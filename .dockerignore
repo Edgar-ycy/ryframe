@@ -1,0 +1,34 @@
+# Build artifacts
+target/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Development files
+.env
+.env.*
+!.env.example
+
+# Test files
+tests/
+
+# Deploy configs (mounted at runtime, not baked into image)
+deploy/
+
+# Docker files (avoid recursive copy)
+docker-compose*.yml
+Dockerfile
+.dockerignore

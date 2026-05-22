@@ -1,0 +1,25 @@
+[package]
+name = "ryframe-middleware"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+ryframe-common = { path = "../ryframe-common" }
+ryframe-config = { path = "../ryframe-config" }
+ryframe-core = { path = "../ryframe-core" }
+axum = { workspace = true }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "compression-br"] }
+tower = "0.5"
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+http = "1"
+bytes = { workspace = true }
+ammonia = "4"
+dashmap = "6"
+serde_json = { workspace = true }
+tokio = { workspace = true }
+redis = { workspace = true }

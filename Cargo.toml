@@ -1,0 +1,56 @@
+[workspace]
+default-members = ["crates/ryframe"]
+
+members = [
+    "crates/ryframe",
+    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-middleware", "crates/ryframe-service",
+    "crates/ryframe-task", "crates/ryframe-generator", "crates/ryframe-monitor"]
+resolver = "3"
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["edgar_ye <edgar@example.com>"]
+license = "MIT"
+repository = ""
+description = "rust开发的框架"
+
+
+[workspace.dependencies]
+axum = "0.8.9"
+tokio = { version = "1", features = ["full"] }
+async-trait = { version = "0.1" }
+chrono = { version = "0.4" }
+sea-orm = { version = "2.0.0-rc", features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite",
+    "runtime-tokio-rustls", "macros", "mock", ] }
+sea-orm-migration = { version = "2.0.0-rc" }
+rand = "0.10"
+rand_core = { version = "0.10" }
+serde = "1"
+serde_json = "1"
+jsonwebtoken = "10.4.0"
+#密码哈希
+md5 = "0.8"
+base64 = "0.22"
+argon2 = "0.5"
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3" }
+tracing-appender = "0.2"
+
+log = "0.4"
+validator = "0.20"
+uuid = "1"
+
+thiserror = "2"
+http = "1"
+bytes = "1"
+
+sysinfo = "0.39"
+cron = "0.16"
+
+image = { version = "0.25" }
+calamine = { version = "0.34" }
+rust_xlsxwriter = { version = "0.94" }
+utoipa = { version = "5", features = ["axum_extras"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+

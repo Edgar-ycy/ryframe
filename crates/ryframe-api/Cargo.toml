@@ -1,0 +1,31 @@
+[package]
+name = "ryframe-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+ryframe-common = { path = "../ryframe-common" }
+ryframe-auth = { path = "../ryframe-auth" }
+ryframe-service = { path = "../ryframe-service" }
+ryframe-config = { path = "../ryframe-config" }
+ryframe-db = { path = "../ryframe-db" }
+ryframe-core = { path = "../ryframe-core" }
+ryframe-monitor = { path = "../ryframe-monitor" }
+ryframe-task = { path = "../ryframe-task" }
+ryframe-generator = { path = "../ryframe-generator" }
+axum = { workspace = true, features = ["multipart"] }
+serde = { workspace = true, features = ["derive"] }
+validator = { workspace = true, features = ["derive"] }
+sea-orm = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+chrono = { workspace = true, features = ["serde"] }
+uuid = { workspace = true, features = ["v4"] }
+base64 = { workspace = true }
+regex = "1"
+utoipa = { workspace = true }
+tracing = { workspace = true }

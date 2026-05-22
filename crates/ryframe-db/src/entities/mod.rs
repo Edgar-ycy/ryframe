@@ -1,0 +1,26 @@
+pub mod user;
+pub mod role;
+pub mod permission;
+pub mod user_role;
+pub mod role_permission;
+pub mod dept;
+pub mod post;
+pub mod menu;
+pub mod config;
+pub mod dict_type;
+pub mod dict_data;
+pub mod notice;
+pub mod role_menu;
+pub mod role_dept;
+pub mod oper_log;
+pub mod login_info;
+pub mod job;
+pub mod job_log;
+
+pub use user::Entity as UserEntity;
+pub use role::Entity as RoleEntity;
+pub use permission::Entity as PermissionEntity;
+pub use dept::Entity as DeptEntity;
+pub use post::Entity as PostEntity;
+pub use menu::Entity as MenuEntity;
+pub use config::Entity as ConfigEntity;

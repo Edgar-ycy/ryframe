@@ -1,0 +1,13 @@
+# 测试环境配置
+
+[database.primary]
+database = "ryframe_test"
+max_connections = 5
+min_connections = 1
+
+[auth]
+access_token_expire = "5m"
+refresh_token_expire = "30m"
+
+[logger]
+level = "debug"

@@ -1,0 +1,41 @@
+# ============================================================
+# RyFrame 默认配置
+# 此文件包含所有配置项的默认值，由环境配置文件覆盖
+# ============================================================
+
+[app]
+name = "ryframe"
+version = "0.1.0"
+host = "0.0.0.0"
+port = 8080
+
+[database.primary]
+driver = "postgres"
+host = "localhost"
+port = 5432
+database = "ryframe"
+username = "postgres"
+password = ""
+max_connections = 10
+min_connections = 1
+
+[auth]
+jwt_secret = "change-me-in-production"
+access_token_expire = "1h"
+refresh_token_expire = "168h"
+
+[redis]
+host = "127.0.0.1"
+port = 6379
+password = ""
+database = 0
+max_pool_size = 16
+timeout_secs = 3
+
+[logger]
+level = "info"
+format = "text"
+output = "stdout"
+
+[cors]
+allow_origins = []

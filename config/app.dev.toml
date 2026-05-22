@@ -1,0 +1,31 @@
+# 开发环境配置
+# 仅覆盖与默认值不同的项
+
+[app]
+name = "ryframe"
+version = "0.1.0"
+host = "0.0.0.0"
+port = 8080
+
+[database.primary]
+driver = "mysql"
+host = "localhost"
+port = 3306
+database = "ryframe_config"
+username = "root"
+password = "123456"
+max_connections = 10
+min_connections = 1
+
+[redis]
+host = "127.0.0.1"
+port = 6379
+# TODO: 请将下方密码替换为你本地的 Redis 密码
+password = "yecy"
+database = 0
+
+[cors]
+allow_origins = ["http://localhost:5173", "http://localhost:3000"]
+
+[logger]
+level = "debug"

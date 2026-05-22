@@ -1,0 +1,20 @@
+[package]
+name = "ryframe-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+ryframe-common = { path = "../ryframe-common" }
+ryframe-config = { path = "../ryframe-config" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+async-trait = {workspace = true}
+sea-orm = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+redis = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

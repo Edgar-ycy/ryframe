@@ -1,0 +1,62 @@
+use crate::naming;
+use crate::schema::TableInfo;
+
+pub fn render_dto(table: &TableInfo) -> String {
+    let struct_name = naming::to_pascal_case(&table.table_name);
+    let _snake = naming::to_snake_case(&table.table_name);
+
+    let vo_fields: String = table
+        .columns
+        .iter()
+        .map(|c| {
+            let field_name = naming::to_snake_case(&c.name);
+            format!("    pub {}: {},", field_name, c.rust_type)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let create_fields: String = table
+        .columns
+        .iter()
+        .filter(|c| {
+            let name = naming::to_snake_case(&c.name);
+            name != "id"
+                && name != "create_time"
+                && name != "update_time"
+                && name != "created_at"
+                && name != "updated_at"
+        })
+        .map(|c| {
+            let field_name = naming::to_snake_case(&c.name);
+            format!("    pub {}: {},", field_name, c.rust_type)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"use serde::{{Deserialize, Serialize}};
+
+/// {struct_name} 视图对象
+#[derive(Debug, Clone, Serialize)]
+pub struct {struct_name}Vo {{
+{vo_fields}
+}}
+
+/// 创建 {struct_name} 请求
+#[derive(Debug, Deserialize)]
+pub struct Create{struct_name}Dto {{
+{create_fields}
+}}
+
+/// 更新 {struct_name} 请求
+#[derive(Debug, Deserialize)]
+pub struct Update{struct_name}Dto {{
+    pub id: i64,
+{create_fields}
+}}
+"#,
+        struct_name = struct_name,
+        vo_fields = vo_fields,
+        create_fields = create_fields,
+    )
+}

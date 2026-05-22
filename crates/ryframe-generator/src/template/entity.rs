@@ -1,0 +1,47 @@
+use crate::naming;
+use crate::schema::TableInfo;
+
+pub fn render_entity(table: &TableInfo) -> String {
+    let _struct_name = naming::to_pascal_case(&table.table_name);
+    let fields: String = table
+        .columns
+        .iter()
+        .map(|c| {
+            let field_name = naming::to_snake_case(&c.name);
+            let mut attrs = Vec::new();
+            if c.is_primary_key {
+                attrs.push("#[sea_orm(primary_key, auto_increment = false)]".to_string());
+            }
+            if c.is_unique {
+                attrs.push("#[sea_orm(unique)]".to_string());
+            }
+            let attr_str = if attrs.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", attrs.join("\n"))
+            };
+            format!("{}    pub {}: {},", attr_str, field_name, c.rust_type)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"use chrono::{{DateTime, Utc}};
+use sea_orm::entity::prelude::*;
+use serde::{{Deserialize, Serialize}};
+
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[sea_orm(table_name = "{table_name}")]
+pub struct Model {{
+{fields}
+}}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+pub enum Relation {{}}
+
+impl ActiveModelBehavior for ActiveModel {{}}
+"#,
+        table_name = table.table_name,
+        fields = fields
+    )
+}

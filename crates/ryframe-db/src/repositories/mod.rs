@@ -1,0 +1,27 @@
+pub mod user_repo;
+pub mod role_repo;
+pub mod permission_repo;
+pub mod dept_repo;
+pub mod post_repo;
+pub mod menu_repo;
+pub mod config_repo;
+pub mod dict_repo;
+pub mod notice_repo;
+mod oper_log_repo;
+mod login_info_repo;
+
+pub use user_repo::UserRepository;
+pub use role_repo::RoleRepository;
+pub use permission_repo::PermissionRepository;
+pub use dept_repo::DeptRepository;
+pub use post_repo::PostRepository;
+pub use menu_repo::MenuRepository;
+pub use config_repo::ConfigRepository;
+pub use dict_repo::{DictTypeRepository, DictDataRepository};
+pub use notice_repo::NoticeRepository;
+pub use oper_log_repo::OperLogRepository;
+pub use login_info_repo::LoginInfoRepository;
+pub mod job_repo;
+pub mod job_log_repo;
+pub use job_repo::JobRepository;
+pub use job_log_repo::JobLogRepository;
