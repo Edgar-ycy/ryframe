@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use uuid::Uuid;
 
 /// MD5 哈希（返回 32 位小写十六进制字符串）

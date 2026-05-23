@@ -30,7 +30,10 @@ impl AppContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ryframe_config::{AppSettings, AppConfig, DatabaseConfig, DbConnection, AuthConfig, LoggerConfig, RateLimitConfig};
+    use ryframe_config::{
+        AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig,
+        RateLimitConfig,
+    };
 
     fn test_config() -> AppConfig {
         AppConfig {
@@ -52,6 +55,7 @@ mod tests {
                     min_connections: 1,
                 },
                 replicas: vec![],
+                datasources: vec![],
             },
             auth: AuthConfig {
                 jwt_secret: "test-secret".into(),

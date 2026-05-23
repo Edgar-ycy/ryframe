@@ -1,9 +1,9 @@
+use log::LevelFilter;
 use ryframe_common::{AppError, AppResult};
 use ryframe_config::DbConnection;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Statement};
 use std::collections::HashSet;
 use std::time::Duration;
-use log::LevelFilter;
 
 /// 根据数据库配置创建连接池
 ///
@@ -21,6 +21,9 @@ pub async fn connect(config: &DbConnection) -> AppResult<DatabaseConnection> {
     // SQLite 需要特殊处理外键和日志级别
     if config.driver == "sqlite" {
         opt.sqlx_logging_level(LevelFilter::Info);
+    } else {
+        // MySQL/Postgres：借鉴若依，关闭 sqlx 查询日志，避免每一条 SQL 刷屏
+        opt.sqlx_logging(false);
     }
 
     Database::connect(opt)
@@ -78,19 +81,12 @@ pub async fn check_tables(db: &DatabaseConnection) -> Result<(), Vec<String>> {
         _ => "SELECT name AS table_name FROM sqlite_master WHERE type = 'table'",
     };
 
-    let results = TableRow::find_by_statement(Statement::from_sql_and_values(
-        backend,
-        sql,
-        [],
-    ))
-    .all(db)
-    .await
-    .map_err(|e| vec![format!("无法查询表列表: {}", e)])?;
+    let results = TableRow::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
+        .all(db)
+        .await
+        .map_err(|e| vec![format!("无法查询表列表: {}", e)])?;
 
-    let existing: HashSet<String> = results
-        .into_iter()
-        .map(|r| r.table_name)
-        .collect();
+    let existing: HashSet<String> = results.into_iter().map(|r| r.table_name).collect();
 
     let missing: Vec<String> = REQUIRED_TABLES
         .iter()

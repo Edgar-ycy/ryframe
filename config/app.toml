@@ -19,17 +19,6 @@ password = ""
 max_connections = 10
 min_connections = 1
 
-# 从库连接（读写分离，可选，可配置多个）
-# [[database.replicas]]
-# driver = "postgres"
-# host = "localhost"
-# port = 5432
-# database = "ryframe"
-# username = "postgres"
-# password = ""
-# max_connections = 5
-# min_connections = 1
-
 [auth]
 jwt_secret = "change-me-in-production"
 access_token_expire = "1h"

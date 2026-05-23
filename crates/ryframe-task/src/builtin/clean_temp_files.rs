@@ -37,24 +37,26 @@ impl ScheduledTask for CleanTempFilesTask {
                 let path = entry.path();
                 if path.is_file()
                     && let Ok(metadata) = path.metadata()
-                        && let Ok(modified) = metadata.modified() {
-                            let modified_time = {
-                                let duration = modified
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default();
-                                chrono::DateTime::from_timestamp(
-                                    duration.as_secs() as i64,
-                                    duration.subsec_nanos(),
-                                )
-                            };
-                            if let Some(mt) = modified_time
-                                && mt < cutoff {
-                                    total_size += metadata.len();
-                                    if std::fs::remove_file(&path).is_ok() {
-                                        deleted_count += 1;
-                                    }
-                                }
+                    && let Ok(modified) = metadata.modified()
+                {
+                    let modified_time = {
+                        let duration = modified
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default();
+                        chrono::DateTime::from_timestamp(
+                            duration.as_secs() as i64,
+                            duration.subsec_nanos(),
+                        )
+                    };
+                    if let Some(mt) = modified_time
+                        && mt < cutoff
+                    {
+                        total_size += metadata.len();
+                        if std::fs::remove_file(&path).is_ok() {
+                            deleted_count += 1;
                         }
+                    }
+                }
             }
         }
 

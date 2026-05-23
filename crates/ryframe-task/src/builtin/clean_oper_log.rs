@@ -31,6 +31,9 @@ impl ScheduledTask for CleanOperLogTask {
             .await
             .map_err(|e| ryframe_common::AppError::Database(format!("清理操作日志失败: {}", e)))?;
 
-        Ok(format!("清理操作日志完成, 删除 {} 条记录", result.rows_affected))
+        Ok(format!(
+            "清理操作日志完成, 删除 {} 条记录",
+            result.rows_affected
+        ))
     }
 }

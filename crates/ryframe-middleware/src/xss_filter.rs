@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::Request,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -25,9 +25,7 @@ pub async fn xss_filter(req: Request, next: Next) -> Result<Response, Response> 
     let (parts, body) = req.into_parts();
     let bytes = axum::body::to_bytes(body, 1024 * 1024 * 2)
         .await
-        .map_err(|_| {
-            (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response()
-        })?;
+        .map_err(|_| (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response())?;
 
     let sanitized = sanitize_json_bytes(&bytes);
     let new_req = Request::from_parts(parts, Body::from(sanitized));

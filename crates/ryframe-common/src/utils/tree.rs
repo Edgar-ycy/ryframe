@@ -25,12 +25,10 @@ where
 {
     items
         .iter()
-        .filter(|node| {
-            match (&parent_id, node.parent_id()) {
-                (None, None) => true,
-                (Some(pid), Some(node_pid)) => pid.eq(&node_pid) ,
-                _ => false,
-            }
+        .filter(|node| match (&parent_id, node.parent_id()) {
+            (None, None) => true,
+            (Some(pid), Some(node_pid)) => pid.eq(&node_pid),
+            _ => false,
         })
         .map(|node| {
             let mut cloned = node.clone();
@@ -125,7 +123,9 @@ mod tests {
 
         // DTO 序列化
         #[derive(Debug, Clone, Serialize)]
-        struct Inner { name: String }
+        struct Inner {
+            name: String,
+        }
         let dto = TreeNodeDto::new(Inner { name: "x".into() });
         let json = serde_json::to_string(&dto).unwrap();
         assert!(json.contains("x"));

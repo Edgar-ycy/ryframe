@@ -1,10 +1,10 @@
+use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
-use ryframe_db::entities::dept;
+use ryframe_core::Repository;
 use ryframe_db::DeptRepository;
+use ryframe_db::entities::dept;
 use ryframe_db::repositories::dept_repo::DeptTreeNode;
 use sea_orm::DatabaseConnection;
-use ryframe_common::utils::snowflake;
-use ryframe_core::Repository;
 use serde::Serialize;
 
 /// 部门视图对象
@@ -79,7 +79,10 @@ impl DeptServiceImpl {
         sort: i32,
         status: String,
     ) -> AppResult<dept::Model> {
-        let mut dept = self.dept_repo.find_by_id(db, id).await?
+        let mut dept = self
+            .dept_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
 
         // 如果父部门变更，重新计算 ancestors
@@ -97,7 +100,9 @@ impl DeptServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        self.dept_repo.find_by_id(db, id).await?
+        self.dept_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
 
         if self.dept_repo.has_children(db, id).await? {
@@ -123,4 +128,3 @@ impl DeptServiceImpl {
         Ok(self.dept_repo.find_by_id(db, id).await?.map(DeptVo::from))
     }
 }
-

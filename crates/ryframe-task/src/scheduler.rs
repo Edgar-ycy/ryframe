@@ -70,7 +70,12 @@ impl TaskScheduler {
 
         let mut tasks = self.tasks.write().await;
         let task_name = task.name().to_string();
-        tracing::info!("已注册定时任务: {} (cron={}, paused={})", task_name, cron_str, paused);
+        tracing::info!(
+            "已注册定时任务: {} (cron={}, paused={})",
+            task_name,
+            cron_str,
+            paused
+        );
         tasks.insert(
             task_name,
             RegisteredTask {
@@ -115,11 +120,7 @@ impl TaskScheduler {
     }
 
     /// 更新任务的 cron 表达式
-    pub async fn update_cron(
-        &self,
-        name: &str,
-        new_cron: &str,
-    ) -> ryframe_common::AppResult<()> {
+    pub async fn update_cron(&self, name: &str, new_cron: &str) -> ryframe_common::AppResult<()> {
         let schedule = Schedule::from_str(new_cron).map_err(|e| {
             ryframe_common::AppError::Config(format!("无效的 cron 表达式 '{}': {}", new_cron, e))
         })?;
@@ -250,11 +251,11 @@ impl TaskScheduler {
                     let next = rt.schedule.upcoming(Utc).next();
                     if let Some(next_time) = next
                         && next_time <= now + chrono::Duration::seconds(1)
-                            && rt.last_fired_at.map(|t| t < next_time).unwrap_or(true)
-                        {
-                            rt.last_fired_at = Some(now);
-                            return Some(rt.task.clone());
-                        }
+                        && rt.last_fired_at.map(|t| t < next_time).unwrap_or(true)
+                    {
+                        rt.last_fired_at = Some(now);
+                        return Some(rt.task.clone());
+                    }
                     None
                 })
                 .collect()

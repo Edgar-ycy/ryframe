@@ -31,6 +31,10 @@ sea-orm-migration = { workspace = true }
 name = "ryframe"
 path = "src/main.rs"
 
-#[[bin]]
-#name = "ryframe-migrate"
-#path = "src/bin/ryframe_migrate.rs"
+[[bin]]
+name = "ryframe-migrate"
+path = "src/bin/ryframe_migrate.rs"
+
+[[bin]]
+name = "ryframe-db-reset"
+path = "src/bin/ryframe_db_reset.rs"

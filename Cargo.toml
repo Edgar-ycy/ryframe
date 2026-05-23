@@ -4,7 +4,7 @@ default-members = ["crates/ryframe"]
 members = [
     "crates/ryframe",
     "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-middleware", "crates/ryframe-service",
-    "crates/ryframe-task", "crates/ryframe-generator", "crates/ryframe-monitor"]
+    "crates/ryframe-task", "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro"]
 resolver = "3"
 [workspace.package]
 version = "0.1.0"
@@ -61,3 +61,4 @@ tower-http = { version = "0.6" }
 ammonia = "4"
 dashmap = "6"
 zip = "2"
+ryframe-macro = { path = "crates/ryframe-macro" }

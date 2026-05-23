@@ -1,12 +1,12 @@
 use ryframe_auth::{jwt, password};
 use ryframe_common::{AppError, AppResult};
 use ryframe_config::AppConfig;
+use ryframe_core::Repository;
 use ryframe_db::entities::user;
 use ryframe_db::{PermissionRepository, RoleRepository, UserRepository};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 use std::sync::Arc;
-use ryframe_core::Repository;
 use utoipa::ToSchema;
 
 /// 登录响应（内部使用，最终由 API 层序列化为 JSON）
@@ -84,8 +84,13 @@ impl AuthServiceImpl {
         let perms = self.perm_repo.find_role_perms(db, &role_ids).await?;
         let perm_codes: Vec<String> = perms.iter().map(|p| p.code.clone()).collect();
 
-        let (access_token, token_id) =
-            jwt::encode_access(user.id, &user.username, &role_codes, &perm_codes, &self.config.auth)?;
+        let (access_token, token_id) = jwt::encode_access(
+            user.id,
+            &user.username,
+            &role_codes,
+            &perm_codes,
+            &self.config.auth,
+        )?;
         let refresh_token = jwt::encode_refresh(user.id, &user.username, &self.config.auth)?;
 
         let mut user_info = UserInfo::from(&user);
@@ -111,10 +116,14 @@ impl AuthServiceImpl {
         let claims = jwt::decode_token(token, &self.config.auth.jwt_secret)?;
 
         if claims.token_type != "refresh" {
-            return Err(AppError::Authentication("令牌类型错误，请使用刷新令牌".into()));
+            return Err(AppError::Authentication(
+                "令牌类型错误，请使用刷新令牌".into(),
+            ));
         }
 
-        let user_id = claims.sub.parse::<i64>()
+        let user_id = claims
+            .sub
+            .parse::<i64>()
             .map_err(|_| AppError::Authentication("令牌中的用户ID无效".into()))?;
 
         let user = self
@@ -130,8 +139,13 @@ impl AuthServiceImpl {
         let perms = self.perm_repo.find_role_perms(db, &role_ids).await?;
         let perm_codes: Vec<String> = perms.iter().map(|p| p.code.clone()).collect();
 
-        let (access_token, token_id) =
-            jwt::encode_access(user.id, &user.username, &role_codes, &perm_codes, &self.config.auth)?;
+        let (access_token, token_id) = jwt::encode_access(
+            user.id,
+            &user.username,
+            &role_codes,
+            &perm_codes,
+            &self.config.auth,
+        )?;
         let refresh_token = jwt::encode_refresh(user.id, &user.username, &self.config.auth)?;
 
         let mut user_info = UserInfo::from(&user);
@@ -172,4 +186,3 @@ impl AuthServiceImpl {
         Ok(user_info)
     }
 }
-

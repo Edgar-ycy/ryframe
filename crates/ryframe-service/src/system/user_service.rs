@@ -1,13 +1,14 @@
 use ryframe_auth::password;
 use ryframe_common::annotations::data_scope::{DataScope, DataScopeContext};
+use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::entities::{role, user};
 use ryframe_db::{DeptRepository, RoleRepository, UserRepository};
-use sea_orm::{DatabaseConnection, TransactionTrait, ActiveModelTrait};
+use ryframe_macro::datasource;
+use sea_orm::{ActiveModelTrait, DatabaseConnection, TransactionTrait};
 use serde::Serialize;
-use ryframe_common::utils::snowflake;
-use ryframe_core::Repository;
 
 #[derive(Debug, Serialize)]
 pub struct UserVo {
@@ -60,7 +61,11 @@ pub struct RoleBriefVo {
 
 impl From<role::Model> for RoleBriefVo {
     fn from(r: role::Model) -> Self {
-        Self { id: r.id, name: r.name, code: r.code }
+        Self {
+            id: r.id,
+            name: r.name,
+            code: r.code,
+        }
     }
 }
 
@@ -75,9 +80,10 @@ impl UserServiceImpl {
     async fn fill_dept_names(&self, db: &DatabaseConnection, records: &mut [UserVo]) {
         for vo in records.iter_mut() {
             if let Some(dept_id) = vo.dept_id
-                && let Ok(Some(dept)) = self.dept_repo.find_by_id(db, dept_id).await {
-                    vo.dept_name = Some(dept.name);
-                }
+                && let Ok(Some(dept)) = self.dept_repo.find_by_id(db, dept_id).await
+            {
+                vo.dept_name = Some(dept.name);
+            }
         }
     }
 
@@ -116,7 +122,9 @@ impl UserServiceImpl {
         status: String,
     ) -> AppResult<()> {
         // 检查用户存在
-        self.user_repo.find_by_id(db, id).await?
+        self.user_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         self.user_repo.update_status(db, id, status).await
     }
@@ -142,7 +150,10 @@ impl UserServiceImpl {
         query: PageQuery,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<UserVo>> {
-        let page = self.user_repo.find_by_page_with_data_scope(db, query.clone(), scope_ctx).await?;
+        let page = self
+            .user_repo
+            .find_by_page_with_data_scope(db, query.clone(), scope_ctx)
+            .await?;
         let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
         self.fill_dept_names(db, &mut records).await;
 
@@ -210,7 +221,8 @@ impl UserServiceImpl {
         match self.user_repo.find_by_id(db, id).await? {
             Some(u) => {
                 let mut vo = UserVo::from(u);
-                self.fill_dept_names(db, std::slice::from_mut(&mut vo)).await;
+                self.fill_dept_names(db, std::slice::from_mut(&mut vo))
+                    .await;
                 Ok(Some(vo))
             }
             None => Ok(None),
@@ -218,14 +230,22 @@ impl UserServiceImpl {
     }
 
     /// 查询用户详情（包含角色列表）
-    pub async fn find_by_id_with_roles(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<UserDetailVo>> {
+    pub async fn find_by_id_with_roles(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+    ) -> AppResult<Option<UserDetailVo>> {
         match self.user_repo.find_by_id(db, id).await? {
             Some(u) => {
                 let mut vo = UserVo::from(u);
-                self.fill_dept_names(db, std::slice::from_mut(&mut vo)).await;
+                self.fill_dept_names(db, std::slice::from_mut(&mut vo))
+                    .await;
                 let roles = self.role_repo.find_user_roles(db, id).await?;
                 let role_vos: Vec<RoleBriefVo> = roles.into_iter().map(RoleBriefVo::from).collect();
-                Ok(Some(UserDetailVo { user: vo, roles: role_vos }))
+                Ok(Some(UserDetailVo {
+                    user: vo,
+                    roles: role_vos,
+                }))
             }
             None => Ok(None),
         }
@@ -244,7 +264,12 @@ impl UserServiceImpl {
         role_ids: Option<Vec<i64>>,
     ) -> AppResult<UserVo> {
         // 检查用户名唯一
-        if self.user_repo.find_by_username(db, username).await?.is_some() {
+        if self
+            .user_repo
+            .find_by_username(db, username)
+            .await?
+            .is_some()
+        {
             return Err(AppError::Conflict("用户名已存在".into()));
         }
 
@@ -269,10 +294,17 @@ impl UserServiceImpl {
         };
 
         // 使用事务：插入用户 + 分配角色
-        let txn = db.begin().await.map_err(|e| AppError::Database(format!("开启事务失败: {}", e)))?;
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| AppError::Database(format!("开启事务失败: {}", e)))?;
 
         let active: user::ActiveModel = new_user.into();
-        let saved = match active.insert(&txn).await.map_err(|e| AppError::Database(e.to_string())) {
+        let saved = match active
+            .insert(&txn)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+        {
             Ok(s) => s,
             Err(err) => {
                 let _ = txn.rollback().await;
@@ -283,13 +315,18 @@ impl UserServiceImpl {
         // 分配角色
         if let Some(role_ids) = &role_ids
             && !role_ids.is_empty()
-            && let Err(err) = self.role_repo.assign_roles_in_txn(&txn, saved.id, role_ids).await
+            && let Err(err) = self
+                .role_repo
+                .assign_roles_in_txn(&txn, saved.id, role_ids)
+                .await
         {
             let _ = txn.rollback().await;
             return Err(err);
         }
 
-        txn.commit().await.map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
+        txn.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
         Ok(UserVo::from(saved))
     }
 
@@ -305,7 +342,10 @@ impl UserServiceImpl {
         status: String,
         role_ids: Option<Vec<i64>>,
     ) -> AppResult<UserVo> {
-        let mut user = self.user_repo.find_by_id(db, id).await?
+        let mut user = self
+            .user_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
         user.nickname = nickname.to_string();
@@ -316,10 +356,17 @@ impl UserServiceImpl {
         user.updated_at = chrono::Utc::now();
 
         // 使用事务：更新用户 + 更新角色
-        let txn = db.begin().await.map_err(|e| AppError::Database(format!("开启事务失败: {}", e)))?;
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| AppError::Database(format!("开启事务失败: {}", e)))?;
 
         let active: user::ActiveModel = user.into();
-        let saved = match active.update(&txn).await.map_err(|e| AppError::Database(e.to_string())) {
+        let saved = match active
+            .update(&txn)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+        {
             Ok(s) => s,
             Err(err) => {
                 let _ = txn.rollback().await;
@@ -329,19 +376,26 @@ impl UserServiceImpl {
 
         // 更新角色
         if let Some(role_ids) = &role_ids
-            && let Err(err) = self.role_repo.assign_roles_in_txn(&txn, saved.id, role_ids).await
+            && let Err(err) = self
+                .role_repo
+                .assign_roles_in_txn(&txn, saved.id, role_ids)
+                .await
         {
             let _ = txn.rollback().await;
             return Err(err);
         }
 
-        txn.commit().await.map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
+        txn.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
         Ok(UserVo::from(saved))
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
         // 检查用户存在
-        self.user_repo.find_by_id(db, id).await?
+        self.user_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         self.user_repo.delete(db, id).await
     }
@@ -352,12 +406,50 @@ impl UserServiceImpl {
         id: i64,
         new_password: &str,
     ) -> AppResult<()> {
-        let mut user = self.user_repo.find_by_id(db, id).await?
+        let mut user = self
+            .user_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         user.password_hash = password::hash(new_password)?;
         user.updated_at = chrono::Utc::now();
         self.user_repo.update(db, user).await?;
         Ok(())
     }
-}
 
+    /// 从从库查询用户（演示 `#[datasource]` 多数据源注解）
+    ///
+    /// 注解 `#[datasource("replica_0")]` 使此方法内所有 `repo.db()` 调用
+    /// 自动走第一个从库连接，无需显式传递 `&DatabaseConnection`。
+    ///
+    /// # 验证方法
+    ///
+    /// 1. 确保 `app.dev.toml` 中配置了 `[[database.replicas]]`
+    /// 2. 在两个库的 `sys_user` 表中插入不同数据
+    /// 3. 调用本方法 → 返回的是从库的数据
+    /// 4. 调用不带注解的 `find_by_page` → 返回的是主库的数据
+    #[datasource("replica_0")]
+    pub async fn find_by_page_from_replica(
+        &self,
+        query: PageQuery,
+    ) -> AppResult<PageResult<UserVo>> {
+        let db = self.user_repo.db(); // ← 从 task-local 解析为 replica_0 连接
+        let page = self.user_repo.find_by_page(&db, query.clone()).await?;
+        let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
+        self.fill_dept_names(&db, &mut records).await;
+        Ok(PageResult::new(records, page.total, &query))
+    }
+
+    /// 从命名数据源查询（演示多数据源切换）
+    #[datasource("db_order")]
+    pub async fn find_by_page_from_order_db(
+        &self,
+        query: PageQuery,
+    ) -> AppResult<PageResult<UserVo>> {
+        let db = self.user_repo.db(); // ← 从 task-local 解析为 db_order 连接
+        let page = self.user_repo.find_by_page(&db, query.clone()).await?;
+        let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
+        self.fill_dept_names(&db, &mut records).await;
+        Ok(PageResult::new(records, page.total, &query))
+    }
+}

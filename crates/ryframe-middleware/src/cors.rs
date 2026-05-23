@@ -1,5 +1,5 @@
-use tower_http::cors::{AllowOrigin, CorsLayer};
 use ryframe_config::CorsConfig;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 /// 创建 CORS 层
 ///

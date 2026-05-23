@@ -14,25 +14,22 @@ use ryframe_api::handlers::auth_handler::AppState;
 use ryframe_api::handlers::captcha_handler::CaptchaStore;
 use ryframe_api::router::api_router;
 use ryframe_config::{
-    AppSettings, AppConfig, DatabaseConfig, DbConnection, AuthConfig,
-    LoggerConfig, RateLimitConfig,
+    AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
 use ryframe_core::AppContext;
-use ryframe_db::entities::{user, dept, role};
+use ryframe_db::entities::{dept, role, user};
 use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository,
-    JobLogRepository, JobRepository, LoginInfoRepository, MenuRepository,
-    NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
-    RoleRepository, UserRepository,
-};
-use ryframe_service::system::{
-    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-    JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
-    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
-    ProfileServiceImpl, OnlineUserServiceImpl, RoleServiceImpl,
-    UserServiceImpl,
+    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
+    JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
+    PermissionRepository, PostRepository, RoleRepository, UserRepository,
 };
 use ryframe_service::AuthServiceImpl;
+use ryframe_service::system::{
+    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
+    LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+    RoleServiceImpl, UserServiceImpl,
+};
 use ryframe_task::{TaskContext, TaskScheduler};
 
 /// 创建 SQLite 内存数据库并运行迁移
@@ -110,7 +107,10 @@ async fn seed_test_data(db: &DatabaseConnection) {
         role_id: 1,
     };
     let active: ryframe_db::entities::user_role::ActiveModel = user_role_model.into();
-    ryframe_db::entities::user_role::Entity::insert(active).exec(db).await.unwrap();
+    ryframe_db::entities::user_role::Entity::insert(active)
+        .exec(db)
+        .await
+        .unwrap();
 }
 
 fn test_config() -> AppConfig {
@@ -133,6 +133,7 @@ fn test_config() -> AppConfig {
                 min_connections: 1,
             },
             replicas: vec![],
+            datasources: vec![],
         },
         auth: AuthConfig {
             jwt_secret: "test-jwt-secret-for-integration-tests".into(),
@@ -160,6 +161,7 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
     let scheduler = Arc::new(TaskScheduler::new(task_ctx));
 
     AppState {
+        datasource_manager: Default::default(),
         db: db.clone(),
         config: config_arc,
         context,
@@ -232,10 +234,7 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
 }
 
 /// 辅助：发送请求并返回 (StatusCode, Body JSON)
-async fn send_request(
-    app: axum::Router,
-    req: Request<Body>,
-) -> (StatusCode, serde_json::Value) {
+async fn send_request(app: axum::Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
     let response = app.oneshot(req).await.unwrap();
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -272,17 +271,20 @@ async fn test_auth_full_flow() {
         .uri("/auth/login")
         .method("POST")
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&serde_json::json!({
-            "username": "admin",
-            "password": "test123"
-        })).unwrap()))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "username": "admin",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
         .unwrap();
     let (status, body) = send_request(router, req).await;
     assert_eq!(status, StatusCode::OK);
-    let access_token = body["access_token"].as_str().unwrap().to_string();
-    let refresh_token = body["refresh_token"].as_str().unwrap().to_string();
+    let access_token = body["data"]["access_token"].as_str().unwrap().to_string();
+    let refresh_token = body["data"]["refresh_token"].as_str().unwrap().to_string();
     assert!(!access_token.is_empty());
-    assert_eq!(body["user_info"]["username"], "admin");
+    assert_eq!(body["data"]["user_info"]["username"], "admin");
 
     // 2. 用 token 访问 /auth/me
     let state2 = build_test_app(db.clone()).await;
@@ -295,7 +297,7 @@ async fn test_auth_full_flow() {
         .unwrap();
     let (s2, b2) = send_request(router2, me_req).await;
     assert_eq!(s2, StatusCode::OK);
-    assert_eq!(b2["username"], "admin");
+    assert_eq!(b2["data"]["username"], "admin");
 
     // 3. 刷新令牌
     let state3 = build_test_app(db.clone()).await;
@@ -304,13 +306,16 @@ async fn test_auth_full_flow() {
         .uri("/auth/refresh")
         .method("POST")
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&serde_json::json!({
-            "refresh_token": refresh_token
-        })).unwrap()))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "refresh_token": refresh_token
+            }))
+            .unwrap(),
+        ))
         .unwrap();
     let (s3, b3) = send_request(router3, refresh_req).await;
     assert_eq!(s3, StatusCode::OK);
-    assert!(b3.get("access_token").is_some());
+    assert!(b3["data"].get("access_token").is_some());
 
     // 4. 错误密码
     let state4 = build_test_app(db.clone()).await;
@@ -319,10 +324,13 @@ async fn test_auth_full_flow() {
         .uri("/auth/login")
         .method("POST")
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&serde_json::json!({
-            "username": "admin",
-            "password": "wrong"
-        })).unwrap()))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "username": "admin",
+                "password": "wrong"
+            }))
+            .unwrap(),
+        ))
         .unwrap();
     let (s4, _) = send_request(router4, bad_req).await;
     assert_eq!(s4, StatusCode::UNAUTHORIZED);
@@ -334,10 +342,13 @@ async fn test_auth_full_flow() {
         .uri("/auth/login")
         .method("POST")
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&serde_json::json!({
-            "username": "nonexistent",
-            "password": "test123"
-        })).unwrap()))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "username": "nonexistent",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
         .unwrap();
     let (s5, _) = send_request(router5, notfound_req).await;
     assert_eq!(s5, StatusCode::UNAUTHORIZED);
@@ -364,18 +375,25 @@ async fn login_get_token(db: &DatabaseConnection) -> String {
         .uri("/auth/login")
         .method("POST")
         .header("content-type", "application/json")
-        .body(Body::from(serde_json::to_string(&serde_json::json!({
-            "username": "admin",
-            "password": "test123"
-        })).unwrap()))
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "username": "admin",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
         .unwrap();
     let (status, body) = send_request(router, req).await;
     assert_eq!(status, StatusCode::OK);
-    body["access_token"].as_str().unwrap().to_string()
+    body["data"]["access_token"].as_str().unwrap().to_string()
 }
 
 /// 辅助：发送带认证的 GET 请求
-async fn auth_get(db: &DatabaseConnection, uri: &str, token: &str) -> (StatusCode, serde_json::Value) {
+async fn auth_get(
+    db: &DatabaseConnection,
+    uri: &str,
+    token: &str,
+) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
     let router = api_router(state);
     let req = Request::builder()
@@ -388,7 +406,12 @@ async fn auth_get(db: &DatabaseConnection, uri: &str, token: &str) -> (StatusCod
 }
 
 /// 辅助：发送带认证的 POST 请求
-async fn auth_post(db: &DatabaseConnection, uri: &str, token: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+async fn auth_post(
+    db: &DatabaseConnection,
+    uri: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
     let router = api_router(state);
     let req = Request::builder()
@@ -409,36 +432,60 @@ async fn test_system_crud_operations() {
     let token = login_get_token(&db).await;
 
     // 岗位 CRUD
-    let (s, b) = auth_post(&db, "/system/posts", &token, serde_json::json!({
-        "name": "测试岗位", "code": "test_post", "sort": 1
-    })).await;
+    let (s, b) = auth_post(
+        &db,
+        "/system/posts",
+        &token,
+        serde_json::json!({
+            "name": "测试岗位", "code": "test_post", "sort": 1
+        }),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["name"], "测试岗位");
     let (s, _) = auth_get(&db, "/system/posts?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 配置 CRUD
-    let (s, b) = auth_post(&db, "/system/configs", &token, serde_json::json!({
-        "name": "测试参数", "key": "test.config.key", "value": "test_value"
-    })).await;
+    let (s, b) = auth_post(
+        &db,
+        "/system/configs",
+        &token,
+        serde_json::json!({
+            "name": "测试参数", "key": "test.config.key", "value": "test_value"
+        }),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["key"], "test.config.key");
     let (s, _) = auth_get(&db, "/system/configs?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 字典 CRUD
-    let (s, b) = auth_post(&db, "/system/dict/types", &token, serde_json::json!({
-        "name": "测试字典", "code": "test_dict"
-    })).await;
+    let (s, b) = auth_post(
+        &db,
+        "/system/dict/types",
+        &token,
+        serde_json::json!({
+            "name": "测试字典", "code": "test_dict"
+        }),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["code"], "test_dict");
     let (s, _) = auth_get(&db, "/system/dict/types?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 通知 CRUD
-    let (s, b) = auth_post(&db, "/system/notices", &token, serde_json::json!({
-        "title": "测试公告", "content": "这是一条测试公告"
-    })).await;
+    let (s, b) = auth_post(
+        &db,
+        "/system/notices",
+        &token,
+        serde_json::json!({
+            "title": "测试公告", "content": "这是一条测试公告"
+        }),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["title"], "测试公告");
     let (s, _) = auth_get(&db, "/system/notices?page=1&page_size=10", &token).await;

@@ -1,7 +1,7 @@
 use ryframe_auth::password;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::Repository;
-use ryframe_db::{UserRepository, RoleRepository, PermissionRepository, user, dept};
+use ryframe_db::{PermissionRepository, RoleRepository, UserRepository, dept, user};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
 use serde::Serialize;
 
@@ -40,7 +40,10 @@ impl ProfileServiceImpl {
         user_id: i64,
     ) -> AppResult<UserProfileResponse> {
         // 查询用户信息
-        let user = self.user_repo.find_by_id(db, user_id).await?
+        let user = self
+            .user_repo
+            .find_by_id(db, user_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
         // 查询部门名称
@@ -89,7 +92,10 @@ impl ProfileServiceImpl {
         email: String,
         phone: String,
     ) -> AppResult<()> {
-        let mut user = self.user_repo.find_by_id(db, user_id).await?
+        let mut user = self
+            .user_repo
+            .find_by_id(db, user_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
         user.nickname = nickname;
@@ -114,7 +120,10 @@ impl ProfileServiceImpl {
         old_password: &str,
         new_password: &str,
     ) -> AppResult<()> {
-        let mut user = self.user_repo.find_by_id(db, user_id).await?
+        let mut user = self
+            .user_repo
+            .find_by_id(db, user_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
         // 验证旧密码
@@ -143,7 +152,10 @@ impl ProfileServiceImpl {
         user_id: i64,
         avatar_url: String,
     ) -> AppResult<()> {
-        let mut user = self.user_repo.find_by_id(db, user_id).await?
+        let mut user = self
+            .user_repo
+            .find_by_id(db, user_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
         // 记录旧头像路径，用于清理
@@ -161,9 +173,8 @@ impl ProfileServiceImpl {
         if let Some(old_path) = old_avatar
             && (old_path.starts_with("/upload/") || old_path.starts_with("upload/"))
         {
-            let file_path = std::path::PathBuf::from("upload").join(
-                old_path.trim_start_matches('/'),
-            );
+            let file_path =
+                std::path::PathBuf::from("upload").join(old_path.trim_start_matches('/'));
             if file_path.exists()
                 && let Err(e) = std::fs::remove_file(&file_path)
             {
@@ -174,4 +185,3 @@ impl ProfileServiceImpl {
         Ok(())
     }
 }
-

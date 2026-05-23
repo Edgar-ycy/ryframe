@@ -1,11 +1,11 @@
+use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::entities::post;
 use ryframe_db::PostRepository;
+use ryframe_db::entities::post;
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use ryframe_common::utils::snowflake;
-use ryframe_core::Repository;
 
 #[derive(Debug, Serialize)]
 pub struct PostVo {
@@ -86,7 +86,10 @@ impl PostServiceImpl {
         sort: i32,
         status: String,
     ) -> AppResult<PostVo> {
-        let mut post = self.post_repo.find_by_id(db, id).await?
+        let mut post = self
+            .post_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
 
         post.name = name.to_string();
@@ -99,7 +102,9 @@ impl PostServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        self.post_repo.find_by_id(db, id).await?
+        self.post_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
         self.post_repo.delete(db, id).await
     }
@@ -113,7 +118,10 @@ impl PostServiceImpl {
         code: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<PostVo>> {
-        let page = self.post_repo.find_by_page_filtered(db, query.clone(), name, code, status).await?;
+        let page = self
+            .post_repo
+            .find_by_page_filtered(db, query.clone(), name, code, status)
+            .await?;
         let records = page.records.into_iter().map(PostVo::from).collect();
         Ok(PageResult::new(records, page.total, &query))
     }
@@ -124,4 +132,3 @@ impl PostServiceImpl {
         Ok(models.into_iter().map(PostVo::from).collect())
     }
 }
-

@@ -1,11 +1,11 @@
 use chrono::Utc;
 use ryframe_common::AppResult;
+use ryframe_common::utils::snowflake;
 use ryframe_core::{PageQuery, PageResult, Repository};
-use ryframe_db::entities::oper_log;
 use ryframe_db::OperLogRepository;
+use ryframe_db::entities::oper_log;
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use ryframe_common::utils::snowflake;
 
 /// 操作日志视图对象
 #[derive(Debug, Clone, Serialize)]
@@ -90,10 +90,22 @@ impl OperLogServiceImpl {
         end_time: Option<&str>,
     ) -> AppResult<PageResult<OperLogVo>> {
         let begin = begin_time
-            .and_then(|s| chrono::NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S").ok())
+            .and_then(|s| {
+                chrono::NaiveDateTime::parse_from_str(
+                    &format!("{} 00:00:00", s),
+                    "%Y-%m-%d %H:%M:%S",
+                )
+                .ok()
+            })
             .map(|d| d.and_utc());
         let end = end_time
-            .and_then(|s| chrono::NaiveDateTime::parse_from_str(&format!("{} 23:59:59", s), "%Y-%m-%d %H:%M:%S").ok())
+            .and_then(|s| {
+                chrono::NaiveDateTime::parse_from_str(
+                    &format!("{} 23:59:59", s),
+                    "%Y-%m-%d %H:%M:%S",
+                )
+                .ok()
+            })
             .map(|d| d.and_utc());
 
         let result = self
@@ -121,8 +133,13 @@ impl OperLogServiceImpl {
         begin_time: Option<&str>,
         end_time: Option<&str>,
     ) -> AppResult<Vec<OperLogVo>> {
-        let query = PageQuery { page: 1, page_size: 10000 };
-        let result = self.find_by_page(db, query, oper_name, status, begin_time, end_time).await?;
+        let query = PageQuery {
+            page: 1,
+            page_size: 10000,
+        };
+        let result = self
+            .find_by_page(db, query, oper_name, status, begin_time, end_time)
+            .await?;
         Ok(result.records)
     }
 }

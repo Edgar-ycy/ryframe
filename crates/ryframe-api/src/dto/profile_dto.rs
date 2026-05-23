@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::sync::LazyLock;
-use validator::Validate;
 use utoipa::ToSchema;
+use validator::Validate;
 
 /// 更新个人信息请求
 #[derive(Debug, Deserialize, Validate, ToSchema)]
@@ -16,9 +16,8 @@ pub struct UpdateProfileRequest {
     pub sex: Option<String>,
 }
 
-static PHONE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"^1[3-9]\d{9}$").unwrap()
-});
+static PHONE_REGEX: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^1[3-9]\d{9}$").unwrap());
 
 /// 修改密码请求
 #[derive(Debug, Deserialize, ToSchema)]

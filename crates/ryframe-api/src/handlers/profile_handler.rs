@@ -1,14 +1,12 @@
+use crate::dto::profile_dto::{ChangePasswordRequest, UpdateProfileRequest};
 use axum::{
+    Json, Router,
     extract::State,
     routing::{get, put},
-    Json, Router,
 };
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{AppError, AppResult};
 use ryframe_service::system::profile_service::UserProfileResponse;
-use crate::dto::profile_dto::{
-    ChangePasswordRequest, UpdateProfileRequest,
-};
 use uuid::Uuid;
 
 use crate::handlers::auth_handler::AppState;
@@ -30,14 +28,17 @@ pub async fn get_profile(
     State(state): State<AppState>,
     claims: axum::Extension<Claims>,
 ) -> AppResult<Json<UserProfileResponse>> {
-    let user_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Authentication("令牌无效".into()))?;
+    let user_id =
+        Uuid::parse_str(&claims.sub).map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
     // 注意：这里需要将 UUID 转换为 i64
     // 实际项目中应该统一 ID 类型
     let user_id_i64 = user_id.as_u128() as i64;
 
-    let profile = state.profile_service.get_profile(&state.db, user_id_i64).await?;
+    let profile = state
+        .profile_service
+        .get_profile(&state.db, user_id_i64)
+        .await?;
 
     Ok(Json(profile))
 }
@@ -51,18 +52,21 @@ pub async fn update_profile(
     claims: axum::Extension<Claims>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let user_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Authentication("令牌无效".into()))?;
+    let user_id =
+        Uuid::parse_str(&claims.sub).map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
     let user_id_i64 = user_id.as_u128() as i64;
 
-    state.profile_service.update_profile(
-        &state.db,
-        user_id_i64,
-        req.nickname,
-        req.email.unwrap_or_default(),
-        req.phone.unwrap_or_default(),
-    ).await?;
+    state
+        .profile_service
+        .update_profile(
+            &state.db,
+            user_id_i64,
+            req.nickname,
+            req.email.unwrap_or_default(),
+            req.phone.unwrap_or_default(),
+        )
+        .await?;
 
     Ok(Json(serde_json::json!({
         "code": 200,
@@ -81,17 +85,15 @@ pub async fn change_password(
 ) -> AppResult<Json<serde_json::Value>> {
     req.validate_passwords().map_err(AppError::Validation)?;
 
-    let user_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Authentication("令牌无效".into()))?;
+    let user_id =
+        Uuid::parse_str(&claims.sub).map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
     let user_id_i64 = user_id.as_u128() as i64;
 
-    state.profile_service.change_password(
-        &state.db,
-        user_id_i64,
-        &req.old_password,
-        &req.new_password,
-    ).await?;
+    state
+        .profile_service
+        .change_password(&state.db, user_id_i64, &req.old_password, &req.new_password)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "code": 200,
@@ -105,8 +107,8 @@ pub async fn update_avatar(
     claims: axum::Extension<Claims>,
     Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let user_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Authentication("令牌无效".into()))?;
+    let user_id =
+        Uuid::parse_str(&claims.sub).map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
     let user_id_i64 = user_id.as_u128() as i64;
 
@@ -115,7 +117,10 @@ pub async fn update_avatar(
         .ok_or_else(|| AppError::Validation("头像URL不能为空".into()))?
         .to_string();
 
-    state.profile_service.update_avatar(&state.db, user_id_i64, avatar_url).await?;
+    state
+        .profile_service
+        .update_avatar(&state.db, user_id_i64, avatar_url)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "code": 200,

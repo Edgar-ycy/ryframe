@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder,
+};
 
 use crate::entities::post;
 
@@ -10,21 +13,40 @@ pub struct PostRepository;
 #[async_trait]
 impl Repository<post::Model, i64> for PostRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<post::Model>> {
-        post::Entity::find_by_id(id).filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL)).one(db).await.map_err(|e| AppError::Database(e.to_string()))
+        post::Entity::find_by_id(id)
+            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+            .one(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    async fn find_by_page(&self, db: &DatabaseConnection, query: PageQuery) -> AppResult<PageResult<post::Model>> {
-        crate::pagination::paginate(db, post::Entity::find().filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL)), &query).await
+    async fn find_by_page(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+    ) -> AppResult<PageResult<post::Model>> {
+        crate::pagination::paginate(
+            db,
+            post::Entity::find().filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL)),
+            &query,
+        )
+        .await
     }
 
     async fn insert(&self, db: &DatabaseConnection, entity: post::Model) -> AppResult<post::Model> {
         let active: post::ActiveModel = entity.into();
-        active.insert(db).await.map_err(|e| AppError::Database(e.to_string()))
+        active
+            .insert(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn update(&self, db: &DatabaseConnection, entity: post::Model) -> AppResult<post::Model> {
         let active: post::ActiveModel = entity.into();
-        active.update(db).await.map_err(|e| AppError::Database(e.to_string()))
+        active
+            .update(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
@@ -34,14 +56,21 @@ impl Repository<post::Model, i64> for PostRepository {
             updated_at: ActiveValue::Set(chrono::Utc::now()),
             ..Default::default()
         };
-        active.update(db).await.map_err(|e| AppError::Database(e.to_string()))?;
+        active
+            .update(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 }
 
 impl PostRepository {
     /// 按岗位编码查找
-    pub async fn find_by_code(&self, db: &DatabaseConnection, code: &str) -> AppResult<Option<post::Model>> {
+    pub async fn find_by_code(
+        &self,
+        db: &DatabaseConnection,
+        code: &str,
+    ) -> AppResult<Option<post::Model>> {
         post::Entity::find()
             .filter(post::Column::Code.eq(code))
             .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
@@ -59,8 +88,8 @@ impl PostRepository {
         code: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<post::Model>> {
-        let mut select = post::Entity::find()
-            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL));
+        let mut select =
+            post::Entity::find().filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL));
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(post::Column::Name.like(format!("%{}%", n)));
         }

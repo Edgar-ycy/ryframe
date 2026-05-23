@@ -38,9 +38,7 @@ pub async fn generate(
     }
 
     if opts.table_name.contains("..") {
-        return Err(ryframe_common::AppError::Validation(
-            "非法表名".into(),
-        ));
+        return Err(ryframe_common::AppError::Validation("非法表名".into()));
     }
 
     let table = crate::schema::fetch_table(db, &opts.table_name).await?;
@@ -112,12 +110,10 @@ pub async fn write_to_disk(
         if full_path.exists() {
             skipped.push(f.path.clone());
         } else {
-            std::fs::create_dir_all(full_path.parent().unwrap()).map_err(|e| {
-                ryframe_common::AppError::Internal(format!("创建目录失败: {}", e))
-            })?;
-            std::fs::write(&full_path, &f.content).map_err(|e| {
-                ryframe_common::AppError::Internal(format!("写文件失败: {}", e))
-            })?;
+            std::fs::create_dir_all(full_path.parent().unwrap())
+                .map_err(|e| ryframe_common::AppError::Internal(format!("创建目录失败: {}", e)))?;
+            std::fs::write(&full_path, &f.content)
+                .map_err(|e| ryframe_common::AppError::Internal(format!("写文件失败: {}", e)))?;
             written.push(f.path.clone());
         }
     }

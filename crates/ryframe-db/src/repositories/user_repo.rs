@@ -2,19 +2,28 @@ use async_trait::async_trait;
 use ryframe_common::annotations::data_scope::{DataScope, DataScopeContext};
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
+    QueryFilter, QueryOrder,
+};
 
 use crate::entities::user;
 
 pub struct UserRepository;
 
+impl UserRepository {
+    /// 从全局 DataSourceManager 解析当前数据源连接
+    ///
+    /// 配合 `#[datasource("name")]` 注解使用时，
+    /// 此方法从 task-local 上下文自动获取对应数据源的连接。
+    pub fn db(&self) -> DatabaseConnection {
+        ryframe_core::current_db()
+    }
+}
+
 #[async_trait]
 impl Repository<user::Model, i64> for UserRepository {
-    async fn find_by_id(
-        &self,
-        db: &DatabaseConnection,
-        id: i64,
-    ) -> AppResult<Option<user::Model>> {
+    async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<user::Model>> {
         user::Entity::find_by_id(id)
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
             .one(db)
@@ -27,14 +36,15 @@ impl Repository<user::Model, i64> for UserRepository {
         db: &DatabaseConnection,
         query: PageQuery,
     ) -> AppResult<PageResult<user::Model>> {
-        crate::pagination::paginate(db, user::Entity::find().filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL)), &query).await
+        crate::pagination::paginate(
+            db,
+            user::Entity::find().filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL)),
+            &query,
+        )
+        .await
     }
 
-    async fn insert(
-        &self,
-        db: &DatabaseConnection,
-        entity: user::Model,
-    ) -> AppResult<user::Model> {
+    async fn insert(&self, db: &DatabaseConnection, entity: user::Model) -> AppResult<user::Model> {
         let active: user::ActiveModel = entity.into();
         active
             .insert(db)
@@ -42,11 +52,7 @@ impl Repository<user::Model, i64> for UserRepository {
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
     }
 
-    async fn update(
-        &self,
-        db: &DatabaseConnection,
-        entity: user::Model,
-    ) -> AppResult<user::Model> {
+    async fn update(&self, db: &DatabaseConnection, entity: user::Model) -> AppResult<user::Model> {
         let active: user::ActiveModel = entity.into();
         active
             .update(db)
@@ -61,7 +67,10 @@ impl Repository<user::Model, i64> for UserRepository {
             updated_at: ActiveValue::Set(chrono::Utc::now()),
             ..Default::default()
         };
-        active.update(db).await.map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        active
+            .update(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
         Ok(())
     }
 }
@@ -91,8 +100,8 @@ impl UserRepository {
         status: Option<&str>,
         dept_id: Option<i64>,
     ) -> AppResult<PageResult<user::Model>> {
-        let mut select = user::Entity::find()
-            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL));
+        let mut select =
+            user::Entity::find().filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL));
 
         if let Some(u) = username.filter(|u| !u.is_empty()) {
             select = select.filter(user::Column::Username.like(format!("%{}%", u)));
@@ -117,8 +126,14 @@ impl UserRepository {
             return Ok(0);
         }
         let result = user::Entity::update_many()
-            .col_expr(user::Column::DelFlag, sea_orm::sea_query::Expr::value(user::Model::DEL_FLAG_DELETED))
-            .col_expr(user::Column::UpdatedAt, sea_orm::sea_query::Expr::value(chrono::Utc::now()))
+            .col_expr(
+                user::Column::DelFlag,
+                sea_orm::sea_query::Expr::value(user::Model::DEL_FLAG_DELETED),
+            )
+            .col_expr(
+                user::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+            )
             .filter(user::Column::Id.is_in(ids.to_vec()))
             .exec(db)
             .await
@@ -139,7 +154,10 @@ impl UserRepository {
             updated_at: ActiveValue::Set(chrono::Utc::now()),
             ..Default::default()
         };
-        active.update(db).await.map_err(|e| AppError::Database(e.to_string()))?;
+        active
+            .update(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -157,8 +175,8 @@ impl UserRepository {
         query: PageQuery,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<user::Model>> {
-        let mut select = user::Entity::find()
-            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL));
+        let mut select =
+            user::Entity::find().filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL));
 
         match &scope_ctx.scope {
             DataScope::All => { /* 不过滤 */ }
@@ -181,20 +199,18 @@ impl UserRepository {
                     Some(did) => {
                         // 子查询：找本部门 + 所有 ancestors 以本部门ID路径开头的子部门
                         select = select.filter(
-                            Condition::any()
-                                .add(user::Column::DeptId.eq(did))
-                                .add(
-                                    user::Column::DeptId.in_subquery(
-                                        sea_orm::sea_query::Query::select()
-                                            .column(crate::entities::dept::Column::Id)
-                                            .from(crate::entities::dept::Entity)
-                                            .and_where(
-                                                crate::entities::dept::Column::Ancestors
-                                                    .like(format!("%{}%", did))
-                                            )
-                                            .take()
-                                    )
-                                )
+                            Condition::any().add(user::Column::DeptId.eq(did)).add(
+                                user::Column::DeptId.in_subquery(
+                                    sea_orm::sea_query::Query::select()
+                                        .column(crate::entities::dept::Column::Id)
+                                        .from(crate::entities::dept::Entity)
+                                        .and_where(
+                                            crate::entities::dept::Column::Ancestors
+                                                .like(format!("%{}%", did)),
+                                        )
+                                        .take(),
+                                ),
+                            ),
                         );
                     }
                     None => {
@@ -206,9 +222,8 @@ impl UserRepository {
                 if scope_ctx.custom_dept_ids.is_empty() {
                     return Ok(PageResult::new(vec![], 0, &query));
                 }
-                select = select.filter(
-                    user::Column::DeptId.is_in(scope_ctx.custom_dept_ids.clone())
-                );
+                select =
+                    select.filter(user::Column::DeptId.is_in(scope_ctx.custom_dept_ids.clone()));
             }
         }
 

@@ -1,11 +1,11 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post, put},
-    Json, Router,
 };
 use ryframe_common::AppResult;
-use ryframe_core::repository::PageQuery;
 use ryframe_core::Repository;
+use ryframe_core::repository::PageQuery;
 use ryframe_service::system::{JobLogVo, JobVo};
 use serde::Deserialize;
 use validator::Validate;
@@ -77,9 +77,7 @@ async fn remove(
 /// 任务列表
 #[utoipa::path(get, path = "/api/v1/system/jobs", tag = "定时任务",
     responses((status = 200, description = "任务列表")), security(("bearer" = [])))]
-async fn list(
-    State(state): State<AppState>,
-) -> AppResult<Json<Vec<JobVo>>> {
+async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<JobVo>>> {
     let jobs = state.job_service.list_all(&state.db).await?;
     Ok(Json(jobs))
 }
@@ -90,7 +88,10 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateJobDto>,
 ) -> AppResult<Json<serde_json::Value>> {
-    state.job_service.update(&state.db, id, dto.cron_expr, dto.status, dto.remark).await?;
+    state
+        .job_service
+        .update(&state.db, id, dto.cron_expr, dto.status, dto.remark)
+        .await?;
     Ok(Json(serde_json::json!({"message": "更新成功"})))
 }
 

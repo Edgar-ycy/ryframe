@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{delete, get},
-    Json, Router,
 };
 use ryframe_common::AppResult;
 use ryframe_service::system::online_user_service::OnlineUserVo;
@@ -39,13 +39,15 @@ pub async fn list_online_users(
         .into_iter()
         .filter(|u| {
             if let Some(username) = &query.username
-                && !u.username.contains(username) {
-                    return false;
-                }
+                && !u.username.contains(username)
+            {
+                return false;
+            }
             if let Some(ipaddr) = &query.ipaddr
-                && !u.ipaddr.contains(ipaddr) {
-                    return false;
-                }
+                && !u.ipaddr.contains(ipaddr)
+            {
+                return false;
+            }
             true
         })
         .collect();

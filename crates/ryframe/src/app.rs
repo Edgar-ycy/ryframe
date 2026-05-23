@@ -1,4 +1,4 @@
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use ryframe_config::CorsConfig;
 use std::sync::Arc;
 
@@ -11,17 +11,19 @@ async fn health_check() -> &'static str {
 ///
 /// 注册中间件管道 + 所有业务模块的路由。
 /// 中间件按从下到上顺序执行（最后注册的先执行）。
-pub fn build_app(state: ryframe_api::AppState, limiter: Arc<ryframe_middleware::RateLimiter>, cors_config: &CorsConfig) -> Router {
+pub fn build_app(
+    state: ryframe_api::AppState,
+    limiter: Arc<ryframe_middleware::RateLimiter>,
+    cors_config: &CorsConfig,
+) -> Router {
     Router::new()
         .route("/", get(health_check))
         // 中间件层（从下到上执行）：
         // 1. 限流 (最外层，最先执行)
-        .layer(
-            axum::middleware::from_fn_with_state(
-                limiter,
-                ryframe_middleware::rate_limit_middleware,
-            ),
-        )
+        .layer(axum::middleware::from_fn_with_state(
+            limiter,
+            ryframe_middleware::rate_limit_middleware,
+        ))
         // 2. 请求体大小限制 (10MB)
         .layer(axum::middleware::from_fn(
             ryframe_middleware::body_limit_middleware,
@@ -31,9 +33,7 @@ pub fn build_app(state: ryframe_api::AppState, limiter: Arc<ryframe_middleware::
             ryframe_middleware::timeout_middleware,
         ))
         // 3. XSS 过滤
-        .layer(axum::middleware::from_fn(
-            ryframe_middleware::xss_filter,
-        ))
+        .layer(axum::middleware::from_fn(ryframe_middleware::xss_filter))
         // 4. 请求日志
         .layer(ryframe_middleware::request_log_layer())
         // 5. CORS

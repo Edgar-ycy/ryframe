@@ -1,14 +1,14 @@
 use axum::{
+    Json, Router,
     extract::{Multipart, Query, State},
-    http::{header, HeaderMap},
+    http::{HeaderMap, header},
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use chrono::Utc;
 use ryframe_common::utils::file_upload::{
-    generate_storage_filename, get_content_type, get_upload_dir, validate_extension, UploadConfig,
-    UploadFileInfo,
+    UploadConfig, UploadFileInfo, generate_storage_filename, get_content_type, get_upload_dir,
+    validate_extension,
 };
 use ryframe_common::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -45,17 +45,20 @@ pub async fn upload_file(
 ) -> AppResult<Json<UploadResponse>> {
     let config = UploadConfig::default();
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::Internal(format!("读取 multipart 失败: {}", e))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::Internal(format!("读取 multipart 失败: {}", e)))?
+    {
         let filename = match field.file_name() {
             Some(name) => name.to_string(),
             None => continue,
         };
 
-        let data = field.bytes().await.map_err(|e| {
-            AppError::Internal(format!("读取文件数据失败: {}", e))
-        })?;
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| AppError::Internal(format!("读取文件数据失败: {}", e)))?;
 
         // 验证文件大小
         if data.len() as u64 > config.max_file_size {
@@ -99,7 +102,10 @@ pub async fn upload_file(
             upload_time: Utc::now().to_rfc3339(),
         };
 
-        let file_url = format!("/api/v1/common/file/download?path={}", relative_path.replace('\\', "/"));
+        let file_url = format!(
+            "/api/v1/common/file/download?path={}",
+            relative_path.replace('\\', "/")
+        );
 
         return Ok(Json(UploadResponse {
             file_url,
@@ -128,17 +134,20 @@ pub async fn upload_image(
         ..Default::default()
     };
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        AppError::Internal(format!("读取 multipart 失败: {}", e))
-    })? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::Internal(format!("读取 multipart 失败: {}", e)))?
+    {
         let filename = match field.file_name() {
             Some(name) => name.to_string(),
             None => continue,
         };
 
-        let data = field.bytes().await.map_err(|e| {
-            AppError::Internal(format!("读取文件数据失败: {}", e))
-        })?;
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| AppError::Internal(format!("读取文件数据失败: {}", e)))?;
 
         // 验证文件大小
         if data.len() as u64 > config.max_file_size {
@@ -182,7 +191,10 @@ pub async fn upload_image(
             upload_time: Utc::now().to_rfc3339(),
         };
 
-        let file_url = format!("/api/v1/common/file/download?path={}", relative_path.replace('\\', "/"));
+        let file_url = format!(
+            "/api/v1/common/file/download?path={}",
+            relative_path.replace('\\', "/")
+        );
 
         return Ok(Json(UploadResponse {
             file_url,
@@ -228,9 +240,9 @@ pub async fn download_file(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        content_type.parse().map_err(|e| {
-            AppError::Internal(format!("设置 Content-Type 失败: {}", e))
-        })?,
+        content_type
+            .parse()
+            .map_err(|e| AppError::Internal(format!("设置 Content-Type 失败: {}", e)))?,
     );
     headers.insert(
         header::CONTENT_DISPOSITION,

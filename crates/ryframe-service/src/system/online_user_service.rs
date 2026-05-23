@@ -60,7 +60,9 @@ impl Default for OnlineUserServiceImpl {
 impl OnlineUserServiceImpl {
     /// 创建 Redis 模式的在线用户服务
     pub fn new_redis(client: RedisClient) -> Self {
-        Self::Redis { client: Box::new(client) }
+        Self::Redis {
+            client: Box::new(client),
+        }
     }
 
     /// 创建内存模式的在线用户服务
@@ -188,9 +190,7 @@ impl OnlineUserServiceImpl {
                             session.last_access_time = Utc::now();
                             if let Ok(new_json) = serde_json::to_string(&session) {
                                 let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
-                                if let Err(e) =
-                                    client.set_ex(&key, &new_json, ttl as u64).await
-                                {
+                                if let Err(e) = client.set_ex(&key, &new_json, ttl as u64).await {
                                     tracing::warn!("Redis SET 续期失败: {}", e);
                                 }
                             }
@@ -263,10 +263,16 @@ mod tests {
     fn make_session(token_id: &str, username: &str) -> UserSession {
         let now = chrono::Utc::now();
         UserSession {
-            token_id: token_id.into(), user_id: 1, username: username.into(),
-            dept_name: Some("研发部".into()), ipaddr: "192.168.1.1".into(),
-            login_location: None, browser: Some("Chrome".into()),
-            os: Some("Windows 10".into()), login_time: now, last_access_time: now,
+            token_id: token_id.into(),
+            user_id: 1,
+            username: username.into(),
+            dept_name: Some("研发部".into()),
+            ipaddr: "192.168.1.1".into(),
+            login_location: None,
+            browser: Some("Chrome".into()),
+            os: Some("Windows 10".into()),
+            login_time: now,
+            last_access_time: now,
         }
     }
 

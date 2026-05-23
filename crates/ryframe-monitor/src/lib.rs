@@ -1,7 +1,7 @@
-mod server_info;
 mod cache_monitor;
+mod server_info;
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use ryframe_common::AppResult;
 use ryframe_core::RedisClient;
 use sea_orm::DatabaseConnection;
@@ -21,7 +21,10 @@ pub fn monitor_router(state: MonitorState) -> axum::Router {
         .route("/server", axum::routing::get(server_info_handler))
         .route("/health", axum::routing::get(health_check_handler))
         .route("/cache", axum::routing::get(cache_info_handler))
-        .route("/cache/commands", axum::routing::get(cache_commands_handler))
+        .route(
+            "/cache/commands",
+            axum::routing::get(cache_commands_handler),
+        )
         .route("/db-pool", axum::routing::get(db_pool_handler))
         .with_state(state)
 }
@@ -70,18 +73,16 @@ async fn cache_commands_handler(
     match state.redis.as_ref() {
         Some(redis) => {
             let stats = cache_monitor::get_cache_command_stats(redis).await;
-            Ok(Json(
-                stats.unwrap_or(serde_json::json!({"error": "无法获取命令统计"})),
-            ))
+            Ok(Json(stats.unwrap_or(
+                serde_json::json!({"error": "无法获取命令统计"}),
+            )))
         }
         None => Ok(Json(serde_json::json!({"error": "Redis 未配置"}))),
     }
 }
 
 /// 数据库连接池状态
-async fn db_pool_handler(
-    State(state): State<MonitorState>,
-) -> AppResult<Json<serde_json::Value>> {
+async fn db_pool_handler(State(state): State<MonitorState>) -> AppResult<Json<serde_json::Value>> {
     use sea_orm::{FromQueryResult, Statement};
 
     let backend = state.db.get_database_backend();
@@ -92,7 +93,9 @@ async fn db_pool_handler(
         sea_orm::DatabaseBackend::MySql => {
             let sql = "SHOW STATUS WHERE Variable_name = 'Threads_connected'";
             #[derive(Debug, FromQueryResult)]
-            struct Row { value: i64 }
+            struct Row {
+                value: i64,
+            }
             Row::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
                 .one(&state.db)
                 .await
@@ -101,9 +104,12 @@ async fn db_pool_handler(
                 .map(|r| r.value)
         }
         sea_orm::DatabaseBackend::Postgres => {
-            let sql = "SELECT count(*)::bigint AS value FROM pg_stat_activity WHERE state = 'active'";
+            let sql =
+                "SELECT count(*)::bigint AS value FROM pg_stat_activity WHERE state = 'active'";
             #[derive(Debug, FromQueryResult)]
-            struct Row { value: i64 }
+            struct Row {
+                value: i64,
+            }
             Row::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
                 .one(&state.db)
                 .await

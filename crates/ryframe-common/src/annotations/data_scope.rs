@@ -85,9 +85,7 @@ impl DataScopeContext {
     pub fn build_sql_condition(&self, dept_alias: &str, user_id_col: &str) -> Option<String> {
         match &self.scope {
             DataScope::All => None,
-            DataScope::SelfOnly => {
-                Some(format!("{} = {}", user_id_col, self.user_id))
-            }
+            DataScope::SelfOnly => Some(format!("{} = {}", user_id_col, self.user_id)),
             DataScope::Dept => {
                 match self.dept_id {
                     Some(did) => Some(format!("{} = {}", dept_alias, did)),
@@ -98,12 +96,10 @@ impl DataScopeContext {
                 // 查本部门 + 所有 ancestors 包含本部门路径的子部门
                 // 使用子查询: dept_id IN (SELECT id FROM sys_dept WHERE id = X OR ancestors LIKE 'X,%')
                 match self.dept_id {
-                    Some(did) => {
-                        Some(format!(
-                            "{} IN (SELECT id FROM sys_dept WHERE id = {} OR ancestors LIKE CONCAT((SELECT ancestors FROM sys_dept WHERE id = {}), ',{}%'))",
-                            dept_alias, did, did, did
-                        ))
-                    }
+                    Some(did) => Some(format!(
+                        "{} IN (SELECT id FROM sys_dept WHERE id = {} OR ancestors LIKE CONCAT((SELECT ancestors FROM sys_dept WHERE id = {}), ',{}%'))",
+                        dept_alias, did, did, did
+                    )),
                     None => Some("1 = 0".to_string()),
                 }
             }
@@ -111,7 +107,11 @@ impl DataScopeContext {
                 if self.custom_dept_ids.is_empty() {
                     Some("1 = 0".to_string())
                 } else {
-                    let ids: Vec<String> = self.custom_dept_ids.iter().map(|id| id.to_string()).collect();
+                    let ids: Vec<String> = self
+                        .custom_dept_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect();
                     Some(format!("{} IN ({})", dept_alias, ids.join(",")))
                 }
             }
@@ -149,9 +149,7 @@ impl DataScopeContext {
             }
         }
 
-        let best_scope = scopes.iter()
-            .max_by_key(|s| priority(&s.scope))
-            .unwrap();
+        let best_scope = scopes.iter().max_by_key(|s| priority(&s.scope)).unwrap();
 
         let mut custom_dept_ids: Vec<i64> = vec![];
         for s in &scopes {
@@ -193,23 +191,65 @@ mod tests {
         assert!(admin.build_sql_condition("dept_id", "id").is_none());
 
         // 仅本人
-        let ctx = DataScopeContext { scope: DataScope::SelfOnly, user_id: 100, dept_id: Some(10), ancestors: None, custom_dept_ids: vec![] };
-        assert!(ctx.build_sql_condition("dept_id", "id").unwrap().contains("id = 100"));
+        let ctx = DataScopeContext {
+            scope: DataScope::SelfOnly,
+            user_id: 100,
+            dept_id: Some(10),
+            ancestors: None,
+            custom_dept_ids: vec![],
+        };
+        assert!(
+            ctx.build_sql_condition("dept_id", "id")
+                .unwrap()
+                .contains("id = 100")
+        );
 
         // 本部门
-        let ctx = DataScopeContext { scope: DataScope::Dept, user_id: 1, dept_id: Some(5), ancestors: None, custom_dept_ids: vec![] };
-        assert!(ctx.build_sql_condition("dept_id", "id").unwrap().contains("dept_id = 5"));
+        let ctx = DataScopeContext {
+            scope: DataScope::Dept,
+            user_id: 1,
+            dept_id: Some(5),
+            ancestors: None,
+            custom_dept_ids: vec![],
+        };
+        assert!(
+            ctx.build_sql_condition("dept_id", "id")
+                .unwrap()
+                .contains("dept_id = 5")
+        );
 
         // 无部门时看不到数据
-        let ctx = DataScopeContext { scope: DataScope::Dept, user_id: 1, dept_id: None, ancestors: None, custom_dept_ids: vec![] };
+        let ctx = DataScopeContext {
+            scope: DataScope::Dept,
+            user_id: 1,
+            dept_id: None,
+            ancestors: None,
+            custom_dept_ids: vec![],
+        };
         assert_eq!(ctx.build_sql_condition("dept_id", "id").unwrap(), "1 = 0");
 
         // 自定义部门
-        let ctx = DataScopeContext { scope: DataScope::Custom, user_id: 1, dept_id: None, ancestors: None, custom_dept_ids: vec![10, 20, 30] };
-        assert!(ctx.build_sql_condition("dept_id", "id").unwrap().contains("dept_id IN (10,20,30)"));
+        let ctx = DataScopeContext {
+            scope: DataScope::Custom,
+            user_id: 1,
+            dept_id: None,
+            ancestors: None,
+            custom_dept_ids: vec![10, 20, 30],
+        };
+        assert!(
+            ctx.build_sql_condition("dept_id", "id")
+                .unwrap()
+                .contains("dept_id IN (10,20,30)")
+        );
 
         // 自定义无部门时看不到数据
-        let ctx = DataScopeContext { scope: DataScope::Custom, user_id: 1, dept_id: None, ancestors: None, custom_dept_ids: vec![] };
+        let ctx = DataScopeContext {
+            scope: DataScope::Custom,
+            user_id: 1,
+            dept_id: None,
+            ancestors: None,
+            custom_dept_ids: vec![],
+        };
         assert_eq!(ctx.build_sql_condition("dept_id", "id").unwrap(), "1 = 0");
     }
 
@@ -220,15 +260,39 @@ mod tests {
 
         // 取最宽
         let scopes = vec![
-            DataScopeContext { scope: DataScope::SelfOnly, user_id: 1, dept_id: Some(1), ancestors: None, custom_dept_ids: vec![] },
-            DataScopeContext { scope: DataScope::Dept, user_id: 1, dept_id: Some(1), ancestors: None, custom_dept_ids: vec![] },
+            DataScopeContext {
+                scope: DataScope::SelfOnly,
+                user_id: 1,
+                dept_id: Some(1),
+                ancestors: None,
+                custom_dept_ids: vec![],
+            },
+            DataScopeContext {
+                scope: DataScope::Dept,
+                user_id: 1,
+                dept_id: Some(1),
+                ancestors: None,
+                custom_dept_ids: vec![],
+            },
         ];
         assert_eq!(DataScopeContext::merge(scopes).scope, DataScope::Dept);
 
         // All 最优先
         let scopes = vec![
-            DataScopeContext { scope: DataScope::Custom, user_id: 1, dept_id: Some(1), ancestors: None, custom_dept_ids: vec![10] },
-            DataScopeContext { scope: DataScope::All, user_id: 1, dept_id: Some(1), ancestors: None, custom_dept_ids: vec![] },
+            DataScopeContext {
+                scope: DataScope::Custom,
+                user_id: 1,
+                dept_id: Some(1),
+                ancestors: None,
+                custom_dept_ids: vec![10],
+            },
+            DataScopeContext {
+                scope: DataScope::All,
+                user_id: 1,
+                dept_id: Some(1),
+                ancestors: None,
+                custom_dept_ids: vec![],
+            },
         ];
         assert_eq!(DataScopeContext::merge(scopes).scope, DataScope::All);
     }

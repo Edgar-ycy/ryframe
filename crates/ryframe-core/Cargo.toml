@@ -18,3 +18,4 @@ chrono = { workspace = true, features = ["serde"] }
 redis = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+dashmap = { workspace = true }

@@ -19,7 +19,9 @@ pub trait ScheduledTask: Send + Sync {
     fn cron(&self) -> &str;
 
     /// 任务说明
-    fn description(&self) -> &str { "" }
+    fn description(&self) -> &str {
+        ""
+    }
 
     /// 执行任务，返回结果消息
     async fn execute(&self, ctx: &TaskContext) -> AppResult<String>;

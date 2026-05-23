@@ -1,11 +1,15 @@
-use serde::{Deserialize, Serialize};
-use serde_json;
-use axum::{extract::{Path, Query, State}, routing::get, Json, Router};
+use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    routing::get,
+};
 use ryframe_common::AppResult;
 use ryframe_core::PageQuery;
 use ryframe_service::system::PostVo;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use validator::Validate;
-use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
 
 use super::auth_handler::AppState;
 
@@ -40,14 +44,29 @@ async fn list(
     State(state): State<AppState>,
     Query(query): Query<PostListQuery>,
 ) -> AppResult<Json<ryframe_core::PageResult<PostVo>>> {
-    let page_query = PageQuery { page: query.page, page_size: query.page_size };
+    let page_query = PageQuery {
+        page: query.page,
+        page_size: query.page_size,
+    };
     let has_filter = query.name.is_some() || query.code.is_some() || query.status.is_some();
     if has_filter {
-        state.post_service
-            .find_by_page_filtered(&state.db, page_query, query.name.as_deref(), query.code.as_deref(), query.status.as_deref())
-            .await.map(Json)
+        state
+            .post_service
+            .find_by_page_filtered(
+                &state.db,
+                page_query,
+                query.name.as_deref(),
+                query.code.as_deref(),
+                query.status.as_deref(),
+            )
+            .await
+            .map(Json)
     } else {
-        state.post_service.find_by_page(&state.db, page_query).await.map(Json)
+        state
+            .post_service
+            .find_by_page(&state.db, page_query)
+            .await
+            .map(Json)
     }
 }
 
@@ -61,24 +80,44 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult
 /// 创建岗位
 #[utoipa::path(post, path = "/api/v1/system/posts", tag = "岗位管理",
     request_body = CreatePostDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
-async fn create(State(state): State<AppState>, Json(dto): Json<CreatePostDto>) -> AppResult<Json<PostVo>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.post_service.create(&state.db, &dto.name, &dto.code, dto.sort.unwrap_or(0)).await.map(Json)
+async fn create(
+    State(state): State<AppState>,
+    Json(dto): Json<CreatePostDto>,
+) -> AppResult<Json<PostVo>> {
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .post_service
+        .create(&state.db, &dto.name, &dto.code, dto.sort.unwrap_or(0))
+        .await
+        .map(Json)
 }
 
 /// 更新岗位
 #[utoipa::path(put, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
     params(("id" = i64, Path)), request_body = UpdatePostDto,
     responses((status = 200, description = "更新成功")), security(("bearer" = [])))]
-async fn update(State(state): State<AppState>, Path(id): Path<i64>, Json(dto): Json<UpdatePostDto>) -> AppResult<Json<PostVo>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.post_service.update(&state.db, id, &dto.name, dto.sort.unwrap_or(0), dto.status).await.map(Json)
+async fn update(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(dto): Json<UpdatePostDto>,
+) -> AppResult<Json<PostVo>> {
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .post_service
+        .update(&state.db, id, &dto.name, dto.sort.unwrap_or(0), dto.status)
+        .await
+        .map(Json)
 }
 
 /// 删除岗位
 #[utoipa::path(delete, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
-async fn remove(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<serde_json::Value>> {
+async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
     state.post_service.delete(&state.db, id).await?;
     Ok(Json(serde_json::json!({"message": "删除成功"})))
 }
@@ -110,9 +149,7 @@ impl PostExportData {
 }
 
 /// 导出岗位数据为 Excel
-async fn export_posts(
-    State(state): State<AppState>,
-) -> AppResult<axum::response::Response> {
+async fn export_posts(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
     let all_posts = state.post_service.find_all(&state.db).await?;
@@ -129,15 +166,15 @@ async fn export_posts(
         })
         .collect();
 
-    let bytes = ExcelExporter::export_to_bytes(
-        &export_data,
-        "岗位数据",
-        &PostExportData::excel_headers(),
-    )?;
+    let bytes =
+        ExcelExporter::export_to_bytes(&export_data, "岗位数据", &PostExportData::excel_headers())?;
 
     let response = axum::response::Response::builder()
         .status(200)
-        .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .header(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
         .header("Content-Disposition", "attachment; filename=posts.xlsx")
         .body(axum::body::Body::from(bytes))
         .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;

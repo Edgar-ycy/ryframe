@@ -1,5 +1,5 @@
-use chrono::Utc;
 use crate::{AppError, AppResult};
+use chrono::Utc;
 use std::path::PathBuf;
 
 /// 文件上传配置
@@ -61,19 +61,12 @@ pub struct UploadFileInfo {
 
 /// 验证文件扩展名
 pub fn validate_extension(filename: &str, allowed: &[String]) -> AppResult<()> {
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
     if allowed.is_empty() || allowed.contains(&ext) {
         Ok(())
     } else {
-        Err(AppError::Validation(format!(
-            "不支持的文件类型: .{}",
-            ext
-        )))
+        Err(AppError::Validation(format!("不支持的文件类型: .{}", ext)))
     }
 }
 
@@ -102,11 +95,7 @@ pub fn get_upload_dir(upload_dir: &str) -> PathBuf {
 
 /// 获取文件的 MIME 类型
 pub fn get_content_type(filename: &str) -> String {
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
     match ext.as_str() {
         // 图片
@@ -118,7 +107,9 @@ pub fn get_content_type(filename: &str) -> String {
         // 文档
         "pdf" => "application/pdf".to_string(),
         "doc" => "application/msword".to_string(),
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string(),
+        "docx" => {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string()
+        }
         "xls" => "application/vnd.ms-excel".to_string(),
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_string(),
         "txt" => "text/plain".to_string(),

@@ -1,10 +1,7 @@
-use axum::{
-    extract::FromRequestParts,
-    http::request::Parts,
-};
+use axum::{extract::FromRequestParts, http::request::Parts};
 use ryframe_auth::jwt::Claims;
-use ryframe_common::annotations::data_scope::DataScope;
 use ryframe_common::AppError;
+use ryframe_common::annotations::data_scope::DataScope;
 
 /// 当前登录用户上下文
 #[derive(Debug, Clone)]

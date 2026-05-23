@@ -1,19 +1,24 @@
-use axum::{
-    middleware,
-    routing::{get, post},
-    Extension, Router, Json,
-};
-use axum::extract::State;
-use axum::middleware::{from_fn_with_state, Next};
 use axum::extract::Request;
+use axum::extract::State;
+use axum::middleware::{Next, from_fn_with_state};
 use axum::response::Response;
+use axum::{
+    Extension, Json, Router, middleware,
+    routing::{get, post},
+};
 use ryframe_auth::jwt::Claims;
 use ryframe_service::system::OnlineUserServiceImpl;
-use std::sync::Arc;
 use serde_json::json;
+use std::sync::Arc;
 
-use crate::handlers::{auth_handler::{self, AppState}, user_handler, role_handler, permission_handler, menu_handler, dept_handler, post_handler, config_handler, dict_handler, notice_handler, oper_log_handler, login_log_handler, job_handler, generator_handler, common_handler, captcha_handler, profile_handler, online_user_handler};
-use crate::oper_log_middleware::{oper_log_middleware, OperLogMiddlewareState};
+use crate::handlers::{
+    auth_handler::{self, AppState},
+    captcha_handler, common_handler, config_handler, dept_handler, dict_handler, generator_handler,
+    job_handler, login_log_handler, menu_handler, notice_handler, online_user_handler,
+    oper_log_handler, permission_handler, post_handler, profile_handler, role_handler,
+    user_handler,
+};
+use crate::oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware};
 
 /// 在线用户跟踪中间件
 ///
@@ -90,17 +95,29 @@ fn system_router(state: AppState) -> Router {
     Router::new()
         .nest("/users", user_handler::user_router(state.clone()))
         .nest("/roles", role_handler::role_router(state.clone()))
-        .nest("/permissions", permission_handler::permission_router(state.clone()))
+        .nest(
+            "/permissions",
+            permission_handler::permission_router(state.clone()),
+        )
         .nest("/menus", menu_handler::menu_router(state.clone()))
         .nest("/depts", dept_handler::dept_router(state.clone()))
         .nest("/posts", post_handler::post_router(state.clone()))
         .nest("/configs", config_handler::config_router(state.clone()))
         .nest("/dict", dict_handler::dict_router(state.clone()))
         .nest("/notices", notice_handler::notice_router(state.clone()))
-        .nest("/operlogs", oper_log_handler::oper_log_router(state.clone()))
-        .nest("/loginlogs", login_log_handler::login_log_router(state.clone()))
+        .nest(
+            "/operlogs",
+            oper_log_handler::oper_log_router(state.clone()),
+        )
+        .nest(
+            "/loginlogs",
+            login_log_handler::login_log_router(state.clone()),
+        )
         .nest("/jobs", job_handler::job_router(state.clone()))
-        .nest("/online", online_user_handler::online_user_router(state.clone()))
+        .nest(
+            "/online",
+            online_user_handler::online_user_router(state.clone()),
+        )
         .layer(from_fn_with_state(
             Arc::new(OperLogMiddlewareState {
                 db: state.db.clone(),
@@ -118,8 +135,7 @@ fn system_router(state: AppState) -> Router {
 }
 
 fn tools_router(state: AppState) -> Router {
-    Router::new()
-        .nest("/gen", generator_handler::generator_router(state.clone()))
+    Router::new().nest("/gen", generator_handler::generator_router(state.clone()))
 }
 
 /// 通用功能路由（文件上传等）

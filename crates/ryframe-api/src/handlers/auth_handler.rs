@@ -1,26 +1,31 @@
-use axum::{extract::State, Extension, Json};
+use crate::dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest};
+use crate::handlers::captcha_handler::CaptchaStore;
 use axum::http::HeaderMap;
+use axum::{Extension, Json, extract::State};
 use ryframe_auth::jwt::Claims;
-use ryframe_common::AppResult;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_config::AppConfig;
-use ryframe_core::RedisClient;
+use ryframe_core::{DataSourceManager, RedisClient};
 use ryframe_service::system::{
-    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-    JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
-    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, RoleServiceImpl,
-    UserServiceImpl, ProfileServiceImpl, OnlineUserServiceImpl,
+    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
+    LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+    RoleServiceImpl, UserServiceImpl,
 };
 use ryframe_service::{AuthServiceImpl, UserInfo};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-use serde_json;
 use validator::Validate;
-use crate::dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest};
-use crate::handlers::captcha_handler::CaptchaStore;
 
 /// API 共享状态
 #[derive(Clone)]
 pub struct AppState {
+    /// 多数据源管理器（新增）
+    ///
+    /// 配合 `#[datasource("name")]` 注解实现透明数据源切换。
+    pub datasource_manager: DataSourceManager,
+
+    /// 主库连接（向后兼容，指向 primary 数据源）
     pub db: DatabaseConnection,
     pub config: Arc<AppConfig>,
     pub context: ryframe_core::AppContext,
@@ -44,8 +49,27 @@ pub struct AppState {
     pub scheduler: Arc<ryframe_task::TaskScheduler>,
     pub monitor_db: DatabaseConnection,
     pub redis: Option<RedisClient>,
-    /// 从库连接池列表（用于读写分离的读操作）
+    /// 从库连接池列表（用于读写分离的读操作，向后兼容）
     pub replica_dbs: Vec<DatabaseConnection>,
+}
+
+impl AppState {
+    /// 获取写库连接（向后兼容：始终返回 primary）
+    pub fn write_db(&self) -> &DatabaseConnection {
+        &self.db
+    }
+
+    /// 获取读库连接（向后兼容：轮询 replicas，无 replicas 回退 primary）
+    pub fn read_db(&self) -> &DatabaseConnection {
+        if self.replica_dbs.is_empty() {
+            &self.db
+        } else {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let idx = COUNTER.fetch_add(1, Ordering::Relaxed) % self.replica_dbs.len();
+            &self.replica_dbs[idx]
+        }
+    }
 }
 
 /// 用户登录
@@ -66,7 +90,7 @@ pub async fn login(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> AppResult<Json<LoginResponse>> {
+) -> AppResult<Json<ApiResponse<LoginResponse>>> {
     req.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
 
@@ -76,18 +100,30 @@ pub async fn login(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    match state.auth_service.login(&state.db, &req.username, &req.password).await {
+    match state
+        .auth_service
+        .login(&state.db, &req.username, &req.password)
+        .await
+    {
         Ok(result) => {
-            let _ = state.login_info_service.record_login(
-                &state.db, &req.username, &ip,
-                Some(user_agent), None,
-                ryframe_db::entities::login_info::Model::STATUS_SUCCESS, None,
-            ).await;
+            let _ = state
+                .login_info_service
+                .record_login(
+                    &state.db,
+                    &req.username,
+                    &ip,
+                    Some(user_agent),
+                    None,
+                    ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
+                    None,
+                )
+                .await;
 
             // 添加在线用户
             let now = chrono::Utc::now();
-            state.online_user_service.add_user(
-                ryframe_service::system::UserSession {
+            state
+                .online_user_service
+                .add_user(ryframe_service::system::UserSession {
                     token_id: result.token_id.clone(),
                     user_id: result.user_info.id,
                     username: result.user_info.username.clone(),
@@ -98,18 +134,24 @@ pub async fn login(
                     os: parse_os(user_agent),
                     login_time: now,
                     last_access_time: now,
-                }
-            ).await;
+                })
+                .await;
 
-            Ok(Json(LoginResponse::from(result)))
+            Ok(Json(ApiResponse::success(LoginResponse::from(result))))
         }
         Err(e) => {
-            let _ = state.login_info_service.record_login(
-                &state.db, &req.username, &ip,
-                Some(user_agent), None,
-                ryframe_db::entities::login_info::Model::STATUS_FAIL,
-                Some(&e.to_string()),
-            ).await;
+            let _ = state
+                .login_info_service
+                .record_login(
+                    &state.db,
+                    &req.username,
+                    &ip,
+                    Some(user_agent),
+                    None,
+                    ryframe_db::entities::login_info::Model::STATUS_FAIL,
+                    Some(&e.to_string()),
+                )
+                .await;
             Err(e)
         }
     }
@@ -130,10 +172,10 @@ pub async fn login(
 pub async fn logout(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     // 从在线用户中移除
     state.online_user_service.remove_user(&claims.jti).await;
-    Ok(Json(serde_json::json!({"message": "登出成功"})))
+    Ok(Json(ApiResponse::<()>::success_no_data()))
 }
 
 /// 刷新令牌
@@ -153,30 +195,46 @@ pub async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<RefreshRequest>,
-) -> AppResult<Json<LoginResponse>> {
+) -> AppResult<Json<ApiResponse<LoginResponse>>> {
     let ip = ryframe_common::utils::ip::get_client_ip(&headers, "unknown");
     let user_agent = headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    match state.auth_service.refresh_token(&state.db, &req.refresh_token).await {
+    match state
+        .auth_service
+        .refresh_token(&state.db, &req.refresh_token)
+        .await
+    {
         Ok(result) => {
-            let _ = state.login_info_service.record_login(
-                &state.db, &result.user_info.username, &ip,
-                Some(user_agent), None,
-                ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
-                Some("令牌刷新"),
-            ).await;
-            Ok(Json(LoginResponse::from(result)))
+            let _ = state
+                .login_info_service
+                .record_login(
+                    &state.db,
+                    &result.user_info.username,
+                    &ip,
+                    Some(user_agent),
+                    None,
+                    ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
+                    Some("令牌刷新"),
+                )
+                .await;
+            Ok(Json(ApiResponse::success(LoginResponse::from(result))))
         }
         Err(e) => {
-            let _ = state.login_info_service.record_login(
-                &state.db, "unknown", &ip,
-                Some(user_agent), None,
-                ryframe_db::entities::login_info::Model::STATUS_FAIL,
-                Some(&e.to_string()),
-            ).await;
+            let _ = state
+                .login_info_service
+                .record_login(
+                    &state.db,
+                    "unknown",
+                    &ip,
+                    Some(user_agent),
+                    None,
+                    ryframe_db::entities::login_info::Model::STATUS_FAIL,
+                    Some(&e.to_string()),
+                )
+                .await;
             Err(e)
         }
     }
@@ -199,8 +257,10 @@ pub async fn refresh(
 pub async fn me(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
-) -> AppResult<Json<ryframe_service::UserInfo>> {
-    let user_id = claims.sub.parse::<i64>()
+) -> AppResult<Json<ApiResponse<ryframe_service::UserInfo>>> {
+    let user_id = claims
+        .sub
+        .parse::<i64>()
         .map_err(|_| ryframe_common::AppError::Authentication("令牌无效".into()))?;
 
     let user_info = state
@@ -208,7 +268,7 @@ pub async fn me(
         .get_current_user(&state.db, user_id)
         .await?;
 
-    Ok(Json(user_info))
+    Ok(Json(ApiResponse::success(user_info)))
 }
 
 /// 从 User-Agent 解析浏览器名称

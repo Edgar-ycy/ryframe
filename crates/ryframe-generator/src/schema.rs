@@ -22,13 +22,12 @@ pub struct ColumnInfo {
 }
 
 /// 读取单张表的结构信息
-pub async fn fetch_table(
-    db: &DatabaseConnection,
-    table_name: &str,
-) -> AppResult<TableInfo> {
+pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult<TableInfo> {
     // 验证表名只包含字母、数字和下划线，防止注入
     if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return Err(ryframe_common::AppError::Validation("表名只能包含字母、数字和下划线".into()));
+        return Err(ryframe_common::AppError::Validation(
+            "表名只能包含字母、数字和下划线".into(),
+        ));
     }
 
     let columns = query_columns(db, table_name).await?;
@@ -72,10 +71,7 @@ struct ColumnRow {
     column_comment: Option<String>,
 }
 
-async fn query_columns(
-    db: &DatabaseConnection,
-    table_name: &str,
-) -> AppResult<Vec<ColumnRow>> {
+async fn query_columns(db: &DatabaseConnection, table_name: &str) -> AppResult<Vec<ColumnRow>> {
     let sql = "SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable, \
          COLUMN_KEY as column_key, EXTRA as extra, COLUMN_COMMENT as column_comment \
          FROM information_schema.columns WHERE table_name = $1 \
@@ -87,9 +83,7 @@ async fn query_columns(
     ))
     .all(db)
     .await
-    .map_err(|e| {
-        ryframe_common::AppError::Database(format!("查询表结构失败: {}", e))
-    })?;
+    .map_err(|e| ryframe_common::AppError::Database(format!("查询表结构失败: {}", e)))?;
     Ok(results)
 }
 
@@ -107,8 +101,6 @@ async fn query_tables(db: &DatabaseConnection) -> AppResult<Vec<TableRow>> {
     ))
     .all(db)
     .await
-    .map_err(|e| {
-        ryframe_common::AppError::Database(format!("查询表列表失败: {}", e))
-    })?;
+    .map_err(|e| ryframe_common::AppError::Database(format!("查询表列表失败: {}", e)))?;
     Ok(results)
 }

@@ -1,7 +1,7 @@
-use calamine::{open_workbook_auto, Data, Reader, Xlsx};
 use crate::{AppError, AppResult};
+use calamine::{Data, Reader, Xlsx, open_workbook_auto};
 use rust_xlsxwriter::{Color, Format, Workbook, Worksheet};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -41,7 +41,8 @@ impl ExcelImporter {
     ) -> AppResult<calamine::Range<Data>>
     where
         R: Reader<RS>,
-        R::Error: std::fmt::Display, RS: std::io::Read + std::io::Seek
+        R::Error: std::fmt::Display,
+        RS: std::io::Read + std::io::Seek,
     {
         let name = match sheet_name {
             Some(n) => n.to_string(),
@@ -60,9 +61,7 @@ impl ExcelImporter {
     }
 
     /// 解析工作表数据
-    fn parse_range<T: DeserializeOwned>(
-        range: &calamine::Range<Data>,
-    ) -> AppResult<Vec<T>> {
+    fn parse_range<T: DeserializeOwned>(range: &calamine::Range<Data>) -> AppResult<Vec<T>> {
         let mut results = Vec::new();
         let mut headers = Vec::new();
         let mut row_no = 0usize;
@@ -82,9 +81,7 @@ impl ExcelImporter {
             let map: HashMap<String, String> = headers
                 .iter()
                 .enumerate()
-                .filter_map(|(i, h)| {
-                    row.get(i).map(|c| (h.clone(), c.to_string()))
-                })
+                .filter_map(|(i, h)| row.get(i).map(|c| (h.clone(), c.to_string())))
                 .collect();
 
             let json = serde_json::to_value(&map)
@@ -125,10 +122,7 @@ impl ExcelExporter {
     }
 
     /// 导出模板（仅表头）
-    pub fn export_template(
-        _sheet_name: &str,
-        headers: &[(&str, &str)],
-    ) -> AppResult<Vec<u8>> {
+    pub fn export_template(_sheet_name: &str, headers: &[(&str, &str)]) -> AppResult<Vec<u8>> {
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
 

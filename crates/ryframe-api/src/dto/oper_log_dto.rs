@@ -1,8 +1,12 @@
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-fn default_page() -> u64 { 1 }
-fn default_page_size() -> u64 { 10 }
+fn default_page() -> u64 {
+    1
+}
+fn default_page_size() -> u64 {
+    10
+}
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct OperLogPageQuery {

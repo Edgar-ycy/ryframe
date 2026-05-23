@@ -1,11 +1,15 @@
-use serde::Serialize;
-use serde_json;
-use axum::{extract::{Path, Query, State}, routing::{delete, get}, Json, Router};
+use crate::dto::config_dto::{CreateConfigDto, UpdateConfigDto};
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    routing::{delete, get},
+};
 use ryframe_common::AppResult;
 use ryframe_core::PageQuery;
 use ryframe_service::system::ConfigVo;
+use serde::Serialize;
+use serde_json;
 use validator::Validate;
-use crate::dto::config_dto::{CreateConfigDto, UpdateConfigDto};
 
 use super::auth_handler::AppState;
 
@@ -22,8 +26,15 @@ pub fn config_router(state: AppState) -> Router {
 /// 参数配置列表
 #[utoipa::path(get, path = "/api/v1/system/configs", tag = "参数配置",
     responses((status = 200, description = "配置列表")), security(("bearer" = [])))]
-async fn list(State(state): State<AppState>, Query(query): Query<PageQuery>) -> AppResult<Json<ryframe_core::PageResult<ConfigVo>>> {
-    state.config_service.find_by_page(&state.db, query).await.map(Json)
+async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<PageQuery>,
+) -> AppResult<Json<ryframe_core::PageResult<ConfigVo>>> {
+    state
+        .config_service
+        .find_by_page(&state.db, query)
+        .await
+        .map(Json)
 }
 
 async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ConfigVo>> {
@@ -40,10 +51,19 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateConfigDto>,
 ) -> AppResult<Json<ConfigVo>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.config_service.create(
-        &state.db, &dto.name, &dto.key, &dto.value, dto.remark.as_deref(),
-    ).await.map(Json)
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .config_service
+        .create(
+            &state.db,
+            &dto.name,
+            &dto.key,
+            &dto.value,
+            dto.remark.as_deref(),
+        )
+        .await
+        .map(Json)
 }
 
 /// 更新参数配置
@@ -55,8 +75,13 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateConfigDto>,
 ) -> AppResult<Json<ConfigVo>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.config_service.update(&state.db, id, &dto.value).await.map(Json)
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .config_service
+        .update(&state.db, id, &dto.value)
+        .await
+        .map(Json)
 }
 
 /// 删除参数配置
@@ -84,23 +109,26 @@ async fn get_by_key(
             "msg": "操作成功",
             "data": cfg.value
         }))),
-        None => Err(ryframe_common::AppError::NotFound(format!("参数 '{}' 不存在", key))),
+        None => Err(ryframe_common::AppError::NotFound(format!(
+            "参数 '{}' 不存在",
+            key
+        ))),
     }
 }
 
 /// 刷新参数缓存
 ///
 /// 清空所有参数配置的 Redis 缓存
-async fn refresh_cache(
-    State(state): State<AppState>,
-) -> AppResult<Json<serde_json::Value>> {
+async fn refresh_cache(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
     if let Some(ref redis) = state.redis
         && let Ok(keys) = redis.keys("sys_config:key:*").await
     {
         for key in &keys {
             let _ = redis.del(key).await;
         }
-        return Ok(Json(serde_json::json!({"message": format!("已清除 {} 个缓存", keys.len())})));
+        return Ok(Json(
+            serde_json::json!({"message": format!("已清除 {} 个缓存", keys.len())}),
+        ));
     }
     Ok(Json(serde_json::json!({"message": "缓存刷新成功"})))
 }
@@ -128,9 +156,7 @@ impl ConfigExportData {
 }
 
 /// 导出参数配置
-async fn export_configs(
-    State(state): State<AppState>,
-) -> AppResult<axum::response::Response> {
+async fn export_configs(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
     let configs = state.config_service.find_all(&state.db).await?;
@@ -153,7 +179,10 @@ async fn export_configs(
 
     let response = axum::response::Response::builder()
         .status(200)
-        .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .header(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
         .header("Content-Disposition", "attachment; filename=configs.xlsx")
         .body(axum::body::Body::from(bytes))
         .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;

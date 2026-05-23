@@ -1,11 +1,11 @@
 use chrono::Utc;
 use ryframe_common::AppResult;
+use ryframe_common::utils::snowflake;
 use ryframe_core::{PageQuery, PageResult, Repository};
-use ryframe_db::entities::login_info;
 use ryframe_db::LoginInfoRepository;
+use ryframe_db::entities::login_info;
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use ryframe_common::utils::snowflake;
 
 /// 登录日志视图对象
 #[derive(Debug, Clone, Serialize)]
@@ -78,10 +78,22 @@ impl LoginInfoServiceImpl {
         end_time: Option<&str>,
     ) -> AppResult<PageResult<LoginInfoVo>> {
         let begin = begin_time
-            .and_then(|s| chrono::NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S").ok())
+            .and_then(|s| {
+                chrono::NaiveDateTime::parse_from_str(
+                    &format!("{} 00:00:00", s),
+                    "%Y-%m-%d %H:%M:%S",
+                )
+                .ok()
+            })
             .map(|d| d.and_utc());
         let end = end_time
-            .and_then(|s| chrono::NaiveDateTime::parse_from_str(&format!("{} 23:59:59", s), "%Y-%m-%d %H:%M:%S").ok())
+            .and_then(|s| {
+                chrono::NaiveDateTime::parse_from_str(
+                    &format!("{} 23:59:59", s),
+                    "%Y-%m-%d %H:%M:%S",
+                )
+                .ok()
+            })
             .map(|d| d.and_utc());
 
         let result = self
@@ -109,8 +121,13 @@ impl LoginInfoServiceImpl {
         begin_time: Option<&str>,
         end_time: Option<&str>,
     ) -> AppResult<Vec<LoginInfoVo>> {
-        let query = PageQuery { page: 1, page_size: 10000 };
-        let result = self.find_by_page(db, query, user_name, status, begin_time, end_time).await?;
+        let query = PageQuery {
+            page: 1,
+            page_size: 10000,
+        };
+        let result = self
+            .find_by_page(db, query, user_name, status, begin_time, end_time)
+            .await?;
         Ok(result.records)
     }
 }

@@ -1,26 +1,28 @@
 mod app;
 
+use ryframe_api::handlers::captcha_handler::CaptchaStore;
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::AppContext;
-use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository,
-    JobLogRepository, JobRepository, LoginInfoRepository, MenuRepository,
-    NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
-    RoleRepository, UserRepository,
-};
-use ryframe_service::system::{
-    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-    JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
-    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, RoleServiceImpl,
-    UserServiceImpl, ProfileServiceImpl, OnlineUserServiceImpl,
-};
-use ryframe_service::AuthServiceImpl;
-use ryframe_task::{ScheduledTask, TaskContext, TaskScheduler};
-use ryframe_task::builtin::{CleanLoginInfoTask, CleanOperLogTask, CleanTempFilesTask, DatabaseBackupTask};
-use ryframe_middleware::RateLimiter;
-use ryframe_api::handlers::captcha_handler::CaptchaStore;
 use ryframe_core::create_redis_client;
+use ryframe_core::{AppContext, DataSourceManager};
+use ryframe_db::{
+    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
+    JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
+    PermissionRepository, PostRepository, RoleRepository, UserRepository,
+};
+use ryframe_middleware::RateLimiter;
+use ryframe_service::AuthServiceImpl;
+use ryframe_service::system::{
+    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
+    LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+    RoleServiceImpl, UserServiceImpl,
+};
+use ryframe_task::builtin::{
+    CleanLoginInfoTask, CleanOperLogTask, CleanTempFilesTask, DatabaseBackupTask,
+};
+use ryframe_task::{ScheduledTask, TaskContext, TaskScheduler};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
@@ -38,8 +40,8 @@ struct LoggerGuard {
 /// - `output = "file"` → 滚动文件输出（每天滚动，保留 7 天）
 /// - `format = "json"` → JSON 格式，否则 text 格式
 fn init_logger(config: &AppConfig) -> LoggerGuard {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.logger.level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logger.level));
 
     let is_json = config.logger.format == "json";
 
@@ -51,7 +53,12 @@ fn init_logger(config: &AppConfig) -> LoggerGuard {
         if is_json {
             tracing_subscriber::registry()
                 .with(env_filter)
-                .with(fmt::layer().json().with_writer(non_blocking.clone()).with_ansi(false))
+                .with(
+                    fmt::layer()
+                        .json()
+                        .with_writer(non_blocking.clone())
+                        .with_ansi(false),
+                )
                 .init();
         } else {
             tracing_subscriber::registry()
@@ -60,7 +67,9 @@ fn init_logger(config: &AppConfig) -> LoggerGuard {
                 .init();
         }
 
-        LoggerGuard { _worker: Some(guard) }
+        LoggerGuard {
+            _worker: Some(guard),
+        }
     } else {
         // 控制台输出
         if is_json {
@@ -90,20 +99,33 @@ async fn main() -> Result<(), AppError> {
 
     // 2. 初始化日志（根据配置支持 stdout / 滚动文件输出）
     let _guard = init_logger(&config);
-    tracing::info!("日志系统初始化完成, 级别: {}, 输出: {}", config.logger.level, config.logger.output);
+    tracing::info!(
+        "日志系统初始化完成, 级别: {}, 输出: {}",
+        config.logger.level,
+        config.logger.output
+    );
 
-    // 3. 连接数据库
-    let db = ryframe_db::connection::connect(&config.database.primary).await?;
-    tracing::info!("数据库连接成功");
+    // 3. 创建 DataSourceManager 并注册所有数据源
+    let ds_manager = DataSourceManager::new();
 
-    // 3.a 连接从库（读写分离）
+    // 3a. 连接 primary 并注册
+    let primary_db = ryframe_db::connection::connect(&config.database.primary).await?;
+    ds_manager.register("primary", primary_db.clone());
+    tracing::info!(
+        "数据源 'primary' 连接成功: {}",
+        config.database.primary.database
+    );
+
+    // 3b. 连接从库并注册（命名规则 replica_0, replica_1...）
     let replica_dbs = {
         let mut dbs = Vec::with_capacity(config.database.replicas.len());
-        for replica_config in &config.database.replicas {
+        for (i, replica_config) in config.database.replicas.iter().enumerate() {
+            let name = format!("replica_{}", i);
             match ryframe_db::connection::connect(replica_config).await {
-                Ok(replica_db) => {
-                    tracing::info!("从库连接成功: {}", replica_config.database);
-                    dbs.push(replica_db);
+                Ok(db) => {
+                    ds_manager.register(&name, db.clone());
+                    tracing::info!("数据源 '{}' 连接成功: {}", name, replica_config.database);
+                    dbs.push(db);
                 }
                 Err(e) => {
                     tracing::warn!("从库连接失败 ({}): {}，跳过", replica_config.database, e);
@@ -119,11 +141,43 @@ async fn main() -> Result<(), AppError> {
         tracing::info!("已连接 {} 个从库", replica_dbs.len());
     }
 
-    // 3.x 健康检查
-    ryframe_db::connection::ping(&db).await?;
+    // 3c. 连接命名数据源并注册
+    for named_ds in &config.database.datasources {
+        match ryframe_db::connection::connect(&named_ds.connection).await {
+            Ok(db) => {
+                ds_manager.register(&named_ds.name, db);
+                tracing::info!(
+                    "数据源 '{}' 连接成功: {}",
+                    named_ds.name,
+                    named_ds.connection.database
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "数据源 '{}' ({}) 连接失败: {}",
+                    named_ds.name,
+                    named_ds.connection.database,
+                    e
+                );
+                return Err(e);
+            }
+        }
+    }
+
+    tracing::info!(
+        "DataSourceManager 初始化完成, 共 {} 个数据源: {:?}",
+        ds_manager.len(),
+        ds_manager.names()
+    );
+
+    // 设为全局单例，业务代码可通过 ryframe_core::current_db() 直接访问
+    ds_manager.clone().set_global();
+
+    // 3.x 健康检查 primary
+    ryframe_db::connection::ping(&primary_db).await?;
 
     // 3.y 检查所有必需表是否存在
-    if let Err(missing) = ryframe_db::connection::check_tables(&db).await {
+    if let Err(missing) = ryframe_db::connection::check_tables(&primary_db).await {
         eprintln!("\n========================================");
         eprintln!("  数据库表缺失！请先执行建表 SQL：");
         eprintln!("    mysql -u root -p ryframe_config < sql/ryframe_config.sql");
@@ -143,7 +197,8 @@ async fn main() -> Result<(), AppError> {
     // 5. 创建 Application Context
     let context = AppContext::new(config.clone());
 
-    // 6. 创建 Repository 实例
+    // 6. 创建 Repository 实例（DataSourceManager 通过全局单例访问）
+
     let user_repo = UserRepository;
     let role_repo = RoleRepository;
     let perm_repo = PermissionRepository;
@@ -211,17 +266,13 @@ async fn main() -> Result<(), AppError> {
         notice_repo: NoticeRepository,
     });
 
-    let oper_log_service = Arc::new(OperLogServiceImpl {
-        oper_log_repo,
-    });
+    let oper_log_service = Arc::new(OperLogServiceImpl { oper_log_repo });
 
-    let login_info_service = Arc::new(LoginInfoServiceImpl {
-        login_info_repo,
-    });
+    let login_info_service = Arc::new(LoginInfoServiceImpl { login_info_repo });
 
     // 7.x 创建 TaskScheduler
     let task_ctx = TaskContext {
-        db: Arc::new(db.clone()),
+        db: Arc::new(primary_db.clone()),
     };
     let scheduler = Arc::new(TaskScheduler::new(task_ctx.clone()));
 
@@ -241,7 +292,9 @@ async fn main() -> Result<(), AppError> {
         Arc::new(CleanTempFilesTask),
         Arc::new(DatabaseBackupTask),
     ];
-    job_service.init_builtin_tasks(&db, &builtin_tasks).await?;
+    job_service
+        .init_builtin_tasks(&primary_db, &builtin_tasks)
+        .await?;
     tracing::info!("已注册 {} 个内置定时任务", scheduler.list().await.len());
 
     // 7.z 创建 GeneratorService
@@ -293,7 +346,8 @@ async fn main() -> Result<(), AppError> {
 
     // 10. 创建 AppState + 构建 Router
     let state = ryframe_api::AppState {
-        db: db.clone(),
+        datasource_manager: ds_manager.clone(),
+        db: primary_db.clone(),
         config: config_arc,
         context,
         auth_service,
@@ -314,7 +368,7 @@ async fn main() -> Result<(), AppError> {
         online_user_service,
         captcha_store,
         scheduler: scheduler.clone(),
-        monitor_db: db.clone(),
+        monitor_db: primary_db.clone(),
         redis: redis_client.clone(),
         replica_dbs,
     };
@@ -334,7 +388,7 @@ async fn main() -> Result<(), AppError> {
 
     // 使用 tokio::select 同时等待服务和停机信号
     tokio::select! {
-        result = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal()) => {
+        result = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown_signal()) => {
             result.map_err(|e| AppError::Internal(format!("服务异常退出: {}", e)))?;
         }
     }

@@ -53,10 +53,7 @@ impl ScheduledTask for DatabaseBackupTask {
 }
 
 /// 导出数据库到 SQL 文件（通过 Entity 查询）
-async fn export_database(
-    ctx: &TaskContext,
-    backup_file: &std::path::Path,
-) -> AppResult<u64> {
+async fn export_database(ctx: &TaskContext, backup_file: &std::path::Path) -> AppResult<u64> {
     use sea_orm::EntityTrait;
 
     let db = ctx.db.as_ref();
@@ -76,10 +73,7 @@ async fn export_database(
                 Ok(models) => {
                     let count = models.len();
                     total_rows += count as u64;
-                    sql_content.push_str(&format!(
-                        "-- Table: {} ({} rows)\n",
-                        $table_name, count
-                    ));
+                    sql_content.push_str(&format!("-- Table: {} ({} rows)\n", $table_name, count));
                     for model in &models {
                         if let Ok(json) = serde_json::to_string(model) {
                             sql_content.push_str(&format!("-- {}\n", json));
@@ -130,19 +124,20 @@ async fn clean_old_backups(backup_dir: &std::path::Path) -> AppResult<usize> {
         .await
         .map_err(|e| ryframe_common::AppError::Internal(format!("读取备份目录失败: {}", e)))?;
 
-    while let Some(entry) = entries.next_entry().await.map_err(|e| {
-        ryframe_common::AppError::Internal(format!("遍历备份目录失败: {}", e))
-    })? {
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| ryframe_common::AppError::Internal(format!("遍历备份目录失败: {}", e)))?
+    {
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|n| n.to_str())
-            && name.starts_with("db_backup_") && name.ends_with(".sql")
+            && name.starts_with("db_backup_")
+            && name.ends_with(".sql")
             && let Ok(metadata) = tokio::fs::metadata(&path).await
             && let Ok(modified) = metadata.modified()
         {
             let modified_time: chrono::DateTime<chrono::Utc> = modified.into();
-            if modified_time < cutoff
-                && tokio::fs::remove_file(&path).await.is_ok()
-            {
+            if modified_time < cutoff && tokio::fs::remove_file(&path).await.is_ok() {
                 cleaned += 1;
             }
         }

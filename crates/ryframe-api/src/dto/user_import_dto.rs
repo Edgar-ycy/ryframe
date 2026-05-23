@@ -6,16 +6,16 @@ use validator::Validate;
 pub struct UserImportData {
     #[validate(length(min = 2, max = 64, message = "用户名长度为2-64个字符"))]
     pub username: String,
-    
+
     #[validate(length(min = 1, max = 64, message = "昵称为1-64个字符"))]
     pub nickname: String,
-    
+
     #[validate(email(message = "邮箱格式不正确"))]
     pub email: String,
-    
+
     #[validate(length(max = 32, message = "手机号最多32个字符"))]
     pub phone: Option<String>,
-    
+
     pub sex: Option<String>,
     pub dept_id: Option<i64>,
     pub status: Option<String>,

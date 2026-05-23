@@ -429,7 +429,7 @@ INSERT INTO `sys_post` (`id`, `name`, `code`, `sort`, `status`, `remark`) VALUES
 -- -----------------------------------------------------------
 INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `remark`) VALUES
     (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
-    (2, '用户管理-账号初始密码', 'sys.user.initPassword',  'ryframe123',   '初始化密码'),
+    (2, '用户管理-账号初始密码', 'sys.user.initPassword',  '123456',   '初始化密码'),
     (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-dark',   'dark主题theme-dark，light主题theme-light'),
     (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'true',       '是否开启验证码功能（true开启，false关闭）'),
     (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      '是否开启注册功能（true开启，false关闭）');

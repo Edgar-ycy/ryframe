@@ -1,11 +1,11 @@
+use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::entities::notice;
 use ryframe_db::NoticeRepository;
+use ryframe_db::entities::notice;
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use ryframe_common::utils::snowflake;
-use ryframe_core::Repository;
 
 #[derive(Debug, Serialize)]
 pub struct NoticeVo {
@@ -21,8 +21,13 @@ pub struct NoticeVo {
 impl From<notice::Model> for NoticeVo {
     fn from(n: notice::Model) -> Self {
         Self {
-            id: n.id, title: n.title, content: n.content, r#type: n.r#type,
-            status: n.status, created_by: n.created_by, created_at: n.created_at,
+            id: n.id,
+            title: n.title,
+            content: n.content,
+            r#type: n.r#type,
+            status: n.status,
+            created_by: n.created_by,
+            created_at: n.created_at,
         }
     }
 }
@@ -33,7 +38,9 @@ pub struct NoticeServiceImpl {
 
 impl NoticeServiceImpl {
     pub async fn find_by_page(
-        &self, db: &DatabaseConnection, query: PageQuery,
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
     ) -> AppResult<PageResult<NoticeVo>> {
         let page = self.notice_repo.find_by_page(db, query.clone()).await?;
         let records = page.records.into_iter().map(NoticeVo::from).collect();
@@ -41,14 +48,23 @@ impl NoticeServiceImpl {
     }
 
     pub async fn find_by_id(
-        &self, db: &DatabaseConnection, id: i64,
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
     ) -> AppResult<Option<NoticeVo>> {
-        Ok(self.notice_repo.find_by_id(db, id).await?.map(NoticeVo::from))
+        Ok(self
+            .notice_repo
+            .find_by_id(db, id)
+            .await?
+            .map(NoticeVo::from))
     }
 
     pub async fn create(
-        &self, db: &DatabaseConnection,
-        title: &str, content: &str, notice_type: Option<&str>,
+        &self,
+        db: &DatabaseConnection,
+        title: &str,
+        content: &str,
+        notice_type: Option<&str>,
         created_by: Option<i64>,
     ) -> AppResult<NoticeVo> {
         let now = chrono::Utc::now();
@@ -63,14 +79,24 @@ impl NoticeServiceImpl {
             created_at: now,
             updated_at: now,
         };
-        Ok(NoticeVo::from(self.notice_repo.insert(db, new_notice).await?))
+        Ok(NoticeVo::from(
+            self.notice_repo.insert(db, new_notice).await?,
+        ))
     }
 
     pub async fn update(
-        &self, db: &DatabaseConnection, id: i64,
-        title: &str, content: &str, notice_type: Option<&str>, status: String,
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+        title: &str,
+        content: &str,
+        notice_type: Option<&str>,
+        status: String,
     ) -> AppResult<NoticeVo> {
-        let mut n = self.notice_repo.find_by_id(db, id).await?
+        let mut n = self
+            .notice_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
         n.title = title.to_string();
         n.content = content.to_string();
@@ -81,7 +107,9 @@ impl NoticeServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        self.notice_repo.find_by_id(db, id).await?
+        self.notice_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
         self.notice_repo.delete(db, id).await
     }
@@ -95,9 +123,11 @@ impl NoticeServiceImpl {
         notice_type: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<NoticeVo>> {
-        let page = self.notice_repo.find_by_page_filtered(db, query.clone(), title, notice_type, status).await?;
+        let page = self
+            .notice_repo
+            .find_by_page_filtered(db, query.clone(), title, notice_type, status)
+            .await?;
         let records = page.records.into_iter().map(NoticeVo::from).collect();
         Ok(PageResult::new(records, page.total, &query))
     }
 }
-

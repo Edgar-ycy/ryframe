@@ -175,10 +175,10 @@ async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
 
     // 统计各前缀的键数
     let online_users = count_keys(client, "online_user:*").await;
-    let captchas = count_keys(client, "captcha:*").await;
+    let captchas = count_keys(client, "ryframe:captcha:*").await;
     let rate_limits = count_keys(client, "rate_limit:*").await;
-    let dict_cache = count_keys(client, "dict:*").await;
-    let config_cache = count_keys(client, "config:*").await;
+    let dict_cache = count_keys(client, "sys_dict:data:*").await;
+    let config_cache = count_keys(client, "sys_config:key:*").await;
 
     CacheInfo {
         available: true,
@@ -226,7 +226,10 @@ async fn count_keys(client: &RedisClient, pattern: &str) -> u64 {
 pub async fn get_cache_command_stats(client: &RedisClient) -> Option<serde_json::Value> {
     let info_result: Result<String, _> = {
         let mut conn = client.conn().clone();
-        redis::cmd("INFO").arg("commandstats").query_async(&mut conn).await
+        redis::cmd("INFO")
+            .arg("commandstats")
+            .query_async(&mut conn)
+            .await
     };
 
     match info_result {
@@ -237,7 +240,10 @@ pub async fn get_cache_command_stats(client: &RedisClient) -> Option<serde_json:
                     && let Some((cmd, data)) = line.split_once(':')
                 {
                     let cmd_name = cmd.strip_prefix("cmdstat_").unwrap_or(cmd);
-                    stats.insert(cmd_name.to_string(), serde_json::Value::String(data.to_string()));
+                    stats.insert(
+                        cmd_name.to_string(),
+                        serde_json::Value::String(data.to_string()),
+                    );
                 }
             }
             Some(serde_json::Value::Object(stats))

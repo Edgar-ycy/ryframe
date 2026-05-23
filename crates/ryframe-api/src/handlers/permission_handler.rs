@@ -1,21 +1,17 @@
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{Json, Router, extract::State, routing::get};
 use ryframe_common::AppResult;
 use ryframe_service::system::PermissionTreeNode;
 
 use super::auth_handler::AppState;
 
 pub fn permission_router(state: AppState) -> Router {
-    Router::new()
-        .route("/tree", get(tree))
-        .with_state(state)
+    Router::new().route("/tree", get(tree)).with_state(state)
 }
 
 /// 权限树查询
 #[utoipa::path(get, path = "/api/v1/system/permissions/tree", tag = "角色管理",
     responses((status = 200, description = "权限树")), security(("bearer" = [])))]
-async fn tree(
-    State(state): State<AppState>,
-) -> AppResult<Json<Vec<PermissionTreeNode>>> {
+async fn tree(State(state): State<AppState>) -> AppResult<Json<Vec<PermissionTreeNode>>> {
     let tree = state.permission_service.find_tree(&state.db, None).await?;
     Ok(Json(tree))
 }

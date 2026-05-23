@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder,
+};
 
 use crate::entities::{role, user_role};
 
@@ -9,11 +12,7 @@ pub struct RoleRepository;
 
 #[async_trait]
 impl Repository<role::Model, i64> for RoleRepository {
-    async fn find_by_id(
-        &self,
-        db: &DatabaseConnection,
-        id: i64,
-    ) -> AppResult<Option<role::Model>> {
+    async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<role::Model>> {
         role::Entity::find_by_id(id)
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
             .one(db)
@@ -26,14 +25,15 @@ impl Repository<role::Model, i64> for RoleRepository {
         db: &DatabaseConnection,
         query: PageQuery,
     ) -> AppResult<PageResult<role::Model>> {
-        crate::pagination::paginate(db, role::Entity::find().filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL)), &query).await
+        crate::pagination::paginate(
+            db,
+            role::Entity::find().filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL)),
+            &query,
+        )
+        .await
     }
 
-    async fn insert(
-        &self,
-        db: &DatabaseConnection,
-        entity: role::Model,
-    ) -> AppResult<role::Model> {
+    async fn insert(&self, db: &DatabaseConnection, entity: role::Model) -> AppResult<role::Model> {
         let active: role::ActiveModel = entity.into();
         active
             .insert(db)
@@ -41,11 +41,7 @@ impl Repository<role::Model, i64> for RoleRepository {
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
     }
 
-    async fn update(
-        &self,
-        db: &DatabaseConnection,
-        entity: role::Model,
-    ) -> AppResult<role::Model> {
+    async fn update(&self, db: &DatabaseConnection, entity: role::Model) -> AppResult<role::Model> {
         let active: role::ActiveModel = entity.into();
         active
             .update(db)
@@ -60,7 +56,10 @@ impl Repository<role::Model, i64> for RoleRepository {
             updated_at: ActiveValue::Set(chrono::Utc::now()),
             ..Default::default()
         };
-        active.update(db).await.map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        active
+            .update(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
         Ok(())
     }
 }
@@ -75,8 +74,8 @@ impl RoleRepository {
         code: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<role::Model>> {
-        let mut select = role::Entity::find()
-            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL));
+        let mut select =
+            role::Entity::find().filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL));
 
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(role::Column::Name.like(format!("%{}%", n)));
@@ -98,8 +97,14 @@ impl RoleRepository {
             return Ok(0);
         }
         let result = role::Entity::update_many()
-            .col_expr(role::Column::DelFlag, sea_orm::sea_query::Expr::value(role::Model::DEL_FLAG_DELETED))
-            .col_expr(role::Column::UpdatedAt, sea_orm::sea_query::Expr::value(chrono::Utc::now()))
+            .col_expr(
+                role::Column::DelFlag,
+                sea_orm::sea_query::Expr::value(role::Model::DEL_FLAG_DELETED),
+            )
+            .col_expr(
+                role::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+            )
             .filter(role::Column::Id.is_in(ids.to_vec()))
             .exec(db)
             .await
@@ -135,11 +140,7 @@ impl RoleRepository {
     }
 
     /// 清除用户全部角色关联
-    pub async fn clear_user_roles(
-        &self,
-        db: &DatabaseConnection,
-        user_id: i64,
-    ) -> AppResult<()> {
+    pub async fn clear_user_roles(&self, db: &DatabaseConnection, user_id: i64) -> AppResult<()> {
         user_role::Entity::delete_many()
             .filter(user_role::Column::UserId.eq(user_id))
             .exec(db)
@@ -271,9 +272,12 @@ impl RoleRepository {
         dept_ids: &[i64],
     ) -> AppResult<()> {
         use crate::entities::role_dept;
-        use sea_orm::{TransactionTrait, ActiveModelTrait, ActiveValue};
+        use sea_orm::{ActiveModelTrait, ActiveValue, TransactionTrait};
 
-        let txn = db.begin().await.map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
 
         // 删除旧关联
         role_dept::Entity::delete_many()
@@ -288,10 +292,14 @@ impl RoleRepository {
                 role_id: ActiveValue::Set(role_id),
                 dept_id: ActiveValue::Set(*dept_id),
             };
-            rd.insert(&txn).await.map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+            rd.insert(&txn)
+                .await
+                .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
         }
 
-        txn.commit().await.map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        txn.commit()
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -304,13 +312,18 @@ impl RoleRepository {
     ) -> AppResult<()> {
         use sea_orm::ActiveValue;
 
-        let role = self.find_by_id(db, role_id).await?
+        let role = self
+            .find_by_id(db, role_id)
+            .await?
             .ok_or_else(|| ryframe_common::AppError::NotFound("角色不存在".into()))?;
 
         let mut active: role::ActiveModel = role.into();
         active.data_scope = ActiveValue::Set(data_scope.to_string());
         active.updated_at = ActiveValue::Set(chrono::Utc::now());
-        active.update(db).await.map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        active
+            .update(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
         Ok(())
     }
 }

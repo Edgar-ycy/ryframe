@@ -1,5 +1,5 @@
 use chrono::Utc;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use ryframe_common::{AppError, AppResult};
 use ryframe_config::AuthConfig;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ pub fn encode_access(
         &claims,
         &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
     )
-        .map_err(|e| AppError::Internal(format!("JWT 编码失败: {}", e)))?;
+    .map_err(|e| AppError::Internal(format!("JWT 编码失败: {}", e)))?;
     Ok((token, jti))
 }
 
@@ -81,7 +81,7 @@ pub fn encode_refresh(user_id: i64, username: &str, config: &AuthConfig) -> AppR
         &claims,
         &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
     )
-        .map_err(|e| AppError::Internal(format!("JWT 编码失败: {}", e)))
+    .map_err(|e| AppError::Internal(format!("JWT 编码失败: {}", e)))
 }
 
 /// 验证并解码 JWT
@@ -91,8 +91,8 @@ pub fn decode_token(token: &str, secret: &str) -> AppResult<Claims> {
         &DecodingKey::from_secret(secret.as_bytes()),
         &Validation::default(),
     )
-        .map(|data| data.claims)
-        .map_err(|e| AppError::Authentication(format!("令牌无效或已过期: {}", e)))
+    .map(|data| data.claims)
+    .map_err(|e| AppError::Authentication(format!("令牌无效或已过期: {}", e)))
 }
 
 /// 解析 duration 字符串为秒数

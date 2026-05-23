@@ -1,6 +1,6 @@
 use ryframe_common::AppResult;
-use ryframe_db::entities::permission;
 use ryframe_db::PermissionRepository;
+use ryframe_db::entities::permission;
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 
@@ -44,7 +44,8 @@ fn build_perm_tree(
     perms: &[&permission::Model],
     parent_id: Option<i64>,
 ) -> Vec<PermissionTreeNode> {
-    perms.iter()
+    perms
+        .iter()
         .filter(|p| p.parent_id == parent_id)
         .map(|p| PermissionTreeNode {
             id: p.id,
@@ -69,9 +70,17 @@ mod tests {
     fn make_perm(id: i64, name: &str, code: &str, parent_id: Option<i64>) -> permission::Model {
         let now = chrono::Utc::now();
         permission::Model {
-            id, name: name.into(), code: code.into(), parent_id, perm_type: "api".into(),
-            path: None, icon: None, sort: 0, status: "1".into(),
-            created_at: now, updated_at: now,
+            id,
+            name: name.into(),
+            code: code.into(),
+            parent_id,
+            perm_type: "api".into(),
+            path: None,
+            icon: None,
+            sort: 0,
+            status: "1".into(),
+            created_at: now,
+            updated_at: now,
         }
     }
 

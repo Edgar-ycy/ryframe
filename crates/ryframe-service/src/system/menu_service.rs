@@ -1,10 +1,10 @@
+use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
-use ryframe_db::entities::menu;
+use ryframe_core::Repository;
 use ryframe_db::MenuRepository;
+use ryframe_db::entities::menu;
 use ryframe_db::repositories::menu_repo::MenuTreeNode;
 use sea_orm::DatabaseConnection;
-use ryframe_common::utils::snowflake;
-use ryframe_core::Repository;
 
 pub struct MenuServiceImpl {
     pub menu_repo: MenuRepository,
@@ -67,7 +67,10 @@ impl MenuServiceImpl {
         visible: bool,
         status: String,
     ) -> AppResult<menu::Model> {
-        let mut menu = self.menu_repo.find_by_id(db, id).await?
+        let mut menu = self
+            .menu_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
 
         menu.name = name.to_string();
@@ -84,7 +87,9 @@ impl MenuServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        self.menu_repo.find_by_id(db, id).await?
+        self.menu_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
         self.menu_repo.delete(db, id).await
     }
@@ -100,8 +105,11 @@ impl MenuServiceImpl {
     }
 
     /// 按 ID 查询菜单详情
-    pub async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<menu::Model>> {
+    pub async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+    ) -> AppResult<Option<menu::Model>> {
         self.menu_repo.find_by_id(db, id).await
     }
 }
-

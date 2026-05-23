@@ -1,11 +1,15 @@
-use serde::Deserialize;
-use serde_json;
-use axum::{extract::{Path, Query, State}, routing::{get, post}, Json, Router};
+use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    routing::{get, post},
+};
 use ryframe_common::AppResult;
 use ryframe_db::repositories::dept_repo::DeptTreeNode;
 use ryframe_service::system::DeptVo;
+use serde::Deserialize;
+use serde_json;
 use validator::Validate;
-use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
 
 use super::auth_handler::AppState;
 
@@ -37,7 +41,11 @@ async fn list(
     State(state): State<AppState>,
     Query(query): Query<DeptListQuery>,
 ) -> AppResult<Json<Vec<DeptVo>>> {
-    state.dept_service.find_filtered(&state.db, query.name.as_deref(), query.status.as_deref()).await.map(Json)
+    state
+        .dept_service
+        .find_filtered(&state.db, query.name.as_deref(), query.status.as_deref())
+        .await
+        .map(Json)
 }
 
 /// 创建部门
@@ -47,8 +55,13 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateDeptDto>,
 ) -> AppResult<Json<ryframe_db::entities::dept::Model>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.dept_service.create(&state.db, &dto.name, dto.parent_id, dto.sort.unwrap_or(0)).await.map(Json)
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .dept_service
+        .create(&state.db, &dto.name, dto.parent_id, dto.sort.unwrap_or(0))
+        .await
+        .map(Json)
 }
 
 /// 更新部门
@@ -60,8 +73,20 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDeptDto>,
 ) -> AppResult<Json<ryframe_db::entities::dept::Model>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.dept_service.update(&state.db, id, &dto.name, dto.parent_id, dto.sort.unwrap_or(0), dto.status).await.map(Json)
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .dept_service
+        .update(
+            &state.db,
+            id,
+            &dto.name,
+            dto.parent_id,
+            dto.sort.unwrap_or(0),
+            dto.status,
+        )
+        .await
+        .map(Json)
 }
 
 /// 部门详情
@@ -75,7 +100,10 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult
 /// 删除部门
 #[utoipa::path(delete, path = "/api/v1/system/depts/{id}", tag = "部门管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
-async fn remove(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<serde_json::Value>> {
+async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
     state.dept_service.delete(&state.db, id).await?;
     Ok(Json(serde_json::json!({"message": "删除成功"})))
 }

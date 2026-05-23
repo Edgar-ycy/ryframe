@@ -15,6 +15,7 @@ ryframe-auth = { path = "../ryframe-auth" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-task = { path = "../ryframe-task" }
 ryframe-generator = { path = "../ryframe-generator" }
+ryframe-macro = { path = "../ryframe-macro" }
 zip = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }

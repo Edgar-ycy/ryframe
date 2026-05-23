@@ -2,15 +2,15 @@
 //!
 //! 拦截 POST/PUT/DELETE 请求，自动记录操作日志到数据库。
 
+use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::body::Body;
 use http_body_util::BodyExt;
 use ryframe_common::utils::snowflake;
 use ryframe_core::Repository;
-use ryframe_db::entities::oper_log;
 use ryframe_db::OperLogRepository;
+use ryframe_db::entities::oper_log;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use std::time::Instant;
@@ -66,7 +66,9 @@ pub async fn oper_log_middleware(
 
     // 缓存请求体（用于记录操作参数）
     let (parts, body) = request.into_parts();
-    let body_bytes = body.collect().await
+    let body_bytes = body
+        .collect()
+        .await
         .map(|c| c.to_bytes())
         .unwrap_or_default();
     let oper_param = if body_bytes.is_empty() {
@@ -74,7 +76,11 @@ pub async fn oper_log_middleware(
     } else {
         let s = String::from_utf8_lossy(&body_bytes);
         // 截断过长的请求体
-        let truncated = if s.len() > 2000 { format!("{}...", &s[..2000]) } else { s.to_string() };
+        let truncated = if s.len() > 2000 {
+            format!("{}...", &s[..2000])
+        } else {
+            s.to_string()
+        };
         Some(truncated)
     };
 

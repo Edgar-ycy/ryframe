@@ -52,27 +52,16 @@ impl GeneratorServiceImpl {
         let mut zip = std::io::Cursor::new(Vec::new());
         {
             let mut writer = zip::ZipWriter::new(&mut zip);
-            let options =
-                zip::write::SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Deflated);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
 
             for file in &files {
-                writer
-                    .start_file(&file.path, options)
-                    .map_err(|e| {
-                        ryframe_common::AppError::Internal(format!(
-                            "创建 zip 条目失败: {}",
-                            e
-                        ))
-                    })?;
-                std::io::Write::write_all(&mut writer, file.content.as_bytes()).map_err(
-                    |e| {
-                        ryframe_common::AppError::Internal(format!(
-                            "写入 zip 内容失败: {}",
-                            e
-                        ))
-                    },
-                )?;
+                writer.start_file(&file.path, options).map_err(|e| {
+                    ryframe_common::AppError::Internal(format!("创建 zip 条目失败: {}", e))
+                })?;
+                std::io::Write::write_all(&mut writer, file.content.as_bytes()).map_err(|e| {
+                    ryframe_common::AppError::Internal(format!("写入 zip 内容失败: {}", e))
+                })?;
             }
             writer.finish().map_err(|e| {
                 ryframe_common::AppError::Internal(format!("完成 zip 打包失败: {}", e))

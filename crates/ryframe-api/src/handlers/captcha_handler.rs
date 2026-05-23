@@ -1,12 +1,13 @@
 use axum::{
+    Json, Router,
     extract::{Query, State},
     http::header,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
-use ryframe_common::utils::captcha::{generate_captcha, CaptchaType};
-use ryframe_common::{AppError, AppResult};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use ryframe_common::utils::captcha::{CaptchaType, generate_captcha};
+use ryframe_common::{AppError, AppResult, CAPTCHA_KEY_PREFIX};
 use ryframe_core::RedisClient;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,12 +15,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use crate::handlers::auth_handler::AppState;
-
-/// Redis key 前缀
-const CAPTCHA_KEY_PREFIX: &str = "captcha:";
 
 /// 验证码生成查询参数
 #[derive(Debug, Deserialize)]
@@ -77,7 +74,10 @@ pub enum CaptchaStore {
 impl CaptchaStore {
     /// 创建 Redis 模式的验证码存储
     pub fn new_redis(client: RedisClient, ttl_secs: u64) -> Self {
-        Self::Redis { client: Box::new(client), ttl_secs }
+        Self::Redis {
+            client: Box::new(client),
+            ttl_secs,
+        }
     }
 
     /// 创建内存模式的验证码存储，指定 TTL（秒）
@@ -177,10 +177,13 @@ pub async fn generate_captcha_handler(
     let captcha = generate_captcha(captcha_type)?;
 
     // 生成验证码 ID
-    let captcha_id = Uuid::new_v4().to_string();
+    let captcha_id = Uuid::now_v7().to_string();
 
     // 存储验证码答案
-    state.captcha_store.set(captcha_id.clone(), captcha.answer).await;
+    state
+        .captcha_store
+        .set(captcha_id.clone(), captcha.answer)
+        .await;
 
     // 将图片转换为 Base64
     let image_base64 = STANDARD.encode(&captcha.image_data);
@@ -221,23 +224,26 @@ pub async fn captcha_image_handler(
     let captcha = generate_captcha(captcha_type)?;
 
     // 生成验证码 ID 并存储
-    let captcha_id = Uuid::new_v4().to_string();
-    state.captcha_store.set(captcha_id.clone(), captcha.answer).await;
+    let captcha_id = Uuid::now_v7().to_string();
+    state
+        .captcha_store
+        .set(captcha_id.clone(), captcha.answer)
+        .await;
 
     // 构建响应头
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        "image/png".parse().map_err(|e| {
-            AppError::Internal(format!("设置 Content-Type 失败: {}", e))
-        })?,
+        "image/png"
+            .parse()
+            .map_err(|e| AppError::Internal(format!("设置 Content-Type 失败: {}", e)))?,
     );
     // 在响应头中返回验证码 ID
     headers.insert(
         "X-Captcha-Id",
-        captcha_id.parse().map_err(|e| {
-            AppError::Internal(format!("设置 X-Captcha-Id 失败: {}", e))
-        })?,
+        captcha_id
+            .parse()
+            .map_err(|e| AppError::Internal(format!("设置 X-Captcha-Id 失败: {}", e)))?,
     );
 
     Ok((headers, captcha.image_data))

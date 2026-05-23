@@ -43,9 +43,10 @@ impl<S: Send + Sync> FromRequestParts<S> for ValidatedPageQuery {
     type Rejection = ryframe_common::AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Query(raw): Query<RawPageParams> = Query::from_request_parts(parts, state)
-            .await
-            .map_err(|e| ryframe_common::AppError::Validation(format!("分页参数解析失败: {}", e)))?;
+        let Query(raw): Query<RawPageParams> =
+            Query::from_request_parts(parts, state).await.map_err(|e| {
+                ryframe_common::AppError::Validation(format!("分页参数解析失败: {}", e))
+            })?;
 
         let page = raw.page.or(raw.page_num).unwrap_or(1);
         let page_size = raw.page_size.unwrap_or(10);

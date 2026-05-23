@@ -42,7 +42,9 @@ impl ServerInfo {
             used_memory: (used_mem * 100.0).round() / 100.0,
             memory_usage: if total_mem > 0.0 {
                 ((used_mem / total_mem) * 10000.0).round() as f32 / 100.0
-            } else { 0.0_f32 },
+            } else {
+                0.0_f32
+            },
             pid: std::process::id(),
             uptime: System::uptime(),
         }

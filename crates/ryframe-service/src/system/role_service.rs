@@ -1,11 +1,11 @@
+use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::entities::role;
 use ryframe_db::{MenuRepository, PermissionRepository, RoleRepository};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use ryframe_common::utils::snowflake;
-use ryframe_core::Repository;
 
 #[derive(Debug, Serialize)]
 pub struct RoleVo {
@@ -134,7 +134,10 @@ impl RoleServiceImpl {
         status: String,
         data_scope: Option<String>,
     ) -> AppResult<RoleVo> {
-        let mut role = self.role_repo.find_by_id(db, id).await?
+        let mut role = self
+            .role_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
 
         role.name = name.to_string();
@@ -150,7 +153,9 @@ impl RoleServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        self.role_repo.find_by_id(db, id).await?
+        self.role_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
         self.role_repo.delete(db, id).await
     }
@@ -161,7 +166,9 @@ impl RoleServiceImpl {
         role_id: i64,
         perm_ids: Vec<i64>,
     ) -> AppResult<()> {
-        self.role_repo.find_by_id(db, role_id).await?
+        self.role_repo
+            .find_by_id(db, role_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
         self.perm_repo.assign_perms(db, role_id, &perm_ids).await
     }
@@ -176,10 +183,15 @@ impl RoleServiceImpl {
         use ryframe_db::entities::role_menu;
         use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 
-        self.role_repo.find_by_id(db, role_id).await?
+        self.role_repo
+            .find_by_id(db, role_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
 
-        let txn = db.begin().await.map_err(|e| AppError::Database(e.to_string()))?;
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 删除旧关联
         role_menu::Entity::delete_many()
@@ -194,10 +206,14 @@ impl RoleServiceImpl {
                 role_id: sea_orm::ActiveValue::Set(role_id),
                 menu_id: sea_orm::ActiveValue::Set(menu_id),
             };
-            rm.insert(&txn).await.map_err(|e| AppError::Database(e.to_string()))?;
+            rm.insert(&txn)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
-        txn.commit().await.map_err(|e| AppError::Database(e.to_string()))?;
+        txn.commit()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -218,21 +234,28 @@ impl RoleServiceImpl {
             _ => return Err(AppError::Validation("无效的数据范围值".into())),
         }
 
-        self.role_repo.find_by_id(db, role_id).await?
+        self.role_repo
+            .find_by_id(db, role_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
 
         // 更新 data_scope 字段
-        self.role_repo.update_data_scope(db, role_id, data_scope).await?;
+        self.role_repo
+            .update_data_scope(db, role_id, data_scope)
+            .await?;
 
         // 如果是自定义权限，更新关联部门
         if data_scope == "2" {
-            self.role_repo.assign_data_scope_depts(db, role_id, &dept_ids).await?;
+            self.role_repo
+                .assign_data_scope_depts(db, role_id, &dept_ids)
+                .await?;
         } else {
             // 非自定义权限，清除旧的自定义部门关联
-            self.role_repo.assign_data_scope_depts(db, role_id, &[]).await?;
+            self.role_repo
+                .assign_data_scope_depts(db, role_id, &[])
+                .await?;
         }
 
         Ok(())
     }
 }
-

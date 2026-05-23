@@ -1,6 +1,9 @@
-use serde::Deserialize;
+use crate::{
+    AuthConfig, CorsConfig, DatabaseConfig, LoggerConfig, RateLimitConfig, RedisConfig,
+    apply_env_overrides,
+};
 use ryframe_common::{AppError, AppResult};
-use crate::{apply_env_overrides, AuthConfig, CorsConfig, DatabaseConfig, LoggerConfig, RateLimitConfig, RedisConfig};
+use serde::Deserialize;
 
 /// 应用基础配置
 #[derive(Debug, Clone, Deserialize)]
@@ -40,26 +43,23 @@ impl AppConfig {
 
         // 第一层：加载默认配置为 TOML Table
         let base_path = format!("{}/app.toml", config_dir);
-        let base_toml = std::fs::read_to_string(&base_path).map_err(|e| {
-            AppError::Config(format!("无法读取 {}: {}", base_path, e))
-        })?;
-        let mut table: toml::Table = toml::from_str(&base_toml).map_err(|e| {
-            AppError::Config(format!("解析 {} 失败: {}", base_path, e))
-        })?;
+        let base_toml = std::fs::read_to_string(&base_path)
+            .map_err(|e| AppError::Config(format!("无法读取 {}: {}", base_path, e)))?;
+        let mut table: toml::Table = toml::from_str(&base_toml)
+            .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", base_path, e)))?;
 
         // 第二层：加载环境配置文件，merge 到 base table
         let env_path = format!("{}/app.{}.toml", config_dir, env);
         if let Ok(env_toml) = std::fs::read_to_string(&env_path) {
-            let env_table: toml::Table = toml::from_str(&env_toml).map_err(|e| {
-                AppError::Config(format!("解析 {} 失败: {}", env_path, e))
-            })?;
+            let env_table: toml::Table = toml::from_str(&env_toml)
+                .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", env_path, e)))?;
             merge_tables(&mut table, &env_table);
         }
 
         // Table → AppConfig
-        let mut config: AppConfig = table.try_into().map_err(|e| {
-            AppError::Config(format!("配置反序列化失败: {}", e))
-        })?;
+        let mut config: AppConfig = table
+            .try_into()
+            .map_err(|e| AppError::Config(format!("配置反序列化失败: {}", e)))?;
 
         // 第三层：APP_ 前缀环境变量覆盖
         apply_env_overrides(&mut config);
@@ -85,7 +85,9 @@ impl AppConfig {
             return Err(AppError::Config("database.primary.host 不能为空".into()));
         }
         if self.database.primary.database.is_empty() {
-            return Err(AppError::Config("database.primary.database 不能为空".into()));
+            return Err(AppError::Config(
+                "database.primary.database 不能为空".into(),
+            ));
         }
         if self.auth.jwt_secret.is_empty() {
             return Err(AppError::Config("auth.jwt_secret 不能为空".into()));

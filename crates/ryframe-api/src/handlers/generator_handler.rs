@@ -1,10 +1,10 @@
 use axum::{
+    Json, Router,
     body::Body,
     extract::State,
     http::header,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use ryframe_common::AppResult;
 use ryframe_generator::{GenerateOptions, GeneratedFile};
@@ -58,7 +58,10 @@ async fn download(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptions>,
 ) -> Result<impl IntoResponse, ryframe_common::AppError> {
-    let zip_data = state.generator_service.download_zip(&state.db, opts).await?;
+    let zip_data = state
+        .generator_service
+        .download_zip(&state.db, opts)
+        .await?;
 
     let headers = [
         (header::CONTENT_TYPE, "application/zip"),

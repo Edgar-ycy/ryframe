@@ -64,12 +64,21 @@ mod tests {
 
         let now = Utc::now();
         let mut m = Model {
-            id: 1, username: "test".into(), password_hash: "x".into(),
-            nickname: "t".into(), email: "".into(), phone: "".into(),
-            avatar: None, status: Model::STATUS_NORMAL.to_string(),
-            dept_id: None, remark: None, login_ip: None, login_date: None,
+            id: 1,
+            username: "test".into(),
+            password_hash: "x".into(),
+            nickname: "t".into(),
+            email: "".into(),
+            phone: "".into(),
+            avatar: None,
+            status: Model::STATUS_NORMAL.to_string(),
+            dept_id: None,
+            remark: None,
+            login_ip: None,
+            login_date: None,
             del_flag: Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now, updated_at: now,
+            created_at: now,
+            updated_at: now,
         };
         assert!(m.is_enabled());
         m.status = Model::STATUS_DISABLED.to_string();

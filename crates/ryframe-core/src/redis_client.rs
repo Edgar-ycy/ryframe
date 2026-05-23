@@ -3,8 +3,8 @@
 //! 提供异步 Redis 连接管理器和常用操作封装。
 //! 当 Redis 未配置时，调用方应回退到内存存储。
 
-use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 use ryframe_config::RedisConfig;
 use std::time::Duration;
 
@@ -73,10 +73,7 @@ impl RedisClient {
     }
 
     /// GET key（不存在返回 None）
-    pub async fn get<K: AsRef<str>>(
-        &self,
-        key: K,
-    ) -> Result<Option<String>, redis::RedisError> {
+    pub async fn get<K: AsRef<str>>(&self, key: K) -> Result<Option<String>, redis::RedisError> {
         let mut conn = self.conn.clone();
         conn.get(key.as_ref()).await
     }
@@ -183,9 +180,7 @@ impl RedisClient {
 ///
 /// - 配置了 Redis → 尝试连接，成功返回 Some，失败返回 None（降级到内存模式）
 /// - 未配置 Redis → 返回 None
-pub async fn create_redis_client(
-    config: &Option<RedisConfig>,
-) -> Option<RedisClient> {
+pub async fn create_redis_client(config: &Option<RedisConfig>) -> Option<RedisClient> {
     let redis_config = config.as_ref()?;
     match RedisClient::connect(redis_config).await {
         Ok(client) => {

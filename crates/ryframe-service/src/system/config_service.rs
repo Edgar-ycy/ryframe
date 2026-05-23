@@ -1,10 +1,10 @@
 use ryframe_common::{AppError, AppResult};
-use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::entities::config;
-use ryframe_db::ConfigRepository;
-use sea_orm::DatabaseConnection;
-use serde::{Serialize, Deserialize};
 use ryframe_core::Repository;
+use ryframe_core::repository::{PageQuery, PageResult};
+use ryframe_db::ConfigRepository;
+use ryframe_db::entities::config;
+use sea_orm::DatabaseConnection;
+use serde::{Deserialize, Serialize};
 
 /// 参数配置缓存 Redis key 前缀
 const CONFIG_CACHE_KEY_PREFIX: &str = "sys_config:key:";
@@ -50,20 +50,38 @@ impl ConfigServiceImpl {
         Ok(PageResult::new(records, page.total, &query))
     }
 
-    pub async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<ConfigVo>> {
-        Ok(self.config_repo.find_by_id(db, id).await?.map(ConfigVo::from))
+    pub async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+    ) -> AppResult<Option<ConfigVo>> {
+        Ok(self
+            .config_repo
+            .find_by_id(db, id)
+            .await?
+            .map(ConfigVo::from))
     }
 
-    pub async fn find_by_key(&self, db: &DatabaseConnection, key: &str) -> AppResult<Option<ConfigVo>> {
+    pub async fn find_by_key(
+        &self,
+        db: &DatabaseConnection,
+        key: &str,
+    ) -> AppResult<Option<ConfigVo>> {
         // 尝试从 Redis 缓存读取
         if let Some(ref redis) = self.redis
-            && let Ok(Some(json)) = redis.get(&format!("{}{}", CONFIG_CACHE_KEY_PREFIX, key)).await
+            && let Ok(Some(json)) = redis
+                .get(&format!("{}{}", CONFIG_CACHE_KEY_PREFIX, key))
+                .await
             && let Ok(cached) = serde_json::from_str::<ConfigVo>(&json)
         {
             return Ok(Some(cached));
         }
 
-        let result = self.config_repo.find_by_key(db, key).await?.map(ConfigVo::from);
+        let result = self
+            .config_repo
+            .find_by_key(db, key)
+            .await?
+            .map(ConfigVo::from);
 
         // 写入缓存
         if let Some(ref redis) = self.redis
@@ -112,7 +130,10 @@ impl ConfigServiceImpl {
         id: i64,
         value: &str,
     ) -> AppResult<ConfigVo> {
-        let mut cfg = self.config_repo.find_by_id(db, id).await?
+        let mut cfg = self
+            .config_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
 
         let key = cfg.key.clone();
@@ -129,7 +150,10 @@ impl ConfigServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        let cfg = self.config_repo.find_by_id(db, id).await?
+        let cfg = self
+            .config_repo
+            .find_by_id(db, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
 
         let key = cfg.key.clone();
@@ -143,7 +167,10 @@ impl ConfigServiceImpl {
 
     /// 查询所有参数（用于导出）
     pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<ConfigVo>> {
-        let query = PageQuery { page: 1, page_size: 10000 };
+        let query = PageQuery {
+            page: 1,
+            page_size: 10000,
+        };
         let page = self.config_repo.find_by_page(db, query).await?;
         Ok(page.records.into_iter().map(ConfigVo::from).collect())
     }
@@ -156,4 +183,3 @@ impl ConfigServiceImpl {
         }
     }
 }
-

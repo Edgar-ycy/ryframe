@@ -25,7 +25,6 @@ pub struct RedisConfig {
     pub timeout_secs: u64,
 }
 
-
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {

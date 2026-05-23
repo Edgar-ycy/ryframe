@@ -1,11 +1,17 @@
-use serde::{Deserialize, Serialize};
-use serde_json;
-use axum::{extract::{Path, Query, State}, routing::{delete, get, put}, Json, Router};
+use crate::dto::role_dto::{
+    AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto,
+};
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    routing::{delete, get, put},
+};
 use ryframe_common::AppResult;
 use ryframe_core::PageQuery;
 use ryframe_service::system::RoleVo;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use validator::Validate;
-use crate::dto::role_dto::{AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto};
 
 use super::auth_handler::AppState;
 
@@ -45,13 +51,17 @@ async fn list(
     State(state): State<AppState>,
     Query(query): Query<RoleListQuery>,
 ) -> AppResult<Json<ryframe_core::PageResult<RoleVo>>> {
-    let page_query = PageQuery { page: query.page, page_size: query.page_size };
+    let page_query = PageQuery {
+        page: query.page,
+        page_size: query.page_size,
+    };
 
     // 如果有搜索条件，使用 filtered 版本
     let has_filter = query.name.is_some() || query.code.is_some() || query.status.is_some();
 
     if has_filter {
-        state.role_service
+        state
+            .role_service
             .find_by_page_filtered(
                 &state.db,
                 page_query,
@@ -62,7 +72,11 @@ async fn list(
             .await
             .map(Json)
     } else {
-        state.role_service.find_by_page(&state.db, page_query).await.map(Json)
+        state
+            .role_service
+            .find_by_page(&state.db, page_query)
+            .await
+            .map(Json)
     }
 }
 
@@ -83,8 +97,19 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateRoleDto>,
 ) -> AppResult<Json<RoleVo>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.role_service.create(&state.db, &dto.name, &dto.code, dto.sort.unwrap_or(0), dto.data_scope).await.map(Json)
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .role_service
+        .create(
+            &state.db,
+            &dto.name,
+            &dto.code,
+            dto.sort.unwrap_or(0),
+            dto.data_scope,
+        )
+        .await
+        .map(Json)
 }
 
 /// 更新角色
@@ -96,14 +121,29 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateRoleDto>,
 ) -> AppResult<Json<RoleVo>> {
-    dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
-    state.role_service.update(&state.db, id, &dto.name, dto.sort.unwrap_or(0), dto.status, dto.data_scope).await.map(Json)
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    state
+        .role_service
+        .update(
+            &state.db,
+            id,
+            &dto.name,
+            dto.sort.unwrap_or(0),
+            dto.status,
+            dto.data_scope,
+        )
+        .await
+        .map(Json)
 }
 
 /// 删除角色
 #[utoipa::path(delete, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
-async fn remove(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<serde_json::Value>> {
+async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
     state.role_service.delete(&state.db, id).await?;
     Ok(Json(serde_json::json!({"message": "删除成功"})))
 }
@@ -119,25 +159,31 @@ async fn batch_remove(
         .collect();
 
     if ids.is_empty() {
-        return Err(ryframe_common::AppError::Validation("请选择要删除的角色".into()));
+        return Err(ryframe_common::AppError::Validation(
+            "请选择要删除的角色".into(),
+        ));
     }
 
     let count = state.role_service.delete_many(&state.db, &ids).await?;
-    Ok(Json(serde_json::json!({"message": format!("成功删除 {} 个角色", count)})))
+    Ok(Json(
+        serde_json::json!({"message": format!("成功删除 {} 个角色", count)}),
+    ))
 }
 
 /// 导出角色数据为 Excel
-async fn export_roles(
-    State(state): State<AppState>,
-) -> AppResult<axum::response::Response> {
+async fn export_roles(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
     // 查询所有角色
-    let query = PageQuery { page: 1, page_size: 10000 };
+    let query = PageQuery {
+        page: 1,
+        page_size: 10000,
+    };
     let page_result = state.role_service.find_by_page(&state.db, query).await?;
 
     // 转换为导出数据
-    let export_data: Vec<RoleExportData> = page_result.records
+    let export_data: Vec<RoleExportData> = page_result
+        .records
         .into_iter()
         .map(|r| RoleExportData {
             role_id: r.id,
@@ -152,16 +198,16 @@ async fn export_roles(
         .collect();
 
     // 生成 Excel
-    let bytes = ExcelExporter::export_to_bytes(
-        &export_data,
-        "角色数据",
-        &RoleExportData::excel_headers(),
-    )?;
+    let bytes =
+        ExcelExporter::export_to_bytes(&export_data, "角色数据", &RoleExportData::excel_headers())?;
 
     // 返回文件
     let response = axum::response::Response::builder()
         .status(200)
-        .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .header(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
         .header("Content-Disposition", "attachment; filename=roles.xlsx")
         .body(axum::body::Body::from(bytes))
         .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
@@ -202,7 +248,10 @@ async fn assign_permissions(
     Path(id): Path<i64>,
     Json(dto): Json<AssignPermsDto>,
 ) -> AppResult<Json<serde_json::Value>> {
-    state.role_service.assign_permissions(&state.db, id, dto.perm_ids).await?;
+    state
+        .role_service
+        .assign_permissions(&state.db, id, dto.perm_ids)
+        .await?;
     Ok(Json(serde_json::json!({"message": "权限分配成功"})))
 }
 
@@ -211,7 +260,10 @@ async fn assign_menus(
     Path(id): Path<i64>,
     Json(dto): Json<AssignMenusDto>,
 ) -> AppResult<Json<serde_json::Value>> {
-    state.role_service.assign_menus(&state.db, id, dto.menu_ids).await?;
+    state
+        .role_service
+        .assign_menus(&state.db, id, dto.menu_ids)
+        .await?;
     Ok(Json(serde_json::json!({"message": "菜单分配成功"})))
 }
 
@@ -223,6 +275,9 @@ async fn assign_data_scope(
     Path(id): Path<i64>,
     Json(dto): Json<AssignDataScopeDto>,
 ) -> AppResult<Json<serde_json::Value>> {
-    state.role_service.assign_data_scope(&state.db, id, &dto.data_scope, dto.dept_ids).await?;
+    state
+        .role_service
+        .assign_data_scope(&state.db, id, &dto.data_scope, dto.dept_ids)
+        .await?;
     Ok(Json(serde_json::json!({"message": "数据权限设置成功"})))
 }

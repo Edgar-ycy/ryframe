@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder,
+};
 
 use crate::entities::dept;
 
@@ -28,18 +31,33 @@ impl Repository<dept::Model, i64> for DeptRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    async fn find_by_page(&self, db: &DatabaseConnection, query: PageQuery) -> AppResult<PageResult<dept::Model>> {
-        crate::pagination::paginate(db, dept::Entity::find().filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL)), &query).await
+    async fn find_by_page(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+    ) -> AppResult<PageResult<dept::Model>> {
+        crate::pagination::paginate(
+            db,
+            dept::Entity::find().filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL)),
+            &query,
+        )
+        .await
     }
 
     async fn insert(&self, db: &DatabaseConnection, entity: dept::Model) -> AppResult<dept::Model> {
         let active: dept::ActiveModel = entity.into();
-        active.insert(db).await.map_err(|e| AppError::Database(e.to_string()))
+        active
+            .insert(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn update(&self, db: &DatabaseConnection, entity: dept::Model) -> AppResult<dept::Model> {
         let active: dept::ActiveModel = entity.into();
-        active.update(db).await.map_err(|e| AppError::Database(e.to_string()))
+        active
+            .update(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
@@ -49,7 +67,10 @@ impl Repository<dept::Model, i64> for DeptRepository {
             updated_at: ActiveValue::Set(chrono::Utc::now()),
             ..Default::default()
         };
-        active.update(db).await.map_err(|e| AppError::Database(e.to_string()))?;
+        active
+            .update(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 }
@@ -89,7 +110,9 @@ impl DeptRepository {
         match parent_id {
             None => Ok("0".to_string()),
             Some(pid) => {
-                let parent = self.find_by_id(db, pid).await?
+                let parent = self
+                    .find_by_id(db, pid)
+                    .await?
                     .ok_or_else(|| AppError::NotFound(format!("父部门 {} 不存在", pid)))?;
                 Ok(format!("{},{}", parent.ancestors, pid))
             }
@@ -103,9 +126,11 @@ impl DeptRepository {
         dept_id: i64,
     ) -> AppResult<Vec<i64>> {
         // 先查自身
-        let dept = self.find_by_id(db, dept_id).await?
+        let dept = self
+            .find_by_id(db, dept_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
-    
+
         // 查所有 ancestors 以本部门路径开头的子部门
         let pattern = format!("{},{}%", dept.ancestors, dept_id);
         let children = dept::Entity::find()
@@ -114,14 +139,14 @@ impl DeptRepository {
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
-    
+
         let mut ids = vec![dept_id];
         for child in children {
             ids.push(child.id);
         }
         Ok(ids)
     }
-    
+
     /// 带搜索条件的查询（按名称、状态过滤）
     pub async fn find_filtered(
         &self,
@@ -129,8 +154,8 @@ impl DeptRepository {
         name: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<Vec<dept::Model>> {
-        let mut select = dept::Entity::find()
-            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL));
+        let mut select =
+            dept::Entity::find().filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL));
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(dept::Column::Name.like(format!("%{}%", n)));
         }
@@ -138,12 +163,16 @@ impl DeptRepository {
             select = select.filter(dept::Column::Status.eq(s));
         }
         select = select.order_by_asc(dept::Column::Sort);
-        select.all(db).await.map_err(|e| AppError::Database(e.to_string()))
+        select
+            .all(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 }
 
 fn build_dept_tree(depts: &[dept::Model], parent_id: Option<i64>) -> Vec<DeptTreeNode> {
-    depts.iter()
+    depts
+        .iter()
         .filter(|d| d.parent_id == parent_id)
         .map(|d| DeptTreeNode {
             id: d.id,

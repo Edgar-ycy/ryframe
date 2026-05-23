@@ -1,4 +1,4 @@
-use crate::jwt::{decode_token, Claims};
+use crate::jwt::{Claims, decode_token};
 use crate::permission::check_permission;
 use axum::{
     extract::{Request, State},
@@ -32,7 +32,9 @@ pub async fn auth_middleware(
     };
 
     if claims.token_type != "access" {
-        return Err(AppError::Authentication("令牌类型错误，请使用访问令牌".into()).into_response());
+        return Err(
+            AppError::Authentication("令牌类型错误，请使用访问令牌".into()).into_response(),
+        );
     }
 
     request.extensions_mut().insert(claims);
@@ -41,14 +43,8 @@ pub async fn auth_middleware(
 
 /// 从请求头提取 Bearer token
 fn extract_bearer_token(request: &Request) -> Option<String> {
-    let header = request
-        .headers()
-        .get("Authorization")?
-        .to_str()
-        .ok()?;
-    header
-        .strip_prefix("Bearer ")
-        .map(|s| s.to_string())
+    let header = request.headers().get("Authorization")?.to_str().ok()?;
+    header.strip_prefix("Bearer ").map(|s| s.to_string())
 }
 
 /// 权限守卫中间件工厂
@@ -67,20 +63,14 @@ pub fn require_permission(
     State<Arc<AppConfig>>,
     Request,
     Next,
-) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<Response, Response>> + Send>,
-> + Clone {
-    move |_state: State<Arc<AppConfig>>,
-          request: Request,
-          next: Next| {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, Response>> + Send>>
++ Clone {
+    move |_state: State<Arc<AppConfig>>, request: Request, next: Next| {
         let perm = perm;
         Box::pin(async move {
-            let claims = request
-                .extensions()
-                .get::<Claims>()
-                .ok_or_else(|| {
-                    AppError::Authentication("未认证，请先登录".into()).into_response()
-                })?;
+            let claims = request.extensions().get::<Claims>().ok_or_else(|| {
+                AppError::Authentication("未认证，请先登录".into()).into_response()
+            })?;
 
             check_permission(claims, perm).map_err(|e| e.into_response())?;
 

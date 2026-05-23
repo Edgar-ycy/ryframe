@@ -57,11 +57,7 @@ impl TaskHistoryStore {
         } else {
             iter
         };
-        filtered
-            .into_iter()
-            .take(limit)
-            .cloned()
-            .collect()
+        filtered.into_iter().take(limit).cloned().collect()
     }
 
     pub fn clone_store(&self) -> Self {

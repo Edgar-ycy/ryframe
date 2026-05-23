@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_db::entities::job;
@@ -6,7 +7,6 @@ use ryframe_db::{JobLogRepository, JobRepository};
 use ryframe_task::{ScheduledTask, TaskHistory, TaskScheduler};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use ryframe_common::utils::snowflake;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -33,8 +33,6 @@ pub struct JobLogVo {
     pub cost_ms: i64,
     pub start_time: DateTime<Utc>,
 }
-
-
 
 pub struct JobServiceImpl {
     pub job_repo: JobRepository,
@@ -128,7 +126,10 @@ impl JobServiceImpl {
     ) -> AppResult<JobVo> {
         // 验证 cron 表达式
         if cron::Schedule::from_str(cron_expr).is_err() {
-            return Err(AppError::Validation(format!("无效的 cron 表达式: {}", cron_expr)));
+            return Err(AppError::Validation(format!(
+                "无效的 cron 表达式: {}",
+                cron_expr
+            )));
         }
 
         // 检查任务名是否已存在
@@ -292,4 +293,3 @@ impl JobServiceImpl {
         })
     }
 }
-

@@ -34,9 +34,7 @@ pub enum RateLimiter {
         window_secs: u64,
     },
     /// 内存限流（开发/降级模式）
-    InMemory {
-        inner: Arc<RateLimiterInner>,
-    },
+    InMemory { inner: Arc<RateLimiterInner> },
 }
 
 pub(crate) struct RateLimiterInner {
@@ -137,8 +135,7 @@ impl RateLimiter {
         if let Self::InMemory { inner } = self.as_ref() {
             let inner = inner.clone();
             tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(60));
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     interval.tick().await;
                     let cutoff = Instant::now() - Duration::from_secs(300);

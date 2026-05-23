@@ -8,6 +8,36 @@ pub struct DatabaseConfig {
     /// 从库连接（读写分离，可选）
     #[serde(default)]
     pub replicas: Vec<DbConnection>,
+    /// 多数据源 — 命名数据源（可选）
+    ///
+    /// 配合 `#[datasource("name")]` 注解使用。
+    ///
+    /// 示例：
+    /// ```toml
+    /// [[database.datasources]]
+    /// name = "db_device"
+    /// driver = "mysql"
+    /// host = "localhost"
+    /// port = 3306
+    /// database = "ryframe_device"
+    /// username = "root"
+    /// password = "123456"
+    /// max_connections = 5
+    /// min_connections = 1
+    /// ```
+    #[serde(default)]
+    pub datasources: Vec<NamedDataSource>,
+}
+
+/// 命名数据源
+///
+/// `name` 字段唯一标识数据源，其余字段与 `DbConnection` 一致。
+#[derive(Debug, Clone, Deserialize)]
+pub struct NamedDataSource {
+    /// 数据源唯一名称，用于 `#[datasource("name")]` 注解引用
+    pub name: String,
+    #[serde(flatten)]
+    pub connection: DbConnection,
 }
 
 /// 数据库连接参数

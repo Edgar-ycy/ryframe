@@ -1,11 +1,15 @@
-use serde::Serialize;
-use axum::{extract::{Query, State}, routing::get, Json, Router};
+use axum::{
+    Json, Router,
+    extract::{Query, State},
+    routing::get,
+};
 use ryframe_common::AppResult;
 use ryframe_core::PageResult;
 use ryframe_service::system::OperLogVo;
+use serde::Serialize;
 
-use crate::dto::oper_log_dto::OperLogPageQuery;
 use super::auth_handler::AppState;
+use crate::dto::oper_log_dto::OperLogPageQuery;
 
 pub fn oper_log_router(state: AppState) -> Router {
     Router::new()
@@ -26,7 +30,10 @@ async fn list(
         .oper_log_service
         .find_by_page(
             &state.db,
-            ryframe_core::PageQuery { page: query.page, page_size: query.page_size },
+            ryframe_core::PageQuery {
+                page: query.page,
+                page_size: query.page_size,
+            },
             query.oper_name.as_deref(),
             query.status,
             query.begin_time.as_deref(),
@@ -41,7 +48,9 @@ async fn list(
     responses((status = 200, description = "清空成功")), security(("bearer" = [])))]
 async fn clean(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
     let count = state.oper_log_service.clean(&state.db).await?;
-    Ok(Json(serde_json::json!({"message": format!("成功清空 {} 条操作日志", count)})))
+    Ok(Json(
+        serde_json::json!({"message": format!("成功清空 {} 条操作日志", count)}),
+    ))
 }
 
 /// 操作日志导出数据
@@ -79,13 +88,16 @@ async fn export_oper_logs(
 ) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
-    let logs = state.oper_log_service.find_all_filtered(
-        &state.db,
-        query.oper_name.as_deref(),
-        query.status,
-        query.begin_time.as_deref(),
-        query.end_time.as_deref(),
-    ).await?;
+    let logs = state
+        .oper_log_service
+        .find_all_filtered(
+            &state.db,
+            query.oper_name.as_deref(),
+            query.status,
+            query.begin_time.as_deref(),
+            query.end_time.as_deref(),
+        )
+        .await?;
 
     let export_data: Vec<OperLogExportData> = logs
         .into_iter()
@@ -109,7 +121,10 @@ async fn export_oper_logs(
 
     let response = axum::response::Response::builder()
         .status(200)
-        .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .header(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
         .header("Content-Disposition", "attachment; filename=oper_logs.xlsx")
         .body(axum::body::Body::from(bytes))
         .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;

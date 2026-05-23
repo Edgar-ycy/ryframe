@@ -1,18 +1,18 @@
 mod app_config;
-mod db_config;
 mod auth_config;
-mod redis_config;
+mod cors_config;
+mod db_config;
 mod logger_config;
 mod rate_limit_config;
-mod cors_config;
+mod redis_config;
 
 pub use app_config::AppSettings;
 pub use auth_config::AuthConfig;
-pub use db_config::{DatabaseConfig, DbConnection};
-pub use logger_config::LoggerConfig;
-pub use redis_config::RedisConfig;
-pub use rate_limit_config::RateLimitConfig;
 pub use cors_config::CorsConfig;
+pub use db_config::{DatabaseConfig, DbConnection, NamedDataSource};
+pub use logger_config::LoggerConfig;
+pub use rate_limit_config::RateLimitConfig;
+pub use redis_config::RedisConfig;
 
 pub use crate::app_config::AppConfig;
 
@@ -65,7 +65,11 @@ pub(crate) fn apply_env_overrides(config: &mut AppConfig) {
             ["logger", "format"] => config.logger.format = value,
             ["logger", "output"] => config.logger.output = value,
             ["cors", "allow_origins"] => {
-                let origins: Vec<String> = value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                let origins: Vec<String> = value
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 config.cors.allow_origins = origins;
             }
             _ => {} // 未知的环境变量忽略
@@ -95,18 +99,31 @@ mod tests {
     #[test]
     fn test_connection_urls() {
         let conn = DbConnection {
-            driver: "postgres".into(), host: "db.example.com".into(),
-            port: 5432, database: "myapp".into(),
-            username: "admin".into(), password: "secret".into(),
-            max_connections: 10, min_connections: 2,
+            driver: "postgres".into(),
+            host: "db.example.com".into(),
+            port: 5432,
+            database: "myapp".into(),
+            username: "admin".into(),
+            password: "secret".into(),
+            max_connections: 10,
+            min_connections: 2,
         };
-        assert_eq!(conn.connection_url(), "postgres://admin:secret@db.example.com:5432/myapp");
+        assert_eq!(
+            conn.connection_url(),
+            "postgres://admin:secret@db.example.com:5432/myapp"
+        );
 
         let redis = RedisConfig {
-            host: "cache.example.com".into(), port: 6380,
-            password: "redispass".into(), database: 1,
-            max_pool_size: 10, timeout_secs: 5,
+            host: "cache.example.com".into(),
+            port: 6380,
+            password: "redispass".into(),
+            database: 1,
+            max_pool_size: 10,
+            timeout_secs: 5,
         };
-        assert_eq!(redis.connection_url(), "redis://:redispass@cache.example.com:6380/1");
+        assert_eq!(
+            redis.connection_url(),
+            "redis://:redispass@cache.example.com:6380/1"
+        );
     }
 }
