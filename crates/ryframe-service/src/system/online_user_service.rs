@@ -44,17 +44,23 @@ pub struct UserSession {
 #[derive(Clone)]
 pub enum OnlineUserServiceImpl {
     /// Redis 存储（生产推荐，支持分布式部署）
-    Redis { client: RedisClient },
+    Redis { client: Box<RedisClient> },
     /// 内存存储（开发/降级模式）
     InMemory {
         sessions: Arc<RwLock<HashMap<String, UserSession>>>,
     },
 }
 
+impl Default for OnlineUserServiceImpl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OnlineUserServiceImpl {
     /// 创建 Redis 模式的在线用户服务
     pub fn new_redis(client: RedisClient) -> Self {
-        Self::Redis { client }
+        Self::Redis { client: Box::new(client) }
     }
 
     /// 创建内存模式的在线用户服务
@@ -247,5 +253,59 @@ fn session_to_vo(s: &UserSession) -> OnlineUserVo {
         os: s.os.clone(),
         login_time: s.login_time.to_rfc3339(),
         last_access_time: s.last_access_time.to_rfc3339(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_session(token_id: &str, username: &str) -> UserSession {
+        let now = chrono::Utc::now();
+        UserSession {
+            token_id: token_id.into(), user_id: 1, username: username.into(),
+            dept_name: Some("研发部".into()), ipaddr: "192.168.1.1".into(),
+            login_location: None, browser: Some("Chrome".into()),
+            os: Some("Windows 10".into()), login_time: now, last_access_time: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_online_user_lifecycle() {
+        let svc = OnlineUserServiceImpl::new_in_memory();
+
+        // 添加用户
+        svc.add_user(make_session("tok-1", "alice")).await;
+        svc.add_user(make_session("tok-2", "bob")).await;
+        assert_eq!(svc.count().await, 2);
+
+        // 移除单个
+        svc.remove_user("tok-1").await;
+        assert_eq!(svc.count().await, 1);
+
+        // 强制下线
+        assert!(svc.force_logout("tok-2").await.is_ok());
+        assert!(svc.force_logout("nonexistent").await.is_err());
+        assert_eq!(svc.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_online_user_touch_and_cleanup() {
+        let svc = OnlineUserServiceImpl::new_in_memory();
+
+        // 添加过期用户 (60 分钟前)
+        let mut old = make_session("tok-old", "olduser");
+        old.last_access_time = Utc::now() - chrono::Duration::minutes(60);
+        svc.add_user(old).await;
+        svc.add_user(make_session("tok-new", "newuser")).await;
+
+        // touch 更新
+        svc.touch_user("tok-new").await;
+
+        // 清理 30 分钟前的
+        svc.cleanup_expired(30).await;
+        let users = svc.list_online_users().await;
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].username, "newuser");
     }
 }

@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct CreateRoleDto {
     #[validate(length(min = 1, max = 50, message = "角色名称长度1-50"))]
     pub name: String,
@@ -11,7 +12,7 @@ pub struct CreateRoleDto {
     pub data_scope: Option<String>,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct UpdateRoleDto {
     #[validate(length(min = 1, message = "角色名称不能为空"))]
     pub name: String,
@@ -20,18 +21,18 @@ pub struct UpdateRoleDto {
     pub data_scope: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AssignPermsDto {
     pub perm_ids: Vec<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AssignMenusDto {
     pub menu_ids: Vec<i64>,
 }
 
 /// 数据权限分配请求
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AssignDataScopeDto {
     /// 数据范围: "1"全部 "2"自定义 "3"本部门 "4"本部门及以下 "5"仅本人
     pub data_scope: String,

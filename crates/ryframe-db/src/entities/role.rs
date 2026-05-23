@@ -14,6 +14,7 @@ pub struct Model {
     pub status: String,
     pub sort: i32,
     pub remark: Option<String>,
+    pub del_flag: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -25,6 +26,9 @@ impl Model {
     pub const DATA_SCOPE_DEPT: &str = "3";
     pub const DATA_SCOPE_DEPT_AND_CHILD: &str = "4";
     pub const DATA_SCOPE_SELF: &str = "5";
+
+    pub const DEL_FLAG_NORMAL: &str = "0";
+    pub const DEL_FLAG_DELETED: &str = "2";
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

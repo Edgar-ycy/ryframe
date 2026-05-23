@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::entities::dept;
 
@@ -22,13 +22,14 @@ pub struct DeptRepository;
 impl Repository<dept::Model, i64> for DeptRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<dept::Model>> {
         dept::Entity::find_by_id(id)
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn find_by_page(&self, db: &DatabaseConnection, query: PageQuery) -> AppResult<PageResult<dept::Model>> {
-        crate::pagination::paginate(db, dept::Entity::find(), &query).await
+        crate::pagination::paginate(db, dept::Entity::find().filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL)), &query).await
     }
 
     async fn insert(&self, db: &DatabaseConnection, entity: dept::Model) -> AppResult<dept::Model> {
@@ -42,7 +43,13 @@ impl Repository<dept::Model, i64> for DeptRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        dept::Entity::delete_by_id(id).exec(db).await.map_err(|e| AppError::Database(e.to_string()))?;
+        let active = dept::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            del_flag: ActiveValue::Set(dept::Model::DEL_FLAG_DELETED.to_string()),
+            updated_at: ActiveValue::Set(chrono::Utc::now()),
+            ..Default::default()
+        };
+        active.update(db).await.map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 }
@@ -51,6 +58,7 @@ impl DeptRepository {
     /// 查询部门树
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<DeptTreeNode>> {
         let all = dept::Entity::find()
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
@@ -62,6 +70,7 @@ impl DeptRepository {
     pub async fn has_children(&self, db: &DatabaseConnection, parent_id: i64) -> AppResult<bool> {
         let exists = dept::Entity::find()
             .filter(dept::Column::ParentId.eq(parent_id))
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -96,20 +105,40 @@ impl DeptRepository {
         // 先查自身
         let dept = self.find_by_id(db, dept_id).await?
             .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
-
+    
         // 查所有 ancestors 以本部门路径开头的子部门
         let pattern = format!("{},{}%", dept.ancestors, dept_id);
         let children = dept::Entity::find()
             .filter(dept::Column::Ancestors.like(&pattern))
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
-
+    
         let mut ids = vec![dept_id];
         for child in children {
             ids.push(child.id);
         }
         Ok(ids)
+    }
+    
+    /// 带搜索条件的查询（按名称、状态过滤）
+    pub async fn find_filtered(
+        &self,
+        db: &DatabaseConnection,
+        name: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<Vec<dept::Model>> {
+        let mut select = dept::Entity::find()
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL));
+        if let Some(n) = name.filter(|n| !n.is_empty()) {
+            select = select.filter(dept::Column::Name.like(format!("%{}%", n)));
+        }
+        if let Some(s) = status.filter(|s| !s.is_empty()) {
+            select = select.filter(dept::Column::Status.eq(s));
+        }
+        select = select.order_by_asc(dept::Column::Sort);
+        select.all(db).await.map_err(|e| AppError::Database(e.to_string()))
     }
 }
 

@@ -17,6 +17,17 @@ password = "123456"
 max_connections = 10
 min_connections = 1
 
+# 从库连接（读写分离，可选，可配置多个）
+[[database.replicas]]
+driver = "mysql"
+host = "localhost"
+port = 3306
+database = "ryframe_device"
+username = "root"
+password = "123456"
+max_connections = 5
+min_connections = 1
+
 [redis]
 host = "127.0.0.1"
 port = 6379

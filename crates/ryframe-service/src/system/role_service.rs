@@ -45,6 +45,31 @@ pub struct RoleServiceImpl {
 }
 
 impl RoleServiceImpl {
+    /// 带搜索条件的分页查询
+    pub async fn find_by_page_filtered(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+        name: Option<&str>,
+        code: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<PageResult<RoleVo>> {
+        let page = self
+            .role_repo
+            .find_by_page_filtered(db, query.clone(), name, code, status)
+            .await?;
+        let records = page.records.into_iter().map(RoleVo::from).collect();
+        Ok(PageResult::new(records, page.total, &query))
+    }
+
+    /// 批量删除角色
+    pub async fn delete_many(&self, db: &DatabaseConnection, ids: &[i64]) -> AppResult<u64> {
+        if ids.is_empty() {
+            return Err(AppError::Validation("请选择要删除的角色".into()));
+        }
+        self.role_repo.delete_many(db, ids).await
+    }
+
     pub async fn find_by_page(
         &self,
         db: &DatabaseConnection,
@@ -91,6 +116,7 @@ impl RoleServiceImpl {
             status: "1".to_string(),
             sort,
             remark: None,
+            del_flag: role::Model::DEL_FLAG_NORMAL.to_string(),
             created_at: now,
             updated_at: now,
         };
@@ -209,3 +235,4 @@ impl RoleServiceImpl {
         Ok(())
     }
 }
+

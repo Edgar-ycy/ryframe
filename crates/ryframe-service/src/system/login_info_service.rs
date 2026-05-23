@@ -99,4 +99,18 @@ impl LoginInfoServiceImpl {
     pub async fn clean(&self, db: &DatabaseConnection) -> AppResult<u64> {
         self.login_info_repo.clean_all(db).await
     }
+
+    /// 导出登录日志（带过滤条件，返回全部匹配结果）
+    pub async fn find_all_filtered(
+        &self,
+        db: &DatabaseConnection,
+        user_name: Option<&str>,
+        status: Option<String>,
+        begin_time: Option<&str>,
+        end_time: Option<&str>,
+    ) -> AppResult<Vec<LoginInfoVo>> {
+        let query = PageQuery { page: 1, page_size: 10000 };
+        let result = self.find_by_page(db, query, user_name, status, begin_time, end_time).await?;
+        Ok(result.records)
+    }
 }

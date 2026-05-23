@@ -9,6 +9,7 @@ description.workspace = true
 
 [dependencies]
 ryframe-common = { path = "../ryframe-common" }
+ryframe-core = { path = "../ryframe-core" }
 ryframe-db = { path = "../ryframe-db" }
 serde = { workspace = true, features = ["derive"] }
 sysinfo = { workspace = true }
@@ -16,3 +17,5 @@ axum = { workspace = true }
 serde_json = { workspace = true }
 sea-orm = { workspace = true }
 chrono = { workspace = true }
+redis = { workspace = true }
+tracing = { workspace = true }

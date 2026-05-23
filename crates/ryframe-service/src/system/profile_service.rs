@@ -1,12 +1,9 @@
 use ryframe_auth::password;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::Repository;
-use ryframe_db::{UserRepository, user, dept};
+use ryframe_db::{UserRepository, RoleRepository, PermissionRepository, user, dept};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
-use serde::{Deserialize, Serialize};
-use validator::Validate;
-
-// ── DTO 定义 ──
+use serde::Serialize;
 
 /// 用户个人信息响应
 #[derive(Debug, Clone, Serialize)]
@@ -28,32 +25,11 @@ pub struct UserProfileResponse {
     pub permissions: Vec<String>,
 }
 
-/// 更新个人信息请求
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateProfileRequest {
-    #[validate(length(min = 1, max = 64, message = "昵称长度为1-64个字符"))]
-    pub nickname: String,
-    #[validate(email(message = "邮箱格式不正确"))]
-    pub email: Option<String>,
-    #[validate(length(max = 32, message = "手机号最多32个字符"))]
-    pub phone: Option<String>,
-    pub sex: Option<String>,
-}
-
-/// 修改密码请求
-#[derive(Debug, Deserialize, Validate)]
-pub struct ChangePasswordRequest {
-    #[validate(length(min = 6, max = 100, message = "密码长度为6-100个字符"))]
-    pub old_password: String,
-    #[validate(length(min = 6, max = 100, message = "新密码长度为6-100个字符"))]
-    pub new_password: String,
-}
-
-// ── 服务实现 ──
-
 /// 个人中心服务
 pub struct ProfileServiceImpl {
     pub user_repo: UserRepository,
+    pub role_repo: RoleRepository,
+    pub perm_repo: PermissionRepository,
 }
 
 impl ProfileServiceImpl {
@@ -78,10 +54,12 @@ impl ProfileServiceImpl {
             None
         };
 
-        // TODO: 从 JWT Claims 中获取 roles 和 permissions
-        // 这里简化处理，实际需要查询数据库
-        let roles = vec![];
-        let permissions = vec![];
+        // 查询角色和权限
+        let roles = self.role_repo.find_user_roles(db, user.id).await?;
+        let role_codes: Vec<String> = roles.iter().map(|r| r.code.clone()).collect();
+        let role_ids: Vec<i64> = roles.iter().map(|r| r.id).collect();
+        let perms = self.perm_repo.find_role_perms(db, &role_ids).await?;
+        let permissions: Vec<String> = perms.iter().map(|p| p.code.clone()).collect();
 
         Ok(UserProfileResponse {
             user_id: user.id,
@@ -97,7 +75,7 @@ impl ProfileServiceImpl {
             login_ip: user.login_ip,
             login_date: user.login_date.map(|d| d.to_rfc3339()),
             created_at: user.created_at.to_rfc3339(),
-            roles,
+            roles: role_codes,
             permissions,
         })
     }
@@ -107,14 +85,16 @@ impl ProfileServiceImpl {
         &self,
         db: &DatabaseConnection,
         user_id: i64,
-        req: UpdateProfileRequest,
+        nickname: String,
+        email: String,
+        phone: String,
     ) -> AppResult<()> {
         let mut user = self.user_repo.find_by_id(db, user_id).await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
-        user.nickname = req.nickname;
-        user.email = req.email.unwrap_or_default();
-        user.phone = req.phone.unwrap_or_default();
+        user.nickname = nickname;
+        user.email = email;
+        user.phone = phone;
 
         // 更新用户信息
         let active_model: user::ActiveModel = user.into();
@@ -131,18 +111,19 @@ impl ProfileServiceImpl {
         &self,
         db: &DatabaseConnection,
         user_id: i64,
-        req: ChangePasswordRequest,
+        old_password: &str,
+        new_password: &str,
     ) -> AppResult<()> {
         let mut user = self.user_repo.find_by_id(db, user_id).await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
         // 验证旧密码
-        if !password::verify(&req.old_password, &user.password_hash)? {
+        if !password::verify(old_password, &user.password_hash)? {
             return Err(AppError::Validation("旧密码不正确".into()));
         }
 
         // 哈希新密码
-        let new_hash = password::hash(&req.new_password)?;
+        let new_hash = password::hash(new_password)?;
         user.password_hash = new_hash;
 
         // 更新密码
@@ -165,6 +146,9 @@ impl ProfileServiceImpl {
         let mut user = self.user_repo.find_by_id(db, user_id).await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
+        // 记录旧头像路径，用于清理
+        let old_avatar = user.avatar.clone();
+
         user.avatar = Some(avatar_url);
 
         let active_model: user::ActiveModel = user.into();
@@ -173,6 +157,21 @@ impl ProfileServiceImpl {
             .await
             .map_err(|e| AppError::Database(format!("更新头像失败: {}", e)))?;
 
+        // 清理旧头像文件（仅清理本地上传的文件）
+        if let Some(old_path) = old_avatar
+            && (old_path.starts_with("/upload/") || old_path.starts_with("upload/"))
+        {
+            let file_path = std::path::PathBuf::from("upload").join(
+                old_path.trim_start_matches('/'),
+            );
+            if file_path.exists()
+                && let Err(e) = std::fs::remove_file(&file_path)
+            {
+                tracing::warn!("清理旧头像文件失败: {}: {}", file_path.display(), e);
+            }
+        }
+
         Ok(())
     }
 }
+

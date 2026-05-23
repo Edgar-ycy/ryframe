@@ -47,3 +47,32 @@ pub fn is_internal_ip(ip: &str) -> bool {
         .and_then(|s| s.parse::<u32>().ok())
         .is_some_and(|n| (16..=31).contains(&n))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderMap;
+
+    #[test]
+    fn test_get_client_ip_and_internal() {
+        // X-Forwarded-For 优先
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8".parse().unwrap());
+        h.insert("x-real-ip", "10.0.0.1".parse().unwrap());
+        assert_eq!(get_client_ip(&h, "127.0.0.1:8080"), "1.2.3.4");
+
+        // 回退到 X-Real-IP
+        let mut h2 = HeaderMap::new();
+        h2.insert("x-real-ip", "10.0.0.1".parse().unwrap());
+        assert_eq!(get_client_ip(&h2, "127.0.0.1:8080"), "10.0.0.1");
+
+        // 回退到直连
+        assert_eq!(get_client_ip(&HeaderMap::new(), "192.168.1.1:8080"), "192.168.1.1");
+
+        // 内网 IP 判断
+        assert!(is_internal_ip("10.0.0.1"));
+        assert!(is_internal_ip("192.168.1.100"));
+        assert!(is_internal_ip("127.0.0.1"));
+        assert!(!is_internal_ip("8.8.8.8"));
+    }
+}

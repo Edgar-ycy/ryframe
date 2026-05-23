@@ -43,33 +43,20 @@ mod tests {
     }
 
     #[test]
-    fn test_check_permission_success() {
-        let claims = make_claims(vec!["system:user:list"], vec![]);
+    fn test_check_permission() {
+        let claims = make_claims(vec!["system:user:list", "system:user:*"], vec![]);
+        // 精确匹配
         assert!(check_permission(&claims, "system:user:list").is_ok());
-    }
-
-    #[test]
-    fn test_check_permission_denied() {
-        let claims = make_claims(vec!["system:user:list"], vec![]);
-        assert!(check_permission(&claims, "system:user:delete").is_err());
-    }
-
-    #[test]
-    fn test_check_permission_wildcard() {
-        let claims = make_claims(vec!["system:user:*"], vec![]);
-        assert!(check_permission(&claims, "system:user:list").is_ok());
+        // 不同模块无权限
+        assert!(check_permission(&claims, "system:role:list").is_err());
+        // 通配符
         assert!(check_permission(&claims, "system:user:create").is_ok());
     }
 
     #[test]
-    fn test_check_role_success() {
+    fn test_check_role() {
         let claims = make_claims(vec![], vec!["admin"]);
         assert!(check_role(&claims, "admin").is_ok());
-    }
-
-    #[test]
-    fn test_check_role_denied() {
-        let claims = make_claims(vec![], vec!["user"]);
-        assert!(check_role(&claims, "admin").is_err());
+        assert!(check_role(&claims, "user").is_err());
     }
 }

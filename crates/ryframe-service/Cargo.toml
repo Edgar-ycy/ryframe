@@ -15,9 +15,9 @@ ryframe-auth = { path = "../ryframe-auth" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-task = { path = "../ryframe-task" }
 ryframe-generator = { path = "../ryframe-generator" }
-zip = "2"
+zip = { workspace = true }
 async-trait = { workspace = true }
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true, features = ["serde"] }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -26,3 +26,4 @@ validator = { workspace = true }
 utoipa = { workspace = true }
 redis = { workspace = true }
 tracing = { workspace = true }
+cron = { workspace = true }

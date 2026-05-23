@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_common::AppResult;
+use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_db::entities::job;
 use ryframe_db::{JobLogRepository, JobRepository};
@@ -7,6 +7,7 @@ use ryframe_task::{ScheduledTask, TaskHistory, TaskScheduler};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 use ryframe_common::utils::snowflake;
+use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Debug, Serialize)]
@@ -33,12 +34,7 @@ pub struct JobLogVo {
     pub start_time: DateTime<Utc>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct UpdateJobDto {
-    pub cron_expr: Option<String>,
-    pub status: Option<String>,
-    pub remark: Option<String>,
-}
+
 
 pub struct JobServiceImpl {
     pub job_repo: JobRepository,
@@ -118,12 +114,82 @@ impl JobServiceImpl {
         Ok(vos)
     }
 
+    /// 新建定时任务
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create(
+        &self,
+        db: &DatabaseConnection,
+        name: &str,
+        cron_expr: &str,
+        group_name: Option<&str>,
+        misfire_policy: Option<&str>,
+        concurrent: Option<&str>,
+        remark: Option<&str>,
+    ) -> AppResult<JobVo> {
+        // 验证 cron 表达式
+        if cron::Schedule::from_str(cron_expr).is_err() {
+            return Err(AppError::Validation(format!("无效的 cron 表达式: {}", cron_expr)));
+        }
+
+        // 检查任务名是否已存在
+        if self.job_repo.find_by_name(db, name).await?.is_some() {
+            return Err(AppError::Conflict(format!("任务名称 '{}' 已存在", name)));
+        }
+
+        let now = Utc::now();
+        let entity = job::Model {
+            id: snowflake::next_snowflake_id(),
+            name: name.to_string(),
+            group_name: group_name.unwrap_or("default").to_string(),
+            cron_expr: cron_expr.to_string(),
+            misfire_policy: misfire_policy.unwrap_or("1").to_string(),
+            concurrent: concurrent.unwrap_or("0").to_string(),
+            status: job::Model::STATUS_NORMAL.to_string(),
+            remark: remark.map(|s| s.to_string()),
+            create_time: now,
+            update_time: now,
+        };
+
+        let saved = self.job_repo.insert(db, entity).await?;
+
+        // 注册到调度器（仅当有对应的内置任务实现时）
+        // 对于用户自定义任务，这里只创建 DB 记录，不注册到调度器
+
+        Ok(JobVo {
+            id: saved.id,
+            name: saved.name,
+            group_name: saved.group_name,
+            cron_expr: saved.cron_expr,
+            status: saved.status,
+            description: saved.remark.clone().unwrap_or_default(),
+            next_fire_time: None,
+            remark: saved.remark,
+        })
+    }
+
+    /// 删除定时任务
+    pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
+        let entity = self
+            .job_repo
+            .find_by_id(db, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("任务不存在".into()))?;
+
+        // 从调度器注销
+        let _ = self.scheduler.unregister(&entity.name).await;
+
+        // 删除 DB 记录
+        self.job_repo.delete(db, id).await
+    }
+
     /// 更新 cron / status / remark
     pub async fn update(
         &self,
         db: &DatabaseConnection,
         id: i64,
-        dto: UpdateJobDto,
+        cron_expr: Option<String>,
+        status: Option<String>,
+        remark: Option<String>,
     ) -> AppResult<()> {
         let entity = self
             .job_repo
@@ -131,19 +197,23 @@ impl JobServiceImpl {
             .await?
             .ok_or_else(|| ryframe_common::AppError::NotFound("任务不存在".into()))?;
 
-        let new_status = dto.status.clone().unwrap_or(entity.status);
-        if let Some(ref _cron) = dto.cron_expr {
-            // cron 变更时会由 scheduler.update_cron 处理
-        }
+        // 持久化到 DB
+        self.job_repo
+            .update_cron(db, id, cron_expr.clone(), status.clone(), remark)
+            .await?;
 
-        self.job_repo.update_status(db, id, new_status).await?;
-
-        if let Some(status) = dto.status {
-            if status == job::Model::STATUS_PAUSED {
+        // 同步状态到调度器
+        if let Some(ref status) = status {
+            if *status == job::Model::STATUS_PAUSED {
                 let _ = self.scheduler.pause(&entity.name).await;
             } else {
                 let _ = self.scheduler.resume(&entity.name).await;
             }
+        }
+
+        // 同步 cron 到调度器
+        if let Some(ref cron) = cron_expr {
+            let _ = self.scheduler.update_cron(&entity.name, cron).await;
         }
 
         Ok(())
@@ -222,3 +292,4 @@ impl JobServiceImpl {
         })
     }
 }
+

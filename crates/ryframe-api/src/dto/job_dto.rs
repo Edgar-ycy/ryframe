@@ -1,48 +1,23 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use utoipa::ToSchema;
 
-/// 任务 VO
-#[derive(Debug, Serialize)]
-pub struct JobVO {
-    pub id: i64,
+/// 新建任务 DTO
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+pub struct CreateJobDto {
+    #[validate(length(min = 1, max = 100, message = "任务名称长度1-100"))]
     pub name: String,
-    pub group_name: String,
+    #[validate(length(min = 1, max = 100, message = "Cron 表达式长度1-100"))]
     pub cron_expr: String,
-    pub status: String,
-    pub description: String,
-    pub next_fire_time: Option<String>,
-}
-
-/// 更新任务 DTO
-#[derive(Debug, Deserialize)]
-pub struct UpdateJobDTO {
-    pub cron_expr: Option<String>,
-    pub status: Option<String>,
+    pub group_name: Option<String>,
+    pub misfire_policy: Option<String>,
+    pub concurrent: Option<String>,
     pub remark: Option<String>,
 }
 
-/// 任务日志 VO
-#[derive(Debug, Serialize)]
-pub struct JobLogVO {
-    pub id: i64,
-    pub job_name: String,
-    pub job_group: String,
-    pub message: String,
-    pub status: String,
-    pub error_msg: Option<String>,
-    pub cost_ms: i64,
-}
-
-/// 任务日志分页查询
-#[derive(Debug, Deserialize)]
-pub struct JobLogPageQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size")]
-    pub page_size: u64,
-    pub job_name: Option<String>,
+/// 更新任务 DTO
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateJobDto {
+    pub cron_expr: Option<String>,
     pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
+    pub remark: Option<String>,
 }

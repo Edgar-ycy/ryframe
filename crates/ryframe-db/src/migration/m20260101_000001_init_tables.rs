@@ -25,6 +25,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysDept::Sort).integer().not_null().default(0))
                     .col(ColumnDef::new(SysDept::Status).char_len(1).not_null().default("1"))
                     .col(ColumnDef::new(SysDept::Remark).string_len(512))
+                    .col(ColumnDef::new(SysDept::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysDept::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysDept::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -49,6 +50,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysUser::Remark).string_len(512))
                     .col(ColumnDef::new(SysUser::LoginIp).string_len(128))
                     .col(ColumnDef::new(SysUser::LoginDate).date_time())
+                    .col(ColumnDef::new(SysUser::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysUser::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysUser::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -68,6 +70,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysRole::Status).char_len(1).not_null().default("1"))
                     .col(ColumnDef::new(SysRole::Sort).integer().not_null().default(0))
                     .col(ColumnDef::new(SysRole::Remark).string_len(512))
+                    .col(ColumnDef::new(SysRole::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysRole::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysRole::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -110,6 +113,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysMenu::Sort).integer().not_null().default(0))
                     .col(ColumnDef::new(SysMenu::Visible).boolean().not_null().default(true))
                     .col(ColumnDef::new(SysMenu::Status).char_len(1).not_null().default("1"))
+                    .col(ColumnDef::new(SysMenu::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysMenu::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysMenu::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -128,6 +132,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysPost::Sort).integer().not_null().default(0))
                     .col(ColumnDef::new(SysPost::Status).char_len(1).not_null().default("1"))
                     .col(ColumnDef::new(SysPost::Remark).string_len(512))
+                    .col(ColumnDef::new(SysPost::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysPost::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysPost::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -145,6 +150,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysConfig::Key).string_len(128).not_null().unique_key())
                     .col(ColumnDef::new(SysConfig::Value).string_len(512).not_null())
                     .col(ColumnDef::new(SysConfig::Remark).string_len(512))
+                    .col(ColumnDef::new(SysConfig::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysConfig::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysConfig::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -162,6 +168,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysDictType::Code).string_len(64).not_null().unique_key())
                     .col(ColumnDef::new(SysDictType::Status).char_len(1).not_null().default("1"))
                     .col(ColumnDef::new(SysDictType::Remark).string_len(512))
+                    .col(ColumnDef::new(SysDictType::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysDictType::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysDictType::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -182,6 +189,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysDictData::Status).char_len(1).not_null().default("1"))
                     .col(ColumnDef::new(SysDictData::CssClass).string_len(64))
                     .col(ColumnDef::new(SysDictData::Remark).string_len(512))
+                    .col(ColumnDef::new(SysDictData::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysDictData::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysDictData::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -200,6 +208,7 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(SysNotice::Type).string_len(16))
                     .col(ColumnDef::new(SysNotice::Status).char_len(1).not_null().default("1"))
                     .col(ColumnDef::new(SysNotice::CreatedBy).big_integer())
+                    .col(ColumnDef::new(SysNotice::DelFlag).char_len(1).not_null().default("0"))
                     .col(ColumnDef::new(SysNotice::CreatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .col(ColumnDef::new(SysNotice::UpdatedAt).date_time().not_null().default(Expr::current_timestamp()))
                     .to_owned(),
@@ -377,35 +386,35 @@ impl MigrationTrait for Migration {
 // ========== 表名枚举 ==========
 
 #[derive(Iden)]
-enum SysDept { Table, Id, Name, ParentId, Ancestors, Sort, Status, Remark, CreatedAt, UpdatedAt }
+enum SysDept { Table, Id, Name, ParentId, Ancestors, Sort, Status, Remark, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
-enum SysUser { Table, Id, Username, PasswordHash, Nickname, Email, Phone, Avatar, Status, DeptId, Remark, LoginIp, LoginDate, CreatedAt, UpdatedAt }
+enum SysUser { Table, Id, Username, PasswordHash, Nickname, Email, Phone, Avatar, Status, DeptId, Remark, LoginIp, LoginDate, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
-enum SysRole { Table, Id, Name, Code, DataScope, Status, Sort, Remark, CreatedAt, UpdatedAt }
+enum SysRole { Table, Id, Name, Code, DataScope, Status, Sort, Remark, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
 enum SysPermission { Table, Id, Name, Code, ParentId, PermType, Path, Icon, Sort, Status, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
-enum SysMenu { Table, Id, Name, ParentId, Path, Component, Icon, Sort, Visible, Status, CreatedAt, UpdatedAt }
+enum SysMenu { Table, Id, Name, ParentId, Path, Component, Icon, Sort, Visible, Status, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
-enum SysPost { Table, Id, Name, Code, Sort, Status, Remark, CreatedAt, UpdatedAt }
+enum SysPost { Table, Id, Name, Code, Sort, Status, Remark, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
 #[iden = "sys_config"]
-enum SysConfig { Table, Id, Name, #[iden = "key"] Key, Value, Remark, CreatedAt, UpdatedAt }
+enum SysConfig { Table, Id, Name, #[iden = "key"] Key, Value, Remark, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
-enum SysDictType { Table, Id, Name, Code, Status, Remark, CreatedAt, UpdatedAt }
+enum SysDictType { Table, Id, Name, Code, Status, Remark, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
-enum SysDictData { Table, Id, TypeCode, Label, Value, Sort, Status, CssClass, Remark, CreatedAt, UpdatedAt }
+enum SysDictData { Table, Id, TypeCode, Label, Value, Sort, Status, CssClass, Remark, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
-enum SysNotice { Table, Id, Title, Content, Type, Status, CreatedBy, CreatedAt, UpdatedAt }
+enum SysNotice { Table, Id, Title, Content, Type, Status, CreatedBy, DelFlag, CreatedAt, UpdatedAt }
 
 #[derive(Iden)]
 enum SysOperLog { Table, Id, Title, BusinessType, Method, RequestMethod, OperName, OperUrl, OperIp, OperLocation, OperParam, JsonResult, Status, ErrorMsg, OperTime, CostTime }

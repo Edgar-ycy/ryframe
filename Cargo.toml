@@ -54,3 +54,10 @@ rust_xlsxwriter = { version = "0.94" }
 utoipa = { version = "5", features = ["axum_extras"] }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
+regex = "1"
+http-body-util = "0.1"
+tower = { version = "0.5" }
+tower-http = { version = "0.6" }
+ammonia = "4"
+dashmap = "6"
+zip = "2"

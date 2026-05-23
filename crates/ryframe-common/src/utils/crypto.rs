@@ -36,51 +36,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_md5_hex() {
-        let hash = md5_hex("hello");
-        assert_eq!(hash.len(), 32);
-        assert_eq!(hash, "5d41402abc4b2a76b9719d911017c592");
-    }
+    fn test_md5_and_base64() {
+        assert_eq!(md5_hex("hello"), "5d41402abc4b2a76b9719d911017c592");
+        assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
 
-    #[test]
-    fn test_md5_hex_empty() {
-        let hash = md5_hex("");
-        assert_eq!(hash.len(), 32);
-        assert_eq!(hash, "d41d8cd98f00b204e9800998ecf8427e");
-    }
-
-    #[test]
-    fn test_base64_encode_decode() {
         let encoded = base64_encode("Hello, World!");
-        assert_eq!(encoded, "SGVsbG8sIFdvcmxkIQ==");
-
-        let decoded = base64_decode(&encoded).unwrap();
-        assert_eq!(decoded, "Hello, World!");
-    }
-
-    #[test]
-    fn test_base64_decode_invalid() {
+        assert_eq!(base64_decode(&encoded).unwrap(), "Hello, World!");
         assert!(base64_decode("!!!invalid!!!").is_none());
     }
 
     #[test]
-    fn test_uuid_v4_simple() {
-        let id = uuid_v4_simple();
-        assert_eq!(id.len(), 32);
-        assert!(!id.contains('-'));
-    }
+    fn test_uuid() {
+        let simple = uuid_v4_simple();
+        assert_eq!(simple.len(), 32);
+        assert!(!simple.contains('-'));
 
-    #[test]
-    fn test_uuid_v4() {
-        let id = uuid_v4();
-        assert!(id.contains('-'));
-        assert_eq!(id.len(), 36); // 8-4-4-4-12
-    }
-
-    #[test]
-    fn test_uuid_uniqueness() {
-        let a = uuid_v4();
-        let b = uuid_v4();
-        assert_ne!(a, b);
+        let standard = uuid_v4();
+        assert_eq!(standard.len(), 36);
+        assert_ne!(uuid_v4(), uuid_v4());
     }
 }

@@ -17,7 +17,7 @@ use ryframe_service::system::{
 };
 use ryframe_service::AuthServiceImpl;
 use ryframe_task::{ScheduledTask, TaskContext, TaskScheduler};
-use ryframe_task::builtin::{CleanLoginInfoTask, CleanOperLogTask, CleanTempFilesTask};
+use ryframe_task::builtin::{CleanLoginInfoTask, CleanOperLogTask, CleanTempFilesTask, DatabaseBackupTask};
 use ryframe_middleware::RateLimiter;
 use ryframe_api::handlers::captcha_handler::CaptchaStore;
 use ryframe_core::create_redis_client;
@@ -96,6 +96,29 @@ async fn main() -> Result<(), AppError> {
     let db = ryframe_db::connection::connect(&config.database.primary).await?;
     tracing::info!("数据库连接成功");
 
+    // 3.a 连接从库（读写分离）
+    let replica_dbs = {
+        let mut dbs = Vec::with_capacity(config.database.replicas.len());
+        for replica_config in &config.database.replicas {
+            match ryframe_db::connection::connect(replica_config).await {
+                Ok(replica_db) => {
+                    tracing::info!("从库连接成功: {}", replica_config.database);
+                    dbs.push(replica_db);
+                }
+                Err(e) => {
+                    tracing::warn!("从库连接失败 ({}): {}，跳过", replica_config.database, e);
+                }
+            }
+        }
+        dbs
+    };
+
+    if replica_dbs.is_empty() && !config.database.replicas.is_empty() {
+        tracing::warn!("所有从库连接均失败，仅使用主库");
+    } else if !replica_dbs.is_empty() {
+        tracing::info!("已连接 {} 个从库", replica_dbs.len());
+    }
+
     // 3.x 健康检查
     ryframe_db::connection::ping(&db).await?;
 
@@ -165,13 +188,23 @@ async fn main() -> Result<(), AppError> {
         post_repo: PostRepository,
     });
 
+    // 7.w 创建 Redis 客户端（提前初始化，供字典/配置服务使用）
+    let redis_client = create_redis_client(&config.redis).await;
+    if redis_client.is_some() {
+        tracing::info!("Redis 已启用，验证码/在线用户/限流器/字典缓存将使用 Redis 存储");
+    } else {
+        tracing::info!("Redis 未配置或不可用，使用内存模式");
+    }
+
     let config_service = Arc::new(ConfigServiceImpl {
         config_repo: ConfigRepository,
+        redis: redis_client.clone(),
     });
 
     let dict_service = Arc::new(DictServiceImpl {
         dict_type_repo: DictTypeRepository,
         dict_data_repo: DictDataRepository,
+        redis: redis_client.clone(),
     });
 
     let notice_service = Arc::new(NoticeServiceImpl {
@@ -206,6 +239,7 @@ async fn main() -> Result<(), AppError> {
         Arc::new(CleanOperLogTask),
         Arc::new(CleanLoginInfoTask),
         Arc::new(CleanTempFilesTask),
+        Arc::new(DatabaseBackupTask),
     ];
     job_service.init_builtin_tasks(&db, &builtin_tasks).await?;
     tracing::info!("已注册 {} 个内置定时任务", scheduler.list().await.len());
@@ -218,15 +252,9 @@ async fn main() -> Result<(), AppError> {
     // 7.aa 创建 ProfileService
     let profile_service = Arc::new(ProfileServiceImpl {
         user_repo: UserRepository,
+        role_repo: RoleRepository,
+        perm_repo: PermissionRepository,
     });
-
-    // 7.bb 创建 Redis 客户端（如果配置了 Redis）
-    let redis_client = create_redis_client(&config.redis).await;
-    if redis_client.is_some() {
-        tracing::info!("Redis 已启用，验证码/在线用户/限流器将使用 Redis 存储");
-    } else {
-        tracing::info!("Redis 未配置或不可用，使用内存模式");
-    }
 
     // 7.cc 创建 OnlineUserService（Redis 或内存模式）
     let online_user_service = if let Some(ref redis) = redis_client {
@@ -286,11 +314,14 @@ async fn main() -> Result<(), AppError> {
         online_user_service,
         captcha_store,
         scheduler: scheduler.clone(),
-        monitor_db: db,
+        monitor_db: db.clone(),
+        redis: redis_client.clone(),
+        replica_dbs,
     };
     let router = app::build_app(state, limiter, &config.cors);
 
     // 11. 启动 scheduler 后台
+    let scheduler_for_shutdown = scheduler.clone();
     scheduler.spawn();
     tracing::info!("TaskScheduler 已启动");
 
@@ -301,10 +332,18 @@ async fn main() -> Result<(), AppError> {
 
     tracing::info!("服务启动: http://{}", addr);
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| AppError::Internal(format!("服务异常退出: {}", e)))
+    // 使用 tokio::select 同时等待服务和停机信号
+    tokio::select! {
+        result = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal()) => {
+            result.map_err(|e| AppError::Internal(format!("服务异常退出: {}", e)))?;
+        }
+    }
+
+    // 优雅关闭：停止定时任务调度器
+    scheduler_for_shutdown.shutdown();
+    tracing::info!("服务已停止");
+
+    Ok(())
 }
 
 /// 优雅停机信号

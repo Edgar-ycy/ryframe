@@ -12,14 +12,14 @@ ryframe-common = { path = "../ryframe-common" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-core = { path = "../ryframe-core" }
 axum = { workspace = true }
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "compression-br"] }
-tower = "0.5"
+tower-http = { workspace = true, features = ["cors", "trace", "compression-gzip", "compression-br"] }
+tower = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["v7"] }
-http = "1"
+http = { workspace = true }
 bytes = { workspace = true }
-ammonia = "4"
-dashmap = "6"
+ammonia = { workspace = true }
+dashmap = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 redis = { workspace = true }

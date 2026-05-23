@@ -111,4 +111,18 @@ impl OperLogServiceImpl {
     pub async fn clean(&self, db: &DatabaseConnection) -> AppResult<u64> {
         self.oper_log_repo.clean_all(db).await
     }
+
+    /// 导出操作日志（带过滤条件，返回全部匹配结果）
+    pub async fn find_all_filtered(
+        &self,
+        db: &DatabaseConnection,
+        oper_name: Option<&str>,
+        status: Option<String>,
+        begin_time: Option<&str>,
+        end_time: Option<&str>,
+    ) -> AppResult<Vec<OperLogVo>> {
+        let query = PageQuery { page: 1, page_size: 10000 };
+        let result = self.find_by_page(db, query, oper_name, status, begin_time, end_time).await?;
+        Ok(result.records)
+    }
 }

@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct CreateUserDto {
     #[validate(length(min = 1, max = 50, message = "用户名长度1-50"))]
     pub username: String,
@@ -14,7 +15,7 @@ pub struct CreateUserDto {
     pub role_ids: Option<Vec<i64>>,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct UpdateUserDto {
     #[validate(length(min = 1, message = "昵称不能为空"))]
     pub nickname: String,
@@ -25,8 +26,15 @@ pub struct UpdateUserDto {
     pub role_ids: Option<Vec<i64>>,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct ResetPasswordDto {
     #[validate(length(min = 6, max = 100, message = "密码长度6-100"))]
     pub password: String,
+}
+
+/// 修改用户状态请求
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ChangeStatusDto {
+    pub user_id: i64,
+    pub status: String,
 }

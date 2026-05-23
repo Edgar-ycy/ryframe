@@ -6,9 +6,11 @@ use axum::{
 use ryframe_common::AppResult;
 use ryframe_core::repository::PageQuery;
 use ryframe_core::Repository;
-use ryframe_service::system::{JobLogVo, JobVo, UpdateJobDto};
+use ryframe_service::system::{JobLogVo, JobVo};
 use serde::Deserialize;
+use validator::Validate;
 
+use crate::dto::job_dto::{CreateJobDto, UpdateJobDto};
 use crate::handlers::auth_handler::AppState;
 
 /// 任务日志分页查询参数
@@ -28,8 +30,8 @@ fn default_page_size() -> u64 {
 
 pub fn job_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/{id}", put(update))
+        .route("/", get(list).post(create_job))
+        .route("/{id}", put(update).delete(remove))
         .route("/{id}/pause", post(pause_job))
         .route("/{id}/resume", post(resume_job))
         .route("/{id}/trigger", post(trigger))
@@ -37,7 +39,44 @@ pub fn job_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// 新建任务
+/// 创建定时任务
+#[utoipa::path(post, path = "/api/v1/system/jobs", tag = "定时任务",
+    request_body = CreateJobDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
+async fn create_job(
+    State(state): State<AppState>,
+    Json(dto): Json<CreateJobDto>,
+) -> AppResult<Json<JobVo>> {
+    dto.validate()
+        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    let job = state
+        .job_service
+        .create(
+            &state.db,
+            &dto.name,
+            &dto.cron_expr,
+            dto.group_name.as_deref(),
+            dto.misfire_policy.as_deref(),
+            dto.concurrent.as_deref(),
+            dto.remark.as_deref(),
+        )
+        .await?;
+    Ok(Json(job))
+}
+
+/// 删除任务
+async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    state.job_service.delete(&state.db, id).await?;
+    Ok(Json(serde_json::json!({"message": "删除成功"})))
+}
+
 /// 列出全部任务
+/// 任务列表
+#[utoipa::path(get, path = "/api/v1/system/jobs", tag = "定时任务",
+    responses((status = 200, description = "任务列表")), security(("bearer" = [])))]
 async fn list(
     State(state): State<AppState>,
 ) -> AppResult<Json<Vec<JobVo>>> {
@@ -51,11 +90,14 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateJobDto>,
 ) -> AppResult<Json<serde_json::Value>> {
-    state.job_service.update(&state.db, id, dto).await?;
+    state.job_service.update(&state.db, id, dto.cron_expr, dto.status, dto.remark).await?;
     Ok(Json(serde_json::json!({"message": "更新成功"})))
 }
 
 /// 暂停任务
+/// 暂停任务
+#[utoipa::path(post, path = "/api/v1/system/jobs/{id}/pause", tag = "定时任务",
+    params(("id" = i64, Path)), responses((status = 200, description = "暂停成功")), security(("bearer" = [])))]
 async fn pause_job(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -65,6 +107,9 @@ async fn pause_job(
 }
 
 /// 恢复任务
+/// 恢复任务
+#[utoipa::path(post, path = "/api/v1/system/jobs/{id}/resume", tag = "定时任务",
+    params(("id" = i64, Path)), responses((status = 200, description = "恢复成功")), security(("bearer" = [])))]
 async fn resume_job(
     State(state): State<AppState>,
     Path(id): Path<i64>,

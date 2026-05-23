@@ -11,5 +11,4 @@ pub mod oper_log_dto;
 pub mod login_log_dto;
 pub mod job_dto;
 pub mod profile_dto;
-pub mod online_user_dto;
 pub mod user_import_dto;

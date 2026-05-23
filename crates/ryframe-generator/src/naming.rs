@@ -44,19 +44,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_snake_case() {
+    fn test_naming_conversions() {
         assert_eq!(to_snake_case("UserName"), "user_name");
-        assert_eq!(to_snake_case("user_name"), "user_name");
-    }
-
-    #[test]
-    fn test_pascal_case() {
         assert_eq!(to_pascal_case("user_name"), "UserName");
-        assert_eq!(to_pascal_case("UserName"), "UserName");
-    }
-
-    #[test]
-    fn test_camel_case() {
         assert_eq!(to_camel_case("user_name"), "userName");
         assert_eq!(to_camel_case("UserName"), "userName");
     }

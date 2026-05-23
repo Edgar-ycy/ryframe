@@ -108,4 +108,34 @@ impl JobRepository {
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
+
+    /// 更新 cron 表达式（同时更新状态和备注）
+    pub async fn update_cron(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+        cron_expr: Option<String>,
+        status: Option<String>,
+        remark: Option<String>,
+    ) -> AppResult<()> {
+        let mut active = job::ActiveModel {
+            id: sea_orm::ActiveValue::Unchanged(id),
+            update_time: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+            ..Default::default()
+        };
+        if let Some(cron) = cron_expr {
+            active.cron_expr = sea_orm::ActiveValue::Set(cron);
+        }
+        if let Some(s) = status {
+            active.status = sea_orm::ActiveValue::Set(s);
+        }
+        if let Some(r) = remark {
+            active.remark = sea_orm::ActiveValue::Set(Some(r));
+        }
+        active
+            .update(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
 }

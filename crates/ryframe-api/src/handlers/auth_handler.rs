@@ -3,7 +3,7 @@ use axum::http::HeaderMap;
 use ryframe_auth::jwt::Claims;
 use ryframe_common::AppResult;
 use ryframe_config::AppConfig;
-use ryframe_core::AppContext;
+use ryframe_core::RedisClient;
 use ryframe_service::system::{
     ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
     JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
@@ -23,7 +23,7 @@ use crate::handlers::captcha_handler::CaptchaStore;
 pub struct AppState {
     pub db: DatabaseConnection,
     pub config: Arc<AppConfig>,
-    pub context: AppContext,
+    pub context: ryframe_core::AppContext,
     pub auth_service: Arc<AuthServiceImpl>,
     pub user_service: Arc<UserServiceImpl>,
     pub role_service: Arc<RoleServiceImpl>,
@@ -43,6 +43,9 @@ pub struct AppState {
     pub captcha_store: CaptchaStore,
     pub scheduler: Arc<ryframe_task::TaskScheduler>,
     pub monitor_db: DatabaseConnection,
+    pub redis: Option<RedisClient>,
+    /// 从库连接池列表（用于读写分离的读操作）
+    pub replica_dbs: Vec<DatabaseConnection>,
 }
 
 /// 用户登录

@@ -12,6 +12,7 @@ pub struct Model {
     pub code: String,
     pub status: String,
     pub remark: Option<String>,
+    pub del_flag: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -19,6 +20,9 @@ pub struct Model {
 impl Model {
     pub const STATUS_DISABLED: &str = "0";
     pub const STATUS_NORMAL: &str = "1";
+
+    pub const DEL_FLAG_NORMAL: &str = "0";
+    pub const DEL_FLAG_DELETED: &str = "2";
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

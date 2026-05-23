@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::entities::menu;
 
@@ -25,11 +25,11 @@ pub struct MenuRepository;
 #[async_trait]
 impl Repository<menu::Model, i64> for MenuRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<menu::Model>> {
-        menu::Entity::find_by_id(id).one(db).await.map_err(|e| AppError::Database(e.to_string()))
+        menu::Entity::find_by_id(id).filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL)).one(db).await.map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn find_by_page(&self, db: &DatabaseConnection, query: PageQuery) -> AppResult<PageResult<menu::Model>> {
-        crate::pagination::paginate(db, menu::Entity::find(), &query).await
+        crate::pagination::paginate(db, menu::Entity::find().filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL)), &query).await
     }
 
     async fn insert(&self, db: &DatabaseConnection, entity: menu::Model) -> AppResult<menu::Model> {
@@ -43,7 +43,13 @@ impl Repository<menu::Model, i64> for MenuRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        menu::Entity::delete_by_id(id).exec(db).await.map_err(|e| AppError::Database(e.to_string()))?;
+        let active = menu::ActiveModel {
+            id: ActiveValue::Unchanged(id),
+            del_flag: ActiveValue::Set(menu::Model::DEL_FLAG_DELETED.to_string()),
+            updated_at: ActiveValue::Set(chrono::Utc::now()),
+            ..Default::default()
+        };
+        active.update(db).await.map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 }
@@ -52,6 +58,7 @@ impl MenuRepository {
     /// 查询菜单树
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
         let all = menu::Entity::find()
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
@@ -78,10 +85,29 @@ impl MenuRepository {
         menu::Entity::find()
             .filter(menu::Column::Id.is_in(menu_ids))
             .filter(menu::Column::Status.eq(menu::Model::STATUS_NORMAL))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
+    }
+    /// 带搜索条件的查询（返回全部，用于列表/搜索）
+    pub async fn find_filtered(
+        &self,
+        db: &DatabaseConnection,
+        name: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<Vec<menu::Model>> {
+        let mut select = menu::Entity::find()
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL));
+        if let Some(n) = name.filter(|n| !n.is_empty()) {
+            select = select.filter(menu::Column::Name.like(format!("%{}%", n)));
+        }
+        if let Some(s) = status.filter(|s| !s.is_empty()) {
+            select = select.filter(menu::Column::Status.eq(s));
+        }
+        select = select.order_by_asc(menu::Column::Sort);
+        select.all(db).await.map_err(|e| AppError::Database(e.to_string()))
     }
 }
 

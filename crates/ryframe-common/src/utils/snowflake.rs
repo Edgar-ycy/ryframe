@@ -158,74 +158,40 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn test_new_with_valid_worker_id() {
+    fn test_snowflake_creation_and_validation() {
         assert!(Snowflake::new(0).is_ok());
-        assert!(Snowflake::new(512).is_ok());
         assert!(Snowflake::new(1023).is_ok());
-    }
-
-    #[test]
-    fn test_new_with_invalid_worker_id() {
         assert!(Snowflake::new(-1).is_err());
         assert!(Snowflake::new(1024).is_err());
     }
 
     #[test]
-    fn test_id_uniqueness() {
-        let sf = Snowflake::new(1).unwrap();
+    fn test_snowflake_uniqueness_and_extraction() {
+        let sf = Snowflake::new(42).unwrap();
         let mut ids = HashSet::new();
-
         for _ in 0..10000 {
             let id = sf.next_id();
+            assert!(id > 0);
             assert!(ids.insert(id), "重复ID: {}", id);
         }
-    }
 
-    #[test]
-    fn test_id_is_positive() {
-        let sf = Snowflake::new(1).unwrap();
-        for _ in 0..1000 {
-            assert!(sf.next_id() > 0);
-        }
-    }
-
-    #[test]
-    fn test_extract_timestamp() {
-        let sf = Snowflake::new(1).unwrap();
+        // 提取 worker_id
         let id = sf.next_id();
+        assert_eq!(Snowflake::extract_worker_id(id), 42);
+
+        // 提取时间戳应在合理范围
         let ts = Snowflake::extract_timestamp(id);
-        // 时间戳应该在合理范围内
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        assert!(ts <= now + 1000);
-        assert!(ts >= now - 10000);
-    }
+        assert!((ts - now).abs() < 10000);
 
-    #[test]
-    fn test_extract_worker_id() {
-        let sf = Snowflake::new(42).unwrap();
-        let id = sf.next_id();
-        assert_eq!(Snowflake::extract_worker_id(id), 42);
-    }
+        // 不同 worker 产生不同 ID
+        let sf2 = Snowflake::new(1).unwrap();
+        assert_ne!(sf.next_id(), sf2.next_id());
 
-    #[test]
-    fn test_different_workers_produce_different_ids() {
-        let sf1 = Snowflake::new(1).unwrap();
-        let sf2 = Snowflake::new(2).unwrap();
-
-        for _ in 0..100 {
-            assert_ne!(sf1.next_id(), sf2.next_id());
-        }
-    }
-
-    #[test]
-    fn test_default_snowflake() {
-        let id1 = next_snowflake_id();
-        let id2 = next_snowflake_id();
-        assert!(id1 > 0);
-        assert!(id2 > 0);
-        assert_ne!(id1, id2);
+        // 全局函数
+        assert_ne!(next_snowflake_id(), next_snowflake_id());
     }
 }

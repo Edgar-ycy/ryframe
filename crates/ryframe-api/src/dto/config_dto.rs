@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct CreateConfigDto {
     #[validate(length(min = 1, max = 100, message = "参数名称长度为1-100"))]
     pub name: String,
@@ -11,7 +12,7 @@ pub struct CreateConfigDto {
     pub remark: Option<String>,
 }
 
-#[derive(Debug, Deserialize, validator::Validate)]
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 pub struct UpdateConfigDto {
     #[validate(length(min = 1, message = "配置值不能为空"))]
     pub value: String,

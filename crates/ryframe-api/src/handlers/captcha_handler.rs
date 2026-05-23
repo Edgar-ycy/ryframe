@@ -64,7 +64,7 @@ pub(crate) struct CaptchaEntry {
 pub enum CaptchaStore {
     /// Redis 存储（生产推荐）
     Redis {
-        client: RedisClient,
+        client: Box<RedisClient>,
         ttl_secs: u64,
     },
     /// 内存存储（开发/降级模式）
@@ -77,7 +77,7 @@ pub enum CaptchaStore {
 impl CaptchaStore {
     /// 创建 Redis 模式的验证码存储
     pub fn new_redis(client: RedisClient, ttl_secs: u64) -> Self {
-        Self::Redis { client, ttl_secs }
+        Self::Redis { client: Box::new(client), ttl_secs }
     }
 
     /// 创建内存模式的验证码存储，指定 TTL（秒）

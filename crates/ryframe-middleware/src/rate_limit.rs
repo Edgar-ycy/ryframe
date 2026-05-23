@@ -28,7 +28,7 @@ pub(crate) struct Bucket {
 pub enum RateLimiter {
     /// Redis 限流（生产推荐）
     Redis {
-        client: RedisClient,
+        client: Box<RedisClient>,
         capacity: u32,
         /// 窗口时长（秒）
         window_secs: u64,
@@ -51,7 +51,7 @@ impl RateLimiter {
     /// `window_secs`：固定窗口时长（秒），每个窗口内最多 `capacity` 次请求
     pub fn new_redis(client: RedisClient, capacity: u32, window_secs: u64) -> Self {
         Self::Redis {
-            client,
+            client: Box::new(client),
             capacity,
             window_secs,
         }
@@ -170,34 +170,27 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_rate_limiter_basic() {
+    async fn test_rate_limiter() {
+        // 基本限流：容量 3，前 3 次通过，第 4 次拒绝
         let limiter = RateLimiter::new_in_memory(3, 1);
-        // 容量为 3，前 3 次应该通过
         assert!(limiter.try_acquire("test").await);
         assert!(limiter.try_acquire("test").await);
         assert!(limiter.try_acquire("test").await);
-        // 第 4 次应该被拒绝
         assert!(!limiter.try_acquire("test").await);
-    }
 
-    #[tokio::test]
-    async fn test_rate_limiter_different_keys() {
-        let limiter = RateLimiter::new_in_memory(1, 1);
-        assert!(limiter.try_acquire("user_a").await);
-        assert!(!limiter.try_acquire("user_a").await); // 耗尽
-        assert!(limiter.try_acquire("user_b").await); // 不同 key，不受影响
-    }
+        // 不同 key 独立
+        let limiter2 = RateLimiter::new_in_memory(1, 1);
+        assert!(limiter2.try_acquire("a").await);
+        assert!(!limiter2.try_acquire("a").await);
+        assert!(limiter2.try_acquire("b").await);
 
-    #[tokio::test]
-    async fn test_rate_limiter_refill() {
-        let limiter = RateLimiter::new_in_memory(2, 100); // 每秒补充 100 个令牌
-        assert!(limiter.try_acquire("test").await);
-        assert!(limiter.try_acquire("test").await);
-        assert!(!limiter.try_acquire("test").await); // 耗尽
-
-        // 等待补充
+        // 令牌补充
+        let limiter3 = RateLimiter::new_in_memory(2, 100);
+        assert!(limiter3.try_acquire("test").await);
+        assert!(limiter3.try_acquire("test").await);
+        assert!(!limiter3.try_acquire("test").await);
         tokio::time::sleep(Duration::from_millis(20)).await;
-        assert!(limiter.try_acquire("test").await); // 已补充
+        assert!(limiter3.try_acquire("test").await);
     }
 
     #[tokio::test]
@@ -205,6 +198,5 @@ mod tests {
         let limiter = Arc::new(RateLimiter::new_in_memory(10, 1));
         limiter.try_acquire("key1").await;
         limiter.spawn_gc();
-        // 只是验证 spawn_gc 不会 panic
     }
 }

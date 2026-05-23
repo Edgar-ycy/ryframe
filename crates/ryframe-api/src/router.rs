@@ -1,7 +1,7 @@
 use axum::{
     middleware,
     routing::{get, post},
-    Extension, Router,
+    Extension, Router, Json,
 };
 use axum::extract::State;
 use axum::middleware::{from_fn_with_state, Next};
@@ -10,8 +10,10 @@ use axum::response::Response;
 use ryframe_auth::jwt::Claims;
 use ryframe_service::system::OnlineUserServiceImpl;
 use std::sync::Arc;
+use serde_json::json;
 
 use crate::handlers::{auth_handler::{self, AppState}, user_handler, role_handler, permission_handler, menu_handler, dept_handler, post_handler, config_handler, dict_handler, notice_handler, oper_log_handler, login_log_handler, job_handler, generator_handler, common_handler, captcha_handler, profile_handler, online_user_handler};
+use crate::oper_log_middleware::{oper_log_middleware, OperLogMiddlewareState};
 
 /// 在线用户跟踪中间件
 ///
@@ -46,10 +48,28 @@ pub fn auth_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// API 版本信息
+async fn api_version() -> Json<serde_json::Value> {
+    Json(json!({
+        "name": env!("CARGO_PKG_NAME"),
+        "version": env!("CARGO_PKG_VERSION"),
+        "api_prefix": "/api/v1",
+        "endpoints": {
+            "auth": "/api/v1/auth",
+            "system": "/api/v1/system",
+            "monitor": "/api/v1/monitor",
+            "tools": "/api/v1/tools",
+            "common": "/api/v1/common",
+            "openapi": "/api/v1/api-docs/openapi.json"
+        }
+    }))
+}
+
 /// API 总路由
 pub fn api_router(state: AppState) -> Router {
     let monitor_state = ryframe_monitor::MonitorState {
         db: state.monitor_db.clone(),
+        redis: state.redis.clone(),
     };
 
     Router::new()
@@ -58,6 +78,8 @@ pub fn api_router(state: AppState) -> Router {
         .nest("/monitor", ryframe_monitor::monitor_router(monitor_state))
         .nest("/tools", tools_router(state.clone()))
         .nest("/common", common_router(state.clone()))
+        // API 版本信息端点
+        .route("/version", get(api_version))
         // OpenAPI JSON 文档: /api-docs/openapi.json
         // 可使用 https://editor.swagger.io/ 导入查看
         .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
@@ -79,6 +101,12 @@ fn system_router(state: AppState) -> Router {
         .nest("/loginlogs", login_log_handler::login_log_router(state.clone()))
         .nest("/jobs", job_handler::job_router(state.clone()))
         .nest("/online", online_user_handler::online_user_router(state.clone()))
+        .layer(from_fn_with_state(
+            Arc::new(OperLogMiddlewareState {
+                db: state.db.clone(),
+            }),
+            oper_log_middleware,
+        ))
         .layer(from_fn_with_state(
             state.online_user_service.clone(),
             online_user_tracking,

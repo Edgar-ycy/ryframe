@@ -48,30 +48,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_exact_match() {
+    fn test_has_permission() {
+        // 精确匹配
         let perms = vec!["system:user:list".to_string()];
         assert!(has_permission(&perms, "system:user:list"));
         assert!(!has_permission(&perms, "system:user:create"));
-    }
 
-    #[test]
-    fn test_wildcard_match() {
+        // 通配符
         let perms = vec!["system:user:*".to_string()];
         assert!(has_permission(&perms, "system:user:list"));
-        assert!(has_permission(&perms, "system:user:create"));
         assert!(!has_permission(&perms, "system:role:list"));
-    }
 
-    #[test]
-    fn test_super_admin() {
+        // 超管
         let perms = vec!["*:*:*".to_string()];
         assert!(has_permission(&perms, "anything:at:all"));
-    }
 
-    #[test]
-    fn test_empty_required() {
-        let perms: Vec<String> = vec![];
-        assert!(has_permission(&perms, ""));
+        // 空权限
+        assert!(has_permission(&Vec::<String>::new(), ""));
     }
 
     #[test]

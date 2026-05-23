@@ -59,6 +59,7 @@ impl NoticeServiceImpl {
             r#type: notice_type.map(|s| s.to_string()),
             status: notice::Model::STATUS_PUBLISHED.to_string(),
             created_by,
+            del_flag: notice::Model::DEL_FLAG_NORMAL.to_string(),
             created_at: now,
             updated_at: now,
         };
@@ -84,4 +85,19 @@ impl NoticeServiceImpl {
             .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
         self.notice_repo.delete(db, id).await
     }
+
+    /// 带搜索条件的分页查询
+    pub async fn find_by_page_filtered(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+        title: Option<&str>,
+        notice_type: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<PageResult<NoticeVo>> {
+        let page = self.notice_repo.find_by_page_filtered(db, query.clone(), title, notice_type, status).await?;
+        let records = page.records.into_iter().map(NoticeVo::from).collect();
+        Ok(PageResult::new(records, page.total, &query))
+    }
 }
+

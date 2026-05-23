@@ -26,6 +26,11 @@ tokio = { workspace = true, features = ["fs"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
 base64 = { workspace = true }
-regex = "1"
+regex = { workspace = true }
 utoipa = { workspace = true }
 tracing = { workspace = true }
+http-body-util = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+sea-orm-migration = { workspace = true }

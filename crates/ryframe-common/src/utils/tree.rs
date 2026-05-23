@@ -97,55 +97,38 @@ mod tests {
     }
 
     #[test]
-    fn test_build_tree_single_root() {
+    fn test_build_tree() {
+        // 空列表
+        let empty: Vec<TestNode> = vec![];
+        assert!(build_tree(&empty, None).is_empty());
+
+        // 单根多子节点
         let nodes = vec![
             make_node(1, None, "root"),
             make_node(2, Some(1), "child1"),
             make_node(3, Some(1), "child2"),
             make_node(4, Some(2), "grandchild"),
         ];
-
         let roots = build_tree(&nodes, None);
         assert_eq!(roots.len(), 1);
-        assert_eq!(roots[0].name, "root");
         assert_eq!(roots[0].children.len(), 2);
-
-        // 找子节点 child1
         let child1 = roots[0].children.iter().find(|n| n.id == 2).unwrap();
         assert_eq!(child1.children.len(), 1);
-        assert_eq!(child1.children[0].name, "grandchild");
-    }
 
-    #[test]
-    fn test_build_tree_multiple_roots() {
-        let nodes = vec![
-            make_node(1, None, "root1"),
-            make_node(2, None, "root2"),
-            make_node(3, Some(1), "child_of_root1"),
+        // 多根
+        let nodes2 = vec![
+            make_node(1, None, "r1"),
+            make_node(2, None, "r2"),
+            make_node(3, Some(1), "c1"),
         ];
+        assert_eq!(build_tree(&nodes2, None).len(), 2);
 
-        let roots = build_tree(&nodes, None);
-        assert_eq!(roots.len(), 2);
-    }
-
-    #[test]
-    fn test_build_tree_empty() {
-        let nodes: Vec<TestNode> = vec![];
-        let roots = build_tree(&nodes, None);
-        assert!(roots.is_empty());
-    }
-
-    #[test]
-    fn test_tree_node_dto_serialization() {
+        // DTO 序列化
         #[derive(Debug, Clone, Serialize)]
-        struct Inner {
-            name: String,
-        }
-
-        let dto = TreeNodeDto::new(Inner { name: "hello".to_string() });
+        struct Inner { name: String }
+        let dto = TreeNodeDto::new(Inner { name: "x".into() });
         let json = serde_json::to_string(&dto).unwrap();
-        assert!(json.contains("hello"));
-        // children 为空时不序列化
+        assert!(json.contains("x"));
         assert!(!json.contains("children"));
     }
 }

@@ -1,26 +1,56 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json;
 use axum::{extract::{Path, Query, State}, routing::{get, put}, Json, Router};
 use ryframe_common::AppResult;
+use ryframe_core::PageQuery;
 use ryframe_service::system::{DictDataVo, DictTypeVo};
 use validator::Validate;
 use crate::dto::dict_dto::{CreateDictDataDto, CreateDictTypeDto, UpdateDictDataDto, UpdateDictTypeDto};
 
 use super::auth_handler::AppState;
 
+/// 字典类型分页查询参数
+#[derive(Debug, Deserialize)]
+pub struct DictTypeListQuery {
+    #[serde(default)]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+    pub name: Option<String>,
+    pub code: Option<String>,
+    pub status: Option<String>,
+}
+
+fn default_page_size() -> u64 {
+    10
+}
+
 pub fn dict_router(state: AppState) -> Router {
     Router::new()
         .route("/types", get(list_types).post(create_type))
+        .route("/types/export", get(export_dict_types))
         .route("/types/{id}", put(update_type).delete(delete_type))
         .route("/data", get(list_data).post(create_data))
+        .route("/data/type/{dict_type}", get(list_data_by_type_path))
         .route("/data/{id}", put(update_data).delete(delete_data))
         .with_state(state)
 }
 
-async fn list_types(State(state): State<AppState>) -> AppResult<Json<Vec<DictTypeVo>>> {
-    state.dict_service.find_types(&state.db).await.map(Json)
+/// 字典类型列表
+#[utoipa::path(get, path = "/api/v1/system/dict/types", tag = "字典管理",
+    responses((status = 200, description = "字典类型列表")), security(("bearer" = [])))]
+async fn list_types(
+    State(state): State<AppState>,
+    Query(query): Query<DictTypeListQuery>,
+) -> AppResult<Json<ryframe_core::PageResult<DictTypeVo>>> {
+    let page_query = PageQuery { page: query.page, page_size: query.page_size };
+    let page_result = state.dict_service.find_types_by_page(&state.db, page_query).await?;
+    Ok(Json(page_result))
 }
 
+/// 创建字典类型
+#[utoipa::path(post, path = "/api/v1/system/dict/types", tag = "字典管理",
+    request_body = CreateDictTypeDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create_type(State(state): State<AppState>, Json(dto): Json<CreateDictTypeDto>) -> AppResult<Json<DictTypeVo>> {
     dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state.dict_service.create_type(&state.db, &dto.name, &dto.code).await.map(Json)
@@ -45,6 +75,35 @@ async fn list_data(State(state): State<AppState>, Query(query): Query<ListDataQu
     state.dict_service.find_data_by_type(&state.db, &query.type_code).await.map(Json)
 }
 
+/// 通过字典类型编码查询字典数据
+/// 查询字典数据
+#[utoipa::path(get, path = "/api/v1/system/dict/data/type/{dict_type}", tag = "字典管理",
+    params(("dict_type" = String, Path)), responses((status = 200, description = "字典数据")), security(("bearer" = [])))]
+async fn list_data_by_type_path(
+    State(state): State<AppState>,
+    Path(dict_type): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let data = state.dict_service.find_data_by_type(&state.db, &dict_type).await?;
+    let items: Vec<serde_json::Value> = data
+        .into_iter()
+        .map(|d| {
+            serde_json::json!({
+                "dictLabel": d.label,
+                "dictValue": d.value,
+                "cssClass": d.css_class,
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "code": 200,
+        "msg": "操作成功",
+        "data": items
+    })))
+}
+
+/// 创建字典数据
+#[utoipa::path(post, path = "/api/v1/system/dict/data", tag = "字典管理",
+    request_body = CreateDictDataDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create_data(State(state): State<AppState>, Json(dto): Json<CreateDictDataDto>) -> AppResult<Json<DictDataVo>> {
     dto.validate().map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state.dict_service.create_data(&state.db, &dto.type_code, &dto.label, &dto.value, dto.sort.unwrap_or(0)).await.map(Json)
@@ -58,4 +117,61 @@ async fn update_data(State(state): State<AppState>, Path(id): Path<i64>, Json(dt
 async fn delete_data(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<serde_json::Value>> {
     state.dict_service.delete_data(&state.db, id).await?;
     Ok(Json(serde_json::json!({"message": "删除成功"})))
+}
+
+/// 字典类型导出数据
+#[derive(Debug, Serialize)]
+struct DictTypeExportData {
+    pub name: String,
+    pub code: String,
+    pub status: String,
+    pub remark: Option<String>,
+    pub created_at: String,
+}
+
+impl DictTypeExportData {
+    fn excel_headers() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("name", "字典名称"),
+            ("code", "字典类型"),
+            ("status", "状态"),
+            ("remark", "备注"),
+            ("created_at", "创建时间"),
+        ]
+    }
+}
+
+/// 导出字典类型
+async fn export_dict_types(
+    State(state): State<AppState>,
+) -> AppResult<axum::response::Response> {
+    use ryframe_common::utils::ExcelExporter;
+
+    let query = PageQuery { page: 1, page_size: 10000 };
+    let page_result = state.dict_service.find_types_by_page(&state.db, query).await?;
+    let export_data: Vec<DictTypeExportData> = page_result.records
+        .into_iter()
+        .map(|t| DictTypeExportData {
+            name: t.name,
+            code: t.code,
+            status: t.status,
+            remark: t.remark,
+            created_at: t.created_at.to_rfc3339(),
+        })
+        .collect();
+
+    let bytes = ExcelExporter::export_to_bytes(
+        &export_data,
+        "字典类型",
+        &DictTypeExportData::excel_headers(),
+    )?;
+
+    let response = axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .header("Content-Disposition", "attachment; filename=dict_types.xlsx")
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
+
+    Ok(response)
 }

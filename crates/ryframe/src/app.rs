@@ -22,7 +22,11 @@ pub fn build_app(state: ryframe_api::AppState, limiter: Arc<ryframe_middleware::
                 ryframe_middleware::rate_limit_middleware,
             ),
         )
-        // 2. 请求超时 (30秒)
+        // 2. 请求体大小限制 (10MB)
+        .layer(axum::middleware::from_fn(
+            ryframe_middleware::body_limit_middleware,
+        ))
+        // 3. 请求超时 (30秒)
         .layer(axum::middleware::from_fn(
             ryframe_middleware::timeout_middleware,
         ))

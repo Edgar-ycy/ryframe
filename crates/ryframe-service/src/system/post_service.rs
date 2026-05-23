@@ -70,6 +70,7 @@ impl PostServiceImpl {
             sort,
             status: "1".to_string(),
             remark: None,
+            del_flag: post::Model::DEL_FLAG_NORMAL.to_string(),
             created_at: now,
             updated_at: now,
         };
@@ -102,4 +103,25 @@ impl PostServiceImpl {
             .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
         self.post_repo.delete(db, id).await
     }
+
+    /// 带搜索条件的分页查询
+    pub async fn find_by_page_filtered(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+        name: Option<&str>,
+        code: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<PageResult<PostVo>> {
+        let page = self.post_repo.find_by_page_filtered(db, query.clone(), name, code, status).await?;
+        let records = page.records.into_iter().map(PostVo::from).collect();
+        Ok(PageResult::new(records, page.total, &query))
+    }
+
+    /// 查询所有岗位（用于导出）
+    pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<PostVo>> {
+        let models = self.post_repo.find_all(db).await?;
+        Ok(models.into_iter().map(PostVo::from).collect())
+    }
 }
+

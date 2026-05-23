@@ -46,6 +46,7 @@ impl MenuServiceImpl {
             sort,
             visible,
             status: menu::Model::STATUS_NORMAL.to_string(),
+            del_flag: menu::Model::DEL_FLAG_NORMAL.to_string(),
             created_at: now,
             updated_at: now,
         };
@@ -87,4 +88,20 @@ impl MenuServiceImpl {
             .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
         self.menu_repo.delete(db, id).await
     }
+
+    /// 按名称/状态搜索菜单列表（返回平铺列表）
+    pub async fn find_filtered(
+        &self,
+        db: &DatabaseConnection,
+        name: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<Vec<menu::Model>> {
+        self.menu_repo.find_filtered(db, name, status).await
+    }
+
+    /// 按 ID 查询菜单详情
+    pub async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<menu::Model>> {
+        self.menu_repo.find_by_id(db, id).await
+    }
 }
+

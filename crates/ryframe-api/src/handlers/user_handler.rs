@@ -1,33 +1,57 @@
+use serde::Deserialize;
 use serde_json;
-use axum::{extract::{Path, Query, State}, routing::{get, post, put}, Extension, Json, Router};
+use axum::{extract::{Path, Query, State}, routing::{delete, get, post, put}, Extension, Json, Router};
 use axum::extract::Multipart;
 use ryframe_auth::jwt::Claims;
 use ryframe_common::AppResult;
 use ryframe_core::{PageQuery, Repository};
-use ryframe_service::system::UserVo;
+use ryframe_service::system::{UserVo, UserDetailVo};
 use validator::Validate;
-use crate::dto::user_dto::{CreateUserDto, ResetPasswordDto, UpdateUserDto};
+use crate::dto::user_dto::{ChangeStatusDto, CreateUserDto, ResetPasswordDto, UpdateUserDto};
 use crate::dto::user_import_dto::{UserImportData, UserExportData};
 
 use super::auth_handler::AppState;
 
+/// 用户列表分页查询参数（支持搜索过滤）
+#[derive(Debug, Deserialize)]
+pub struct UserListQuery {
+    #[serde(default)]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+    pub username: Option<String>,
+    pub phone: Option<String>,
+    pub status: Option<String>,
+    pub dept_id: Option<i64>,
+}
+
+fn default_page_size() -> u64 {
+    10
+}
+
 pub fn user_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list).post(create))
-        .route("/{id}", get(detail).put(update).delete(remove))
+        .route("/{id}", get(detail).put(update))
+        .route("/batch/{ids}", delete(batch_remove))
+        .route("/{id}", delete(remove))
         .route("/{id}/password", put(reset_password))
+        .route("/changeStatus", put(change_status))
         .route("/export", get(export_users))
         .route("/import", post(import_users))
         .route("/import-template", get(download_import_template))
         .with_state(state)
 }
 
+/// 用户列表分页查询
+#[utoipa::path(get, path = "/api/v1/system/users", tag = "用户管理",
+    responses((status = 200, description = "用户列表")),
+    security(("bearer" = [])))]
 async fn list(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
-    Query(query): Query<PageQuery>,
+    Query(query): Query<UserListQuery>,
 ) -> AppResult<Json<ryframe_core::PageResult<UserVo>>> {
-    // 构建数据权限上下文
     let user_id = claims.sub.parse::<i64>()
         .map_err(|_| ryframe_common::AppError::Authentication("令牌无效".into()))?;
 
@@ -43,22 +67,52 @@ async fn list(
         .build_data_scope_context(&state.db, user_id, user.dept_id, &roles)
         .await?;
 
-    state.user_service
-        .find_by_page_with_data_scope(&state.db, query, &scope_ctx)
-        .await
-        .map(Json)
+    let page_query = PageQuery { page: query.page, page_size: query.page_size };
+
+    // 如果有搜索条件，使用 filtered 版本；否则用 data_scope 版本
+    let has_filter = query.username.is_some() || query.phone.is_some() 
+        || query.status.is_some() || query.dept_id.is_some();
+
+    if has_filter {
+        state.user_service
+            .find_by_page_filtered(
+                &state.db,
+                page_query,
+                query.username.as_deref(),
+                query.phone.as_deref(),
+                query.status.as_deref(),
+                query.dept_id,
+            )
+            .await
+            .map(Json)
+    } else {
+        state.user_service
+            .find_by_page_with_data_scope(&state.db, page_query, &scope_ctx)
+            .await
+            .map(Json)
+    }
 }
 
+/// 用户详情
+#[utoipa::path(get, path = "/api/v1/system/users/{id}", tag = "用户管理",
+    params(("id" = i64, Path, description = "用户ID")),
+    responses((status = 200, description = "用户详情")),
+    security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<UserVo>> {
-    match state.user_service.find_by_id(&state.db, id).await? {
+) -> AppResult<Json<UserDetailVo>> {
+    match state.user_service.find_by_id_with_roles(&state.db, id).await? {
         Some(user) => Ok(Json(user)),
         None => Err(ryframe_common::AppError::NotFound("用户不存在".into())),
     }
 }
 
+/// 创建用户
+#[utoipa::path(post, path = "/api/v1/system/users", tag = "用户管理",
+    request_body = CreateUserDto,
+    responses((status = 200, description = "创建成功")),
+    security(("bearer" = [])))]
 async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateUserDto>,
@@ -72,6 +126,12 @@ async fn create(
     ).await.map(Json)
 }
 
+/// 更新用户
+#[utoipa::path(put, path = "/api/v1/system/users/{id}", tag = "用户管理",
+    params(("id" = i64, Path, description = "用户ID")),
+    request_body = UpdateUserDto,
+    responses((status = 200, description = "更新成功")),
+    security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -86,12 +146,44 @@ async fn update(
     ).await.map(Json)
 }
 
+/// 删除用户
+#[utoipa::path(delete, path = "/api/v1/system/users/{id}", tag = "用户管理",
+    params(("id" = i64, Path, description = "用户ID")),
+    responses((status = 200, description = "删除成功")),
+    security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     state.user_service.delete(&state.db, id).await?;
     Ok(Json(serde_json::json!({"message": "删除成功"})))
+}
+
+/// 批量删除用户
+async fn batch_remove(
+    State(state): State<AppState>,
+    Path(ids_str): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let ids: Vec<i64> = ids_str
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+
+    if ids.is_empty() {
+        return Err(ryframe_common::AppError::Validation("请选择要删除的用户".into()));
+    }
+
+    let count = state.user_service.delete_many(&state.db, &ids).await?;
+    Ok(Json(serde_json::json!({"message": format!("成功删除 {} 个用户", count)})))
+}
+
+/// 修改用户状态
+async fn change_status(
+    State(state): State<AppState>,
+    Json(dto): Json<ChangeStatusDto>,
+) -> AppResult<Json<serde_json::Value>> {
+    state.user_service.change_status(&state.db, dto.user_id, dto.status).await?;
+    Ok(Json(serde_json::json!({"message": "状态修改成功"})))
 }
 
 async fn reset_password(
