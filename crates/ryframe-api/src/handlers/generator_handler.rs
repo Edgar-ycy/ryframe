@@ -6,7 +6,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use ryframe_common::AppResult;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_generator::{GenerateOptions, GeneratedFile};
 use serde::Deserialize;
 
@@ -30,27 +30,27 @@ pub fn generator_router(state: AppState) -> Router {
 /// 列出数据库表
 async fn list_tables(
     State(state): State<AppState>,
-) -> AppResult<Json<Vec<ryframe_generator::TableInfo>>> {
+) -> AppResult<Json<ApiResponse<Vec<ryframe_generator::TableInfo>>>> {
     let tables = state.generator_service.list_tables(&state.db).await?;
-    Ok(Json(tables))
+    Ok(Json(ApiResponse::success(tables)))
 }
 
 /// 预览生成内容
 async fn preview(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptions>,
-) -> AppResult<Json<Vec<GeneratedFile>>> {
+) -> AppResult<Json<ApiResponse<Vec<GeneratedFile>>>> {
     let files = state.generator_service.preview(&state.db, opts).await?;
-    Ok(Json(files))
+    Ok(Json(ApiResponse::success(files)))
 }
 
 /// 写入磁盘
 async fn generate(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptions>,
-) -> AppResult<Json<Vec<String>>> {
+) -> AppResult<Json<ApiResponse<Vec<String>>>> {
     let written = state.generator_service.generate(&state.db, opts).await?;
-    Ok(Json(written))
+    Ok(Json(ApiResponse::success(written)))
 }
 
 /// 打包 zip 下载

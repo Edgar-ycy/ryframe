@@ -7,11 +7,10 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use ryframe_auth::jwt::Claims;
-use ryframe_common::AppResult;
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::{PageQuery, Repository};
 use ryframe_service::system::{UserDetailVo, UserVo};
 use serde::Deserialize;
-use serde_json;
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -21,7 +20,7 @@ use super::auth_handler::AppState;
 pub struct UserListQuery {
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
     pub username: Option<String>,
     pub phone: Option<String>,
@@ -36,6 +35,8 @@ fn default_page_size() -> u64 {
 pub fn user_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/list", get(list))
+        .route("/listNoPage", get(list_no_page))
         .route("/{id}", get(detail).put(update))
         .route("/batch/{ids}", delete(batch_remove))
         .route("/{id}", delete(remove))
@@ -55,7 +56,7 @@ async fn list(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Query(query): Query<UserListQuery>,
-) -> AppResult<Json<ryframe_core::PageResult<UserVo>>> {
+) -> AppResult<Json<ApiPageResponse<UserVo>>> {
     let user_id = claims
         .sub
         .parse::<i64>()
@@ -105,14 +106,26 @@ async fn list(
                 query.dept_id,
             )
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     } else {
         state
             .user_service
             .find_by_page_with_data_scope(&state.db, page_query, &scope_ctx)
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     }
+}
+
+/// 用户列表不分页查询（返回全部数据）
+async fn list_no_page(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<Vec<UserVo>>>> {
+    let page_query = PageQuery { page: 1, page_size: 10000 };
+    state
+        .user_service
+        .find_by_page(&state.db, page_query)
+        .await
+        .map(|p| Json(ApiResponse::success(p.records)))
 }
 
 /// 用户详情
@@ -123,13 +136,13 @@ async fn list(
 async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<UserDetailVo>> {
+) -> AppResult<Json<ApiResponse<UserDetailVo>>> {
     match state
         .user_service
         .find_by_id_with_roles(&state.db, id)
         .await?
     {
-        Some(user) => Ok(Json(user)),
+        Some(user) => Ok(Json(ApiResponse::success(user))),
         None => Err(ryframe_common::AppError::NotFound("用户不存在".into())),
     }
 }
@@ -142,7 +155,7 @@ async fn detail(
 async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateUserDto>,
-) -> AppResult<Json<UserVo>> {
+) -> AppResult<Json<ApiResponse<UserVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -158,7 +171,7 @@ async fn create(
             dto.role_ids,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 更新用户
@@ -171,7 +184,7 @@ async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateUserDto>,
-) -> AppResult<Json<UserVo>> {
+) -> AppResult<Json<ApiResponse<UserVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -187,7 +200,7 @@ async fn update(
             dto.role_ids,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 删除用户
@@ -198,16 +211,16 @@ async fn update(
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.user_service.delete(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 /// 批量删除用户
 async fn batch_remove(
     State(state): State<AppState>,
     Path(ids_str): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     let ids: Vec<i64> = ids_str
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
@@ -220,35 +233,36 @@ async fn batch_remove(
     }
 
     let count = state.user_service.delete_many(&state.db, &ids).await?;
-    Ok(Json(
-        serde_json::json!({"message": format!("成功删除 {} 个用户", count)}),
-    ))
+    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
+        "成功删除 {} 个用户",
+        count
+    ))))
 }
 
 /// 修改用户状态
 async fn change_status(
     State(state): State<AppState>,
     Json(dto): Json<ChangeStatusDto>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state
         .user_service
         .change_status(&state.db, dto.user_id, dto.status)
         .await?;
-    Ok(Json(serde_json::json!({"message": "状态修改成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("状态修改成功")))
 }
 
 async fn reset_password(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<ResetPasswordDto>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .user_service
         .reset_password(&state.db, id, &dto.password)
         .await?;
-    Ok(Json(serde_json::json!({"message": "密码重置成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("密码重置成功")))
 }
 
 /// 导出用户数据为 Excel
@@ -305,7 +319,7 @@ async fn export_users(
 async fn import_users(
     State(state): State<AppState>,
     mut multipart: Multipart,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     use ryframe_common::utils::ExcelImporter;
     use validator::Validate;
 
@@ -359,15 +373,11 @@ async fn import_users(
                 }
             }
 
-            return Ok(Json(serde_json::json!({
-                "code": 200,
-                "message": "导入完成",
-                "data": {
-                    "success_count": success_count,
-                    "fail_count": fail_count,
-                    "errors": errors
-                }
-            })));
+            return Ok(Json(ApiResponse::success_msg("导入完成", serde_json::json!({
+                "success_count": success_count,
+                "fail_count": fail_count,
+                "errors": errors
+            }))));
         }
     }
 

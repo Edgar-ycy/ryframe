@@ -1,5 +1,6 @@
 use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::entities::role;
@@ -39,9 +40,9 @@ impl From<role::Model> for RoleVo {
 }
 
 pub struct RoleServiceImpl {
-    pub role_repo: RoleRepository,
-    pub perm_repo: PermissionRepository,
-    pub menu_repo: MenuRepository,
+    pub role_repo: LoggedRepo<RoleRepository>,
+    pub perm_repo: LoggedRepo<PermissionRepository>,
+    pub menu_repo: LoggedRepo<MenuRepository>,
 }
 
 impl RoleServiceImpl {

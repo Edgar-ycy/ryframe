@@ -1,5 +1,6 @@
 use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_db::MenuRepository;
 use ryframe_db::entities::menu;
@@ -7,7 +8,7 @@ use ryframe_db::repositories::menu_repo::MenuTreeNode;
 use sea_orm::DatabaseConnection;
 
 pub struct MenuServiceImpl {
-    pub menu_repo: MenuRepository,
+    pub menu_repo: LoggedRepo<MenuRepository>,
 }
 
 impl MenuServiceImpl {

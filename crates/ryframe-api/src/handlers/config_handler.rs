@@ -4,11 +4,10 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get},
 };
-use ryframe_common::AppResult;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::ConfigVo;
 use serde::Serialize;
-use serde_json;
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -16,6 +15,8 @@ use super::auth_handler::AppState;
 pub fn config_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/list", get(list))
+        .route("/listNoPage", get(list_no_page))
         .route("/export", get(export_configs))
         .route("/refreshCache", delete(refresh_cache))
         .route("/configKey/{key}", get(get_by_key))
@@ -29,17 +30,28 @@ pub fn config_router(state: AppState) -> Router {
 async fn list(
     State(state): State<AppState>,
     Query(query): Query<PageQuery>,
-) -> AppResult<Json<ryframe_core::PageResult<ConfigVo>>> {
+) -> AppResult<Json<ryframe_common::ApiPageResponse<ConfigVo>>> {
     state
         .config_service
         .find_by_page(&state.db, query)
         .await
-        .map(Json)
+        .map(|p| Json(p.to_page_response("查询成功")))
 }
 
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ConfigVo>> {
+/// 参数配置列表不分页查询（返回全部数据）
+async fn list_no_page(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<Vec<ConfigVo>>>> {
+    state
+        .config_service
+        .find_all(&state.db)
+        .await
+        .map(|v| Json(ApiResponse::success(v)))
+}
+
+async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<ConfigVo>>> {
     match state.config_service.find_by_id(&state.db, id).await? {
-        Some(cfg) => Ok(Json(cfg)),
+        Some(cfg) => Ok(Json(ApiResponse::success(cfg))),
         None => Err(ryframe_common::AppError::NotFound("参数配置不存在".into())),
     }
 }
@@ -50,7 +62,7 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult
 async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateConfigDto>,
-) -> AppResult<Json<ConfigVo>> {
+) -> AppResult<Json<ApiResponse<ConfigVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -63,7 +75,7 @@ async fn create(
             dto.remark.as_deref(),
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 更新参数配置
@@ -74,14 +86,14 @@ async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateConfigDto>,
-) -> AppResult<Json<ConfigVo>> {
+) -> AppResult<Json<ApiResponse<ConfigVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .config_service
         .update(&state.db, id, &dto.value)
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 删除参数配置
@@ -90,25 +102,20 @@ async fn update(
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.config_service.delete(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 /// 根据参数键名查询参数值
-/// 根据键名查询参数值
 #[utoipa::path(get, path = "/api/v1/system/configs/configKey/{key}", tag = "参数配置",
     params(("key" = String, Path)), responses((status = 200, description = "参数值")), security(("bearer" = [])))]
 async fn get_by_key(
     State(state): State<AppState>,
     Path(key): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<String>>> {
     match state.config_service.find_by_key(&state.db, &key).await? {
-        Some(cfg) => Ok(Json(serde_json::json!({
-            "code": 200,
-            "msg": "操作成功",
-            "data": cfg.value
-        }))),
+        Some(cfg) => Ok(Json(ApiResponse::success(cfg.value))),
         None => Err(ryframe_common::AppError::NotFound(format!(
             "参数 '{}' 不存在",
             key
@@ -119,18 +126,19 @@ async fn get_by_key(
 /// 刷新参数缓存
 ///
 /// 清空所有参数配置的 Redis 缓存
-async fn refresh_cache(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
+async fn refresh_cache(State(state): State<AppState>) -> AppResult<Json<ApiResponse<()>>> {
     if let Some(ref redis) = state.redis
         && let Ok(keys) = redis.keys("sys_config:key:*").await
     {
         for key in &keys {
             let _ = redis.del(key).await;
         }
-        return Ok(Json(
-            serde_json::json!({"message": format!("已清除 {} 个缓存", keys.len())}),
-        ));
+        return Ok(Json(ApiResponse::success_no_data_with_msg(format!(
+            "已清除 {} 个缓存",
+            keys.len()
+        ))));
     }
-    Ok(Json(serde_json::json!({"message": "缓存刷新成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("缓存刷新成功")))
 }
 
 /// 参数导出数据

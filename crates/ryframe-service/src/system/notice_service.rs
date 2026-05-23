@@ -1,5 +1,6 @@
 use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::NoticeRepository;
@@ -33,7 +34,7 @@ impl From<notice::Model> for NoticeVo {
 }
 
 pub struct NoticeServiceImpl {
-    pub notice_repo: NoticeRepository,
+    pub notice_repo: LoggedRepo<NoticeRepository>,
 }
 
 impl NoticeServiceImpl {

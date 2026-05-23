@@ -9,6 +9,10 @@ version = "0.1.0"
 host = "0.0.0.0"
 port = 8080
 
+[database]
+# SQL 日志级别: off(关闭) / summary(SQL+耗时+行数) / full(含完整SQL)
+sql_log_level = "off"
+
 [database.primary]
 driver = "postgres"
 host = "localhost"

@@ -1,4 +1,5 @@
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::ConfigRepository;
@@ -35,7 +36,7 @@ impl From<config::Model> for ConfigVo {
 }
 
 pub struct ConfigServiceImpl {
-    pub config_repo: ConfigRepository,
+    pub config_repo: LoggedRepo<ConfigRepository>,
     pub redis: Option<ryframe_core::RedisClient>,
 }
 

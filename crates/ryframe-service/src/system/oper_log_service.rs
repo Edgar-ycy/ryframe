@@ -1,6 +1,7 @@
 use chrono::Utc;
 use ryframe_common::AppResult;
 use ryframe_common::utils::snowflake;
+use ryframe_core::LoggedRepo;
 use ryframe_core::{PageQuery, PageResult, Repository};
 use ryframe_db::OperLogRepository;
 use ryframe_db::entities::oper_log;
@@ -38,7 +39,7 @@ impl From<oper_log::Model> for OperLogVo {
 }
 
 pub struct OperLogServiceImpl {
-    pub oper_log_repo: OperLogRepository,
+    pub oper_log_repo: LoggedRepo<OperLogRepository>,
 }
 
 impl OperLogServiceImpl {

@@ -1,6 +1,7 @@
 use ryframe_common::{AppError, AppResult};
 
 use ryframe_common::utils::snowflake;
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::entities::{dict_data, dict_type};
@@ -62,8 +63,8 @@ impl From<dict_data::Model> for DictDataVo {
 }
 
 pub struct DictServiceImpl {
-    pub dict_type_repo: DictTypeRepository,
-    pub dict_data_repo: DictDataRepository,
+    pub dict_type_repo: LoggedRepo<DictTypeRepository>,
+    pub dict_data_repo: LoggedRepo<DictDataRepository>,
     pub redis: Option<ryframe_core::RedisClient>,
 }
 

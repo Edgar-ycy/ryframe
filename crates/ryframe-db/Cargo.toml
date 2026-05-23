@@ -16,5 +16,7 @@ sea-orm-migration = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 log = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["registry", "std", "fmt"] }
 serde = { workspace = true ,features = ["derive"]}
 chrono = {workspace = true,features = ["serde"]}

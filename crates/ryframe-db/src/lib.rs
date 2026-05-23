@@ -3,6 +3,7 @@ pub mod entities;
 pub mod migration;
 pub mod pagination;
 pub mod repositories;
+pub mod sql_logger;
 pub mod transaction;
 
 // 便捷导出

@@ -1,5 +1,6 @@
 use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_db::DeptRepository;
 use ryframe_db::entities::dept;
@@ -36,7 +37,7 @@ impl From<dept::Model> for DeptVo {
 }
 
 pub struct DeptServiceImpl {
-    pub dept_repo: DeptRepository,
+    pub dept_repo: LoggedRepo<DeptRepository>,
 }
 
 impl DeptServiceImpl {

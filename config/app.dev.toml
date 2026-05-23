@@ -7,6 +7,11 @@ version = "0.1.0"
 host = "0.0.0.0"
 port = 8080
 
+[database]
+# 开发环境输出 SQL 摘要日志
+# off = 关闭 | summary = SQL+耗时+行数 | full = 含完整SQL
+sql_log_level = "full"
+
 [database.primary]
 driver = "mysql"
 host = "localhost"
@@ -31,7 +36,6 @@ min_connections = 1
 [redis]
 host = "127.0.0.1"
 port = 6379
-# TODO: 请将下方密码替换为你本地的 Redis 密码
 password = "yecy"
 database = 0
 

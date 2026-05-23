@@ -4,11 +4,11 @@ use axum::{
     extract::{Path, Query, State},
     routing::get,
 };
-use ryframe_common::AppResult;
+use ryframe_common::ApiPageResponse;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::PostVo;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -18,7 +18,7 @@ use super::auth_handler::AppState;
 pub struct PostListQuery {
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
     pub name: Option<String>,
     pub code: Option<String>,
@@ -32,6 +32,8 @@ fn default_page_size() -> u64 {
 pub fn post_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/list", get(list))
+        .route("/listNoPage", get(list_no_page))
         .route("/export", get(export_posts))
         .route("/{id}", get(detail).put(update).delete(remove))
         .with_state(state)
@@ -43,7 +45,7 @@ pub fn post_router(state: AppState) -> Router {
 async fn list(
     State(state): State<AppState>,
     Query(query): Query<PostListQuery>,
-) -> AppResult<Json<ryframe_core::PageResult<PostVo>>> {
+) -> AppResult<Json<ApiPageResponse<PostVo>>> {
     let page_query = PageQuery {
         page: query.page,
         page_size: query.page_size,
@@ -60,19 +62,30 @@ async fn list(
                 query.status.as_deref(),
             )
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     } else {
         state
             .post_service
             .find_by_page(&state.db, page_query)
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     }
 }
 
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<PostVo>> {
+/// 岗位列表不分页查询（返回全部数据）
+async fn list_no_page(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<Vec<PostVo>>>> {
+    state
+        .post_service
+        .find_all(&state.db)
+        .await
+        .map(|v| Json(ApiResponse::success(v)))
+}
+
+async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<PostVo>>> {
     match state.post_service.find_by_id(&state.db, id).await? {
-        Some(post) => Ok(Json(post)),
+        Some(post) => Ok(Json(ApiResponse::success(post))),
         None => Err(ryframe_common::AppError::NotFound("岗位不存在".into())),
     }
 }
@@ -83,14 +96,14 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult
 async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreatePostDto>,
-) -> AppResult<Json<PostVo>> {
+) -> AppResult<Json<ApiResponse<PostVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .post_service
         .create(&state.db, &dto.name, &dto.code, dto.sort.unwrap_or(0))
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 更新岗位
@@ -101,14 +114,14 @@ async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdatePostDto>,
-) -> AppResult<Json<PostVo>> {
+) -> AppResult<Json<ApiResponse<PostVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .post_service
         .update(&state.db, id, &dto.name, dto.sort.unwrap_or(0), dto.status)
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 删除岗位
@@ -117,9 +130,9 @@ async fn update(
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.post_service.delete(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 /// 岗位导出数据

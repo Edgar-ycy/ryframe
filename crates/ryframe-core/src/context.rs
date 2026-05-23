@@ -56,6 +56,7 @@ mod tests {
                 },
                 replicas: vec![],
                 datasources: vec![],
+                sql_log_level: ryframe_config::SqlLogLevel::Off,
             },
             auth: AuthConfig {
                 jwt_secret: "test-secret".into(),

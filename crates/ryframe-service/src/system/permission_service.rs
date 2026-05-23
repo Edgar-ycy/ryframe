@@ -1,4 +1,5 @@
 use ryframe_common::AppResult;
+use ryframe_core::LoggedRepo;
 use ryframe_db::PermissionRepository;
 use ryframe_db::entities::permission;
 use sea_orm::DatabaseConnection;
@@ -19,7 +20,7 @@ pub struct PermissionTreeNode {
 }
 
 pub struct PermissionServiceImpl {
-    pub perm_repo: PermissionRepository,
+    pub perm_repo: LoggedRepo<PermissionRepository>,
 }
 
 impl PermissionServiceImpl {

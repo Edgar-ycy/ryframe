@@ -4,11 +4,11 @@ use axum::{
     extract::{Path, Query, State},
     routing::get,
 };
-use ryframe_common::AppResult;
+use ryframe_common::ApiPageResponse;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::NoticeVo;
 use serde::Deserialize;
-use serde_json;
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -18,7 +18,7 @@ use super::auth_handler::AppState;
 pub struct NoticeListQuery {
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
     pub title: Option<String>,
     pub notice_type: Option<String>,
@@ -32,6 +32,8 @@ fn default_page_size() -> u64 {
 pub fn notice_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/list", get(list))
+        .route("/listNoPage", get(list_no_page))
         .route("/{id}", get(detail).put(update).delete(remove))
         .with_state(state)
 }
@@ -42,7 +44,7 @@ pub fn notice_router(state: AppState) -> Router {
 async fn list(
     State(state): State<AppState>,
     Query(query): Query<NoticeListQuery>,
-) -> AppResult<Json<ryframe_core::PageResult<NoticeVo>>> {
+) -> AppResult<Json<ApiPageResponse<NoticeVo>>> {
     let page_query = PageQuery {
         page: query.page,
         page_size: query.page_size,
@@ -59,19 +61,31 @@ async fn list(
                 query.status.as_deref(),
             )
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     } else {
         state
             .notice_service
             .find_by_page(&state.db, page_query)
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     }
 }
 
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<NoticeVo>> {
+/// 通知公告列表不分页查询（返回全部数据）
+async fn list_no_page(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<Vec<NoticeVo>>>> {
+    let page_query = PageQuery { page: 1, page_size: 10000 };
+    state
+        .notice_service
+        .find_by_page(&state.db, page_query)
+        .await
+        .map(|p| Json(ApiResponse::success(p.records)))
+}
+
+async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<NoticeVo>>> {
     match state.notice_service.find_by_id(&state.db, id).await? {
-        Some(notice) => Ok(Json(notice)),
+        Some(notice) => Ok(Json(ApiResponse::success(notice))),
         None => Err(ryframe_common::AppError::NotFound("通知公告不存在".into())),
     }
 }
@@ -82,7 +96,7 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult
 async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateNoticeDto>,
-) -> AppResult<Json<NoticeVo>> {
+) -> AppResult<Json<ApiResponse<NoticeVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -95,14 +109,14 @@ async fn create(
             None,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateNoticeDto>,
-) -> AppResult<Json<NoticeVo>> {
+) -> AppResult<Json<ApiResponse<NoticeVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -116,7 +130,7 @@ async fn update(
             dto.status,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 删除通知公告
@@ -125,7 +139,7 @@ async fn update(
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.notice_service.delete(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }

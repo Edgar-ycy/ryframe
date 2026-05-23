@@ -1,5 +1,8 @@
 # 测试环境配置
 
+[database]
+sql_log_level = "summary"
+
 [database.primary]
 database = "ryframe_test"
 max_connections = 5

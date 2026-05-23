@@ -7,7 +7,7 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ryframe_common::utils::captcha::{CaptchaType, generate_captcha};
-use ryframe_common::{AppError, AppResult, CAPTCHA_KEY_PREFIX};
+use ryframe_common::{ApiResponse, AppError, AppResult, CAPTCHA_KEY_PREFIX};
 use ryframe_core::RedisClient;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -168,7 +168,7 @@ pub fn captcha_router(state: AppState) -> Router<AppState> {
 pub async fn generate_captcha_handler(
     State(state): State<AppState>,
     Query(query): Query<CaptchaQuery>,
-) -> AppResult<Json<CaptchaResponse>> {
+) -> AppResult<Json<ApiResponse<CaptchaResponse>>> {
     let captcha_type = match query.captcha_type.as_str() {
         "math" => CaptchaType::Math,
         _ => CaptchaType::Alphanumeric,
@@ -188,24 +188,21 @@ pub async fn generate_captcha_handler(
     // 将图片转换为 Base64
     let image_base64 = STANDARD.encode(&captcha.image_data);
 
-    Ok(Json(CaptchaResponse {
+    Ok(Json(ApiResponse::success(CaptchaResponse {
         captcha_id,
         image_base64: format!("data:image/png;base64,{}", image_base64),
-    }))
+    })))
 }
 
 /// 校验验证码
 pub async fn verify_captcha_handler(
     State(state): State<AppState>,
     Json(req): Json<CaptchaVerifyRequest>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let valid = state.captcha_store.verify(&req.captcha_id, &req.code).await;
 
     if valid {
-        Ok(Json(serde_json::json!({
-            "valid": true,
-            "message": "验证码正确"
-        })))
+        Ok(Json(ApiResponse::success(serde_json::json!({"valid": true}))))
     } else {
         Err(AppError::Validation("验证码错误或已过期".into()))
     }

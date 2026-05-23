@@ -9,7 +9,7 @@ mod redis_config;
 pub use app_config::AppSettings;
 pub use auth_config::AuthConfig;
 pub use cors_config::CorsConfig;
-pub use db_config::{DatabaseConfig, DbConnection, NamedDataSource};
+pub use db_config::{DatabaseConfig, DbConnection, NamedDataSource, SqlLogLevel};
 pub use logger_config::LoggerConfig;
 pub use rate_limit_config::RateLimitConfig;
 pub use redis_config::RedisConfig;

@@ -5,7 +5,7 @@ use axum::{
     routing::{get, put},
 };
 use ryframe_auth::jwt::Claims;
-use ryframe_common::{AppError, AppResult};
+use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_service::system::profile_service::UserProfileResponse;
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ pub fn profile_router(state: AppState) -> Router<AppState> {
 pub async fn get_profile(
     State(state): State<AppState>,
     claims: axum::Extension<Claims>,
-) -> AppResult<Json<UserProfileResponse>> {
+) -> AppResult<Json<ApiResponse<UserProfileResponse>>> {
     let user_id =
         Uuid::parse_str(&claims.sub).map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
@@ -40,7 +40,7 @@ pub async fn get_profile(
         .get_profile(&state.db, user_id_i64)
         .await?;
 
-    Ok(Json(profile))
+    Ok(Json(ApiResponse::success(profile)))
 }
 
 /// 更新个人信息
@@ -51,7 +51,7 @@ pub async fn update_profile(
     State(state): State<AppState>,
     claims: axum::Extension<Claims>,
     Json(req): Json<UpdateProfileRequest>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     let user_id =
         Uuid::parse_str(&claims.sub).map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
@@ -68,10 +68,7 @@ pub async fn update_profile(
         )
         .await?;
 
-    Ok(Json(serde_json::json!({
-        "code": 200,
-        "message": "个人信息更新成功"
-    })))
+    Ok(Json(ApiResponse::success_no_data_with_msg("个人信息更新成功")))
 }
 
 /// 修改密码
@@ -82,7 +79,7 @@ pub async fn change_password(
     State(state): State<AppState>,
     claims: axum::Extension<Claims>,
     Json(req): Json<ChangePasswordRequest>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     req.validate_passwords().map_err(AppError::Validation)?;
 
     let user_id =
@@ -95,10 +92,7 @@ pub async fn change_password(
         .change_password(&state.db, user_id_i64, &req.old_password, &req.new_password)
         .await?;
 
-    Ok(Json(serde_json::json!({
-        "code": 200,
-        "message": "密码修改成功"
-    })))
+    Ok(Json(ApiResponse::success_no_data_with_msg("密码修改成功")))
 }
 
 /// 更新头像
@@ -106,7 +100,7 @@ pub async fn update_avatar(
     State(state): State<AppState>,
     claims: axum::Extension<Claims>,
     Json(req): Json<serde_json::Value>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     let user_id =
         Uuid::parse_str(&claims.sub).map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
@@ -122,8 +116,5 @@ pub async fn update_avatar(
         .update_avatar(&state.db, user_id_i64, avatar_url)
         .await?;
 
-    Ok(Json(serde_json::json!({
-        "code": 200,
-        "message": "头像更新成功"
-    })))
+    Ok(Json(ApiResponse::success_no_data_with_msg("头像更新成功")))
 }

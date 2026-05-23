@@ -4,11 +4,10 @@ use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
 };
-use ryframe_common::AppResult;
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_db::repositories::dept_repo::DeptTreeNode;
 use ryframe_service::system::DeptVo;
 use serde::Deserialize;
-use serde_json;
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -16,14 +15,23 @@ use super::auth_handler::AppState;
 /// 部门列表查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
 pub struct DeptListQuery {
+    #[serde(default)]
+    pub page: u64,
+    #[serde(default = "default_page_size", alias = "pageSize")]
+    pub page_size: u64,
     pub name: Option<String>,
     pub status: Option<String>,
+}
+
+fn default_page_size() -> u64 {
+    10
 }
 
 pub fn dept_router(state: AppState) -> Router {
     Router::new()
         .route("/tree", get(tree))
-        .route("/list", get(list))
+        .route("/list", get(list_page))
+        .route("/listNoPage", get(list_no_page))
         .route("/", post(create))
         .route("/{id}", get(detail).put(update).delete(remove))
         .with_state(state)
@@ -32,20 +40,35 @@ pub fn dept_router(state: AppState) -> Router {
 /// 部门树查询
 #[utoipa::path(get, path = "/api/v1/system/depts/tree", tag = "部门管理",
     responses((status = 200, description = "部门树")), security(("bearer" = [])))]
-async fn tree(State(state): State<AppState>) -> AppResult<Json<Vec<DeptTreeNode>>> {
-    state.dept_service.find_tree(&state.db).await.map(Json)
+async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
+    state.dept_service.find_tree(&state.db).await.map(|v| Json(ApiResponse::success(v)))
 }
 
-/// 部门列表（支持按名称/状态搜索）
-async fn list(
+/// 部门列表分页查询
+async fn list_page(
     State(state): State<AppState>,
     Query(query): Query<DeptListQuery>,
-) -> AppResult<Json<Vec<DeptVo>>> {
+) -> AppResult<Json<ApiPageResponse<DeptVo>>> {
+    let all = state
+        .dept_service
+        .find_filtered(&state.db, query.name.as_deref(), query.status.as_deref())
+        .await?;
+    let total = all.len() as u64;
+    let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
+    let rows: Vec<DeptVo> = all.into_iter().skip(offset).take(query.page_size as usize).collect();
+    Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
+}
+
+/// 部门列表不分页查询（返回全部数据）
+async fn list_no_page(
+    State(state): State<AppState>,
+    Query(query): Query<DeptListQuery>,
+) -> AppResult<Json<ApiResponse<Vec<DeptVo>>>> {
     state
         .dept_service
         .find_filtered(&state.db, query.name.as_deref(), query.status.as_deref())
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 创建部门
@@ -54,14 +77,14 @@ async fn list(
 async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateDeptDto>,
-) -> AppResult<Json<ryframe_db::entities::dept::Model>> {
+) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .dept_service
         .create(&state.db, &dto.name, dto.parent_id, dto.sort.unwrap_or(0))
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 更新部门
@@ -72,7 +95,7 @@ async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDeptDto>,
-) -> AppResult<Json<ryframe_db::entities::dept::Model>> {
+) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -86,13 +109,13 @@ async fn update(
             dto.status,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 部门详情
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<DeptVo>> {
+async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<DeptVo>>> {
     match state.dept_service.find_by_id(&state.db, id).await? {
-        Some(dept) => Ok(Json(dept)),
+        Some(dept) => Ok(Json(ApiResponse::success(dept))),
         None => Err(ryframe_common::AppError::NotFound("部门不存在".into())),
     }
 }
@@ -103,7 +126,7 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.dept_service.delete(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }

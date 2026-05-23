@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use ryframe_common::AppResult;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
+use std::ops::{Deref, DerefMut};
 
 /// 分页查询参数
 #[derive(Debug, Clone, Deserialize)]
@@ -10,7 +11,7 @@ pub struct PageQuery {
     #[serde(default = "default_page")]
     pub page: u64,
     /// 每页记录数
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
@@ -83,6 +84,14 @@ impl<T> PageResult<T> {
         }
         self.total.div_ceil(self.page_size)
     }
+
+    /// 转换为若依风格分页 API 响应
+    pub fn to_page_response(self, msg: impl Into<String>) -> ryframe_common::ApiPageResponse<T>
+    where
+        T: Serialize,
+    {
+        ryframe_common::ApiPageResponse::new(self.records, self.total, msg)
+    }
 }
 
 /// 通用 Repository trait
@@ -108,4 +117,93 @@ pub trait Repository<T, ID>: Send + Sync {
 
     /// 根据主键删除记录
     async fn delete(&self, db: &DatabaseConnection, id: ID) -> AppResult<()>;
+}
+
+/// 带结果日志的 Repository 包装器
+///
+/// 当 `sql_log_level = "full"` 时，自动在每次数据库操作后
+/// 使用 `tracing::debug!` / 若依风格 `[结果]` 输出返回数据。
+///
+/// 通过 `Deref<Target = R>` 透明访问内部 Repository 的自定义方法。
+#[derive(Debug, Clone, Copy)]
+pub struct LoggedRepo<R>(pub R);
+
+impl<R> LoggedRepo<R> {
+    /// 创建带日志的 Repository 包装器
+    pub fn new(inner: R) -> Self {
+        Self(inner)
+    }
+}
+
+impl<R> Deref for LoggedRepo<R> {
+    type Target = R;
+    fn deref(&self) -> &R {
+        &self.0
+    }
+}
+
+impl<R> DerefMut for LoggedRepo<R> {
+    fn deref_mut(&mut self) -> &mut R {
+        &mut self.0
+    }
+}
+
+/// 内部：以若依风格输出结果日志
+fn log_full_result(label: &str, data: &dyn std::fmt::Debug) {
+    if ryframe_common::is_sql_full_log() {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), "[结果] {}: {:#?}", label, data);
+    }
+}
+
+#[async_trait]
+impl<R, T, ID> Repository<T, ID> for LoggedRepo<R>
+where
+    R: Repository<T, ID> + Send + Sync,
+    T: std::fmt::Debug + Send + Sync + 'static,
+    ID: std::fmt::Debug + Send + Sync + 'static,
+{
+    async fn find_by_id(&self, db: &DatabaseConnection, id: ID) -> AppResult<Option<T>> {
+        let result = self.0.find_by_id(db, id).await;
+        if let Ok(Some(ref data)) = result {
+            log_full_result("find_by_id", data);
+        }
+        result
+    }
+
+    async fn find_by_page(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+    ) -> AppResult<PageResult<T>> {
+        let result = self.0.find_by_page(db, query).await;
+        if let Ok(ref page) = result {
+            log_full_result(&format!("find_by_page (共{}条)", page.total), &page.records);
+        }
+        result
+    }
+
+    async fn insert(&self, db: &DatabaseConnection, entity: T) -> AppResult<T> {
+        let result = self.0.insert(db, entity).await;
+        if let Ok(ref data) = result {
+            log_full_result("insert", data);
+        }
+        result
+    }
+
+    async fn update(&self, db: &DatabaseConnection, entity: T) -> AppResult<T> {
+        let result = self.0.update(db, entity).await;
+        if let Ok(ref data) = result {
+            log_full_result("update", data);
+        }
+        result
+    }
+
+    async fn delete(&self, db: &DatabaseConnection, id: ID) -> AppResult<()> {
+        let result = self.0.delete(db, id).await;
+        if result.is_ok() {
+            log_full_result("delete", &"success");
+        }
+        result
+    }
 }

@@ -1,6 +1,6 @@
 use log::LevelFilter;
-use ryframe_common::{AppError, AppResult};
-use ryframe_config::DbConnection;
+use ryframe_common::{AppError, AppResult, enable_sql_full_log};
+use ryframe_config::{DbConnection, SqlLogLevel};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Statement};
 use std::collections::HashSet;
 use std::time::Duration;
@@ -9,6 +9,14 @@ use std::time::Duration;
 ///
 /// 支持三种数据库引擎：postgres / mysql / sqlite
 pub async fn connect(config: &DbConnection) -> AppResult<DatabaseConnection> {
+    connect_with_level(config, SqlLogLevel::Off).await
+}
+
+/// 根据数据库配置 + SQL 日志级别创建连接池
+pub async fn connect_with_level(
+    config: &DbConnection,
+    sql_log_level: SqlLogLevel,
+) -> AppResult<DatabaseConnection> {
     let url = config.connection_url();
 
     let mut opt = ConnectOptions::new(url);
@@ -18,17 +26,36 @@ pub async fn connect(config: &DbConnection) -> AppResult<DatabaseConnection> {
         .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(600));
 
-    // SQLite 需要特殊处理外键和日志级别
-    if config.driver == "sqlite" {
-        opt.sqlx_logging_level(LevelFilter::Info);
-    } else {
-        // MySQL/Postgres：借鉴若依，关闭 sqlx 查询日志，避免每一条 SQL 刷屏
-        opt.sqlx_logging(false);
+    // 根据配置控制 SQL 日志输出
+    configure_sql_logging(&mut opt, &config.driver, sql_log_level);
+
+    // full 模式：激活结果日志全局标志
+    if sql_log_level == SqlLogLevel::Full {
+        enable_sql_full_log();
     }
 
     Database::connect(opt)
         .await
         .map_err(|e| AppError::Database(format!("数据库连接失败: {}", e)))
+}
+
+/// 根据 SqlLogLevel 配置 sqlx 日志
+fn configure_sql_logging(opt: &mut ConnectOptions, driver: &str, level: SqlLogLevel) {
+    match level {
+        SqlLogLevel::Off => {
+            // SQLite 保留 INFO 级别用于开发调试
+            if driver == "sqlite" {
+                opt.sqlx_logging_level(LevelFilter::Info);
+            } else {
+                opt.sqlx_logging(false);
+            }
+        }
+        SqlLogLevel::Summary | SqlLogLevel::Full => {
+            // 启用 sqlx 日志，由 SqlLogLayer 统一格式化
+            opt.sqlx_logging(true);
+            opt.sqlx_logging_level(LevelFilter::Info);
+        }
+    }
 }
 
 /// 健康检查：发送一条简单查询验证连接可用

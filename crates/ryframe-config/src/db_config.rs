@@ -1,8 +1,24 @@
 use serde::Deserialize;
 
+/// SQL 日志输出级别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SqlLogLevel {
+    /// 关闭 SQL 日志
+    #[default]
+    Off,
+    /// 仅输出 SQL 语句 + 耗时 + 返回行数
+    Summary,
+    /// 完整输出（含结果行数详情）
+    Full,
+}
+
 /// 数据库配置
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseConfig {
+    /// SQL 日志级别（默认 off）
+    #[serde(default)]
+    pub sql_log_level: SqlLogLevel,
     /// 主库连接
     pub primary: DbConnection,
     /// 从库连接（读写分离，可选）

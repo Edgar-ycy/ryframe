@@ -1,6 +1,7 @@
 use ryframe_auth::{jwt, password};
 use ryframe_common::{AppError, AppResult};
 use ryframe_config::AppConfig;
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_db::entities::user;
 use ryframe_db::{PermissionRepository, RoleRepository, UserRepository};
@@ -49,9 +50,9 @@ impl From<&user::Model> for UserInfo {
 
 /// 认证服务
 pub struct AuthServiceImpl {
-    pub user_repo: UserRepository,
-    pub role_repo: RoleRepository,
-    pub perm_repo: PermissionRepository,
+    pub user_repo: LoggedRepo<UserRepository>,
+    pub role_repo: LoggedRepo<RoleRepository>,
+    pub perm_repo: LoggedRepo<PermissionRepository>,
     pub config: Arc<AppConfig>,
 }
 

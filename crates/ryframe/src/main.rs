@@ -4,7 +4,8 @@ use ryframe_api::handlers::captcha_handler::CaptchaStore;
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
 use ryframe_core::create_redis_client;
-use ryframe_core::{AppContext, DataSourceManager};
+use ryframe_core::{AppContext, DataSourceManager, LoggedRepo};
+use ryframe_db::sql_logger::SqlLogLayer;
 use ryframe_db::{
     ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
     JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
@@ -25,6 +26,8 @@ use ryframe_task::{ScheduledTask, TaskContext, TaskScheduler};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer;
+use tracing_subscriber::filter::FilterFn;
 use tracing_subscriber::fmt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -44,45 +47,52 @@ fn init_logger(config: &AppConfig) -> LoggerGuard {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logger.level));
 
     let is_json = config.logger.format == "json";
+    let sql_log_level = config.database.sql_log_level;
+
+    // 阻止 sqlx 查询事件到达 fmt 层（由 SqlLogLayer 单独格式化输出）
+    let sqlx_filter = FilterFn::new(|meta| meta.target() != "sqlx::query");
 
     if config.logger.output == "file" {
-        // 滚动文件输出：logs/ryframe-yyyy-MM-dd.log
         let file_appender = tracing_appender::rolling::daily("logs", "ryframe.log");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-        if is_json {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(
-                    fmt::layer()
-                        .json()
-                        .with_writer(non_blocking.clone())
-                        .with_ansi(false),
-                )
-                .init();
+        let fmt_boxed = if is_json {
+            fmt::layer()
+                .json()
+                .with_writer(non_blocking.clone())
+                .with_ansi(false)
+                .with_filter(sqlx_filter)
+                .boxed()
         } else {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
-                .init();
-        }
+            fmt::layer()
+                .with_writer(non_blocking.clone())
+                .with_ansi(false)
+                .with_filter(sqlx_filter)
+                .boxed()
+        };
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_boxed)
+            .with(SqlLogLayer::new(sql_log_level))
+            .init();
 
         LoggerGuard {
             _worker: Some(guard),
         }
     } else {
         // 控制台输出
-        if is_json {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(fmt::layer().json())
-                .init();
+        let fmt_boxed = if is_json {
+            fmt::layer().json().with_filter(sqlx_filter).boxed()
         } else {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(fmt::layer())
-                .init();
-        }
+            fmt::layer().with_filter(sqlx_filter).boxed()
+        };
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_boxed)
+            .with(SqlLogLayer::new(sql_log_level))
+            .init();
 
         LoggerGuard { _worker: None }
     }
@@ -109,7 +119,11 @@ async fn main() -> Result<(), AppError> {
     let ds_manager = DataSourceManager::new();
 
     // 3a. 连接 primary 并注册
-    let primary_db = ryframe_db::connection::connect(&config.database.primary).await?;
+    let primary_db = ryframe_db::connection::connect_with_level(
+        &config.database.primary,
+        config.database.sql_log_level,
+    )
+    .await?;
     ds_manager.register("primary", primary_db.clone());
     tracing::info!(
         "数据源 'primary' 连接成功: {}",
@@ -121,7 +135,12 @@ async fn main() -> Result<(), AppError> {
         let mut dbs = Vec::with_capacity(config.database.replicas.len());
         for (i, replica_config) in config.database.replicas.iter().enumerate() {
             let name = format!("replica_{}", i);
-            match ryframe_db::connection::connect(replica_config).await {
+            match ryframe_db::connection::connect_with_level(
+                replica_config,
+                config.database.sql_log_level,
+            )
+            .await
+            {
                 Ok(db) => {
                     ds_manager.register(&name, db.clone());
                     tracing::info!("数据源 '{}' 连接成功: {}", name, replica_config.database);
@@ -143,7 +162,12 @@ async fn main() -> Result<(), AppError> {
 
     // 3c. 连接命名数据源并注册
     for named_ds in &config.database.datasources {
-        match ryframe_db::connection::connect(&named_ds.connection).await {
+        match ryframe_db::connection::connect_with_level(
+            &named_ds.connection,
+            config.database.sql_log_level,
+        )
+        .await
+        {
             Ok(db) => {
                 ds_manager.register(&named_ds.name, db);
                 tracing::info!(
@@ -199,48 +223,45 @@ async fn main() -> Result<(), AppError> {
 
     // 6. 创建 Repository 实例（DataSourceManager 通过全局单例访问）
 
-    let user_repo = UserRepository;
-    let role_repo = RoleRepository;
-    let perm_repo = PermissionRepository;
-    let oper_log_repo = OperLogRepository;
-    let login_info_repo = LoginInfoRepository;
+    let oper_log_repo = LoggedRepo::new(OperLogRepository);
+    let login_info_repo = LoggedRepo::new(LoginInfoRepository);
 
     let config_arc = Arc::new(config.clone());
 
     // 7. 创建 Service（构造注入 Repository + Config）
     let auth_service = Arc::new(AuthServiceImpl {
-        user_repo,
-        role_repo,
-        perm_repo,
+        user_repo: LoggedRepo::new(UserRepository),
+        role_repo: LoggedRepo::new(RoleRepository),
+        perm_repo: LoggedRepo::new(PermissionRepository),
         config: Arc::new(config.clone()),
     });
 
     let user_service = Arc::new(UserServiceImpl {
-        user_repo: UserRepository,
-        role_repo: RoleRepository,
-        dept_repo: DeptRepository,
+        user_repo: LoggedRepo::new(UserRepository),
+        role_repo: LoggedRepo::new(RoleRepository),
+        dept_repo: LoggedRepo::new(DeptRepository),
     });
 
     let role_service = Arc::new(RoleServiceImpl {
-        role_repo: RoleRepository,
-        perm_repo: PermissionRepository,
-        menu_repo: MenuRepository,
+        role_repo: LoggedRepo::new(RoleRepository),
+        perm_repo: LoggedRepo::new(PermissionRepository),
+        menu_repo: LoggedRepo::new(MenuRepository),
     });
 
     let permission_service = Arc::new(PermissionServiceImpl {
-        perm_repo: PermissionRepository,
+        perm_repo: LoggedRepo::new(PermissionRepository),
     });
 
     let menu_service = Arc::new(MenuServiceImpl {
-        menu_repo: MenuRepository,
+        menu_repo: LoggedRepo::new(MenuRepository),
     });
 
     let dept_service = Arc::new(DeptServiceImpl {
-        dept_repo: DeptRepository,
+        dept_repo: LoggedRepo::new(DeptRepository),
     });
 
     let post_service = Arc::new(PostServiceImpl {
-        post_repo: PostRepository,
+        post_repo: LoggedRepo::new(PostRepository),
     });
 
     // 7.w 创建 Redis 客户端（提前初始化，供字典/配置服务使用）
@@ -252,18 +273,18 @@ async fn main() -> Result<(), AppError> {
     }
 
     let config_service = Arc::new(ConfigServiceImpl {
-        config_repo: ConfigRepository,
+        config_repo: LoggedRepo::new(ConfigRepository),
         redis: redis_client.clone(),
     });
 
     let dict_service = Arc::new(DictServiceImpl {
-        dict_type_repo: DictTypeRepository,
-        dict_data_repo: DictDataRepository,
+        dict_type_repo: LoggedRepo::new(DictTypeRepository),
+        dict_data_repo: LoggedRepo::new(DictDataRepository),
         redis: redis_client.clone(),
     });
 
     let notice_service = Arc::new(NoticeServiceImpl {
-        notice_repo: NoticeRepository,
+        notice_repo: LoggedRepo::new(NoticeRepository),
     });
 
     let oper_log_service = Arc::new(OperLogServiceImpl { oper_log_repo });
@@ -278,8 +299,8 @@ async fn main() -> Result<(), AppError> {
 
     // 7.y 创建 JobService（注入 scheduler）并初始化内置任务
     let job_service = Arc::new(JobServiceImpl {
-        job_repo: JobRepository,
-        job_log_repo: JobLogRepository,
+        job_repo: LoggedRepo::new(JobRepository),
+        job_log_repo: LoggedRepo::new(JobLogRepository),
         scheduler: scheduler.clone(),
     });
 
@@ -304,9 +325,9 @@ async fn main() -> Result<(), AppError> {
 
     // 7.aa 创建 ProfileService
     let profile_service = Arc::new(ProfileServiceImpl {
-        user_repo: UserRepository,
-        role_repo: RoleRepository,
-        perm_repo: PermissionRepository,
+        user_repo: LoggedRepo::new(UserRepository),
+        role_repo: LoggedRepo::new(RoleRepository),
+        perm_repo: LoggedRepo::new(PermissionRepository),
     });
 
     // 7.cc 创建 OnlineUserService（Redis 或内存模式）

@@ -6,11 +6,11 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, put},
 };
-use ryframe_common::AppResult;
+use ryframe_common::ApiPageResponse;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::RoleVo;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -20,7 +20,7 @@ use super::auth_handler::AppState;
 pub struct RoleListQuery {
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
     pub name: Option<String>,
     pub code: Option<String>,
@@ -34,6 +34,8 @@ fn default_page_size() -> u64 {
 pub fn role_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/list", get(list))
+        .route("/listNoPage", get(list_no_page))
         .route("/export", get(export_roles))
         .route("/{id}", get(detail).put(update))
         .route("/batch/{ids}", delete(batch_remove))
@@ -50,7 +52,7 @@ pub fn role_router(state: AppState) -> Router {
 async fn list(
     State(state): State<AppState>,
     Query(query): Query<RoleListQuery>,
-) -> AppResult<Json<ryframe_core::PageResult<RoleVo>>> {
+) -> AppResult<Json<ApiPageResponse<RoleVo>>> {
     let page_query = PageQuery {
         page: query.page,
         page_size: query.page_size,
@@ -70,22 +72,34 @@ async fn list(
                 query.status.as_deref(),
             )
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     } else {
         state
             .role_service
             .find_by_page(&state.db, page_query)
             .await
-            .map(Json)
+            .map(|p| Json(p.to_page_response("查询成功")))
     }
+}
+
+/// 角色列表不分页查询（返回全部数据）
+async fn list_no_page(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<Vec<RoleVo>>>> {
+    let page_query = PageQuery { page: 1, page_size: 10000 };
+    state
+        .role_service
+        .find_by_page(&state.db, page_query)
+        .await
+        .map(|p| Json(ApiResponse::success(p.records)))
 }
 
 /// 角色详情
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = i64, Path)), responses((status = 200, description = "角色详情")), security(("bearer" = [])))]
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<RoleVo>> {
+async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<RoleVo>>> {
     match state.role_service.find_by_id(&state.db, id).await? {
-        Some(role) => Ok(Json(role)),
+        Some(role) => Ok(Json(ApiResponse::success(role))),
         None => Err(ryframe_common::AppError::NotFound("角色不存在".into())),
     }
 }
@@ -96,7 +110,7 @@ async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult
 async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateRoleDto>,
-) -> AppResult<Json<RoleVo>> {
+) -> AppResult<Json<ApiResponse<RoleVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -109,7 +123,7 @@ async fn create(
             dto.data_scope,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 更新角色
@@ -120,7 +134,7 @@ async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateRoleDto>,
-) -> AppResult<Json<RoleVo>> {
+) -> AppResult<Json<ApiResponse<RoleVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -134,7 +148,7 @@ async fn update(
             dto.data_scope,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 删除角色
@@ -143,16 +157,16 @@ async fn update(
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.role_service.delete(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 /// 批量删除角色
 async fn batch_remove(
     State(state): State<AppState>,
     Path(ids_str): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     let ids: Vec<i64> = ids_str
         .split(',')
         .filter_map(|s| s.trim().parse().ok())
@@ -165,9 +179,10 @@ async fn batch_remove(
     }
 
     let count = state.role_service.delete_many(&state.db, &ids).await?;
-    Ok(Json(
-        serde_json::json!({"message": format!("成功删除 {} 个角色", count)}),
-    ))
+    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
+        "成功删除 {} 个角色",
+        count
+    ))))
 }
 
 /// 导出角色数据为 Excel
@@ -247,24 +262,24 @@ async fn assign_permissions(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<AssignPermsDto>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state
         .role_service
         .assign_permissions(&state.db, id, dto.perm_ids)
         .await?;
-    Ok(Json(serde_json::json!({"message": "权限分配成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
 }
 
 async fn assign_menus(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<AssignMenusDto>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state
         .role_service
         .assign_menus(&state.db, id, dto.menu_ids)
         .await?;
-    Ok(Json(serde_json::json!({"message": "菜单分配成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("菜单分配成功")))
 }
 
 /// 设置角色数据权限
@@ -274,10 +289,10 @@ async fn assign_data_scope(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<AssignDataScopeDto>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state
         .role_service
         .assign_data_scope(&state.db, id, &dto.data_scope, dto.dept_ids)
         .await?;
-    Ok(Json(serde_json::json!({"message": "数据权限设置成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("数据权限设置成功")))
 }

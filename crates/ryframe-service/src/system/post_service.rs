@@ -1,5 +1,6 @@
 use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::PostRepository;
@@ -33,7 +34,7 @@ impl From<post::Model> for PostVo {
 }
 
 pub struct PostServiceImpl {
-    pub post_repo: PostRepository,
+    pub post_repo: LoggedRepo<PostRepository>,
 }
 
 impl PostServiceImpl {

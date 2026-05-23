@@ -16,7 +16,7 @@ use ryframe_api::router::api_router;
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
-use ryframe_core::AppContext;
+use ryframe_core::{AppContext, LoggedRepo};
 use ryframe_db::entities::{dept, role, user};
 use ryframe_db::{
     ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
@@ -134,6 +134,7 @@ fn test_config() -> AppConfig {
             },
             replicas: vec![],
             datasources: vec![],
+            sql_log_level: ryframe_config::SqlLogLevel::Off,
         },
         auth: AuthConfig {
             jwt_secret: "test-jwt-secret-for-integration-tests".into(),
@@ -166,63 +167,63 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
         config: config_arc,
         context,
         auth_service: Arc::new(AuthServiceImpl {
-            user_repo: UserRepository,
-            role_repo: RoleRepository,
-            perm_repo: PermissionRepository,
+            user_repo: LoggedRepo::new(UserRepository),
+            role_repo: LoggedRepo::new(RoleRepository),
+            perm_repo: LoggedRepo::new(PermissionRepository),
             config: Arc::new(config.clone()),
         }),
         user_service: Arc::new(UserServiceImpl {
-            user_repo: UserRepository,
-            role_repo: RoleRepository,
-            dept_repo: DeptRepository,
+            user_repo: LoggedRepo::new(UserRepository),
+            role_repo: LoggedRepo::new(RoleRepository),
+            dept_repo: LoggedRepo::new(DeptRepository),
         }),
         role_service: Arc::new(RoleServiceImpl {
-            role_repo: RoleRepository,
-            perm_repo: PermissionRepository,
-            menu_repo: MenuRepository,
+            role_repo: LoggedRepo::new(RoleRepository),
+            perm_repo: LoggedRepo::new(PermissionRepository),
+            menu_repo: LoggedRepo::new(MenuRepository),
         }),
         permission_service: Arc::new(PermissionServiceImpl {
-            perm_repo: PermissionRepository,
+            perm_repo: LoggedRepo::new(PermissionRepository),
         }),
         menu_service: Arc::new(MenuServiceImpl {
-            menu_repo: MenuRepository,
+            menu_repo: LoggedRepo::new(MenuRepository),
         }),
         dept_service: Arc::new(DeptServiceImpl {
-            dept_repo: DeptRepository,
+            dept_repo: LoggedRepo::new(DeptRepository),
         }),
         post_service: Arc::new(PostServiceImpl {
-            post_repo: PostRepository,
+            post_repo: LoggedRepo::new(PostRepository),
         }),
         config_service: Arc::new(ConfigServiceImpl {
-            config_repo: ConfigRepository,
+            config_repo: LoggedRepo::new(ConfigRepository),
             redis: None,
         }),
         dict_service: Arc::new(DictServiceImpl {
-            dict_type_repo: DictTypeRepository,
-            dict_data_repo: DictDataRepository,
+            dict_type_repo: LoggedRepo::new(DictTypeRepository),
+            dict_data_repo: LoggedRepo::new(DictDataRepository),
             redis: None,
         }),
         notice_service: Arc::new(NoticeServiceImpl {
-            notice_repo: NoticeRepository,
+            notice_repo: LoggedRepo::new(NoticeRepository),
         }),
         oper_log_service: Arc::new(OperLogServiceImpl {
-            oper_log_repo: OperLogRepository,
+            oper_log_repo: LoggedRepo::new(OperLogRepository),
         }),
         login_info_service: Arc::new(LoginInfoServiceImpl {
-            login_info_repo: LoginInfoRepository,
+            login_info_repo: LoggedRepo::new(LoginInfoRepository),
         }),
         job_service: Arc::new(JobServiceImpl {
-            job_repo: JobRepository,
-            job_log_repo: JobLogRepository,
+            job_repo: LoggedRepo::new(JobRepository),
+            job_log_repo: LoggedRepo::new(JobLogRepository),
             scheduler: scheduler.clone(),
         }),
         generator_service: Arc::new(GeneratorServiceImpl {
             workspace_root: std::env::current_dir().unwrap(),
         }),
         profile_service: Arc::new(ProfileServiceImpl {
-            user_repo: UserRepository,
-            role_repo: RoleRepository,
-            perm_repo: PermissionRepository,
+            user_repo: LoggedRepo::new(UserRepository),
+            role_repo: LoggedRepo::new(RoleRepository),
+            perm_repo: LoggedRepo::new(PermissionRepository),
         }),
         online_user_service: Arc::new(OnlineUserServiceImpl::new_in_memory()),
         captcha_store: CaptchaStore::new_in_memory(300),
@@ -442,8 +443,11 @@ async fn test_system_crud_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["name"], "测试岗位");
-    let (s, _) = auth_get(&db, "/system/posts?page=1&page_size=10", &token).await;
+    assert_eq!(b["data"]["name"], "测试岗位");
+    let (s, _) = auth_get(&db, "/system/posts/list?page=1&pageSize=10", &token).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (s, _) = auth_get(&db, "/system/posts/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 配置 CRUD
@@ -457,8 +461,11 @@ async fn test_system_crud_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["key"], "test.config.key");
-    let (s, _) = auth_get(&db, "/system/configs?page=1&page_size=10", &token).await;
+    assert_eq!(b["data"]["key"], "test.config.key");
+    let (s, _) = auth_get(&db, "/system/configs/list?page=1&pageSize=10", &token).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (s, _) = auth_get(&db, "/system/configs/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 字典 CRUD
@@ -472,8 +479,11 @@ async fn test_system_crud_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["code"], "test_dict");
-    let (s, _) = auth_get(&db, "/system/dict/types?page=1&page_size=10", &token).await;
+    assert_eq!(b["data"]["code"], "test_dict");
+    let (s, _) = auth_get(&db, "/system/dict/types/list?page=1&pageSize=10", &token).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (s, _) = auth_get(&db, "/system/dict/types/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 通知 CRUD
@@ -487,8 +497,11 @@ async fn test_system_crud_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["title"], "测试公告");
-    let (s, _) = auth_get(&db, "/system/notices?page=1&page_size=10", &token).await;
+    assert_eq!(b["data"]["title"], "测试公告");
+    let (s, _) = auth_get(&db, "/system/notices/list?page=1&pageSize=10", &token).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (s, _) = auth_get(&db, "/system/notices/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
 }
 
@@ -499,29 +512,49 @@ async fn test_system_query_endpoints() {
     seed_test_data(&db).await;
     let token = login_get_token(&db).await;
 
-    let (s, b) = auth_get(&db, "/system/users?page=1&page_size=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/users/list?page=1&pageSize=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("records").is_some());
+    assert!(b.get("rows").is_some());
 
-    let (s, b) = auth_get(&db, "/system/roles?page=1&page_size=10", &token).await;
+    let (s, _) = auth_get(&db, "/system/users/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("records").is_some());
+
+    let (s, b) = auth_get(&db, "/system/roles/list?page=1&pageSize=10", &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.get("rows").is_some());
+
+    let (s, _) = auth_get(&db, "/system/roles/listNoPage", &token).await;
+    assert_eq!(s, StatusCode::OK);
 
     let (s, b) = auth_get(&db, "/system/depts/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.as_array().is_some());
+    assert!(b["data"].as_array().is_some());
+
+    let (s, b) = auth_get(&db, "/system/depts/list?page=1&pageSize=10", &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.get("rows").is_some());
+
+    let (s, _) = auth_get(&db, "/system/depts/listNoPage", &token).await;
+    assert_eq!(s, StatusCode::OK);
 
     let (s, b) = auth_get(&db, "/system/menus/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.as_array().is_some());
+    assert!(b["data"].as_array().is_some());
+
+    let (s, b) = auth_get(&db, "/system/menus/list?page=1&pageSize=10", &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(b.get("rows").is_some());
+
+    let (s, _) = auth_get(&db, "/system/menus/listNoPage", &token).await;
+    assert_eq!(s, StatusCode::OK);
 
     let (s, b) = auth_get(&db, "/system/permissions/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.as_array().is_some());
+    assert!(b["data"].as_array().is_some());
 
     let (s, b) = auth_get(&db, "/system/online", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.as_array().is_some());
+    assert!(b["data"].as_array().is_some());
 }
 
 /// 未认证访问系统接口应返回 401
@@ -533,11 +566,12 @@ async fn test_unauthenticated_access_denied() {
     let state = build_test_app(db.clone()).await;
     let router = api_router(state);
     let endpoints = vec![
-        "/system/users?page=1&page_size=10",
-        "/system/roles?page=1&page_size=10",
+        "/system/users/list?page=1&pageSize=10",
+        "/system/roles/list?page=1&pageSize=10",
         "/system/depts/tree",
-        "/system/posts?page=1&page_size=10",
-        "/system/configs?page=1&page_size=10",
+        "/system/depts/list?page=1&pageSize=10",
+        "/system/posts/list?page=1&pageSize=10",
+        "/system/configs/list?page=1&pageSize=10",
     ];
     for uri in endpoints {
         let req = Request::builder()

@@ -86,7 +86,7 @@ use utoipa::OpenApi;
         crate::handlers::login_log_handler::clean,
         // 定时任务
         crate::handlers::job_handler::create_job,
-        crate::handlers::job_handler::list,
+        crate::handlers::job_handler::list_no_page,
         crate::handlers::job_handler::pause_job,
         crate::handlers::job_handler::resume_job,
         // 在线用户

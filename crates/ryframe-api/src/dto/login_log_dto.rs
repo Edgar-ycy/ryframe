@@ -12,7 +12,7 @@ fn default_page_size() -> u64 {
 pub struct LoginLogPageQuery {
     #[serde(default = "default_page")]
     pub page: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
     pub user_name: Option<String>,
     pub status: Option<String>,

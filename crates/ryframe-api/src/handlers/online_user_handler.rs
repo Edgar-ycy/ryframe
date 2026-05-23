@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get},
 };
-use ryframe_common::AppResult;
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_service::system::online_user_service::OnlineUserVo;
 use serde::Deserialize;
 
@@ -12,14 +12,24 @@ use crate::handlers::auth_handler::AppState;
 /// 在线用户查询参数
 #[derive(Debug, Deserialize)]
 pub struct OnlineUserQuery {
+    #[serde(default)]
+    pub page: u64,
+    #[serde(default = "default_page_size", alias = "pageSize")]
+    pub page_size: u64,
     pub username: Option<String>,
     pub ipaddr: Option<String>,
+}
+
+fn default_page_size() -> u64 {
+    10
 }
 
 /// 在线用户路由
 pub fn online_user_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list_online_users))
+        .route("/list", get(list_online_users_page))
+        .route("/listNoPage", get(list_online_users))
         .route("/{token_id}", delete(force_logout))
         .with_state(state)
 }
@@ -31,7 +41,7 @@ pub fn online_user_router(state: AppState) -> Router {
 pub async fn list_online_users(
     State(state): State<AppState>,
     Query(query): Query<OnlineUserQuery>,
-) -> AppResult<Json<Vec<OnlineUserVo>>> {
+) -> AppResult<Json<ApiResponse<Vec<OnlineUserVo>>>> {
     let users = state.online_user_service.list_online_users().await;
 
     // 过滤
@@ -52,7 +62,38 @@ pub async fn list_online_users(
         })
         .collect();
 
-    Ok(Json(filtered))
+    Ok(Json(ApiResponse::success(filtered)))
+}
+
+/// 获取在线用户列表（分页）
+pub async fn list_online_users_page(
+    State(state): State<AppState>,
+    Query(query): Query<OnlineUserQuery>,
+) -> AppResult<Json<ApiPageResponse<OnlineUserVo>>> {
+    let users = state.online_user_service.list_online_users().await;
+
+    // 过滤
+    let filtered: Vec<OnlineUserVo> = users
+        .into_iter()
+        .filter(|u| {
+            if let Some(username) = &query.username
+                && !u.username.contains(username)
+            {
+                return false;
+            }
+            if let Some(ipaddr) = &query.ipaddr
+                && !u.ipaddr.contains(ipaddr)
+            {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    let total = filtered.len() as u64;
+    let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
+    let rows: Vec<OnlineUserVo> = filtered.into_iter().skip(offset).take(query.page_size as usize).collect();
+    Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
 }
 
 /// 强制下线用户
@@ -62,11 +103,8 @@ pub async fn list_online_users(
 pub async fn force_logout(
     State(state): State<AppState>,
     Path(token_id): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.online_user_service.force_logout(&token_id).await?;
 
-    Ok(Json(serde_json::json!({
-        "code": 200,
-        "message": "用户已强制下线"
-    })))
+    Ok(Json(ApiResponse::success_no_data_with_msg("用户已强制下线")))
 }

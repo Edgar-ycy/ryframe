@@ -3,8 +3,7 @@ use axum::{
     extract::{Query, State},
     routing::get,
 };
-use ryframe_common::AppResult;
-use ryframe_core::PageResult;
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_service::system::LoginInfoVo;
 use serde::Serialize;
 
@@ -14,6 +13,8 @@ use crate::dto::login_log_dto::LoginLogPageQuery;
 pub fn login_log_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list))
+        .route("/list", get(list))
+        .route("/listNoPage", get(list_no_page))
         .route("/export", get(export_login_logs))
         .route("/clean", axum::routing::delete(clean))
         .with_state(state)
@@ -25,7 +26,7 @@ pub fn login_log_router(state: AppState) -> Router {
 async fn list(
     State(state): State<AppState>,
     Query(query): Query<LoginLogPageQuery>,
-) -> AppResult<Json<PageResult<LoginInfoVo>>> {
+) -> AppResult<Json<ApiPageResponse<LoginInfoVo>>> {
     state
         .login_info_service
         .find_by_page(
@@ -40,17 +41,36 @@ async fn list(
             query.end_time.as_deref(),
         )
         .await
-        .map(Json)
+        .map(|p| Json(p.to_page_response("查询成功")))
+}
+
+/// 登录日志不分页查询（返回全部数据）
+async fn list_no_page(
+    State(state): State<AppState>,
+    Query(query): Query<LoginLogPageQuery>,
+) -> AppResult<Json<ApiResponse<Vec<LoginInfoVo>>>> {
+    let logs = state
+        .login_info_service
+        .find_all_filtered(
+            &state.db,
+            query.user_name.as_deref(),
+            query.status,
+            query.begin_time.as_deref(),
+            query.end_time.as_deref(),
+        )
+        .await?;
+    Ok(Json(ApiResponse::success(logs)))
 }
 
 /// 清空登录日志
 #[utoipa::path(delete, path = "/api/v1/system/loginlogs/clean", tag = "登录日志",
     responses((status = 200, description = "清空成功")), security(("bearer" = [])))]
-async fn clean(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
+async fn clean(State(state): State<AppState>) -> AppResult<Json<ApiResponse<()>>> {
     let count = state.login_info_service.clean(&state.db).await?;
-    Ok(Json(
-        serde_json::json!({"message": format!("成功清空 {} 条登录日志", count)}),
-    ))
+    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
+        "成功清空 {} 条登录日志",
+        count
+    ))))
 }
 
 /// 登录日志导出数据

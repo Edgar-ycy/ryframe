@@ -1,5 +1,6 @@
 use ryframe_auth::password;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_db::{PermissionRepository, RoleRepository, UserRepository, dept, user};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
@@ -27,9 +28,9 @@ pub struct UserProfileResponse {
 
 /// 个人中心服务
 pub struct ProfileServiceImpl {
-    pub user_repo: UserRepository,
-    pub role_repo: RoleRepository,
-    pub perm_repo: PermissionRepository,
+    pub user_repo: LoggedRepo<UserRepository>,
+    pub role_repo: LoggedRepo<RoleRepository>,
+    pub perm_repo: LoggedRepo<PermissionRepository>,
 }
 
 impl ProfileServiceImpl {

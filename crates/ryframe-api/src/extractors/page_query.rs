@@ -9,7 +9,7 @@ use ryframe_core::PageQuery;
 use serde::Deserialize;
 
 /// 最大每页记录数
-const MAX_PAGE_SIZE: u64 = 500;
+const MAX_PAGE_SIZE: u64 = 1000;
 
 /// 原始分页参数（支持多种命名风格）
 #[derive(Debug, Deserialize)]

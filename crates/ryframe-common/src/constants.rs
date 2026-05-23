@@ -4,7 +4,7 @@
 pub const DEFAULT_PAGE_SIZE: u64 = 10;
 
 /// 最大分页大小（防止客户端传入过大值导致性能问题）
-pub const MAX_PAGE_SIZE: u64 = 100;
+pub const MAX_PAGE_SIZE: u64 = 1000;
 
 /// Redis 缓存键前缀
 pub const CACHE_KEY_PREFIX: &str = "ryframe:";

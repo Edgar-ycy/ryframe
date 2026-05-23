@@ -2,6 +2,7 @@ use ryframe_auth::password;
 use ryframe_common::annotations::data_scope::{DataScope, DataScopeContext};
 use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::Repository;
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::entities::{role, user};
@@ -70,9 +71,9 @@ impl From<role::Model> for RoleBriefVo {
 }
 
 pub struct UserServiceImpl {
-    pub user_repo: UserRepository,
-    pub role_repo: RoleRepository,
-    pub dept_repo: DeptRepository,
+    pub user_repo: LoggedRepo<UserRepository>,
+    pub role_repo: LoggedRepo<RoleRepository>,
+    pub dept_repo: LoggedRepo<DeptRepository>,
 }
 
 impl UserServiceImpl {

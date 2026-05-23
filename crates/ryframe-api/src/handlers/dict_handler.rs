@@ -6,11 +6,11 @@ use axum::{
     extract::{Path, Query, State},
     routing::{get, put},
 };
-use ryframe_common::AppResult;
+use ryframe_common::ApiPageResponse;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::{DictDataVo, DictTypeVo};
 use serde::{Deserialize, Serialize};
-use serde_json;
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -20,7 +20,7 @@ use super::auth_handler::AppState;
 pub struct DictTypeListQuery {
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
     pub name: Option<String>,
     pub code: Option<String>,
@@ -34,6 +34,8 @@ fn default_page_size() -> u64 {
 pub fn dict_router(state: AppState) -> Router {
     Router::new()
         .route("/types", get(list_types).post(create_type))
+        .route("/types/list", get(list_types))
+        .route("/types/listNoPage", get(list_types_no_page))
         .route("/types/export", get(export_dict_types))
         .route("/types/{id}", put(update_type).delete(delete_type))
         .route("/data", get(list_data).post(create_data))
@@ -48,7 +50,7 @@ pub fn dict_router(state: AppState) -> Router {
 async fn list_types(
     State(state): State<AppState>,
     Query(query): Query<DictTypeListQuery>,
-) -> AppResult<Json<ryframe_core::PageResult<DictTypeVo>>> {
+) -> AppResult<Json<ApiPageResponse<DictTypeVo>>> {
     let page_query = PageQuery {
         page: query.page,
         page_size: query.page_size,
@@ -57,7 +59,19 @@ async fn list_types(
         .dict_service
         .find_types_by_page(&state.db, page_query)
         .await?;
-    Ok(Json(page_result))
+    Ok(Json(page_result.to_page_response("查询成功")))
+}
+
+/// 字典类型不分页查询
+async fn list_types_no_page(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<Vec<DictTypeVo>>>> {
+    let page_query = PageQuery { page: 1, page_size: 10000 };
+    let page_result = state
+        .dict_service
+        .find_types_by_page(&state.db, page_query)
+        .await?;
+    Ok(Json(ApiResponse::success(page_result.records)))
 }
 
 /// 创建字典类型
@@ -66,36 +80,36 @@ async fn list_types(
 async fn create_type(
     State(state): State<AppState>,
     Json(dto): Json<CreateDictTypeDto>,
-) -> AppResult<Json<DictTypeVo>> {
+) -> AppResult<Json<ApiResponse<DictTypeVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .dict_service
         .create_type(&state.db, &dto.name, &dto.code)
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 async fn update_type(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDictTypeDto>,
-) -> AppResult<Json<DictTypeVo>> {
+) -> AppResult<Json<ApiResponse<DictTypeVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .dict_service
         .update_type(&state.db, id, &dto.name, dto.status)
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 async fn delete_type(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.dict_service.delete_type(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,12 +120,12 @@ struct ListDataQuery {
 async fn list_data(
     State(state): State<AppState>,
     Query(query): Query<ListDataQuery>,
-) -> AppResult<Json<Vec<DictDataVo>>> {
+) -> AppResult<Json<ApiResponse<Vec<DictDataVo>>>> {
     state
         .dict_service
         .find_data_by_type(&state.db, &query.type_code)
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 通过字典类型编码查询字典数据
@@ -121,7 +135,7 @@ async fn list_data(
 async fn list_data_by_type_path(
     State(state): State<AppState>,
     Path(dict_type): Path<String>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<Vec<serde_json::Value>>>> {
     let data = state
         .dict_service
         .find_data_by_type(&state.db, &dict_type)
@@ -136,11 +150,7 @@ async fn list_data_by_type_path(
             })
         })
         .collect();
-    Ok(Json(serde_json::json!({
-        "code": 200,
-        "msg": "操作成功",
-        "data": items
-    })))
+    Ok(Json(ApiResponse::success(items)))
 }
 
 /// 创建字典数据
@@ -149,7 +159,7 @@ async fn list_data_by_type_path(
 async fn create_data(
     State(state): State<AppState>,
     Json(dto): Json<CreateDictDataDto>,
-) -> AppResult<Json<DictDataVo>> {
+) -> AppResult<Json<ApiResponse<DictDataVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -162,14 +172,14 @@ async fn create_data(
             dto.sort.unwrap_or(0),
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 async fn update_data(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDictDataDto>,
-) -> AppResult<Json<DictDataVo>> {
+) -> AppResult<Json<ApiResponse<DictDataVo>>> {
     dto.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
@@ -183,15 +193,15 @@ async fn update_data(
             dto.status,
         )
         .await
-        .map(Json)
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 async fn delete_data(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<()>>> {
     state.dict_service.delete_data(&state.db, id).await?;
-    Ok(Json(serde_json::json!({"message": "删除成功"})))
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 /// 字典类型导出数据

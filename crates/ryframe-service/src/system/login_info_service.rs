@@ -1,6 +1,7 @@
 use chrono::Utc;
 use ryframe_common::AppResult;
 use ryframe_common::utils::snowflake;
+use ryframe_core::LoggedRepo;
 use ryframe_core::{PageQuery, PageResult, Repository};
 use ryframe_db::LoginInfoRepository;
 use ryframe_db::entities::login_info;
@@ -38,7 +39,7 @@ impl From<login_info::Model> for LoginInfoVo {
 }
 
 pub struct LoginInfoServiceImpl {
-    pub login_info_repo: LoginInfoRepository,
+    pub login_info_repo: LoggedRepo<LoginInfoRepository>,
 }
 
 impl LoginInfoServiceImpl {

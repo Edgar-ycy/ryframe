@@ -10,7 +10,7 @@ use ryframe_common::utils::file_upload::{
     UploadConfig, UploadFileInfo, generate_storage_filename, get_content_type, get_upload_dir,
     validate_extension,
 };
-use ryframe_common::{AppError, AppResult};
+use ryframe_common::{ApiResponse, AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -42,7 +42,7 @@ pub fn upload_router(state: AppState) -> Router {
 pub async fn upload_file(
     State(_state): State<AppState>,
     mut multipart: Multipart,
-) -> AppResult<Json<UploadResponse>> {
+) -> AppResult<Json<ApiResponse<UploadResponse>>> {
     let config = UploadConfig::default();
 
     while let Some(field) = multipart
@@ -107,10 +107,10 @@ pub async fn upload_file(
             relative_path.replace('\\', "/")
         );
 
-        return Ok(Json(UploadResponse {
+        return Ok(Json(ApiResponse::success(UploadResponse {
             file_url,
             file_info,
-        }));
+        })));
     }
 
     Err(AppError::Validation("未找到上传文件".into()))
@@ -120,7 +120,7 @@ pub async fn upload_file(
 pub async fn upload_image(
     State(_state): State<AppState>,
     mut multipart: Multipart,
-) -> AppResult<Json<UploadResponse>> {
+) -> AppResult<Json<ApiResponse<UploadResponse>>> {
     let config = UploadConfig {
         allowed_extensions: vec![
             "jpg".to_string(),
@@ -196,10 +196,10 @@ pub async fn upload_image(
             relative_path.replace('\\', "/")
         );
 
-        return Ok(Json(UploadResponse {
+        return Ok(Json(ApiResponse::success(UploadResponse {
             file_url,
             file_info,
-        }));
+        })));
     }
 
     Err(AppError::Validation("未找到上传图片".into()))

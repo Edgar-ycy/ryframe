@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_common::utils::snowflake;
 use ryframe_common::{AppError, AppResult};
+use ryframe_core::LoggedRepo;
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_db::entities::job;
 use ryframe_db::{JobLogRepository, JobRepository};
@@ -35,8 +36,8 @@ pub struct JobLogVo {
 }
 
 pub struct JobServiceImpl {
-    pub job_repo: JobRepository,
-    pub job_log_repo: JobLogRepository,
+    pub job_repo: LoggedRepo<JobRepository>,
+    pub job_log_repo: LoggedRepo<JobLogRepository>,
     pub scheduler: Arc<TaskScheduler>,
 }
 
