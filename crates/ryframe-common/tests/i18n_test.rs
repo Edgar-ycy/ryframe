@@ -1,15 +1,21 @@
 use std::io::Write;
+use std::sync::Mutex;
 
 /// i18n 模块测试
 /// 从 crates/ryframe-common/src/i18n.rs 内联测试迁移
 use ryframe_common::i18n::{I18nManager, detect_language};
 
+/// 互斥锁：防止 cargo test 并行运行时多个测试同时操作同一临时目录
+static TEST_DIR_MUTEX: Mutex<()> = Mutex::new(());
+
 fn create_test_locale_dir() -> std::path::PathBuf {
+    // 串行化目录创建，避免并发删除/创建导致的竞态条件
+    let _guard = TEST_DIR_MUTEX.lock().unwrap();
+
     let dir = std::env::temp_dir().join("ryframe_i18n_test");
-    // 清理残留文件（避免历史测试影响 read_dir 顺序）
-    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
 
+    // File::create 使用截断模式，会覆盖已存在的文件
     let zh_cn = dir.join("zh-CN.toml");
     let mut f = std::fs::File::create(&zh_cn).unwrap();
     writeln!(f, r#"[common]"#).unwrap();
@@ -21,7 +27,6 @@ fn create_test_locale_dir() -> std::path::PathBuf {
     writeln!(f).unwrap();
     writeln!(f, r#"[user]"#).unwrap();
     writeln!(f, r#"welcome = "欢迎 {{name}}""#).unwrap();
-    // 显式 flush 关闭，确保写盘完成
     f.flush().unwrap();
     drop(f);
 
