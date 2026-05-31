@@ -15,4 +15,10 @@ ignore = [
     # 风险: 中 - 需要本地访问且大量请求才能利用
     # 解决: 上游 rsa crate 已弃用，需等 jsonwebtoken 迁移到 rsa-next 或 rustls-crypto
     "RUSTSEC-2023-0071",
+
+    # paste 1.0.15 已停止维护
+    # 传播路径: ryframe-common → image 0.25 → ravif 0.13 → rav1e 0.8 → paste 1.0.15
+    # 风险: 极低 - paste 是 macro-only 编译时依赖，无运行时攻击面
+    # 解决: 等待 image crate 升级 ravif 或将 AVIF 设为可选 feature
+    "RUSTSEC-2024-0436",
 ]
