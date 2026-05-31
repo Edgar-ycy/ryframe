@@ -1,10 +1,9 @@
-use ryframe_common::utils::snowflake;
-use ryframe_common::{AppError, AppResult};
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
-use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::NoticeRepository;
-use ryframe_db::entities::notice;
+use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_core::{
+    LoggedRepo, Repository,
+    repository::{PageQuery, PageResult},
+};
+use ryframe_db::{NoticeRepository, entities::notice};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 

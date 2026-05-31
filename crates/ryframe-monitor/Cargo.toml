@@ -11,6 +11,7 @@ description.workspace = true
 ryframe-common = { path = "../ryframe-common" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-db = { path = "../ryframe-db" }
+ryframe-middleware = { path = "../ryframe-middleware" }
 serde = { workspace = true, features = ["derive"] }
 sysinfo = { workspace = true }
 axum = { workspace = true }
@@ -19,3 +20,4 @@ sea-orm = { workspace = true }
 chrono = { workspace = true }
 redis = { workspace = true }
 tracing = { workspace = true }
+prometheus = { workspace = true }

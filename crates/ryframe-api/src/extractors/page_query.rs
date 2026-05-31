@@ -3,8 +3,10 @@
 //! 自动从 Query 参数中提取并校验分页参数，
 //! 确保 page >= 1 且 page_size 在合理范围内。
 
-use axum::extract::{FromRequestParts, Query};
-use axum::http::request::Parts;
+use axum::{
+    extract::{FromRequestParts, Query},
+    http::request::Parts,
+};
 use ryframe_core::PageQuery;
 use serde::Deserialize;
 

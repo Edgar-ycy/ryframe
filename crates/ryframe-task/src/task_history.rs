@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize)]

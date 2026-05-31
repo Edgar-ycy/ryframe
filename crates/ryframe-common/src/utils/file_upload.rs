@@ -1,6 +1,8 @@
-use crate::{AppError, AppResult};
-use chrono::Utc;
 use std::path::PathBuf;
+
+use chrono::Utc;
+
+use crate::{AppError, AppResult};
 
 /// 文件上传配置
 #[derive(Debug, Clone)]
@@ -132,5 +134,96 @@ pub fn format_file_size(size: u64) -> String {
         format!("{:.2} MB", size as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.2} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/// 压缩图片数据
+///
+/// 根据图片格式进行智能压缩：
+/// - JPEG/WebP：重新编码为质量 85% 的 JPEG
+/// - PNG：尝试优化压缩
+/// - 其他格式：不做处理，原样返回
+///
+/// 返回压缩后的字节数据和新的文件名（如果格式变化）。
+pub fn compress_image(data: &[u8], original_name: &str) -> AppResult<(Vec<u8>, String)> {
+    use image::{ImageEncoder, ImageFormat};
+
+    // 检测图片格式（验证是否为有效图片）
+    let _format = image::guess_format(data)
+        .map_err(|e| AppError::Internal(format!("无法识别图片格式: {}", e)))?;
+
+    let img = image::load_from_memory(data)
+        .map_err(|e| AppError::Internal(format!("加载图片失败: {}", e)))?;
+
+    let ext = original_name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+
+    let ext_lower = ext.as_str();
+
+    match ext_lower {
+        "jpg" | "jpeg" => {
+            // JPEG: 重新编码为质量 85%
+            let mut buf = Vec::new();
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
+            encoder
+                .write_image(
+                    img.as_bytes(),
+                    img.width(),
+                    img.height(),
+                    img.color().into(),
+                )
+                .map_err(|e| AppError::Internal(format!("JPEG 压缩失败: {}", e)))?;
+            Ok((buf, original_name.to_string()))
+        }
+        "png" => {
+            // PNG: 使用优化的编码器
+            let mut buf = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut buf), ImageFormat::Png)
+                .map_err(|e| AppError::Internal(format!("PNG 压缩失败: {}", e)))?;
+            Ok((buf, original_name.to_string()))
+        }
+        "webp" => {
+            // WebP 转为质量 85% 的 JPEG 以减小大小
+            let mut buf = Vec::new();
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
+            encoder
+                .write_image(
+                    img.as_bytes(),
+                    img.width(),
+                    img.height(),
+                    img.color().into(),
+                )
+                .map_err(|e| AppError::Internal(format!("WebP 转 JPEG 失败: {}", e)))?;
+            // 更新文件后缀名为 jpg
+            let new_name = if let Some(pos) = original_name.rfind('.') {
+                format!("{}jpg", &original_name[..=pos])
+            } else {
+                format!("{}.jpg", original_name)
+            };
+            Ok((buf, new_name))
+        }
+        _ => {
+            // GIF/BMP/其他：转为 JPEG 格式以压缩
+            let mut buf = Vec::new();
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85);
+            encoder
+                .write_image(
+                    img.as_bytes(),
+                    img.width(),
+                    img.height(),
+                    img.color().into(),
+                )
+                .map_err(|e| AppError::Internal(format!("{} 转 JPEG 失败: {}", ext_lower, e)))?;
+            // 更新文件后缀名为 jpg
+            let new_name = if let Some(pos) = original_name.rfind('.') {
+                format!("{}jpg", &original_name[..=pos])
+            } else {
+                format!("{}.jpg", original_name)
+            };
+            Ok((buf, new_name))
+        }
     }
 }

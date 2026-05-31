@@ -12,7 +12,9 @@ port = 8080
 # off = 关闭 | summary = SQL+耗时+行数 | full = 含完整SQL
 sql_log_level = "full"
 
-[database.primary]
+# 开发环境数据库连接
+# 第一个为主数据库，后续为额外数据源
+[[database.connections]]
 driver = "mysql"
 host = "localhost"
 port = 3306
@@ -22,8 +24,8 @@ password = "123456"
 max_connections = 10
 min_connections = 1
 
-# 从库连接（读写分离，可选，可配置多个）
-[[database.replicas]]
+# 额外数据库
+[[database.connections]]
 driver = "mysql"
 host = "localhost"
 port = 3306

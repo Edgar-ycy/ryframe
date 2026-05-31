@@ -1,0 +1,13 @@
+[package]
+name = "ryframe-example-basic"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+ryframe-common = { path = "../../crates/ryframe-common" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

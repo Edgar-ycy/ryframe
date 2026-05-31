@@ -1,19 +1,18 @@
-use crate::dto::dict_dto::{
-    CreateDictDataDto, CreateDictTypeDto, UpdateDictDataDto, UpdateDictTypeDto,
-};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     routing::{get, put},
 };
-use ryframe_common::ApiPageResponse;
-use ryframe_common::{ApiResponse, AppResult};
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::{DictDataVo, DictTypeVo};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::dict_dto::{
+    CreateDictDataDto, CreateDictTypeDto, UpdateDictDataDto, UpdateDictTypeDto,
+};
 
 /// 字典类型分页查询参数
 #[derive(Debug, Deserialize)]
@@ -66,7 +65,10 @@ async fn list_types(
 async fn list_types_no_page(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<DictTypeVo>>>> {
-    let page_query = PageQuery { page: 1, page_size: 10000 };
+    let page_query = PageQuery {
+        page: 1,
+        page_size: 10000,
+    };
     let page_result = state
         .dict_service
         .find_types_by_page(&state.db, page_query)

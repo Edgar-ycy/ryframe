@@ -1,0 +1,36 @@
+🎉 RyFrame 部署成功！
+
+============================================================
+
+1. 查看 Pod 状态：
+   kubectl get pods -n {{ .Release.Namespace }}
+
+2. 查看服务：
+   kubectl get svc -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+3. 通过 Ingress 访问：
+{{- range .Values.ingress.hosts }}
+   https://{{ .host }}
+{{- end }}
+{{- else }}
+3. 本地端口转发：
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "ryframe.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+   然后访问 http://localhost:{{ .Values.service.port }}
+{{- end }}
+
+4. 查看日志：
+   kubectl logs -n {{ .Release.Namespace }} -l app={{ include "ryframe.name" . }} -f
+
+{{- if .Values.autoscaling.enabled }}
+5. HPA 状态：
+   kubectl get hpa -n {{ .Release.Namespace }} {{ include "ryframe.fullname" . }}-hpa
+{{- end }}
+
+{{- if .Values.metrics.enabled }}
+6. Prometheus Metrics：
+   kubectl get svc -n {{ .Release.Namespace }} {{ include "ryframe.fullname" . }}
+   访问 http://<pod-ip>:{{ .Values.metrics.port }}/metrics
+{{- end }}
+
+============================================================

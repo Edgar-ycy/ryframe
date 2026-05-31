@@ -1,14 +1,17 @@
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use axum::{
-    extract::ConnectInfo,
+    extract::{ConnectInfo, State},
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
 use ryframe_core::RedisClient;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 /// Redis key 前缀
 const RATE_LIMIT_KEY_PREFIX: &str = "rate_limit:";
@@ -117,8 +120,7 @@ impl RateLimiter {
         }
     }
 
-    /// 获取当前可用令牌数（仅内存模式，用于测试）
-    #[cfg(test)]
+    /// 获取当前可用令牌数（仅内存模式）
     pub fn available_tokens(&self, key: &str) -> f64 {
         match self {
             Self::InMemory { inner } => inner
@@ -145,9 +147,89 @@ impl RateLimiter {
         }
         // Redis 模式由 Redis 自身 EXPIRE 机制管理，无需后台 GC
     }
+
+    /// 滑动窗口限流（仅 Redis 模式）
+    ///
+    /// 使用 Redis Sorted Set + Lua 脚本实现原子滑动窗口。
+    ///
+    /// # Arguments
+    /// - `key`: 限流 key
+    /// - `window_secs`: 滑动窗口时长（秒）
+    /// - `limit`: 窗口内最大请求数
+    ///
+    /// # Returns
+    /// `true` 表示通过，`false` 表示限流触发
+    pub async fn sliding_window_acquire(&self, key: &str, window_secs: u64, limit: u32) -> bool {
+        match self {
+            Self::Redis { client, .. } => {
+                let redis_key = format!("{}sw:", RATE_LIMIT_KEY_PREFIX) + key;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64();
+
+                let script = r#"
+                    local key = KEYS[1]
+                    local now = tonumber(ARGV[1])
+                    local window = tonumber(ARGV[2])
+                    local limit = tonumber(ARGV[3])
+
+                    redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+
+                    local count = redis.call('ZCARD', key)
+                    if count < limit then
+                        redis.call('ZADD', key, now, now .. '-' .. math.random())
+                        redis.call('EXPIRE', key, math.ceil(window * 2))
+                        return 1
+                    else
+                        return 0
+                    end
+                "#;
+
+                match client
+                    .eval_script(
+                        script,
+                        &[&redis_key],
+                        &[
+                            &now.to_string(),
+                            &window_secs.to_string(),
+                            &limit.to_string(),
+                        ],
+                    )
+                    .await
+                {
+                    Ok(redis::Value::Int(1)) => true,
+                    Ok(redis::Value::Int(0)) => false,
+                    Ok(_) => true,
+                    Err(e) => {
+                        tracing::error!("Redis 滑动窗口限流失败，放行请求: {}", e);
+                        true
+                    }
+                }
+            }
+            Self::InMemory { .. } => self.try_acquire(key).await,
+        }
+    }
+
+    /// 生成用户级限流 key
+    pub fn user_key(user_id: &str) -> String {
+        format!("user:{}", user_id)
+    }
+
+    /// 生成接口级限流 key
+    pub fn api_key(path: &str) -> String {
+        format!("api:{}", path)
+    }
+
+    /// 生成用户+接口级限流 key
+    pub fn user_api_key(user_id: &str, path: &str) -> String {
+        format!("user_api:{}:{}", user_id, path)
+    }
 }
 
-/// Axum 限流中间件
+/// Axum 限流中间件（IP 维度）
+///
+/// 根据客户端 IP 地址限流，使用令牌桶或固定窗口模式。
 pub async fn rate_limit_middleware(
     axum::extract::State(limiter): axum::extract::State<Arc<RateLimiter>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -158,42 +240,125 @@ pub async fn rate_limit_middleware(
     if limiter.try_acquire(&key).await {
         Ok(next.run(req).await)
     } else {
-        Err((StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response())
+        Err((StatusCode::TOO_MANY_REQUESTS, "请求过于频繁，请稍后再试").into_response())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Axum 限流状态（包含 RateLimiter + RateLimitConfig）
+///
+/// 用于 per-user / per-api 限流中间件。
+#[derive(Clone)]
+pub struct RateLimitState {
+    pub limiter: Arc<RateLimiter>,
+    pub config: Arc<ryframe_config::RateLimitConfig>,
+}
 
-    #[tokio::test]
-    async fn test_rate_limiter() {
-        // 基本限流：容量 3，前 3 次通过，第 4 次拒绝
-        let limiter = RateLimiter::new_in_memory(3, 1);
-        assert!(limiter.try_acquire("test").await);
-        assert!(limiter.try_acquire("test").await);
-        assert!(limiter.try_acquire("test").await);
-        assert!(!limiter.try_acquire("test").await);
-
-        // 不同 key 独立
-        let limiter2 = RateLimiter::new_in_memory(1, 1);
-        assert!(limiter2.try_acquire("a").await);
-        assert!(!limiter2.try_acquire("a").await);
-        assert!(limiter2.try_acquire("b").await);
-
-        // 令牌补充
-        let limiter3 = RateLimiter::new_in_memory(2, 100);
-        assert!(limiter3.try_acquire("test").await);
-        assert!(limiter3.try_acquire("test").await);
-        assert!(!limiter3.try_acquire("test").await);
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert!(limiter3.try_acquire("test").await);
+/// 用户级限流中间件
+///
+/// 从 JWT Claims 中提取 user_id，对每个用户单独限流。
+/// 需要在认证中间件 **之后** 注册。
+///
+/// 用法：
+/// ```ignore
+/// Router::new()
+///     .layer(from_fn_with_state(auth_state, auth_middleware))          // JWT 认证
+///     .layer(from_fn_with_state(rate_limit_state.clone(), user_rate_limit_middleware)) // 用户限流
+/// ```
+pub async fn user_rate_limit_middleware(
+    State(state): State<RateLimitState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Result<Response, Response> {
+    if !state.config.enabled || !state.config.enable_user_rate_limit {
+        return Ok(next.run(request).await);
     }
 
-    #[tokio::test]
-    async fn test_spawn_gc() {
-        let limiter = Arc::new(RateLimiter::new_in_memory(10, 1));
-        limiter.try_acquire("key1").await;
-        limiter.spawn_gc();
+    // 从 JWT Claims 提取 user_id（未认证用户走 IP 限流，不触发 user 限流）
+    let user_key = request
+        .extensions()
+        .get::<ryframe_auth::jwt::Claims>()
+        .map(|claims| RateLimiter::user_key(&claims.sub))
+        .unwrap_or_default();
+
+    // 未认证用户跳过用户级限流
+    if user_key.is_empty() {
+        return Ok(next.run(request).await);
+    }
+
+    let limit = state.config.user_capacity;
+    let window = state.config.user_window_secs;
+
+    let passed = if state.config.window_secs > 0 {
+        state
+            .limiter
+            .sliding_window_acquire(&user_key, window, limit)
+            .await
+    } else {
+        state.limiter.try_acquire(&user_key).await
+    };
+
+    if passed {
+        Ok(next.run(request).await)
+    } else {
+        Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("用户请求过于频繁（{}秒内最多 {} 次）", window, limit),
+        )
+            .into_response())
+    }
+}
+
+/// 接口级限流中间件
+///
+/// 根据 HTTP Method + Path 匹配配置中的 `api_limits`，对敏感接口单独限流。
+///
+/// 例如：登录接口 `POST /api/v1/auth/login` 每分钟最多 5 次。
+pub async fn api_rate_limit_middleware(
+    State(state): State<RateLimitState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Result<Response, Response> {
+    if !state.config.enabled || state.config.api_limits.is_empty() {
+        return Ok(next.run(request).await);
+    }
+
+    let method = request.method().as_str();
+    let path = request.uri().path().to_string();
+    let window = state.config.api_window_secs;
+
+    // 精确匹配 `METHOD /path`
+    let exact_key = format!("{} {}", method, &path);
+    // 通配匹配 `METHOD` 或 `/path`
+    let method_key = method.to_string();
+
+    let api_limit = state
+        .config
+        .api_limits
+        .get(&exact_key)
+        .or_else(|| state.config.api_limits.get(&path))
+        .or_else(|| state.config.api_limits.get(&method_key));
+
+    let Some(&limit) = api_limit else {
+        return Ok(next.run(request).await);
+    };
+
+    let key = RateLimiter::api_key(&exact_key);
+    let passed = if state.config.window_secs > 0 {
+        state
+            .limiter
+            .sliding_window_acquire(&key, window, limit)
+            .await
+    } else {
+        state.limiter.try_acquire(&key).await
+    };
+
+    if passed {
+        Ok(next.run(request).await)
+    } else {
+        Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("接口请求过于频繁（{}秒内最多 {} 次）", window, limit),
+        )
+            .into_response())
     }
 }

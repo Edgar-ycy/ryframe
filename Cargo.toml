@@ -4,7 +4,8 @@ default-members = ["crates/ryframe"]
 members = [
     "crates/ryframe",
     "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-middleware", "crates/ryframe-service",
-    "crates/ryframe-task", "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro"]
+    "crates/ryframe-task", "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro",
+    "examples/basic"]
 resolver = "3"
 [workspace.package]
 version = "0.1.0"
@@ -16,7 +17,7 @@ description = "rust开发的框架"
 
 
 [workspace.dependencies]
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = { version = "0.1" }
 chrono = { version = "0.4" }
@@ -60,5 +61,31 @@ tower = { version = "0.5" }
 tower-http = { version = "0.6" }
 ammonia = "4"
 dashmap = "6"
-zip = "2"
+zip = "8.6"
+prometheus = "0.14"
+lazy_static = "1"
 ryframe-macro = { path = "crates/ryframe-macro" }
+criterion = { version = "0.8", default-features = false }
+futures-util = "0.3"
+tokio-stream = "0.1"
+# OpenTelemetry 链路追踪
+opentelemetry = { version = "0.32", features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", features = ["http-proto"] }
+opentelemetry-semantic-conventions = { version = "0.32" }
+tracing-opentelemetry = "0.33"
+# SMTP 邮件发送
+lettre = { version = "0.11", default-features = false, features = ["builder", "rustls-tls", "smtp-transport", "tokio1", "tokio1-rustls"] }
+# gRPC
+prost = "0.14"
+tonic = { version = "0.14", default-features = false, features = ["transport", "server", "codegen", "router"] }
+tonic-build = "0.14"
+# 对象存储 (MinIO/S3)
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+aes-gcm = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
+digest = "0.11"
+hex = "0.4"
+# 消息队列 (Kafka, 可选 feature)
+rdkafka = { version = "0.39", features = ["tokio"] }

@@ -1,9 +1,6 @@
-use crate::dto::user_dto::{ChangeStatusDto, CreateUserDto, ResetPasswordDto, UpdateUserDto};
-use crate::dto::user_import_dto::{UserExportData, UserImportData};
-use axum::extract::Multipart;
 use axum::{
     Extension, Json, Router,
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     routing::{delete, get, post, put},
 };
 use ryframe_auth::jwt::Claims;
@@ -14,6 +11,10 @@ use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::{
+    user_dto::{ChangeStatusDto, CreateUserDto, ResetPasswordDto, UpdateUserDto},
+    user_import_dto::{UserExportData, UserImportData},
+};
 
 /// 用户列表分页查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -117,10 +118,11 @@ async fn list(
 }
 
 /// 用户列表不分页查询（返回全部数据）
-async fn list_no_page(
-    State(state): State<AppState>,
-) -> AppResult<Json<ApiResponse<Vec<UserVo>>>> {
-    let page_query = PageQuery { page: 1, page_size: 10000 };
+async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<UserVo>>>> {
+    let page_query = PageQuery {
+        page: 1,
+        page_size: 10000,
+    };
     state
         .user_service
         .find_by_page(&state.db, page_query)
@@ -169,6 +171,7 @@ async fn create(
             dto.phone.as_deref().unwrap_or(""),
             dto.dept_id,
             dto.role_ids,
+            state.config.auth.enable_password_complexity,
         )
         .await
         .map(|v| Json(ApiResponse::success(v)))
@@ -260,7 +263,12 @@ async fn reset_password(
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
     state
         .user_service
-        .reset_password(&state.db, id, &dto.password)
+        .reset_password(
+            &state.db,
+            id,
+            &dto.password,
+            state.config.auth.enable_password_complexity,
+        )
         .await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("密码重置成功")))
 }
@@ -362,6 +370,7 @@ async fn import_users(
                         data.phone.as_deref().unwrap_or(""),
                         data.dept_id,
                         None,
+                        false, // 导入时不强制密码复杂度（使用默认密码）
                     )
                     .await
                 {
@@ -373,11 +382,14 @@ async fn import_users(
                 }
             }
 
-            return Ok(Json(ApiResponse::success_msg("导入完成", serde_json::json!({
-                "success_count": success_count,
-                "fail_count": fail_count,
-                "errors": errors
-            }))));
+            return Ok(Json(ApiResponse::success_msg(
+                "导入完成",
+                serde_json::json!({
+                    "success_count": success_count,
+                    "fail_count": fail_count,
+                    "errors": errors
+                }),
+            )));
         }
     }
 

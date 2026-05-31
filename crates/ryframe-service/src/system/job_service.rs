@@ -1,15 +1,15 @@
+use std::{str::FromStr, sync::Arc};
+
 use chrono::{DateTime, Utc};
-use ryframe_common::utils::snowflake;
-use ryframe_common::{AppError, AppResult};
-use ryframe_core::LoggedRepo;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use ryframe_db::entities::job;
-use ryframe_db::{JobLogRepository, JobRepository};
+use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_core::{
+    LoggedRepo,
+    repository::{PageQuery, PageResult, Repository},
+};
+use ryframe_db::{JobLogRepository, JobRepository, entities::job};
 use ryframe_task::{ScheduledTask, TaskHistory, TaskScheduler};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use std::str::FromStr;
-use std::sync::Arc;
 
 #[derive(Debug, Serialize)]
 pub struct JobVo {

@@ -1,17 +1,16 @@
-use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     routing::get,
 };
-use ryframe_common::ApiPageResponse;
-use ryframe_common::{ApiResponse, AppResult};
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::PostVo;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
 
 /// 岗位列表查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -73,9 +72,7 @@ async fn list(
 }
 
 /// 岗位列表不分页查询（返回全部数据）
-async fn list_no_page(
-    State(state): State<AppState>,
-) -> AppResult<Json<ApiResponse<Vec<PostVo>>>> {
+async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<PostVo>>>> {
     state
         .post_service
         .find_all(&state.db)
@@ -83,7 +80,10 @@ async fn list_no_page(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<PostVo>>> {
+async fn detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ApiResponse<PostVo>>> {
     match state.post_service.find_by_id(&state.db, id).await? {
         Some(post) => Ok(Json(ApiResponse::success(post))),
         None => Err(ryframe_common::AppError::NotFound("岗位不存在".into())),

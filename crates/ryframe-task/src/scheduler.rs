@@ -1,12 +1,18 @@
-use crate::task_history::{TaskHistory, TaskHistoryStore};
-use crate::task_manager::{ScheduledTask, TaskContext};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+
 use chrono::{DateTime, Utc};
 use cron::Schedule;
+use ryframe_core::{DistributedLock, LockGuard};
 use serde::Serialize;
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use crate::{
+    task_history::{TaskHistory, TaskHistoryStore},
+    task_manager::{ScheduledTask, TaskContext},
+};
+
+/// 分布式锁默认 TTL（5 分钟），防止持有者崩溃导致死锁
+const DEFAULT_LOCK_TTL_SECS: u64 = 300;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskInfo {
@@ -21,6 +27,8 @@ pub struct TaskScheduler {
     tasks: Arc<RwLock<HashMap<String, RegisteredTask>>>,
     history: TaskHistoryStore,
     ctx: TaskContext,
+    /// 分布式锁（多实例防重复执行，None 表示单实例模式）
+    distributed_lock: Option<Arc<dyn DistributedLock>>,
     /// 优雅关闭通知
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -35,12 +43,30 @@ struct RegisteredTask {
 }
 
 impl TaskScheduler {
+    /// 创建调度器（单实例模式，不使用分布式锁）
     pub fn new(ctx: TaskContext) -> Self {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         Self {
             tasks: Arc::new(RwLock::new(HashMap::new())),
             history: TaskHistoryStore::new(500),
             ctx,
+            distributed_lock: None,
+            shutdown_tx,
+            shutdown_rx,
+        }
+    }
+
+    /// 创建带分布式锁的调度器（多实例防重复执行）
+    pub fn with_distributed_lock(
+        ctx: TaskContext,
+        distributed_lock: Arc<dyn DistributedLock>,
+    ) -> Self {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        Self {
+            tasks: Arc::new(RwLock::new(HashMap::new())),
+            history: TaskHistoryStore::new(500),
+            ctx,
+            distributed_lock: Some(distributed_lock),
             shutdown_tx,
             shutdown_rx,
         }
@@ -176,6 +202,29 @@ impl TaskScheduler {
             .collect()
     }
 
+    /// 尝试获取任务分布式锁，返回 LockGuard 在任务执行期间持有
+    async fn acquire_lock(&self, task_name: &str) -> Option<LockGuard> {
+        let lock = self.distributed_lock.as_ref()?;
+        match lock
+            .try_acquire(
+                &format!("task:lock:{}", task_name),
+                Duration::from_secs(DEFAULT_LOCK_TTL_SECS),
+            )
+            .await
+        {
+            Ok(guard) => {
+                if guard.is_none() {
+                    tracing::debug!("分布式锁被其他实例持有 [task={}], 跳过", task_name);
+                }
+                guard
+            }
+            Err(e) => {
+                tracing::warn!("分布式锁异常 [task={}]: {}, 降级执行", task_name, e);
+                None
+            }
+        }
+    }
+
     pub async fn trigger_once(&self, name: &str) -> ryframe_common::AppResult<TaskHistory> {
         let task = {
             let tasks = self.tasks.read().await;
@@ -183,6 +232,9 @@ impl TaskScheduler {
                 ryframe_common::AppError::NotFound(format!("任务不存在: {}", name))
             })?
         };
+
+        // 分布式锁：防止多实例同时手动触发同一任务
+        let _lock_guard = self.acquire_lock(name).await;
 
         let started_at = Utc::now();
         let ctx = self.ctx.clone();
@@ -262,9 +314,12 @@ impl TaskScheduler {
         };
 
         for task in due_tasks {
+            // 分布式锁：防止多实例 cron 调度同时执行同一任务
+            let name = task.name().to_string();
+            let _lock_guard = self.acquire_lock(&name).await;
+
             let started_at = Utc::now();
             let ctx = self.ctx.clone();
-            let name = task.name().to_string();
             let result = task.execute(&ctx).await;
             let finished_at = Utc::now();
             let cost_ms = (finished_at - started_at).num_milliseconds();

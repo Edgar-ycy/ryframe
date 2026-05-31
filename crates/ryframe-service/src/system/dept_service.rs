@@ -1,12 +1,13 @@
-use ryframe_common::utils::snowflake;
-use ryframe_common::{AppError, AppResult};
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
-use ryframe_db::DeptRepository;
-use ryframe_db::entities::dept;
-use ryframe_db::repositories::dept_repo::DeptTreeNode;
+use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_core::{LoggedRepo, RedisClient, Repository};
+use ryframe_db::{DeptRepository, entities::dept, repositories::dept_repo::DeptTreeNode};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
+
+/// 部门树缓存 Redis key
+const DEPT_TREE_CACHE_KEY: &str = "sys_dept:tree";
+/// 缓存过期时间（1 小时）
+const CACHE_TTL_SECS: u64 = 3600;
 
 /// 部门视图对象
 #[derive(Debug, Serialize)]
@@ -38,11 +39,31 @@ impl From<dept::Model> for DeptVo {
 
 pub struct DeptServiceImpl {
     pub dept_repo: LoggedRepo<DeptRepository>,
+    pub redis: Option<RedisClient>,
 }
 
 impl DeptServiceImpl {
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<DeptTreeNode>> {
-        self.dept_repo.find_tree(db).await
+        // 尝试从 Redis 缓存读取
+        if let Some(ref redis) = self.redis
+            && let Ok(Some(json)) = redis.get(DEPT_TREE_CACHE_KEY).await
+            && let Ok(cached) = serde_json::from_str::<Vec<DeptTreeNode>>(&json)
+        {
+            return Ok(cached);
+        }
+
+        let tree = self.dept_repo.find_tree(db).await?;
+
+        // 写入缓存
+        if let Some(ref redis) = self.redis
+            && let Ok(json) = serde_json::to_string(&tree)
+        {
+            let _ = redis
+                .set_ex(DEPT_TREE_CACHE_KEY, &json, CACHE_TTL_SECS)
+                .await;
+        }
+
+        Ok(tree)
     }
 
     pub async fn create(
@@ -68,7 +89,9 @@ impl DeptServiceImpl {
             created_at: now,
             updated_at: now,
         };
-        self.dept_repo.insert(db, new_dept).await
+        self.dept_repo.insert(db, new_dept).await.inspect(|_| {
+            self.invalidate_dept_cache();
+        })
     }
 
     pub async fn update(
@@ -97,7 +120,9 @@ impl DeptServiceImpl {
         dept.status = status;
         dept.updated_at = chrono::Utc::now();
 
-        self.dept_repo.update(db, dept).await
+        self.dept_repo.update(db, dept).await.inspect(|_| {
+            self.invalidate_dept_cache();
+        })
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
@@ -110,7 +135,9 @@ impl DeptServiceImpl {
             return Err(AppError::Validation("存在子部门，无法删除".into()));
         }
 
-        self.dept_repo.delete(db, id).await
+        self.dept_repo.delete(db, id).await.map(|_| {
+            self.invalidate_dept_cache();
+        })
     }
 
     /// 按名称/状态搜索部门列表
@@ -127,5 +154,15 @@ impl DeptServiceImpl {
     /// 按 ID 查询部门详情
     pub async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<DeptVo>> {
         Ok(self.dept_repo.find_by_id(db, id).await?.map(DeptVo::from))
+    }
+
+    /// 清除部门树缓存
+    fn invalidate_dept_cache(&self) {
+        if let Some(ref redis) = self.redis {
+            let redis = redis.clone();
+            tokio::spawn(async move {
+                let _ = redis.del(DEPT_TREE_CACHE_KEY).await;
+            });
+        }
     }
 }

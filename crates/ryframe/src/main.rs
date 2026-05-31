@@ -1,36 +1,41 @@
 mod app;
 
+use std::{net::SocketAddr, sync::Arc};
+
 use ryframe_api::handlers::captcha_handler::CaptchaStore;
-use ryframe_common::AppError;
+use ryframe_common::{AppError, utils::create_storage_from_config};
 use ryframe_config::AppConfig;
-use ryframe_core::create_redis_client;
-use ryframe_core::{AppContext, DataSourceManager, LoggedRepo};
-use ryframe_db::sql_logger::SqlLogLayer;
+use ryframe_core::{
+    AppContext, DataSourceManager, HotConfig, LoggedRepo, TokenBlacklist, create_redis_client,
+    spawn_config_watcher,
+};
 use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
-    JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
-    PermissionRepository, PostRepository, RoleRepository, UserRepository,
+    ConfigRepository, DbSpanLayer, DeptRepository, DictDataRepository, DictTypeRepository,
+    JobLogRepository, JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository,
+    OperLogRepository, PermissionRepository, PostRepository, RoleRepository, SqlLogLayer,
+    UserRepository,
 };
-use ryframe_middleware::RateLimiter;
-use ryframe_service::AuthServiceImpl;
-use ryframe_service::system::{
-    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
-    LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-    RoleServiceImpl, UserServiceImpl,
+use ryframe_middleware::{
+    RateLimiter,
+    rate_limit::RateLimitState,
+    telemetry::{TelemetryConfig, init_tracer_provider},
 };
-use ryframe_task::builtin::{
-    CleanLoginInfoTask, CleanOperLogTask, CleanTempFilesTask, DatabaseBackupTask,
+use ryframe_service::{
+    AuthServiceImpl,
+    system::{
+        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
+        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+        RoleServiceImpl, UserServiceImpl,
+    },
 };
-use ryframe_task::{ScheduledTask, TaskContext, TaskScheduler};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::Layer;
-use tracing_subscriber::filter::FilterFn;
-use tracing_subscriber::fmt;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use ryframe_task::{
+    ScheduledTask, TaskContext, TaskScheduler,
+    builtin::{CleanLoginInfoTask, CleanOperLogTask, CleanTempFilesTask, DatabaseBackupTask},
+};
+use tracing_subscriber::{
+    EnvFilter, Layer, filter::FilterFn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 /// 日志 Guard，保证滚动文件 writer 不被提前 Drop
 struct LoggerGuard {
@@ -42,7 +47,13 @@ struct LoggerGuard {
 /// - `output = "stdout"` → 控制台输出
 /// - `output = "file"` → 滚动文件输出（每天滚动，保留 7 天）
 /// - `format = "json"` → JSON 格式，否则 text 格式
-fn init_logger(config: &AppConfig) -> LoggerGuard {
+/// - 同时初始化 OpenTelemetry 链路追踪（通过环境变量控制）
+fn init_logger(
+    config: &AppConfig,
+) -> (
+    LoggerGuard,
+    Option<ryframe_middleware::telemetry::TelemetryGuard>,
+) {
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logger.level));
 
@@ -52,49 +63,88 @@ fn init_logger(config: &AppConfig) -> LoggerGuard {
     // 阻止 sqlx 查询事件到达 fmt 层（由 SqlLogLayer 单独格式化输出）
     let sqlx_filter = FilterFn::new(|meta| meta.target() != "sqlx::query");
 
+    // 初始化链路追踪（在 subscriber 构建之前）
+    let telemetry_config = TelemetryConfig {
+        enabled: std::env::var("OTEL_ENABLED").unwrap_or_else(|_| "false".into()) == "true",
+        endpoint: std::env::var("OTEL_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:4318/v1/traces".into()),
+        service_name: std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "ryframe".into()),
+        sample_rate: std::env::var("OTEL_SAMPLE_RATE")
+            .unwrap_or_else(|_| "1.0".into())
+            .parse()
+            .unwrap_or(1.0),
+    };
+    let telemetry_guard = init_tracer_provider(&telemetry_config);
+    let otel_layer = telemetry_guard.tracing_layer();
+
+    // 构建 subscriber 的顺序很关键：
+    // 1. fmt_layer（含 sqlx 过滤器）→ 2. SqlLogLayer → 3. otel(可选) → 4. env_filter
+    // env_filter 放最后因为 EnvFilter: Layer<S> for all S: Subscriber，
+    // 而 Filtered<FmtLayer, FilterFn, Registry> 只能 Layer<Registry>，
+    // 无法 layer 到 Layered<EnvFilter, Registry> 上
     if config.logger.output == "file" {
         let file_appender = tracing_appender::rolling::daily("logs", "ryframe.log");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-        let fmt_boxed = if is_json {
-            fmt::layer()
+        // 构建 subscriber：先用 .boxed() 擦除 Filtered 类型
+        let subscriber = if is_json {
+            let fmt_layer = fmt::layer()
                 .json()
-                .with_writer(non_blocking.clone())
+                .with_writer(non_blocking)
                 .with_ansi(false)
                 .with_filter(sqlx_filter)
-                .boxed()
+                .boxed();
+            tracing_subscriber::registry()
+                .with(fmt_layer)
+                .with(DbSpanLayer::new())
+                .with(SqlLogLayer::new(sql_log_level, 0))
         } else {
-            fmt::layer()
-                .with_writer(non_blocking.clone())
+            let fmt_layer = fmt::layer()
+                .with_writer(non_blocking)
                 .with_ansi(false)
                 .with_filter(sqlx_filter)
-                .boxed()
+                .boxed();
+            tracing_subscriber::registry()
+                .with(fmt_layer)
+                .with(DbSpanLayer::new())
+                .with(SqlLogLayer::new(sql_log_level, 0))
         };
 
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt_boxed)
-            .with(SqlLogLayer::new(sql_log_level))
-            .init();
-
-        LoggerGuard {
-            _worker: Some(guard),
+        if let Some(otel) = otel_layer {
+            subscriber.with(otel).with(env_filter).init();
+        } else {
+            subscriber.with(env_filter).init();
         }
+
+        (
+            LoggerGuard {
+                _worker: Some(guard),
+            },
+            Some(telemetry_guard),
+        )
     } else {
         // 控制台输出
-        let fmt_boxed = if is_json {
-            fmt::layer().json().with_filter(sqlx_filter).boxed()
+        let subscriber = if is_json {
+            let fmt_layer = fmt::layer().json().with_filter(sqlx_filter).boxed();
+            tracing_subscriber::registry()
+                .with(fmt_layer)
+                .with(DbSpanLayer::new())
+                .with(SqlLogLayer::new(sql_log_level, 0))
         } else {
-            fmt::layer().with_filter(sqlx_filter).boxed()
+            let fmt_layer = fmt::layer().with_filter(sqlx_filter).boxed();
+            tracing_subscriber::registry()
+                .with(fmt_layer)
+                .with(DbSpanLayer::new())
+                .with(SqlLogLayer::new(sql_log_level, 0))
         };
 
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt_boxed)
-            .with(SqlLogLayer::new(sql_log_level))
-            .init();
+        if let Some(otel) = otel_layer {
+            subscriber.with(otel).with(env_filter).init();
+        } else {
+            subscriber.with(env_filter).init();
+        }
 
-        LoggerGuard { _worker: None }
+        (LoggerGuard { _worker: None }, Some(telemetry_guard))
     }
 }
 
@@ -107,83 +157,50 @@ async fn main() -> Result<(), AppError> {
         std::env::var("APP_ENV").unwrap_or_else(|_| "dev".into())
     );
 
-    // 2. 初始化日志（根据配置支持 stdout / 滚动文件输出）
-    let _guard = init_logger(&config);
+    // 1.1 创建热加载配置句柄（日志/限流/CORS/Redis 可热更新）
+    let hot_config = HotConfig::new(config.clone());
+
+    // 2. 初始化日志（内部同时初始化 OpenTelemetry 链路追踪）
+    let (_logger_guard, _telemetry_guard) = init_logger(&config);
     tracing::info!(
         "日志系统初始化完成, 级别: {}, 输出: {}",
         config.logger.level,
         config.logger.output
     );
 
+    // 2.1 启动进程指标采集后台任务（CPU/内存/FD/线程）
+    ryframe_middleware::metrics::spawn_process_metrics_updater();
+
     // 3. 创建 DataSourceManager 并注册所有数据源
     let ds_manager = DataSourceManager::new();
 
-    // 3a. 连接 primary 并注册
-    let primary_db = ryframe_db::connection::connect_with_level(
-        &config.database.primary,
-        config.database.sql_log_level,
-    )
-    .await?;
+    // 3a. 连接主库（connections[0]）
+    let primary_config = &config.database.connections[0];
+    let primary_db =
+        ryframe_db::connection::connect_with_level(primary_config, config.database.sql_log_level)
+            .await?;
     ds_manager.register("primary", primary_db.clone());
-    tracing::info!(
-        "数据源 'primary' 连接成功: {}",
-        config.database.primary.database
-    );
+    tracing::info!("数据源 'primary' 连接成功: {}", primary_config.database);
 
-    // 3b. 连接从库并注册（命名规则 replica_0, replica_1...）
-    let replica_dbs = {
-        let mut dbs = Vec::with_capacity(config.database.replicas.len());
-        for (i, replica_config) in config.database.replicas.iter().enumerate() {
-            let name = format!("replica_{}", i);
-            match ryframe_db::connection::connect_with_level(
-                replica_config,
-                config.database.sql_log_level,
-            )
+    // 3b. 连接额外数据源（connections[1..]），命名为 db_1, db_2...
+    let mut extra_dbs = Vec::with_capacity(config.database.connections.len().saturating_sub(1));
+    for (i, conn_config) in config.database.connections.iter().enumerate().skip(1) {
+        let name = format!("db_{}", i);
+        match ryframe_db::connection::connect_with_level(conn_config, config.database.sql_log_level)
             .await
-            {
-                Ok(db) => {
-                    ds_manager.register(&name, db.clone());
-                    tracing::info!("数据源 '{}' 连接成功: {}", name, replica_config.database);
-                    dbs.push(db);
-                }
-                Err(e) => {
-                    tracing::warn!("从库连接失败 ({}): {}，跳过", replica_config.database, e);
-                }
-            }
-        }
-        dbs
-    };
-
-    if replica_dbs.is_empty() && !config.database.replicas.is_empty() {
-        tracing::warn!("所有从库连接均失败，仅使用主库");
-    } else if !replica_dbs.is_empty() {
-        tracing::info!("已连接 {} 个从库", replica_dbs.len());
-    }
-
-    // 3c. 连接命名数据源并注册
-    for named_ds in &config.database.datasources {
-        match ryframe_db::connection::connect_with_level(
-            &named_ds.connection,
-            config.database.sql_log_level,
-        )
-        .await
         {
             Ok(db) => {
-                ds_manager.register(&named_ds.name, db);
-                tracing::info!(
-                    "数据源 '{}' 连接成功: {}",
-                    named_ds.name,
-                    named_ds.connection.database
-                );
+                ds_manager.register(&name, db.clone());
+                tracing::info!("数据源 '{}' 连接成功: {}", name, conn_config.database);
+                extra_dbs.push(db);
             }
             Err(e) => {
-                tracing::error!(
-                    "数据源 '{}' ({}) 连接失败: {}",
-                    named_ds.name,
-                    named_ds.connection.database,
+                tracing::warn!(
+                    "数据源 '{}' ({}) 连接失败: {}，跳过",
+                    name,
+                    conn_config.database,
                     e
                 );
-                return Err(e);
             }
         }
     }
@@ -252,25 +269,35 @@ async fn main() -> Result<(), AppError> {
         perm_repo: LoggedRepo::new(PermissionRepository),
     });
 
+    // 7.w 创建 Redis 客户端（提前初始化，供菜单/部门/字典/配置服务使用）
+    let redis_client = create_redis_client(&config.redis).await;
+    if redis_client.is_some() {
+        tracing::info!(
+            "Redis 已启用，验证码/在线用户/限流器/菜单树/部门树/字典缓存将使用 Redis 存储"
+        );
+    } else {
+        tracing::info!("Redis 未配置或不可用，使用内存模式");
+    }
+
+    // 7.w2 创建 Token 黑名单（Redis 或内存模式）
+    let token_blacklist = TokenBlacklist::new(redis_client.clone());
+    if redis_client.is_none() {
+        token_blacklist.spawn_gc(); // 内存模式需要后台 GC
+    }
+
     let menu_service = Arc::new(MenuServiceImpl {
         menu_repo: LoggedRepo::new(MenuRepository),
+        redis: redis_client.clone(),
     });
 
     let dept_service = Arc::new(DeptServiceImpl {
         dept_repo: LoggedRepo::new(DeptRepository),
+        redis: redis_client.clone(),
     });
 
     let post_service = Arc::new(PostServiceImpl {
         post_repo: LoggedRepo::new(PostRepository),
     });
-
-    // 7.w 创建 Redis 客户端（提前初始化，供字典/配置服务使用）
-    let redis_client = create_redis_client(&config.redis).await;
-    if redis_client.is_some() {
-        tracing::info!("Redis 已启用，验证码/在线用户/限流器/字典缓存将使用 Redis 存储");
-    } else {
-        tracing::info!("Redis 未配置或不可用，使用内存模式");
-    }
 
     let config_service = Arc::new(ConfigServiceImpl {
         config_repo: LoggedRepo::new(ConfigRepository),
@@ -348,10 +375,15 @@ async fn main() -> Result<(), AppError> {
 
     // 8. 限流器（Redis 或内存模式）
     let limiter = if let Some(ref redis) = redis_client {
+        let window = if config.rate_limit.window_secs > 0 {
+            config.rate_limit.window_secs
+        } else {
+            60 // 默认 60 秒固定窗口
+        };
         Arc::new(RateLimiter::new_redis(
             redis.clone(),
             config.rate_limit.capacity,
-            60, // 60 秒固定窗口
+            window,
         ))
     } else {
         let l = Arc::new(RateLimiter::new_in_memory(
@@ -361,6 +393,38 @@ async fn main() -> Result<(), AppError> {
         l.spawn_gc();
         l
     };
+
+    // 8.1 创建限流状态（用于 per-user / per-api 中间件）
+    let rate_limit_state = RateLimitState {
+        limiter: limiter.clone(),
+        config: Arc::new(config.rate_limit.clone()),
+    };
+
+    // 8.1 创建对象存储（根据配置自动选择本地/MinIO/S3，MinIO 初始化失败时降级为本地）
+    let storage_config = &config.object_storage;
+    let object_storage: Arc<dyn ryframe_common::utils::ObjectStorage> =
+        Arc::from(create_storage_from_config(
+            match storage_config.backend {
+                ryframe_config::StorageBackend::Local => "local",
+                ryframe_config::StorageBackend::Minio => "minio",
+                ryframe_config::StorageBackend::S3 => "s3",
+            },
+            &storage_config.local_base_dir,
+            &storage_config.public_base_url,
+            &storage_config.endpoint,
+            &storage_config.access_key,
+            &storage_config.secret_key,
+            storage_config.use_ssl,
+        ));
+    tracing::info!(
+        "对象存储初始化完成, 后端: {}, 本地目录: {}",
+        match storage_config.backend {
+            ryframe_config::StorageBackend::Local => "local",
+            ryframe_config::StorageBackend::Minio => "minio",
+            ryframe_config::StorageBackend::S3 => "s3",
+        },
+        storage_config.local_base_dir
+    );
 
     // 9. 获取监听地址
     let addr = format!("{}:{}", config.app.host, config.app.port);
@@ -391,9 +455,12 @@ async fn main() -> Result<(), AppError> {
         scheduler: scheduler.clone(),
         monitor_db: primary_db.clone(),
         redis: redis_client.clone(),
-        replica_dbs,
+        token_blacklist,
+        replica_dbs: extra_dbs,
+        rate_limiter: limiter.clone(),
+        object_storage,
     };
-    let router = app::build_app(state, limiter, &config.cors);
+    let router = app::build_app(state, limiter, rate_limit_state, &config.cors);
 
     // 11. 启动 scheduler 后台
     let scheduler_for_shutdown = scheduler.clone();
@@ -406,6 +473,21 @@ async fn main() -> Result<(), AppError> {
         .map_err(|e| AppError::Internal(format!("绑定地址 {} 失败: {}", addr, e)))?;
 
     tracing::info!("服务启动: http://{}", addr);
+
+    // 13. 启动配置文件热加载（每 5 秒检查一次）
+    spawn_config_watcher(
+        hot_config,
+        "config".to_string(),
+        Some(Arc::new(move |new_config: &AppConfig| {
+            // 配置变更时提示（日志级别变更需重启 tracing subscriber 才能完整生效）
+            tracing::info!(
+                "[ConfigWatcher] 配置已热更新 - 日志级别: {}, 限流: {}/{}",
+                new_config.logger.level,
+                new_config.rate_limit.capacity,
+                new_config.rate_limit.refill_per_sec,
+            );
+        })),
+    );
 
     // 使用 tokio::select 同时等待服务和停机信号
     tokio::select! {

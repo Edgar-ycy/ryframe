@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ryframe.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ryframe.labels" . | nindent 4 }}
+    app: {{ include "ryframe.name" . }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "ryframe.selectorLabels" . | nindent 4 }}
+    app: {{ include "ryframe.name" . }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http

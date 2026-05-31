@@ -13,7 +13,7 @@ port = 8080
 # SQL 日志级别: off(关闭) / summary(SQL+耗时+行数) / full(含完整SQL)
 sql_log_level = "off"
 
-[database.primary]
+[[database.connections]]
 driver = "postgres"
 host = "localhost"
 port = 5432
@@ -43,3 +43,45 @@ output = "stdout"
 
 [cors]
 allow_origins = []
+
+[rate_limit]
+# 是否启用全局限流
+enabled = true
+# 令牌桶容量（每窗口最大请求数）
+capacity = 100
+# 每秒补充令牌数（0 表示使用 window_secs 固定窗口模式）
+refill_per_sec = 20
+# 固定窗口时长（秒），0 使用 refill_per_sec 令牌桶模式
+window_secs = 0
+# ========== 用户级限流 ==========
+# 是否启用用户级限流（需 Redis + 在 system_router 添加中间件）
+enable_user_rate_limit = false
+# 用户级窗口时长（秒）
+user_window_secs = 60
+# 每用户每窗口最大请求数
+user_capacity = 500
+# ========== 接口级限流 ==========
+# 敏感接口限流：METHOD /path = 每窗口最大请求数
+# 示例：{"POST /api/v1/auth/login" = 5} 表示登录接口每分钟最多 5 次
+[rate_limit.api_limits]
+"POST /api/v1/auth/login" = 5
+# 接口级窗口时长（秒）
+api_window_secs = 60
+
+[object_storage]
+# 存储后端: local（本地）| minio（MinIO）| s3（S3-compatible）
+backend = "s3"
+# 本地存储根目录
+local_base_dir = "uploads"
+# 公共访问 URL 前缀（生产环境应改为 CDN 域名）
+public_base_url = ""
+# MinIO / S3 端点
+endpoint = "http://localhost:9000"
+# Access Key（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY 注入）
+access_key = "rustfsadmin"
+# Secret Key（生产环境通过 APP_OBJECT_STORAGE_SECRET_KEY 注入）
+secret_key = "rustfsadmin"
+# 是否启用 SSL
+use_ssl = false
+# AWS Region
+region = "us-east-1"

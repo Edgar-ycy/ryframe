@@ -9,6 +9,7 @@ description.workspace = true
 
 [dependencies]
 ryframe-common = { path = "../ryframe-common" }
+ryframe-core = { path = "../ryframe-core" }
 ryframe-db = { path = "../ryframe-db" }
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 async-trait = { workspace = true }
@@ -16,6 +17,5 @@ chrono = { workspace = true }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-uuid = { workspace = true }
 tracing = { workspace = true }
 cron = { workspace = true }

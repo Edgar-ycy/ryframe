@@ -1,7 +1,10 @@
-use axum::extract::Request;
-use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
 use std::time::Duration;
+
+use axum::{
+    extract::Request,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 
 /// 请求超时中间件
 ///

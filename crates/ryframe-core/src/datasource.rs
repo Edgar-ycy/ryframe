@@ -1,14 +1,15 @@
 //! 多数据源上下文持有与连接注册中心
 //!
-//! - `DataSourceContext`: 类似若依 `DynamicDataSourceContextHolder`，
+//! - `DataSourceContext`: 基于 task_local 的数据源上下文持有，实现线程级数据源切换。
 //!   基于 `tokio::task::task_local!` 的 task-local 存储
 //! - `DataSourceManager`: 启动时注册所有数据源连接，运行时按名称解析
 //! - 全局单例: 通过 `set_global()` / `global()` / `current_db()` 避免
 //!   所有 Repository 都需要显式注入 `DataSourceManager`
 
+use std::sync::{Arc, OnceLock};
+
 use dashmap::DashMap;
 use sea_orm::DatabaseConnection;
-use std::sync::{Arc, OnceLock};
 
 // ============================================================
 // 全局单例（减少注入样板代码）

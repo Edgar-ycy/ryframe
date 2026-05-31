@@ -1,9 +1,10 @@
-use crate::{AppError, AppResult};
+use std::{collections::HashMap, io::Cursor};
+
 use calamine::{Data, Reader, Xlsx, open_workbook_auto};
 use rust_xlsxwriter::{Color, Format, Workbook, Worksheet};
 use serde::{Serialize, de::DeserializeOwned};
-use std::collections::HashMap;
-use std::io::Cursor;
+
+use crate::{AppError, AppResult};
 
 /// Excel 导入工具
 pub struct ExcelImporter;
@@ -184,7 +185,7 @@ impl ExcelExporter {
         Ok(())
     }
 
-    fn value_to_str(v: &serde_json::Value) -> String {
+    pub fn value_to_str(v: &serde_json::Value) -> String {
         match v {
             serde_json::Value::String(s) => s.clone(),
             serde_json::Value::Number(n) => n.to_string(),

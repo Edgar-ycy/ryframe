@@ -28,3 +28,6 @@ utoipa = { workspace = true }
 redis = { workspace = true }
 tracing = { workspace = true }
 cron = { workspace = true }
+
+[dev-dependencies]
+sea-orm-migration = { workspace = true }

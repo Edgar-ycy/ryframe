@@ -3,16 +3,16 @@ use axum::{
     extract::{Path, Query, State},
     routing::{get, post, put},
 };
-use ryframe_common::ApiPageResponse;
-use ryframe_common::{ApiResponse, AppResult};
-use ryframe_core::Repository;
-use ryframe_core::repository::PageQuery;
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_core::{Repository, repository::PageQuery};
 use ryframe_service::system::{JobLogVo, JobVo};
 use serde::Deserialize;
 use validator::Validate;
 
-use crate::dto::job_dto::{CreateJobDto, UpdateJobDto};
-use crate::handlers::auth_handler::AppState;
+use crate::{
+    dto::job_dto::{CreateJobDto, UpdateJobDto},
+    handlers::auth_handler::AppState,
+};
 
 /// 任务日志分页查询参数
 #[derive(Debug, Deserialize)]
@@ -84,7 +84,11 @@ async fn list_page(
     let all = state.job_service.list_all(&state.db).await?;
     let total = all.len() as u64;
     let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
-    let rows: Vec<JobVo> = all.into_iter().skip(offset).take(query.page_size as usize).collect();
+    let rows: Vec<JobVo> = all
+        .into_iter()
+        .skip(offset)
+        .take(query.page_size as usize)
+        .collect();
     Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
 }
 

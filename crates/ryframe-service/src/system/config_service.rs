@@ -1,9 +1,9 @@
 use ryframe_common::{AppError, AppResult};
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
-use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::ConfigRepository;
-use ryframe_db::entities::config;
+use ryframe_core::{
+    LoggedRepo, Repository,
+    repository::{PageQuery, PageResult},
+};
+use ryframe_db::{ConfigRepository, entities::config};
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 

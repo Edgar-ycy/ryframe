@@ -9,5 +9,8 @@ description.workspace = true
 
 [dependencies]
 ryframe-common = { path = "../ryframe-common" }
+aes-gcm = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 toml = { workspace = true }

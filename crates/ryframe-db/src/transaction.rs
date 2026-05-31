@@ -1,6 +1,7 @@
+use std::future::Future;
+
 use ryframe_common::{AppError, AppResult};
 use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
-use std::future::Future;
 
 /// 闭包式事务管理器
 ///

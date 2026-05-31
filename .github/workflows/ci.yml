@@ -5,15 +5,25 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+
+# 防止同一分支/PR 重复触发
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings"
+  CARGO_HTTP_TIMEOUT: "600"
+  CARGO_NET_RETRY: "5"
 
 jobs:
+  # ========== 代码质量门禁 ==========
   check:
     name: Check & Lint
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-Dwarnings"
     steps:
       - uses: actions/checkout@v4
 
@@ -30,15 +40,73 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+      - name: Clippy (all targets, deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check build
-        run: cargo check --workspace
+        run: cargo check --workspace --all-targets
 
-  test:
-    name: Test
+  # ========== 安全检查 ==========
+  security-audit:
+    name: Security Audit
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: License check
+        run: cargo deny check licenses
+        continue-on-error: true
+
+  # ========== 测试 & 覆盖率 ==========
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run tests with coverage (threshold 60%)
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 60
+
+      - name: Run tests without coverage threshold (fallback)
+        if: failure()
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ========== 跨平台测试 (Windows) ==========
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
     needs: check
     steps:
       - uses: actions/checkout@v4
@@ -48,14 +116,17 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
 
       - name: Run tests
-        run: cargo test --workspace -- --test-threads=1
+        run: cargo test --workspace --no-fail-fast
 
+  # ========== 发布构建 ==========
   build:
     name: Build Release
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, security-audit]
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +146,7 @@ jobs:
           name: ryframe-linux
           path: target/release/ryframe
 
+  # ========== Docker 镜像 ==========
   docker:
     name: Docker Build
     runs-on: ubuntu-latest

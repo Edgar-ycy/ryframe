@@ -1,11 +1,12 @@
-use ryframe_common::{AppError, AppResult};
-
-use ryframe_common::utils::snowflake;
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
-use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::entities::{dict_data, dict_type};
-use ryframe_db::{DictDataRepository, DictTypeRepository};
+use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_core::{
+    LoggedRepo, Repository,
+    repository::{PageQuery, PageResult},
+};
+use ryframe_db::{
+    DictDataRepository, DictTypeRepository,
+    entities::{dict_data, dict_type},
+};
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 

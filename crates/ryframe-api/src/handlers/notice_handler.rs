@@ -1,17 +1,16 @@
-use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     routing::get,
 };
-use ryframe_common::ApiPageResponse;
-use ryframe_common::{ApiResponse, AppResult};
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::NoticeVo;
 use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};
 
 /// 通知公告列表查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -75,7 +74,10 @@ async fn list(
 async fn list_no_page(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<NoticeVo>>>> {
-    let page_query = PageQuery { page: 1, page_size: 10000 };
+    let page_query = PageQuery {
+        page: 1,
+        page_size: 10000,
+    };
     state
         .notice_service
         .find_by_page(&state.db, page_query)
@@ -83,7 +85,10 @@ async fn list_no_page(
         .map(|p| Json(ApiResponse::success(p.records)))
 }
 
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<NoticeVo>>> {
+async fn detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ApiResponse<NoticeVo>>> {
     match state.notice_service.find_by_id(&state.db, id).await? {
         Some(notice) => Ok(Json(ApiResponse::success(notice))),
         None => Err(ryframe_common::AppError::NotFound("通知公告不存在".into())),

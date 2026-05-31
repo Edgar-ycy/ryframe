@@ -1,13 +1,12 @@
+use std::sync::Arc;
+
 use ryframe_auth::{jwt, password};
 use ryframe_common::{AppError, AppResult};
 use ryframe_config::AppConfig;
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
-use ryframe_db::entities::user;
-use ryframe_db::{PermissionRepository, RoleRepository, UserRepository};
+use ryframe_core::{LoggedRepo, Repository};
+use ryframe_db::{PermissionRepository, RoleRepository, UserRepository, entities::user};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
-use std::sync::Arc;
 use utoipa::ToSchema;
 
 /// 登录响应（内部使用，最终由 API 层序列化为 JSON）

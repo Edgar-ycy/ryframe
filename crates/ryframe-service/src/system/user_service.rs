@@ -1,12 +1,17 @@
 use ryframe_auth::password;
-use ryframe_common::annotations::data_scope::{DataScope, DataScopeContext};
-use ryframe_common::utils::snowflake;
-use ryframe_common::{AppError, AppResult};
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
-use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::entities::{role, user};
-use ryframe_db::{DeptRepository, RoleRepository, UserRepository};
+use ryframe_common::{
+    AppError, AppResult,
+    annotations::data_scope::{DataScope, DataScopeContext},
+    utils::snowflake,
+};
+use ryframe_core::{
+    LoggedRepo, Repository,
+    repository::{PageQuery, PageResult},
+};
+use ryframe_db::{
+    DeptRepository, RoleRepository, UserRepository,
+    entities::{role, user},
+};
 use ryframe_macro::datasource;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, TransactionTrait};
 use serde::Serialize;
@@ -263,7 +268,13 @@ impl UserServiceImpl {
         phone: &str,
         dept_id: Option<i64>,
         role_ids: Option<Vec<i64>>,
+        enable_pwd_complexity: bool,
     ) -> AppResult<UserVo> {
+        // 密码复杂度校验
+        if enable_pwd_complexity {
+            password::validate_complexity(password)?;
+        }
+
         // 检查用户名唯一
         if self
             .user_repo
@@ -406,7 +417,13 @@ impl UserServiceImpl {
         db: &DatabaseConnection,
         id: i64,
         new_password: &str,
+        enable_pwd_complexity: bool,
     ) -> AppResult<()> {
+        // 密码复杂度校验
+        if enable_pwd_complexity {
+            password::validate_complexity(new_password)?;
+        }
+
         let mut user = self
             .user_repo
             .find_by_id(db, id)
@@ -425,16 +442,16 @@ impl UserServiceImpl {
     ///
     /// # 验证方法
     ///
-    /// 1. 确保 `app.dev.toml` 中配置了 `[[database.replicas]]`
+    /// 1. 确保 `app.dev.toml` 中配置了 `[[database.connections]]`（至少 2 个）
     /// 2. 在两个库的 `sys_user` 表中插入不同数据
     /// 3. 调用本方法 → 返回的是从库的数据
     /// 4. 调用不带注解的 `find_by_page` → 返回的是主库的数据
-    #[datasource("replica_0")]
+    #[datasource("db_1")]
     pub async fn find_by_page_from_replica(
         &self,
         query: PageQuery,
     ) -> AppResult<PageResult<UserVo>> {
-        let db = self.user_repo.db(); // ← 从 task-local 解析为 replica_0 连接
+        let db = self.user_repo.db(); // ← 从 task-local 解析为 db_1 连接
         let page = self.user_repo.find_by_page(&db, query.clone()).await?;
         let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
         self.fill_dept_names(&db, &mut records).await;
@@ -442,12 +459,12 @@ impl UserServiceImpl {
     }
 
     /// 从命名数据源查询（演示多数据源切换）
-    #[datasource("db_order")]
+    #[datasource("db_2")]
     pub async fn find_by_page_from_order_db(
         &self,
         query: PageQuery,
     ) -> AppResult<PageResult<UserVo>> {
-        let db = self.user_repo.db(); // ← 从 task-local 解析为 db_order 连接
+        let db = self.user_repo.db(); // ← 从 task-local 解析为 db_2 连接
         let page = self.user_repo.find_by_page(&db, query.clone()).await?;
         let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
         self.fill_dept_names(&db, &mut records).await;

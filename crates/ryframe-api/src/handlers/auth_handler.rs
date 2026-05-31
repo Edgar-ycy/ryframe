@@ -1,21 +1,27 @@
-use crate::dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest};
-use crate::handlers::captcha_handler::CaptchaStore;
-use axum::http::HeaderMap;
-use axum::{Extension, Json, extract::State};
-use ryframe_auth::jwt::Claims;
-use ryframe_common::{ApiResponse, AppResult};
-use ryframe_config::AppConfig;
-use ryframe_core::{DataSourceManager, RedisClient};
-use ryframe_service::system::{
-    ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
-    LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-    OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-    RoleServiceImpl, UserServiceImpl,
-};
-use ryframe_service::{AuthServiceImpl, UserInfo};
-use sea_orm::DatabaseConnection;
 use std::sync::Arc;
+
+use axum::{Extension, Json, extract::State, http::HeaderMap};
+use ryframe_auth::jwt::Claims;
+use ryframe_common::{ApiResponse, AppError, AppResult};
+use ryframe_config::AppConfig;
+use ryframe_core::{DataSourceManager, RedisClient, TokenBlacklist};
+use ryframe_middleware::RateLimiter;
+use ryframe_service::{
+    AuthServiceImpl, UserInfo,
+    system::{
+        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
+        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+        RoleServiceImpl, UserServiceImpl,
+    },
+};
+use sea_orm::DatabaseConnection;
 use validator::Validate;
+
+use crate::{
+    dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest},
+    handlers::captcha_handler::CaptchaStore,
+};
 
 /// API 共享状态
 #[derive(Clone)]
@@ -49,8 +55,14 @@ pub struct AppState {
     pub scheduler: Arc<ryframe_task::TaskScheduler>,
     pub monitor_db: DatabaseConnection,
     pub redis: Option<RedisClient>,
+    /// Token 黑名单（JWT 主动撤销）
+    pub token_blacklist: TokenBlacklist,
     /// 从库连接池列表（用于读写分离的读操作，向后兼容）
     pub replica_dbs: Vec<DatabaseConnection>,
+    /// 限流器（用于验证码等接口的细粒度限流）
+    pub rate_limiter: Arc<RateLimiter>,
+    /// 对象存储（本地/MinIO/S3，通过配置切换）
+    pub object_storage: Arc<dyn ryframe_common::utils::ObjectStorage>,
 }
 
 impl AppState {
@@ -69,6 +81,85 @@ impl AppState {
             let idx = COUNTER.fetch_add(1, Ordering::Relaxed) % self.replica_dbs.len();
             &self.replica_dbs[idx]
         }
+    }
+}
+
+/// 检查登录暴力破解
+///
+/// 使用 Redis 记录失败次数，按用户名/IP 维度分别限流。
+/// - 连续失败超限后锁定指定分钟
+/// - Redis 不可用时降级为无条件放行
+async fn check_brute_force(
+    redis: &Option<RedisClient>,
+    config: &Arc<AppConfig>,
+    username: &str,
+    ip: &str,
+) -> AppResult<()> {
+    let max_attempts = config.auth.max_login_attempts;
+    let lockout_seconds = (config.auth.lockout_duration_minutes * 60) as u64;
+
+    if let Some(redis) = redis {
+        // 按用户名限流
+        let user_key = format!("login_fail:user:{}", username);
+        if let Ok(Some(count)) = redis.get(&user_key).await
+            && let Ok(c) = count.parse::<u32>()
+            && c >= max_attempts
+        {
+            let ttl = redis.ttl(&user_key).await.unwrap_or(lockout_seconds as i64);
+            if ttl > 0 {
+                return Err(AppError::Authentication(format!(
+                    "账户已被锁定，请 {} 秒后再试",
+                    ttl
+                )));
+            }
+        }
+
+        // 按 IP 限流
+        let ip_key = format!("login_fail:ip:{}", ip);
+        if let Ok(Some(count)) = redis.get(&ip_key).await
+            && let Ok(c) = count.parse::<u32>()
+            && c >= max_attempts * 2
+        {
+            let ttl = redis.ttl(&ip_key).await.unwrap_or(lockout_seconds as i64);
+            if ttl > 0 {
+                return Err(AppError::Authentication(format!(
+                    "IP 已被临时限制，请 {} 秒后再试",
+                    ttl
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 记录登录失败（递增 Redis 计数器）
+async fn record_login_failure(
+    redis: &Option<RedisClient>,
+    config: &Arc<AppConfig>,
+    username: &str,
+    ip: &str,
+) {
+    if let Some(redis) = redis {
+        let lockout_seconds = (config.auth.lockout_duration_minutes * 60) as u64;
+        let user_key = format!("login_fail:user:{}", username);
+        let ip_key = format!("login_fail:ip:{}", ip);
+
+        // 递增计数器并设置过期时间
+        let _ = redis.incr(&user_key).await;
+        let _ = redis.expire(&user_key, lockout_seconds).await;
+        let _ = redis.incr(&ip_key).await;
+        let _ = redis.expire(&ip_key, lockout_seconds).await;
+    }
+}
+
+/// 登录成功后清除失败计数
+async fn clear_login_failures(redis: &Option<RedisClient>, username: &str, ip: &str) {
+    if let Some(redis) = redis {
+        let user_key = format!("login_fail:user:{}", username);
+        let ip_key = format!("login_fail:ip:{}", ip);
+        let _ = redis.del(&user_key).await;
+        let _ = redis.del(&ip_key).await;
     }
 }
 
@@ -100,12 +191,18 @@ pub async fn login(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
+    // 暴力破解防护：登录前检查
+    check_brute_force(&state.redis, &state.config, &req.username, &ip).await?;
+
     match state
         .auth_service
         .login(&state.db, &req.username, &req.password)
         .await
     {
         Ok(result) => {
+            // 登录成功：清除失败计数
+            clear_login_failures(&state.redis, &req.username, &ip).await;
+
             let _ = state
                 .login_info_service
                 .record_login(
@@ -140,6 +237,9 @@ pub async fn login(
             Ok(Json(ApiResponse::success(LoginResponse::from(result))))
         }
         Err(e) => {
+            // 登录失败：记录失败次数
+            record_login_failure(&state.redis, &state.config, &req.username, &ip).await;
+
             let _ = state
                 .login_info_service
                 .record_login(
@@ -160,6 +260,7 @@ pub async fn login(
 /// 用户登出
 ///
 /// POST /api/v1/auth/logout
+/// 将当前 token 加入黑名单，实现 JWT 主动撤销。
 #[utoipa::path(
     post,
     path = "/api/v1/auth/logout",
@@ -173,6 +274,20 @@ pub async fn logout(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    // 将当前 token 加入黑名单（JWT 主动撤销）
+    let now = chrono::Utc::now().timestamp() as usize;
+    let remaining = if claims.exp > now {
+        (claims.exp - now) as u64
+    } else {
+        0
+    };
+    if remaining > 0 {
+        state
+            .token_blacklist
+            .blacklist(&claims.jti, remaining)
+            .await;
+    }
+
     // 从在线用户中移除
     state.online_user_service.remove_user(&claims.jti).await;
     Ok(Json(ApiResponse::<()>::success_no_data()))

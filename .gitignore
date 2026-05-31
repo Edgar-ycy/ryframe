@@ -4,8 +4,7 @@ target
 *.pdb
 **/mutants.out*/
 .idea/
-Cargo.lock
 .claude
-docs
 
-
+# Code coverage profiler data (large files)
+*.profraw

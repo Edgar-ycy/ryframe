@@ -1,10 +1,9 @@
-use ryframe_common::utils::snowflake;
-use ryframe_common::{AppError, AppResult};
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
-use ryframe_core::repository::{PageQuery, PageResult};
-use ryframe_db::entities::role;
-use ryframe_db::{MenuRepository, PermissionRepository, RoleRepository};
+use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_core::{
+    LoggedRepo, Repository,
+    repository::{PageQuery, PageResult},
+};
+use ryframe_db::{MenuRepository, PermissionRepository, RoleRepository, entities::role};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 

@@ -1,6 +1,7 @@
-use crate::{AppError, AppResult};
 use image::{ImageBuffer, Rgb};
 use rand::prelude::*;
+
+use crate::{AppError, AppResult};
 
 /// 验证码类型
 #[derive(Debug, Clone)]
@@ -587,34 +588,5 @@ pub fn generate_captcha(captcha_type: CaptchaType) -> AppResult<CaptchaResult> {
             let image_data = create_captcha_image(&question, 120, 40)?;
             Ok(CaptchaResult { answer, image_data })
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generate_text_and_math() {
-        let text = generate_text(4);
-        assert_eq!(text.len(), 4);
-        for ch in text.chars() {
-            assert!("ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(ch));
-        }
-
-        let (question, answer) = generate_math();
-        assert!(question.contains("=?"));
-        assert!(answer.parse::<i64>().is_ok());
-    }
-
-    #[test]
-    fn test_generate_captcha_both_types() {
-        let alpha = generate_captcha(CaptchaType::Alphanumeric).unwrap();
-        assert_eq!(alpha.answer.len(), 4);
-        assert_eq!(&alpha.image_data[0..4], &[137, 80, 78, 71]);
-
-        let math = generate_captcha(CaptchaType::Math).unwrap();
-        assert!(math.answer.parse::<i64>().is_ok());
-        assert_eq!(&math.image_data[0..4], &[137, 80, 78, 71]);
     }
 }

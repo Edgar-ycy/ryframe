@@ -11,15 +11,38 @@ description.workspace = true
 ryframe-common = { path = "../ryframe-common" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-core = { path = "../ryframe-core" }
+ryframe-auth = { path = "../ryframe-auth" }
 axum = { workspace = true }
 tower-http = { workspace = true, features = ["cors", "trace", "compression-gzip", "compression-br"] }
 tower = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 uuid = { workspace = true, features = ["v7"] }
 http = { workspace = true }
 bytes = { workspace = true }
 ammonia = { workspace = true }
 dashmap = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+chrono = { workspace = true }
 tokio = { workspace = true }
+prometheus = { workspace = true }
+lazy_static = { workspace = true }
 redis = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+futures-util = { workspace = true }
+tokio-stream = { workspace = true }
+sha2 = { workspace = true }
+sysinfo = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }
+criterion = { workspace = true }
+
+[[bench]]
+name = "middleware_bench"
+harness = false

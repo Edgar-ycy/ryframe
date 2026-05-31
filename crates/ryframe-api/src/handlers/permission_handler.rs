@@ -11,7 +11,9 @@ pub fn permission_router(state: AppState) -> Router {
 /// 权限树查询
 #[utoipa::path(get, path = "/api/v1/system/permissions/tree", tag = "角色管理",
     responses((status = 200, description = "权限树")), security(("bearer" = [])))]
-async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<PermissionTreeNode>>>> {
+async fn tree(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<Vec<PermissionTreeNode>>>> {
     let tree = state.permission_service.find_tree(&state.db, None).await?;
     Ok(Json(ApiResponse::success(tree)))
 }

@@ -1,5 +1,7 @@
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use serde::Serialize;
 // 统一错误类型 (AppError)
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +89,7 @@ impl ApiResponse<()> {
 
 /// 分页 API 响应结构体
 ///
-/// 序列化为若依风格分页格式：
+/// 序列化为统一的分页响应格式：
 /// ```json
 /// {"code": 200, "msg": "查询成功", "rows": [...], "total": 100}
 /// ```
@@ -129,9 +131,8 @@ impl IntoResponse for AppError {
             AppError::Internal(s) => (StatusCode::INTERNAL_SERVER_ERROR, 500, s.clone()),
         };
         let body = ApiResponse::<()>::fail(code, msg);
-        let json = serde_json::to_string(&body).unwrap_or_else(|_| {
-            r#"{"code":500,"msg":"序列化错误响应失败"}"#.into()
-        });
+        let json = serde_json::to_string(&body)
+            .unwrap_or_else(|_| r#"{"code":500,"msg":"序列化错误响应失败"}"#.into());
 
         let mut response = Response::new(axum::body::Body::from(json));
         *response.status_mut() = status;

@@ -19,3 +19,23 @@ redis = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 dashmap = { workspace = true }
+axum = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tonic-build = { workspace = true }
+http = { workspace = true }
+tower-service = "0.3"
+rand = { workspace = true }
+thiserror = { workspace = true }
+rdkafka = { workspace = true, optional = true }
+
+[features]
+kafka = ["dep:rdkafka"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+
+[[bench]]
+name = "core_bench"
+harness = false

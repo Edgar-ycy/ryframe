@@ -1,5 +1,6 @@
-use serde::Deserialize;
 use std::sync::LazyLock;
+
+use serde::Deserialize;
 use utoipa::ToSchema;
 use validator::Validate;
 

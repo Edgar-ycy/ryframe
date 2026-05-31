@@ -1,7 +1,8 @@
+use std::path::PathBuf;
+
 use ryframe_common::AppResult;
 use ryframe_generator::{GenerateOptions, GeneratedFile};
 use sea_orm::DatabaseConnection;
-use std::path::PathBuf;
 
 pub struct GeneratorServiceImpl {
     pub workspace_root: PathBuf,

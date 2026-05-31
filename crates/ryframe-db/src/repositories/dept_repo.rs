@@ -9,7 +9,7 @@ use sea_orm::{
 use crate::entities::dept;
 
 /// 部门树节点
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct DeptTreeNode {
     pub id: i64,
     pub name: String,

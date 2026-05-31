@@ -32,7 +32,7 @@ pub async fn xss_filter(req: Request, next: Next) -> Result<Response, Response> 
     Ok(next.run(new_req).await)
 }
 
-fn sanitize_json_bytes(input: &axum::body::Bytes) -> axum::body::Bytes {
+pub fn sanitize_json_bytes(input: &axum::body::Bytes) -> axum::body::Bytes {
     let mut v: serde_json::Value = match serde_json::from_slice(input) {
         Ok(v) => v,
         Err(_) => return input.clone(),

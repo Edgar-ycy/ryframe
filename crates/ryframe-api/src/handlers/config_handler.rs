@@ -1,4 +1,3 @@
-use crate::dto::config_dto::{CreateConfigDto, UpdateConfigDto};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -11,6 +10,7 @@ use serde::Serialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::config_dto::{CreateConfigDto, UpdateConfigDto};
 
 pub fn config_router(state: AppState) -> Router {
     Router::new()
@@ -49,7 +49,10 @@ async fn list_no_page(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<ConfigVo>>> {
+async fn detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ApiResponse<ConfigVo>>> {
     match state.config_service.find_by_id(&state.db, id).await? {
         Some(cfg) => Ok(Json(ApiResponse::success(cfg))),
         None => Err(ryframe_common::AppError::NotFound("参数配置不存在".into())),

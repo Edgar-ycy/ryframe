@@ -1,18 +1,24 @@
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::header,
     response::IntoResponse,
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ryframe_common::utils::captcha::{CaptchaType, generate_captcha};
-use ryframe_common::{ApiResponse, AppError, AppResult, CAPTCHA_KEY_PREFIX};
+use ryframe_common::{
+    ApiResponse, AppError, AppResult, CAPTCHA_KEY_PREFIX,
+    utils::captcha::{CaptchaType, generate_captcha},
+};
 use ryframe_core::RedisClient;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -167,8 +173,17 @@ pub fn captcha_router(state: AppState) -> Router<AppState> {
 /// 生成验证码
 pub async fn generate_captcha_handler(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(query): Query<CaptchaQuery>,
 ) -> AppResult<Json<ApiResponse<CaptchaResponse>>> {
+    // 验证码生成频率限制（每个 IP 每分钟最多 10 次）
+    let captcha_key = format!("captcha:gen:{}", addr.ip());
+    if !state.rate_limiter.try_acquire(&captcha_key).await {
+        return Err(AppError::Validation(
+            "验证码请求过于频繁，请稍后再试".into(),
+        ));
+    }
+
     let captcha_type = match query.captcha_type.as_str() {
         "math" => CaptchaType::Math,
         _ => CaptchaType::Alphanumeric,
@@ -197,12 +212,23 @@ pub async fn generate_captcha_handler(
 /// 校验验证码
 pub async fn verify_captcha_handler(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<CaptchaVerifyRequest>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    // 验证码校验频率限制（每个 IP 每分钟最多 5 次）
+    let verify_key = format!("captcha:verify:{}", addr.ip());
+    if !state.rate_limiter.try_acquire(&verify_key).await {
+        return Err(AppError::Validation(
+            "验证码校验过于频繁，请稍后再试".into(),
+        ));
+    }
+
     let valid = state.captcha_store.verify(&req.captcha_id, &req.code).await;
 
     if valid {
-        Ok(Json(ApiResponse::success(serde_json::json!({"valid": true}))))
+        Ok(Json(ApiResponse::success(
+            serde_json::json!({"valid": true}),
+        )))
     } else {
         Err(AppError::Validation("验证码错误或已过期".into()))
     }
@@ -211,8 +237,17 @@ pub async fn verify_captcha_handler(
 /// 返回验证码图片（PNG 格式）
 pub async fn captcha_image_handler(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(query): Query<CaptchaQuery>,
 ) -> AppResult<impl IntoResponse> {
+    // 验证码生成频率限制（每个 IP 每分钟最多 10 次）
+    let captcha_key = format!("captcha:gen:{}", addr.ip());
+    if !state.rate_limiter.try_acquire(&captcha_key).await {
+        return Err(AppError::Validation(
+            "验证码请求过于频繁，请稍后再试".into(),
+        ));
+    }
+
     let captcha_type = match query.captcha_type.as_str() {
         "math" => CaptchaType::Math,
         _ => CaptchaType::Alphanumeric,

@@ -1,5 +1,5 @@
-use crate::jwt::{Claims, decode_token};
-use crate::permission::check_permission;
+use std::sync::Arc;
+
 use axum::{
     extract::{Request, State},
     middleware::Next,
@@ -7,17 +7,30 @@ use axum::{
 };
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use std::sync::Arc;
+use ryframe_core::TokenBlacklist;
+
+use crate::{
+    jwt::{Claims, decode_token},
+    permission::check_permission,
+};
+
+/// 认证中间件状态（合并 Config + TokenBlacklist）
+#[derive(Clone)]
+pub struct AuthState {
+    pub config: Arc<AppConfig>,
+    pub blacklist: TokenBlacklist,
+}
 
 /// 认证中间件
 ///
-/// 从 Authorization 头提取 Bearer token，验证并注入 Claims 到 extensions。
+/// 从 Authorization 头提取 Bearer token，验证 JWT 签名和有效期，
+/// 检查 Token 黑名单（支持 JWT 主动撤销），并将 Claims 注入到 extensions。
 /// 需要在 Router 上注册：
 /// ```ignore
-/// Router::new().route_layer(middleware::from_fn_with_state(config, auth_middleware))
+/// Router::new().route_layer(middleware::from_fn_with_state(auth_state, auth_middleware))
 /// ```
 pub async fn auth_middleware(
-    State(config): State<Arc<AppConfig>>,
+    State(auth_state): State<AuthState>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, Response> {
@@ -26,7 +39,7 @@ pub async fn auth_middleware(
         None => return Err(AppError::Authentication("缺少认证令牌".into()).into_response()),
     };
 
-    let claims = match decode_token(&token, &config.auth.jwt_secret) {
+    let claims = match decode_token(&token, &auth_state.config.auth.jwt_secret) {
         Ok(c) => c,
         Err(e) => return Err(e.into_response()),
     };
@@ -35,6 +48,11 @@ pub async fn auth_middleware(
         return Err(
             AppError::Authentication("令牌类型错误，请使用访问令牌".into()).into_response(),
         );
+    }
+
+    // Token 黑名单检查（支持 JWT 主动撤销）
+    if auth_state.blacklist.is_blacklisted(&claims.jti).await {
+        return Err(AppError::Authentication("令牌已被撤销，请重新登录".into()).into_response());
     }
 
     request.extensions_mut().insert(claims);
@@ -52,7 +70,7 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
 /// 使用方式（路由级）：
 /// ```ignore
 /// .route("/users", get(list_users).route_layer(middleware::from_fn_with_state(
-///     config.clone(),
+///     auth_state.clone(),
 ///     require_permission("system:user:list"),
 /// )))
 /// ```
@@ -60,12 +78,12 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
 pub fn require_permission(
     perm: &'static str,
 ) -> impl Fn(
-    State<Arc<AppConfig>>,
+    State<AuthState>,
     Request,
     Next,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, Response>> + Send>>
 + Clone {
-    move |_state: State<Arc<AppConfig>>, request: Request, next: Next| {
+    move |_state: State<AuthState>, request: Request, next: Next| {
         let perm = perm;
         Box::pin(async move {
             let claims = request.extensions().get::<Claims>().ok_or_else(|| {

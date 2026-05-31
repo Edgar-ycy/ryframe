@@ -3,10 +3,10 @@
 //! 提供异步 Redis 连接管理器和常用操作封装。
 //! 当 Redis 未配置时，调用方应回退到内存存储。
 
-use redis::AsyncCommands;
-use redis::aio::ConnectionManager;
-use ryframe_config::RedisConfig;
 use std::time::Duration;
+
+use redis::{AsyncCommands, aio::ConnectionManager};
+use ryframe_config::RedisConfig;
 
 /// Redis 客户端封装
 ///
@@ -173,6 +173,32 @@ impl RedisClient {
     pub async fn decr<K: AsRef<str>>(&self, key: K) -> Result<i64, redis::RedisError> {
         let mut conn = self.conn.clone();
         conn.decr(key.as_ref(), 1).await
+    }
+
+    /// EVAL Lua 脚本（用于原子操作，如滑动窗口限流）
+    ///
+    /// # Arguments
+    /// - `script`: Lua 脚本内容
+    /// - `keys`: KEYS 数组
+    /// - `args`: ARGV 数组
+    ///
+    /// # Returns
+    /// 脚本返回值（通常为整数或字符串）
+    pub async fn eval_script<S: AsRef<str>, K: AsRef<str>, V: AsRef<str>>(
+        &self,
+        script: S,
+        keys: &[K],
+        args: &[V],
+    ) -> Result<redis::Value, redis::RedisError> {
+        let mut conn = self.conn.clone();
+        let lua = redis::Script::new(script.as_ref());
+        for key in keys {
+            lua.key(key.as_ref());
+        }
+        for arg in args {
+            lua.arg(arg.as_ref());
+        }
+        lua.invoke_async(&mut conn).await
     }
 }
 

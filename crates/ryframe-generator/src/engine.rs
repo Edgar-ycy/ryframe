@@ -1,6 +1,7 @@
+use std::path::Path;
+
 use ryframe_common::AppResult;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 /// 代码生成选项
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -271,8 +271,9 @@ impl RoleRepository {
         role_id: i64,
         dept_ids: &[i64],
     ) -> AppResult<()> {
-        use crate::entities::role_dept;
         use sea_orm::{ActiveModelTrait, ActiveValue, TransactionTrait};
+
+        use crate::entities::role_dept;
 
         let txn = db
             .begin()

@@ -1,5 +1,4 @@
-use crate::naming;
-use crate::schema::TableInfo;
+use crate::{naming, schema::TableInfo};
 
 pub fn render_repository(table: &TableInfo, _module: &str) -> String {
     let struct_name = naming::to_pascal_case(&table.table_name);

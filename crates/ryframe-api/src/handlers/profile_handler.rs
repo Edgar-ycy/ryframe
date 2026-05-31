@@ -1,4 +1,3 @@
-use crate::dto::profile_dto::{ChangePasswordRequest, UpdateProfileRequest};
 use axum::{
     Json, Router,
     extract::State,
@@ -9,7 +8,10 @@ use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_service::system::profile_service::UserProfileResponse;
 use uuid::Uuid;
 
-use crate::handlers::auth_handler::AppState;
+use crate::{
+    dto::profile_dto::{ChangePasswordRequest, UpdateProfileRequest},
+    handlers::auth_handler::AppState,
+};
 
 /// 个人中心路由
 pub fn profile_router(state: AppState) -> Router<AppState> {
@@ -68,7 +70,9 @@ pub async fn update_profile(
         )
         .await?;
 
-    Ok(Json(ApiResponse::success_no_data_with_msg("个人信息更新成功")))
+    Ok(Json(ApiResponse::success_no_data_with_msg(
+        "个人信息更新成功",
+    )))
 }
 
 /// 修改密码

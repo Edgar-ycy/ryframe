@@ -1,19 +1,18 @@
-use crate::dto::role_dto::{
-    AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto,
-};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     routing::{delete, get, put},
 };
-use ryframe_common::ApiPageResponse;
-use ryframe_common::{ApiResponse, AppResult};
+use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::RoleVo;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::role_dto::{
+    AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto,
+};
 
 /// 角色列表分页查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -83,10 +82,11 @@ async fn list(
 }
 
 /// 角色列表不分页查询（返回全部数据）
-async fn list_no_page(
-    State(state): State<AppState>,
-) -> AppResult<Json<ApiResponse<Vec<RoleVo>>>> {
-    let page_query = PageQuery { page: 1, page_size: 10000 };
+async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<RoleVo>>>> {
+    let page_query = PageQuery {
+        page: 1,
+        page_size: 10000,
+    };
     state
         .role_service
         .find_by_page(&state.db, page_query)
@@ -97,7 +97,10 @@ async fn list_no_page(
 /// 角色详情
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = i64, Path)), responses((status = 200, description = "角色详情")), security(("bearer" = [])))]
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<RoleVo>>> {
+async fn detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ApiResponse<RoleVo>>> {
     match state.role_service.find_by_id(&state.db, id).await? {
         Some(role) => Ok(Json(ApiResponse::success(role))),
         None => Err(ryframe_common::AppError::NotFound("角色不存在".into())),
@@ -294,5 +297,7 @@ async fn assign_data_scope(
         .role_service
         .assign_data_scope(&state.db, id, &dto.data_scope, dto.dept_ids)
         .await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("数据权限设置成功")))
+    Ok(Json(ApiResponse::success_no_data_with_msg(
+        "数据权限设置成功",
+    )))
 }

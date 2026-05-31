@@ -1,0 +1,26 @@
+apiVersion: v2
+name: ryframe
+description: RyFrame - Rust 企业级 Web 应用框架 Helm Chart
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ryframe
+  - rust
+  - axum
+  - web-framework
+home: https://github.com/ryframe/ryframe
+sources:
+  - https://github.com/ryframe/ryframe
+maintainers:
+  - name: ryframe
+    email: edgar@example.com
+dependencies:
+  - name: mysql
+    version: ">=9.0.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: mysql.enabled
+  - name: redis
+    version: ">=18.0.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

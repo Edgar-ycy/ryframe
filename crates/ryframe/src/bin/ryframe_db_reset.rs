@@ -8,10 +8,9 @@
 //! cargo run --bin ryframe-db-reset
 //! ```
 
+use std::{fs, path::PathBuf, time::Duration};
+
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
-use std::fs;
-use std::path::PathBuf;
-use std::time::Duration;
 
 /// 需要删除的全部表（按外键依赖从子到父排列）
 const ALL_TABLES: &[&str] = &[
@@ -55,7 +54,7 @@ async fn main() {
     // 1. 加载配置
     let config =
         ryframe_config::AppConfig::load("config").expect("加载配置失败，请确认 config/ 目录存在");
-    let db_url = config.database.primary.connection_url();
+    let db_url = config.database.connections[0].connection_url();
     println!("\n数据库: {}", db_url);
 
     // 2. 连接数据库

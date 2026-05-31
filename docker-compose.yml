@@ -11,7 +11,7 @@ services:
     container_name: ryframe-app
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "3000:3000"
     environment:
       - APP_ENV=prod
       - APP_DATABASE_PRIMARY_HOST=mysql
@@ -55,7 +55,7 @@ services:
       - ./sql:/docker-entrypoint-initdb.d:ro
     command: >
       --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
+      --collation-server=utf8mb4_general_ci
       --default-authentication-plugin=mysql_native_password
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-ryframe2024}"]

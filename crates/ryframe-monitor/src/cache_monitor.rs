@@ -5,9 +5,10 @@
 //! - 键统计（DBSIZE）
 //! - 内存分析
 
+use std::collections::HashMap;
+
 use ryframe_core::RedisClient;
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// 缓存信息响应
 #[derive(Debug, Serialize)]

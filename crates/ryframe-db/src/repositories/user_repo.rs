@@ -1,6 +1,8 @@
 use async_trait::async_trait;
-use ryframe_common::annotations::data_scope::{DataScope, DataScopeContext};
-use ryframe_common::{AppError, AppResult};
+use ryframe_common::{
+    AppError, AppResult,
+    annotations::data_scope::{DataScope, DataScopeContext},
+};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseConnection, EntityTrait,

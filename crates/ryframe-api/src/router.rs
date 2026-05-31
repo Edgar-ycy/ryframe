@@ -1,55 +1,86 @@
-use axum::extract::Request;
-use axum::extract::State;
-use axum::middleware::{Next, from_fn_with_state};
-use axum::response::Response;
-use axum::{
-    Extension, Json, Router, middleware,
-    routing::{get, post},
-};
-use ryframe_auth::jwt::Claims;
-use ryframe_service::system::OnlineUserServiceImpl;
-use serde_json::json;
 use std::sync::Arc;
 
-use crate::handlers::{
-    auth_handler::{self, AppState},
-    captcha_handler, common_handler, config_handler, dept_handler, dict_handler, generator_handler,
-    job_handler, login_log_handler, menu_handler, notice_handler, online_user_handler,
-    oper_log_handler, permission_handler, post_handler, profile_handler, role_handler,
-    user_handler,
+use axum::{
+    Json, Router,
+    extract::{Request, State},
+    middleware,
+    middleware::{Next, from_fn_with_state},
+    response::{Html, Response},
+    routing::{get, post},
 };
-use crate::oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware};
+use ryframe_auth::{jwt::Claims, middleware::AuthState};
+use ryframe_service::system::OnlineUserServiceImpl;
+use serde_json::json;
+
+use crate::{
+    handlers::{
+        auth_handler::{self, AppState},
+        captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
+        generator_handler, job_handler, login_log_handler, menu_handler, notice_handler,
+        online_user_handler, oper_log_handler, permission_handler, post_handler, profile_handler,
+        role_handler, user_handler,
+    },
+    oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware},
+};
 
 /// 在线用户跟踪中间件
 ///
-/// 需要在 auth_middleware 之后运行（Claims 已在 extensions 中）。
+/// 在 auth_middleware 之后运行（Claims 已在 extensions 中）。
+/// 优雅处理未认证请求（跳过跟踪）。
 async fn online_user_tracking(
     State(online_user_service): State<Arc<OnlineUserServiceImpl>>,
-    Extension(claims): Extension<Claims>,
     request: Request,
     next: Next,
 ) -> Response {
-    // 更新用户最后访问时间
-    online_user_service.touch_user(&claims.jti).await;
+    // 尝试从 extensions 获取 Claims，未认证时跳过跟踪
+    if let Some(claims) = request.extensions().get::<Claims>() {
+        online_user_service.touch_user(&claims.jti).await;
+    }
     next.run(request).await
 }
 
 /// 认证路由
 pub fn auth_router(state: AppState) -> Router {
+    let oper_log_state = Arc::new(OperLogMiddlewareState {
+        db: state.db.clone(),
+    });
+
+    let auth_state = AuthState {
+        config: state.config.clone(),
+        blacklist: state.token_blacklist.clone(),
+    };
+
+    // 公开路由（无认证，操作日志记录为 "anonymous"）
+    let public = Router::new()
+        .route("/login", post(auth_handler::login))
+        .route("/refresh", post(auth_handler::refresh))
+        .layer(from_fn_with_state(
+            oper_log_state.clone(),
+            oper_log_middleware,
+        ));
+
+    // 受保护路由：auth → oper_log → handler
+    // layer 从下到上执行，最后注册的最外层先执行
     let protected = Router::new()
         .route("/logout", post(auth_handler::logout))
         .route("/me", get(auth_handler::me))
+        .route_layer(from_fn_with_state(
+            oper_log_state.clone(),
+            oper_log_middleware,
+        ))
         .route_layer(middleware::from_fn_with_state(
-            state.config.clone(),
+            auth_state,
             ryframe_auth::middleware::auth_middleware,
         ));
 
+    // Profile 路由（auth + oper_log 在 profile_router 内部处理）
+    let profile = profile_handler::profile_router(state.clone());
+
     Router::new()
-        .route("/login", post(auth_handler::login))
-        .route("/refresh", post(auth_handler::refresh))
+        .merge(public)
         .merge(protected)
         .nest("/captcha", captcha_handler::captcha_router(state.clone()))
-        .nest("/profile", profile_handler::profile_router(state.clone()))
+        .nest("/profile", profile)
         .with_state(state)
 }
 
@@ -65,7 +96,8 @@ async fn api_version() -> Json<serde_json::Value> {
             "monitor": "/api/v1/monitor",
             "tools": "/api/v1/tools",
             "common": "/api/v1/common",
-            "openapi": "/api/v1/api-docs/openapi.json"
+            "openapi": "/api/v1/api-docs/openapi.json",
+            "swagger": "/api/v1/swagger-ui"
         }
     }))
 }
@@ -86,12 +118,22 @@ pub fn api_router(state: AppState) -> Router {
         // API 版本信息端点
         .route("/version", get(api_version))
         // OpenAPI JSON 文档: /api-docs/openapi.json
-        // 可使用 https://editor.swagger.io/ 导入查看
         .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
+        // Swagger UI 交互文档: /swagger-ui
+        .route("/swagger-ui", get(swagger_ui))
 }
 
 /// 系统管理路由（需认证）
+/// layer 从下到上执行（最后注册的最外层先执行）：
+///   1. auth_middleware（最外层，先执行 → 注入 Claims）
+///   2. online_user_tracking（使用 Claims）
+///   3. oper_log_middleware（最内层，最后执行 → 使用 Claims 记录操作者）
 fn system_router(state: AppState) -> Router {
+    let auth_state = AuthState {
+        config: state.config.clone(),
+        blacklist: state.token_blacklist.clone(),
+    };
+
     Router::new()
         .nest("/users", user_handler::user_router(state.clone()))
         .nest("/roles", role_handler::role_router(state.clone()))
@@ -119,26 +161,117 @@ fn system_router(state: AppState) -> Router {
             online_user_handler::online_user_router(state.clone()),
         )
         .layer(from_fn_with_state(
-            Arc::new(OperLogMiddlewareState {
-                db: state.db.clone(),
-            }),
-            oper_log_middleware,
+            auth_state,
+            ryframe_auth::middleware::auth_middleware,
         ))
         .layer(from_fn_with_state(
             state.online_user_service.clone(),
             online_user_tracking,
         ))
         .layer(from_fn_with_state(
-            state.config.clone(),
-            ryframe_auth::middleware::auth_middleware,
+            Arc::new(OperLogMiddlewareState {
+                db: state.db.clone(),
+            }),
+            oper_log_middleware,
         ))
 }
 
+/// 工具路由（需认证）
+/// layer 从下到上执行：auth → oper_log
 fn tools_router(state: AppState) -> Router {
-    Router::new().nest("/gen", generator_handler::generator_router(state.clone()))
+    let auth_state = AuthState {
+        config: state.config.clone(),
+        blacklist: state.token_blacklist.clone(),
+    };
+
+    Router::new()
+        .nest("/gen", generator_handler::generator_router(state.clone()))
+        .layer(from_fn_with_state(
+            auth_state,
+            ryframe_auth::middleware::auth_middleware,
+        ))
+        .layer(from_fn_with_state(
+            Arc::new(OperLogMiddlewareState {
+                db: state.db.clone(),
+            }),
+            oper_log_middleware,
+        ))
 }
 
 /// 通用功能路由（文件上传等）
+/// - 上传路由：公开（需要时可在 handler 内做认证）
+/// - 下载路由：需认证
 fn common_router(state: AppState) -> Router {
-    common_handler::upload_router(state)
+    use axum::middleware;
+
+    let auth_state = AuthState {
+        config: state.config.clone(),
+        blacklist: state.token_blacklist.clone(),
+    };
+
+    let oper_log_state = Arc::new(OperLogMiddlewareState {
+        db: state.db.clone(),
+    });
+
+    // 上传路由（公开，记录操作日志）
+    let upload = common_handler::upload_router(state.clone()).layer(from_fn_with_state(
+        oper_log_state.clone(),
+        oper_log_middleware,
+    ));
+
+    // 下载路由（需认证，记录操作日志）
+    let download = common_handler::download_router(state.clone())
+        .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
+        .route_layer(middleware::from_fn_with_state(
+            auth_state,
+            ryframe_auth::middleware::auth_middleware,
+        ));
+
+    Router::new().merge(upload).merge(download)
+}
+
+/// Swagger UI 交互文档页面
+///
+/// 利用 CDN 加载 Swagger UI，指向本服务的 OpenAPI JSON。
+async fn swagger_ui() -> Html<&'static str> {
+    Html(
+        r##"<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RyFrame API 文档</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+    <style>
+        html { box-sizing: border-box; overflow-y: scroll; }
+        *, *:before, *:after { box-sizing: inherit; }
+        body { margin: 0; background: #fafafa; }
+        .topbar { display: none; }
+        .swagger-ui .info .title { font-size: 2em; }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js" crossorigin></script>
+    <script>
+        window.onload = () => {
+            window.ui = SwaggerUIBundle({
+                url: "/api/v1/api-docs/openapi.json",
+                dom_id: "#swagger-ui",
+                deepLinking: true,
+                presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+                layout: "StandaloneLayout",
+                defaultModelsExpandDepth: 1,
+                defaultModelExpandDepth: 1,
+                docExpansion: "list",
+                filter: true,
+                showExtensions: true,
+                showCommonExtensions: true,
+            });
+        };
+    </script>
+</body>
+</html>"##,
+    )
 }

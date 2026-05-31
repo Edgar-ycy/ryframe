@@ -1,7 +1,6 @@
 use ryframe_auth::password;
 use ryframe_common::{AppError, AppResult};
-use ryframe_core::LoggedRepo;
-use ryframe_core::Repository;
+use ryframe_core::{LoggedRepo, Repository};
 use ryframe_db::{PermissionRepository, RoleRepository, UserRepository, dept, user};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
 use serde::Serialize;

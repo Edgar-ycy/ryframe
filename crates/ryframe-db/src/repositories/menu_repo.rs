@@ -9,7 +9,7 @@ use sea_orm::{
 use crate::entities::menu;
 
 /// 菜单树节点
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MenuTreeNode {
     pub id: i64,
     pub name: String,

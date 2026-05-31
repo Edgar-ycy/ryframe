@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 /// Redis 配置（可选）
 ///
-/// 不配置 [redis] section 时，框架不启用缓存。
+/// 不配置 `[redis]` section 时，框架不启用缓存。
 #[derive(Debug, Clone, Deserialize)]
 pub struct RedisConfig {
     /// Redis 主机地址

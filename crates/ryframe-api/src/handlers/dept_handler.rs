@@ -1,4 +1,3 @@
-use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -11,6 +10,7 @@ use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
 
 /// 部门列表查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -41,7 +41,11 @@ pub fn dept_router(state: AppState) -> Router {
 #[utoipa::path(get, path = "/api/v1/system/depts/tree", tag = "部门管理",
     responses((status = 200, description = "部门树")), security(("bearer" = [])))]
 async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
-    state.dept_service.find_tree(&state.db).await.map(|v| Json(ApiResponse::success(v)))
+    state
+        .dept_service
+        .find_tree(&state.db)
+        .await
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 部门列表分页查询
@@ -55,7 +59,11 @@ async fn list_page(
         .await?;
     let total = all.len() as u64;
     let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
-    let rows: Vec<DeptVo> = all.into_iter().skip(offset).take(query.page_size as usize).collect();
+    let rows: Vec<DeptVo> = all
+        .into_iter()
+        .skip(offset)
+        .take(query.page_size as usize)
+        .collect();
     Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
 }
 
@@ -113,7 +121,10 @@ async fn update(
 }
 
 /// 部门详情
-async fn detail(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<ApiResponse<DeptVo>>> {
+async fn detail(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ApiResponse<DeptVo>>> {
     match state.dept_service.find_by_id(&state.db, id).await? {
         Some(dept) => Ok(Json(ApiResponse::success(dept))),
         None => Err(ryframe_common::AppError::NotFound("部门不存在".into())),

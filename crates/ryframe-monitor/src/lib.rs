@@ -1,11 +1,10 @@
 mod cache_monitor;
-mod server_info;
+pub mod server_info;
 
 use axum::{Json, extract::State};
-use ryframe_common::AppResult;
+use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::RedisClient;
 use sea_orm::DatabaseConnection;
-
 pub use server_info::ServerInfo;
 
 /// 监控路由状态
@@ -26,18 +25,19 @@ pub fn monitor_router(state: MonitorState) -> axum::Router {
             axum::routing::get(cache_commands_handler),
         )
         .route("/db-pool", axum::routing::get(db_pool_handler))
+        .route("/metrics", axum::routing::get(metrics_handler))
         .with_state(state)
 }
 
 /// 服务器信息
-async fn server_info_handler() -> AppResult<Json<ServerInfo>> {
-    Ok(Json(ServerInfo::collect()))
+async fn server_info_handler() -> AppResult<Json<ApiResponse<ServerInfo>>> {
+    Ok(Json(ApiResponse::success(ServerInfo::collect())))
 }
 
 /// 增强健康检查（含 DB + Redis 连通性）
 async fn health_check_handler(
     State(state): State<MonitorState>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let db_ok = ryframe_db::connection::ping(&state.db).await.is_ok();
     let redis_ok = match state.redis.as_ref() {
         Some(r) => r.ping().await.is_ok(),
@@ -46,7 +46,7 @@ async fn health_check_handler(
     let redis_configured = state.redis.is_some();
     let all_ok = db_ok && (!redis_configured || redis_ok);
 
-    Ok(Json(serde_json::json!({
+    Ok(Json(ApiResponse::success(serde_json::json!({
         "status": if all_ok { "UP" } else { "DOWN" },
         "database": if db_ok { "connected" } else { "disconnected" },
         "redis": if redis_configured {
@@ -55,34 +55,47 @@ async fn health_check_handler(
             "not_configured"
         },
         "timestamp": chrono::Utc::now().to_rfc3339(),
-    })))
+    }))))
 }
 
 /// 缓存信息
 async fn cache_info_handler(
     State(state): State<MonitorState>,
-) -> AppResult<Json<cache_monitor::CacheInfo>> {
+) -> AppResult<Json<ApiResponse<cache_monitor::CacheInfo>>> {
     let info = cache_monitor::get_cache_info(state.redis.as_ref()).await;
-    Ok(Json(info))
+    Ok(Json(ApiResponse::success(info)))
 }
 
 /// 缓存命令统计
 async fn cache_commands_handler(
     State(state): State<MonitorState>,
-) -> AppResult<Json<serde_json::Value>> {
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     match state.redis.as_ref() {
         Some(redis) => {
             let stats = cache_monitor::get_cache_command_stats(redis).await;
-            Ok(Json(stats.unwrap_or(
+            Ok(Json(ApiResponse::success(stats.unwrap_or(
                 serde_json::json!({"error": "无法获取命令统计"}),
-            )))
+            ))))
         }
-        None => Ok(Json(serde_json::json!({"error": "Redis 未配置"}))),
+        None => Ok(Json(ApiResponse::success(
+            serde_json::json!({"error": "Redis 未配置"}),
+        ))),
     }
 }
 
+/// Prometheus Metrics 端点
+async fn metrics_handler() -> axum::response::Response {
+    let text = ryframe_middleware::metrics::metrics_text();
+    axum::response::Response::builder()
+        .header("Content-Type", "text/plain; version=0.0.4")
+        .body(axum::body::Body::from(text))
+        .unwrap()
+}
+
 /// 数据库连接池状态
-async fn db_pool_handler(State(state): State<MonitorState>) -> AppResult<Json<serde_json::Value>> {
+async fn db_pool_handler(
+    State(state): State<MonitorState>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     use sea_orm::{FromQueryResult, Statement};
 
     let backend = state.db.get_database_backend();
@@ -120,9 +133,9 @@ async fn db_pool_handler(State(state): State<MonitorState>) -> AppResult<Json<se
         _ => None,
     };
 
-    Ok(Json(serde_json::json!({
+    Ok(Json(ApiResponse::success(serde_json::json!({
         "status": if ping_ok { "connected" } else { "disconnected" },
         "active_connections": active_connections,
         "timestamp": chrono::Utc::now().to_rfc3339(),
-    })))
+    }))))
 }

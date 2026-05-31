@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use axum::{
     Json, Router,
     extract::{Multipart, Query, State},
@@ -6,13 +8,14 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use ryframe_common::utils::file_upload::{
-    UploadConfig, UploadFileInfo, generate_storage_filename, get_content_type, get_upload_dir,
-    validate_extension,
+use ryframe_common::{
+    ApiResponse, AppError, AppResult,
+    utils::file_upload::{
+        UploadConfig, UploadFileInfo, compress_image, generate_storage_filename, get_content_type,
+        get_upload_dir, validate_extension,
+    },
 };
-use ryframe_common::{ApiResponse, AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 use crate::handlers::auth_handler::AppState;
 
@@ -29,11 +32,17 @@ pub struct DownloadQuery {
     pub path: String,
 }
 
-/// 上传文件路由
+/// 上传文件路由（公开）
 pub fn upload_router(state: AppState) -> Router {
     Router::new()
         .route("/", post(upload_file))
         .route("/image", post(upload_image))
+        .with_state(state)
+}
+
+/// 下载文件路由（需认证）
+pub fn download_router(state: AppState) -> Router {
+    Router::new()
         .route("/download", get(download_file))
         .with_state(state)
 }
@@ -160,8 +169,26 @@ pub async fn upload_image(
         // 验证文件类型
         validate_extension(&filename, &config.allowed_extensions)?;
 
-        // 生成存储文件名
-        let storage_name = generate_storage_filename(&filename);
+        // 图片压缩（减小存储空间和带宽消耗）
+        let (compressed_data, compressed_name) =
+            compress_image(&data, &filename).unwrap_or_else(|e| {
+                tracing::warn!("图片压缩失败，使用原始数据: {}", e);
+                (data.to_vec(), filename.clone())
+            });
+        let original_size = data.len() as u64;
+        let compressed_size = compressed_data.len() as u64;
+        if compressed_size < original_size {
+            let saved_pct = (1.0 - compressed_size as f64 / original_size as f64) * 100.0;
+            tracing::info!(
+                "图片压缩: {} → {} ({:.1}% 减小)",
+                ryframe_common::utils::file_upload::format_file_size(original_size),
+                ryframe_common::utils::file_upload::format_file_size(compressed_size),
+                saved_pct
+            );
+        }
+
+        // 生成存储文件名（使用压缩后的文件名以匹配格式变化）
+        let storage_name = generate_storage_filename(&compressed_name);
 
         // 创建上传目录
         let upload_dir = get_upload_dir(&config.upload_dir);
@@ -171,7 +198,7 @@ pub async fn upload_image(
 
         // 保存文件
         let file_path = upload_dir.join(&storage_name);
-        tokio::fs::write(&file_path, &data)
+        tokio::fs::write(&file_path, &compressed_data)
             .await
             .map_err(|e| AppError::Internal(format!("保存文件失败: {}", e)))?;
 
@@ -186,8 +213,8 @@ pub async fn upload_image(
             original_name: filename.clone(),
             storage_name: storage_name.clone(),
             file_path: format!("/{}", relative_path.replace('\\', "/")),
-            file_size: data.len() as u64,
-            content_type: get_content_type(&filename),
+            file_size: compressed_size,
+            content_type: get_content_type(&compressed_name),
             upload_time: Utc::now().to_rfc3339(),
         };
 

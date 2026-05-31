@@ -1,8 +1,9 @@
+use std::ops::{Deref, DerefMut};
+
 use async_trait::async_trait;
 use ryframe_common::AppResult;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut};
 
 /// 分页查询参数
 #[derive(Debug, Clone, Deserialize)]
@@ -85,7 +86,7 @@ impl<T> PageResult<T> {
         self.total.div_ceil(self.page_size)
     }
 
-    /// 转换为若依风格分页 API 响应
+    /// 转换为统一的 API 分页响应
     pub fn to_page_response(self, msg: impl Into<String>) -> ryframe_common::ApiPageResponse<T>
     where
         T: Serialize,
@@ -122,7 +123,7 @@ pub trait Repository<T, ID>: Send + Sync {
 /// 带结果日志的 Repository 包装器
 ///
 /// 当 `sql_log_level = "full"` 时，自动在每次数据库操作后
-/// 使用 `tracing::debug!` / 若依风格 `[结果]` 输出返回数据。
+/// 使用 `tracing::debug!` / `[结果]` 输出返回数据。
 ///
 /// 通过 `Deref<Target = R>` 透明访问内部 Repository 的自定义方法。
 #[derive(Debug, Clone, Copy)]
@@ -148,7 +149,7 @@ impl<R> DerefMut for LoggedRepo<R> {
     }
 }
 
-/// 内部：以若依风格输出结果日志
+/// 内部：输出结果日志
 fn log_full_result(label: &str, data: &dyn std::fmt::Debug) {
     if ryframe_common::is_sql_full_log() {
         use std::io::Write as _;

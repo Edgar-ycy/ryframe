@@ -1,10 +1,7 @@
 use chrono::Utc;
-use ryframe_common::AppResult;
-use ryframe_common::utils::snowflake;
-use ryframe_core::LoggedRepo;
-use ryframe_core::{PageQuery, PageResult, Repository};
-use ryframe_db::OperLogRepository;
-use ryframe_db::entities::oper_log;
+use ryframe_common::{AppResult, utils::snowflake};
+use ryframe_core::{LoggedRepo, PageQuery, PageResult, Repository};
+use ryframe_db::{OperLogRepository, entities::oper_log};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 

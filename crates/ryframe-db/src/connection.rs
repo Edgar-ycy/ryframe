@@ -1,9 +1,9 @@
+use std::{collections::HashSet, time::Duration};
+
 use log::LevelFilter;
 use ryframe_common::{AppError, AppResult, enable_sql_full_log};
 use ryframe_config::{DbConnection, SqlLogLevel};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Statement};
-use std::collections::HashSet;
-use std::time::Duration;
 
 /// 根据数据库配置创建连接池
 ///
@@ -22,9 +22,10 @@ pub async fn connect_with_level(
     let mut opt = ConnectOptions::new(url);
     opt.max_connections(config.max_connections)
         .min_connections(config.min_connections)
-        .connect_timeout(Duration::from_secs(10))
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(600));
+        .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs))
+        .idle_timeout(Duration::from_secs(config.idle_timeout_secs))
+        .max_lifetime(Duration::from_secs(config.max_lifetime_secs))
+        .connect_timeout(Duration::from_secs(config.connect_timeout_secs));
 
     // 根据配置控制 SQL 日志输出
     configure_sql_logging(&mut opt, &config.driver, sql_log_level);

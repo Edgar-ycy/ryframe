@@ -1,16 +1,15 @@
-use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
-use ryframe_db::entities::menu;
-use ryframe_db::repositories::menu_repo::MenuTreeNode;
+use ryframe_db::{entities::menu, repositories::menu_repo::MenuTreeNode};
 use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
 
 /// 菜单列表查询参数
 #[derive(Debug, Deserialize)]
@@ -41,7 +40,11 @@ pub fn menu_router(state: AppState) -> Router {
 #[utoipa::path(get, path = "/api/v1/system/menus/tree", tag = "菜单管理",
     responses((status = 200, description = "菜单树")), security(("bearer" = [])))]
 async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
-    state.menu_service.find_tree(&state.db).await.map(|v| Json(ApiResponse::success(v)))
+    state
+        .menu_service
+        .find_tree(&state.db)
+        .await
+        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 菜单列表分页查询
@@ -55,7 +58,11 @@ async fn list_page(
         .await?;
     let total = all.len() as u64;
     let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
-    let rows: Vec<menu::Model> = all.into_iter().skip(offset).take(query.page_size as usize).collect();
+    let rows: Vec<menu::Model> = all
+        .into_iter()
+        .skip(offset)
+        .take(query.page_size as usize)
+        .collect();
     Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
 }
 

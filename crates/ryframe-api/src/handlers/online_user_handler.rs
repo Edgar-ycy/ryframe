@@ -92,7 +92,11 @@ pub async fn list_online_users_page(
 
     let total = filtered.len() as u64;
     let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
-    let rows: Vec<OnlineUserVo> = filtered.into_iter().skip(offset).take(query.page_size as usize).collect();
+    let rows: Vec<OnlineUserVo> = filtered
+        .into_iter()
+        .skip(offset)
+        .take(query.page_size as usize)
+        .collect();
     Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
 }
 
@@ -106,5 +110,7 @@ pub async fn force_logout(
 ) -> AppResult<Json<ApiResponse<()>>> {
     state.online_user_service.force_logout(&token_id).await?;
 
-    Ok(Json(ApiResponse::success_no_data_with_msg("用户已强制下线")))
+    Ok(Json(ApiResponse::success_no_data_with_msg(
+        "用户已强制下线",
+    )))
 }

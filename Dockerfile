@@ -56,11 +56,11 @@ RUN chown -R ryframe:ryframe /app
 USER ryframe
 
 # 暴露端口
-EXPOSE 8080
+EXPOSE 3000
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/ || exit 1
+    CMD curl -f http://localhost:3000/health || exit 1
 
 # 启动应用
 ENTRYPOINT ["/app/ryframe"]

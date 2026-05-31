@@ -15,6 +15,7 @@ ryframe-config = { path = "../ryframe-config" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-monitor = { path = "../ryframe-monitor" }
+ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-task = { path = "../ryframe-task" }
 ryframe-generator = { path = "../ryframe-generator" }
 ryframe-macro = { path = "../ryframe-macro" }

@@ -1,0 +1,49 @@
+[common]
+success = "Operation successful"
+fail = "Operation failed"
+save = "Saved successfully"
+update = "Updated successfully"
+delete = "Deleted successfully"
+query = "Query successful"
+export = "Export successful"
+import = "Import successful"
+upload = "Upload successful"
+download = "Download successful"
+submit = "Submitted successfully"
+
+[error]
+internal = "Internal server error"
+not_found = "Resource not found"
+unauthorized = "Unauthorized access"
+forbidden = "Access denied"
+bad_request = "Invalid request parameters"
+validation = "Data validation failed"
+duplicate = "Data already exists"
+timeout = "Request timeout"
+service_unavailable = "Service unavailable"
+database = "Database error"
+
+[auth]
+login_success = "Login successful"
+login_fail = "Invalid username or password"
+logout_success = "Logout successful"
+token_expired = "Token expired"
+token_invalid = "Invalid token"
+captcha_error = "Captcha error"
+account_locked = "Account locked"
+account_disabled = "Account disabled"
+password_expired = "Password expired"
+
+[user]
+welcome = "Welcome {name}"
+created = "User created successfully"
+updated = "User updated successfully"
+deleted = "User deleted successfully"
+reset_password = "Password reset successfully"
+profile_updated = "Profile updated successfully"
+avatar_updated = "Avatar updated successfully"
+
+[notice]
+sent = "Notification sent"
+read = "Marked as read"
+all_read = "All marked as read"

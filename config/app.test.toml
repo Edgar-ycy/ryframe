@@ -3,7 +3,7 @@
 [database]
 sql_log_level = "summary"
 
-[database.primary]
+[[database.connections]]
 database = "ryframe_test"
 max_connections = 5
 min_connections = 1

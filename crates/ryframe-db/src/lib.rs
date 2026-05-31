@@ -4,6 +4,7 @@ pub mod migration;
 pub mod pagination;
 pub mod repositories;
 pub mod sql_logger;
+pub use sql_logger::{DbSpanLayer, SqlLogLayer};
 pub mod transaction;
 
 // 便捷导出

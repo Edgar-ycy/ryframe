@@ -1,0 +1,40 @@
+# RyFrame Helm Chart - 生产环境覆盖配置
+# 用法: helm install ryframe ./deploy/helm/ryframe -f ./deploy/helm/ryframe/values-prod.yaml
+
+replicaCount: 3
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "2000m"
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilization: 60
+  targetMemoryUtilization: 80
+
+app:
+  logger:
+    level: "warn"
+
+ingress:
+  enabled: true
+  hosts:
+    - host: api.ryframe.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: ryframe-tls
+      hosts:
+        - api.ryframe.example.com
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/metrics"

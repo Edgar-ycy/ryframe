@@ -1,7 +1,8 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use ryframe_common::AppResult;
 use sea_orm::DatabaseConnection;
-use std::sync::Arc;
 
 /// 任务执行上下文（传递给 execute）
 #[derive(Clone)]

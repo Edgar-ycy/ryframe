@@ -2,10 +2,12 @@
 //!
 //! 防止超大请求体消耗服务器资源。默认限制 10 MB。
 
-use axum::extract::Request;
-use axum::http::StatusCode;
-use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::{
+    extract::Request,
+    http::StatusCode,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 
 /// 默认请求体大小限制：10 MB
 const DEFAULT_MAX_BODY_SIZE: usize = 10 * 1024 * 1024;

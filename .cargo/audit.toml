@@ -1,0 +1,18 @@
+# RyFrame 安全审计配置
+# 
+# 本文件记录已知依赖漏洞及其风险评估，供 CI 审计使用。
+
+[advisories]
+ignore = [
+    # protobuf < 3.7.2 存在失控递归崩溃漏洞
+    # 传播路径: prometheus 0.13.4 → protobuf 2.28.0
+    # 风险: 中低 - metrics 端点不直接暴露 protobuf 解析面
+    # 解决: 升级 Rust 版本后，prometheus 0.14+ 将使用 protobuf 3.x
+    "RUSTSEC-2024-0437",
+
+    # rsa 0.9.10 存在 Marvin Attack 时序侧信道漏洞
+    # 传播路径: sqlx-mysql → jsonwebtoken 10.4.0 → rsa 0.9.10
+    # 风险: 中 - 需要本地访问且大量请求才能利用
+    # 解决: 上游 rsa crate 已弃用，需等 jsonwebtoken 迁移到 rsa-next 或 rustls-crypto
+    "RUSTSEC-2023-0071",
+]
