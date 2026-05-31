@@ -1,21 +1,20 @@
-use std::io::Write;
-use std::sync::Mutex;
+use std::{
+    io::Write,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 /// i18n 模块测试
 /// 从 crates/ryframe-common/src/i18n.rs 内联测试迁移
 use ryframe_common::i18n::{I18nManager, detect_language};
 
-/// 互斥锁：防止 cargo test 并行运行时多个测试同时操作同一临时目录
-static TEST_DIR_MUTEX: Mutex<()> = Mutex::new(());
+/// 原子计数器：每个测试使用唯一临时目录，彻底消除并行竞态条件
+static DIR_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn create_test_locale_dir() -> std::path::PathBuf {
-    // 串行化目录创建，避免并发删除/创建导致的竞态条件
-    let _guard = TEST_DIR_MUTEX.lock().unwrap();
-
-    let dir = std::env::temp_dir().join("ryframe_i18n_test");
+    let id = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("ryframe_i18n_test_{}", id));
     let _ = std::fs::create_dir_all(&dir);
 
-    // File::create 使用截断模式，会覆盖已存在的文件
     let zh_cn = dir.join("zh-CN.toml");
     let mut f = std::fs::File::create(&zh_cn).unwrap();
     writeln!(f, r#"[common]"#).unwrap();
