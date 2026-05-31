@@ -6,6 +6,8 @@ use ryframe_common::i18n::{I18nManager, detect_language};
 
 fn create_test_locale_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("ryframe_i18n_test");
+    // 清理残留文件（避免历史测试影响 read_dir 顺序）
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
 
     let zh_cn = dir.join("zh-CN.toml");
@@ -19,6 +21,9 @@ fn create_test_locale_dir() -> std::path::PathBuf {
     writeln!(f).unwrap();
     writeln!(f, r#"[user]"#).unwrap();
     writeln!(f, r#"welcome = "欢迎 {{name}}""#).unwrap();
+    // 显式 flush 关闭，确保写盘完成
+    f.flush().unwrap();
+    drop(f);
 
     let en_us = dir.join("en-US.toml");
     let mut f = std::fs::File::create(&en_us).unwrap();
@@ -31,6 +36,8 @@ fn create_test_locale_dir() -> std::path::PathBuf {
     writeln!(f).unwrap();
     writeln!(f, r#"[user]"#).unwrap();
     writeln!(f, r#"welcome = "Welcome {{name}}""#).unwrap();
+    f.flush().unwrap();
+    drop(f);
 
     dir
 }
