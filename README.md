@@ -18,7 +18,6 @@
 - **代码生成**：读取表结构自动生成 CRUD 代码
 - **弹性容错**：重试（指数退避）+ 熔断器
 - **Swagger UI**：交互式 API 文档
-- **Docker**：多阶段构建 + docker-compose 一键部署
 
 ## 快速开始
 
@@ -50,12 +49,6 @@ cargo run
 # Swagger UI: http://localhost:3000/api/v1/swagger-ui
 ```
 
-### Docker 部署
-
-```bash
-docker compose up -d
-```
-
 ### Kubernetes 部署
 
 ```bash
@@ -78,7 +71,7 @@ helm install ryframe ./deploy/helm/ryframe -f ./deploy/helm/ryframe/values-prod.
 ryframe/
 ├── config/              # 配置文件（dev/test/prod）
 ├── sql/                 # 数据库初始化脚本
-├── deploy/              # Nginx 配置
+├── deploy/              # K8s 部署配置
 ├── crates/
 │   ├── ryframe/         # 应用入口（main.rs）
 │   ├── ryframe-api/     # HTTP 层（Handler/DTO/Router）

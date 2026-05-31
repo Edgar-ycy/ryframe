@@ -29,14 +29,7 @@ min_connections = 1
 
 ### 字符集
 
-MySQL 使用 `utf8mb4_general_ci`（`docker-compose.yml` 中已配置）：
-
-```yaml
-mysql:
-  command: >
-    --character-set-server=utf8mb4
-    --collation-server=utf8mb4_general_ci
-```
+MySQL 使用 `utf8mb4_general_ci`，建议在数据库初始化时配置：
 
 ## 数据表
 

@@ -261,15 +261,11 @@ ryframe/
 ├── Cargo.toml                          # Workspace 根配置
 ├── Cargo.lock                          # 依赖锁文件
 ├── .gitignore                          # Git 忽略规则
-├── Dockerfile                          # 多阶段构建
-├── docker-compose.yml                  # 本地开发环境
-├── deploy.sh                           # 一键部署脚本
 │
 ├── docs/                               # 文档目录
 │   ├── architecture.md                 # 系统架构设计文档（本文件）
 │   ├── api-guide.md                    # API 开发指南
 │   ├── db-guide.md                     # 数据库使用指南
-│   ├── deployment.md                   # 部署运维文档
 │   └── large-project-roadmap.md        # 开发路线图
 │
 ├── config/                             # 配置文件目录
@@ -278,9 +274,9 @@ ryframe/
 │   ├── app.prod.toml                   # 生产环境配置
 │   └── app.test.toml                   # 测试环境配置
 │
-├── deploy/                             # 部署相关资源
-│   ├── nginx.conf                      # Nginx 反向代理配置
+├── deploy/                             # Kubernetes 部署资源
 │   ├── k8s/all-in-one.yaml             # Kubernetes 部署清单
+│   ├── helm/ryframe/                   # Helm Chart
 │   ├── grafana/dashboards/             # Grafana 监控面板
 │   ├── prometheus/prometheus.yml       # Prometheus 配置
 │   ├── scripts/                        # 运维脚本
@@ -1727,7 +1723,7 @@ services:
 | **中间件** | 5 个 | 15 个（Metrics/Telemetry/RequestId/Compression/CORS/RequestLog/XssFilter/Timeout/BodyLimit/ApiRateLimit/RateLimit/SecurityHeaders/CacheControl/Idempotency/ReplayProtection） |
 | **高级特性** | 无 | 缓存策略（防穿透/击穿/雪崩）、消息队列（Kafka）、多租户、熔断器、分布式锁、事件总线、功能开关、gRPC |
 | **可观测性** | 基础日志 | OpenTelemetry 链路追踪 + Prometheus Metrics + 结构化日志 |
-| **部署** | 无 | Docker 多阶段构建 + docker-compose + K8s all-in-one + Grafana/Prometheus + 冒烟/压力测试 |
+| **部署** | 无 | K8s all-in-one + Helm Chart + Grafana/Prometheus + 冒烟/压力测试 |
 | **开发者体验** | 基础 | OpenAPI + Swagger UI + 国际化 + 代码生成器 + 配置热加载 |
 | **安全** | JWT | JWT + 多层限流 + XSS 过滤 + 安全头 + 幂等性 + 重放防护 + Token 黑名单 |
 

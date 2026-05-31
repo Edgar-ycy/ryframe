@@ -60,10 +60,7 @@
 - ✅ 国际化（zh-CN / en-US）
 
 ### 部署
-- ✅ Docker 多阶段构建（rust:1.85-slim → debian:bookworm-slim，端口 3000 + HEALTHCHECK /health）
-- ✅ docker-compose（MySQL 8.0 / Redis 7 / Nginx）
 - ✅ K8s all-in-one 部署清单
-- ✅ deploy.sh 一键部署脚本
 - ✅ Nginx 反向代理配置（限流/安全头/静态缓存）
 - ✅ Grafana Dashboard 模板 + Prometheus 配置
 
@@ -105,8 +102,7 @@
 - [x] 确认 CI 实际运行：clippy + fmt 门禁 ✅
 - [x] GitHub Actions: test + coverage 报告 ✅
 - [x] GitHub Actions: cargo audit 安全扫描 ✅
-- [x] GitHub Actions: Docker 镜像构建 ✅
-- [x] 自动生成测试覆盖率 Badge ✅
+- [x] GitHub Actions: 测试覆盖率 Badge ✅
 
 ### 4. 安全加固
 
