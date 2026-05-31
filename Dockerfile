@@ -3,7 +3,8 @@
 # ============================================================
 
 # Stage 1: 构建
-FROM rust:1.85-slim AS builder
+# 部分依赖 (time-core, tonic, zip) 需要 rustc >= 1.88
+FROM rust:1.88-slim AS builder
 
 WORKDIR /build
 
@@ -32,10 +33,11 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# 安装运行时依赖
+# 安装运行时依赖（curl 用于健康检查）
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     tzdata \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置时区
