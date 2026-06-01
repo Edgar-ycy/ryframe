@@ -9,7 +9,7 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
+//! ```
 //! use ryframe_core::event_bus::{Event, EventBus};
 //! use std::sync::Arc;
 //!
@@ -17,12 +17,15 @@
 //! struct UserCreatedEvent { user_id: i64, username: String }
 //! impl Event for UserCreatedEvent {}
 //!
+//! # #[tokio::main]
+//! # async fn main() {
 //! let bus = EventBus::new();
 //! bus.subscribe_fn(|event: Arc<UserCreatedEvent>| async move {
-//!     tracing::info!("用户创建: {}", event.username);
+//!     assert_eq!(event.username, "alice");
 //!     Ok(())
 //! });
 //! bus.publish(UserCreatedEvent { user_id: 1, username: "alice".into() }).await;
+//! # }
 //! ```
 
 use std::{
@@ -79,14 +82,21 @@ impl EventBus {
     /// 订阅事件（trait 对象方式）
     ///
     /// # 示例
-    /// ```ignore
+    /// ```
+    /// # use ryframe_core::event_bus::{Event, EventBus, EventHandler, EventResult};
+    /// # use std::sync::Arc;
+    /// # use async_trait::async_trait;
+    /// # #[derive(Debug, Clone)]
+    /// # struct UserCreatedEvent { user_id: i64 }
+    /// # impl Event for UserCreatedEvent {}
     /// struct LogHandler;
     /// #[async_trait]
     /// impl EventHandler<UserCreatedEvent> for LogHandler {
-    ///     async fn handle(&self, event: Arc<UserCreatedEvent>) -> EventResult {
+    ///     async fn handle(&self, _event: Arc<UserCreatedEvent>) -> EventResult {
     ///         Ok(())
     ///     }
     /// }
+    /// # let bus = EventBus::new();
     /// bus.subscribe::<UserCreatedEvent, _>(LogHandler);
     /// ```
     pub fn subscribe<E: Event, H: EventHandler<E> + 'static>(&self, handler: H) {
@@ -130,9 +140,15 @@ impl EventBus {
     /// 处理器接收 `Arc<E>`，与其它处理器共享同一份事件数据，无需 Clone。
     ///
     /// # 示例
-    /// ```ignore
+    /// ```
+    /// # use ryframe_core::event_bus::{Event, EventBus};
+    /// # use std::sync::Arc;
+    /// # #[derive(Debug, Clone)]
+    /// # struct UserCreatedEvent { username: String }
+    /// # impl Event for UserCreatedEvent {}
+    /// # let bus = EventBus::new();
     /// bus.subscribe_fn(|event: Arc<UserCreatedEvent>| async move {
-    ///     tracing::info!("用户创建: {}", event.username);
+    ///     assert_eq!(event.username, "alice");
     ///     Ok(())
     /// });
     /// ```
@@ -183,8 +199,16 @@ impl EventBus {
     /// 单个处理器失败仅记录日志，不影响其他处理器或调用方。
     ///
     /// # 示例
-    /// ```ignore
+    /// ```
+    /// # use ryframe_core::event_bus::{Event, EventBus};
+    /// # #[derive(Debug, Clone)]
+    /// # struct UserCreatedEvent { user_id: i64, username: String }
+    /// # impl Event for UserCreatedEvent {}
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let bus = EventBus::new();
     /// bus.publish(UserCreatedEvent { user_id: 1, username: "alice".into() }).await;
+    /// # }
     /// ```
     pub async fn publish<E: Event>(&self, event: E) {
         let type_id = TypeId::of::<E>();

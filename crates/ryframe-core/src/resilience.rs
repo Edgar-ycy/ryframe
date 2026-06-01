@@ -1,13 +1,23 @@
 //! 弹性容错工具：重试、熔断器
 //!
 //! 使用示例：
-//! ```ignore
-//! use ryframe_core::resilience::{RetryConfig, retry_with_backoff};
-//!
+//! ```
+//! # use ryframe_core::resilience::{RetryConfig, retry_with_backoff};
+//! # use ryframe_core::resilience::CircuitBreaker;
+//! # #[tokio::main]
+//! # async fn main() {
+//! // 重试机制
 //! let result = retry_with_backoff(
-//!     || async { db.find_by_id(1).await },
+//!     || async { Ok::<_, &str>("success") },
 //!     &RetryConfig::default(),
 //! ).await;
+//! assert_eq!(result.unwrap(), "success");
+//!
+//! // 熔断器
+//! let breaker = CircuitBreaker::default_config();
+//! assert!(breaker.allow_request());
+//! breaker.record_success();
+//! # }
 //! ```
 
 use std::{

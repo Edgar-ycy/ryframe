@@ -110,9 +110,12 @@ impl EmailSender {
     /// 发送 HTML 邮件
     ///
     /// # 示例
-    /// ```ignore
+    /// ```
+    /// use ryframe_common::utils::email::{EmailSender, EmailConfig};
+    ///
+    /// let config = EmailConfig::default();
     /// let sender = EmailSender::new(config);
-    /// sender.send("user@example.com", "验证码", "<h1>您的验证码是: 123456</h1>").await?;
+    /// // sender.send("user@example.com", "验证码", "<h1>123456</h1>").await?;
     /// ```
     pub async fn send(&self, to: &str, subject: &str, html_body: &str) -> Result<(), String> {
         let message = self.build_message(to, subject, html_body)?;

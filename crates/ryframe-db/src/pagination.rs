@@ -1,12 +1,25 @@
 use ryframe_common::AppResult;
 use ryframe_core::{PageQuery, PageResult};
 use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, Select};
-/// 执行分页查询
-///
 /// 使用方式：
-/// ```ignore
-/// let select = user::Entity::find().filter(user::Column::Status.eq(1));
-/// let result = paginate(&db, select, &query).await?;
+/// ```
+/// use ryframe_core::{PageQuery, PageResult};
+///
+/// let query = PageQuery { page: 1, page_size: 10 };
+/// assert_eq!(query.offset(), 0);
+///
+/// let result: PageResult<String> = PageResult::new(
+///     vec!["item1".into(), "item2".into()],
+///     2,
+///     &query,
+/// );
+/// assert_eq!(result.total_pages(), 1);
+/// assert_eq!(result.records.len(), 2);
+/// ```
+///
+/// 实际分页查询需提供 `DatabaseConnection` 和 `Select<E>`：
+/// ```text
+/// let result = paginate(db, select, &query).await?;
 /// ```
 pub async fn paginate<E>(
     db: &DatabaseConnection,

@@ -259,10 +259,22 @@ pub struct RateLimitState {
 /// 需要在认证中间件 **之后** 注册。
 ///
 /// 用法：
-/// ```ignore
-/// Router::new()
-///     .layer(from_fn_with_state(auth_state, auth_middleware))          // JWT 认证
-///     .layer(from_fn_with_state(rate_limit_state.clone(), user_rate_limit_middleware)) // 用户限流
+/// ```
+/// # use ryframe_middleware::rate_limit::RateLimiter;
+/// # #[tokio::main]
+/// # async fn main() {
+/// // 创建内存限流器（自包含示例，无需外部依赖）
+/// let limiter = RateLimiter::new_in_memory(100, 10);
+/// assert!(limiter.try_acquire("test_key").await);
+///
+/// // 生成各类限流 key
+/// assert_eq!(RateLimiter::user_key("42"), "user:42");
+/// assert_eq!(RateLimiter::api_key("/api/login"), "api:/api/login");
+/// assert_eq!(
+///     RateLimiter::user_api_key("42", "/api/login"),
+///     "user_api:42:/api/login"
+/// );
+/// # }
 /// ```
 pub async fn user_rate_limit_middleware(
     State(state): State<RateLimitState>,

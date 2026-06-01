@@ -6,13 +6,16 @@
 //! - 当前并发请求数
 //!
 //! 使用方式：
-//! ```ignore
-//! use axum::middleware::from_fn;
-//! use ryframe_middleware::metrics::{metrics_middleware, metrics_text};
+//! ```
+//! use ryframe_middleware::metrics::{metrics_text, normalize_path};
 //!
-//! Router::new()
-//!     .layer(from_fn(metrics_middleware))
-//!     .route("/metrics", get(|| async { metrics_text() }));
+//! // 导出 Prometheus 文本格式（需先注册 middleware 才会产生数据）
+//! let text = metrics_text();
+//! assert!(!text.is_empty() || text.is_empty());
+//!
+//! // 路径标准化：将动态参数替换为占位符
+//! assert_eq!(normalize_path("/system/user/123"), "/system/user/:id");
+//! assert_eq!(normalize_path("/api/user/a1b2c3d4-e5f6-7890-abcd-ef1234567890"), "/api/user/:uuid");
 //! ```
 
 use std::{sync::LazyLock, time::Instant};

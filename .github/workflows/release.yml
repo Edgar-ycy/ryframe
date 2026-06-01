@@ -16,36 +16,11 @@ env:
 
 jobs:
   # ============================================================
-  # 构建二进制
-  # ============================================================
-  build:
-    name: Build Release Binary
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build release
-        run: cargo build --release --bin ryframe
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: ryframe-linux
-          path: target/release/ryframe
-
-  # ============================================================
   # Nightly 自动发布 (push main, 复用固定 nightly tag)
   # ============================================================
   nightly:
     name: Create Nightly Release
     runs-on: ubuntu-latest
-    needs: build
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
@@ -54,10 +29,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ryframe-linux
+      - name: Package source
+        run: |
+          git archive --format=tar.gz --output=ryframe-nightly-src.tar.gz HEAD
+          git archive --format=zip --output=ryframe-nightly-src.zip HEAD
 
       - name: Force update nightly tag
         run: |
@@ -79,7 +54,9 @@ jobs:
 
             > ⚠️ 这是开发中的快照版本，可能不稳定。
           prerelease: true
-          files: ryframe
+          files: |
+            ryframe-nightly-src.tar.gz
+            ryframe-nightly-src.zip
 
   # ============================================================
   # Stable 发布 (手动创建 V* 或 v* tag 触发)
@@ -87,17 +64,17 @@ jobs:
   stable:
     name: Create Stable Release
     runs-on: ubuntu-latest
-    needs: build
     if: startsWith(github.ref, 'refs/tags/V') || startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download binary
-        uses: actions/download-artifact@v4
-        with:
-          name: ryframe-linux
+      - name: Package source
+        run: |
+          RELEASE_TAG="${{ github.ref_name }}"
+          git archive --format=tar.gz --output="ryframe-${RELEASE_TAG}-src.tar.gz" HEAD
+          git archive --format=zip --output="ryframe-${RELEASE_TAG}-src.zip" HEAD
 
       - name: Extract changelog
         id: changelog
@@ -119,4 +96,6 @@ jobs:
           name: ${{ github.ref_name }}
           body_path: release_body.md
           prerelease: false
-          files: ryframe
+          files: |
+            ryframe-${{ github.ref_name }}-src.tar.gz
+            ryframe-${{ github.ref_name }}-src.zip

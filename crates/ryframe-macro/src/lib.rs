@@ -19,27 +19,27 @@ use syn::{ItemFn, LitStr, parse_macro_input};
 /// # 展开原理
 ///
 /// `#[datasource("db_device")]` 展开为：
-/// ```ignore
-/// ryframe_core::DATA_SOURCE_NAME.scope("db_device".to_string(), async move {
-///     // 原始函数体
-/// }).await
+/// ```
+/// // ryframe_core::DATA_SOURCE_NAME.scope("db_device".to_string(), async move {
+/// //     // 原始函数体
+/// // }).await
 /// ```
 ///
 /// `task_local!.scope()` 自动处理嵌套和恢复。
 ///
 /// # 示例
 ///
-/// ```ignore
-/// use ryframe_macro::datasource;
+/// ```
+/// // use ryframe_macro::datasource;
 ///
-/// impl DeviceServiceImpl {
-///     /// 从设备库查询 — 只需注解，无需传 db 参数
-///     #[datasource("db_device")]
-///     pub async fn list_devices(&self, query: PageQuery) -> AppResult<PageResult<DeviceVo>> {
-///         let db = self.device_repo.db(); // ← 自动解析为 db_device 连接
-///         self.device_repo.find_by_page(&db, query).await
-///     }
-/// }
+/// // impl DeviceServiceImpl {
+/// //     /// 从设备库查询 — 只需注解，无需传 db 参数
+/// //     #[datasource("db_device")]
+/// //     pub async fn list_devices(&self, query: PageQuery) -> AppResult<PageResult<DeviceVo>> {
+/// //         let db = self.device_repo.db(); // ← 自动解析为 db_device 连接
+/// //         self.device_repo.find_by_page(&db, query).await
+/// //     }
+/// // }
 /// ```
 #[proc_macro_attribute]
 pub fn datasource(attr: TokenStream, item: TokenStream) -> TokenStream {

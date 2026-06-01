@@ -59,18 +59,22 @@ mod seaql_migration_entity {
 ///
 /// # 示例
 ///
-/// ```ignore
+/// ```
 /// use ryframe_db::migration::MigrationManager;
 ///
-/// // 检查数据库是否为最新
-/// let up_to_date = MigrationManager::is_up_to_date(&db).await?;
+/// // 获取迁移名称列表（无需数据库连接）
+/// let names = MigrationManager::migration_names();
+/// assert!(!names.is_empty());
 ///
-/// // 获取待处理迁移数
-/// let pending = MigrationManager::pending_count(&db).await?;
-///
-/// // 执行所有待处理迁移
-/// MigrationManager::migrate_up(&db, None).await?;
+/// // 获取迁移总数
+/// let count = MigrationManager::migration_count();
+/// assert_eq!(count, names.len());
 /// ```
+///
+/// 需要数据库连接的方法（需在运行时提供 `DatabaseConnection`）：
+/// - `MigrationManager::is_up_to_date(db)`
+/// - `MigrationManager::pending_count(db)`
+/// - `MigrationManager::status(db)`
 pub struct MigrationManager;
 
 impl MigrationManager {

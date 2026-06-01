@@ -9,17 +9,20 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
-//! use ryframe_core::cache::{Cache, RedisCache, CacheStrategy};
-//!
-//! // Redis 缓存
-//! let cache = RedisCache::new(redis_client);
-//! cache.get_or_load("key", 3600, || async { db_query().await }).await?;
+//! ```
+//! # use ryframe_core::cache::{Cache, LocalMemoryCache, CacheStrategy};
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // 本地内存缓存（自包含示例，无需外部依赖）
+//! let cache = LocalMemoryCache::unlimited();
+//! cache.get_or_load("key", 3600, || async { Ok("value".to_string()) }).await?;
 //!
 //! // 带防护的缓存
 //! let cache = CacheStrategy::new(cache)
 //!     .with_avalanche_jitter(0.2)  // ±20% TTL 抖动
 //!     .with_null_cache_ttl(60);    // 空值缓存 60 秒
+//! # Ok(())
+//! # }
 //! ```
 
 use std::{collections::HashMap, sync::Arc};
@@ -82,8 +85,17 @@ pub trait Cache: Send + Sync {
 
     /// Get-or-Load 模式：缓存未命中时自动回源加载
     ///
-    /// ```ignore
-    /// let user = cache.get_or_load("user:1", 3600, || db.find_user(1)).await?;
+    /// ```
+    /// # use ryframe_core::cache::{Cache, LocalMemoryCache};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let cache = LocalMemoryCache::unlimited();
+    /// let user = cache.get_or_load("user:1", 3600, || async {
+    ///     Ok("Alice".to_string())
+    /// }).await?;
+    /// assert_eq!(user, "Alice");
+    /// # Ok(())
+    /// # }
     /// ```
     async fn get_or_load<T, F, Fut>(
         &self,
@@ -555,10 +567,18 @@ impl CacheBackend {
 ///
 /// # 使用示例
 ///
-/// ```ignore
-/// let cache = BreakdownGuard::new(RedisCache::new(redis_client));
+/// ```
+/// # use ryframe_core::cache::{Cache, LocalMemoryCache, BreakdownGuard};
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let cache = BreakdownGuard::new(LocalMemoryCache::unlimited());
 /// // 自动防止击穿
-/// cache.get_or_load_guarded("hot:key", 3600, || db.query()).await?;
+/// let result = cache.get_or_load_guarded("hot:key", 3600, || async {
+///     Ok(Some("data".to_string()))
+/// }).await?;
+/// assert_eq!(result, Some("data".to_string()));
+/// # Ok(())
+/// # }
 /// ```
 pub struct BreakdownGuard<C: Cache> {
     inner: C,
@@ -697,13 +717,16 @@ impl<C: Cache> std::fmt::Debug for WarmUpTask<C> {
 ///
 /// # 使用示例
 ///
-/// ```ignore
-/// let mut warmer = CacheWarmer::new(redis_cache);
+/// ```
+/// # use ryframe_core::cache::{CacheWarmer, LocalMemoryCache};
+/// # #[tokio::main]
+/// # async fn main() {
+/// let mut warmer = CacheWarmer::new(LocalMemoryCache::unlimited());
 /// warmer.add_task("sys_menu:tree", 3600, || Box::pin(async {
-///     let tree = load_menu_tree().await?;
-///     Ok(serde_json::to_string(&tree)?)
+///     Ok(r#"[{"id":1,"name":"首页"}]"#.to_string())
 /// }));
-/// warmer.warm_up().await?;
+/// warmer.warm_up().await;
+/// # }
 /// ```
 pub struct CacheWarmer<C: Cache> {
     cache: C,

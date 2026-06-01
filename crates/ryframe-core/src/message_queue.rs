@@ -7,15 +7,19 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
+//! ```
 //! use ryframe_core::message_queue::{MessageQueue, InMemoryMessageQueue};
 //!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mq = InMemoryMessageQueue::new();
 //! mq.publish("user.created", b"{\"user_id\": 1}").await?;
 //! mq.subscribe("user.created", |msg| async move {
-//!     println!("Received: {:?}", msg);
+//!     assert_eq!(msg, b"{\"user_id\": 1}");
 //!     Ok(())
 //! }).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use async_trait::async_trait;

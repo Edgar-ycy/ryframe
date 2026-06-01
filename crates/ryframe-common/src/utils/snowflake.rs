@@ -12,11 +12,18 @@ use std::sync::{
 ///
 /// # 使用方式
 ///
-/// ```ignore
+/// ```
 /// use ryframe_common::utils::snowflake::Snowflake;
 ///
 /// let sf = Snowflake::new(1).expect("创建雪花算法实例失败");
 /// let id = sf.next_id();
+/// assert!(id > 0);
+///
+/// // 从 ID 提取时间戳和工作机器ID
+/// let ts = Snowflake::extract_timestamp(id);
+/// let wid = Snowflake::extract_worker_id(id);
+/// assert_eq!(wid, 1);
+/// assert!(ts > 1_769_660_800_000);
 /// ```
 pub struct Snowflake {
     /// 工作机器ID（0~1023）

@@ -5,16 +5,15 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
+//! ```
 //! use ryframe_core::feature_flag::FeatureFlags;
 //!
 //! let flags = FeatureFlags::new()
 //!     .with_flag("new_user_flow", true, "新版用户注册流程")
 //!     .with_flag("dark_mode", false, "深色模式");
 //!
-//! if flags.is_enabled("new_user_flow") {
-//!     // 启用新功能
-//! }
+//! assert!(flags.is_enabled("new_user_flow"));
+//! assert!(!flags.is_enabled("dark_mode"));
 //! ```
 
 use std::{

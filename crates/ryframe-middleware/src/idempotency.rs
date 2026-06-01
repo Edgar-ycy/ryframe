@@ -149,11 +149,16 @@ fn rebuild_response(cached: &CachedResponse) -> Response {
 /// - 重复请求：直接返回缓存结果（加 `X-Idempotency-Replay: true` 头）
 ///
 /// 使用方式（路由级）：
-/// ```ignore
-/// .route_layer(middleware::from_fn_with_state(
-///     idempotency_state,
-///     idempotency_middleware,
-/// ))
+/// ```
+/// use ryframe_middleware::idempotency::IdempotencyState;
+///
+/// // 创建幂等性状态（内存模式，自包含示例）
+/// let state = IdempotencyState::new(None, 300);
+/// // 启动后台 GC 清理过期缓存
+/// state.spawn_gc();
+///
+/// // 注册为路由中间件：
+/// // .route_layer(middleware::from_fn_with_state(state, idempotency_middleware))
 /// ```
 pub async fn idempotency_middleware(
     State(state): State<IdempotencyState>,

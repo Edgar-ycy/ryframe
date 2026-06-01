@@ -8,21 +8,20 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
-//! // main.rs 中初始化
-//! let telemetry_guard = ryframe_middleware::telemetry::init_tracer_provider(
-//!     &ryframe_middleware::telemetry::TelemetryConfig::default()
+//! ```
+//! use ryframe_middleware::telemetry::TelemetryConfig;
+//!
+//! // 配置链路追踪
+//! let config = TelemetryConfig::default();
+//! assert!(!config.enabled);
+//! assert_eq!(config.service_name, "ryframe");
+//!
+//! // 创建 Span 工具函数（不依赖实际 OTLP 后端）
+//! let span = ryframe_middleware::telemetry::child_span(
+//!     "db.query_user",
+//!     &[("db.user_id", "42".to_string())]
 //! );
-//!
-//! // 获取 tracing layer 并注册到 subscriber
-//! let otel_layer = telemetry_guard.tracing_layer();
-//! tracing_subscriber::registry()
-//!     .with(otel_layer)
-//!     .init();
-//!
-//! // Router 中添加 HTTP Span 中间件
-//! Router::new()
-//!     .layer(from_fn(ryframe_middleware::telemetry::telemetry_middleware))
+//! drop(span);
 //! ```
 
 use std::{net::SocketAddr, time::Duration};
@@ -278,13 +277,15 @@ pub async fn telemetry_middleware(
 /// 为外部调用（如数据库查询、RPC 调用）创建子 Span
 ///
 /// # 示例
-/// ```ignore
+/// ```
 /// let span = ryframe_middleware::telemetry::child_span(
 ///     "db.query_user",
-///     &[("db.user_id", "42")]
+///     &[("db.user_id", "42".to_string())]
 /// );
 /// let _guard = span.enter();
 /// // ... 数据库操作
+/// drop(_guard);
+/// drop(span);
 /// ```
 pub fn child_span(name: &str, attrs: &[(&str, String)]) -> Span {
     let span = tracing::info_span!("otel.child", otel.name = name);
@@ -304,11 +305,14 @@ pub fn child_span(name: &str, attrs: &[(&str, String)]) -> Span {
 /// 使用方式：在 span 的 context 内执行 HTTP 调用。
 ///
 /// # 示例
-/// ```ignore
+/// ```
+/// # use ryframe_middleware::telemetry::http_client_span;
 /// let span = http_client_span("GET", "https://api.example.com/users", None);
 /// let _guard = span.enter();
-/// let resp = reqwest::get("https://api.example.com/users").await?;
+/// // let resp = reqwest::get("https://api.example.com/users").await?;
 /// // span.record("http.status_code", resp.status().as_u16());
+/// drop(_guard);
+/// drop(span);
 /// ```
 pub fn http_client_span(method: &str, url: &str, body_size: Option<u64>) -> Span {
     let span = tracing::info_span!(
@@ -329,10 +333,13 @@ pub fn http_client_span(method: &str, url: &str, body_size: Option<u64>) -> Span
 /// 为 Redis 操作创建 Span。
 ///
 /// # 示例
-/// ```ignore
+/// ```
+/// # use ryframe_middleware::telemetry::redis_span;
 /// let span = redis_span("GET", "user:42");
 /// let _guard = span.enter();
-/// let val = redis_client.get::<String>("user:42").await?;
+/// // let val = redis_client.get::<String>("user:42").await?;
+/// drop(_guard);
+/// drop(span);
 /// ```
 pub fn redis_span(command: &str, key: &str) -> Span {
     let span = tracing::info_span!(
@@ -351,10 +358,13 @@ pub fn redis_span(command: &str, key: &str) -> Span {
 /// 为 gRPC 出站调用创建符合 OTel 语义约定的 Span。
 ///
 /// # 示例
-/// ```ignore
+/// ```
+/// # use ryframe_middleware::telemetry::grpc_client_span;
 /// let span = grpc_client_span("user.UserService", "GetUser");
 /// let _guard = span.enter();
-/// let resp = grpc_client.get_user(request).await?;
+/// // let resp = grpc_client.get_user(request).await?;
+/// drop(_guard);
+/// drop(span);
 /// ```
 pub fn grpc_client_span(service: &str, method: &str) -> Span {
     let span = tracing::info_span!(
@@ -373,10 +383,13 @@ pub fn grpc_client_span(service: &str, method: &str) -> Span {
 /// 为消息发布操作创建 Span。
 ///
 /// # 示例
-/// ```ignore
+/// ```
+/// # use ryframe_middleware::telemetry::mq_produce_span;
 /// let span = mq_produce_span("kafka", "order-events");
 /// let _guard = span.enter();
-/// mq.publish("order-events", payload).await?;
+/// // mq.publish("order-events", payload).await?;
+/// drop(_guard);
+/// drop(span);
 /// ```
 pub fn mq_produce_span(broker: &str, topic: &str) -> Span {
     let span = tracing::info_span!(
@@ -392,10 +405,13 @@ pub fn mq_produce_span(broker: &str, topic: &str) -> Span {
 /// 缓存操作 Span（通用，用于 memory cache 等非 Redis 缓存）
 ///
 /// # 示例
-/// ```ignore
+/// ```
+/// # use ryframe_middleware::telemetry::cache_span;
 /// let span = cache_span("get", "user:profile:42");
 /// let _guard = span.enter();
-/// let val = cache.get("user:profile:42").await?;
+/// // let val = cache.get("user:profile:42").await?;
+/// drop(_guard);
+/// drop(span);
 /// ```
 pub fn cache_span(operation: &str, key: &str) -> Span {
     let span = tracing::info_span!(
@@ -414,10 +430,13 @@ pub fn cache_span(operation: &str, key: &str) -> Span {
 /// 适用于无法使用上述预定义函数的自定义场景。
 ///
 /// # 示例
-/// ```ignore
+/// ```
+/// # use ryframe_middleware::telemetry::external_span;
 /// let span = external_span("email.send", &[("email.to", "user@example.com")]);
 /// let _guard = span.enter();
 /// // ... 发送邮件
+/// drop(_guard);
+/// drop(span);
 /// ```
 pub fn external_span(name: &str, attrs: &[(&str, &str)]) -> Span {
     let span = tracing::info_span!("external", otel.name = name, otel.kind = "client",);

@@ -26,8 +26,9 @@ pub struct AuthState {
 /// 从 Authorization 头提取 Bearer token，验证 JWT 签名和有效期，
 /// 检查 Token 黑名单（支持 JWT 主动撤销），并将 Claims 注入到 extensions。
 /// 需要在 Router 上注册：
-/// ```ignore
-/// Router::new().route_layer(middleware::from_fn_with_state(auth_state, auth_middleware))
+/// ```
+/// # use ryframe_auth::middleware::auth_middleware;
+/// // Router::new().route_layer(middleware::from_fn_with_state(auth_state, auth_middleware))
 /// ```
 pub async fn auth_middleware(
     State(auth_state): State<AuthState>,
@@ -68,11 +69,12 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
 /// 权限守卫中间件工厂
 ///
 /// 使用方式（路由级）：
-/// ```ignore
-/// .route("/users", get(list_users).route_layer(middleware::from_fn_with_state(
-///     auth_state.clone(),
-///     require_permission("system:user:list"),
-/// )))
+/// ```
+/// # use ryframe_auth::middleware::require_permission;
+/// // .route("/users", get(list_users).route_layer(middleware::from_fn_with_state(
+/// //     auth_state.clone(),
+/// //     require_permission("system:user:list"),
+/// // )))
 /// ```
 #[allow(clippy::type_complexity)]
 pub fn require_permission(

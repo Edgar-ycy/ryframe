@@ -5,7 +5,9 @@
 /// - `system:*:*` 匹配 `system:user:list`、`system:role:list` 等
 ///
 /// 示例：
-/// ```ignore
+/// ```
+/// use ryframe_auth::rbac::has_permission;
+///
 /// let perms = vec!["system:user:*".to_string()];
 /// assert!(has_permission(&perms, "system:user:list"));
 /// assert!(has_permission(&perms, "system:user:create"));

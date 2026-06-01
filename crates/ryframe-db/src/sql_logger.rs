@@ -143,12 +143,21 @@ impl Visit for SqlxVisitor {
 ///
 /// # 使用方式
 ///
-/// ```ignore
-/// tracing_subscriber::registry()
-///     .with(DbSpanLayer::new())
-///     .with(SqlLogLayer::new(level, threshold))
-///     .with(otel_layer)
-///     .init();
+/// ```
+/// use ryframe_db::sql_logger::{DbSpanLayer, SqlLogLayer};
+/// use ryframe_config::SqlLogLevel;
+///
+/// // 创建 DB Span 追踪层（自包含，无需实际 subscriber）
+/// let db_span_layer = DbSpanLayer::new();
+///
+/// // 创建 SQL 日志层
+/// let sql_log_layer = SqlLogLayer::new(SqlLogLevel::Simple, 100);
+///
+/// // 注册到 subscriber：
+/// // tracing_subscriber::registry()
+/// //     .with(db_span_layer)
+/// //     .with(sql_log_layer)
+/// //     .init();
 /// ```
 pub struct DbSpanLayer;
 

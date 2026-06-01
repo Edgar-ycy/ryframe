@@ -112,8 +112,16 @@ impl ReplayProtectionState {
 /// 如果请求未包含这两个头，则跳过校验（兼容无需防重放的客户端）。
 ///
 /// 使用方式：
-/// ```ignore
-/// .route_layer(middleware::from_fn_with_state(replay_state, replay_protection_middleware))
+/// ```
+/// use ryframe_middleware::replay_protection::ReplayProtectionState;
+///
+/// // 创建重放防护状态（内存模式，自包含示例，窗口 5 分钟）
+/// let state = ReplayProtectionState::new(None, 300);
+/// // 启动后台 GC 清理过期 nonce
+/// state.spawn_gc();
+///
+/// // 注册为路由中间件：
+/// // .route_layer(middleware::from_fn_with_state(replay_state, replay_protection_middleware))
 /// ```
 pub async fn replay_protection_middleware(
     State(state): State<ReplayProtectionState>,

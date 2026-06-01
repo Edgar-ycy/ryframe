@@ -9,16 +9,24 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
-//! use ryframe_common::i18n::{I18nManager, translate, set_language_for_request};
+//! ```
+//! use ryframe_common::i18n::{I18nManager, detect_language};
 //!
-//! // 启动时加载
-//! let i18n = I18nManager::load("locales").unwrap();
-//! i18n.set_global();
+//! // 创建管理器（不加载文件，使用内置翻译）
+//! let i18n = I18nManager::load("nonexistent_dir").unwrap();
+//! assert_eq!(i18n.default_lang(), "zh-CN");
 //!
-//! // Handler 中使用
-//! let msg = translate("common.success", "zh-CN");  // → "操作成功"
-//! let msg = translate_with_args("user.welcome", "en-US", &[("name", "Alice")]);
+//! // 翻译回退到 key 本身
+//! let msg = i18n.translate("unknown.key", "zh-CN");
+//! assert_eq!(msg, "unknown.key");
+//!
+//! // 带参数翻译
+//! let msg = i18n.translate_with_args("Hello, {name}!", "zh-CN", &[("name", "Alice")]);
+//! assert_eq!(msg, "Hello, Alice!");
+//!
+//! // 语言检测
+//! let lang = detect_language(Some("en-US,en;q=0.9"), &["zh-CN".into(), "en-US".into()]);
+//! assert_eq!(lang, "en-us");
 //! ```
 
 use std::{
@@ -186,10 +194,11 @@ impl I18nManager {
     /// 替换占位符 `{name}` 为对应值。
     ///
     /// # 示例
-    /// ```ignore
-    /// i18n.translate_with_args("user.greeting", "en-US", &[("name", "Alice")]);
-    /// // 翻译资源: "user.greeting" = "Hello, {name}!"
-    /// // 输出: "Hello, Alice!"
+    /// ```
+    /// # use ryframe_common::i18n::I18nManager;
+    /// let i18n = I18nManager::load("nonexistent_dir").unwrap();
+    /// let msg = i18n.translate_with_args("Hello, {name}!", "zh-CN", &[("name", "Alice")]);
+    /// assert_eq!(msg, "Hello, Alice!");
     /// ```
     pub fn translate_with_args(&self, key: &str, lang: &str, args: &[(&str, &str)]) -> String {
         let template = self.translate(key, lang);
@@ -244,8 +253,16 @@ impl I18nManager {
 /// 在 Handler 中直接调用，无需传递 I18nManager。
 ///
 /// # 示例
-/// ```ignore
+/// ```
+/// use ryframe_common::i18n::{I18nManager, translate};
+///
+/// // 初始化全局管理器
+/// let i18n = I18nManager::load("nonexistent_dir").unwrap();
+/// i18n.set_global();
+///
+/// // 翻译（key 不存在时回退到 key 本身）
 /// let msg = translate("common.success", "zh-CN");
+/// assert_eq!(msg, "common.success");
 /// ```
 pub fn translate(key: &str, lang: &str) -> String {
     global_i18n()

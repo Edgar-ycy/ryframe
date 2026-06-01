@@ -34,10 +34,13 @@ struct RawPageParams {
 /// - `page_size` / `pageSize` / `size`：每页条数
 ///
 /// # 用法
-/// ```ignore
-/// async fn list(ValidatedPageQuery(query): ValidatedPageQuery) -> ... {
-///     // query.page 和 query.page_size 已校验
-/// }
+/// ```
+/// use ryframe_core::PageQuery;
+///
+/// // 直接构造 PageQuery（无需 axum extractor 上下文）
+/// let query = PageQuery { page: 2, page_size: 20 };
+/// assert_eq!(query.page, 2);
+/// assert_eq!(query.page_size, 20);
 /// ```
 pub struct ValidatedPageQuery(pub PageQuery);
 

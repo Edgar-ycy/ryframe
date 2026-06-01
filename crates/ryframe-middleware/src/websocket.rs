@@ -9,20 +9,25 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
-//! use ryframe_middleware::websocket::{WsManager, ws_upgrade};
+//! ```
+//! # #[tokio::main]
+//! # async fn main() {
+//! use ryframe_middleware::websocket::{WsManager, WsMessage};
 //! use std::sync::Arc;
 //!
 //! let ws_manager = Arc::new(WsManager::new());
+//! assert_eq!(ws_manager.connection_count(), 0);
 //!
-//! // Router 中注册 WebSocket 端点
-//! Router::new()
-//!     .route("/ws", get(ws_upgrade))
-//!     .with_state(ws_manager.clone());
+//! // 消息类型构造（自包含，无需连接）
+//! let msg = WsMessage::text("你好");
+//! assert_eq!(msg.msg_type, "text");
 //!
-//! // 业务代码中广播消息
-//! ws_manager.broadcast_text("系统通知: 服务重启").await;
-//! ws_manager.send_to_room_text("admin", "管理员消息").await;
+//! let notification = WsMessage::notification("系统通知");
+//! assert_eq!(notification.msg_type, "notification");
+//!
+//! let system_msg = WsMessage::system("服务重启");
+//! assert!(system_msg.to_json().contains("服务重启"));
+//! # }
 //! ```
 
 use std::{collections::HashSet, sync::Arc};
@@ -298,10 +303,12 @@ impl std::fmt::Debug for WsManager {
 /// 支持 `?token=xxx&rooms=room1,room2` 查询参数。
 ///
 /// # 示例
-/// ```ignore
-/// Router::new()
-///     .route("/ws", get(ws_upgrade))
-///     .with_state(ws_manager);
+/// ```
+/// # use ryframe_middleware::websocket::ws_upgrade;
+/// // 可作为 axum handler 注册：
+/// // Router::new()
+/// //     .route("/ws", get(ws_upgrade))
+/// //     .with_state(ws_manager);
 /// ```
 pub async fn ws_upgrade(
     ws: WebSocketUpgrade,

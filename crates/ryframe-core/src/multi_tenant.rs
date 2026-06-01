@@ -15,18 +15,29 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
-//! use ryframe_core::multi_tenant::{TenantConfig, tenant_middleware};
-//! use axum::{Router, middleware};
+//! ```
+//! use ryframe_core::multi_tenant::{TenantConfig, TenantContext, TenantFilter};
+//! use ryframe_core::multi_tenant::{ExtractionMethod, IsolationStrategy, TenantQuota};
 //!
+//! // 配置租户识别方式
 //! let config = TenantConfig {
 //!     extraction_method: ExtractionMethod::Header("X-Tenant-Id".into()),
 //!     isolation_strategy: IsolationStrategy::SharedTable,
 //!     default_tenant: None,
 //! };
+//! assert!(matches!(config.extraction_method, ExtractionMethod::Header(_)));
 //!
-//! Router::new()
-//!     .layer(middleware::from_fn_with_state(config, tenant_middleware))
+//! // 创建租户上下文
+//! let ctx = TenantContext::admin();
+//! assert!(ctx.is_admin);
+//!
+//! // 创建租户过滤器
+//! let filter = TenantFilter::new("inner_repo").with_context(&ctx);
+//! assert!(filter.is_admin());
+//!
+//! // 租户配额
+//! let quota = TenantQuota::default();
+//! assert_eq!(quota.max_users, 100);
 //! ```
 
 use axum::{

@@ -89,3 +89,8 @@ digest = "0.11"
 hex = "0.4"
 # 消息队列 (Kafka, 可选 feature)
 rdkafka = { version = "0.39", features = ["tokio"] }
+tower-service = "0.3"
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+tempfile = "3"

@@ -5,16 +5,22 @@
 //!
 //! # 使用示例
 //!
-//! ```rust,ignore
-//! use ryframe_core::distributed_lock::{DistributedLock, RedisDistributedLock};
+//! ```
+//! use ryframe_core::distributed_lock::{DistributedLock, NoopLock};
 //! use std::time::Duration;
 //!
-//! let lock = RedisDistributedLock::new(redis_client);
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let lock = NoopLock::new();
 //! if let Some(guard) = lock.try_acquire("my_resource", Duration::from_secs(30)).await? {
 //!     // 获取到锁，执行临界区代码
-//!     do_critical_work().await;
+//!     let _ = do_critical_work();
 //!     // guard 在 drop 时自动释放锁
 //! }
+//! # Ok(())
+//! # }
+//! #
+//! # fn do_critical_work() -> i32 { 42 }
 //! ```
 
 use std::{
@@ -74,12 +80,20 @@ pub trait DistributedLock: Send + Sync {
 ///
 /// # 使用方式
 ///
-/// ```rust,ignore
+/// ```
+/// # use ryframe_core::distributed_lock::{DistributedLock, NoopLock};
+/// # use std::time::Duration;
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let lock = NoopLock::new();
+/// let ttl = Duration::from_secs(30);
 /// {
 ///     let guard = lock.try_acquire("task:clean_log", ttl).await?.unwrap();
-///     // 执行临界区代码
+///     assert_eq!(guard.key(), "task:clean_log");
 ///     // guard 离开作用域时自动释放锁
 /// }
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug)]
 pub struct LockGuard {

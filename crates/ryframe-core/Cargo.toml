@@ -24,7 +24,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tonic-build = { workspace = true }
 http = { workspace = true }
-tower-service = "0.3"
+tower-service = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
 rdkafka = { workspace = true, optional = true }

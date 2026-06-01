@@ -71,15 +71,17 @@ impl DataSourceContext {
 ///
 /// # 使用方式
 ///
-/// ```ignore
-/// // 启动时注册
-/// let manager = DataSourceManager::new();
-/// manager.register("primary", primary_db);
-/// manager.register("replica_0", replica_db);
-/// manager.register("db_device", device_db);
+/// ```
+/// use ryframe_core::datasource::DataSourceManager;
 ///
-/// // 运行时解析（配合 #[datasource] 注解）
-/// let db = manager.current_db();  // 自动从 task-local 上下文获取
+/// // 创建并注册数据源（实际使用时需传入 DatabaseConnection）
+/// let manager = DataSourceManager::new();
+/// assert!(manager.is_empty());
+/// assert_eq!(manager.len(), 0);
+///
+/// // 运行时通过全局单例解析
+/// // manager.set_global();
+/// // let db = manager.current_db();
 /// ```
 #[derive(Clone)]
 pub struct DataSourceManager {

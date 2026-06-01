@@ -4,13 +4,17 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
+//! ```
 //! use ryframe_api::versioning::{ApiVersion, VersionedRouter};
 //!
-//! let router = VersionedRouter::new()
-//!     .with_v1(v1_routes)
-//!     .with_version(ApiVersion::v2(), v2_routes)
-//!     .into_router(state);
+//! // 创建版本化路由器（自包含示例，无需 axum Router）
+//! let router: VersionedRouter = VersionedRouter::new();
+//! assert_eq!(router.latest_version(), &ApiVersion::v1());
+//! assert!(router.registered_versions().is_empty());
+//!
+//! // 注册版本
+//! let router = router.with_v1(axum::Router::new());
+//! assert!(router.has_version(&ApiVersion::v1()));
 //! ```
 
 use std::{collections::BTreeMap, fmt, str::FromStr};

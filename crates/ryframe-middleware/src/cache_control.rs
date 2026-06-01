@@ -8,8 +8,8 @@
 //!
 //! # 使用示例
 //!
-//! ```ignore
-//! use ryframe_middleware::cache_control::{CacheControlConfig, cache_control_middleware};
+//! ```
+//! use ryframe_middleware::cache_control::CacheControlConfig;
 //!
 //! let config = CacheControlConfig {
 //!     default_max_age: 3600,          // 默认缓存 1 小时
@@ -19,9 +19,12 @@
 //!         ("/api/v1/config/*".into(), "no-cache".into()),
 //!     ],
 //! };
+//! assert_eq!(config.default_max_age, 3600);
+//! assert!(config.enable_etag);
 //!
-//! Router::new()
-//!     .layer(from_fn_with_state(config, cache_control_middleware))
+//! // 静态资源预设
+//! let static_config = CacheControlConfig::for_static_assets();
+//! assert_eq!(static_config.custom_rules.len(), 2);
 //! ```
 
 use std::{
