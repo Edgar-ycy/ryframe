@@ -572,9 +572,14 @@ async fn test_menu_create_and_tree() {
             &db,
             "系统管理",
             None,
+            "M",
             Some("/system"),
             None,
+            None,
+            None,
             Some("icon"),
+            false,
+            false,
             1,
             true,
         )
@@ -587,9 +592,14 @@ async fn test_menu_create_and_tree() {
             &db,
             "用户管理",
             Some(root.id),
+            "C",
             Some("/system/user"),
             Some("views/user/index"),
             None,
+            None,
+            None,
+            false,
+            false,
             1,
             true,
         )
@@ -610,7 +620,21 @@ async fn test_menu_update() {
     };
 
     let m = svc
-        .create(&db, "原菜单", None, Some("/a"), None, None, 0, true)
+        .create(
+            &db,
+            "原菜单",
+            None,
+            "C",
+            Some("/a"),
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            0,
+            true,
+        )
         .await
         .expect("创建失败");
 
@@ -643,7 +667,21 @@ async fn test_menu_delete() {
     };
 
     let m = svc
-        .create(&db, "待删菜单", None, Some("/del"), None, None, 0, true)
+        .create(
+            &db,
+            "待删菜单",
+            None,
+            "C",
+            Some("/del"),
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            0,
+            true,
+        )
         .await
         .expect("创建失败");
 

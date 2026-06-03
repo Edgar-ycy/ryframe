@@ -13,11 +13,12 @@
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mq = InMemoryMessageQueue::new();
-//! mq.publish("user.created", b"{\"user_id\": 1}").await?;
+//! // subscribe first, then publish (broadcast requires active receiver)
 //! mq.subscribe("user.created", |msg| async move {
 //!     assert_eq!(msg, b"{\"user_id\": 1}");
 //!     Ok(())
 //! }).await?;
+//! mq.publish("user.created", b"{\"user_id\": 1}").await?;
 //! # Ok(())
 //! # }
 //! ```

@@ -17,7 +17,7 @@
 //!
 //! ```
 //! use ryframe_core::multi_tenant::{TenantConfig, TenantContext, TenantFilter};
-//! use ryframe_core::multi_tenant::{ExtractionMethod, IsolationStrategy, TenantQuota};
+//! use ryframe_core::multi_tenant::{ExtractionMethod, IsolationStrategy, TenantQuota, TenantIsolation};
 //!
 //! // 配置租户识别方式
 //! let config = TenantConfig {

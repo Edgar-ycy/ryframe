@@ -10,7 +10,6 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use std::net::SocketAddr;
 use ryframe_api::{
     handlers::{auth_handler::AppState, captcha_handler::CaptchaStore},
     router::api_router,
@@ -38,6 +37,7 @@ use ryframe_service::{
 use ryframe_task::{TaskContext, TaskScheduler};
 use sea_orm::{Database, DatabaseConnection, EntityTrait};
 use sea_orm_migration::MigratorTrait;
+use std::net::SocketAddr;
 use tower::ServiceExt;
 
 /// 创建 SQLite 内存数据库并运行迁移
@@ -263,7 +263,10 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
 }
 
 /// 辅助：发送请求并返回 (StatusCode, Body JSON)
-async fn send_request(app: axum::Router, mut req: Request<Body>) -> (StatusCode, serde_json::Value) {
+async fn send_request(
+    app: axum::Router,
+    mut req: Request<Body>,
+) -> (StatusCode, serde_json::Value) {
     // Axum 0.8: oneshot() 不自动注入 ConnectInfo，需手动 mock
     req.extensions_mut()
         .insert(ConnectInfo("127.0.0.1:8080".parse::<SocketAddr>().unwrap()));
@@ -814,7 +817,7 @@ async fn test_update_and_delete_operations() {
     // ===== 菜单：创建 → 更新 → 删除 =====
     let (s, b) = auth_post(
         &db, "/system/menus", &token,
-        serde_json::json!({"name": "测试菜单", "parent_id": null, "path": null, "component": null, "icon": null, "sort": 0, "visible": true}),
+        serde_json::json!({"name": "测试菜单", "parent_id": null, "menu_type": "C", "path": null, "component": null, "query": null, "perms": null, "icon": null, "is_frame": false, "is_cache": false, "sort": 0, "visible": true}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -822,7 +825,7 @@ async fn test_update_and_delete_operations() {
 
     let (s, _) = auth_put(
         &db, &format!("/system/menus/{}", menu_id), &token,
-        serde_json::json!({"name": "改名菜单", "parent_id": null, "path": null, "component": null, "icon": null, "sort": 1, "visible": true, "status": "1"}),
+        serde_json::json!({"name": "改名菜单", "parent_id": null, "menu_type": "C", "path": null, "component": null, "query": null, "perms": null, "icon": null, "is_frame": false, "is_cache": false, "sort": 1, "visible": true, "status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);

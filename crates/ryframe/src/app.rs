@@ -61,5 +61,8 @@ pub fn build_app(
         .layer(from_fn(ryframe_middleware::telemetry::telemetry_middleware))
         // 11. HTTP Metrics（最内层，最先开始计时，最后结束计时，捕获完整请求耗时）
         .layer(from_fn(ryframe_middleware::metrics::metrics_middleware))
-        .nest("/api/v1", ryframe_api::api_router(state, rate_limit_state_for_api))
+        .nest(
+            "/api/v1",
+            ryframe_api::api_router(state, rate_limit_state_for_api),
+        )
 }

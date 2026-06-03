@@ -35,8 +35,10 @@ pub fn monitor_router(state: MonitorState, auth_state: Option<AuthState>) -> axu
         .route("/db-pool", get(db_pool_handler));
 
     if let Some(auth) = auth_state {
-        protected = protected
-            .route_layer(middleware::from_fn_with_state(auth, ryframe_auth::middleware::auth_middleware));
+        protected = protected.route_layer(middleware::from_fn_with_state(
+            auth,
+            ryframe_auth::middleware::auth_middleware,
+        ));
     }
 
     axum::Router::new()

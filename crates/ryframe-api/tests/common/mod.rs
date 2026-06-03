@@ -11,7 +11,6 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use std::net::SocketAddr;
 use ryframe_api::{
     handlers::{auth_handler::AppState, captcha_handler::CaptchaStore},
     router::api_router,
@@ -39,6 +38,7 @@ use ryframe_service::{
 use ryframe_task::{TaskContext, TaskScheduler};
 use sea_orm::{Database, DatabaseConnection, EntityTrait};
 use sea_orm_migration::MigratorTrait;
+use std::net::SocketAddr;
 use tower::ServiceExt;
 
 // ==================== 数据库 ====================

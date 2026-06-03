@@ -117,8 +117,6 @@ impl ReplayProtectionState {
 ///
 /// // 创建重放防护状态（内存模式，自包含示例，窗口 5 分钟）
 /// let state = ReplayProtectionState::new(None, 300);
-/// // 启动后台 GC 清理过期 nonce
-/// state.spawn_gc();
 ///
 /// // 注册为路由中间件：
 /// // .route_layer(middleware::from_fn_with_state(replay_state, replay_protection_middleware))

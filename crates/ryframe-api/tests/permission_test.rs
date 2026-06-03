@@ -11,8 +11,8 @@ use axum::{
 use serde_json::json;
 
 use common::{
-    auth_delete, auth_get, auth_post, auth_put, login_get_token, seed_test_data,
-    setup_test_db, test_rate_limit_state,
+    auth_delete, auth_get, auth_post, auth_put, login_get_token, seed_test_data, setup_test_db,
+    test_rate_limit_state,
 };
 
 // ==================== 权限校验测试 ====================

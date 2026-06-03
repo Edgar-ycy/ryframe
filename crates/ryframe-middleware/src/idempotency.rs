@@ -154,8 +154,6 @@ fn rebuild_response(cached: &CachedResponse) -> Response {
 ///
 /// // 创建幂等性状态（内存模式，自包含示例）
 /// let state = IdempotencyState::new(None, 300);
-/// // 启动后台 GC 清理过期缓存
-/// state.spawn_gc();
 ///
 /// // 注册为路由中间件：
 /// // .route_layer(middleware::from_fn_with_state(state, idempotency_middleware))

@@ -277,15 +277,21 @@ pub struct LocalMemoryCache {
 impl LocalMemoryCache {
     /// 创建指定容量的本地缓存（容量达到上限时随机淘汰）
     pub fn new(capacity: usize) -> Self {
-        let capacity = if capacity == 0 { usize::MAX } else { capacity };
+        let store = if capacity == 0 || capacity == usize::MAX {
+            HashMap::new()
+        } else {
+            HashMap::with_capacity(capacity)
+        };
         Self {
-            store: Arc::new(RwLock::new(HashMap::with_capacity(capacity))),
+            store: Arc::new(RwLock::new(store)),
         }
     }
 
     /// 创建无容量限制的缓存
     pub fn unlimited() -> Self {
-        Self::new(usize::MAX)
+        Self {
+            store: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     /// 清理过期条目（建议定期调用或惰性清理）

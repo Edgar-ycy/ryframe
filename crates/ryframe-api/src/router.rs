@@ -89,10 +89,7 @@ pub fn auth_router(state: AppState) -> Router {
     // profile_router 不再内嵌 .with_state()
     let profile = Router::new()
         .merge(profile_handler::profile_router())
-        .layer(from_fn_with_state(
-            oper_log_state,
-            oper_log_middleware,
-        ))
+        .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
         .layer(middleware::from_fn_with_state(
             auth_state,
             ryframe_auth::middleware::auth_middleware,
@@ -140,9 +137,18 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 
     Router::new()
         .nest("/auth", auth_router(state.clone()))
-        .nest("/system", system_router(state.clone(), rate_limit_state.clone()))
-        .nest("/monitor", ryframe_monitor::monitor_router(monitor_state, Some(auth_state)))
-        .nest("/tools", tools_router(state.clone(), rate_limit_state.clone()))
+        .nest(
+            "/system",
+            system_router(state.clone(), rate_limit_state.clone()),
+        )
+        .nest(
+            "/monitor",
+            ryframe_monitor::monitor_router(monitor_state, Some(auth_state)),
+        )
+        .nest(
+            "/tools",
+            tools_router(state.clone(), rate_limit_state.clone()),
+        )
         .nest("/common", common_router(state.clone()))
         // API 版本信息端点
         .route("/version", get(api_version))
