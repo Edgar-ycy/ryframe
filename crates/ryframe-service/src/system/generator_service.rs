@@ -40,7 +40,7 @@ impl GeneratorServiceImpl {
         opts: GenerateOptions,
     ) -> AppResult<Vec<String>> {
         let files = ryframe_generator::generate(db, &opts).await?;
-        ryframe_generator::write_to_disk(&files, &self.workspace_root).await
+        ryframe_generator::write_to_disk(&files, &self.workspace_root, true).await
     }
 
     /// 打包 zip 下载（不写盘）

@@ -11,6 +11,7 @@ description.workspace = true
 ryframe-common = { path = "../ryframe-common" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-core = { path = "../ryframe-core" }
+ryframe-macro = { path = "../ryframe-macro" }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 tokio = { workspace = true }

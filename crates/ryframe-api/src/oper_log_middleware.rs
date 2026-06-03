@@ -78,7 +78,7 @@ pub async fn oper_log_middleware(
     } else {
         let s = String::from_utf8_lossy(&body_bytes);
         let truncated = if s.len() > 2000 {
-            format!("{}...[truncated]", &s[..2000])
+            format!("{}...[truncated]", truncate_str(&s, 2000))
         } else {
             s.to_string()
         };
@@ -108,7 +108,7 @@ pub async fn oper_log_middleware(
     } else {
         let s = String::from_utf8_lossy(&response_bytes);
         let truncated = if s.len() > 2000 {
-            format!("{}...[truncated]", &s[..2000])
+            format!("{}...[truncated]", truncate_str(&s, 2000))
         } else {
             s.to_string()
         };
@@ -166,6 +166,11 @@ fn extract_error_message(json_result: &Option<String>) -> Option<String> {
             .ok()
             .and_then(|v| v.get("message").and_then(|m| m.as_str().map(String::from)))
     })
+}
+
+/// 安全截断字符串（按字符边界截断，避免 UTF-8 字节边界 panic）
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    s.chars().take(max_chars).collect()
 }
 
 /// 根据 URI 路径 + HTTP 方法推导业务类型和模块标题

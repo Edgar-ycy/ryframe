@@ -269,9 +269,29 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(SysMenu::Name).string_len(64).not_null())
                     .col(ColumnDef::new(SysMenu::ParentId).big_integer())
+                    .col(
+                        ColumnDef::new(SysMenu::MenuType)
+                            .char_len(1)
+                            .not_null()
+                            .default(""),
+                    )
                     .col(ColumnDef::new(SysMenu::Path).string_len(255))
                     .col(ColumnDef::new(SysMenu::Component).string_len(255))
-                    .col(ColumnDef::new(SysMenu::Icon).string_len(64))
+                    .col(ColumnDef::new(SysMenu::Query).string_len(255))
+                    .col(ColumnDef::new(SysMenu::Perms).string_len(128))
+                    .col(ColumnDef::new(SysMenu::Icon).string_len(128))
+                    .col(
+                        ColumnDef::new(SysMenu::IsFrame)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
+                    .col(
+                        ColumnDef::new(SysMenu::IsCache)
+                            .boolean()
+                            .not_null()
+                            .default(false),
+                    )
                     .col(
                         ColumnDef::new(SysMenu::Sort)
                             .integer()
@@ -290,6 +310,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default("1"),
                     )
+                    .col(ColumnDef::new(SysMenu::Remark).string_len(512))
                     .col(
                         ColumnDef::new(SysMenu::DelFlag)
                             .char_len(1)
@@ -935,12 +956,22 @@ enum SysMenu {
     Id,
     Name,
     ParentId,
+    #[iden = "menu_type"]
+    MenuType,
     Path,
     Component,
+    #[iden = "query"]
+    Query,
+    Perms,
     Icon,
+    #[iden = "is_frame"]
+    IsFrame,
+    #[iden = "is_cache"]
+    IsCache,
     Sort,
     Visible,
     Status,
+    Remark,
     DelFlag,
     CreatedAt,
     UpdatedAt,

@@ -163,11 +163,13 @@ impl CaptchaStore {
 }
 
 /// 验证码路由
-pub fn captcha_router(state: AppState) -> Router<AppState> {
+///
+/// 不内嵌 `.with_state()`，由父路由统一注入 AppState。
+pub fn captcha_router() -> Router<AppState> {
     Router::new()
         .route("/generate", get(generate_captcha_handler))
+        .route("/image", get(captcha_image_handler))
         .route("/verify", post(verify_captcha_handler))
-        .with_state(state)
 }
 
 /// 生成验证码
@@ -190,6 +192,13 @@ pub async fn generate_captcha_handler(
     };
 
     let captcha = generate_captcha(captcha_type)?;
+
+    // 输出验证码到日志（开发调试用）
+    tracing::info!(
+        "验证码生成: answer={}, type={}",
+        captcha.answer,
+        query.captcha_type
+    );
 
     // 生成验证码 ID
     let captcha_id = Uuid::now_v7().to_string();
@@ -254,6 +263,13 @@ pub async fn captcha_image_handler(
     };
 
     let captcha = generate_captcha(captcha_type)?;
+
+    // 输出验证码到日志（开发调试用）
+    tracing::info!(
+        "验证码生成: answer={}, type={}",
+        captcha.answer,
+        query.captcha_type
+    );
 
     // 生成验证码 ID 并存储
     let captcha_id = Uuid::now_v7().to_string();

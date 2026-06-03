@@ -1,6 +1,7 @@
 use ryframe_common::{AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
+    auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{
@@ -97,17 +98,17 @@ impl DictServiceImpl {
         if self.dict_type_repo.find_by_code(db, code).await?.is_some() {
             return Err(AppError::Conflict("字典类型编码已存在".into()));
         }
-        let now = chrono::Utc::now();
-        let new_type = dict_type::Model {
+        let mut new_type = dict_type::Model {
             id: snowflake::next_snowflake_id(),
             name: name.to_string(),
             code: code.to_string(),
             status: dict_type::Model::STATUS_NORMAL.to_string(),
             remark: None,
             del_flag: dict_type::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_type.fill_on_insert(&FillContext::new());
         Ok(DictTypeVo::from(
             self.dict_type_repo.insert(db, new_type).await?,
         ))
@@ -127,7 +128,7 @@ impl DictServiceImpl {
             .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
         t.name = name.to_string();
         t.status = status;
-        t.updated_at = chrono::Utc::now();
+        t.fill_on_update(&FillContext::new());
         Ok(DictTypeVo::from(self.dict_type_repo.update(db, t).await?))
     }
 
@@ -178,8 +179,7 @@ impl DictServiceImpl {
         value: &str,
         sort: i32,
     ) -> AppResult<DictDataVo> {
-        let now = chrono::Utc::now();
-        let new_data = dict_data::Model {
+        let mut new_data = dict_data::Model {
             id: snowflake::next_snowflake_id(),
             type_code: type_code.to_string(),
             label: label.to_string(),
@@ -189,9 +189,10 @@ impl DictServiceImpl {
             css_class: None,
             remark: None,
             del_flag: dict_data::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_data.fill_on_insert(&FillContext::new());
         let vo = DictDataVo::from(self.dict_data_repo.insert(db, new_data).await?);
 
         // 便新缓存
@@ -219,7 +220,7 @@ impl DictServiceImpl {
         d.value = value.to_string();
         d.sort = sort;
         d.status = status;
-        d.updated_at = chrono::Utc::now();
+        d.fill_on_update(&FillContext::new());
         let vo = DictDataVo::from(self.dict_data_repo.update(db, d).await?);
 
         // 便新缓存

@@ -19,11 +19,15 @@ pub fn build_app(
     rate_limit_state: RateLimitState,
     cors_config: &CorsConfig,
 ) -> Router {
+    // 克隆一份传给 api_router（用于子路由的用户级限流）
+    let rate_limit_state_for_api = rate_limit_state.clone();
+
     Router::new()
         .route("/", get(health_check))
         .route("/health", get(health_check))
-        // 中间件层（从下到上执行）：
-        // 1. 限流 (最外层，最先执行)
+        // 中间件层（从下到上执行，即从内到外）：
+        // 后注册的 layer 包裹先注册的 → 后注册的先执行（最外层）
+        // 1. 限流（最外层，最先执行，IP 维度）
         .layer(axum::middleware::from_fn_with_state(
             limiter,
             ryframe_middleware::rate_limit_middleware,
@@ -47,7 +51,7 @@ pub fn build_app(
         .layer(ryframe_middleware::request_log_layer())
         // 7. CORS
         .layer(ryframe_middleware::cors_layer(cors_config))
-        // 8. 响应压缩 (最内层，最后执行)
+        // 8. 响应压缩
         .layer(ryframe_middleware::compression_layer())
         // 9. Request ID
         .layer(axum::middleware::from_fn(
@@ -55,7 +59,7 @@ pub fn build_app(
         ))
         // 10. 链路追踪 Span（在 request_id 之后，读取 x-request-id）
         .layer(from_fn(ryframe_middleware::telemetry::telemetry_middleware))
-        // 11. HTTP Metrics（最内层，最先执行，捕获完整请求）
+        // 11. HTTP Metrics（最内层，最先开始计时，最后结束计时，捕获完整请求耗时）
         .layer(from_fn(ryframe_middleware::metrics::metrics_middleware))
-        .nest("/api/v1", ryframe_api::api_router(state))
+        .nest("/api/v1", ryframe_api::api_router(state, rate_limit_state_for_api))
 }

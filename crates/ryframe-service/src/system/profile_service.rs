@@ -1,6 +1,9 @@
 use ryframe_auth::password;
 use ryframe_common::{AppError, AppResult};
-use ryframe_core::{LoggedRepo, Repository};
+use ryframe_core::{
+    LoggedRepo, Repository,
+    auto_fill::{AutoFill, FillContext},
+};
 use ryframe_db::{PermissionRepository, RoleRepository, UserRepository, dept, user};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
 use serde::Serialize;
@@ -101,6 +104,7 @@ impl ProfileServiceImpl {
         user.nickname = nickname;
         user.email = email;
         user.phone = phone;
+        user.fill_on_update(&FillContext::new());
 
         // 更新用户信息
         let active_model: user::ActiveModel = user.into();
@@ -134,6 +138,7 @@ impl ProfileServiceImpl {
         // 哈希新密码
         let new_hash = password::hash(new_password)?;
         user.password_hash = new_hash;
+        user.fill_on_update(&FillContext::new());
 
         // 更新密码
         let active_model: user::ActiveModel = user.into();
@@ -162,6 +167,7 @@ impl ProfileServiceImpl {
         let old_avatar = user.avatar.clone();
 
         user.avatar = Some(avatar_url);
+        user.fill_on_update(&FillContext::new());
 
         let active_model: user::ActiveModel = user.into();
         active_model

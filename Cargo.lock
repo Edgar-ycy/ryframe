@@ -4700,6 +4700,7 @@ dependencies = [
  "ryframe-common",
  "ryframe-config",
  "ryframe-core",
+ "ryframe-macro",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -4712,12 +4713,14 @@ dependencies = [
 name = "ryframe-example-basic"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "ryframe-common",
  "serde",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "validator",
 ]
 
 [[package]]
@@ -4727,7 +4730,6 @@ dependencies = [
  "chrono",
  "log",
  "ryframe-common",
- "ryframe-db",
  "sea-orm",
  "serde",
  "serde_json",
@@ -4740,6 +4742,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "ryframe-core",
  "syn 2.0.117",
 ]
 
@@ -4788,6 +4791,7 @@ dependencies = [
  "chrono",
  "prometheus",
  "redis",
+ "ryframe-auth",
  "ryframe-common",
  "ryframe-core",
  "ryframe-db",

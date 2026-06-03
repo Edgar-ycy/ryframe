@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use ryframe_auth::{jwt::Claims, middleware::AuthState};
+use ryframe_middleware::rate_limit::{RateLimitState, user_rate_limit_middleware};
 use ryframe_service::system::OnlineUserServiceImpl;
 use serde_json::json;
 
@@ -40,6 +41,17 @@ async fn online_user_tracking(
 }
 
 /// 认证路由
+///
+/// 路由结构：
+/// - public (no auth): /login, /refresh
+/// - protected (auth → oper_log): /logout, /me
+/// - captcha (no auth): /captcha/generate, /captcha/verify
+/// - profile (auth → oper_log): /profile, /profile/password, /profile/avatar
+///
+/// 中间件执行顺序（从外到内，先注册的最内层、后注册的最外层先执行）：
+///   public:  oper_log → handler
+///   protected: auth → oper_log → handler
+///   profile:  auth → oper_log → handler
 pub fn auth_router(state: AppState) -> Router {
     let oper_log_state = Arc::new(OperLogMiddlewareState {
         db: state.db.clone(),
@@ -59,27 +71,37 @@ pub fn auth_router(state: AppState) -> Router {
             oper_log_middleware,
         ));
 
-    // 受保护路由：auth → oper_log → handler
-    // layer 从下到上执行，最后注册的最外层先执行
+    // 受保护路由
+    // .layer() 从后往前执行：auth（外层先执行）→ oper_log（内层后执行）→ handler
     let protected = Router::new()
         .route("/logout", post(auth_handler::logout))
         .route("/me", get(auth_handler::me))
-        .route_layer(from_fn_with_state(
+        .layer(from_fn_with_state(
             oper_log_state.clone(),
             oper_log_middleware,
         ))
-        .route_layer(middleware::from_fn_with_state(
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            ryframe_auth::middleware::auth_middleware,
+        ));
+
+    // Profile 路由（认证 + 操作日志，中间件在此统一注册）
+    // profile_router 不再内嵌 .with_state()
+    let profile = Router::new()
+        .merge(profile_handler::profile_router())
+        .layer(from_fn_with_state(
+            oper_log_state,
+            oper_log_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
             auth_state,
             ryframe_auth::middleware::auth_middleware,
         ));
 
-    // Profile 路由（auth + oper_log 在 profile_router 内部处理）
-    let profile = profile_handler::profile_router(state.clone());
-
     Router::new()
         .merge(public)
         .merge(protected)
-        .nest("/captcha", captcha_handler::captcha_router(state.clone()))
+        .nest("/captcha", captcha_handler::captcha_router())
         .nest("/profile", profile)
         .with_state(state)
 }
@@ -103,17 +125,24 @@ async fn api_version() -> Json<serde_json::Value> {
 }
 
 /// API 总路由
-pub fn api_router(state: AppState) -> Router {
+///
+/// `rate_limit_state` 传递到子路由以启用用户级限流。
+pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let monitor_state = ryframe_monitor::MonitorState {
         db: state.monitor_db.clone(),
         redis: state.redis.clone(),
     };
 
+    let auth_state = ryframe_auth::middleware::AuthState {
+        config: state.config.clone(),
+        blacklist: state.token_blacklist.clone(),
+    };
+
     Router::new()
         .nest("/auth", auth_router(state.clone()))
-        .nest("/system", system_router(state.clone()))
-        .nest("/monitor", ryframe_monitor::monitor_router(monitor_state))
-        .nest("/tools", tools_router(state.clone()))
+        .nest("/system", system_router(state.clone(), rate_limit_state.clone()))
+        .nest("/monitor", ryframe_monitor::monitor_router(monitor_state, Some(auth_state)))
+        .nest("/tools", tools_router(state.clone(), rate_limit_state.clone()))
         .nest("/common", common_router(state.clone()))
         // API 版本信息端点
         .route("/version", get(api_version))
@@ -123,12 +152,15 @@ pub fn api_router(state: AppState) -> Router {
         .route("/swagger-ui", get(swagger_ui))
 }
 
-/// 系统管理路由（需认证）
-/// layer 从下到上执行（最后注册的最外层先执行）：
+/// 系统管理路由（需认证 + 用户限流 + 在线跟踪 + 操作日志）
+///
+/// .layer() 链的语义：后注册的 layer 包裹先注册的，即后注册的先执行（外层先执行）。
+/// 执行顺序（从外到内）：
 ///   1. auth_middleware（最外层，先执行 → 注入 Claims）
-///   2. online_user_tracking（使用 Claims）
-///   3. oper_log_middleware（最内层，最后执行 → 使用 Claims 记录操作者）
-fn system_router(state: AppState) -> Router {
+///   2. user_rate_limit_middleware（用户级限流，使用 Claims）
+///   3. online_user_tracking（在线跟踪，使用 Claims）
+///   4. oper_log_middleware（最内层，后执行 → 使用 Claims 记录操作者）
+fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
@@ -160,25 +192,31 @@ fn system_router(state: AppState) -> Router {
             "/online",
             online_user_handler::online_user_router(state.clone()),
         )
-        .layer(from_fn_with_state(
-            auth_state,
-            ryframe_auth::middleware::auth_middleware,
-        ))
-        .layer(from_fn_with_state(
-            state.online_user_service.clone(),
-            online_user_tracking,
-        ))
+        // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
             Arc::new(OperLogMiddlewareState {
                 db: state.db.clone(),
             }),
             oper_log_middleware,
         ))
+        .layer(from_fn_with_state(
+            state.online_user_service.clone(),
+            online_user_tracking,
+        ))
+        .layer(from_fn_with_state(
+            rate_limit_state,
+            user_rate_limit_middleware,
+        ))
+        .layer(from_fn_with_state(
+            auth_state,
+            ryframe_auth::middleware::auth_middleware,
+        ))
 }
 
-/// 工具路由（需认证）
-/// layer 从下到上执行：auth → oper_log
-fn tools_router(state: AppState) -> Router {
+/// 工具路由（需认证 + 用户限流 + 操作日志）
+///
+/// 执行顺序（从外到内）：auth → user_rate_limit → oper_log
+fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
@@ -187,20 +225,24 @@ fn tools_router(state: AppState) -> Router {
     Router::new()
         .nest("/gen", generator_handler::generator_router(state.clone()))
         .layer(from_fn_with_state(
-            auth_state,
-            ryframe_auth::middleware::auth_middleware,
-        ))
-        .layer(from_fn_with_state(
             Arc::new(OperLogMiddlewareState {
                 db: state.db.clone(),
             }),
             oper_log_middleware,
         ))
+        .layer(from_fn_with_state(
+            rate_limit_state,
+            user_rate_limit_middleware,
+        ))
+        .layer(from_fn_with_state(
+            auth_state,
+            ryframe_auth::middleware::auth_middleware,
+        ))
 }
 
 /// 通用功能路由（文件上传等）
-/// - 上传路由：公开（需要时可在 handler 内做认证）
-/// - 下载路由：需认证
+/// - 上传路由：公开（无认证，无操作日志以避免大文件请求体缓冲）
+/// - 下载路由：需认证 + 操作日志
 fn common_router(state: AppState) -> Router {
     use axum::middleware;
 
@@ -213,21 +255,20 @@ fn common_router(state: AppState) -> Router {
         db: state.db.clone(),
     });
 
-    // 上传路由（公开，记录操作日志）
-    let upload = common_handler::upload_router(state.clone()).layer(from_fn_with_state(
-        oper_log_state.clone(),
-        oper_log_middleware,
-    ));
+    // 上传路由（公开，不记录操作日志以避免大文件 body 缓冲）
+    let upload = common_handler::upload_router(state.clone());
 
     // 下载路由（需认证，记录操作日志）
     let download = common_handler::download_router(state.clone())
         .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
-        .route_layer(middleware::from_fn_with_state(
+        .layer(middleware::from_fn_with_state(
             auth_state,
             ryframe_auth::middleware::auth_middleware,
         ));
 
-    Router::new().merge(upload).merge(download)
+    Router::new()
+        .nest("/upload", upload)
+        .nest("/file", download)
 }
 
 /// Swagger UI 交互文档页面

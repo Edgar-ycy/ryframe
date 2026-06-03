@@ -3,7 +3,7 @@ use crate::{naming, schema::TableInfo};
 pub fn render_repository(table: &TableInfo, _module: &str) -> String {
     let struct_name = naming::to_pascal_case(&table.table_name);
     let snake = naming::to_snake_case(&table.table_name);
-    let pk_type = get_pk_type(table);
+    let pk_type = crate::schema::get_pk_type(table);
 
     format!(
         r#"use async_trait::async_trait;
@@ -78,17 +78,4 @@ impl Repository<{snake}::Model, {pk_type}> for {struct_name}Repository {{
         snake = snake,
         pk_type = pk_type,
     )
-}
-
-fn get_pk_type(table: &TableInfo) -> &'static str {
-    for col in &table.columns {
-        if col.is_primary_key {
-            return if col.rust_type.contains("i64") {
-                "i64"
-            } else {
-                "i32"
-            };
-        }
-    }
-    "i64"
 }

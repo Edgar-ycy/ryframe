@@ -1,5 +1,8 @@
 use ryframe_common::{AppError, AppResult, utils::snowflake};
-use ryframe_core::{LoggedRepo, RedisClient, Repository};
+use ryframe_core::{
+    LoggedRepo, RedisClient, Repository,
+    auto_fill::{AutoFill, FillContext},
+};
 use ryframe_db::{MenuRepository, entities::menu, repositories::menu_repo::MenuTreeNode};
 use sea_orm::DatabaseConnection;
 
@@ -51,27 +54,38 @@ impl MenuServiceImpl {
         db: &DatabaseConnection,
         name: &str,
         parent_id: Option<i64>,
+        menu_type: &str,
         path: Option<&str>,
         component: Option<&str>,
+        query: Option<&str>,
+        perms: Option<&str>,
         icon: Option<&str>,
+        is_frame: bool,
+        is_cache: bool,
         sort: i32,
         visible: bool,
     ) -> AppResult<menu::Model> {
-        let now = chrono::Utc::now();
-        let new_menu = menu::Model {
+        let mut new_menu = menu::Model {
             id: snowflake::next_snowflake_id(),
             name: name.to_string(),
             parent_id,
+            menu_type: menu_type.to_string(),
             path: path.map(|s| s.to_string()),
             component: component.map(|s| s.to_string()),
+            query: query.map(|s| s.to_string()),
+            perms: perms.map(|s| s.to_string()),
             icon: icon.map(|s| s.to_string()),
+            is_frame,
+            is_cache,
             sort,
             visible,
             status: menu::Model::STATUS_NORMAL.to_string(),
+            remark: None,
             del_flag: menu::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_menu.fill_on_insert(&FillContext::new());
         self.menu_repo.insert(db, new_menu).await.inspect(|_| {
             self.invalidate_menu_cache();
         })
@@ -84,9 +98,14 @@ impl MenuServiceImpl {
         id: i64,
         name: &str,
         parent_id: Option<i64>,
+        menu_type: &str,
         path: Option<&str>,
         component: Option<&str>,
+        query: Option<&str>,
+        perms: Option<&str>,
         icon: Option<&str>,
+        is_frame: bool,
+        is_cache: bool,
         sort: i32,
         visible: bool,
         status: String,
@@ -99,13 +118,18 @@ impl MenuServiceImpl {
 
         menu.name = name.to_string();
         menu.parent_id = parent_id;
+        menu.menu_type = menu_type.to_string();
         menu.path = path.map(|s| s.to_string());
         menu.component = component.map(|s| s.to_string());
+        menu.query = query.map(|s| s.to_string());
+        menu.perms = perms.map(|s| s.to_string());
         menu.icon = icon.map(|s| s.to_string());
+        menu.is_frame = is_frame;
+        menu.is_cache = is_cache;
         menu.sort = sort;
         menu.visible = visible;
         menu.status = status;
-        menu.updated_at = chrono::Utc::now();
+        menu.fill_on_update(&FillContext::new());
 
         self.menu_repo.update(db, menu).await.inspect(|_| {
             self.invalidate_menu_cache();

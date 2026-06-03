@@ -8,27 +8,45 @@ use utoipa::OpenApi;
     info(
         title = "RyFrame API",
         version = "0.5.0",
-        description = "RyFrame —— 基于 Rust + Axum 的现代化企业级后端框架",
+        description = r#"RyFrame —— 基于 Rust + Axum 的现代化企业级后端框架。
+
+## 认证
+所有受保护接口需在请求头携带 `Authorization: Bearer <access_token>`。
+登录接口返回 `access_token`（短期）和 `refresh_token`（长期）。
+
+## 响应格式
+```json
+{ "code": 200, "message": "操作成功", "data": { ... } }
+```
+分页接口额外包含 `total`、`page`、`page_size`、`total_pages` 字段。
+
+## 菜单类型
+菜单管理使用 `menu_type` 字段区分节点类型：
+- `M`（目录）：侧边栏一级分组，无实际页面
+- `C`（菜单）：可点击的页面路由
+- `F`（按钮）：页面内的操作按钮，通过 `perms` 字段关联权限标识
+"#,
         license(name = "MIT")
     ),
     tags(
-        (name = "认证", description = "登录/登出/刷新令牌/获取当前用户"),
-        (name = "用户管理", description = "用户 CRUD、导入导出、密码重置"),
-        (name = "角色管理", description = "角色 CRUD、权限分配、菜单分配"),
-        (name = "菜单管理", description = "菜单树 CRUD"),
-        (name = "部门管理", description = "部门树 CRUD"),
-        (name = "岗位管理", description = "岗位 CRUD"),
-        (name = "字典管理", description = "字典类型 + 字典数据 CRUD"),
-        (name = "参数配置", description = "系统参数配置 CRUD"),
-        (name = "通知公告", description = "通知公告 CRUD"),
-        (name = "操作日志", description = "操作日志查询/清空"),
-        (name = "登录日志", description = "登录日志查询/清空"),
-        (name = "定时任务", description = "定时任务 CRUD、暂停/恢复/触发"),
-        (name = "在线用户", description = "在线用户列表/强退"),
-        (name = "服务器监控", description = "服务器信息/健康检查"),
-        (name = "代码生成", description = "根据数据库表生成代码"),
-        (name = "个人中心", description = "个人信息/密码修改/头像上传"),
-        (name = "通用", description = "文件上传下载")
+        (name = "认证", description = "登录/登出/刷新令牌/验证码获取。登录需验证码（可通过配置关闭），支持暴力破解防护。"),
+        (name = "用户管理", description = "用户 CRUD、分页查询、详情、导入导出、密码重置、状态变更。"),
+        (name = "角色管理", description = "角色 CRUD、权限分配(role_permission)、菜单分配(role_menu)、数据权限设置(data_scope + sys_role_dept)。"),
+        (name = "菜单管理", description = "菜单树管理（含目录M/菜单C/按钮F），支持路由参数(query)、权限标识(perms)、外链(is_frame)、缓存(is_cache)配置。"),
+        (name = "权限管理", description = "权限码树查询，用于角色分配权限时展示可选权限列表。"),
+        (name = "部门管理", description = "部门树 CRUD，支持祖级列表(ancestors)快速查询子部门。"),
+        (name = "岗位管理", description = "岗位 CRUD，用户可关联岗位。"),
+        (name = "字典管理", description = "字典类型 + 字典数据 CRUD，前端可据此渲染下拉选项。"),
+        (name = "参数配置", description = "系统参数键值对 CRUD，支持按 key 精确查询。"),
+        (name = "通知公告", description = "通知公告 CRUD，支持草稿/发布/关闭状态。"),
+        (name = "操作日志", description = "POST/PUT/DELETE 请求自动记录，支持分页查询和批量清空。"),
+        (name = "登录日志", description = "登录成功/失败记录，含 IP、浏览器、操作系统信息。"),
+        (name = "定时任务", description = "定时任务 CRUD、暂停/恢复/立即执行。cron 表达式驱动。"),
+        (name = "在线用户", description = "查看当前在线用户列表，支持强制下线(token 加入黑名单)。"),
+        (name = "服务器监控", description = "/health(健康检查) + /metrics(Prometheus) 公开；/server(CPU/内存/磁盘), /cache, /db-pool 需认证。"),
+        (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
+        (name = "个人中心", description = "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。"),
+        (name = "通用", description = "/upload(公开文件上传) + /upload/image(公开图片上传+压缩) + /file/download(需认证下载)。")
     ),
     paths(
         // 认证接口

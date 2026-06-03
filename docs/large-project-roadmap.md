@@ -1,7 +1,7 @@
 # RyFrame 大型项目开发路线图
 
-> 当前状态：v0.5.0 高级特性全部完成。工程化（CI/CD、测试体系、审计）待完善。
-> **最后更新**：2026-05-31
+> 当前状态：v0.5.0 高级特性全部完成。工程化（CI/CD、测试体系）持续完善中。K8s/Helm 部署暂不涉及。
+> **最后更新**：2026-06-03
 
 ---
 
@@ -53,16 +53,16 @@
 - ✅ 服务器信息 / 健康检查 / 缓存统计 / DB 连接池监控
 - ✅ 慢查询日志告警（SqlLogLayer + slow_query_threshold_ms）
 - ✅ AlertManager 告警规则（HTTP / 进程 / 安全 / 流量共 14 条）
-- ✅ Prometheus 抓取配置 + Grafana Dashboard 模板
+- ✅ Prometheus 抓取配置
 
 ### API 文档
 - ✅ OpenAPI JSON + Swagger UI
 - ✅ 国际化（zh-CN / en-US）
 
 ### 部署
-- ✅ K8s all-in-one 部署清单
 - ✅ Nginx 反向代理配置（限流/安全头/静态缓存）
-- ✅ Grafana Dashboard 模板 + Prometheus 配置
+- ✅ Prometheus Metrics 抓取配置
+- ✅ AlertManager 告警规则（14 条规则，见 `deploy/alertmanager/rules.yml`）
 
 ---
 
@@ -119,28 +119,19 @@
 
 ### 5. 可观测性完善
 
-- [x] Grafana Dashboard JSON 模板（Prometheus 数据源）
-- [x] AlertManager 告警规则
+- [x] AlertManager 告警规则（14 条规则，见 `deploy/alertmanager/rules.yml`）
 - [x] 慢查询日志（`slow_query_threshold_ms` + SqlLogLayer WARN 告警）
 - [x] 结构化日志统一为 JSON 格式（通过 logger.format 配置）
 - [x] 链路追踪 span 细化（DB 查询 / 外部调用）
 
-### 6. Kubernetes 部署
-
-- [x] Deployment + Service + ConfigMap（`deploy/k8s/all-in-one.yaml`）
-- [x] Helm Chart 封装（`deploy/helm/ryframe/`，含 values/values-prod）
-- [x] liveness / readiness probe（`/health` 端点 + Helm 模板配置）
-- [x] HPA 自动伸缩配置（CPU + Memory，Helm 模板化）
-- [x] Ingress 配置（TLS + cert-manager，Helm 模板化）
-
-### 7. 数据治理
+### 6. 数据治理
 
 - [x] 数据库备份脚本（`deploy.sh` 内置）
 - [x] 操作日志自动归档/清理（CleanOperLogTask + CleanLoginInfoTask 内置定时任务）
 - [x] 连接池健康检查增强
 - [x] 数据库慢查询监控集成（`slow_query_threshold_ms` 配置项）
 
-### 8. 缓存策略层
+### 7. 缓存策略层
 
 - [x] 统一缓存 trait 抽象
 - [x] Redis 缓存实现
@@ -150,7 +141,7 @@
 - [x] 缓存雪崩防护（随机 TTL 抖动）
 - [x] 缓存预热机制
 
-### 9. 开发者体验
+### 8. 开发者体验
 
 - [x] `.editorconfig` 统一编辑器配置
 - [x] `.devcontainer` 开发容器
@@ -162,14 +153,14 @@
 
 ## 🟢 低优先级（已全部完成 ✅）
 
-### 10. 消息队列集成 ✅
+### 9. 消息队列集成 ✅
 
 - [x] 消息队列 trait 抽象（`MessageQueue`）
 - [x] Kafka 适配器（`rdkafka` + `kafka` feature）
 - [x] InMemory 开发实现（tokio broadcast）
 - [x] MqBackend 枚举委托模式
 
-### 11. 多租户 ✅
+### 10. 多租户 ✅
 
 - [x] 租户识别中间件（`tenant_middleware`）
 - [x] 三种提取方式（Header/Subdomain/PathPrefix）
@@ -177,14 +168,14 @@
 - [x] TenantFilter<T> 自动过滤
 - [x] 租户配额管理（`TenantQuota`）
 
-### 12. API 网关增强 ✅
+### 11. API 网关增强 ✅
 
 - [x] 响应缓存头（ETag / Cache-Control + 304）
 - [x] API 版本协商（`versioning.rs`）
 - [x] 请求/响应日志脱敏
 - [x] 限流策略增强（per-user / per-api 三层限流）
 
-### 13. 性能与压测 ✅
+### 12. 性能与压测 ✅
 
 - [x] 压力测试脚本（`deploy/tests/stress-test.js`）
 - [x] 冒烟测试脚本（`deploy/tests/smoke-test.js`）
@@ -202,8 +193,7 @@
 | CI 自动化 | CI 文件已有 ✅ | 100% 流水线通过 |
 | API 集成测试 | 部分 | 全覆盖核心流程 |
 | 安全扫描 | 配置文件已有 | cargo audit 零严重漏洞 |
-| K8s 部署 | Helm Chart ✅ | 完整 Helm Chart |
 
 ---
 
-> **下一步**：数据治理提升、集成测试增强。清理已完成的待办项。
+> **下一步**：测试覆盖率提升至 70%+、集成测试全覆盖核心流程。

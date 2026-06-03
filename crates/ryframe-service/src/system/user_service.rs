@@ -6,6 +6,7 @@ use ryframe_common::{
 };
 use ryframe_core::{
     LoggedRepo, Repository,
+    auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{
@@ -286,8 +287,7 @@ impl UserServiceImpl {
         }
 
         let password_hash = password::hash(password)?;
-        let now = chrono::Utc::now();
-        let new_user = user::Model {
+        let mut new_user = user::Model {
             id: snowflake::next_snowflake_id(),
             username: username.to_string(),
             password_hash,
@@ -301,9 +301,10 @@ impl UserServiceImpl {
             login_ip: None,
             login_date: None,
             del_flag: user::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_user.fill_on_insert(&FillContext::new());
 
         // 使用事务：插入用户 + 分配角色
         let txn = db
@@ -365,7 +366,7 @@ impl UserServiceImpl {
         user.phone = phone.to_string();
         user.dept_id = dept_id;
         user.status = status;
-        user.updated_at = chrono::Utc::now();
+        user.fill_on_update(&FillContext::new());
 
         // 使用事务：更新用户 + 更新角色
         let txn = db
@@ -430,7 +431,7 @@ impl UserServiceImpl {
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         user.password_hash = password::hash(new_password)?;
-        user.updated_at = chrono::Utc::now();
+        user.fill_on_update(&FillContext::new());
         self.user_repo.update(db, user).await?;
         Ok(())
     }

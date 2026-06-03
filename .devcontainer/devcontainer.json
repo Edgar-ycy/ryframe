@@ -1,0 +1,32 @@
+{
+    "name": "RyFrame Development",
+    "image": "mcr.microsoft.com/devcontainers/rust:1",
+    "features": {
+        "ghcr.io/devcontainers/features/rust:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "tamasfe.even-better-toml",
+                "vadimcn.vscode-lldb",
+                "fill-labs.dependi",
+                "usernamehw.errorlens",
+                "editorconfig.editorconfig"
+            ],
+            "settings": {
+                "editor.formatOnSave": true,
+                "editor.rulers": [100],
+                "rust-analyzer.cargo.features": "all",
+                "rust-analyzer.check.command": "clippy",
+                "rust-analyzer.check.extraArgs": ["--", "-D", "warnings"],
+                "rust-analyzer.testExplorer": true
+            }
+        }
+    },
+    "postCreateCommand": "rustup component add clippy rustfmt && cargo install cargo-nextest cargo-llvm-cov",
+    "remoteUser": "vscode",
+    "mounts": [
+        "source=${localWorkspaceFolder}/target,target=${containerWorkspaceFolder}/target,type=bind,consistency=cached"
+    ]
+}

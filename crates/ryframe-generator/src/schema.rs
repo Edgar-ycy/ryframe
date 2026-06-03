@@ -1,5 +1,5 @@
 use ryframe_common::AppResult;
-use sea_orm::{DatabaseConnection, FromQueryResult, Statement};
+use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +61,20 @@ pub async fn list_tables(db: &DatabaseConnection) -> AppResult<Vec<String>> {
     Ok(tables.into_iter().map(|t| t.table_name).collect())
 }
 
+/// 获取主键的 Rust 类型（通用工具函数）
+pub fn get_pk_type(table: &TableInfo) -> &'static str {
+    for col in &table.columns {
+        if col.is_primary_key {
+            return if col.rust_type.contains("i64") {
+                "i64"
+            } else {
+                "i32"
+            };
+        }
+    }
+    "i64"
+}
+
 #[derive(Debug, FromQueryResult)]
 struct ColumnRow {
     column_name: String,
@@ -93,14 +107,24 @@ struct TableRow {
 }
 
 async fn query_tables(db: &DatabaseConnection) -> AppResult<Vec<TableRow>> {
-    let sql = "SELECT TABLE_NAME as table_name FROM information_schema.tables WHERE table_schema = DATABASE()";
-    let results = TableRow::find_by_statement(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        sql,
-        [],
-    ))
-    .all(db)
-    .await
-    .map_err(|e| ryframe_common::AppError::Database(format!("查询表列表失败: {}", e)))?;
+    let backend = db.get_database_backend();
+    let sql = match backend {
+        DatabaseBackend::MySql => {
+            "SELECT TABLE_NAME as table_name FROM information_schema.tables WHERE table_schema = DATABASE()"
+        }
+        DatabaseBackend::Postgres => {
+            "SELECT TABLE_NAME as table_name FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog')"
+        }
+        DatabaseBackend::Sqlite => {
+            "SELECT name as table_name FROM sqlite_master WHERE type = 'table'"
+        }
+        _ => {
+            "SELECT TABLE_NAME as table_name FROM information_schema.tables WHERE table_schema = DATABASE()"
+        }
+    };
+    let results = TableRow::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
+        .all(db)
+        .await
+        .map_err(|e| ryframe_common::AppError::Database(format!("查询表列表失败: {}", e)))?;
     Ok(results)
 }

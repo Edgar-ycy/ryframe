@@ -165,12 +165,16 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {{
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {{
-        // TODO: 在此编写迁移逻辑
+        // 在此编写数据库迁移逻辑（建表、加字段、加索引等）
+        // 示例：
+        // manager.create_table(...).await?;
         Ok(())
     }}
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {{
-        // TODO: 在此编写回滚逻辑（与 up 对应）
+        // 在此编写回滚逻辑（与 up 中的操作对应，如表删除、字段删除）
+        // 示例：
+        // manager.drop_table(...).await?;
         Ok(())
     }}
 }}

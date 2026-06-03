@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
+use ryframe_macro::AutoFill;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
+#[auto_fill(login_date, skip)]
 #[sea_orm(table_name = "sys_user")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]

@@ -1,6 +1,7 @@
 use ryframe_common::{AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
+    auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{MenuRepository, PermissionRepository, RoleRepository, entities::role};
@@ -107,8 +108,7 @@ impl RoleServiceImpl {
             return Err(AppError::Conflict("角色编码已存在".into()));
         }
 
-        let now = chrono::Utc::now();
-        let new_role = role::Model {
+        let mut new_role = role::Model {
             id: snowflake::next_snowflake_id(),
             name: name.to_string(),
             code: code.to_string(),
@@ -117,9 +117,10 @@ impl RoleServiceImpl {
             sort,
             remark: None,
             del_flag: role::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_role.fill_on_insert(&FillContext::new());
 
         let saved = self.role_repo.insert(db, new_role).await?;
         Ok(RoleVo::from(saved))
@@ -146,7 +147,7 @@ impl RoleServiceImpl {
         if let Some(ds) = data_scope {
             role.data_scope = ds;
         }
-        role.updated_at = chrono::Utc::now();
+        role.fill_on_update(&FillContext::new());
 
         let saved = self.role_repo.update(db, role).await?;
         Ok(RoleVo::from(saved))

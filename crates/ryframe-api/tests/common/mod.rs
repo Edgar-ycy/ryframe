@@ -7,9 +7,11 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
+    extract::ConnectInfo,
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
+use std::net::SocketAddr;
 use ryframe_api::{
     handlers::{auth_handler::AppState, captcha_handler::CaptchaStore},
     router::api_router,
@@ -24,6 +26,7 @@ use ryframe_db::{
     PermissionRepository, PostRepository, RoleRepository, UserRepository,
     entities::{dept, role, user},
 };
+use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
     AuthServiceImpl,
     system::{
@@ -196,6 +199,14 @@ pub fn test_config() -> AppConfig {
     }
 }
 
+/// 创建测试用的 RateLimitState（限流默认关闭，不会拦截测试请求）
+pub fn test_rate_limit_state() -> RateLimitState {
+    RateLimitState {
+        limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
+        config: Arc::new(RateLimitConfig::default()),
+    }
+}
+
 // ==================== App 构建 ====================
 
 /// 构建测试用 AppState 和 Router
@@ -293,8 +304,11 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
 /// 发送请求并返回 (StatusCode, Body JSON)
 pub async fn send_request(
     app: axum::Router,
-    req: Request<Body>,
+    mut req: Request<Body>,
 ) -> (StatusCode, serde_json::Value) {
+    // Axum 0.8: oneshot() 不自动注入 ConnectInfo，需手动 mock
+    req.extensions_mut()
+        .insert(ConnectInfo("127.0.0.1:8080".parse::<SocketAddr>().unwrap()));
     let response = app.oneshot(req).await.unwrap();
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -305,7 +319,7 @@ pub async fn send_request(
 /// 登录并返回 access_token
 pub async fn login_get_token(db: &DatabaseConnection) -> String {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")
@@ -330,7 +344,7 @@ pub async fn auth_get(
     token: &str,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("GET")
@@ -348,7 +362,7 @@ pub async fn auth_post(
     body: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("POST")
@@ -367,7 +381,7 @@ pub async fn auth_put(
     body: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("PUT")
@@ -385,7 +399,7 @@ pub async fn auth_delete(
     token: &str,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("DELETE")

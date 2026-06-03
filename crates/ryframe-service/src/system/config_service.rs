@@ -1,6 +1,7 @@
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::{
     LoggedRepo, Repository,
+    auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{ConfigRepository, entities::config};
@@ -109,17 +110,17 @@ impl ConfigServiceImpl {
             return Err(AppError::Validation(format!("参数键名 '{}' 已存在", key)));
         }
 
-        let now = chrono::Utc::now();
-        let new_config = config::Model {
+        let mut new_config = config::Model {
             id: ryframe_common::utils::snowflake::next_snowflake_id(),
             name: name.to_string(),
             key: key.to_string(),
             value: value.to_string(),
             remark: remark.map(|s| s.to_string()),
             del_flag: config::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_config.fill_on_insert(&FillContext::new());
 
         let saved = self.config_repo.insert(db, new_config).await?;
         Ok(ConfigVo::from(saved))
@@ -139,7 +140,7 @@ impl ConfigServiceImpl {
 
         let key = cfg.key.clone();
         cfg.value = value.to_string();
-        cfg.updated_at = chrono::Utc::now();
+        cfg.fill_on_update(&FillContext::new());
 
         let saved = self.config_repo.update(db, cfg).await?;
         let vo = ConfigVo::from(saved);

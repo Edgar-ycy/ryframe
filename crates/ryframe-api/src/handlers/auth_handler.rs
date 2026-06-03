@@ -1,6 +1,10 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
-use axum::{Extension, Json, extract::State, http::HeaderMap};
+use axum::{
+    Extension, Json,
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+};
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_config::AppConfig;
@@ -179,13 +183,15 @@ async fn clear_login_failures(redis: &Option<RedisClient>, username: &str, ip: &
 )]
 pub async fn login(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
     req.validate()
         .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
 
-    let ip = ryframe_common::utils::ip::get_client_ip(&headers, "unknown");
+    let remote_addr = addr.to_string();
+    let ip = ryframe_common::utils::ip::get_client_ip(&headers, &remote_addr);
     let user_agent = headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
@@ -216,6 +222,18 @@ pub async fn login(
                 )
                 .await;
 
+            // 查询用户部门名称
+            let dept_name = state
+                .user_service
+                .find_by_id(&state.db, result.user_info.id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|u| u.dept_name);
+
+            // IP 归属地解析
+            let login_location = ryframe_common::utils::ip::get_ip_location(&ip);
+
             // 添加在线用户
             let now = chrono::Utc::now();
             state
@@ -224,9 +242,9 @@ pub async fn login(
                     token_id: result.token_id.clone(),
                     user_id: result.user_info.id,
                     username: result.user_info.username.clone(),
-                    dept_name: None, // 可后续查询部门
+                    dept_name,
                     ipaddr: ip.to_string(),
-                    login_location: None,
+                    login_location,
                     browser: parse_browser(user_agent),
                     os: parse_os(user_agent),
                     login_time: now,
@@ -308,10 +326,12 @@ pub async fn logout(
 )]
 pub async fn refresh(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<RefreshRequest>,
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
-    let ip = ryframe_common::utils::ip::get_client_ip(&headers, "unknown");
+    let remote_addr = addr.to_string();
+    let ip = ryframe_common::utils::ip::get_client_ip(&headers, &remote_addr);
     let user_agent = headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())

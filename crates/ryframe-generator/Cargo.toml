@@ -9,7 +9,6 @@ description.workspace = true
 
 [dependencies]
 ryframe-common = { path = "../ryframe-common" }
-ryframe-db = { path = "../ryframe-db" }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

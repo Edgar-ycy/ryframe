@@ -2,6 +2,7 @@ mod cache_monitor;
 pub mod server_info;
 
 use axum::{Json, extract::State};
+use ryframe_auth::middleware::AuthState;
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::RedisClient;
 use sea_orm::DatabaseConnection;
@@ -15,17 +16,32 @@ pub struct MonitorState {
 }
 
 /// 监控路由
-pub fn monitor_router(state: MonitorState) -> axum::Router {
+///
+/// `auth_state` 为 `Some` 时，敏感路由（/server, /cache, /db-pool）需认证。
+/// `/health` 和 `/metrics` 始终公开。
+pub fn monitor_router(state: MonitorState, auth_state: Option<AuthState>) -> axum::Router {
+    use axum::{middleware, routing::get};
+
+    // 公开路由（健康检查 + Prometheus 指标）
+    let public = axum::Router::new()
+        .route("/health", get(health_check_handler))
+        .route("/metrics", get(metrics_handler));
+
+    // 受保护路由（服务器信息、缓存、DB 连接池）
+    let mut protected = axum::Router::new()
+        .route("/server", get(server_info_handler))
+        .route("/cache", get(cache_info_handler))
+        .route("/cache/commands", get(cache_commands_handler))
+        .route("/db-pool", get(db_pool_handler));
+
+    if let Some(auth) = auth_state {
+        protected = protected
+            .route_layer(middleware::from_fn_with_state(auth, ryframe_auth::middleware::auth_middleware));
+    }
+
     axum::Router::new()
-        .route("/server", axum::routing::get(server_info_handler))
-        .route("/health", axum::routing::get(health_check_handler))
-        .route("/cache", axum::routing::get(cache_info_handler))
-        .route(
-            "/cache/commands",
-            axum::routing::get(cache_commands_handler),
-        )
-        .route("/db-pool", axum::routing::get(db_pool_handler))
-        .route("/metrics", axum::routing::get(metrics_handler))
+        .merge(public)
+        .merge(protected)
         .with_state(state)
 }
 

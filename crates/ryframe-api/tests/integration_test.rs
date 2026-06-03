@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
+    extract::ConnectInfo,
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
+use std::net::SocketAddr;
 use ryframe_api::{
     handlers::{auth_handler::AppState, captcha_handler::CaptchaStore},
     router::api_router,
@@ -23,6 +25,7 @@ use ryframe_db::{
     PermissionRepository, PostRepository, RoleRepository, UserRepository,
     entities::{dept, role, user},
 };
+use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
     AuthServiceImpl,
     system::{
@@ -163,6 +166,13 @@ fn test_config() -> AppConfig {
     }
 }
 
+fn test_rate_limit_state() -> RateLimitState {
+    RateLimitState {
+        limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
+        config: Arc::new(RateLimitConfig::default()),
+    }
+}
+
 async fn build_test_app(db: DatabaseConnection) -> AppState {
     let config = test_config();
     let config_arc = Arc::new(config.clone());
@@ -253,7 +263,10 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
 }
 
 /// 辅助：发送请求并返回 (StatusCode, Body JSON)
-async fn send_request(app: axum::Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
+async fn send_request(app: axum::Router, mut req: Request<Body>) -> (StatusCode, serde_json::Value) {
+    // Axum 0.8: oneshot() 不自动注入 ConnectInfo，需手动 mock
+    req.extensions_mut()
+        .insert(ConnectInfo("127.0.0.1:8080".parse::<SocketAddr>().unwrap()));
     let response = app.oneshot(req).await.unwrap();
     let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
@@ -267,7 +280,7 @@ async fn send_request(app: axum::Router, req: Request<Body>) -> (StatusCode, ser
 async fn test_health_check() {
     let db = setup_test_db().await;
     let state = build_test_app(db).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
         .uri("/auth/login")
@@ -285,7 +298,7 @@ async fn test_auth_full_flow() {
 
     // 1. 登录成功
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")
@@ -307,7 +320,7 @@ async fn test_auth_full_flow() {
 
     // 2. 用 token 访问 /auth/me
     let state2 = build_test_app(db.clone()).await;
-    let router2 = api_router(state2);
+    let router2 = api_router(state2, test_rate_limit_state());
     let me_req = Request::builder()
         .uri("/auth/me")
         .method("GET")
@@ -320,7 +333,7 @@ async fn test_auth_full_flow() {
 
     // 3. 刷新令牌
     let state3 = build_test_app(db.clone()).await;
-    let router3 = api_router(state3);
+    let router3 = api_router(state3, test_rate_limit_state());
     let refresh_req = Request::builder()
         .uri("/auth/refresh")
         .method("POST")
@@ -338,7 +351,7 @@ async fn test_auth_full_flow() {
 
     // 4. 错误密码
     let state4 = build_test_app(db.clone()).await;
-    let router4 = api_router(state4);
+    let router4 = api_router(state4, test_rate_limit_state());
     let bad_req = Request::builder()
         .uri("/auth/login")
         .method("POST")
@@ -356,7 +369,7 @@ async fn test_auth_full_flow() {
 
     // 5. 用户不存在
     let state5 = build_test_app(db.clone()).await;
-    let router5 = api_router(state5);
+    let router5 = api_router(state5, test_rate_limit_state());
     let notfound_req = Request::builder()
         .uri("/auth/login")
         .method("POST")
@@ -374,7 +387,7 @@ async fn test_auth_full_flow() {
 
     // 6. 无 token 访问 /auth/me
     let state6 = build_test_app(db).await;
-    let router6 = api_router(state6);
+    let router6 = api_router(state6, test_rate_limit_state());
     let noauth_req = Request::builder()
         .uri("/auth/me")
         .method("GET")
@@ -389,7 +402,7 @@ async fn test_auth_full_flow() {
 /// 辅助：登录并返回 access_token
 async fn login_get_token(db: &DatabaseConnection) -> String {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")
@@ -414,7 +427,7 @@ async fn auth_get(
     token: &str,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("GET")
@@ -432,7 +445,7 @@ async fn auth_post(
     body: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("POST")
@@ -451,7 +464,7 @@ async fn auth_put(
     body: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("PUT")
@@ -469,7 +482,7 @@ async fn auth_delete(
     token: &str,
 ) -> (StatusCode, serde_json::Value) {
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri(uri)
         .method("DELETE")
@@ -618,7 +631,7 @@ async fn test_unauthenticated_access_denied() {
     seed_test_data(&db).await;
 
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let endpoints = vec![
         "/system/users/list?page=1&pageSize=10",
         "/system/roles/list?page=1&pageSize=10",
@@ -1126,24 +1139,27 @@ async fn test_validation_error_scenarios() {
 
 // ==================== 监控端点测试 ====================
 
-/// 监控端点（无需认证，公开访问）
+/// 监控端点（/health 和 /metrics 公开，/server /cache /db-pool 需认证）
 #[tokio::test]
 async fn test_monitor_endpoints() {
     let db = setup_test_db().await;
+    seed_test_data(&db).await;
+    let token = login_get_token(&db).await;
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
 
-    // 服务器信息
+    // 服务器信息（需认证）
     let req = Request::builder()
         .uri("/monitor/server")
         .method("GET")
+        .header("authorization", format!("Bearer {}", token))
         .body(Body::empty())
         .unwrap();
     let (status, body) = send_request(router.clone(), req).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "监控服务器信息应返回 200");
     assert!(body["data"].get("cpu_cores").is_some(), "应包含 CPU 核心数");
 
-    // 健康检查
+    // 健康检查（公开）
     let req = Request::builder()
         .uri("/monitor/health")
         .method("GET")
@@ -1153,19 +1169,21 @@ async fn test_monitor_endpoints() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["data"].get("database").is_some(), "应包含数据库状态");
 
-    // 缓存信息
+    // 缓存信息（需认证）
     let req = Request::builder()
         .uri("/monitor/cache")
         .method("GET")
+        .header("authorization", format!("Bearer {}", token))
         .body(Body::empty())
         .unwrap();
     let (status, _) = send_request(router.clone(), req).await;
     assert_eq!(status, StatusCode::OK);
 
-    // 数据库连接池
+    // 数据库连接池（需认证）
     let req = Request::builder()
         .uri("/monitor/db-pool")
         .method("GET")
+        .header("authorization", format!("Bearer {}", token))
         .body(Body::empty())
         .unwrap();
     let (status, body) = send_request(router.clone(), req).await;
@@ -1255,7 +1273,7 @@ async fn test_logout_flow() {
 
     // 登出
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri("/auth/logout")
         .method("POST")
@@ -1310,7 +1328,7 @@ async fn test_generator_endpoints() {
 async fn test_version_endpoint() {
     let db = setup_test_db().await;
     let state = build_test_app(db).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
         .uri("/version")
@@ -1330,7 +1348,7 @@ async fn test_version_endpoint() {
 async fn test_swagger_ui_endpoint() {
     let db = setup_test_db().await;
     let state = build_test_app(db).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
         .uri("/swagger-ui")
@@ -1352,7 +1370,7 @@ async fn test_swagger_ui_endpoint() {
 async fn test_openapi_json_endpoint() {
     let db = setup_test_db().await;
     let state = build_test_app(db).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
         .uri("/api-docs/openapi.json")
@@ -1382,7 +1400,7 @@ async fn test_token_blacklist_on_logout() {
 
     // 3. 构建一次 state，用于登出和后续验证（复用同一个 TokenBlacklist）
     let state = build_test_app(db.clone()).await;
-    let router = api_router(state.clone());
+    let router = api_router(state.clone(), test_rate_limit_state());
 
     let logout_req = Request::builder()
         .uri("/auth/logout")
@@ -1394,7 +1412,7 @@ async fn test_token_blacklist_on_logout() {
     assert_eq!(s, StatusCode::OK);
 
     // 4. 登出后再次使用同一 token（同一 state）访问 /auth/me (应 401)
-    let router2 = api_router(state);
+    let router2 = api_router(state, test_rate_limit_state());
     let me_req = Request::builder()
         .uri("/auth/me")
         .method("GET")
@@ -1439,7 +1457,7 @@ async fn test_invalid_token_rejected() {
     let fake_token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIiwianRpIjoiZmFrZSJ9.fake";
 
     let state = build_test_app(db).await;
-    let router = api_router(state);
+    let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri("/auth/me")
         .method("GET")

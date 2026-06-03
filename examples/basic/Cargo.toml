@@ -8,6 +8,8 @@ license = "MIT"
 ryframe-common = { path = "../../crates/ryframe-common" }
 axum = { workspace = true }
 tokio = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+validator = { workspace = true, features = ["derive"] }
+async-trait = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

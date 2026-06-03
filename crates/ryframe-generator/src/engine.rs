@@ -81,39 +81,38 @@ pub async fn generate(
 pub async fn write_to_disk(
     files: &[GeneratedFile],
     workspace_root: &Path,
+    overwrite: bool,
 ) -> AppResult<Vec<String>> {
     let mut written: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
+
+    let canonical_workspace = tokio::fs::canonicalize(workspace_root)
+        .await
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
 
     for f in files {
         let full_path = workspace_root.join(&f.path);
 
         // 安全检查：路径必须在 workspace_root 内
-        let canonical_workspace = workspace_root
-            .canonicalize()
-            .unwrap_or_else(|_| workspace_root.to_path_buf());
-        let canonical_target = full_path
-            .parent()
-            .map(|p| {
-                tokio::runtime::Handle::current().block_on(async {
-                    std::fs::create_dir_all(p).ok();
-                });
-                p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
-            })
-            .unwrap_or_else(|| full_path.clone());
-
-        if !canonical_target.starts_with(&canonical_workspace) {
-            return Err(ryframe_common::AppError::Internal(
-                "路径穿越攻击被阻止".into(),
-            ));
+        if let Some(parent) = full_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| ryframe_common::AppError::Internal(format!("创建目录失败: {}", e)))?;
+            let canonical_parent = tokio::fs::canonicalize(parent)
+                .await
+                .unwrap_or_else(|_| parent.to_path_buf());
+            if !canonical_parent.starts_with(&canonical_workspace) {
+                return Err(ryframe_common::AppError::Internal(
+                    "路径穿越攻击被阻止".into(),
+                ));
+            }
         }
 
-        if full_path.exists() {
+        if full_path.exists() && !overwrite {
             skipped.push(f.path.clone());
         } else {
-            std::fs::create_dir_all(full_path.parent().unwrap())
-                .map_err(|e| ryframe_common::AppError::Internal(format!("创建目录失败: {}", e)))?;
-            std::fs::write(&full_path, &f.content)
+            tokio::fs::write(&full_path, &f.content)
+                .await
                 .map_err(|e| ryframe_common::AppError::Internal(format!("写文件失败: {}", e)))?;
             written.push(f.path.clone());
         }

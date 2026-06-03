@@ -90,23 +90,30 @@ CREATE TABLE IF NOT EXISTS `sys_permission` (
 
 -- ============================================================
 -- 5. 菜单表 (sys_menu)
+-- 统一管理目录(M)、菜单(C)、按钮(F)，前端通过 menu_type 区分
 -- ============================================================
 CREATE TABLE IF NOT EXISTS `sys_menu` (
     `id`          BIGINT       NOT NULL                    COMMENT '菜单ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '菜单名称',
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID',
-    `path`        VARCHAR(255)          DEFAULT NULL       COMMENT '路由路径',
-    `component`   VARCHAR(255)          DEFAULT NULL       COMMENT '组件路径',
-    `icon`        VARCHAR(64)           DEFAULT NULL       COMMENT '图标',
+    `menu_type`   CHAR(1)      NOT NULL DEFAULT ''         COMMENT '菜单类型: M目录 C菜单 F按钮',
+    `path`        VARCHAR(255)          DEFAULT NULL       COMMENT '路由路径(目录/菜单)或接口路径(按钮)',
+    `component`   VARCHAR(255)          DEFAULT NULL       COMMENT '组件路径(仅菜单类型)',
+    `query`       VARCHAR(255)          DEFAULT NULL       COMMENT '路由参数(如 id=1)',
+    `perms`       VARCHAR(128)          DEFAULT NULL       COMMENT '权限标识(如 system:user:list)',
+    `icon`        VARCHAR(128)          DEFAULT NULL       COMMENT '图标',
+    `is_frame`    TINYINT(1)   NOT NULL DEFAULT 0          COMMENT '是否外链: 0否 1是',
+    `is_cache`    TINYINT(1)   NOT NULL DEFAULT 0          COMMENT '是否缓存: 0否 1是',
     `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
     `visible`     TINYINT(1)   NOT NULL DEFAULT 1          COMMENT '是否可见: 0隐藏 1显示',
     `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
+    `remark`      VARCHAR(512)          DEFAULT NULL       COMMENT '备注',
     `del_flag`    CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_parent_id` (`parent_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='菜单表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='菜单表(含目录/菜单/按钮)';
 
 -- ============================================================
 -- 6. 岗位表 (sys_post)
@@ -358,12 +365,12 @@ INSERT INTO `sys_user` (`id`, `username`, `password_hash`, `nickname`, `email`, 
 -- -----------------------------------------------------------
 INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `path`, `icon`, `sort`, `status`) VALUES
     -- 系统管理
-    (1,  '系统管理',   'system',            NULL, 'menu', '/system',  'setting', 1, '1'),
-    (2,  '用户管理',   'system:user',       1,    'menu', '/system/user',  'user',   1, '1'),
-    (3,  '角色管理',   'system:role',       1,    'menu', '/system/role',  'peoples', 2, '1'),
-    (4,  '菜单管理',   'system:menu',       1,    'menu', '/system/menu',  'tree',   3, '1'),
-    (5,  '部门管理',   'system:dept',       1,    'menu', '/system/dept',  'tree-table', 4, '1'),
-    (6,  '岗位管理',   'system:post',       1,    'menu', '/system/post',  'post',   5, '1'),
+    (1,  '系统管理',   'system',            NULL, 'menu', '/system',  'Setting', 1, '1'),
+    (2,  '用户管理',   'system:user',       1,    'menu', '/system/user',  'User',   1, '1'),
+    (3,  '角色管理',   'system:role',       1,    'menu', '/system/role',  'UserFilled', 2, '1'),
+    (4,  '菜单管理',   'system:menu',       1,    'menu', '/system/menu',  'Menu',   3, '1'),
+    (5,  '部门管理',   'system:dept',       1,    'menu', '/system/dept',  'Grid', 4, '1'),
+    (6,  '岗位管理',   'system:post',       1,    'menu', '/system/post',  'Management',   5, '1'),
     -- 用户管理按钮权限
     (7,  '用户查询',   'system:user:list',   2,    'api', NULL, NULL, 1, '1'),
     (8,  '用户新增',   'system:user:add',    2,    'api', NULL, NULL, 2, '1'),
@@ -372,48 +379,56 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `p
     -- 超级管理员通配符权限
     (11, '全部权限',   '*:*:*',             NULL, 'api', NULL, NULL, 0, '1'),
     -- 系统监控
-    (12, '系统监控',   'monitor',           NULL, 'menu', '/monitor', 'monitor', 2, '1'),
-    (13, '在线用户',   'monitor:online',    12,   'menu', '/monitor/online', 'online', 1, '1'),
-    (14, '服务器监控', 'monitor:server',    12,   'menu', '/monitor/server', 'server', 2, '1'),
+    (12, '系统监控',   'monitor',           NULL, 'menu', '/monitor', 'Monitor', 2, '1'),
+    (13, '在线用户',   'monitor:online',    12,   'menu', '/monitor/online', 'Connection', 1, '1'),
+    (14, '服务器监控', 'monitor:server',    12,   'menu', '/monitor/server', 'DataAnalysis', 2, '1'),
     -- 日志管理
-    (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', 'log', 6, '1'),
-    (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', 'logininfor', 7, '1'),
+    (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', 'Document', 6, '1'),
+    (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', 'Notebook', 7, '1'),
     -- 定时任务
-    (17, '定时任务',   'system:job',        1,    'menu', '/system/job', 'job', 8, '1'),
+    (17, '定时任务',   'system:job',        1,    'menu', '/system/job', 'Timer', 8, '1'),
     -- 字典管理
-    (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', 'dict', 9, '1'),
+    (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', 'Collection', 9, '1'),
     -- 参数设置
-    (19, '参数设置',   'system:config',     1,    'menu', '/system/config', 'edit', 10, '1'),
+    (19, '参数设置',   'system:config',     1,    'menu', '/system/config', 'EditPen', 10, '1'),
     -- 通知公告
-    (20, '通知公告',   'system:notice',     1,    'menu', '/system/notice', 'message', 11, '1'),
+    (20, '通知公告',   'system:notice',     1,    'menu', '/system/notice', 'Bell', 11, '1'),
     -- 代码生成
-    (21, '代码生成',   'tools:gen',         NULL, 'menu', '/tools/gen', 'code', 3, '1');
+    (21, '代码生成',   'tools:gen',         NULL, 'menu', '/tools/gen', 'MagicStick', 3, '1');
 
 -- -----------------------------------------------------------
 -- 默认菜单 (sys_menu)
 -- -----------------------------------------------------------
-INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `path`, `component`, `icon`, `sort`, `visible`, `status`) VALUES
-    -- 一级菜单
-    (1,  '系统管理', NULL, '/system',  'Layout', 'setting', 1, 1, '1'),
-    (2,  '系统监控', NULL, '/monitor', 'Layout', 'monitor', 2, 1, '1'),
-    (3,  '系统工具', NULL, '/tools',   'Layout', 'tool',    3, 1, '1'),
+INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `path`, `component`, `query`, `perms`, `icon`, `is_frame`, `is_cache`, `sort`, `visible`, `status`) VALUES
+    -- 主页
+    (0,  '首页',   NULL, 'C', '/dashboard',    'dashboard/index',   NULL,  NULL,          'HomeFilled',    0, 0, 0, 1, '1'),
+    -- 一级目录
+    (1,  '系统管理', NULL, 'M', '/system',  'Layout', NULL,  NULL,          'Setting',    0, 0, 1, 1, '1'),
+    (2,  '系统监控', NULL, 'M', '/monitor', 'Layout', NULL,  NULL,          'Monitor',    0, 0, 2, 1, '1'),
+    (3,  '系统工具', NULL, 'M', '/tools',   'Layout', NULL,  NULL,          'Tools',      0, 0, 3, 1, '1'),
     -- 系统管理子菜单
-    (4,  '用户管理', 1, '/system/user',      'system/user/index',      'user',       1, 1, '1'),
-    (5,  '角色管理', 1, '/system/role',      'system/role/index',      'peoples',    2, 1, '1'),
-    (6,  '菜单管理', 1, '/system/menu',      'system/menu/index',      'tree-table', 3, 1, '1'),
-    (7,  '部门管理', 1, '/system/dept',      'system/dept/index',      'tree',       4, 1, '1'),
-    (8,  '岗位管理', 1, '/system/post',      'system/post/index',      'post',       5, 1, '1'),
-    (9,  '字典管理', 1, '/system/dict',      'system/dict/index',      'dict',       6, 1, '1'),
-    (10, '参数设置', 1, '/system/config',    'system/config/index',    'edit',       7, 1, '1'),
-    (11, '通知公告', 1, '/system/notice',    'system/notice/index',    'message',    8, 1, '1'),
-    (12, '操作日志', 1, '/system/operlog',   'system/operlog/index',   'form',       9, 1, '1'),
-    (13, '登录日志', 1, '/system/logininfor','system/logininfor/index','logininfor', 10, 1, '1'),
-    (14, '定时任务', 1, '/system/job',       'system/job/index',       'job',        11, 1, '1'),
+    (4,  '用户管理', 1, 'C', '/system/user',      'system/user/index',      NULL,  'system:user:list',   'User',          0, 0, 1, 1, '1'),
+    (5,  '角色管理', 1, 'C', '/system/role',      'system/role/index',      NULL,  'system:role:list',   'UserFilled',    0, 0, 2, 1, '1'),
+    (6,  '菜单管理', 1, 'C', '/system/menu',      'system/menu/index',      NULL,  'system:menu:list',   'Grid',          0, 0, 3, 1, '1'),
+    (7,  '部门管理', 1, 'C', '/system/dept',      'system/dept/index',      NULL,  'system:dept:list',   'Menu',          0, 0, 4, 1, '1'),
+    (8,  '岗位管理', 1, 'C', '/system/post',      'system/post/index',      NULL,  'system:post:list',   'Management',    0, 0, 5, 1, '1'),
+    (9,  '字典管理', 1, 'C', '/system/dict',      'system/dict/index',      NULL,  'system:dict:list',   'Collection',    0, 0, 6, 1, '1'),
+    (10, '参数设置', 1, 'C', '/system/config',    'system/config/index',    NULL,  'system:config:list', 'EditPen',       0, 0, 7, 1, '1'),
+    (11, '通知公告', 1, 'C', '/system/notice',    'system/notice/index',    NULL,  'system:notice:list', 'Bell',          0, 0, 8, 1, '1'),
+    (12, '操作日志', 1, 'C', '/system/operlog',   'system/operlog/index',   NULL,  'system:operlog:list','Document',      0, 0, 9, 1, '1'),
+    (13, '登录日志', 1, 'C', '/system/logininfor','system/logininfor/index',NULL,  'system:logininfor:list','Notebook',  0, 0, 10, 1, '1'),
+    (14, '定时任务', 1, 'C', '/system/job',       'system/job/index',       NULL,  'system:job:list',    'Timer',         0, 0, 11, 1, '1'),
     -- 系统监控子菜单
-    (15, '在线用户', 2, '/monitor/online',   'monitor/online/index',   'online',     1, 1, '1'),
-    (16, '服务监控', 2, '/monitor/server',   'monitor/server/index',   'server',     2, 1, '1'),
+    (15, '在线用户', 2, 'C', '/monitor/online',   'monitor/online/index',   NULL,  'monitor:online:list','Connection',    0, 0, 1, 1, '1'),
+    (16, '服务监控', 2, 'C', '/monitor/server',   'monitor/server/index',   NULL,  'monitor:server:list','DataAnalysis',  0, 0, 2, 1, '1'),
     -- 系统工具子菜单
-    (17, '代码生成', 3, '/tools/gen',        'tools/gen/index',        'code',       1, 1, '1');
+    (17, '代码生成', 3, 'C', '/tools/gen',        'tools/gen/index',        NULL,  'tools:gen:list',     'MagicStick',    0, 0, 1, 1, '1'),
+    -- 用户管理按钮
+    (18, '用户查询', 4, 'F', NULL,  NULL, NULL, 'system:user:list',   NULL, 0, 0, 1, 1, '1'),
+    (19, '用户新增', 4, 'F', NULL,  NULL, NULL, 'system:user:add',    NULL, 0, 0, 2, 1, '1'),
+    (20, '用户修改', 4, 'F', NULL,  NULL, NULL, 'system:user:edit',   NULL, 0, 0, 3, 1, '1'),
+    (21, '用户删除', 4, 'F', NULL,  NULL, NULL, 'system:user:remove', NULL, 0, 0, 4, 1, '1'),
+    (22, '用户导出', 4, 'F', NULL,  NULL, NULL, 'system:user:export', NULL, 0, 0, 5, 1, '1');
 
 -- -----------------------------------------------------------
 -- 默认岗位 (sys_post)
@@ -505,10 +520,11 @@ INSERT INTO `role_permission` (`role_id`, `perm_id`) VALUES
 
 -- -----------------------------------------------------------
 -- 角色-菜单关联 (role_menu)
--- 超级管理员拥有全部菜单
+-- 超级管理员拥有全部菜单（含按钮）
 -- -----------------------------------------------------------
 INSERT INTO `role_menu` (`role_id`, `menu_id`) VALUES
     -- 超级管理员 - 全部菜单
+    (1, 0),
     (1, 1),
     (1, 2),
     (1, 3),
@@ -526,7 +542,13 @@ INSERT INTO `role_menu` (`role_id`, `menu_id`) VALUES
     (1, 15),
     (1, 16),
     (1, 17),
-    -- 普通用户 - 系统监控菜单
+    (1, 18),
+    (1, 19),
+    (1, 20),
+    (1, 21),
+    (1, 22),
+    -- 普通用户 - 首页 + 系统监控菜单
+    (2, 0),
     (2, 2),
     (2, 15),
     (2, 16);

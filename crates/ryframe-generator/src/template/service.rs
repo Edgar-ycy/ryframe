@@ -3,7 +3,7 @@ use crate::{naming, schema::TableInfo};
 pub fn render_service(table: &TableInfo, _module: &str) -> String {
     let struct_name = naming::to_pascal_case(&table.table_name);
     let snake = naming::to_snake_case(&table.table_name);
-    let pk_type = get_pk_type(table);
+    let pk_type = crate::schema::get_pk_type(table);
 
     // 生成 Model → Vo 字段映射
     let model_to_vo_fields: String = table
@@ -16,20 +16,19 @@ pub fn render_service(table: &TableInfo, _module: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
 
-    // 生成 DTO → Model 字段映射（跳过 id 和自动时间戳字段）
+    // 生成 DTO → Model 字段映射（时间字段用 Default::default() 占位，由 AutoFill 填充）
     let dto_to_model_fields: String = table
         .columns
         .iter()
         .map(|c| {
             let fn_name = naming::to_snake_case(&c.name);
-            if fn_name == "id" {
-                format!("            {}: Default::default(),", fn_name)
-            } else if fn_name == "created_at"
+            if fn_name == "id"
+                || fn_name == "created_at"
                 || fn_name == "updated_at"
                 || fn_name == "create_time"
                 || fn_name == "update_time"
             {
-                format!("            {}: chrono::Utc::now().naive_utc(),", fn_name)
+                format!("            {}: Default::default(),", fn_name)
             } else {
                 format!("            {}: dto.{},", fn_name, fn_name)
             }
@@ -59,6 +58,7 @@ pub fn render_service(table: &TableInfo, _module: &str) -> String {
     format!(
         r#"use chrono;
 use ryframe_common::{{AppResult}};
+use ryframe_core::auto_fill::FillContext;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
@@ -111,7 +111,8 @@ impl {snake_name}ServiceImpl {{
         &self,
         dto: Create{snake_name}Dto,
     ) -> AppResult<{snake_name}Vo> {{
-        let model: {snake}::Model = dto.into();
+        let mut model: {snake}::Model = dto.into();
+        model.fill_on_insert(&FillContext::new());
         let saved = self.repo.insert(&self.db, model).await?;
         Ok(saved.into())
     }}
@@ -173,17 +174,4 @@ impl From<Create{snake_name}Dto> for {snake}::Model {{
         dto_to_model_fields = dto_to_model_fields,
         update_fields = update_fields,
     )
-}
-
-fn get_pk_type(table: &TableInfo) -> &'static str {
-    for col in &table.columns {
-        if col.is_primary_key {
-            return if col.rust_type.contains("i64") {
-                "i64"
-            } else {
-                "i32"
-            };
-        }
-    }
-    "i64"
 }

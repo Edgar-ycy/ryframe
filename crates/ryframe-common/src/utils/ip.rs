@@ -49,3 +49,25 @@ pub fn is_internal_ip(ip: &str) -> bool {
                 .and_then(|s| s.parse::<u32>().ok())
                 .is_some_and(|n| (16..=31).contains(&n))
 }
+
+/// 解析 IP 归属地
+///
+/// 简单实现：
+/// - 本地回环 → "本地"
+/// - 内网 IP → "内网IP"
+/// - 其他 → "未知"
+///
+/// 生产环境可对接 GeoIP 数据库（如 MaxMind）获取城市级精度。
+pub fn get_ip_location(ip: &str) -> Option<String> {
+    if ip.is_empty() || ip == "unknown" {
+        return None;
+    }
+    if ip.starts_with("127.") || ip == "::1" || ip == "0:0:0:0:0:0:0:1" {
+        return Some("本地".to_string());
+    }
+    if is_internal_ip(ip) {
+        return Some("内网IP".to_string());
+    }
+    // 外网 IP 暂无法定位（可接入 GeoIP 服务扩展）
+    None
+}

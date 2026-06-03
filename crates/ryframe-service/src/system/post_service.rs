@@ -1,6 +1,7 @@
 use ryframe_common::{AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
+    auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{PostRepository, entities::post};
@@ -62,8 +63,7 @@ impl PostServiceImpl {
             return Err(AppError::Conflict("岗位编码已存在".into()));
         }
 
-        let now = chrono::Utc::now();
-        let new_post = post::Model {
+        let mut new_post = post::Model {
             id: snowflake::next_snowflake_id(),
             name: name.to_string(),
             code: code.to_string(),
@@ -71,9 +71,10 @@ impl PostServiceImpl {
             status: "1".to_string(),
             remark: None,
             del_flag: post::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_post.fill_on_insert(&FillContext::new());
         let saved = self.post_repo.insert(db, new_post).await?;
         Ok(PostVo::from(saved))
     }
@@ -95,7 +96,7 @@ impl PostServiceImpl {
         post.name = name.to_string();
         post.sort = sort;
         post.status = status;
-        post.updated_at = chrono::Utc::now();
+        post.fill_on_update(&FillContext::new());
 
         let saved = self.post_repo.update(db, post).await?;
         Ok(PostVo::from(saved))

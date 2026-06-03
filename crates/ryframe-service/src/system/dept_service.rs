@@ -1,5 +1,8 @@
 use ryframe_common::{AppError, AppResult, utils::snowflake};
-use ryframe_core::{LoggedRepo, RedisClient, Repository};
+use ryframe_core::{
+    LoggedRepo, RedisClient, Repository,
+    auto_fill::{AutoFill, FillContext},
+};
 use ryframe_db::{DeptRepository, entities::dept, repositories::dept_repo::DeptTreeNode};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
@@ -76,8 +79,7 @@ impl DeptServiceImpl {
         // 自动计算 ancestors
         let ancestors = self.dept_repo.build_ancestors(db, parent_id).await?;
 
-        let now = chrono::Utc::now();
-        let new_dept = dept::Model {
+        let mut new_dept = dept::Model {
             id: snowflake::next_snowflake_id(),
             name: name.to_string(),
             parent_id,
@@ -86,9 +88,11 @@ impl DeptServiceImpl {
             status: dept::Model::STATUS_NORMAL.to_string(),
             remark: None,
             del_flag: dept::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        let ctx = FillContext::new();
+        new_dept.fill_on_insert(&ctx);
         self.dept_repo.insert(db, new_dept).await.inspect(|_| {
             self.invalidate_dept_cache();
         })
@@ -118,7 +122,8 @@ impl DeptServiceImpl {
         dept.parent_id = parent_id;
         dept.sort = sort;
         dept.status = status;
-        dept.updated_at = chrono::Utc::now();
+        let ctx = FillContext::new();
+        dept.fill_on_update(&ctx);
 
         self.dept_repo.update(db, dept).await.inspect(|_| {
             self.invalidate_dept_cache();

@@ -1,3 +1,4 @@
+pub mod auto_fill;
 pub mod cache;
 pub mod config_watcher;
 mod context;

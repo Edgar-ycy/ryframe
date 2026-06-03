@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -10,14 +10,20 @@ use axum::{
 use chrono::Utc;
 use ryframe_common::{
     ApiResponse, AppError, AppResult,
-    utils::file_upload::{
-        UploadConfig, UploadFileInfo, compress_image, generate_storage_filename, get_content_type,
-        get_upload_dir, validate_extension,
+    utils::{
+        ObjectStorage,
+        file_upload::{
+            UploadConfig, UploadFileInfo, compress_image, generate_storage_filename,
+            get_content_type, validate_extension,
+        },
     },
 };
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::auth_handler::AppState;
+
+/// 默认上传 bucket 名称
+const UPLOAD_BUCKET: &str = "uploads";
 
 /// 文件上传响应
 #[derive(Debug, Serialize)]
@@ -29,7 +35,15 @@ pub struct UploadResponse {
 /// 文件下载查询参数
 #[derive(Debug, Deserialize)]
 pub struct DownloadQuery {
+    /// 对象存储中的 key 路径
     pub path: String,
+    /// bucket 名称（默认 uploads）
+    #[serde(default = "default_bucket")]
+    pub bucket: String,
+}
+
+fn default_bucket() -> String {
+    UPLOAD_BUCKET.to_string()
 }
 
 /// 上传文件路由（公开）
@@ -49,7 +63,7 @@ pub fn download_router(state: AppState) -> Router {
 
 /// 通用文件上传
 pub async fn upload_file(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<UploadResponse>>> {
     let config = UploadConfig::default();
@@ -80,41 +94,30 @@ pub async fn upload_file(
         // 验证文件类型
         validate_extension(&filename, &config.allowed_extensions)?;
 
-        // 生成存储文件名
+        // 生成存储文件名 + 日期路径
         let storage_name = generate_storage_filename(&filename);
+        let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
+        let object_key = format!("{}/{}", date_prefix, storage_name);
+        let content_type = get_content_type(&filename);
 
-        // 创建上传目录
-        let upload_dir = get_upload_dir(&config.upload_dir);
-        tokio::fs::create_dir_all(&upload_dir)
-            .await
-            .map_err(|e| AppError::Internal(format!("创建上传目录失败: {}", e)))?;
-
-        // 保存文件
-        let file_path = upload_dir.join(&storage_name);
-        tokio::fs::write(&file_path, &data)
+        // 通过对象存储保存（自动路由到本地/MinIO/S3）
+        state
+            .object_storage
+            .put(UPLOAD_BUCKET, &object_key, &data, &content_type)
             .await
             .map_err(|e| AppError::Internal(format!("保存文件失败: {}", e)))?;
 
-        // 构建响应
-        let relative_path = file_path
-            .strip_prefix(config.upload_dir)
-            .unwrap_or(&file_path)
-            .to_string_lossy()
-            .to_string();
+        // 生成文件访问 URL
+        let file_url = build_file_url(&state.object_storage, UPLOAD_BUCKET, &object_key);
 
         let file_info = UploadFileInfo {
             original_name: filename.clone(),
-            storage_name: storage_name.clone(),
-            file_path: format!("/{}", relative_path.replace('\\', "/")),
+            storage_name,
+            file_path: format!("/{}", object_key),
             file_size: data.len() as u64,
-            content_type: get_content_type(&filename),
+            content_type,
             upload_time: Utc::now().to_rfc3339(),
         };
-
-        let file_url = format!(
-            "/api/v1/common/file/download?path={}",
-            relative_path.replace('\\', "/")
-        );
 
         return Ok(Json(ApiResponse::success(UploadResponse {
             file_url,
@@ -127,7 +130,7 @@ pub async fn upload_file(
 
 /// 上传图片（仅允许图片类型）
 pub async fn upload_image(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<UploadResponse>>> {
     let config = UploadConfig {
@@ -187,41 +190,30 @@ pub async fn upload_image(
             );
         }
 
-        // 生成存储文件名（使用压缩后的文件名以匹配格式变化）
+        // 生成存储文件名 + 日期路径
         let storage_name = generate_storage_filename(&compressed_name);
+        let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
+        let object_key = format!("{}/{}", date_prefix, storage_name);
+        let content_type = get_content_type(&compressed_name);
 
-        // 创建上传目录
-        let upload_dir = get_upload_dir(&config.upload_dir);
-        tokio::fs::create_dir_all(&upload_dir)
+        // 通过对象存储保存（自动路由到本地/MinIO/S3）
+        state
+            .object_storage
+            .put(UPLOAD_BUCKET, &object_key, &compressed_data, &content_type)
             .await
-            .map_err(|e| AppError::Internal(format!("创建上传目录失败: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("保存图片失败: {}", e)))?;
 
-        // 保存文件
-        let file_path = upload_dir.join(&storage_name);
-        tokio::fs::write(&file_path, &compressed_data)
-            .await
-            .map_err(|e| AppError::Internal(format!("保存文件失败: {}", e)))?;
-
-        // 构建响应
-        let relative_path = file_path
-            .strip_prefix(config.upload_dir)
-            .unwrap_or(&file_path)
-            .to_string_lossy()
-            .to_string();
+        // 生成文件访问 URL
+        let file_url = build_file_url(&state.object_storage, UPLOAD_BUCKET, &object_key);
 
         let file_info = UploadFileInfo {
             original_name: filename.clone(),
-            storage_name: storage_name.clone(),
-            file_path: format!("/{}", relative_path.replace('\\', "/")),
+            storage_name,
+            file_path: format!("/{}", object_key),
             file_size: compressed_size,
-            content_type: get_content_type(&compressed_name),
+            content_type,
             upload_time: Utc::now().to_rfc3339(),
         };
-
-        let file_url = format!(
-            "/api/v1/common/file/download?path={}",
-            relative_path.replace('\\', "/")
-        );
 
         return Ok(Json(ApiResponse::success(UploadResponse {
             file_url,
@@ -234,33 +226,29 @@ pub async fn upload_image(
 
 /// 下载文件
 pub async fn download_file(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(query): Query<DownloadQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let config = UploadConfig::default();
-
     // 安全检查：防止路径穿越
     if query.path.contains("..") {
         return Err(AppError::Validation("非法的文件路径".into()));
     }
 
-    let file_path = PathBuf::from(&config.upload_dir).join(&query.path);
+    let bucket = if query.bucket.is_empty() {
+        UPLOAD_BUCKET.to_string()
+    } else {
+        query.bucket
+    };
 
-    // 检查文件是否存在
-    if !file_path.exists() {
-        return Err(AppError::NotFound("文件不存在".into()));
-    }
-
-    // 读取文件
-    let data = tokio::fs::read(&file_path)
+    // 通过对象存储读取（自动路由到本地/MinIO/S3）
+    let data = state
+        .object_storage
+        .get(&bucket, &query.path)
         .await
-        .map_err(|e| AppError::Internal(format!("读取文件失败: {}", e)))?;
+        .map_err(|e| AppError::NotFound(format!("文件不存在: {}", e)))?;
 
-    // 获取 MIME 类型
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("download");
+    // 获取文件名和 MIME 类型
+    let filename = query.path.rsplit('/').next().unwrap_or("download");
     let content_type = get_content_type(filename);
 
     // 构建响应头
@@ -279,4 +267,20 @@ pub async fn download_file(
     );
 
     Ok((headers, data))
+}
+
+/// 构建文件访问 URL
+/// - S3/MinIO：返回对象的 public_url（直接访问云存储）
+/// - 本地：如果 public_url 为空，返回代理下载 URL
+fn build_file_url(storage: &Arc<dyn ObjectStorage>, bucket: &str, key: &str) -> String {
+    let public_url = storage.public_url(bucket, key);
+    // 本地模式且 public_url 为空时，使用代理下载 URL
+    if public_url.is_empty() || public_url == "/" {
+        format!(
+            "/api/v1/common/file/download?bucket={}&path={}",
+            bucket, key
+        )
+    } else {
+        public_url
+    }
 }

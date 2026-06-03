@@ -364,6 +364,9 @@ async fn main() -> Result<(), AppError> {
         Arc::new(OnlineUserServiceImpl::new_in_memory())
     };
 
+    // 启动时清理残留的旧在线用户会话
+    online_user_service.clear_all_on_startup().await;
+
     // 7.dd 创建 CaptchaStore（Redis 或内存模式）
     let captcha_store = if let Some(ref redis) = redis_client {
         CaptchaStore::new_redis(redis.clone(), 300)

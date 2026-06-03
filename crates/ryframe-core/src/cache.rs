@@ -276,10 +276,10 @@ pub struct LocalMemoryCache {
 
 impl LocalMemoryCache {
     /// 创建指定容量的本地缓存（容量达到上限时随机淘汰）
-    pub fn new(_capacity: usize) -> Self {
-        // TODO: 后续可迁移到 moka 等成熟库
+    pub fn new(capacity: usize) -> Self {
+        let capacity = if capacity == 0 { usize::MAX } else { capacity };
         Self {
-            store: Arc::new(RwLock::new(HashMap::new())),
+            store: Arc::new(RwLock::new(HashMap::with_capacity(capacity))),
         }
     }
 

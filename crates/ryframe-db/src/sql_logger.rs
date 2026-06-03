@@ -151,7 +151,7 @@ impl Visit for SqlxVisitor {
 /// let db_span_layer = DbSpanLayer::new();
 ///
 /// // 创建 SQL 日志层
-/// let sql_log_layer = SqlLogLayer::new(SqlLogLevel::Simple, 100);
+/// let sql_log_layer = SqlLogLayer::new(SqlLogLevel::Summary, 100);
 ///
 /// // 注册到 subscriber：
 /// // tracing_subscriber::registry()

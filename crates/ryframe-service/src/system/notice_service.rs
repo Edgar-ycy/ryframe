@@ -1,6 +1,7 @@
 use ryframe_common::{AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
+    auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{NoticeRepository, entities::notice};
@@ -67,8 +68,7 @@ impl NoticeServiceImpl {
         notice_type: Option<&str>,
         created_by: Option<i64>,
     ) -> AppResult<NoticeVo> {
-        let now = chrono::Utc::now();
-        let new_notice = notice::Model {
+        let mut new_notice = notice::Model {
             id: snowflake::next_snowflake_id(),
             title: title.to_string(),
             content: content.to_string(),
@@ -76,9 +76,10 @@ impl NoticeServiceImpl {
             status: notice::Model::STATUS_PUBLISHED.to_string(),
             created_by,
             del_flag: notice::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now,
-            updated_at: now,
+            created_at: Default::default(),
+            updated_at: Default::default(),
         };
+        new_notice.fill_on_insert(&FillContext::new());
         Ok(NoticeVo::from(
             self.notice_repo.insert(db, new_notice).await?,
         ))
@@ -102,7 +103,7 @@ impl NoticeServiceImpl {
         n.content = content.to_string();
         n.r#type = notice_type.map(|s| s.to_string());
         n.status = status;
-        n.updated_at = chrono::Utc::now();
+        n.fill_on_update(&FillContext::new());
         Ok(NoticeVo::from(self.notice_repo.update(db, n).await?))
     }
 

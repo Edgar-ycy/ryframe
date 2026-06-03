@@ -11,7 +11,8 @@ use axum::{
 use serde_json::json;
 
 use common::{
-    auth_delete, auth_get, auth_post, auth_put, login_get_token, seed_test_data, setup_test_db,
+    auth_delete, auth_get, auth_post, auth_put, login_get_token, seed_test_data,
+    setup_test_db, test_rate_limit_state,
 };
 
 // ==================== 权限校验测试 ====================
@@ -23,7 +24,7 @@ async fn test_permission_no_token_returns_401() {
     seed_test_data(&db).await;
 
     let state = common::build_test_app(db.clone()).await;
-    let router = ryframe_api::router::api_router(state);
+    let router = ryframe_api::router::api_router(state, test_rate_limit_state());
 
     let protected_routes = vec![
         "/system/users/list?page=1&pageSize=10",
@@ -61,7 +62,7 @@ async fn test_permission_invalid_token_returns_401() {
     seed_test_data(&db).await;
 
     let state = common::build_test_app(db.clone()).await;
-    let router = ryframe_api::router::api_router(state);
+    let router = ryframe_api::router::api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
         .uri("/system/users/list?page=1&pageSize=10")
@@ -84,7 +85,7 @@ async fn test_permission_non_admin_access() {
 
     // 用普通用户登录
     let state = common::build_test_app(db.clone()).await;
-    let router = ryframe_api::router::api_router(state);
+    let router = ryframe_api::router::api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")

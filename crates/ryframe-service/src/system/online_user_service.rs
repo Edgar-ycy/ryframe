@@ -239,6 +239,33 @@ impl OnlineUserServiceImpl {
             }
         }
     }
+
+    /// 启动时清理所有在线用户（Redis 模式下清除残留的旧会话）
+    pub async fn clear_all_on_startup(&self) {
+        match self {
+            Self::Redis { client } => {
+                let pattern = format!("{}*", ONLINE_USER_KEY_PREFIX);
+                match client.keys(&pattern).await {
+                    Ok(keys) => {
+                        let count = keys.len();
+                        for key in &keys {
+                            let _ = client.del(key).await;
+                        }
+                        if count > 0 {
+                            tracing::info!("启动时清理了 {} 个残留在线用户会话", count);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("清理残留在线用户会话失败: {}", e);
+                    }
+                }
+            }
+            Self::InMemory { sessions } => {
+                let mut s = sessions.write().await;
+                s.clear();
+            }
+        }
+    }
 }
 
 /// UserSession → OnlineUserVo

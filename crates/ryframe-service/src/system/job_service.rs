@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use ryframe_common::{AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo,
+    auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult, Repository},
 };
 use ryframe_db::{JobLogRepository, JobRepository, entities::job};
@@ -63,7 +64,7 @@ impl JobServiceImpl {
                 }
                 None => {
                     // 数据库中没有 → 插入默认记录 + 使用默认 cron 注册
-                    let entity = job::Model {
+                    let mut entity = job::Model {
                         id: snowflake::next_snowflake_id(),
                         name: name.to_string(),
                         group_name: "system".into(),
@@ -72,9 +73,10 @@ impl JobServiceImpl {
                         concurrent: "0".to_string(),
                         status: job::Model::STATUS_NORMAL.to_string(),
                         remark: Some(task.description().to_string()),
-                        create_time: Utc::now(),
-                        update_time: Utc::now(),
+                        create_time: Default::default(),
+                        update_time: Default::default(),
                     };
+                    entity.fill_on_insert(&FillContext::new());
                     self.job_repo.insert(db, entity).await?;
                     // 使用任务默认 cron 注册
                     self.scheduler.register(task.clone(), None, false).await?;
@@ -138,8 +140,7 @@ impl JobServiceImpl {
             return Err(AppError::Conflict(format!("任务名称 '{}' 已存在", name)));
         }
 
-        let now = Utc::now();
-        let entity = job::Model {
+        let mut entity = job::Model {
             id: snowflake::next_snowflake_id(),
             name: name.to_string(),
             group_name: group_name.unwrap_or("default").to_string(),
@@ -148,9 +149,10 @@ impl JobServiceImpl {
             concurrent: concurrent.unwrap_or("0").to_string(),
             status: job::Model::STATUS_NORMAL.to_string(),
             remark: remark.map(|s| s.to_string()),
-            create_time: now,
-            update_time: now,
+            create_time: Default::default(),
+            update_time: Default::default(),
         };
+        entity.fill_on_insert(&FillContext::new());
 
         let saved = self.job_repo.insert(db, entity).await?;
 
