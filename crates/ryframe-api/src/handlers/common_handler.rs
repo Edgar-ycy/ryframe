@@ -219,8 +219,7 @@ async fn process_upload(
             let original_size = data.len() as u64;
             let compressed_size = compressed.len() as u64;
             if compressed_size < original_size {
-                let saved_pct =
-                    (1.0 - compressed_size as f64 / original_size as f64) * 100.0;
+                let saved_pct = (1.0 - compressed_size as f64 / original_size as f64) * 100.0;
                 tracing::info!(
                     "图片压缩: {} → {} ({:.1}% 减小)",
                     ryframe_common::utils::file_upload::format_file_size(original_size),
@@ -248,8 +247,7 @@ async fn process_upload(
             .map_err(|e| AppError::Internal(format!("保存文件失败: {}", e)))?;
 
         // 生成文件访问 URL（动态根据配置拼接，用于 API 响应）
-        let public_file_url =
-            build_file_url(&state.object_storage, &effective_bucket, &object_key);
+        let public_file_url = build_file_url(&state.object_storage, &effective_bucket, &object_key);
 
         // 写入文件元数据到 sys_file 表
         // file_url 仅存相对路径（bucket/date/uuid.ext），不含协议/域名/端口

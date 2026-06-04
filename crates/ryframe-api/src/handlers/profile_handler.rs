@@ -127,12 +127,10 @@ pub async fn update_avatar(
         .map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
     const BUCKET: &str = "avatar";
-    let allowed_extensions: Vec<String> = vec![
-        "jpg", "jpeg", "png", "gif", "bmp", "webp",
-    ]
-    .into_iter()
-    .map(|s| s.to_string())
-    .collect();
+    let allowed_extensions: Vec<String> = vec!["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
 
     let mut avatar_url = String::new();
 
@@ -160,11 +158,10 @@ pub async fn update_avatar(
         validate_extension(&filename, &allowed_extensions)?;
 
         // 图片压缩
-        let (final_data, final_name) =
-            compress_image(&data, &filename).unwrap_or_else(|e| {
-                tracing::warn!("头像压缩失败，使用原始数据: {}", e);
-                (data.to_vec(), filename.clone())
-            });
+        let (final_data, final_name) = compress_image(&data, &filename).unwrap_or_else(|e| {
+            tracing::warn!("头像压缩失败，使用原始数据: {}", e);
+            (data.to_vec(), filename.clone())
+        });
         let content_type = get_content_type(&final_name);
 
         // 生成存储路径
