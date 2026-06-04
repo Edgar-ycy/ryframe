@@ -1275,7 +1275,7 @@ Auth → OnlineUserTracking → OperLog → Handler
 
 #### 6.7.2 Cache Trait
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait Cache: Send + Sync {
     async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, CacheError>;
@@ -1310,7 +1310,7 @@ pub trait Cache: Send + Sync {
 
 #### 6.8.1 MessageQueue Trait
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait MessageQueue: Send + Sync {
     async fn publish(&self, topic: &str, payload: &[u8]) -> Result<(), MqError>;

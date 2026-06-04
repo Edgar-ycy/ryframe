@@ -1774,7 +1774,7 @@ POST/PUT/DELETE 请求通过 `oper_log_middleware` 自动记录到 `sys_oper_log
 
 ## 12. 缓存使用
 
-```rust
+```rust,ignore
 use ryframe_core::cache::{Cache, BreakdownGuard};
 
 // 基础读写
@@ -1800,7 +1800,7 @@ let user = guard.get_or_load_guarded("hot:key", 3600, || db.query()).await?;
 
 ## 13. 消息队列
 
-```rust
+```rust,ignore
 use ryframe_core::message_queue::{MqBackend, create_in_memory_mq, publish_json};
 
 let mq = create_in_memory_mq();
@@ -1819,7 +1819,7 @@ publish_json(&mq, "user.created", &user_data).await?;
 
 ## 14. 功能开关
 
-```rust
+```rust,ignore
 use ryframe_core::feature_flag::FeatureFlags;
 
 let flags = FeatureFlags::new()
@@ -1836,7 +1836,7 @@ if flags.is_enabled("new_payment") {
 
 框架集成 tonic，支持 gRPC 微服务间通信：
 
-```rust
+```rust,ignore
 use ryframe_core::grpc::{GrpcServer, GrpcServerConfig, GrpcClient, GrpcClientConfig};
 
 // 服务端
@@ -1855,7 +1855,7 @@ let channel = GrpcClient::connect(&client_config).await?;
 
 通过请求头 `X-Tenant-Id` 识别租户：
 
-```rust
+```rust,ignore
 use ryframe_core::multi_tenant::{TenantConfig, ExtractionMethod, tenant_middleware};
 
 let config = TenantConfig {
@@ -1869,7 +1869,7 @@ let config = TenantConfig {
 
 ## 17. API 版本管理
 
-```rust
+```rust,ignore
 use ryframe_core::versioning::{ApiVersion, VersionedRouter};
 
 let v1_routes = Router::new().route("/users", get(v1_handler));

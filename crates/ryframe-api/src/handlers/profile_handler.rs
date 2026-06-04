@@ -7,11 +7,8 @@ use chrono::Utc;
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{
     ApiResponse, AppError, AppResult,
-    utils::{
-        file_upload::{
-            compress_image, generate_storage_filename, get_content_type,
-            validate_extension,
-        },
+    utils::file_upload::{
+        compress_image, generate_storage_filename, get_content_type, validate_extension,
     },
 };
 use ryframe_core::repository::Repository;

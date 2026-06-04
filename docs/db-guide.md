@@ -75,7 +75,7 @@ MySQL 使用 `utf8mb4_general_ci`，建议在数据库初始化时配置：
 
 所有实体使用 SeaORM 派生宏，位于 `crates/ryframe-db/src/entities/`：
 
-```rust
+```rust,ignore
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -115,7 +115,7 @@ impl ActiveModelBehavior for ActiveModel {}
 
 所有仓库实现在 `crates/ryframe-db/src/repositories/`（14 个文件）：
 
-```rust
+```rust,ignore
 use ryframe_core::{Repository, LoggedRepo, PageQuery, PageResult};
 
 // 基础仓库
@@ -129,7 +129,7 @@ logged_repo.update_by_id(&db, 1, user.active_model).await?;
 
 ## 分页查询
 
-```rust
+```rust,ignore
 use ryframe_db::pagination::{PageQuery, PageResult, paginate};
 
 let page = PageQuery {
@@ -147,7 +147,7 @@ let result: PageResult<user::Model> = paginate(query, page, &db).await?;
 
 ## 事务
 
-```rust
+```rust,ignore
 use sea_orm::TransactionTrait;
 
 let txn = db.begin().await?;
@@ -195,7 +195,7 @@ sea-orm-cli migrate generate <migration_name>
 
 ### 编程式迁移管理
 
-```rust
+```rust,ignore
 use ryframe_db::migration::MigrationManager;
 
 let up_to_date = MigrationManager::is_up_to_date(&db).await?;
@@ -227,7 +227,7 @@ let applied = MigrationManager::status(&db).await?;
 
 通过 `DataSourceManager` 支持读写分离和多数据源动态路由：
 
-```rust
+```rust,ignore
 use ryframe_core::datasource::{DataSourceManager, current_db, get_db};
 
 // 获取当前上下文的数据源

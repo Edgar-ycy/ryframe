@@ -1,0 +1,18 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./Cargo.toml"
+    ],
+    "rust-analyzer.checkOnSave.allTargets": false,
+    "rust-analyzer.diagnostics.disabled": [
+        "unresolved-proc-macro"
+    ],
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/target/**": true,
+        "**/backup/**": true,
+        "**/docs/**": true
+    },
+    "files.exclude": {
+        "**/.git": true
+    }
+}

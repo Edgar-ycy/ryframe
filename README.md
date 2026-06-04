@@ -5,7 +5,7 @@
 [![CI](https://github.com/Edgar-ycy/ryframe/actions/workflows/ci.yml/badge.svg)](https://github.com/Edgar-ycy/ryframe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Edgar-ycy/ryframe/branch/main/graph/badge.svg)](https://codecov.io/gh/Edgar-ycy/ryframe)
 
-**RyFrame** —— 基于 Rust + Axum 的现代化企业级后端框架。提供开箱即用的认证授权、系统管理、监控运维、定时任务、代码生成等完整能力，采用模块化 Cargo Workspace 架构，支持按需组合与独立演进。
+**RyFrame** —— 基于 Rust + Axum 的现代化企业级后端框架。提供开箱即用的认证授权、系统管理、监控运维、定时任务、代码生成等完整能力，采用 Cargo Workspace 分层架构，各 crate 职责清晰、边界明确。
 
 ## 目录
 
@@ -436,7 +436,7 @@ POST/PUT/DELETE 请求自动记录到 `sys_oper_log` 表，包含：
 
 ### 缓存使用
 
-```rust
+```rust,ignore
 use ryframe_core::cache::{Cache, BreakdownGuard, RedisCache};
 
 // 基础读写
@@ -464,7 +464,7 @@ X-Nonce: random-nonce-value
 
 ### gRPC 通信
 
-```rust
+```rust,ignore
 use ryframe_core::grpc::{GrpcServer, GrpcClient, GrpcServerConfig, GrpcClientConfig};
 
 // 服务端
@@ -481,7 +481,7 @@ let client = GrpcClient::connect(&GrpcClientConfig::new("http://localhost:50051"
 
 ### 消息队列
 
-```rust
+```rust,ignore
 use ryframe_core::message_queue::{create_in_memory_mq, publish_json};
 
 let mq = create_in_memory_mq();
