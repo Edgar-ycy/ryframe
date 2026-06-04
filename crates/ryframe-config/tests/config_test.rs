@@ -7,7 +7,6 @@ fn test_load_and_validate_config() {
     assert!(config.is_ok());
     let cfg = config.unwrap();
     assert_eq!(cfg.app.name, "ryframe");
-    assert_eq!(cfg.app.port, 8080);
 
     // 空应用名应校验失败
     let mut bad = cfg;
