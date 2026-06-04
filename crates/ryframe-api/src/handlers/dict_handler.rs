@@ -62,6 +62,9 @@ async fn list_types(
 }
 
 /// 字典类型不分页查询
+#[utoipa::path(get, path = "/api/v1/system/dict/types/listNoPage", tag = "字典管理",
+    responses((status = 200, description = "字典类型列表")),
+    security(("bearer" = [])))]
 async fn list_types_no_page(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<DictTypeVo>>>> {
@@ -92,6 +95,12 @@ async fn create_type(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
+/// 更新字典类型
+#[utoipa::path(put, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
+    params(("id" = i64, Path)),
+    request_body = UpdateDictTypeDto,
+    responses((status = 200, description = "更新成功")),
+    security(("bearer" = [])))]
 async fn update_type(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -106,6 +115,11 @@ async fn update_type(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
+/// 删除字典类型
+#[utoipa::path(delete, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "删除成功")),
+    security(("bearer" = [])))]
 async fn delete_type(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -177,6 +191,12 @@ async fn create_data(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
+/// 更新字典数据
+#[utoipa::path(put, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
+    params(("id" = i64, Path)),
+    request_body = UpdateDictDataDto,
+    responses((status = 200, description = "更新成功")),
+    security(("bearer" = [])))]
 async fn update_data(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -198,6 +218,11 @@ async fn update_data(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
+/// 删除字典数据
+#[utoipa::path(delete, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "删除成功")),
+    security(("bearer" = [])))]
 async fn delete_data(
     State(state): State<AppState>,
     Path(id): Path<i64>,

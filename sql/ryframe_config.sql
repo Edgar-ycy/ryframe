@@ -317,6 +317,30 @@ CREATE TABLE IF NOT EXISTS `sys_role_dept` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-部门关联表(自定义数据权限)';
 
 -- ============================================================
+-- 19. 文件元数据表 (sys_file)
+-- 存储所有上传文件的元信息，仅存在于主数据库
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `sys_file` (
+    `id`            BIGINT       NOT NULL                    COMMENT '文件ID',
+    `original_name` VARCHAR(255) NOT NULL                    COMMENT '原始文件名',
+    `storage_name`  VARCHAR(255) NOT NULL                    COMMENT '存储文件名(UUID)',
+    `storage_path`  VARCHAR(500) NOT NULL                    COMMENT '对象存储 key',
+    `bucket`        VARCHAR(100) NOT NULL DEFAULT 'uploads'  COMMENT '存储桶',
+    `file_url`      VARCHAR(1000)NOT NULL                    COMMENT '相对路径(bucket/date/uuid.ext)',
+    `file_size`     BIGINT       NOT NULL DEFAULT 0          COMMENT '字节数',
+    `content_type`  VARCHAR(100) NOT NULL                    COMMENT 'MIME类型',
+    `file_md5`      CHAR(32)              DEFAULT NULL       COMMENT 'MD5去重校验',
+    `upload_by`     VARCHAR(64)           DEFAULT NULL       COMMENT '上传者',
+    `del_flag`      CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
+    `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
+    `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_bucket` (`bucket`),
+    KEY `idx_upload_by` (`upload_by`),
+    KEY `idx_del_flag` (`del_flag`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='文件元数据表';
+
+-- ============================================================
 -- =================== 默认初始化数据 =========================
 -- ============================================================
 -- ID 规划:

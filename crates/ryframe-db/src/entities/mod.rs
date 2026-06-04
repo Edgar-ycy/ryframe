@@ -14,6 +14,7 @@ pub mod role;
 pub mod role_dept;
 pub mod role_menu;
 pub mod role_permission;
+pub mod sys_file;
 pub mod user;
 pub mod user_role;
 
@@ -23,4 +24,5 @@ pub use menu::Entity as MenuEntity;
 pub use permission::Entity as PermissionEntity;
 pub use post::Entity as PostEntity;
 pub use role::Entity as RoleEntity;
+pub use sys_file::Entity as SysFileEntity;
 pub use user::Entity as UserEntity;

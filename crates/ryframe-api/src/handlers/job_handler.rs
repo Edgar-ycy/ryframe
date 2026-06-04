@@ -68,6 +68,10 @@ async fn create_job(
 }
 
 /// 删除任务
+#[utoipa::path(delete, path = "/api/v1/system/jobs/{id}", tag = "定时任务",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "删除成功")),
+    security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -77,6 +81,9 @@ async fn remove(
 }
 
 /// 任务列表分页查询
+#[utoipa::path(get, path = "/api/v1/system/jobs/list", tag = "定时任务",
+    responses((status = 200, description = "任务列表")),
+    security(("bearer" = [])))]
 async fn list_page(
     State(state): State<AppState>,
     Query(query): Query<PageQuery>,
@@ -102,6 +109,11 @@ async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiRespon
 }
 
 /// 更新任务
+#[utoipa::path(put, path = "/api/v1/system/jobs/{id}", tag = "定时任务",
+    params(("id" = i64, Path)),
+    request_body = UpdateJobDto,
+    responses((status = 200, description = "更新成功")),
+    security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -138,7 +150,11 @@ async fn resume_job(
     Ok(Json(ApiResponse::success_no_data_with_msg("恢复成功")))
 }
 
-/// 立即触发一次
+/// 立即触发一次任务
+#[utoipa::path(post, path = "/api/v1/system/jobs/{id}/trigger", tag = "定时任务",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "执行完成")),
+    security(("bearer" = [])))]
 async fn trigger(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -154,7 +170,10 @@ async fn trigger(
     Ok(Json(ApiResponse::success(history)))
 }
 
-/// 执行历史分页
+/// 任务执行历史分页
+#[utoipa::path(get, path = "/api/v1/system/jobs/logs", tag = "定时任务",
+    responses((status = 200, description = "日志列表")),
+    security(("bearer" = [])))]
 async fn log_list(
     State(state): State<AppState>,
     Query(q): Query<JobLogPageQuery>,

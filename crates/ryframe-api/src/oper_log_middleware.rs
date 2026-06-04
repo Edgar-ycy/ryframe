@@ -66,27 +66,40 @@ pub async fn oper_log_middleware(
     // 推导业务类型和模块标题（基于 URI + HTTP 方法精确映射）
     let (title, business_type) = infer_business_info(&uri, &request_method);
 
-    // 缓存请求体（用于记录操作参数）
-    let (parts, body) = request.into_parts();
-    let body_bytes = body
-        .collect()
-        .await
-        .map(|c| c.to_bytes())
-        .unwrap_or_default();
-    let oper_param = if body_bytes.is_empty() {
-        None
-    } else {
-        let s = String::from_utf8_lossy(&body_bytes);
-        let truncated = if s.len() > 2000 {
-            format!("{}...[truncated]", truncate_str(&s, 2000))
-        } else {
-            s.to_string()
-        };
-        Some(truncated)
-    };
+    // 检查是否为文件上传请求（multipart/form-data 的 body 被消费后无法被 Multipart 解析）
+    let is_multipart = request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.starts_with("multipart/form-data"))
+        .unwrap_or(false);
 
-    // 重建请求
-    let request = Request::from_parts(parts, Body::from(body_bytes));
+    // 缓存请求体（用于记录操作参数）—— multipart 请求跳过 body 消费
+    let (parts, body) = request.into_parts();
+    let (request, oper_param) = if is_multipart {
+        // multipart 请求不消费 body，直接透传原始流
+        let req = Request::from_parts(parts, body);
+        (req, Some("[文件上传]".to_string()))
+    } else {
+        let bytes = body
+            .collect()
+            .await
+            .map(|c| c.to_bytes())
+            .unwrap_or_default();
+        let param = if bytes.is_empty() {
+            None
+        } else {
+            let s = String::from_utf8_lossy(&bytes);
+            let truncated = if s.len() > 2000 {
+                format!("{}...[truncated]", truncate_str(&s, 2000))
+            } else {
+                s.to_string()
+            };
+            Some(truncated)
+        };
+        let req = Request::from_parts(parts, Body::from(bytes));
+        (req, param)
+    };
 
     let start = Instant::now();
     let response = next.run(request).await;

@@ -82,6 +82,9 @@ async fn list(
 }
 
 /// 角色列表不分页查询（返回全部数据）
+#[utoipa::path(get, path = "/api/v1/system/roles/listNoPage", tag = "角色管理",
+    responses((status = 200, description = "角色列表")),
+    security(("bearer" = [])))]
 async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<RoleVo>>>> {
     let page_query = PageQuery {
         page: 1,
@@ -166,6 +169,10 @@ async fn remove(
 }
 
 /// 批量删除角色
+#[utoipa::path(delete, path = "/api/v1/system/roles/batch/{ids}", tag = "角色管理",
+    params(("ids" = String, Path)),
+    responses((status = 200, description = "批量删除成功")),
+    security(("bearer" = [])))]
 async fn batch_remove(
     State(state): State<AppState>,
     Path(ids_str): Path<String>,
@@ -261,6 +268,12 @@ impl RoleExportData {
     }
 }
 
+/// 分配权限给角色
+#[utoipa::path(put, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
+    params(("id" = i64, Path)),
+    request_body = AssignPermsDto,
+    responses((status = 200, description = "权限分配成功")),
+    security(("bearer" = [])))]
 async fn assign_permissions(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -273,6 +286,12 @@ async fn assign_permissions(
     Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
 }
 
+/// 分配菜单给角色
+#[utoipa::path(put, path = "/api/v1/system/roles/{id}/menus", tag = "角色管理",
+    params(("id" = i64, Path)),
+    request_body = AssignMenusDto,
+    responses((status = 200, description = "菜单分配成功")),
+    security(("bearer" = [])))]
 async fn assign_menus(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -286,8 +305,11 @@ async fn assign_menus(
 }
 
 /// 设置角色数据权限
-///
-/// PUT /api/v1/system/roles/{id}/data-scope
+#[utoipa::path(put, path = "/api/v1/system/roles/{id}/data-scope", tag = "角色管理",
+    params(("id" = i64, Path)),
+    request_body = AssignDataScopeDto,
+    responses((status = 200, description = "数据权限设置成功")),
+    security(("bearer" = [])))]
 async fn assign_data_scope(
     State(state): State<AppState>,
     Path(id): Path<i64>,

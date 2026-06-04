@@ -39,6 +39,9 @@ async fn list(
 }
 
 /// 参数配置列表不分页查询（返回全部数据）
+#[utoipa::path(get, path = "/api/v1/system/configs/listNoPage", tag = "参数配置",
+    responses((status = 200, description = "配置列表")),
+    security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<ConfigVo>>>> {
@@ -49,6 +52,11 @@ async fn list_no_page(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
+/// 参数配置详情
+#[utoipa::path(get, path = "/api/v1/system/configs/{id}", tag = "参数配置",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "配置详情")),
+    security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,

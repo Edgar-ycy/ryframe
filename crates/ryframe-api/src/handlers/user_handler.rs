@@ -118,6 +118,9 @@ async fn list(
 }
 
 /// 用户列表不分页查询（返回全部数据）
+#[utoipa::path(get, path = "/api/v1/system/users/listNoPage", tag = "用户管理",
+    responses((status = 200, description = "用户列表")),
+    security(("bearer" = [])))]
 async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<UserVo>>>> {
     let page_query = PageQuery {
         page: 1,
@@ -220,6 +223,10 @@ async fn remove(
 }
 
 /// 批量删除用户
+#[utoipa::path(delete, path = "/api/v1/system/users/batch/{ids}", tag = "用户管理",
+    params(("ids" = String, Path, description = "用户ID列表，逗号分隔")),
+    responses((status = 200, description = "批量删除成功")),
+    security(("bearer" = [])))]
 async fn batch_remove(
     State(state): State<AppState>,
     Path(ids_str): Path<String>,
@@ -243,6 +250,10 @@ async fn batch_remove(
 }
 
 /// 修改用户状态
+#[utoipa::path(put, path = "/api/v1/system/users/changeStatus", tag = "用户管理",
+    request_body = ChangeStatusDto,
+    responses((status = 200, description = "状态修改成功")),
+    security(("bearer" = [])))]
 async fn change_status(
     State(state): State<AppState>,
     Json(dto): Json<ChangeStatusDto>,
@@ -254,6 +265,12 @@ async fn change_status(
     Ok(Json(ApiResponse::success_no_data_with_msg("状态修改成功")))
 }
 
+/// 重置用户密码
+#[utoipa::path(put, path = "/api/v1/system/users/{id}/password", tag = "用户管理",
+    params(("id" = i64, Path, description = "用户ID")),
+    request_body = ResetPasswordDto,
+    responses((status = 200, description = "密码重置成功")),
+    security(("bearer" = [])))]
 async fn reset_password(
     State(state): State<AppState>,
     Path(id): Path<i64>,

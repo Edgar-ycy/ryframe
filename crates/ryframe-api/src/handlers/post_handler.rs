@@ -72,6 +72,9 @@ async fn list(
 }
 
 /// 岗位列表不分页查询（返回全部数据）
+#[utoipa::path(get, path = "/api/v1/system/posts/listNoPage", tag = "岗位管理",
+    responses((status = 200, description = "岗位列表")),
+    security(("bearer" = [])))]
 async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<PostVo>>>> {
     state
         .post_service
@@ -80,6 +83,11 @@ async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiRespon
         .map(|v| Json(ApiResponse::success(v)))
 }
 
+/// 岗位详情
+#[utoipa::path(get, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "岗位详情")),
+    security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,

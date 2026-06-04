@@ -82,6 +82,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_login_info",
     "sys_job",
     "sys_job_log",
+    "sys_file",
+    "sys_role_dept",
     "user_role",
     "role_permission",
     "role_menu",

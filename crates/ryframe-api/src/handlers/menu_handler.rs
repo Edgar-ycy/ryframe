@@ -48,6 +48,9 @@ async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<M
 }
 
 /// 菜单列表分页查询
+#[utoipa::path(get, path = "/api/v1/system/menus/list", tag = "菜单管理",
+    responses((status = 200, description = "菜单列表")),
+    security(("bearer" = [])))]
 async fn list_page(
     State(state): State<AppState>,
     Query(query): Query<MenuListQuery>,
@@ -67,6 +70,9 @@ async fn list_page(
 }
 
 /// 菜单列表不分页查询（返回全部数据）
+#[utoipa::path(get, path = "/api/v1/system/menus/listNoPage", tag = "菜单管理",
+    responses((status = 200, description = "菜单列表")),
+    security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
     Query(query): Query<MenuListQuery>,
@@ -143,6 +149,10 @@ async fn update(
 }
 
 /// 菜单详情
+#[utoipa::path(get, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "菜单详情")),
+    security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,

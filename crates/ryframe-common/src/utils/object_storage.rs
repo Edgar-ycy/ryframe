@@ -375,6 +375,121 @@ impl MinioStorage {
             self.config.access_key, date_stamp, region, service, signed_headers, signature
         )
     }
+
+    /// 设置 bucket 为公开读（Allow s3:GetObject for anonymous）
+    pub async fn set_bucket_public_read(&self, bucket: &str) -> StorageResult<()> {
+        let policy = serde_json::json!({
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": {"AWS": ["*"]},
+                "Action": ["s3:GetObject"],
+                "Resource": [format!("arn:aws:s3:::{}/*", bucket)]
+            }]
+        });
+        let policy_str = policy.to_string();
+        let payload_hash = hex::encode(sha2::Sha256::digest(policy_str.as_bytes()));
+
+        let url = format!("{}/{}?policy", self.config.endpoint, bucket);
+        let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let authorization =
+            self.sign_bucket_policy_request(bucket, "PUT", &payload_hash, &amz_date);
+
+        let response = self
+            .client
+            .put(&url)
+            .header("Content-Type", "application/json")
+            .header("x-amz-content-sha256", &payload_hash)
+            .header("x-amz-date", &amz_date)
+            .header("Authorization", &authorization)
+            .body(policy_str)
+            .send()
+            .await
+            .map_err(|e| format!("设置 bucket policy 请求失败: {}", e))?;
+
+        let status = response.status();
+        if status.is_success() || status.as_u16() == 204 {
+            tracing::info!("已设置 bucket '{}' 为公开读", bucket);
+            Ok(())
+        } else {
+            let body = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "设置 bucket '{}' 公开读失败 (HTTP {}): {}。请手动在 MinIO 控制台将 bucket 设为 public",
+                bucket,
+                status.as_u16(),
+                body
+            );
+            // 返回错误以便调用方感知
+            Err(format!(
+                "设置 bucket 公开读失败 (HTTP {}): {}",
+                status.as_u16(),
+                body
+            ))
+        }
+    }
+
+    /// 生成 Bucket Policy 级别 AWS Signature V4 签名
+    fn sign_bucket_policy_request(
+        &self,
+        bucket: &str,
+        method: &str,
+        payload_hash: &str,
+        amz_date: &str,
+    ) -> String {
+        use chrono::Utc;
+
+        let now = Utc::now();
+        let date_stamp = now.format("%Y%m%d").to_string();
+        let region = "us-east-1";
+        let service = "s3";
+
+        let canonical_uri = format!("/{}", bucket);
+        let canonical_querystring = "policy";
+        let canonical_headers = format!(
+            "host:{}\nx-amz-content-sha256:{}\nx-amz-date:{}\n",
+            self.config
+                .endpoint
+                .trim_start_matches("http://")
+                .trim_start_matches("https://"),
+            payload_hash,
+            amz_date
+        );
+        let signed_headers = "host;x-amz-content-sha256;x-amz-date";
+
+        let canonical_request = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            method,
+            canonical_uri,
+            canonical_querystring,
+            canonical_headers,
+            signed_headers,
+            payload_hash
+        );
+
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
+            amz_date,
+            date_stamp,
+            region,
+            service,
+            hex::encode(sha2::Sha256::digest(canonical_request.as_bytes()))
+        );
+
+        let date_key = hmac_sign(
+            format!("AWS4{}", self.config.secret_key).as_bytes(),
+            date_stamp.as_bytes(),
+        );
+        let date_region_key = hmac_sign(&date_key, region.as_bytes());
+        let date_region_service_key = hmac_sign(&date_region_key, service.as_bytes());
+        let signing_key = hmac_sign(&date_region_service_key, b"aws4_request");
+
+        let signature = hex::encode(hmac_sign(&signing_key, string_to_sign.as_bytes()));
+
+        format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request,SignedHeaders={},Signature={}",
+            self.config.access_key, date_stamp, region, service, signed_headers, signature
+        )
+    }
 }
 
 /// HMAC-SHA256 签名辅助函数
@@ -549,10 +664,18 @@ impl ObjectStorage for MinioStorage {
     }
 
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
-        match self.bucket_exists(bucket).await {
-            Ok(true) => Ok(()),
-            Ok(false) => self.create_bucket(bucket).await,
-            Err(e) => Err(e),
+        let exists = self.bucket_exists(bucket).await?;
+        if !exists {
+            self.create_bucket(bucket).await?;
         }
+        // 尝试设置公开读策略（失败不阻断上传，可手动在 MinIO 控制台设置）
+        if let Err(e) = self.set_bucket_public_read(bucket).await {
+            tracing::warn!(
+                "设置 bucket '{}' 公开读失败: {}。请手动在 MinIO 控制台将 bucket 设为 public",
+                bucket,
+                e
+            );
+        }
+        Ok(())
     }
 }

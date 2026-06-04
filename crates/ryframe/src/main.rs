@@ -233,7 +233,7 @@ async fn main() -> Result<(), AppError> {
             missing.len()
         )));
     }
-    tracing::info!("数据库表检查通过 ({} 张表全部存在)", 17);
+    tracing::info!("数据库表检查通过 ({} 张表全部存在)", 19);
 
     // 5. 创建 Application Context
     let context = AppContext::new(config.clone());

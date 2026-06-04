@@ -49,6 +49,9 @@ async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<D
 }
 
 /// 部门列表分页查询
+#[utoipa::path(get, path = "/api/v1/system/depts/list", tag = "部门管理",
+    responses((status = 200, description = "部门列表")),
+    security(("bearer" = [])))]
 async fn list_page(
     State(state): State<AppState>,
     Query(query): Query<DeptListQuery>,
@@ -68,6 +71,9 @@ async fn list_page(
 }
 
 /// 部门列表不分页查询（返回全部数据）
+#[utoipa::path(get, path = "/api/v1/system/depts/listNoPage", tag = "部门管理",
+    responses((status = 200, description = "部门列表")),
+    security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
     Query(query): Query<DeptListQuery>,
@@ -121,6 +127,10 @@ async fn update(
 }
 
 /// 部门详情
+#[utoipa::path(get, path = "/api/v1/system/depts/{id}", tag = "部门管理",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "部门详情")),
+    security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,

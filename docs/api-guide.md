@@ -303,11 +303,18 @@ Authorization: Bearer {token}
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/` | 获取个人信息（含角色、权限、部门） |
-| `PUT` | `/` | 更新个人信息（昵称、邮箱、手机号） |
+| `PUT` | `/` | 更新个人信息（昵称、邮箱、手机号、性别） |
 | `PUT` | `/password` | 修改密码（需提供旧密码） |
 | `PUT` | `/avatar` | 更新头像 URL |
 
-**获取个人信息响应**：
+#### 5.3.1 获取个人信息
+
+```
+GET /api/v1/auth/profile
+Authorization: Bearer {token}
+```
+
+**响应**：
 
 ```json
 {
@@ -331,14 +338,75 @@ Authorization: Bearer {token}
 }
 ```
 
-**修改密码请求**：
+**HTTP 状态码**: 200 | 401
+
+#### 5.3.2 更新个人信息
+
+```
+PUT /api/v1/auth/profile
+```
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `nickname` | string | 是 | 长度 1-64 | 昵称 |
+| `email` | string | 否 | 邮箱格式 | 邮箱 |
+| `phone` | string | 否 | 正则 ^1[3-9]\d{9}$ | 手机号 |
+| `sex` | string | 否 | - | 性别：0=男 1=女 2=未知 |
+
+**请求示例**：
+
+```json
+{
+    "nickname": "新昵称",
+    "email": "new@example.com",
+    "phone": "13800138000",
+    "sex": "0"
+}
+```
+
+**HTTP 状态码**: 200 | 400（参数校验失败）| 401
+
+#### 5.3.3 修改密码
+
+```
+PUT /api/v1/auth/profile/password
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `old_password` | string | 是 | 旧密码，长度 6-100 |
+| `new_password` | string | 是 | 新密码，长度 6-100，至少含字母和数字 |
+
+**请求示例**：
 
 ```json
 {
     "old_password": "123456",
-    "new_password": "new_password_here"
+    "new_password": "NewPass123"
 }
 ```
+
+**HTTP 状态码**: 200 | 400（旧密码错误或新密码不符合规范）| 401
+
+#### 5.3.4 更新头像
+
+```
+PUT /api/v1/auth/profile/avatar
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `avatar_url` | string | 是 | 头像 URL 地址 |
+
+**请求示例**：
+
+```json
+{
+    "avatar_url": "/api/v1/common/file/download?path=2026/06/04/abc123.png"
+}
+```
+
+**HTTP 状态码**: 200 | 400（URL为空）| 401
 
 ### 5.4 用户管理
 
@@ -347,14 +415,107 @@ Authorization: Bearer {token}
 | 方法 | 路径 | 说明 | 权限码 |
 |------|------|------|--------|
 | `GET` | `/list?page=1&pageSize=10&username=&status=` | 分页查询用户 | `system:user:list` |
-| `GET` | `/{id}` | 用户详情 | `system:user:list` |
+| `GET` | `/listNoPage` | 用户列表（不分页，最多10000条） | `system:user:list` |
+| `GET` | `/{id}` | 用户详情（含角色列表） | `system:user:list` |
 | `POST` | `/` | 创建用户 | `system:user:add` |
 | `PUT` | `/{id}` | 更新用户 | `system:user:edit` |
 | `DELETE` | `/{id}` | 删除用户（软删除） | `system:user:remove` |
-| `PUT` | `/reset-password` | 重置密码 | `system:user:edit` |
-| `PUT` | `/change-status` | 修改状态（正常/停用/锁定） | `system:user:edit` |
+| `DELETE` | `/batch/{ids}` | 批量删除用户（逗号分隔ID） | `system:user:remove` |
+| `PUT` | `/{id}/password` | 重置密码（管理员操作） | `system:user:edit` |
+| `PUT` | `/changeStatus` | 修改状态（正常/停用/锁定） | `system:user:edit` |
+| `GET` | `/export` | 导出用户数据为 Excel | `system:user:export` |
+| `POST` | `/import` | 从 Excel 导入用户（multipart/form-data） | `system:user:import` |
+| `GET` | `/import-template` | 下载导入模板 Excel | `system:user:import` |
 
-**创建用户请求**：
+#### 5.4.1 分页查询用户
+
+```
+GET /api/v1/system/users/list?page=1&pageSize=10&username=&phone=&status=&dept_id=
+```
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码（从 1 开始） |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `username` | string | 否 | - | 用户名（模糊搜索） |
+| `phone` | string | 否 | - | 手机号（模糊搜索） |
+| `dept_id` | i64 | 否 | - | 部门 ID 过滤 |
+| `status` | string | 否 | - | 状态过滤：0=停用 1=正常 2=锁定 |
+
+**成功响应**：
+
+```json
+{
+    "code": 200,
+    "message": "查询成功",
+    "data": {
+        "rows": [{
+            "id": 1,
+            "username": "admin",
+            "nickname": "超级管理员",
+            "email": "admin@ryframe.com",
+            "phone": "13800000000",
+            "avatar": null,
+            "dept_id": 1,
+            "dept_name": "RyFrame 科技",
+            "status": "1",
+            "remark": null,
+            "created_at": "2026-05-22T00:00:00"
+        }],
+        "total": 1
+    }
+}
+```
+
+**HTTP 状态码**: 200 | 401（未认证）| 403（无权限）
+
+#### 5.4.2 用户详情
+
+```
+GET /api/v1/system/users/{id}
+```
+
+**响应**：
+
+```json
+{
+    "code": 200,
+    "data": {
+        "id": 1,
+        "username": "admin",
+        "nickname": "超级管理员",
+        "email": "admin@ryframe.com",
+        "phone": "13800000000",
+        "dept_id": 1,
+        "dept_name": "RyFrame 科技",
+        "status": "1",
+        "role_ids": [1],
+        "role_names": ["admin"],
+        "created_at": "2026-05-22T00:00:00",
+        "updated_at": "2026-06-01T00:00:00"
+    }
+}
+```
+
+**HTTP 状态码**: 200 | 401 | 403 | 404（用户不存在）
+
+#### 5.4.3 创建用户
+
+```
+POST /api/v1/system/users
+```
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `username` | string | 是 | 长度 1-50 | 用户名（唯一） |
+| `password` | string | 是 | 长度 6-100 | 密码（可启用复杂度校验） |
+| `nickname` | string | 是 | 长度 ≥1 | 用户昵称 |
+| `email` | string | 否 | - | 邮箱 |
+| `phone` | string | 否 | - | 手机号 |
+| `dept_id` | i64 | 否 | - | 所属部门 ID |
+| `role_ids` | i64[] | 否 | - | 角色 ID 列表 |
+
+**请求示例**：
 
 ```json
 {
@@ -368,15 +529,150 @@ Authorization: Bearer {token}
 }
 ```
 
-**分页查询参数**：
+**HTTP 状态码**: 200 | 400（参数校验失败）| 401 | 403 | 409（用户名已存在）
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `page` | u64 | 否 | 1 | 页码 |
-| `pageSize` | u64 | 否 | 10 | 每页条数 |
-| `username` | string | 否 | - | 用户名（模糊搜索） |
-| `dept_id` | i64 | 否 | - | 部门 ID 过滤 |
-| `status` | string | 否 | - | 状态过滤：0=停用 1=正常 2=锁定 |
+#### 5.4.4 更新用户
+
+```
+PUT /api/v1/system/users/{id}
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `nickname` | string | 是 | 用户昵称 |
+| `email` | string | 否 | 邮箱 |
+| `phone` | string | 否 | 手机号 |
+| `dept_id` | i64 | 否 | 部门 ID |
+| `status` | string | 是 | 状态：0/1/2 |
+| `role_ids` | i64[] | 否 | 角色 ID 列表 |
+
+**请求示例**：
+
+```json
+{
+    "nickname": "新昵称",
+    "email": "new@example.com",
+    "phone": "13800000001",
+    "dept_id": 3,
+    "status": "1",
+    "role_ids": [1, 2]
+}
+```
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+#### 5.4.5 删除用户（软删除）
+
+```
+DELETE /api/v1/system/users/{id}
+```
+
+**HTTP 状态码**: 200 | 401 | 403 | 404
+
+#### 5.4.6 批量删除用户
+
+```
+DELETE /api/v1/system/users/batch/1,2,3
+```
+
+路径参数为逗号分隔的用户 ID 列表。
+
+**失败响应（ID 列表为空）**：
+
+```json
+{ "code": 400, "message": "请选择要删除的用户", "data": null }
+```
+
+**HTTP 状态码**: 200 | 400（ID列表为空）| 401 | 403
+
+#### 5.4.7 重置密码
+
+```
+PUT /api/v1/system/users/{id}/password
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `password` | string | 是 | 长度 6-100，新密码 |
+
+**请求示例**：
+
+```json
+{
+    "password": "NewPass123"
+}
+```
+
+**HTTP 状态码**: 200 | 400（密码不符合规范）| 401 | 403 | 404
+
+#### 5.4.8 修改用户状态
+
+```
+PUT /api/v1/system/users/changeStatus
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `user_id` | i64 | 是 | 用户 ID |
+| `status` | string | 是 | 状态：0=停用 1=正常 2=锁定 |
+
+**请求示例**：
+
+```json
+{
+    "user_id": 3,
+    "status": "0"
+}
+```
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+#### 5.4.9 导出用户（Excel）
+
+```
+GET /api/v1/system/users/export
+```
+
+返回 `.xlsx` 二进制文件（`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`）。
+
+导出字段：user_id, username, nickname, email, phone, sex, dept_name, status, remark, created_at。
+
+**HTTP 状态码**: 200 | 401 | 403
+
+#### 5.4.10 导入用户（Excel）
+
+```
+POST /api/v1/system/users/import
+Content-Type: multipart/form-data
+```
+
+上传字段名：`file`（.xlsx 文件）。导入模板列：username, nickname, email, phone, sex, dept_id, status, remark。
+
+**响应示例**：
+
+```json
+{
+    "code": 200,
+    "message": "导入完成",
+    "data": {
+        "success_count": 5,
+        "fail_count": 1,
+        "errors": ["第 3 行数据验证失败: 用户名长度为2-64个字符"]
+    }
+}
+```
+
+**HTTP 状态码**: 200 | 400（未找到上传文件）| 401 | 403
+
+#### 5.4.11 下载导入模板
+
+```
+GET /api/v1/system/users/import-template
+```
+
+返回 `.xlsx` 模板文件（包含表头，无数据行），文件名 `user_template.xlsx`。
+
+**HTTP 状态码**: 200 | 401 | 403
 
 **用户状态值**：
 
@@ -392,16 +688,70 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 | 权限码 |
 |------|------|------|--------|
-| `GET` | `/list?page=1&pageSize=10` | 角色列表 | `system:role:list` |
+| `GET` | `/list?page=1&pageSize=10&name=&code=&status=` | 角色列表（分页） | `system:role:list` |
+| `GET` | `/listNoPage` | 角色列表（不分页） | `system:role:list` |
+| `GET` | `/export` | 导出角色 Excel | `system:role:export` |
 | `GET` | `/{id}` | 角色详情 | `system:role:list` |
 | `POST` | `/` | 创建角色 | `system:role:add` |
 | `PUT` | `/{id}` | 更新角色 | `system:role:edit` |
 | `DELETE` | `/{id}` | 删除角色 | `system:role:remove` |
-| `PUT` | `/assign-perms` | 分配权限（role_permission） | `system:role:edit` |
-| `PUT` | `/assign-menus` | 分配菜单（role_menu） | `system:role:edit` |
-| `PUT` | `/assign-data-scope` | 设置数据权限 | `system:role:edit` |
+| `DELETE` | `/batch/{ids}` | 批量删除（逗号分隔ID） | `system:role:remove` |
+| `PUT` | `/{id}/permissions` | 分配权限（role_permission） | `system:role:edit` |
+| `PUT` | `/{id}/menus` | 分配菜单（role_menu） | `system:role:edit` |
+| `PUT` | `/{id}/data-scope` | 设置数据权限 | `system:role:edit` |
 
-**创建角色请求**：
+#### 5.5.1 分页查询角色
+
+```
+GET /api/v1/system/roles/list?page=1&pageSize=10&name=&code=&status=
+```
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `name` | string | 否 | - | 角色名称（模糊搜索） |
+| `code` | string | 否 | - | 角色编码（模糊搜索） |
+| `status` | string | 否 | - | 状态过滤：0/1 |
+
+**成功响应**：
+
+```json
+{
+    "code": 200,
+    "message": "查询成功",
+    "data": {
+        "rows": [{
+            "id": 1,
+            "name": "超级管理员",
+            "code": "admin",
+            "data_scope": "1",
+            "sort": 1,
+            "status": "1",
+            "remark": null,
+            "created_at": "2026-05-22T00:00:00"
+        }],
+        "total": 1
+    }
+}
+```
+
+**HTTP 状态码**: 200 | 401 | 403
+
+#### 5.5.2 创建角色
+
+```
+POST /api/v1/system/roles
+```
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `name` | string | 是 | 长度 1-50 | 角色名称 |
+| `code` | string | 是 | 长度 1-50 | 角色编码（唯一） |
+| `sort` | i32 | 否 | - | 显示顺序，默认 0 |
+| `data_scope` | string | 否 | - | 数据范围：1/2/3/4/5，默认 1 |
+
+**请求示例**：
 
 ```json
 {
@@ -412,23 +762,109 @@ Authorization: Bearer {token}
 }
 ```
 
-**分配权限请求**：
+**HTTP 状态码**: 200 | 400（参数校验失败）| 401 | 403 | 409（code 重复）
+
+#### 5.5.3 更新角色
+
+```
+PUT /api/v1/system/roles/{id}
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 角色名称 |
+| `sort` | i32 | 否 | 排序值 |
+| `status` | string | 是 | 状态：0/1 |
+| `data_scope` | string | 否 | 数据范围 |
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+#### 5.5.4 删除角色
+
+```
+DELETE /api/v1/system/roles/{id}
+```
+**HTTP 状态码**: 200 | 401 | 403 | 404
+
+#### 5.5.5 批量删除角色
+
+```
+DELETE /api/v1/system/roles/batch/1,2,3
+```
+
+**HTTP 状态码**: 200 | 400（ID列表为空）| 401 | 403
+
+#### 5.5.6 分配权限
+
+```
+PUT /api/v1/system/roles/{id}/permissions
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `perm_ids` | i64[] | 是 | 权限 ID 列表（全量覆盖） |
+
+**请求示例**：
 
 ```json
 {
-    "role_id": 3,
     "perm_ids": [7, 8, 9, 10]
 }
 ```
 
-**分配菜单请求**：
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+#### 5.5.7 分配菜单
+
+```
+PUT /api/v1/system/roles/{id}/menus
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `menu_ids` | i64[] | 是 | 菜单 ID 列表（全量覆盖） |
+
+**请求示例**：
 
 ```json
 {
-    "role_id": 3,
     "menu_ids": [0, 1, 4]
 }
 ```
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+#### 5.5.8 设置数据权限
+
+```
+PUT /api/v1/system/roles/{id}/data-scope
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `data_scope` | string | 是 | 数据范围：1/2/3/4/5 |
+| `dept_ids` | i64[] | 否 | 自定义部门 ID 列表（仅 data_scope=2 时有效） |
+
+**请求示例（自定义部门）**：
+
+```json
+{
+    "data_scope": "2",
+    "dept_ids": [1, 5, 10]
+}
+```
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+#### 5.5.9 导出角色
+
+```
+GET /api/v1/system/roles/export
+```
+
+返回 `.xlsx` 文件，导出字段：role_id, role_name, role_code, data_scope, status, sort, remark, created_at。
+
+**HTTP 状态码**: 200 | 401 | 403
 
 **数据权限 (data_scope)**：
 
@@ -456,15 +892,24 @@ Authorization: Bearer {token}
 
 **基础路径**: `/api/v1/system/menus` | **全部需要认证 + 用户限流 + 操作日志**
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/tree` | 菜单树（含目录 M/菜单 C/按钮 F） |
-| `GET` | `/list?page=1&pageSize=10` | 菜单列表（分页） |
-| `GET` | `/listNoPage` | 菜单列表（不分页） |
-| `GET` | `/{id}` | 菜单详情 |
-| `POST` | `/` | 创建菜单 |
-| `PUT` | `/{id}` | 更新菜单 |
-| `DELETE` | `/{id}` | 删除菜单（软删除） |
+| 方法 | 路径 | 说明 | 权限码 |
+|------|------|------|--------|
+| `GET` | `/tree` | 菜单树（含目录 M/菜单 C/按钮 F） | `system:menu:list` |
+| `GET` | `/list?page=1&pageSize=10&name=&status=` | 菜单列表（分页） | `system:menu:list` |
+| `GET` | `/listNoPage` | 菜单列表（不分页） | `system:menu:list` |
+| `GET` | `/{id}` | 菜单详情 | `system:menu:list` |
+| `POST` | `/` | 创建菜单 | `system:menu:add` |
+| `PUT` | `/{id}` | 更新菜单 | `system:menu:edit` |
+| `DELETE` | `/{id}` | 删除菜单（软删除） | `system:menu:remove` |
+
+**分页查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `name` | string | 否 | - | 菜单名称（模糊搜索） |
+| `status` | string | 否 | - | 状态：0/1 |
 
 **菜单 DTO 详细字段**：
 
@@ -563,9 +1008,50 @@ Authorization: Bearer {token}
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/tree` | 部门树（含 ancestors 祖级列表） |
+| `GET` | `/list?page=1&pageSize=10&name=&status=` | 部门列表（分页） |
+| `GET` | `/listNoPage` | 部门列表（不分页） |
+| `GET` | `/{id}` | 部门详情 |
 | `POST` | `/` | 创建部门 |
 | `PUT` | `/{id}` | 更新部门 |
 | `DELETE` | `/{id}` | 删除部门 |
+
+**分页查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `name` | string | 否 | - | 部门名称（模糊搜索） |
+| `status` | string | 否 | - | 状态过滤：0/1 |
+
+**创建部门**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 长度 ≥1，部门名称 |
+| `parent_id` | i64 | 否 | 父部门 ID |
+| `sort` | i32 | 否 | 显示顺序，默认 0 |
+
+**请求示例**：
+
+```json
+{
+    "name": "技术部",
+    "parent_id": 1,
+    "sort": 2
+}
+```
+
+**更新部门**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 部门名称 |
+| `parent_id` | i64 | 否 | 父部门 ID |
+| `sort` | i32 | 否 | 排序值 |
+| `status` | string | 是 | 状态：0/1 |
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
 ### 5.9 岗位管理
 
@@ -573,10 +1059,53 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/list?page=1&pageSize=10` | 岗位列表 |
+| `GET` | `/list?page=1&pageSize=10&name=&code=&status=` | 岗位列表（分页） |
+| `GET` | `/listNoPage` | 岗位列表（不分页） |
+| `GET` | `/export` | 导出岗位 Excel |
+| `GET` | `/{id}` | 岗位详情 |
 | `POST` | `/` | 创建岗位 |
 | `PUT` | `/{id}` | 更新岗位 |
 | `DELETE` | `/{id}` | 删除岗位 |
+
+**分页查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `name` | string | 否 | - | 岗位名称（模糊搜索） |
+| `code` | string | 否 | - | 岗位编码（模糊搜索） |
+| `status` | string | 否 | - | 状态过滤：0/1 |
+
+**创建岗位**：
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `name` | string | 是 | 长度 ≥1 | 岗位名称 |
+| `code` | string | 是 | 长度 ≥1 | 岗位编码 |
+| `sort` | i32 | 否 | - | 显示顺序 |
+
+**请求示例**：
+
+```json
+{
+    "name": "董事长",
+    "code": "chairman",
+    "sort": 1
+}
+```
+
+**更新岗位**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 岗位名称 |
+| `sort` | i32 | 否 | 排序值 |
+| `status` | string | 是 | 状态：0/1 |
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+**导出岗位**：`GET /api/v1/system/posts/export` 返回 `.xlsx`，字段：post_id, name, code, sort, status, remark, created_at。
 
 ### 5.10 参数配置
 
@@ -584,12 +1113,47 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/list?page=1&pageSize=10` | 配置列表 |
+| `GET` | `/list?page=1&pageSize=10` | 配置列表（分页） |
+| `GET` | `/listNoPage` | 配置列表（不分页） |
+| `GET` | `/export` | 导出配置 Excel |
 | `GET` | `/{id}` | 配置详情 |
-| `GET` | `/configKey/{key}` | 按 Key 精确查询 |
+| `GET` | `/configKey/{key}` | 按 Key 精确查询（只返回值） |
 | `POST` | `/` | 创建配置 |
 | `PUT` | `/{id}` | 更新配置 |
 | `DELETE` | `/{id}` | 删除配置 |
+| `DELETE` | `/refreshCache` | 刷新参数缓存（清空 Redis 中 sys_config:key:*） |
+
+**创建配置**：
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `name` | string | 是 | 长度 1-100 | 参数名称 |
+| `key` | string | 是 | 长度 1-100 | 参数键名（唯一） |
+| `value` | string | 是 | 长度 1-500 | 参数键值 |
+| `remark` | string | 否 | - | 备注 |
+
+**请求示例**：
+
+```json
+{
+    "name": "文件上传大小限制",
+    "key": "sys.upload.fileSize",
+    "value": "10485760",
+    "remark": "单位：字节"
+}
+```
+
+**更新配置**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `value` | string | 是 | 参数键值（长度≥1） |
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+**按 Key 查询**：`GET /api/v1/system/configs/configKey/sys.account.captchaEnabled` → 直接返回 `{"code":200,"data":"true"}`。
+
+**导出配置**：`GET /api/v1/system/configs/export` → `.xlsx`，字段：name, key, value, remark, created_at。
 
 **默认配置项**：
 
@@ -608,8 +1172,9 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/types?page=1&pageSize=10` | 字典类型列表 |
-| `GET` | `/types/{id}` | 字典类型详情 |
+| `GET` | `/types/list?page=1&pageSize=10` | 字典类型列表（分页） |
+| `GET` | `/types/listNoPage` | 字典类型列表（不分页） |
+| `GET` | `/types/export` | 导出字典类型 Excel |
 | `POST` | `/types` | 创建字典类型 |
 | `PUT` | `/types/{id}` | 更新字典类型 |
 | `DELETE` | `/types/{id}` | 删除字典类型 |
@@ -618,10 +1183,64 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/data/type/{type_code}` | 按类型编码获取字典数据列表 |
+| `GET` | `/data?type_code=xxx` | 按类型编码查询字典数据列表 |
+| `GET` | `/data/type/{dict_type}` | 按路径参数查询（返回 dictLabel/dictValue/cssClass） |
 | `POST` | `/data` | 创建字典数据 |
 | `PUT` | `/data/{id}` | 更新字典数据 |
 | `DELETE` | `/data/{id}` | 删除字典数据 |
+
+**创建字典类型**：
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `name` | string | 是 | 长度 ≥1 | 字典名称 |
+| `code` | string | 是 | 长度 ≥1 | 字典编码（唯一） |
+
+**创建字典数据**：
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `type_code` | string | 是 | - | 所属字典类型编码 |
+| `label` | string | 是 | 长度 ≥1 | 字典标签（显示名） |
+| `value` | string | 是 | 长度 ≥1 | 字典值 |
+| `sort` | i32 | 否 | - | 排序，默认 0 |
+
+**请求示例（创建字典数据）**：
+
+```json
+{
+    "type_code": "sys_user_sex",
+    "label": "男",
+    "value": "0",
+    "sort": 0
+}
+```
+
+**字典数据路径查询** `GET /api/v1/system/dict/data/type/sys_user_sex`：
+
+```json
+{
+    "code": 200,
+    "data": [
+        { "dictLabel": "男", "dictValue": "0", "cssClass": null },
+        { "dictLabel": "女", "dictValue": "1", "cssClass": null },
+        { "dictLabel": "未知", "dictValue": "2", "cssClass": null }
+    ]
+}
+```
+
+**更新字典数据**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `label` | string | 是 | 字典标签 |
+| `value` | string | 是 | 字典值 |
+| `sort` | i32 | 否 | 排序值 |
+| `status` | string | 是 | 状态：0/1 |
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+**导出字典类型**：`GET /api/v1/system/dict/types/export` → `.xlsx`，字段：name, code, status, remark, created_at。
 
 ### 5.12 通知公告
 
@@ -629,10 +1248,51 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/list?page=1&pageSize=10` | 通知列表 |
+| `GET` | `/list?page=1&pageSize=10&title=&notice_type=&status=` | 通知列表（分页） |
+| `GET` | `/listNoPage` | 通知列表（不分页） |
+| `GET` | `/{id}` | 通知详情 |
 | `POST` | `/` | 创建通知 |
 | `PUT` | `/{id}` | 更新通知 |
 | `DELETE` | `/{id}` | 删除通知 |
+
+**分页查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `title` | string | 否 | - | 标题（模糊搜索） |
+| `notice_type` | string | 否 | - | 类型：notice/announcement |
+| `status` | string | 否 | - | 状态：0/1/2 |
+
+**创建通知**：
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `title` | string | 是 | 长度 ≥1 | 标题 |
+| `content` | string | 是 | 长度 ≥1 | 内容 |
+| `notice_type` | string | 否 | - | 类型，默认 notice |
+
+**请求示例**：
+
+```json
+{
+    "title": "系统维护通知",
+    "content": "系统将于本周六凌晨进行维护",
+    "notice_type": "notice"
+}
+```
+
+**更新通知**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `title` | string | 是 | 标题 |
+| `content` | string | 是 | 内容 |
+| `notice_type` | string | 否 | 类型 |
+| `status` | string | 是 | 状态：0/1/2 |
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
 **通知状态**：`0`=草稿 `1`=已发布 `2`=已关闭
 
@@ -644,8 +1304,23 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/list?page=1&pageSize=10` | 操作日志分页查询 |
+| `GET` | `/list?page=1&pageSize=10&oper_name=&status=&begin_time=&end_time=` | 操作日志分页查询 |
+| `GET` | `/listNoPage` | 操作日志不分页查询 |
+| `GET` | `/export` | 导出操作日志 Excel |
 | `DELETE` | `/clean` | 清空全部操作日志 |
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `oper_name` | string | 否 | - | 操作人（模糊） |
+| `status` | string | 否 | - | 状态：0=失败 1=成功 |
+| `begin_time` | string | 否 | - | 开始时间，格式 yyyy-MM-dd HH:mm:ss |
+| `end_time` | string | 否 | - | 结束时间 |
+
+**导出**：`GET /api/v1/system/operlogs/export` → `.xlsx`，字段：title, business_type, oper_name, oper_url, oper_ip, status, cost_time, oper_time。
 
 **日志包含信息**：操作人、IP、URL、请求方法、请求参数、响应结果、耗时(ms)、业务类型。
 
@@ -655,8 +1330,23 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/list?page=1&pageSize=10` | 登录日志分页查询 |
+| `GET` | `/list?page=1&pageSize=10&user_name=&status=&begin_time=&end_time=` | 登录日志分页查询 |
+| `GET` | `/listNoPage` | 登录日志不分页查询 |
+| `GET` | `/export` | 导出登录日志 Excel |
 | `DELETE` | `/clean` | 清空全部登录日志 |
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `user_name` | string | 否 | - | 用户名（模糊） |
+| `status` | string | 否 | - | 状态：0=失败 1=成功 |
+| `begin_time` | string | 否 | - | 开始时间 |
+| `end_time` | string | 否 | - | 结束时间 |
+
+**导出**：`GET /api/v1/system/loginlogs/export` → `.xlsx`，字段：user_name, ipaddr, login_location, browser, os, status, msg, login_time。
 
 **日志包含信息**：用户名、IP、地址、浏览器、操作系统、登录状态(0=失败/1=成功)、提示信息、登录时间。
 
@@ -666,26 +1356,60 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/list` | 任务列表（不分页） |
+| `GET` | `/list?page=1&pageSize=10` | 任务列表（分页） |
+| `GET` | `/listNoPage` | 任务列表（不分页） |
 | `POST` | `/` | 创建任务 |
 | `PUT` | `/{id}` | 更新任务 |
 | `DELETE` | `/{id}` | 删除任务 |
 | `POST` | `/{id}/pause` | 暂停任务 |
 | `POST` | `/{id}/resume` | 恢复任务 |
 | `POST` | `/{id}/trigger` | 立即执行一次 |
+| `GET` | `/logs?page=1&pageSize=10&job_name=&status=` | 任务执行日志 |
 
-**创建任务请求**：
+**创建任务**：
+
+| 参数 | 类型 | 必填 | 验证 | 说明 |
+|------|------|------|------|------|
+| `name` | string | 是 | 长度 1-100 | 任务名称 |
+| `cron_expr` | string | 是 | 长度 1-100 | Cron 表达式（如 `0 0 3 * * *`） |
+| `group_name` | string | 否 | - | 任务分组名 |
+| `misfire_policy` | string | 否 | - | 错过策略：1=立即执行 2=放弃 |
+| `concurrent` | string | 否 | - | 是否并发：0=禁止 1=允许 |
+| `remark` | string | 否 | - | 备注 |
+
+**请求示例**：
 
 ```json
 {
     "name": "clean_temp_files",
-    "group_name": "system",
     "cron_expr": "0 0 3 * * *",
+    "group_name": "system",
     "misfire_policy": "1",
     "concurrent": "0",
     "remark": "每天凌晨 3 点清理临时文件"
 }
 ```
+
+**更新任务**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `cron_expr` | string | 否 | Cron 表达式 |
+| `status` | string | 否 | 状态 |
+| `remark` | string | 否 | 备注 |
+
+**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
+
+**任务执行日志查询参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `page` | u64 | 否 | 页码 |
+| `pageSize` | u64 | 否 | 每页条数 |
+| `job_name` | string | 否 | 任务名称 |
+| `status` | string | 否 | 执行状态 |
+
+**立即触发**：`POST /api/v1/system/jobs/{id}/trigger` 返回 `TaskHistory` 对象。
 
 ### 5.16 在线用户
 
@@ -693,10 +1417,22 @@ Authorization: Bearer {token}
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/list` | 在线用户列表 |
+| `GET` | `/list?page=1&pageSize=10&username=&ipaddr=` | 在线用户列表（分页） |
+| `GET` | `/listNoPage` | 在线用户列表（不分页） |
 | `DELETE` | `/{token_id}` | 强制下线（token 加入黑名单） |
 
-**在线用户信息**：tokenId、用户名、登录IP、登录时间、最后活跃时间。
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | u64 | 否 | 1 | 页码 |
+| `pageSize` | u64 | 否 | 10 | 每页条数 |
+| `username` | string | 否 | - | 用户名（模糊搜索） |
+| `ipaddr` | string | 否 | - | IP 地址（模糊搜索） |
+
+**在线用户信息**：token_id, user_id, username, dept_name, ipaddr, login_location, browser, os, login_time, last_access_time。
+
+**HTTP 状态码**: 200 | 400 | 401 | 403
 
 ### 5.17 监控
 
@@ -733,9 +1469,21 @@ Authorization: Bearer {token}
 |------|------|------|
 | `GET` | `/tables` | 数据库表列表 |
 | `POST` | `/preview` | 预览生成代码 |
-| `POST` | `/generate` | 执行代码生成（生成到项目目录） |
+| `POST` | `/generate` | 执行代码生成（写入磁盘） |
+| `POST` | `/download` | 打包 zip 下载 |
 
-**生成代码预览请求**：
+**生成选项 (GenerateOptions)**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `table_name` | string | 是 | 数据库表名（如 sys_user） |
+| `module_name` | string | 否 | 模块名称 |
+| `business_name` | string | 否 | 业务名称 |
+| `class_name` | string | 否 | 类名 |
+| `package_name` | string | 否 | 包名 |
+| `author` | string | 否 | 作者 |
+
+**请求示例**：
 
 ```json
 {
@@ -747,6 +1495,8 @@ Authorization: Bearer {token}
 ```
 
 生成产物：Entity → Repository → Service → Handler → DTO（五层架构）。
+
+**HTTP 状态码**: 200 | 400 | 401 | 403
 
 ### 5.19 通用
 

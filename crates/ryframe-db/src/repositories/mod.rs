@@ -1,6 +1,7 @@
 pub mod config_repo;
 pub mod dept_repo;
 pub mod dict_repo;
+pub mod file_repo;
 mod login_info_repo;
 pub mod menu_repo;
 pub mod notice_repo;
@@ -13,6 +14,7 @@ pub mod user_repo;
 pub use config_repo::ConfigRepository;
 pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeRepository};
+pub use file_repo::FileRepository;
 pub use login_info_repo::LoginInfoRepository;
 pub use menu_repo::MenuRepository;
 pub use notice_repo::NoticeRepository;

@@ -66,6 +66,9 @@ pub async fn list_online_users(
 }
 
 /// 获取在线用户列表（分页）
+#[utoipa::path(get, path = "/api/v1/system/online/list", tag = "在线用户",
+    responses((status = 200, description = "在线用户列表")),
+    security(("bearer" = [])))]
 pub async fn list_online_users_page(
     State(state): State<AppState>,
     Query(query): Query<OnlineUserQuery>,

@@ -71,6 +71,9 @@ async fn list(
 }
 
 /// 通知公告列表不分页查询（返回全部数据）
+#[utoipa::path(get, path = "/api/v1/system/notices/listNoPage", tag = "通知公告",
+    responses((status = 200, description = "公告列表")),
+    security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<NoticeVo>>>> {
@@ -85,6 +88,11 @@ async fn list_no_page(
         .map(|p| Json(ApiResponse::success(p.records)))
 }
 
+/// 通知公告详情
+#[utoipa::path(get, path = "/api/v1/system/notices/{id}", tag = "通知公告",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "通知详情")),
+    security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -117,6 +125,12 @@ async fn create(
         .map(|v| Json(ApiResponse::success(v)))
 }
 
+/// 更新通知公告
+#[utoipa::path(put, path = "/api/v1/system/notices/{id}", tag = "通知公告",
+    params(("id" = i64, Path)),
+    request_body = UpdateNoticeDto,
+    responses((status = 200, description = "更新成功")),
+    security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,

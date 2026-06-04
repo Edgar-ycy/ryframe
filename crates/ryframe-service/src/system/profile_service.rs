@@ -5,7 +5,7 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
 };
 use ryframe_db::{PermissionRepository, RoleRepository, UserRepository, dept, user};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde::Serialize;
 
 /// 用户个人信息响应
@@ -157,23 +157,36 @@ impl ProfileServiceImpl {
         user_id: i64,
         avatar_url: String,
     ) -> AppResult<()> {
-        let mut user = self
+        // 读取当前头像路径用于后续清理
+        let old_avatar = self
+            .user_repo
+            .find_by_id(db, user_id)
+            .await?
+            .and_then(|u| u.avatar);
+
+        // 直接构造 ActiveModel，只更新 avatar 和 updated_at
+        let active = user::ActiveModel {
+            id: Set(user_id),
+            avatar: Set(Some(avatar_url)),
+            updated_at: Set(chrono::Utc::now()),
+            ..Default::default()
+        };
+        active
+            .update(db)
+            .await
+            .map_err(|e| AppError::Database(format!("更新头像失败: {}", e)))?;
+
+        // 读取验证：确认头像已持久化
+        let updated = self
             .user_repo
             .find_by_id(db, user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
-
-        // 记录旧头像路径，用于清理
-        let old_avatar = user.avatar.clone();
-
-        user.avatar = Some(avatar_url);
-        user.fill_on_update(&FillContext::new());
-
-        let active_model: user::ActiveModel = user.into();
-        active_model
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(format!("更新头像失败: {}", e)))?;
+        tracing::info!(
+            "[update_avatar] DB 确认: user_id={}, avatar={:?}",
+            user_id,
+            updated.avatar
+        );
 
         // 清理旧头像文件（仅清理本地上传的文件）
         if let Some(old_path) = old_avatar
