@@ -191,6 +191,34 @@ pub async fn login(
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
     req.validate()?;
 
+    // 检查验证码开关：开启时校验验证码
+    {
+        let captcha_enabled = state
+            .config_service
+            .find_by_key(&state.db, "sys.account.captchaEnabled")
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.value == "true")
+            .unwrap_or(true);
+        if captcha_enabled {
+            let captcha_id = req
+                .captcha_id
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| AppError::Validation("验证码ID不能为空".into()))?;
+            let captcha_code = req
+                .captcha_code
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| AppError::Validation("验证码不能为空".into()))?;
+            let valid = state.captcha_store.verify(captcha_id, captcha_code).await;
+            if !valid {
+                return Err(AppError::Validation("验证码错误或已过期".into()));
+            }
+        }
+    }
+
     let remote_addr = addr.to_string();
     let ip = ryframe_common::utils::ip::get_client_ip(&headers, &remote_addr);
     let user_agent = headers

@@ -9,6 +9,10 @@ pub struct LoginRequest {
     pub username: String,
     #[validate(length(min = 1, message = "密码不能为空"))]
     pub password: String,
+    /// 验证码 ID（验证码开关开启时必填）
+    pub captcha_id: Option<String>,
+    /// 验证码（验证码开关开启时必填）
+    pub captcha_code: Option<String>,
 }
 
 /// 刷新令牌请求

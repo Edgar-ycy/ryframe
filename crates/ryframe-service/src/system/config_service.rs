@@ -139,11 +139,20 @@ impl ConfigServiceImpl {
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
 
         let key = cfg.key.clone();
+        tracing::info!(
+            "[ConfigUpdate] id={}, key={}, old_value={}, input_value={}",
+            id, key, cfg.value, value
+        );
         cfg.value = value.to_string();
+        tracing::info!("[ConfigUpdate] after set: cfg.value={}", cfg.value);
         cfg.fill_on_update(&FillContext::new());
 
         let saved = self.config_repo.update(db, cfg).await?;
-        let vo = ConfigVo::from(saved);
+        let vo = ConfigVo::from(saved.clone());
+        tracing::info!(
+            "[ConfigUpdate] DB saved.value={}, vo.value={}",
+            saved.value, vo.value
+        );
 
         // 便新缓存
         self.invalidate_config_cache(&key).await;

@@ -170,6 +170,7 @@ pub fn captcha_router() -> Router<AppState> {
         .route("/generate", get(generate_captcha_handler))
         .route("/image", get(captcha_image_handler))
         .route("/verify", post(verify_captcha_handler))
+        .route("/config", get(get_captcha_config_handler))
 }
 
 /// 生成验证码
@@ -241,6 +242,27 @@ pub async fn verify_captcha_handler(
     } else {
         Err(AppError::Validation("验证码错误或已过期".into()))
     }
+}
+
+/// 查询验证码开关状态
+///
+/// GET /api/v1/auth/captcha/config（公开接口，无需认证）
+/// 返回 sys.account.captchaEnabled 配置值。
+pub async fn get_captcha_config_handler(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let enabled = state
+        .config_service
+        .find_by_key(&state.db, "sys.account.captchaEnabled")
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.value == "true")
+        .unwrap_or(true); // 配置缺失时默认开启
+
+    Ok(Json(ApiResponse::success(
+        serde_json::json!({"captcha_enabled": enabled}),
+    )))
 }
 
 /// 返回验证码图片（PNG 格式）
