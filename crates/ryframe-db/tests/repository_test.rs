@@ -3,7 +3,7 @@
 //! 使用 SQLite 内存数据库测试 Permission/Post/Config/Dict/Notice/Job/Log Repo 的 CRUD 行为。
 
 use chrono::Utc;
-use ryframe_common::utils::snowflake;
+use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::{
     ConfigRepository, DictDataRepository, DictTypeRepository, JobRepository, LoginInfoRepository,
@@ -29,6 +29,178 @@ async fn setup_test_db() -> DatabaseConnection {
     db
 }
 
+// ==================== 辅助构造器（使用 AutoFill 自动生成雪花 ID） ====================
+
+fn make_permission(name: &str, code: &str, sort: i32) -> permission::Model {
+    let mut m = permission::Model {
+        id: 0,
+        name: name.into(),
+        code: code.into(),
+        parent_id: None,
+        perm_type: "api".into(),
+        path: None,
+        icon: None,
+        sort,
+        status: "1".into(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_role(name: &str, code: &str) -> role::Model {
+    let mut m = role::Model {
+        id: 0,
+        name: name.into(),
+        code: code.into(),
+        data_scope: role::Model::DATA_SCOPE_ALL.to_string(),
+        status: "1".into(),
+        sort: 0,
+        remark: None,
+        del_flag: role::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_post(name: &str, code: &str, status: &str) -> post::Model {
+    let mut m = post::Model {
+        id: 0,
+        name: name.into(),
+        code: code.into(),
+        sort: 0,
+        status: status.into(),
+        remark: None,
+        del_flag: post::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_config(key: &str, value: &str) -> config::Model {
+    let mut m = config::Model {
+        id: 0,
+        name: key.into(),
+        key: key.into(),
+        value: value.into(),
+        remark: None,
+        del_flag: config::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_dict_type(name: &str, code: &str) -> dict_type::Model {
+    let mut m = dict_type::Model {
+        id: 0,
+        name: name.into(),
+        code: code.into(),
+        status: dict_type::Model::STATUS_NORMAL.to_string(),
+        remark: None,
+        del_flag: dict_type::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_dict_data(type_code: &str, label: &str, value: &str, sort: i32) -> dict_data::Model {
+    let mut m = dict_data::Model {
+        id: 0,
+        type_code: type_code.into(),
+        label: label.into(),
+        value: value.into(),
+        sort,
+        status: dict_data::Model::STATUS_NORMAL.to_string(),
+        css_class: None,
+        remark: None,
+        del_flag: dict_data::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_notice(title: &str, ntype: Option<&str>) -> notice::Model {
+    let mut m = notice::Model {
+        id: 0,
+        title: title.into(),
+        content: "内容".into(),
+        r#type: ntype.map(|s| s.to_string()),
+        status: notice::Model::STATUS_PUBLISHED.to_string(),
+        created_by: None,
+        del_flag: notice::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_job(name: &str, status: &str) -> job::Model {
+    let mut m = job::Model {
+        id: 0,
+        name: name.into(),
+        group_name: "DEFAULT".into(),
+        cron_expr: "0/30 * * * * ?".into(),
+        misfire_policy: "1".into(),
+        concurrent: "1".into(),
+        status: status.into(),
+        remark: None,
+        create_time: now(),
+        update_time: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_login_info(user: &str, status: &str) -> login_info::Model {
+    let mut m = login_info::Model {
+        id: 0,
+        user_name: user.into(),
+        ipaddr: "127.0.0.1".into(),
+        login_location: Some("本地".into()),
+        browser: Some("Chrome".into()),
+        os: Some("Windows".into()),
+        status: status.into(),
+        msg: Some("登录成功".into()),
+        login_time: Utc::now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
+fn make_oper_log(oper_name: &str, status: &str) -> oper_log::Model {
+    let mut m = oper_log::Model {
+        id: 0,
+        title: format!("{}操作", oper_name),
+        business_type: "INSERT".into(),
+        method: "UserServiceImpl.create".into(),
+        request_method: "POST".into(),
+        oper_name: oper_name.into(),
+        oper_url: "/api/v1/system/users".into(),
+        oper_ip: "127.0.0.1".into(),
+        oper_location: Some("本地".into()),
+        oper_param: Some("{}".into()),
+        json_result: Some("{}".into()),
+        status: status.into(),
+        error_msg: None,
+        oper_time: Utc::now(),
+        cost_time: 23,
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
+}
+
 // ==================== PermissionRepository ====================
 
 #[tokio::test]
@@ -36,19 +208,7 @@ async fn test_permission_repo_crud() {
     let db = setup_test_db().await;
     let repo = PermissionRepository;
 
-    let perm = permission::Model {
-        id: snowflake::next_snowflake_id(),
-        name: "用户列表".into(),
-        code: "system:user:list".into(),
-        parent_id: None,
-        perm_type: "api".into(),
-        path: Some("/api/v1/system/users".into()),
-        icon: None,
-        sort: 1,
-        status: "1".into(),
-        created_at: now(),
-        updated_at: now(),
-    };
+    let perm = make_permission("用户列表", "system:user:list", 1);
     let inserted = repo.insert(&db, perm).await.unwrap();
     assert_eq!(inserted.code, "system:user:list");
 
@@ -65,63 +225,9 @@ async fn test_permission_repo_assign_and_find_role_perms() {
     let perm_repo = PermissionRepository;
     let role_repo = RoleRepository;
 
-    let r = role_repo
-        .insert(
-            &db,
-            role::Model {
-                id: snowflake::next_snowflake_id(),
-                name: "测试角色".into(),
-                code: "test_role".into(),
-                data_scope: role::Model::DATA_SCOPE_ALL.to_string(),
-                status: "1".into(),
-                sort: 0,
-                remark: None,
-                del_flag: role::Model::DEL_FLAG_NORMAL.to_string(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
-
-    let p1 = perm_repo
-        .insert(
-            &db,
-            permission::Model {
-                id: snowflake::next_snowflake_id(),
-                name: "查询".into(),
-                code: "system:user:query".into(),
-                parent_id: None,
-                perm_type: "api".into(),
-                path: None,
-                icon: None,
-                sort: 1,
-                status: "1".into(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
-    let p2 = perm_repo
-        .insert(
-            &db,
-            permission::Model {
-                id: snowflake::next_snowflake_id(),
-                name: "删除".into(),
-                code: "system:user:delete".into(),
-                parent_id: None,
-                perm_type: "api".into(),
-                path: None,
-                icon: None,
-                sort: 2,
-                status: "1".into(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+    let r = role_repo.insert(&db, make_role("测试角色", "test_role")).await.unwrap();
+    let p1 = perm_repo.insert(&db, make_permission("查询", "system:user:query", 1)).await.unwrap();
+    let p2 = perm_repo.insert(&db, make_permission("删除", "system:user:delete", 2)).await.unwrap();
 
     perm_repo
         .assign_perms(&db, r.id, &[p1.id, p2.id])
@@ -142,24 +248,9 @@ async fn test_permission_repo_find_all() {
     let repo = PermissionRepository;
 
     for i in 0..3 {
-        repo.insert(
-            &db,
-            permission::Model {
-                id: snowflake::next_snowflake_id(),
-                name: format!("perm_{}", i),
-                code: format!("code:{}", i),
-                parent_id: None,
-                perm_type: "api".into(),
-                path: None,
-                icon: None,
-                sort: i,
-                status: "1".into(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+        repo.insert(&db, make_permission(&format!("perm_{}", i), &format!("code:{}", i), i))
+            .await
+            .unwrap();
     }
     let all = repo.find_all(&db).await.unwrap();
     assert_eq!(all.len(), 3);
@@ -172,17 +263,7 @@ async fn test_post_repo_crud() {
     let db = setup_test_db().await;
     let repo = PostRepository;
 
-    let p = post::Model {
-        id: snowflake::next_snowflake_id(),
-        name: "研发经理".into(),
-        code: "dev_mgr".into(),
-        sort: 1,
-        status: post::Model::STATUS_NORMAL.to_string(),
-        remark: None,
-        del_flag: post::Model::DEL_FLAG_NORMAL.to_string(),
-        created_at: now(),
-        updated_at: now(),
-    };
+    let p = make_post("研发经理", "dev_mgr", post::Model::STATUS_NORMAL);
     let inserted = repo.insert(&db, p).await.unwrap();
     assert_eq!(inserted.code, "dev_mgr");
 
@@ -199,22 +280,9 @@ async fn test_post_repo_find_by_code() {
     let repo = PostRepository;
 
     for code in ["pm", "qa"] {
-        repo.insert(
-            &db,
-            post::Model {
-                id: snowflake::next_snowflake_id(),
-                name: code.into(),
-                code: code.into(),
-                sort: 0,
-                status: post::Model::STATUS_NORMAL.to_string(),
-                remark: None,
-                del_flag: post::Model::DEL_FLAG_NORMAL.to_string(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+        repo.insert(&db, make_post(code, code, post::Model::STATUS_NORMAL))
+            .await
+            .unwrap();
     }
     assert!(repo.find_by_code(&db, "pm").await.unwrap().is_some());
     assert!(repo.find_by_code(&db, "unknown").await.unwrap().is_none());
@@ -225,27 +293,12 @@ async fn test_post_repo_filtered_pagination() {
     let db = setup_test_db().await;
     let repo = PostRepository;
 
-    for (name, code, status) in [
-        ("经理", "mgr", post::Model::STATUS_NORMAL),
-        ("实习生", "intern", post::Model::STATUS_DISABLED),
-    ] {
-        repo.insert(
-            &db,
-            post::Model {
-                id: snowflake::next_snowflake_id(),
-                name: name.into(),
-                code: code.into(),
-                sort: 0,
-                status: status.to_string(),
-                remark: None,
-                del_flag: post::Model::DEL_FLAG_NORMAL.to_string(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
+    repo.insert(&db, make_post("经理", "mgr", post::Model::STATUS_NORMAL))
         .await
         .unwrap();
-    }
+    repo.insert(&db, make_post("实习生", "intern", post::Model::STATUS_DISABLED))
+        .await
+        .unwrap();
 
     let page = repo
         .find_by_page_filtered(&db, PageQuery::default(), Some("经理"), None, None)
@@ -261,21 +314,9 @@ async fn test_config_repo_find_by_key() {
     let db = setup_test_db().await;
     let repo = ConfigRepository;
 
-    repo.insert(
-        &db,
-        config::Model {
-            id: snowflake::next_snowflake_id(),
-            name: "初始密码".into(),
-            key: "sys.user.initPassword".into(),
-            value: "123456".into(),
-            remark: None,
-            del_flag: config::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: now(),
-            updated_at: now(),
-        },
-    )
-    .await
-    .unwrap();
+    repo.insert(&db, make_config("sys.user.initPassword", "123456"))
+        .await
+        .unwrap();
 
     let found = repo
         .find_by_key(&db, "sys.user.initPassword")
@@ -292,44 +333,20 @@ async fn test_config_repo_pagination_boundary() {
     let repo = ConfigRepository;
 
     for i in 0..25 {
-        repo.insert(
-            &db,
-            config::Model {
-                id: snowflake::next_snowflake_id(),
-                name: format!("配置{}", i),
-                key: format!("config_{:02}", i),
-                value: format!("v{}", i),
-                remark: None,
-                del_flag: config::Model::DEL_FLAG_NORMAL.to_string(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+        repo.insert(&db, make_config(&format!("config_{:02}", i), &format!("v{}", i)))
+            .await
+            .unwrap();
     }
 
     let p1 = repo
-        .find_by_page(
-            &db,
-            PageQuery {
-                page: 1,
-                page_size: 10,
-            },
-        )
+        .find_by_page(&db, PageQuery { page: 1, page_size: 10 })
         .await
         .unwrap();
     assert_eq!(p1.records.len(), 10);
     assert_eq!(p1.total, 25);
 
     let p3 = repo
-        .find_by_page(
-            &db,
-            PageQuery {
-                page: 3,
-                page_size: 10,
-            },
-        )
+        .find_by_page(&db, PageQuery { page: 3, page_size: 10 })
         .await
         .unwrap();
     assert_eq!(p3.records.len(), 5);
@@ -342,16 +359,7 @@ async fn test_dict_type_repo_crud() {
     let db = setup_test_db().await;
     let repo = DictTypeRepository;
 
-    let dt = dict_type::Model {
-        id: snowflake::next_snowflake_id(),
-        name: "用户性别".into(),
-        code: "sys_user_sex".into(),
-        status: dict_type::Model::STATUS_NORMAL.to_string(),
-        remark: None,
-        del_flag: dict_type::Model::DEL_FLAG_NORMAL.to_string(),
-        created_at: now(),
-        updated_at: now(),
-    };
+    let dt = make_dict_type("用户性别", "sys_user_sex");
     let inserted = repo.insert(&db, dt).await.unwrap();
     assert_eq!(inserted.code, "sys_user_sex");
 
@@ -365,41 +373,11 @@ async fn test_dict_data_repo_find_by_type_code() {
     let type_repo = DictTypeRepository;
     let data_repo = DictDataRepository;
 
-    let dt = type_repo
-        .insert(
-            &db,
-            dict_type::Model {
-                id: snowflake::next_snowflake_id(),
-                name: "通用状态".into(),
-                code: "sys_normal_disable".into(),
-                status: dict_type::Model::STATUS_NORMAL.to_string(),
-                remark: None,
-                del_flag: dict_type::Model::DEL_FLAG_NORMAL.to_string(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
+    let dt = type_repo.insert(&db, make_dict_type("通用状态", "sys_normal_disable")).await.unwrap();
 
     for (label, value, sort) in [("正常", "0", 1), ("停用", "1", 2)] {
         data_repo
-            .insert(
-                &db,
-                dict_data::Model {
-                    id: snowflake::next_snowflake_id(),
-                    type_code: dt.code.clone(),
-                    label: label.into(),
-                    value: value.into(),
-                    sort,
-                    status: dict_data::Model::STATUS_NORMAL.to_string(),
-                    css_class: None,
-                    remark: None,
-                    del_flag: dict_data::Model::DEL_FLAG_NORMAL.to_string(),
-                    created_at: now(),
-                    updated_at: now(),
-                },
-            )
+            .insert(&db, make_dict_data(&dt.code, label, value, sort))
             .await
             .unwrap();
     }
@@ -419,17 +397,7 @@ async fn test_notice_repo_crud() {
     let db = setup_test_db().await;
     let repo = NoticeRepository;
 
-    let n = notice::Model {
-        id: snowflake::next_snowflake_id(),
-        title: "系统维护通知".into(),
-        content: "系统将于凌晨维护".into(),
-        r#type: Some("1".into()),
-        status: notice::Model::STATUS_PUBLISHED.to_string(),
-        created_by: Some(1),
-        del_flag: notice::Model::DEL_FLAG_NORMAL.to_string(),
-        created_at: now(),
-        updated_at: now(),
-    };
+    let n = make_notice("系统维护通知", Some("1"));
     let inserted = repo.insert(&db, n).await.unwrap();
     assert_eq!(inserted.title, "系统维护通知");
 
@@ -445,28 +413,9 @@ async fn test_notice_repo_filtered_pagination() {
     let db = setup_test_db().await;
     let repo = NoticeRepository;
 
-    for (title, ntype) in [
-        ("通知A", Some("1".into())),
-        ("通知B", Some("1".into())),
-        ("公告C", Some("2".into())),
-    ] {
-        repo.insert(
-            &db,
-            notice::Model {
-                id: snowflake::next_snowflake_id(),
-                title: title.into(),
-                content: "内容".into(),
-                r#type: ntype,
-                status: notice::Model::STATUS_PUBLISHED.to_string(),
-                created_by: None,
-                del_flag: notice::Model::DEL_FLAG_NORMAL.to_string(),
-                created_at: now(),
-                updated_at: now(),
-            },
-        )
-        .await
-        .unwrap();
-    }
+    repo.insert(&db, make_notice("通知A", Some("1"))).await.unwrap();
+    repo.insert(&db, make_notice("通知B", Some("1"))).await.unwrap();
+    repo.insert(&db, make_notice("公告C", Some("2"))).await.unwrap();
 
     // 按类型过滤
     let page = repo
@@ -490,8 +439,8 @@ async fn test_job_repo_crud() {
     let db = setup_test_db().await;
     let repo = JobRepository;
 
-    let j = job::Model {
-        id: snowflake::next_snowflake_id(),
+    let mut j = job::Model {
+        id: 0,
         name: "日志清理".into(),
         group_name: "DEFAULT".into(),
         cron_expr: "0 0 2 * * ?".into(),
@@ -502,6 +451,7 @@ async fn test_job_repo_crud() {
         create_time: now(),
         update_time: now(),
     };
+    j.fill_on_insert(&FillContext::new());
     let inserted = repo.insert(&db, j).await.unwrap();
     assert_eq!(inserted.cron_expr, "0 0 2 * * ?");
 
@@ -514,24 +464,7 @@ async fn test_job_repo_update_status() {
     let db = setup_test_db().await;
     let repo = JobRepository;
 
-    let j = repo
-        .insert(
-            &db,
-            job::Model {
-                id: snowflake::next_snowflake_id(),
-                name: "测试任务".into(),
-                group_name: "DEFAULT".into(),
-                cron_expr: "0/10 * * * * ?".into(),
-                misfire_policy: "1".into(),
-                concurrent: "1".into(),
-                status: job::Model::STATUS_NORMAL.to_string(),
-                remark: None,
-                create_time: now(),
-                update_time: now(),
-            },
-        )
-        .await
-        .unwrap();
+    let j = repo.insert(&db, make_job("测试任务", job::Model::STATUS_NORMAL)).await.unwrap();
 
     repo.update_status(&db, j.id, job::Model::STATUS_PAUSED.to_string())
         .await
@@ -546,29 +479,10 @@ async fn test_job_repo_find_all_enabled() {
     let db = setup_test_db().await;
     let repo = JobRepository;
 
-    for (name, status) in [
-        ("任务A", job::Model::STATUS_NORMAL),
-        ("任务B", job::Model::STATUS_PAUSED),
-        ("任务C", job::Model::STATUS_NORMAL),
-    ] {
-        repo.insert(
-            &db,
-            job::Model {
-                id: snowflake::next_snowflake_id(),
-                name: name.into(),
-                group_name: "DEFAULT".into(),
-                cron_expr: "0/30 * * * * ?".into(),
-                misfire_policy: "1".into(),
-                concurrent: "1".into(),
-                status: status.to_string(),
-                remark: None,
-                create_time: now(),
-                update_time: now(),
-            },
-        )
-        .await
-        .unwrap();
-    }
+    repo.insert(&db, make_job("任务A", job::Model::STATUS_NORMAL)).await.unwrap();
+    repo.insert(&db, make_job("任务B", job::Model::STATUS_PAUSED)).await.unwrap();
+    repo.insert(&db, make_job("任务C", job::Model::STATUS_NORMAL)).await.unwrap();
+
     let enabled = repo.find_all_enabled(&db).await.unwrap();
     assert_eq!(enabled.len(), 2);
 }
@@ -578,24 +492,20 @@ async fn test_job_repo_update_cron() {
     let db = setup_test_db().await;
     let repo = JobRepository;
 
-    let j = repo
-        .insert(
-            &db,
-            job::Model {
-                id: snowflake::next_snowflake_id(),
-                name: "动态任务".into(),
-                group_name: "DEFAULT".into(),
-                cron_expr: "0 0 1 * * ?".into(),
-                misfire_policy: "1".into(),
-                concurrent: "1".into(),
-                status: job::Model::STATUS_NORMAL.to_string(),
-                remark: None,
-                create_time: now(),
-                update_time: now(),
-            },
-        )
-        .await
-        .unwrap();
+    let mut j = job::Model {
+        id: 0,
+        name: "动态任务".into(),
+        group_name: "DEFAULT".into(),
+        cron_expr: "0 0 1 * * ?".into(),
+        misfire_policy: "1".into(),
+        concurrent: "1".into(),
+        status: job::Model::STATUS_NORMAL.to_string(),
+        remark: None,
+        create_time: now(),
+        update_time: now(),
+    };
+    j.fill_on_insert(&FillContext::new());
+    let j = repo.insert(&db, j).await.unwrap();
 
     repo.update_cron(
         &db,
@@ -620,28 +530,9 @@ async fn test_login_info_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = LoginInfoRepository;
 
-    for (user, status) in [
-        ("admin", login_info::Model::STATUS_SUCCESS),
-        ("user1", login_info::Model::STATUS_SUCCESS),
-        ("user2", login_info::Model::STATUS_FAIL),
-    ] {
-        repo.insert(
-            &db,
-            login_info::Model {
-                id: snowflake::next_snowflake_id(),
-                user_name: user.into(),
-                ipaddr: "127.0.0.1".into(),
-                login_location: Some("本地".into()),
-                browser: Some("Chrome".into()),
-                os: Some("Windows".into()),
-                status: status.to_string(),
-                msg: Some("登录成功".into()),
-                login_time: Utc::now(),
-            },
-        )
-        .await
-        .unwrap();
-    }
+    repo.insert(&db, make_login_info("admin", login_info::Model::STATUS_SUCCESS)).await.unwrap();
+    repo.insert(&db, make_login_info("user1", login_info::Model::STATUS_SUCCESS)).await.unwrap();
+    repo.insert(&db, make_login_info("user2", login_info::Model::STATUS_FAIL)).await.unwrap();
 
     // 分页查询
     let page = repo.find_by_page(&db, PageQuery::default()).await.unwrap();
@@ -675,22 +566,19 @@ async fn test_login_info_repo_clean_all() {
     let repo = LoginInfoRepository;
 
     for i in 0..3 {
-        repo.insert(
-            &db,
-            login_info::Model {
-                id: snowflake::next_snowflake_id(),
-                user_name: format!("user_{}", i),
-                ipaddr: "127.0.0.1".into(),
-                login_location: None,
-                browser: None,
-                os: None,
-                status: login_info::Model::STATUS_SUCCESS.to_string(),
-                msg: None,
-                login_time: Utc::now(),
-            },
-        )
-        .await
-        .unwrap();
+        let mut m = login_info::Model {
+            id: 0,
+            user_name: format!("user_{}", i),
+            ipaddr: "127.0.0.1".into(),
+            login_location: None,
+            browser: None,
+            os: None,
+            status: login_info::Model::STATUS_SUCCESS.to_string(),
+            msg: None,
+            login_time: Utc::now(),
+        };
+        m.fill_on_insert(&FillContext::new());
+        repo.insert(&db, m).await.unwrap();
     }
 
     let deleted = repo.clean_all(&db).await.unwrap();
@@ -707,34 +595,9 @@ async fn test_oper_log_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = OperLogRepository;
 
-    for (oper_name, status) in [
-        ("admin", oper_log::Model::STATUS_SUCCESS),
-        ("admin", oper_log::Model::STATUS_SUCCESS),
-        ("user1", oper_log::Model::STATUS_FAIL),
-    ] {
-        repo.insert(
-            &db,
-            oper_log::Model {
-                id: snowflake::next_snowflake_id(),
-                title: format!("{}操作", oper_name),
-                business_type: "INSERT".into(),
-                method: "UserServiceImpl.create".into(),
-                request_method: "POST".into(),
-                oper_name: oper_name.into(),
-                oper_url: "/api/v1/system/users".into(),
-                oper_ip: "127.0.0.1".into(),
-                oper_location: Some("本地".into()),
-                oper_param: Some("{}".into()),
-                json_result: Some("{}".into()),
-                status: status.to_string(),
-                error_msg: None,
-                oper_time: Utc::now(),
-                cost_time: 23,
-            },
-        )
-        .await
-        .unwrap();
-    }
+    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS)).await.unwrap();
+    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS)).await.unwrap();
+    repo.insert(&db, make_oper_log("user1", oper_log::Model::STATUS_FAIL)).await.unwrap();
 
     let page = repo.find_by_page(&db, PageQuery::default()).await.unwrap();
     assert_eq!(page.total, 3);
@@ -767,28 +630,25 @@ async fn test_oper_log_repo_clean_all() {
     let repo = OperLogRepository;
 
     for i in 0..3 {
-        repo.insert(
-            &db,
-            oper_log::Model {
-                id: snowflake::next_snowflake_id(),
-                title: format!("操作{}", i),
-                business_type: "QUERY".into(),
-                method: "UserServiceImpl.find".into(),
-                request_method: "GET".into(),
-                oper_name: "admin".into(),
-                oper_url: "/api/v1/system".into(),
-                oper_ip: "127.0.0.1".into(),
-                oper_location: None,
-                oper_param: None,
-                json_result: None,
-                status: oper_log::Model::STATUS_SUCCESS.to_string(),
-                error_msg: None,
-                oper_time: Utc::now(),
-                cost_time: 10,
-            },
-        )
-        .await
-        .unwrap();
+        let mut m = oper_log::Model {
+            id: 0,
+            title: format!("操作{}", i),
+            business_type: "QUERY".into(),
+            method: "UserServiceImpl.find".into(),
+            request_method: "GET".into(),
+            oper_name: "admin".into(),
+            oper_url: "/api/v1/system".into(),
+            oper_ip: "127.0.0.1".into(),
+            oper_location: None,
+            oper_param: None,
+            json_result: None,
+            status: oper_log::Model::STATUS_SUCCESS.to_string(),
+            error_msg: None,
+            oper_time: Utc::now(),
+            cost_time: 10,
+        };
+        m.fill_on_insert(&FillContext::new());
+        repo.insert(&db, m).await.unwrap();
     }
 
     let deleted = repo.clean_all(&db).await.unwrap();

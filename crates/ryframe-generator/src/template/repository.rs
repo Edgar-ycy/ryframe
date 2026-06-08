@@ -8,6 +8,7 @@ pub fn render_repository(table: &TableInfo, _module: &str) -> String {
     format!(
         r#"use async_trait::async_trait;
 use ryframe_common::{{AppError, AppResult}};
+use ryframe_core::auto_fill::{{AutoFill, FillContext}};
 use ryframe_core::repository::{{PageQuery, PageResult, Repository}};
 use sea_orm::{{ColumnTrait, DatabaseConnection, EntityTrait, QueryOrder}};
 
@@ -44,8 +45,9 @@ impl Repository<{snake}::Model, {pk_type}> for {struct_name}Repository {{
     async fn insert(
         &self,
         db: &DatabaseConnection,
-        entity: {snake}::Model,
+        mut entity: {snake}::Model,
     ) -> AppResult<{snake}::Model> {{
+        entity.fill_on_insert(&FillContext::new());
         let active: {snake}::ActiveModel = entity.into();
         active
             .insert(db)

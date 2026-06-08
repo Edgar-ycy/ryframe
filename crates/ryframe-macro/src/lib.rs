@@ -5,7 +5,7 @@
 //! | 宏 | 种类 | 用途 |
 //! |-----|------|------|
 //! | `#[datasource("name")]` | 属性宏 | 多数据源路由，标注在 async fn 上自动包裹 scope |
-//! | `#[derive(AutoFill)]` | derive 宏 | 按默认规则自动填充实体字段（created_at 等） |
+//! | `#[derive(AutoFill)]` | derive 宏 | 按默认规则自动填充实体字段（created_at 等），支持雪花 ID |
 //!
 //! # 用法
 //!
@@ -16,7 +16,18 @@
 //! #[datasource("db_device")]
 //! async fn list_devices() { ... }
 //!
-//! // 自动填充
+//! // 自动填充（字段级标注，推荐）
+//! #[derive(AutoFill)]
+//! pub struct User {
+//!     #[sea_orm(primary_key, auto_increment = false)]
+//!     #[auto_fill(snowflake)]
+//!     pub id: i64,
+//!     pub created_at: DateTime<Utc>,
+//!     #[auto_fill(skip)]
+//!     pub login_date: Option<DateTime<Utc>>,
+//! }
+//!
+//! // struct 级标注也支持（兼容旧写法）
 //! #[derive(AutoFill)]
 //! #[auto_fill(login_date, skip)]
 //! struct User { pub created_at: DateTime<Utc>, pub login_date: Option<DateTime<Utc>> }
@@ -60,7 +71,11 @@ pub fn datasource(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// 按 `DEFAULTS` 规则表自动填充实体字段（如 `created_at` → `Utc::now()`）。
 /// 实体有对应字段则填充，没有则跳过。
 ///
-/// 用 `#[auto_fill(field_name, skip)]` 排除不想自动填充的字段。
+/// 支持字段级和 struct 级两种标注方式：
+/// - `#[auto_fill(snowflake)]`：插入时自动生成雪花 ID（用于主键 `id` 字段）
+/// - `#[auto_fill(skip)]`：跳过默认规则，不自动填充
+/// - `#[auto_fill(field_name, skip)]`：struct 级跳过（兼容旧写法）
+/// - `#[auto_fill(field_name, snowflake)]`：struct 级雪花 ID（兼容旧写法）
 ///
 /// # 示例
 ///
@@ -68,9 +83,12 @@ pub fn datasource(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// use ryframe_macro::AutoFill;
 ///
 /// #[derive(AutoFill)]
-/// #[auto_fill(login_date, skip)]
 /// pub struct User {
+///     #[sea_orm(primary_key, auto_increment = false)]
+///     #[auto_fill(snowflake)]
+///     pub id: i64,
 ///     pub created_at: DateTime<Utc>,
+///     #[auto_fill(skip)]
 ///     pub login_date: Option<DateTime<Utc>>,
 /// }
 /// ```

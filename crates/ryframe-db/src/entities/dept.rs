@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 #[sea_orm(table_name = "sys_dept")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
+    #[auto_fill(snowflake)]
     pub id: i64,
     pub name: String,
     pub parent_id: Option<i64>,

@@ -24,6 +24,8 @@ pub enum FillSource {
     UserId,
     /// 当前用户名（预留，取自 FillContext）
     Username,
+    /// 雪花算法生成分布式唯一 ID
+    Snowflake,
 }
 
 // ============================================================

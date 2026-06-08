@@ -3,7 +3,7 @@
 //! 使用 SQLite 内存数据库测试任务日志仓库的 CRUD、过滤查询、清理等功能。
 
 use chrono::{Duration, Utc};
-use ryframe_common::utils::snowflake;
+use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::JobLogRepository;
 use ryframe_db::entities::job_log;
@@ -25,14 +25,13 @@ async fn setup_test_db() -> sea_orm::DatabaseConnection {
 }
 
 fn make_job_log(
-    id: i64,
     job_name: &str,
     status: &str,
     start_time: chrono::DateTime<Utc>,
     cost_ms: i64,
 ) -> job_log::Model {
-    job_log::Model {
-        id,
+    let mut model = job_log::Model {
+        id: 0,
         job_name: job_name.into(),
         job_group: "DEFAULT".into(),
         message: format!("{}执行完成", job_name),
@@ -44,7 +43,9 @@ fn make_job_log(
         },
         cost_ms,
         start_time,
-    }
+    };
+    model.fill_on_insert(&FillContext::new());
+    model
 }
 
 // ==================== CRUD 基础操作 ====================
@@ -55,7 +56,6 @@ async fn test_job_log_repo_crud() {
     let repo = JobLogRepository;
 
     let log = make_job_log(
-        snowflake::next_snowflake_id(),
         "日志清理",
         job_log::Model::STATUS_SUCCESS,
         now(),
@@ -79,7 +79,6 @@ async fn test_job_log_repo_update_should_fail() {
     let repo = JobLogRepository;
 
     let log = make_job_log(
-        snowflake::next_snowflake_id(),
         "测试任务",
         job_log::Model::STATUS_SUCCESS,
         now(),
@@ -101,7 +100,6 @@ async fn test_job_log_repo_pagination() {
 
     for i in 0..10 {
         let log = make_job_log(
-            snowflake::next_snowflake_id(),
             &format!("任务{}", i),
             job_log::Model::STATUS_SUCCESS,
             now() - Duration::minutes(i as i64),
@@ -152,7 +150,7 @@ async fn test_job_log_repo_find_by_page_filtered() {
         ("日志清理", job_log::Model::STATUS_FAIL, t2),
         ("数据备份", job_log::Model::STATUS_SUCCESS, t3),
     ] {
-        let log = make_job_log(snowflake::next_snowflake_id(), name, status, time, 100);
+        let log = make_job_log(name, status, time, 100);
         repo.insert(&db, log).await.unwrap();
     }
 
@@ -209,7 +207,6 @@ async fn test_job_log_repo_clean_all() {
 
     for i in 0..5 {
         let log = make_job_log(
-            snowflake::next_snowflake_id(),
             &format!("任务{}", i),
             job_log::Model::STATUS_SUCCESS,
             now(),
@@ -233,7 +230,6 @@ async fn test_job_log_repo_clean_before() {
     // 3天前的日志（应被清理）
     for i in 0..3 {
         let log = make_job_log(
-            snowflake::next_snowflake_id(),
             &format!("旧任务{}", i),
             job_log::Model::STATUS_SUCCESS,
             now() - Duration::days(5),
@@ -245,7 +241,6 @@ async fn test_job_log_repo_clean_before() {
     // 最近的日志（不应被清理）
     for i in 0..2 {
         let log = make_job_log(
-            snowflake::next_snowflake_id(),
             &format!("新任务{}", i),
             job_log::Model::STATUS_SUCCESS,
             now(),
@@ -270,7 +265,6 @@ async fn test_job_log_repo_clean_before_none() {
 
     for i in 0..3 {
         let log = make_job_log(
-            snowflake::next_snowflake_id(),
             &format!("任务{}", i),
             job_log::Model::STATUS_SUCCESS,
             now(),

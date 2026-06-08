@@ -3,10 +3,10 @@
 //! 使用 SQLite 内存数据库测试菜单仓库的 CRUD、树形结构、角色菜单关联等功能。
 
 use chrono::Utc;
-use ryframe_common::utils::snowflake;
+use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::{
-    MenuRepository,
+    MenuRepository, RoleRepository,
     entities::{menu, role, role_menu},
 };
 use sea_orm::{ActiveModelTrait, ActiveValue, Database};
@@ -26,9 +26,9 @@ async fn setup_test_db() -> sea_orm::DatabaseConnection {
     db
 }
 
-fn make_menu(id: i64, name: &str, parent_id: Option<i64>, sort: i32, status: &str) -> menu::Model {
-    menu::Model {
-        id,
+fn make_menu(name: &str, parent_id: Option<i64>, sort: i32, status: &str) -> menu::Model {
+    let mut model = menu::Model {
+        id: 0,
         name: name.into(),
         parent_id,
         menu_type: menu::Model::MENU_TYPE_MENU.into(),
@@ -46,7 +46,26 @@ fn make_menu(id: i64, name: &str, parent_id: Option<i64>, sort: i32, status: &st
         del_flag: menu::Model::DEL_FLAG_NORMAL.to_string(),
         created_at: now(),
         updated_at: now(),
-    }
+    };
+    model.fill_on_insert(&FillContext::new());
+    model
+}
+
+fn make_role(name: &str, code: &str) -> role::Model {
+    let mut m = role::Model {
+        id: 0,
+        name: name.into(),
+        code: code.into(),
+        data_scope: role::Model::DATA_SCOPE_ALL.to_string(),
+        status: role::Model::DEL_FLAG_NORMAL.to_string(),
+        sort: 1,
+        remark: None,
+        del_flag: role::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: now(),
+        updated_at: now(),
+    };
+    m.fill_on_insert(&FillContext::new());
+    m
 }
 
 // ==================== CRUD 基础操作 ====================
@@ -57,7 +76,6 @@ async fn test_menu_repo_crud() {
     let repo = MenuRepository;
 
     let m = make_menu(
-        snowflake::next_snowflake_id(),
         "系统管理",
         None,
         1,
@@ -80,7 +98,6 @@ async fn test_menu_repo_update() {
     let repo = MenuRepository;
 
     let m = make_menu(
-        snowflake::next_snowflake_id(),
         "原始菜单",
         None,
         1,
@@ -106,7 +123,6 @@ async fn test_menu_repo_pagination() {
 
     for i in 0..12 {
         let m = make_menu(
-            snowflake::next_snowflake_id(),
             &format!("菜单{}", i),
             None,
             i,
@@ -137,7 +153,6 @@ async fn test_menu_repo_find_tree() {
     let repo = MenuRepository;
 
     let root = make_menu(
-        snowflake::next_snowflake_id(),
         "系统管理",
         None,
         1,
@@ -146,7 +161,6 @@ async fn test_menu_repo_find_tree() {
     let root = repo.insert(&db, root).await.unwrap();
 
     let child = make_menu(
-        snowflake::next_snowflake_id(),
         "用户管理",
         Some(root.id),
         1,
@@ -155,7 +169,6 @@ async fn test_menu_repo_find_tree() {
     let child = repo.insert(&db, child).await.unwrap();
 
     let sub = make_menu(
-        snowflake::next_snowflake_id(),
         "用户列表",
         Some(child.id),
         1,
@@ -190,21 +203,18 @@ async fn test_menu_repo_find_by_role_ids() {
 
     // 创建菜单
     let m1 = make_menu(
-        snowflake::next_snowflake_id(),
         "系统管理",
         None,
         1,
         menu::Model::STATUS_NORMAL,
     );
     let m2 = make_menu(
-        snowflake::next_snowflake_id(),
         "用户管理",
         None,
         2,
         menu::Model::STATUS_NORMAL,
     );
     let m3 = make_menu(
-        snowflake::next_snowflake_id(),
         "角色管理",
         None,
         3,
@@ -215,20 +225,9 @@ async fn test_menu_repo_find_by_role_ids() {
     let _m3 = menu_repo.insert(&db, m3).await.unwrap();
 
     // 创建角色
-    let role_id = snowflake::next_snowflake_id();
-    let r = role::ActiveModel {
-        id: ActiveValue::Set(role_id),
-        name: ActiveValue::Set("管理员".into()),
-        code: ActiveValue::Set("admin".into()),
-        data_scope: ActiveValue::Set(role::Model::DATA_SCOPE_ALL.to_string()),
-        status: ActiveValue::Set(role::Model::DEL_FLAG_NORMAL.to_string()),
-        sort: ActiveValue::Set(1),
-        remark: ActiveValue::Set(None),
-        del_flag: ActiveValue::Set(role::Model::DEL_FLAG_NORMAL.to_string()),
-        created_at: ActiveValue::Set(now()),
-        updated_at: ActiveValue::Set(now()),
-    };
-    r.insert(&db).await.unwrap();
+    let role_repo = RoleRepository;
+    let r = role_repo.insert(&db, make_role("管理员", "admin")).await.unwrap();
+    let role_id = r.id;
 
     // 分配菜单给角色
     for menu_id in [m1.id, m2.id] {
@@ -264,14 +263,12 @@ async fn test_menu_repo_find_filtered() {
     let repo = MenuRepository;
 
     let m1 = make_menu(
-        snowflake::next_snowflake_id(),
         "系统管理",
         None,
         1,
         menu::Model::STATUS_NORMAL,
     );
     let m2 = make_menu(
-        snowflake::next_snowflake_id(),
         "监控管理",
         None,
         2,

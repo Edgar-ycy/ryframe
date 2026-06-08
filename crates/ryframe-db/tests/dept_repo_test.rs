@@ -3,7 +3,7 @@
 //! 使用 SQLite 内存数据库测试部门仓库的 CRUD、树形结构、祖先路径等功能。
 
 use chrono::Utc;
-use ryframe_common::utils::snowflake;
+use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::DeptRepository;
 use ryframe_db::entities::dept;
@@ -25,15 +25,14 @@ async fn setup_test_db() -> sea_orm::DatabaseConnection {
 }
 
 fn make_dept(
-    id: i64,
     name: &str,
     parent_id: Option<i64>,
     ancestors: &str,
     sort: i32,
     status: &str,
 ) -> dept::Model {
-    dept::Model {
-        id,
+    let mut model = dept::Model {
+        id: 0,
         name: name.into(),
         parent_id,
         ancestors: ancestors.into(),
@@ -43,7 +42,9 @@ fn make_dept(
         del_flag: dept::Model::DEL_FLAG_NORMAL.to_string(),
         created_at: now(),
         updated_at: now(),
-    }
+    };
+    model.fill_on_insert(&FillContext::new());
+    model
 }
 
 // ==================== CRUD 基础操作 ====================
@@ -54,7 +55,6 @@ async fn test_dept_repo_crud() {
     let repo = DeptRepository;
 
     let d = make_dept(
-        snowflake::next_snowflake_id(),
         "技术部",
         None,
         "0",
@@ -78,7 +78,6 @@ async fn test_dept_repo_update() {
     let repo = DeptRepository;
 
     let d = make_dept(
-        snowflake::next_snowflake_id(),
         "原始名称",
         None,
         "0",
@@ -106,7 +105,6 @@ async fn test_dept_repo_pagination() {
 
     for i in 0..8 {
         let d = make_dept(
-            snowflake::next_snowflake_id(),
             &format!("部门{}", i),
             None,
             "0",
@@ -138,7 +136,6 @@ async fn test_dept_repo_find_tree() {
     let repo = DeptRepository;
 
     let root = make_dept(
-        snowflake::next_snowflake_id(),
         "总公司",
         None,
         "0",
@@ -150,7 +147,6 @@ async fn test_dept_repo_find_tree() {
     // 二级部门
     let ancestors_a = format!("0,{}", root.id);
     let dept_a = make_dept(
-        snowflake::next_snowflake_id(),
         "研发部",
         Some(root.id),
         &ancestors_a,
@@ -162,7 +158,6 @@ async fn test_dept_repo_find_tree() {
     // 三级部门
     let ancestors_b = format!("{},{}", ancestors_a, dept_a.id);
     let dept_b = make_dept(
-        snowflake::next_snowflake_id(),
         "前端组",
         Some(dept_a.id),
         &ancestors_b,
@@ -188,7 +183,6 @@ async fn test_dept_repo_has_children() {
     let repo = DeptRepository;
 
     let parent = make_dept(
-        snowflake::next_snowflake_id(),
         "父部门",
         None,
         "0",
@@ -203,7 +197,6 @@ async fn test_dept_repo_has_children() {
     // 添加子部门
     let children_ancestors = format!("0,{}", parent.id);
     let child = make_dept(
-        snowflake::next_snowflake_id(),
         "子部门",
         Some(parent.id),
         &children_ancestors,
@@ -228,7 +221,6 @@ async fn test_dept_repo_build_ancestors() {
 
     // 创建父部门后，子部门的祖先
     let parent = make_dept(
-        snowflake::next_snowflake_id(),
         "父部门",
         None,
         "0",
@@ -258,7 +250,6 @@ async fn test_dept_repo_find_child_dept_ids() {
     let repo = DeptRepository;
 
     let root = make_dept(
-        snowflake::next_snowflake_id(),
         "总公司",
         None,
         "0",
@@ -269,7 +260,6 @@ async fn test_dept_repo_find_child_dept_ids() {
 
     let ancestors_a = format!("0,{}", root.id);
     let dept_a = make_dept(
-        snowflake::next_snowflake_id(),
         "研发部",
         Some(root.id),
         &ancestors_a,
@@ -280,7 +270,6 @@ async fn test_dept_repo_find_child_dept_ids() {
 
     let ancestors_b = format!("{},{}", ancestors_a, dept_a.id);
     let dept_b = make_dept(
-        snowflake::next_snowflake_id(),
         "前端组",
         Some(dept_a.id),
         &ancestors_b,
@@ -304,7 +293,6 @@ async fn test_dept_repo_find_filtered() {
     let repo = DeptRepository;
 
     let d1 = make_dept(
-        snowflake::next_snowflake_id(),
         "研发部",
         None,
         "0",
@@ -312,7 +300,6 @@ async fn test_dept_repo_find_filtered() {
         dept::Model::STATUS_NORMAL,
     );
     let d2 = make_dept(
-        snowflake::next_snowflake_id(),
         "市场部",
         None,
         "0",

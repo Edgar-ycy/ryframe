@@ -10,6 +10,7 @@ pub fn render_entity(table: &TableInfo) -> String {
             let mut attrs = Vec::new();
             if c.is_primary_key {
                 attrs.push("#[sea_orm(primary_key, auto_increment = false)]".to_string());
+                attrs.push("#[auto_fill(snowflake)]".to_string());
             }
             if c.is_unique {
                 attrs.push("#[sea_orm(unique)]".to_string());
@@ -26,10 +27,11 @@ pub fn render_entity(table: &TableInfo) -> String {
 
     format!(
         r#"use chrono::{{DateTime, Utc}};
+use ryframe_macro::AutoFill;
 use sea_orm::entity::prelude::*;
 use serde::{{Deserialize, Serialize}};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
 #[sea_orm(table_name = "{table_name}")]
 pub struct Model {{
 {fields}
