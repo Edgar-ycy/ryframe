@@ -19,7 +19,10 @@ pub fn render_entity(table: &TableInfo, base_name: &str, generate_comments: bool
             let attr_str = if attrs.is_empty() {
                 String::new()
             } else {
-                attrs.iter().map(|a| format!("    {}\n", a)).collect::<String>()
+                attrs
+                    .iter()
+                    .map(|a| format!("    {}\n", a))
+                    .collect::<String>()
             };
             // 注释在宏下方
             let field_doc = if generate_comments {
@@ -30,7 +33,10 @@ pub fn render_entity(table: &TableInfo, base_name: &str, generate_comments: bool
             } else {
                 String::new()
             };
-            format!("{}{}    pub {}: {},", attr_str, field_doc, field_name, c.rust_type)
+            format!(
+                "{}{}    pub {}: {},",
+                attr_str, field_doc, field_name, c.rust_type
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");

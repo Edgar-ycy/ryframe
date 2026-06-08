@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::process;
 
-use ryframe_generator::{generate, write_to_disk, GenerateOptions};
+use ryframe_generator::{GenerateOptions, generate, write_to_disk};
 use sea_orm::Database;
 
 // ═══════════════════════════════════════════════════════════

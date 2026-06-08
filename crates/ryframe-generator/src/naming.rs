@@ -1,9 +1,8 @@
 /// Rust 保留关键字，用作字段名时追加 _ 后缀
 const RUST_KEYWORDS: &[&str] = &[
-    "as", "async", "await", "break", "const", "continue", "crate", "dyn",
-    "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
-    "let", "loop", "match", "mod", "move", "mut", "override", "pub",
-    "ref", "return", "self", "static", "struct", "super", "trait", "true",
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut",
+    "override", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true",
     "try", "type", "union", "unsafe", "use", "where", "while", "yield",
 ];
 

@@ -95,9 +95,7 @@ async fn query_columns(db: &DatabaseConnection, table_name: &str) -> AppResult<V
     };
     let schema_filter = match backend {
         DatabaseBackend::MySql => "AND table_schema = DATABASE()",
-        DatabaseBackend::Postgres => {
-            "AND table_schema NOT IN ('information_schema', 'pg_catalog')"
-        }
+        DatabaseBackend::Postgres => "AND table_schema NOT IN ('information_schema', 'pg_catalog')",
         _ => "",
     };
     let sql = format!(
@@ -123,7 +121,10 @@ struct TableCommentRow {
     comment: Option<String>,
 }
 
-async fn query_table_comment(db: &DatabaseConnection, table_name: &str) -> AppResult<Option<String>> {
+async fn query_table_comment(
+    db: &DatabaseConnection,
+    table_name: &str,
+) -> AppResult<Option<String>> {
     let backend = db.get_database_backend();
     let placeholder = match backend {
         DatabaseBackend::MySql => "?",

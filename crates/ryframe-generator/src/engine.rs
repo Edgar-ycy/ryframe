@@ -74,9 +74,7 @@ pub struct GeneratedFile {
 
 /// 验证表名合法性
 fn validate_table_name(name: &str) -> AppResult<()> {
-    if name.is_empty()
-        || !name.chars().all(|c| c.is_alphanumeric() || c == '_')
-    {
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return Err(ryframe_common::AppError::Validation(format!(
             "表名包含非法字符: {}",
             name
@@ -118,7 +116,8 @@ pub async fn generate(
         let snake = crate::naming::to_snake_case(&base_name);
 
         if opts.generate_entity {
-            let content = crate::template::entity::render_entity(&table, &base_name, opts.generate_comments);
+            let content =
+                crate::template::entity::render_entity(&table, &base_name, opts.generate_comments);
             all_files.push(GeneratedFile {
                 path: format!("{}/{}.rs", entity_base, snake),
                 content,
@@ -187,9 +186,9 @@ pub async fn write_to_disk(
             tokio::fs::create_dir_all(parent)
                 .await
                 .map_err(|e| ryframe_common::AppError::Internal(format!("创建目录失败: {}", e)))?;
-            let canonical_parent = tokio::fs::canonicalize(parent)
-                .await
-                .map_err(|e| ryframe_common::AppError::Internal(format!("解析输出目录失败: {}", e)))?;
+            let canonical_parent = tokio::fs::canonicalize(parent).await.map_err(|e| {
+                ryframe_common::AppError::Internal(format!("解析输出目录失败: {}", e))
+            })?;
             if !canonical_parent.starts_with(&canonical_workspace) {
                 return Err(ryframe_common::AppError::Internal(
                     "路径穿越攻击被阻止".into(),
