@@ -141,7 +141,10 @@ impl ConfigServiceImpl {
         let key = cfg.key.clone();
         tracing::info!(
             "[ConfigUpdate] id={}, key={}, old_value={}, input_value={}",
-            id, key, cfg.value, value
+            id,
+            key,
+            cfg.value,
+            value
         );
         cfg.value = value.to_string();
         tracing::info!("[ConfigUpdate] after set: cfg.value={}", cfg.value);
@@ -151,7 +154,8 @@ impl ConfigServiceImpl {
         let vo = ConfigVo::from(saved.clone());
         tracing::info!(
             "[ConfigUpdate] DB saved.value={}, vo.value={}",
-            saved.value, vo.value
+            saved.value,
+            vo.value
         );
 
         // 便新缓存
