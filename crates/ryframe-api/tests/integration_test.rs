@@ -22,7 +22,7 @@ use ryframe_db::{
     ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
     JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
     PermissionRepository, PostRepository, RoleRepository, UserRepository,
-    entities::{dept, role, user},
+    entities::{config, dept, role, user},
 };
 use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
@@ -119,6 +119,20 @@ async fn seed_test_data(db: &DatabaseConnection) {
         .exec(db)
         .await
         .unwrap();
+
+    // 创建默认配置：关闭验证码（测试环境）
+    let captcha_config = config::Model {
+        id: 3,
+        name: "账户验证码开关".into(),
+        key: "sys.account.captchaEnabled".into(),
+        value: "false".into(),
+        remark: None,
+        del_flag: config::Model::DEL_FLAG_NORMAL.to_string(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    let active: config::ActiveModel = captcha_config.into();
+    config::Entity::insert(active).exec(db).await.unwrap();
 }
 
 fn test_config() -> AppConfig {
