@@ -13,11 +13,7 @@ fn test_parse_duration() {
 fn test_encode_decode_roundtrip() {
     let config = AuthConfig {
         jwt_secret: "test-secret".into(),
-        access_token_expire: "1h".into(),
-        refresh_token_expire: "168h".into(),
-        max_login_attempts: 5,
-        lockout_duration_minutes: 30,
-        enable_password_complexity: true,
+        ..Default::default()
     };
     let user_id = 1234567890123456789i64;
     let roles = vec!["admin".to_string()];

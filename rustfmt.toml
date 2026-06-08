@@ -1,0 +1,29 @@
+# RyFrame rustfmt 配置
+# 运行 cargo fmt 自动应用
+#
+# 注意：import 分组与合并功能需要 nightly rustfmt
+#   使用方式: cargo +nightly fmt --all
+#   CI 中使用: rustup component add rustfmt --toolchain nightly
+#              cargo +nightly fmt --all -- --check
+
+# ========== 基础格式 (stable) ==========
+# 最大行宽
+max_width = 100
+
+# 缩进（与 .editorconfig 对齐）
+tab_spaces = 4
+hard_tabs = false
+
+# ========== Import 整理 (需要 nightly) ==========
+# 开启后 cargo +nightly fmt 将自动：
+#   1. 合并同一 crate 的多个 use 为一条语句
+#   2. 按 std → 外部 crate → workspace 内部 crate 分组
+#   3. 字母序排列
+#
+# 如需启用，取消下面的注释并运行:
+#   cargo +nightly fmt --all
+#
+# unstable_features = true
+# imports_granularity = "Crate"
+# group_imports = "StdExternalCrate"
+# reorder_imports = true

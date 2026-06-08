@@ -31,3 +31,16 @@ fn default_lockout_duration_minutes() -> u32 {
 fn default_enable_password_complexity() -> bool {
     true
 }
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            jwt_secret: "test-secret-do-not-use-in-production".into(),
+            access_token_expire: "1h".into(),
+            refresh_token_expire: "168h".into(),
+            max_login_attempts: default_max_login_attempts(),
+            lockout_duration_minutes: default_lockout_duration_minutes(),
+            enable_password_complexity: default_enable_password_complexity(),
+        }
+    }
+}

@@ -1,6 +1,6 @@
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, CorsConfig, DatabaseConfig, DbConnection, LoggerConfig,
-    RateLimitConfig, RedisConfig, SqlLogLevel,
+    RateLimitConfig, RedisConfig,
 };
 use ryframe_core::HotConfig;
 
@@ -8,50 +8,32 @@ fn test_config() -> AppConfig {
     AppConfig {
         app: AppSettings {
             name: "test".into(),
-            version: "0.1.0".into(),
-            host: "127.0.0.1".into(),
-            port: 8080,
+            ..Default::default()
         },
         database: DatabaseConfig {
             connections: vec![DbConnection {
                 driver: "sqlite".into(),
-                host: "".into(),
-                port: 0,
                 database: ":memory:".into(),
-                username: "".into(),
-                password: "".into(),
                 max_connections: 5,
-                min_connections: 1,
-                acquire_timeout_secs: 10,
-                idle_timeout_secs: 600,
-                max_lifetime_secs: 1800,
-                connect_timeout_secs: 10,
+                ..Default::default()
             }],
-            sql_log_level: SqlLogLevel::Off,
+            ..Default::default()
         },
         auth: AuthConfig {
             jwt_secret: "test-secret".into(),
-            access_token_expire: "1h".into(),
-            refresh_token_expire: "168h".into(),
-            max_login_attempts: 5,
-            lockout_duration_minutes: 30,
-            enable_password_complexity: true,
+            ..Default::default()
         },
         redis: Some(RedisConfig {
             host: "127.0.0.1".into(),
-            port: 6379,
             password: "pass".into(),
-            database: 0,
             max_pool_size: 5,
-            timeout_secs: 3,
+            ..Default::default()
         }),
         logger: LoggerConfig {
             level: "info".into(),
-            format: "text".into(),
-            output: "stdout".into(),
+            ..Default::default()
         },
         rate_limit: RateLimitConfig {
-            enabled: true,
             capacity: 100,
             refill_per_sec: 10,
             ..Default::default()

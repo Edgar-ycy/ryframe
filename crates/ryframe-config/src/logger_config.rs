@@ -10,3 +10,13 @@ pub struct LoggerConfig {
     /// 输出目标：stdout / file
     pub output: String,
 }
+
+impl Default for LoggerConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".into(),
+            format: "text".into(),
+            output: "stdout".into(),
+        }
+    }
+}

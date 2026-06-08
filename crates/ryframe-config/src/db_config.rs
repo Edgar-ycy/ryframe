@@ -46,6 +46,15 @@ pub struct DatabaseConfig {
     pub connections: Vec<DbConnection>,
 }
 
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            sql_log_level: SqlLogLevel::default(),
+            connections: Vec::new(),
+        }
+    }
+}
+
 /// 数据库连接参数
 ///
 /// 连接池调优参考：

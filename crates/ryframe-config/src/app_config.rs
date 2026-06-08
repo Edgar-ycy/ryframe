@@ -19,6 +19,17 @@ pub struct AppSettings {
     pub port: u16,
 }
 
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            name: "ryframe".into(),
+            version: "0.1.0".into(),
+            host: "0.0.0.0".into(),
+            port: 8080,
+        }
+    }
+}
+
 /// 顶层应用配置
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {

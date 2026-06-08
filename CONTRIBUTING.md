@@ -80,7 +80,7 @@ cargo fmt --all -- --check
 # Clippy 检查（零警告）
 cargo clippy --workspace --all-targets -- -D warnings
 
-# 编译检查
+# 编译检查（含 tests/benches/examples）
 cargo check --workspace --all-targets
 
 # 运行测试
@@ -90,6 +90,20 @@ cargo nextest run --workspace
 cargo doc --workspace --no-deps --document-private-items
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
+
+### 结构体/配置字段变更检查清单
+
+当修改结构体定义（新增/删除/重命名字段）或配置结构体时，必须执行以下步骤：
+
+1. **全局搜索构造点**：使用 `cargo check --workspace --all-targets` 编译整个项目
+2. **检查以下位置**：
+   - `src/` 中的生产代码
+   - `tests/` 中的测试代码（测试文件中的结构体初始化也需补全新字段）
+   - `benches/` 中的基准测试
+   - `examples/` 中的示例代码
+3. **配置结构体**：优先为配置结构体实现 `Default` trait，让测试用 `..Default::default()` 自动填充
+4. **AutoFill 规则**：新增 `FillSource` 变体时，确保 proc macro 的 `auto_fill.rs` 中 match 分支覆盖完整
+5. **API 文档**：数据模型变更后同步更新 `openapi.rs` 和 `docs/api-guide.md`
 
 ### Commit 规范
 
