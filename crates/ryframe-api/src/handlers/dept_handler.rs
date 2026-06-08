@@ -4,28 +4,19 @@ use axum::{
     routing::{get, post},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_core::PageQuery;
 use ryframe_db::repositories::dept_repo::DeptTreeNode;
 use ryframe_service::system::DeptVo;
-use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
+use crate::list_query;
 
-/// 部门列表查询参数（支持搜索过滤）
-#[derive(Debug, Deserialize)]
-pub struct DeptListQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
-    pub page_size: u64,
-    pub name: Option<String>,
-    pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
-}
+list_query!(pub DeptListQuery {
+    name: String,
+    status: String,
+});
 
 pub fn dept_router(state: AppState) -> Router {
     Router::new()
@@ -56,18 +47,19 @@ async fn list_page(
     State(state): State<AppState>,
     Query(query): Query<DeptListQuery>,
 ) -> AppResult<Json<ApiPageResponse<DeptVo>>> {
-    let all = state
+    state
         .dept_service
-        .find_filtered(&state.db, query.name.as_deref(), query.status.as_deref())
-        .await?;
-    let total = all.len() as u64;
-    let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
-    let rows: Vec<DeptVo> = all
-        .into_iter()
-        .skip(offset)
-        .take(query.page_size as usize)
-        .collect();
-    Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
+        .find_by_page_filtered(
+            &state.db,
+            PageQuery {
+                page: query.page,
+                page_size: query.page_size,
+            },
+            query.name.as_deref(),
+            query.status.as_deref(),
+        )
+        .await
+        .map(|p| Json(p.to_page_response("查询成功")))
 }
 
 /// 部门列表不分页查询（返回全部数据）
@@ -92,8 +84,7 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateDeptDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .dept_service
         .create(&state.db, &dto.name, dto.parent_id, dto.sort.unwrap_or(0))
@@ -110,8 +101,7 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDeptDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .dept_service
         .update(

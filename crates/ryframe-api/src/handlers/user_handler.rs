@@ -6,7 +6,7 @@ use axum::{
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::{PageQuery, Repository};
-use ryframe_service::system::{UserDetailVo, UserVo};
+use ryframe_service::system::{CreateUserParams, UpdateUserParams, UserDetailVo, UserVo};
 use serde::Deserialize;
 use validator::Validate;
 
@@ -21,16 +21,15 @@ use crate::dto::{
 pub struct UserListQuery {
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(
+        default = "ryframe_core::repository::default_page_size",
+        alias = "pageSize"
+    )]
     pub page_size: u64,
     pub username: Option<String>,
     pub phone: Option<String>,
     pub status: Option<String>,
     pub dept_id: Option<i64>,
-}
-
-fn default_page_size() -> u64 {
-    10
 }
 
 pub fn user_router(state: AppState) -> Router {
@@ -161,20 +160,21 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateUserDto>,
 ) -> AppResult<Json<ApiResponse<UserVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .user_service
         .create(
             &state.db,
-            &dto.username,
-            &dto.password,
-            &dto.nickname,
-            dto.email.as_deref().unwrap_or(""),
-            dto.phone.as_deref().unwrap_or(""),
-            dto.dept_id,
-            dto.role_ids,
-            state.config.auth.enable_password_complexity,
+            CreateUserParams {
+                username: &dto.username,
+                password: &dto.password,
+                nickname: &dto.nickname,
+                email: dto.email.as_deref().unwrap_or(""),
+                phone: dto.phone.as_deref().unwrap_or(""),
+                dept_id: dto.dept_id,
+                role_ids: dto.role_ids,
+                enable_pwd_complexity: state.config.auth.enable_password_complexity,
+            },
         )
         .await
         .map(|v| Json(ApiResponse::success(v)))
@@ -191,19 +191,20 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateUserDto>,
 ) -> AppResult<Json<ApiResponse<UserVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .user_service
         .update(
             &state.db,
-            id,
-            &dto.nickname,
-            dto.email.as_deref().unwrap_or(""),
-            dto.phone.as_deref().unwrap_or(""),
-            dto.dept_id,
-            dto.status,
-            dto.role_ids,
+            UpdateUserParams {
+                id,
+                nickname: &dto.nickname,
+                email: dto.email.as_deref().unwrap_or(""),
+                phone: dto.phone.as_deref().unwrap_or(""),
+                dept_id: dto.dept_id,
+                status: dto.status,
+                role_ids: dto.role_ids,
+            },
         )
         .await
         .map(|v| Json(ApiResponse::success(v)))
@@ -276,8 +277,7 @@ async fn reset_password(
     Path(id): Path<i64>,
     Json(dto): Json<ResetPasswordDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .user_service
         .reset_password(
@@ -380,14 +380,16 @@ async fn import_users(
                     .user_service
                     .create(
                         &state.db,
-                        &data.username,
-                        "123456", // 默认密码
-                        &data.nickname,
-                        &data.email,
-                        data.phone.as_deref().unwrap_or(""),
-                        data.dept_id,
-                        None,
-                        false, // 导入时不强制密码复杂度（使用默认密码）
+                        CreateUserParams {
+                            username: &data.username,
+                            password: "123456", // 默认密码
+                            nickname: &data.nickname,
+                            email: &data.email,
+                            phone: data.phone.as_deref().unwrap_or(""),
+                            dept_id: data.dept_id,
+                            role_ids: None,
+                            enable_pwd_complexity: false, // 导入时不强制密码复杂度（使用默认密码）
+                        },
                     )
                     .await
                 {

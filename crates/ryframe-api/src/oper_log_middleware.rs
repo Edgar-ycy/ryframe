@@ -23,6 +23,13 @@ pub struct OperLogMiddlewareState {
     pub db: DatabaseConnection,
 }
 
+impl OperLogMiddlewareState {
+    /// 创建 Arc 包装的状态（用于 axum layer 注入）
+    pub fn new_arc(db: DatabaseConnection) -> Arc<Self> {
+        Arc::new(Self { db })
+    }
+}
+
 /// 操作日志中间件
 ///
 /// 对 POST/PUT/DELETE 请求自动记录操作日志。

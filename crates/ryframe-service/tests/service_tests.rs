@@ -21,7 +21,8 @@ use ryframe_db::{
 use ryframe_service::{
     AuthServiceImpl,
     system::{
-        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, LoginInfoServiceImpl, MenuServiceImpl,
+        ConfigServiceImpl, CreateUserParams, DeptServiceImpl, DictServiceImpl, LoginInfoServiceImpl,
+        MenuServiceImpl,
         NoticeServiceImpl, OperLogServiceImpl, PostServiceImpl, RoleServiceImpl, UserServiceImpl,
     },
 };
@@ -169,14 +170,16 @@ async fn test_user_create_and_find() {
     let vo = svc
         .create(
             &db,
-            "alice",
-            "pass123",
-            "Alice",
-            "alice@a.com",
-            "111",
-            None,
-            None,
-            false,
+            CreateUserParams {
+                username: "alice",
+                password: "pass123",
+                nickname: "Alice",
+                email: "alice@a.com",
+                phone: "111",
+                dept_id: None,
+                role_ids: None,
+                enable_pwd_complexity: false,
+            },
         )
         .await
         .expect("创建用户失败");
@@ -186,7 +189,17 @@ async fn test_user_create_and_find() {
     // 用户名重复检测
     let err = svc
         .create(
-            &db, "alice", "pass456", "Alice2", "a2@a.com", "222", None, None, false,
+            &db,
+            CreateUserParams {
+                username: "alice",
+                password: "pass456",
+                nickname: "Alice2",
+                email: "a2@a.com",
+                phone: "222",
+                dept_id: None,
+                role_ids: None,
+                enable_pwd_complexity: false,
+            },
         )
         .await
         .unwrap_err();
@@ -959,14 +972,16 @@ async fn test_user_create_with_roles() {
     let user = user_svc
         .create(
             &db,
-            "eve",
-            "password",
-            "Eve",
-            "eve@test.com",
-            "138",
-            None,
-            Some(vec![role1.id]),
-            false,
+            CreateUserParams {
+                username: "eve",
+                password: "password",
+                nickname: "Eve",
+                email: "eve@test.com",
+                phone: "138",
+                dept_id: None,
+                role_ids: Some(vec![role1.id]),
+                enable_pwd_complexity: false,
+            },
         )
         .await
         .expect("创建用户失败");

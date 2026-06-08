@@ -154,6 +154,36 @@ impl DeptRepository {
         name: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<Vec<dept::Model>> {
+        self.build_filtered_query(name, status)
+            .order_by_asc(dept::Column::Sort)
+            .all(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// 带搜索条件的分页查询
+    pub async fn find_by_page_filtered(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+        name: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<PageResult<dept::Model>> {
+        crate::pagination::paginate(
+            db,
+            self.build_filtered_query(name, status)
+                .order_by_asc(dept::Column::Sort),
+            &query,
+        )
+        .await
+    }
+
+    /// 构建带搜索条件的查询（复用逻辑）
+    fn build_filtered_query(
+        &self,
+        name: Option<&str>,
+        status: Option<&str>,
+    ) -> sea_orm::Select<dept::Entity> {
         let mut select =
             dept::Entity::find().filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL));
         if let Some(n) = name.filter(|n| !n.is_empty()) {
@@ -162,11 +192,7 @@ impl DeptRepository {
         if let Some(s) = status.filter(|s| !s.is_empty()) {
             select = select.filter(dept::Column::Status.eq(s));
         }
-        select = select.order_by_asc(dept::Column::Sort);
         select
-            .all(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
     }
 }
 

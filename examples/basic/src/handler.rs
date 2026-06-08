@@ -43,8 +43,7 @@ async fn create_todo(
     State(state): State<AppState>,
     Json(dto): Json<CreateTodoDto>,
 ) -> AppResult<Json<ApiResponse<Todo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     let todo = state.todo_service.create(&dto.title).await?;
     Ok(Json(ApiResponse::success(todo)))
 }

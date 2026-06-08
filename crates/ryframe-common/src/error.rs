@@ -3,6 +3,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use validator::ValidationErrors;
 // 统一错误类型 (AppError)
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -141,5 +142,11 @@ impl IntoResponse for AppError {
             http::HeaderValue::from_static("application/json"),
         );
         response
+    }
+}
+
+impl From<ValidationErrors> for AppError {
+    fn from(e: ValidationErrors) -> Self {
+        AppError::Validation(e.to_string())
     }
 }

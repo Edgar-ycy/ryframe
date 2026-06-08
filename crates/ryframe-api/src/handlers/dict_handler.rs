@@ -13,22 +13,13 @@ use super::auth_handler::AppState;
 use crate::dto::dict_dto::{
     CreateDictDataDto, CreateDictTypeDto, UpdateDictDataDto, UpdateDictTypeDto,
 };
+use crate::list_query;
 
-/// 字典类型分页查询参数
-#[derive(Debug, Deserialize)]
-pub struct DictTypeListQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
-    pub page_size: u64,
-    pub name: Option<String>,
-    pub code: Option<String>,
-    pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
-}
+list_query!(pub DictTypeListQuery {
+    name: String,
+    code: String,
+    status: String,
+});
 
 pub fn dict_router(state: AppState) -> Router {
     Router::new()
@@ -86,8 +77,7 @@ async fn create_type(
     State(state): State<AppState>,
     Json(dto): Json<CreateDictTypeDto>,
 ) -> AppResult<Json<ApiResponse<DictTypeVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .dict_service
         .create_type(&state.db, &dto.name, &dto.code)
@@ -106,8 +96,7 @@ async fn update_type(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDictTypeDto>,
 ) -> AppResult<Json<ApiResponse<DictTypeVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .dict_service
         .update_type(&state.db, id, &dto.name, dto.status)
@@ -176,8 +165,7 @@ async fn create_data(
     State(state): State<AppState>,
     Json(dto): Json<CreateDictDataDto>,
 ) -> AppResult<Json<ApiResponse<DictDataVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .dict_service
         .create_data(
@@ -202,8 +190,7 @@ async fn update_data(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDictDataDto>,
 ) -> AppResult<Json<ApiResponse<DictDataVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .dict_service
         .update_data(

@@ -6,27 +6,18 @@ use axum::{
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::PostVo;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
+use crate::{detail_body, list_query, remove_body};
 
-/// 岗位列表查询参数（支持搜索过滤）
-#[derive(Debug, Deserialize)]
-pub struct PostListQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
-    pub page_size: u64,
-    pub name: Option<String>,
-    pub code: Option<String>,
-    pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
-}
+list_query!(pub PostListQuery {
+    name: String,
+    code: String,
+    status: String,
+});
 
 pub fn post_router(state: AppState) -> Router {
     Router::new()
@@ -92,10 +83,7 @@ async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<PostVo>>> {
-    match state.post_service.find_by_id(&state.db, id).await? {
-        Some(post) => Ok(Json(ApiResponse::success(post))),
-        None => Err(ryframe_common::AppError::NotFound("岗位不存在".into())),
-    }
+    detail_body!(state, id, post_service, PostVo, "岗位")
 }
 
 /// 创建岗位
@@ -105,8 +93,7 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreatePostDto>,
 ) -> AppResult<Json<ApiResponse<PostVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .post_service
         .create(&state.db, &dto.name, &dto.code, dto.sort.unwrap_or(0))
@@ -123,8 +110,7 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdatePostDto>,
 ) -> AppResult<Json<ApiResponse<PostVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .post_service
         .update(&state.db, id, &dto.name, dto.sort.unwrap_or(0), dto.status)
@@ -139,8 +125,7 @@ async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    state.post_service.delete(&state.db, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    remove_body!(state, id, post_service)
 }
 
 /// 岗位导出数据

@@ -31,6 +31,7 @@ sha2 = {workspace = true}
 digest = {workspace = true, features = ["mac"]}
 hex = {workspace = true}
 async-trait = {workspace = true}
+validator = {workspace = true}
 
 [dev-dependencies]
 tempfile = { workspace = true }

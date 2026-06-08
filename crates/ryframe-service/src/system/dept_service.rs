@@ -2,6 +2,7 @@ use ryframe_common::{AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
+    repository::{PageQuery, PageResult},
 };
 use ryframe_db::{DeptRepository, entities::dept, repositories::dept_repo::DeptTreeNode};
 use sea_orm::DatabaseConnection;
@@ -154,6 +155,22 @@ impl DeptServiceImpl {
     ) -> AppResult<Vec<DeptVo>> {
         let models = self.dept_repo.find_filtered(db, name, status).await?;
         Ok(models.into_iter().map(DeptVo::from).collect())
+    }
+
+    /// 按名称/状态搜索部门列表（分页）
+    pub async fn find_by_page_filtered(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+        name: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<PageResult<DeptVo>> {
+        let page = self
+            .dept_repo
+            .find_by_page_filtered(db, query.clone(), name, status)
+            .await?;
+        let records = page.records.into_iter().map(DeptVo::from).collect();
+        Ok(PageResult::new(records, page.total, &query))
     }
 
     /// 按 ID 查询部门详情

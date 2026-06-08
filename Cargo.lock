@@ -4647,6 +4647,7 @@ dependencies = [
  "toml",
  "tracing",
  "uuid",
+ "validator",
 ]
 
 [[package]]

@@ -21,4 +21,10 @@ ignore = [
     # 风险: 极低 - paste 是 macro-only 编译时依赖，无运行时攻击面
     # 解决: 等待 image crate 升级 ravif 或将 AVIF 设为可选 feature
     "RUSTSEC-2024-0436",
+
+    # proc-macro-error2 已停止维护
+    # 传播路径: 间接依赖（proc macro 编译时依赖）
+    # 风险: 极低 - 仅编译时使用，无运行时攻击面，且功能稳定
+    # 解决: 等待上游 crate 迁移到 manyhow 或 proc-macro2-diagnostics
+    "RUSTSEC-2026-0173",
 ]

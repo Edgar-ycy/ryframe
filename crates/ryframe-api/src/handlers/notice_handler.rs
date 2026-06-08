@@ -6,27 +6,17 @@ use axum::{
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::NoticeVo;
-use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};
+use crate::{detail_body, list_query, remove_body};
 
-/// 通知公告列表查询参数（支持搜索过滤）
-#[derive(Debug, Deserialize)]
-pub struct NoticeListQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
-    pub page_size: u64,
-    pub title: Option<String>,
-    pub notice_type: Option<String>,
-    pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
-}
+list_query!(pub NoticeListQuery {
+    title: String,
+    notice_type: String,
+    status: String,
+});
 
 pub fn notice_router(state: AppState) -> Router {
     Router::new()
@@ -97,10 +87,7 @@ async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<NoticeVo>>> {
-    match state.notice_service.find_by_id(&state.db, id).await? {
-        Some(notice) => Ok(Json(ApiResponse::success(notice))),
-        None => Err(ryframe_common::AppError::NotFound("通知公告不存在".into())),
-    }
+    detail_body!(state, id, notice_service, NoticeVo, "通知公告")
 }
 
 /// 创建通知公告
@@ -110,8 +97,7 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateNoticeDto>,
 ) -> AppResult<Json<ApiResponse<NoticeVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .notice_service
         .create(
@@ -136,8 +122,7 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateNoticeDto>,
 ) -> AppResult<Json<ApiResponse<NoticeVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .notice_service
         .update(
@@ -159,6 +144,5 @@ async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    state.notice_service.delete(&state.db, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    remove_body!(state, id, notice_service)
 }

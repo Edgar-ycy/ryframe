@@ -36,7 +36,9 @@ pub use multi_tenant::{
     TenantIsolation, TenantQuota, tenant_middleware,
 };
 pub use redis_client::{RedisClient, create_redis_client};
-pub use repository::{LoggedRepo, PageQuery, PageResult, Repository};
+pub use repository::{
+    LoggedRepo, PageQuery, PageResult, Repository, default_page, default_page_size,
+};
 pub use service::Service;
 pub use task_queue::{TaskMessage, TaskQueue};
 pub use token_blacklist::TokenBlacklist;

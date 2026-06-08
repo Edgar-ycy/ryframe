@@ -6,29 +6,20 @@ use axum::{
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::RoleVo;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::role_dto::{
     AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto,
 };
+use crate::{detail_body, list_query, remove_body};
 
-/// 角色列表分页查询参数（支持搜索过滤）
-#[derive(Debug, Deserialize)]
-pub struct RoleListQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
-    pub page_size: u64,
-    pub name: Option<String>,
-    pub code: Option<String>,
-    pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
-}
+list_query!(pub RoleListQuery {
+    name: String,
+    code: String,
+    status: String,
+});
 
 pub fn role_router(state: AppState) -> Router {
     Router::new()
@@ -104,10 +95,7 @@ async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<RoleVo>>> {
-    match state.role_service.find_by_id(&state.db, id).await? {
-        Some(role) => Ok(Json(ApiResponse::success(role))),
-        None => Err(ryframe_common::AppError::NotFound("角色不存在".into())),
-    }
+    detail_body!(state, id, role_service, RoleVo, "角色")
 }
 
 /// 创建角色
@@ -117,8 +105,7 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateRoleDto>,
 ) -> AppResult<Json<ApiResponse<RoleVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .role_service
         .create(
@@ -141,8 +128,7 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateRoleDto>,
 ) -> AppResult<Json<ApiResponse<RoleVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .role_service
         .update(
@@ -164,8 +150,7 @@ async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    state.role_service.delete(&state.db, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    remove_body!(state, id, role_service)
 }
 
 /// 批量删除角色

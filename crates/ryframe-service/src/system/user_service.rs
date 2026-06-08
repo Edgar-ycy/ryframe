@@ -82,6 +82,29 @@ pub struct UserServiceImpl {
     pub dept_repo: LoggedRepo<DeptRepository>,
 }
 
+/// 创建用户参数
+pub struct CreateUserParams<'a> {
+    pub username: &'a str,
+    pub password: &'a str,
+    pub nickname: &'a str,
+    pub email: &'a str,
+    pub phone: &'a str,
+    pub dept_id: Option<i64>,
+    pub role_ids: Option<Vec<i64>>,
+    pub enable_pwd_complexity: bool,
+}
+
+/// 更新用户参数
+pub struct UpdateUserParams<'a> {
+    pub id: i64,
+    pub nickname: &'a str,
+    pub email: &'a str,
+    pub phone: &'a str,
+    pub dept_id: Option<i64>,
+    pub status: String,
+    pub role_ids: Option<Vec<i64>>,
+}
+
 impl UserServiceImpl {
     /// 批量补充 dept_name
     async fn fill_dept_names(&self, db: &DatabaseConnection, records: &mut [UserVo]) {
@@ -258,19 +281,22 @@ impl UserServiceImpl {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         db: &DatabaseConnection,
-        username: &str,
-        password: &str,
-        nickname: &str,
-        email: &str,
-        phone: &str,
-        dept_id: Option<i64>,
-        role_ids: Option<Vec<i64>>,
-        enable_pwd_complexity: bool,
+        params: CreateUserParams<'_>,
     ) -> AppResult<UserVo> {
+        let CreateUserParams {
+            username,
+            password,
+            nickname,
+            email,
+            phone,
+            dept_id,
+            role_ids,
+            enable_pwd_complexity,
+        } = params;
+
         // 密码复杂度校验
         if enable_pwd_complexity {
             password::validate_complexity(password)?;
@@ -343,18 +369,20 @@ impl UserServiceImpl {
         Ok(UserVo::from(saved))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
         db: &DatabaseConnection,
-        id: i64,
-        nickname: &str,
-        email: &str,
-        phone: &str,
-        dept_id: Option<i64>,
-        status: String,
-        role_ids: Option<Vec<i64>>,
+        params: UpdateUserParams<'_>,
     ) -> AppResult<UserVo> {
+        let UpdateUserParams {
+            id,
+            nickname,
+            email,
+            phone,
+            dept_id,
+            status,
+            role_ids,
+        } = params;
         let mut user = self
             .user_repo
             .find_by_id(db, id)

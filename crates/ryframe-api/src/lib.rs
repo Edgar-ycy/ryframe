@@ -1,6 +1,8 @@
 pub mod dto;
 pub mod extractors;
 pub mod handlers;
+#[macro_use]
+pub mod macros;
 pub mod openapi;
 pub mod oper_log_middleware;
 pub mod router;

@@ -16,11 +16,12 @@ pub struct PageQuery {
     pub page_size: u64,
 }
 
-fn default_page() -> u64 {
+pub fn default_page() -> u64 {
     1
 }
 
-fn default_page_size() -> u64 {
+/// `#[serde(default = "ryframe_core::repository::default_page_size")]` 的全局默认页大小
+pub fn default_page_size() -> u64 {
     10
 }
 

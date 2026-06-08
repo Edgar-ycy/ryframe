@@ -19,14 +19,13 @@ use crate::{
 pub struct JobLogPageQuery {
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(
+        default = "ryframe_core::repository::default_page_size",
+        alias = "pageSize"
+    )]
     pub page_size: u64,
     pub job_name: Option<String>,
     pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
 }
 
 pub fn job_router(state: AppState) -> Router {
@@ -50,8 +49,7 @@ async fn create_job(
     State(state): State<AppState>,
     Json(dto): Json<CreateJobDto>,
 ) -> AppResult<Json<ApiResponse<JobVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     let job = state
         .job_service
         .create(

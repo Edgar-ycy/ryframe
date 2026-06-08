@@ -74,8 +74,7 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateConfigDto>,
 ) -> AppResult<Json<ApiResponse<ConfigVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .config_service
         .create(
@@ -98,8 +97,7 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateConfigDto>,
 ) -> AppResult<Json<ApiResponse<ConfigVo>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .config_service
         .update(&state.db, id, &dto.value)

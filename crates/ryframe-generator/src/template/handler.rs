@@ -36,11 +36,9 @@ pub fn {snake}_router(db: sea_orm::DatabaseConnection) -> Router {{
 pub struct {snake_name}ListQuery {{
     #[serde(default)]
     pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "ryframe_core::repository::default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }}
-
-fn default_page_size() -> u64 {{ 10 }}
 
 /// 分页列表
 async fn list(

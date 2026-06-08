@@ -187,8 +187,7 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
-    req.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    req.validate()?;
 
     let remote_addr = addr.to_string();
     let ip = ryframe_common::utils::ip::get_client_ip(&headers, &remote_addr);
@@ -245,8 +244,8 @@ pub async fn login(
                     dept_name,
                     ipaddr: ip.to_string(),
                     login_location,
-                    browser: parse_browser(user_agent),
-                    os: parse_os(user_agent),
+                    browser: ryframe_common::utils::user_agent::parse_browser(user_agent),
+                    os: ryframe_common::utils::user_agent::parse_os(user_agent),
                     login_time: now,
                     last_access_time: now,
                 })
@@ -404,49 +403,4 @@ pub async fn me(
         .await?;
 
     Ok(Json(ApiResponse::success(user_info)))
-}
-
-/// 从 User-Agent 解析浏览器名称
-fn parse_browser(ua: &str) -> Option<String> {
-    if ua.is_empty() {
-        return None;
-    }
-    let ua_lower = ua.to_lowercase();
-    let browser = if ua_lower.contains("edg/") {
-        "Edge"
-    } else if ua_lower.contains("chrome/") && !ua_lower.contains("edg/") {
-        "Chrome"
-    } else if ua_lower.contains("firefox/") {
-        "Firefox"
-    } else if ua_lower.contains("safari/") && !ua_lower.contains("chrome/") {
-        "Safari"
-    } else if ua_lower.contains("opera") || ua_lower.contains("opr/") {
-        "Opera"
-    } else {
-        "Other"
-    };
-    Some(browser.to_string())
-}
-
-/// 从 User-Agent 解析操作系统名称
-fn parse_os(ua: &str) -> Option<String> {
-    if ua.is_empty() {
-        return None;
-    }
-    let os = if ua.contains("Windows NT 10") {
-        "Windows 10"
-    } else if ua.contains("Windows") {
-        "Windows"
-    } else if ua.contains("Mac OS X") {
-        "macOS"
-    } else if ua.contains("Linux") {
-        "Linux"
-    } else if ua.contains("Android") {
-        "Android"
-    } else if ua.contains("iPhone") || ua.contains("iPad") {
-        "iOS"
-    } else {
-        "Other"
-    };
-    Some(os.to_string())
 }

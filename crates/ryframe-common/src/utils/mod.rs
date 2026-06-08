@@ -5,6 +5,7 @@ pub mod log_mask;
 pub mod snowflake;
 pub mod string;
 pub mod tree;
+pub mod user_agent;
 pub use excel::{ExcelExporter, ExcelImporter};
 pub mod captcha;
 pub mod data_diff;

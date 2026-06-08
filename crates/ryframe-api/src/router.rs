@@ -53,9 +53,7 @@ async fn online_user_tracking(
 ///   protected: auth → oper_log → handler
 ///   profile:  auth → oper_log → handler
 pub fn auth_router(state: AppState) -> Router {
-    let oper_log_state = Arc::new(OperLogMiddlewareState {
-        db: state.db.clone(),
-    });
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.db.clone());
 
     let auth_state = AuthState {
         config: state.config.clone(),
@@ -200,9 +198,7 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
-            Arc::new(OperLogMiddlewareState {
-                db: state.db.clone(),
-            }),
+            OperLogMiddlewareState::new_arc(state.db.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
@@ -231,9 +227,7 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     Router::new()
         .nest("/gen", generator_handler::generator_router(state.clone()))
         .layer(from_fn_with_state(
-            Arc::new(OperLogMiddlewareState {
-                db: state.db.clone(),
-            }),
+            OperLogMiddlewareState::new_arc(state.db.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
@@ -257,9 +251,7 @@ fn common_router(state: AppState) -> Router {
         blacklist: state.token_blacklist.clone(),
     };
 
-    let oper_log_state = Arc::new(OperLogMiddlewareState {
-        db: state.db.clone(),
-    });
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.db.clone());
 
     // 上传路由（公开，不记录操作日志以避免大文件 body 缓冲）
     let upload = common_handler::upload_router(state.clone());

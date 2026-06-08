@@ -20,7 +20,9 @@ pub use oper_log_service::{OperLogServiceImpl, OperLogVo};
 pub use permission_service::{PermissionServiceImpl, PermissionTreeNode};
 pub use post_service::{PostServiceImpl, PostVo};
 pub use role_service::{RoleServiceImpl, RoleVo};
-pub use user_service::{RoleBriefVo, UserDetailVo, UserServiceImpl, UserVo};
+pub use user_service::{
+    CreateUserParams, RoleBriefVo, UpdateUserParams, UserDetailVo, UserServiceImpl, UserVo,
+};
 pub mod job_service;
 pub use job_service::{JobLogVo, JobServiceImpl, JobVo};
 pub mod generator_service;

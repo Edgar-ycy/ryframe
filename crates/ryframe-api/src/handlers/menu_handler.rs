@@ -5,26 +5,16 @@ use axum::{
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_db::{entities::menu, repositories::menu_repo::MenuTreeNode};
-use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
+use crate::list_query;
 
-/// 菜单列表查询参数
-#[derive(Debug, Deserialize)]
-pub struct MenuListQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
-    pub page_size: u64,
-    pub name: Option<String>,
-    pub status: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
-}
+list_query!(pub MenuListQuery {
+    name: String,
+    status: String,
+});
 
 pub fn menu_router(state: AppState) -> Router {
     Router::new()
@@ -91,8 +81,7 @@ async fn create(
     State(state): State<AppState>,
     Json(dto): Json<CreateMenuDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .menu_service
         .create(
@@ -123,8 +112,7 @@ async fn update(
     Path(id): Path<i64>,
     Json(dto): Json<UpdateMenuDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
-    dto.validate()
-        .map_err(|e| ryframe_common::AppError::Validation(e.to_string()))?;
+    dto.validate()?;
     state
         .menu_service
         .update(

@@ -5,24 +5,14 @@ use axum::{
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_service::system::online_user_service::OnlineUserVo;
-use serde::Deserialize;
 
 use crate::handlers::auth_handler::AppState;
+use crate::list_query;
 
-/// 在线用户查询参数
-#[derive(Debug, Deserialize)]
-pub struct OnlineUserQuery {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_page_size", alias = "pageSize")]
-    pub page_size: u64,
-    pub username: Option<String>,
-    pub ipaddr: Option<String>,
-}
-
-fn default_page_size() -> u64 {
-    10
-}
+list_query!(pub OnlineUserQuery {
+    username: String,
+    ipaddr: String,
+});
 
 /// 在线用户路由
 pub fn online_user_router(state: AppState) -> Router {
