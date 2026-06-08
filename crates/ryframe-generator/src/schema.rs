@@ -48,9 +48,11 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
         col_infos.push(col_info);
     }
 
+    let table_comment = query_table_comment(db, table_name).await?;
+
     Ok(TableInfo {
         table_name: table_name.to_string(),
-        comment: None,
+        comment: table_comment,
         columns: col_infos,
     })
 }
@@ -86,19 +88,64 @@ struct ColumnRow {
 }
 
 async fn query_columns(db: &DatabaseConnection, table_name: &str) -> AppResult<Vec<ColumnRow>> {
-    let sql = "SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable, \
+    let backend = db.get_database_backend();
+    let placeholder = match backend {
+        DatabaseBackend::MySql => "?",
+        _ => "$1",
+    };
+    let schema_filter = match backend {
+        DatabaseBackend::MySql => "AND table_schema = DATABASE()",
+        DatabaseBackend::Postgres => {
+            "AND table_schema NOT IN ('information_schema', 'pg_catalog')"
+        }
+        _ => "",
+    };
+    let sql = format!(
+        "SELECT COLUMN_NAME as column_name, DATA_TYPE as data_type, IS_NULLABLE as is_nullable, \
          COLUMN_KEY as column_key, EXTRA as extra, COLUMN_COMMENT as column_comment \
-         FROM information_schema.columns WHERE table_name = $1 \
-         ORDER BY ORDINAL_POSITION";
+         FROM information_schema.columns \
+         WHERE table_name = {placeholder} {schema_filter} \
+         ORDER BY ORDINAL_POSITION"
+    );
     let results = ColumnRow::find_by_statement(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        sql,
+        backend,
+        &sql,
         [table_name.into()],
     ))
     .all(db)
     .await
     .map_err(|e| ryframe_common::AppError::Database(format!("查询表结构失败: {}", e)))?;
     Ok(results)
+}
+
+#[derive(Debug, FromQueryResult)]
+struct TableCommentRow {
+    comment: Option<String>,
+}
+
+async fn query_table_comment(db: &DatabaseConnection, table_name: &str) -> AppResult<Option<String>> {
+    let backend = db.get_database_backend();
+    let placeholder = match backend {
+        DatabaseBackend::MySql => "?",
+        _ => "$1",
+    };
+    let schema_filter = match backend {
+        DatabaseBackend::MySql => "AND table_schema = DATABASE()",
+        DatabaseBackend::Postgres => "AND table_schema NOT IN ('information_schema', 'pg_catalog')",
+        _ => "",
+    };
+    let sql = format!(
+        "SELECT TABLE_COMMENT as comment FROM information_schema.tables WHERE table_name = {placeholder} {schema_filter}"
+    );
+    let result = TableCommentRow::find_by_statement(Statement::from_sql_and_values(
+        backend,
+        &sql,
+        [table_name.into()],
+    ))
+    .one(db)
+    .await
+    .map_err(|e| ryframe_common::AppError::Database(format!("查询表注释失败: {}", e)))?;
+    Ok(result.and_then(|r| r.comment))
 }
 
 #[derive(Debug, FromQueryResult)]

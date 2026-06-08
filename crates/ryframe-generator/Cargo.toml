@@ -11,7 +11,9 @@ description.workspace = true
 ryframe-common = { path = "../ryframe-common" }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-chrono = { workspace = true }
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
 log = { workspace = true }
+
+[[bin]]
+name = "ryframe-gen"
+path = "src/bin/gen.rs"

@@ -4711,29 +4711,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryframe-example-basic"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "ryframe-common",
- "serde",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "validator",
-]
-
-[[package]]
 name = "ryframe-generator"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "log",
  "ryframe-common",
  "sea-orm",
  "serde",
- "serde_json",
  "tokio",
 ]
 

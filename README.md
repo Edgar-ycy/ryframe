@@ -94,13 +94,13 @@ cargo run
 
 ### 5. 访问
 
-| 入口 | 地址 |
-|------|------|
-| API 服务 | http://localhost:8080 |
-| 健康检查 | http://localhost:8080/health |
-| Swagger UI | http://localhost:8080/api/v1/swagger-ui |
+| 入口         | 地址                                           |
+|------------|----------------------------------------------|
+| API 服务     | http://localhost:8080                        |
+| 健康检查       | http://localhost:8080/health                 |
+| Swagger UI | http://localhost:8080/api/v1/swagger-ui      |
 | Prometheus | http://localhost:8080/api/v1/monitor/metrics |
-| API 版本 | http://localhost:8080/api/v1/version |
+| API 版本     | http://localhost:8080/api/v1/version         |
 
 ### 6. 登录测试
 
@@ -112,21 +112,21 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 
 ### 默认账户
 
-| 账号 | 密码 | 角色 |
-|------|------|------|
+| 账号    | 密码     | 角色          |
+|-------|--------|-------------|
 | admin | 123456 | 超级管理员（全部权限） |
-| user | 123456 | 普通用户（基础权限） |
+| user  | 123456 | 普通用户（基础权限）  |
 
 ### 环境变量
 
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `APP_ENV` | 运行环境（dev/test/prod） | `dev` |
-| `APP_CONFIG_DIR` | 配置文件目录 | `config` |
-| `OTEL_ENABLED` | 启用链路追踪 | `false` |
-| `OTEL_ENDPOINT` | OTLP 端点 | `http://localhost:4318/v1/traces` |
-| `OTEL_SERVICE_NAME` | 服务名称 | `ryframe` |
-| `OTEL_SAMPLE_RATE` | 采样率（0.0-1.0） | `1.0` |
+| 变量名                 | 说明                  | 默认值                               |
+|---------------------|---------------------|-----------------------------------|
+| `APP_ENV`           | 运行环境（dev/test/prod） | `dev`                             |
+| `APP_CONFIG_DIR`    | 配置文件目录              | `config`                          |
+| `OTEL_ENABLED`      | 启用链路追踪              | `false`                           |
+| `OTEL_ENDPOINT`     | OTLP 端点             | `http://localhost:4318/v1/traces` |
+| `OTEL_SERVICE_NAME` | 服务名称                | `ryframe`                         |
+| `OTEL_SAMPLE_RATE`  | 采样率（0.0-1.0）        | `1.0`                             |
 
 ## 项目结构
 
@@ -135,8 +135,6 @@ ryframe/
 ├── config/              # 配置文件（dev/test/prod）
 ├── sql/                 # 数据库初始化脚本
 ├── locales/             # 国际化语言文件
-├── examples/            # 示例项目
-├── docs/                # 架构文档 / 开发指南
 ├── crates/
 │   ├── ryframe/         # 应用入口（main.rs / app.rs）
 │   ├── ryframe-api/     # HTTP 层（Handler / DTO / Router / OpenAPI）
@@ -180,60 +178,60 @@ ryframe/
 
 ### 认证 (`/api/v1/auth`)
 
-| 方法 | 路径 | 说明 | 认证 |
-|------|------|------|------|
-| `POST` | `/login` | 用户登录 | 否 |
-| `POST` | `/refresh` | 刷新令牌 | 否 |
-| `POST` | `/logout` | 用户登出 | 是 |
-| `GET` | `/me` | 当前用户信息+菜单+角色 | 是 |
-| `GET` | `/captcha/image` | 获取验证码图片 | 否 |
-| `GET` | `/profile` | 个人信息 | 是 |
-| `PUT` | `/profile` | 更新个人信息 | 是 |
-| `PUT` | `/profile/password` | 修改密码 | 是 |
+| 方法     | 路径                  | 说明           | 认证 |
+|--------|---------------------|--------------|----|
+| `POST` | `/login`            | 用户登录         | 否  |
+| `POST` | `/refresh`          | 刷新令牌         | 否  |
+| `POST` | `/logout`           | 用户登出         | 是  |
+| `GET`  | `/me`               | 当前用户信息+菜单+角色 | 是  |
+| `GET`  | `/captcha/image`    | 获取验证码图片      | 否  |
+| `GET`  | `/profile`          | 个人信息         | 是  |
+| `PUT`  | `/profile`          | 更新个人信息       | 是  |
+| `PUT`  | `/profile/password` | 修改密码         | 是  |
 
 ### 系统管理 (`/api/v1/system`) —— 全部需要认证
 
-| 子模块 | 路径 | 主要操作 |
-|--------|------|----------|
-| 用户管理 | `/users` | 分页查询/详情/创建/更新/删除/重置密码/修改状态 |
-| 角色管理 | `/roles` | 列表/详情/创建/更新/删除/分配权限/分配菜单/设置数据权限 |
-| 权限管理 | `/permissions` | 权限树查询 |
-| 菜单管理 | `/menus` | 菜单树/创建/更新/删除 |
-| 部门管理 | `/depts` | 部门树/创建/更新/删除 |
-| 岗位管理 | `/posts` | 列表/创建/更新/删除 |
-| 参数配置 | `/configs` | 列表/详情/按Key查询/创建/更新/删除 |
-| 字典管理 | `/dict` | 类型CRUD + 数据CRUD + 按类型获取 |
-| 通知公告 | `/notices` | 列表/创建/更新/删除 |
-| 操作日志 | `/operlogs` | 分页查询/清空 |
-| 登录日志 | `/loginlogs` | 分页查询/清空 |
-| 定时任务 | `/jobs` | CRUD/暂停/恢复/立即触发 |
-| 在线用户 | `/online` | 列表/强制踢出 |
+| 子模块  | 路径             | 主要操作                            |
+|------|----------------|---------------------------------|
+| 用户管理 | `/users`       | 分页查询/详情/创建/更新/删除/重置密码/修改状态      |
+| 角色管理 | `/roles`       | 列表/详情/创建/更新/删除/分配权限/分配菜单/设置数据权限 |
+| 权限管理 | `/permissions` | 权限树查询                           |
+| 菜单管理 | `/menus`       | 菜单树/创建/更新/删除                    |
+| 部门管理 | `/depts`       | 部门树/创建/更新/删除                    |
+| 岗位管理 | `/posts`       | 列表/创建/更新/删除                     |
+| 参数配置 | `/configs`     | 列表/详情/按Key查询/创建/更新/删除           |
+| 字典管理 | `/dict`        | 类型CRUD + 数据CRUD + 按类型获取         |
+| 通知公告 | `/notices`     | 列表/创建/更新/删除                     |
+| 操作日志 | `/operlogs`    | 分页查询/清空                         |
+| 登录日志 | `/loginlogs`   | 分页查询/清空                         |
+| 定时任务 | `/jobs`        | CRUD/暂停/恢复/立即触发                 |
+| 在线用户 | `/online`      | 列表/强制踢出                         |
 
 ### 监控 (`/api/v1/monitor`)
 
-| 路径 | 说明 |
-|------|------|
-| `/server` | 服务器 CPU/内存/磁盘信息 |
-| `/health` | 增强健康检查（DB+Redis 连通性） |
-| `/cache` | 缓存命中率统计 |
-| `/cache/commands` | Redis 命令统计 |
-| `/db-pool` | 数据库连接池状态 |
-| `/metrics` | Prometheus 指标导出 |
+| 路径                | 说明                   |
+|-------------------|----------------------|
+| `/server`         | 服务器 CPU/内存/磁盘信息      |
+| `/health`         | 增强健康检查（DB+Redis 连通性） |
+| `/cache`          | 缓存命中率统计              |
+| `/cache/commands` | Redis 命令统计           |
+| `/db-pool`        | 数据库连接池状态             |
+| `/metrics`        | Prometheus 指标导出      |
 
 ### 其他
 
-| 前缀 | 说明 |
-|------|------|
-| `/api/v1/tools/gen` | 代码生成器（表列表/预览/生成） |
-| `/api/v1/common` | 文件上传（公开）/ 文件下载（需认证） |
-| `/api/v1/version` | API 版本信息与端点列表 |
+| 前缀                              | 说明                  |
+|---------------------------------|---------------------|
+| `/api/v1/tools/gen`             | 代码生成器（表列表/预览/生成）    |
+| `/api/v1/common`                | 文件上传（公开）/ 文件下载（需认证） |
+| `/api/v1/version`               | API 版本信息与端点列表       |
 | `/api/v1/api-docs/openapi.json` | OpenAPI 3.0 JSON 文档 |
-| `/api/v1/swagger-ui` | Swagger UI 交互文档 |
-| `/health` | 服务存活检测 |
+| `/api/v1/swagger-ui`            | Swagger UI 交互文档     |
+| `/health`                       | 服务存活检测              |
 
 ### 统一响应格式
 
-```json
+```json,ignore
 {
     "code": 200,
     "message": "操作成功",
@@ -241,23 +239,23 @@ ryframe/
 }
 ```
 
-| 状态码 | 含义 |
-|--------|------|
-| 200 | 操作成功 |
-| 400 | 请求参数错误 |
+| 状态码 | 含义           |
+|-----|--------------|
+| 200 | 操作成功         |
+| 400 | 请求参数错误       |
 | 401 | 未认证（令牌无效/过期） |
-| 403 | 无权限 |
-| 404 | 资源不存在 |
-| 409 | 数据冲突 |
-| 429 | 请求过于频繁（限流） |
-| 500 | 服务器内部错误 |
+| 403 | 无权限          |
+| 404 | 资源不存在        |
+| 409 | 数据冲突         |
+| 429 | 请求过于频繁（限流）   |
+| 500 | 服务器内部错误      |
 
 ### 分页格式
 
 请求：`GET /api/v1/system/users/list?page=1&page_size=10`
 
 响应：
-```json
+```json,ignore
 {
     "code": 200,
     "data": {
@@ -283,16 +281,16 @@ ryframe/
 
 ### 主要配置项
 
-| 配置节 | 说明 |
-|--------|------|
-| `[app]` | 应用名称、版本、监听地址端口 |
-| `[database]` | SQL 日志级别 + 多数据源连接配置 |
-| `[auth]` | JWT 密钥、Token 过期时间 |
-| `[redis]` | Redis 连接（可选，未配置时降级内存模式） |
-| `[logger]` | 日志级别/格式（text/json）/输出（stdout/file） |
-| `[cors]` | CORS 允许的域名列表 |
-| `[rate_limit]` | 全局限流/用户级/接口级限流参数 |
-| `[object_storage]` | 对象存储后端（local/minio/s3）及凭证 |
+| 配置节                | 说明                                 |
+|--------------------|------------------------------------|
+| `[app]`            | 应用名称、版本、监听地址端口                     |
+| `[database]`       | SQL 日志级别 + 多数据源连接配置                |
+| `[auth]`           | JWT 密钥、Token 过期时间                  |
+| `[redis]`          | Redis 连接（可选，未配置时降级内存模式）            |
+| `[logger]`         | 日志级别/格式（text/json）/输出（stdout/file） |
+| `[cors]`           | CORS 允许的域名列表                       |
+| `[rate_limit]`     | 全局限流/用户级/接口级限流参数                   |
+| `[object_storage]` | 对象存储后端（local/minio/s3）及凭证          |
 
 ### 多数据源配置
 
@@ -351,26 +349,26 @@ mysql -u root -p ryframe_config < sql/ryframe_config.sql
 
 ### 数据表清单（18 张表）
 
-| 表名 | 说明 |
-|------|------|
-| `sys_user` | 系统用户 |
-| `sys_role` | 系统角色 |
-| `sys_permission` | 权限资源（树形） |
-| `sys_menu` | 系统菜单（树形） |
-| `sys_dept` | 组织部门（树形） |
-| `sys_post` | 岗位 |
-| `sys_config` | 系统参数配置 |
-| `sys_dict_type` | 字典类型 |
-| `sys_dict_data` | 字典数据 |
-| `sys_notice` | 通知公告 |
-| `sys_oper_log` | 操作日志 |
-| `sys_login_info` | 登录日志 |
-| `sys_job` | 定时任务 |
-| `sys_job_log` | 任务执行日志 |
-| `user_role` | 用户-角色关联 |
-| `role_permission` | 角色-权限关联 |
-| `role_menu` | 角色-菜单关联 |
-| `sys_role_dept` | 角色-部门关联（数据权限） |
+| 表名                | 说明            |
+|-------------------|---------------|
+| `sys_user`        | 系统用户          |
+| `sys_role`        | 系统角色          |
+| `sys_permission`  | 权限资源（树形）      |
+| `sys_menu`        | 系统菜单（树形）      |
+| `sys_dept`        | 组织部门（树形）      |
+| `sys_post`        | 岗位            |
+| `sys_config`      | 系统参数配置        |
+| `sys_dict_type`   | 字典类型          |
+| `sys_dict_data`   | 字典数据          |
+| `sys_notice`      | 通知公告          |
+| `sys_oper_log`    | 操作日志          |
+| `sys_login_info`  | 登录日志          |
+| `sys_job`         | 定时任务          |
+| `sys_job_log`     | 任务执行日志        |
+| `user_role`       | 用户-角色关联       |
+| `role_permission` | 角色-权限关联       |
+| `role_menu`       | 角色-菜单关联       |
+| `sys_role_dept`   | 角色-部门关联（数据权限） |
 
 ## 认证使用
 
@@ -516,29 +514,29 @@ cargo audit
 
 ## 技术栈
 
-| 层次 | 技术 | 版本 |
-|------|------|------|
-| Web 框架 | Axum + Tower | 0.8 / 0.5 |
-| 异步运行时 | Tokio | 1.x |
-| ORM | SeaORM | 2.0（MySQL / PostgreSQL / SQLite） |
-| 认证 | JWT (jsonwebtoken) + Argon2 | 10.4 / 0.5 |
-| 权限 | RBAC + 数据权限 DataScope | — |
-| 缓存 | Redis (redis-rs) + 本地内存降级 | 0.27 |
-| 日志 | Tracing + Subscriber + Appender | 0.1 / 0.3 / 0.2 |
-| 序列化 | Serde + TOML + JSON | 1.x |
-| 监控 | Prometheus + Sysinfo | 0.14 / 0.39 |
-| 链路追踪 | OpenTelemetry（OTLP over HTTP） | 0.32 |
-| API 文档 | Utoipa + Swagger UI | 5.x |
-| gRPC | Tonic + Prost | 0.14 |
-| 消息队列 | Kafka (rdkafka) + 进程内内存队列 | 0.39 |
-| 对象存储 | 本地 / MinIO / S3（reqwest + rustls） | 0.13 |
-| 邮件 | Lettre（SMTP） | 0.11 |
-| 图片处理 | Image（压缩/裁剪） | 0.25 |
-| Excel | Calamine（读）+ XlsxWriter（写） | 0.34 / 0.94 |
-| 安全 | Ammonia XSS + AES-GCM + HMAC | 4.x / 0.10 / 0.13 |
-| 验证 | Validator 自动校验 | 0.20 |
-| 任务调度 | Cron | 0.16 |
-| UUID | uuid（v4 / v7） | 1.x |
+| 层次     | 技术                                | 版本                               |
+|--------|-----------------------------------|----------------------------------|
+| Web 框架 | Axum + Tower                      | 0.8 / 0.5                        |
+| 异步运行时  | Tokio                             | 1.x                              |
+| ORM    | SeaORM                            | 2.0（MySQL / PostgreSQL / SQLite） |
+| 认证     | JWT (jsonwebtoken) + Argon2       | 10.4 / 0.5                       |
+| 权限     | RBAC + 数据权限 DataScope             | —                                |
+| 缓存     | Redis (redis-rs) + 本地内存降级         | 0.27                             |
+| 日志     | Tracing + Subscriber + Appender   | 0.1 / 0.3 / 0.2                  |
+| 序列化    | Serde + TOML + JSON               | 1.x                              |
+| 监控     | Prometheus + Sysinfo              | 0.14 / 0.39                      |
+| 链路追踪   | OpenTelemetry（OTLP over HTTP）     | 0.32                             |
+| API 文档 | Utoipa + Swagger UI               | 5.x                              |
+| gRPC   | Tonic + Prost                     | 0.14                             |
+| 消息队列   | Kafka (rdkafka) + 进程内内存队列         | 0.39                             |
+| 对象存储   | 本地 / MinIO / S3（reqwest + rustls） | 0.13                             |
+| 邮件     | Lettre（SMTP）                      | 0.11                             |
+| 图片处理   | Image（压缩/裁剪）                      | 0.25                             |
+| Excel  | Calamine（读）+ XlsxWriter（写）        | 0.34 / 0.94                      |
+| 安全     | Ammonia XSS + AES-GCM + HMAC      | 4.x / 0.10 / 0.13                |
+| 验证     | Validator 自动校验                    | 0.20                             |
+| 任务调度   | Cron                              | 0.16                             |
+| UUID   | uuid（v4 / v7）                     | 1.x                              |
 
 ## 许可证
 

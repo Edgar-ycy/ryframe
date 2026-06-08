@@ -11,7 +11,7 @@ use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
-use crate::list_query;
+use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub DeptListQuery {
     name: String,
@@ -125,10 +125,7 @@ async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<DeptVo>>> {
-    match state.dept_service.find_by_id(&state.db, id).await? {
-        Some(dept) => Ok(Json(ApiResponse::success(dept))),
-        None => Err(ryframe_common::AppError::NotFound("部门不存在".into())),
-    }
+    detail_body!(state, id, dept_service, DeptVo, "部门")
 }
 
 /// 删除部门
@@ -138,6 +135,5 @@ async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    state.dept_service.delete(&state.db, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    remove_body!(state, id, dept_service)
 }

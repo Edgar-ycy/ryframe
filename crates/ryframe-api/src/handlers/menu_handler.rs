@@ -9,7 +9,7 @@ use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
-use crate::list_query;
+use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub MenuListQuery {
     name: String,
@@ -145,10 +145,7 @@ async fn detail(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<menu::Model>>> {
-    match state.menu_service.find_by_id(&state.db, id).await? {
-        Some(menu) => Ok(Json(ApiResponse::success(menu))),
-        None => Err(ryframe_common::AppError::NotFound("菜单不存在".into())),
-    }
+    detail_body!(state, id, menu_service, menu::Model, "菜单")
 }
 
 /// 删除菜单
@@ -158,6 +155,5 @@ async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    state.menu_service.delete(&state.db, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    remove_body!(state, id, menu_service)
 }

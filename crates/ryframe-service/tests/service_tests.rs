@@ -21,9 +21,9 @@ use ryframe_db::{
 use ryframe_service::{
     AuthServiceImpl,
     system::{
-        ConfigServiceImpl, CreateUserParams, DeptServiceImpl, DictServiceImpl, LoginInfoServiceImpl,
-        MenuServiceImpl,
-        NoticeServiceImpl, OperLogServiceImpl, PostServiceImpl, RoleServiceImpl, UserServiceImpl,
+        ConfigServiceImpl, CreateUserParams, DeptServiceImpl, DictServiceImpl,
+        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OperLogServiceImpl,
+        PostServiceImpl, RoleServiceImpl, UserServiceImpl,
     },
 };
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait};

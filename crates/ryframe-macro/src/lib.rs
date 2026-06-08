@@ -38,7 +38,7 @@ mod datasource;
 
 use proc_macro::TokenStream;
 
-/// 多数据源注解 — 类似 MyBatis-Plus `@DS("db_name")`
+/// 多数据源注解
 ///
 /// 标注在 async 函数上，自动将函数体包裹在目标数据源上下文中。
 /// 函数返回时自动恢复之前的数据源（支持嵌套）。

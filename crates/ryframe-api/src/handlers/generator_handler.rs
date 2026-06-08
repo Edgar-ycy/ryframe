@@ -8,15 +8,8 @@ use axum::{
 };
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_generator::{GenerateOptions, GeneratedFile};
-use serde::Deserialize;
 
 use crate::handlers::auth_handler::AppState;
-
-/// 表查询参数
-#[derive(Debug, Deserialize)]
-pub struct GenTableQuery {
-    pub table_name: Option<String>,
-}
 
 pub fn generator_router(state: AppState) -> Router {
     Router::new()

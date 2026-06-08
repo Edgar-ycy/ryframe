@@ -1,8 +1,8 @@
 use crate::{naming, schema::TableInfo};
 
-pub fn render_repository(table: &TableInfo, _module: &str) -> String {
-    let struct_name = naming::to_pascal_case(&table.table_name);
-    let snake = naming::to_snake_case(&table.table_name);
+pub fn render_repository(table: &TableInfo, base_name: &str) -> String {
+    let struct_name = naming::to_pascal_case(base_name);
+    let snake = naming::to_snake_case(base_name);
     let pk_type = crate::schema::get_pk_type(table);
 
     format!(
@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use ryframe_common::{{AppError, AppResult}};
 use ryframe_core::auto_fill::{{AutoFill, FillContext}};
 use ryframe_core::repository::{{PageQuery, PageResult, Repository}};
-use sea_orm::{{ColumnTrait, DatabaseConnection, EntityTrait, QueryOrder}};
+use sea_orm::{{ActiveModelTrait, DatabaseConnection, EntityTrait}};
 
 use crate::entities::{snake};
 
