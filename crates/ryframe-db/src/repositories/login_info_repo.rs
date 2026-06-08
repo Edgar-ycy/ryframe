@@ -72,10 +72,10 @@ impl LoginInfoRepository {
         end_time: Option<DateTime<Utc>>,
     ) -> AppResult<PageResult<login_info::Model>> {
         let mut select = login_info::Entity::find();
-        if let Some(name) = user_name {
+        if let Some(name) = user_name.filter(|n| !n.is_empty()) {
             select = select.filter(login_info::Column::UserName.contains(name));
         }
-        if let Some(s) = status {
+        if let Some(s) = status.filter(|s| !s.is_empty()) {
             select = select.filter(login_info::Column::Status.eq(s));
         }
         if let Some(begin) = begin_time {

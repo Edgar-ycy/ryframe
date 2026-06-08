@@ -76,10 +76,10 @@ impl OperLogRepository {
         end_time: Option<DateTime<Utc>>,
     ) -> AppResult<PageResult<oper_log::Model>> {
         let mut select = oper_log::Entity::find();
-        if let Some(name) = oper_name {
+        if let Some(name) = oper_name.filter(|n| !n.is_empty()) {
             select = select.filter(oper_log::Column::OperName.contains(name));
         }
-        if let Some(s) = status {
+        if let Some(s) = status.filter(|s| !s.is_empty()) {
             select = select.filter(oper_log::Column::Status.eq(s));
         }
         if let Some(begin) = begin_time {

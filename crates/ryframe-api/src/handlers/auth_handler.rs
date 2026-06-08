@@ -22,6 +22,8 @@ use ryframe_service::{
 use sea_orm::DatabaseConnection;
 use validator::Validate;
 
+use ryframe_common::utils::user_agent::{parse_browser, parse_os};
+
 use crate::{
     dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest},
     handlers::captcha_handler::CaptchaStore,
@@ -208,18 +210,21 @@ pub async fn login(
             // 登录成功：清除失败计数
             clear_login_failures(&state.redis, &req.username, &ip).await;
 
-            let _ = state
+            if let Err(e) = state
                 .login_info_service
                 .record_login(
                     &state.db,
                     &req.username,
                     &ip,
-                    Some(user_agent),
-                    None,
+                    parse_browser(user_agent).as_deref(),
+                    parse_os(user_agent).as_deref(),
                     ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
                     None,
                 )
-                .await;
+                .await
+            {
+                tracing::error!("记录登录成功日志失败: {}", e);
+            }
 
             // 查询用户部门名称
             let dept_name = state
@@ -257,18 +262,21 @@ pub async fn login(
             // 登录失败：记录失败次数
             record_login_failure(&state.redis, &state.config, &req.username, &ip).await;
 
-            let _ = state
+            if let Err(err) = state
                 .login_info_service
                 .record_login(
                     &state.db,
                     &req.username,
                     &ip,
-                    Some(user_agent),
-                    None,
+                    parse_browser(user_agent).as_deref(),
+                    parse_os(user_agent).as_deref(),
                     ryframe_db::entities::login_info::Model::STATUS_FAIL,
                     Some(&e.to_string()),
                 )
-                .await;
+                .await
+            {
+                tracing::error!("记录登录失败日志失败: {}", err);
+            }
             Err(e)
         }
     }
@@ -342,33 +350,39 @@ pub async fn refresh(
         .await
     {
         Ok(result) => {
-            let _ = state
+            if let Err(e) = state
                 .login_info_service
                 .record_login(
                     &state.db,
                     &result.user_info.username,
                     &ip,
-                    Some(user_agent),
-                    None,
+                    parse_browser(user_agent).as_deref(),
+                    parse_os(user_agent).as_deref(),
                     ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
                     Some("令牌刷新"),
                 )
-                .await;
+                .await
+            {
+                tracing::error!("记录令牌刷新日志失败: {}", e);
+            }
             Ok(Json(ApiResponse::success(LoginResponse::from(result))))
         }
         Err(e) => {
-            let _ = state
+            if let Err(err) = state
                 .login_info_service
                 .record_login(
                     &state.db,
                     "unknown",
                     &ip,
-                    Some(user_agent),
-                    None,
+                    parse_browser(user_agent).as_deref(),
+                    parse_os(user_agent).as_deref(),
                     ryframe_db::entities::login_info::Model::STATUS_FAIL,
                     Some(&e.to_string()),
                 )
-                .await;
+                .await
+            {
+                tracing::error!("记录令牌刷新失败日志失败: {}", err);
+            }
             Err(e)
         }
     }
