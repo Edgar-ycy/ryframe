@@ -538,6 +538,10 @@ cargo audit
 | 任务调度   | Cron                              | 0.16                             |
 | UUID   | uuid（v4 / v7）                     | 1.x                              |
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/chart?repos=Edgar-ycy/ryframe&type=timeline&logscale&legend=top-left)](https://www.star-history.com/?repos=Edgar-ycy%2Fryframe&type=timeline&logscale=&legend=top-left)
+
 ## 许可证
 
 MIT License
