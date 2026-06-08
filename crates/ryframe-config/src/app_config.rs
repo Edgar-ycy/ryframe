@@ -19,6 +19,9 @@ pub struct AppSettings {
     pub port: u16,
 }
 
+// #[derive(Default)] 不能用于 AppSettings，需要提供有意义的应用默认值
+// （名称、版本号等），而非空字符串。
+#[allow(clippy::derivable_impls)]
 impl Default for AppSettings {
     fn default() -> Self {
         Self {

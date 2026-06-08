@@ -55,12 +55,7 @@ async fn test_job_log_repo_crud() {
     let db = setup_test_db().await;
     let repo = JobLogRepository;
 
-    let log = make_job_log(
-        "日志清理",
-        job_log::Model::STATUS_SUCCESS,
-        now(),
-        150,
-    );
+    let log = make_job_log("日志清理", job_log::Model::STATUS_SUCCESS, now(), 150);
     let inserted = repo.insert(&db, log).await.unwrap();
     assert_eq!(inserted.job_name, "日志清理");
     assert_eq!(inserted.cost_ms, 150);
@@ -78,12 +73,7 @@ async fn test_job_log_repo_update_should_fail() {
     let db = setup_test_db().await;
     let repo = JobLogRepository;
 
-    let log = make_job_log(
-        "测试任务",
-        job_log::Model::STATUS_SUCCESS,
-        now(),
-        100,
-    );
+    let log = make_job_log("测试任务", job_log::Model::STATUS_SUCCESS, now(), 100);
     let inserted = repo.insert(&db, log).await.unwrap();
 
     // 任务日志不支持修改

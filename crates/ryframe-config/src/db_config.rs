@@ -14,7 +14,7 @@ pub enum SqlLogLevel {
 }
 
 /// 数据库配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct DatabaseConfig {
     /// SQL 日志级别（默认 off）
     #[serde(default)]
@@ -44,15 +44,6 @@ pub struct DatabaseConfig {
     /// min_connections = 1
     /// ```
     pub connections: Vec<DbConnection>,
-}
-
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            sql_log_level: SqlLogLevel::default(),
-            connections: Vec::new(),
-        }
-    }
 }
 
 /// 数据库连接参数

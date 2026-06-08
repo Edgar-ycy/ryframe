@@ -32,6 +32,9 @@ fn default_enable_password_complexity() -> bool {
     true
 }
 
+// #[derive(Default)] 不能用于 AuthConfig，因为 serde 的 default 函数
+// 语义不同（expire 需非空字符串），必须手动维护对应关系。
+#[allow(clippy::derivable_impls)]
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {

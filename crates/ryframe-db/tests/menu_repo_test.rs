@@ -75,12 +75,7 @@ async fn test_menu_repo_crud() {
     let db = setup_test_db().await;
     let repo = MenuRepository;
 
-    let m = make_menu(
-        "系统管理",
-        None,
-        1,
-        menu::Model::STATUS_NORMAL,
-    );
+    let m = make_menu("系统管理", None, 1, menu::Model::STATUS_NORMAL);
     let inserted = repo.insert(&db, m).await.unwrap();
     assert_eq!(inserted.name, "系统管理");
 
@@ -97,12 +92,7 @@ async fn test_menu_repo_update() {
     let db = setup_test_db().await;
     let repo = MenuRepository;
 
-    let m = make_menu(
-        "原始菜单",
-        None,
-        1,
-        menu::Model::STATUS_NORMAL,
-    );
+    let m = make_menu("原始菜单", None, 1, menu::Model::STATUS_NORMAL);
     let inserted = repo.insert(&db, m).await.unwrap();
 
     // SeaORM 2.0-rc + SQLite update 可能不返回新值，跳过严格字段断言
@@ -122,12 +112,7 @@ async fn test_menu_repo_pagination() {
     let repo = MenuRepository;
 
     for i in 0..12 {
-        let m = make_menu(
-            &format!("菜单{}", i),
-            None,
-            i,
-            menu::Model::STATUS_NORMAL,
-        );
+        let m = make_menu(&format!("菜单{}", i), None, i, menu::Model::STATUS_NORMAL);
         repo.insert(&db, m).await.unwrap();
     }
 
@@ -152,28 +137,13 @@ async fn test_menu_repo_find_tree() {
     let db = setup_test_db().await;
     let repo = MenuRepository;
 
-    let root = make_menu(
-        "系统管理",
-        None,
-        1,
-        menu::Model::STATUS_NORMAL,
-    );
+    let root = make_menu("系统管理", None, 1, menu::Model::STATUS_NORMAL);
     let root = repo.insert(&db, root).await.unwrap();
 
-    let child = make_menu(
-        "用户管理",
-        Some(root.id),
-        1,
-        menu::Model::STATUS_NORMAL,
-    );
+    let child = make_menu("用户管理", Some(root.id), 1, menu::Model::STATUS_NORMAL);
     let child = repo.insert(&db, child).await.unwrap();
 
-    let sub = make_menu(
-        "用户列表",
-        Some(child.id),
-        1,
-        menu::Model::STATUS_NORMAL,
-    );
+    let sub = make_menu("用户列表", Some(child.id), 1, menu::Model::STATUS_NORMAL);
     repo.insert(&db, sub).await.unwrap();
 
     let tree = repo.find_tree(&db).await.unwrap();
@@ -202,31 +172,19 @@ async fn test_menu_repo_find_by_role_ids() {
     let menu_repo = MenuRepository;
 
     // 创建菜单
-    let m1 = make_menu(
-        "系统管理",
-        None,
-        1,
-        menu::Model::STATUS_NORMAL,
-    );
-    let m2 = make_menu(
-        "用户管理",
-        None,
-        2,
-        menu::Model::STATUS_NORMAL,
-    );
-    let m3 = make_menu(
-        "角色管理",
-        None,
-        3,
-        menu::Model::STATUS_NORMAL,
-    );
+    let m1 = make_menu("系统管理", None, 1, menu::Model::STATUS_NORMAL);
+    let m2 = make_menu("用户管理", None, 2, menu::Model::STATUS_NORMAL);
+    let m3 = make_menu("角色管理", None, 3, menu::Model::STATUS_NORMAL);
     let m1 = menu_repo.insert(&db, m1).await.unwrap();
     let m2 = menu_repo.insert(&db, m2).await.unwrap();
     let _m3 = menu_repo.insert(&db, m3).await.unwrap();
 
     // 创建角色
     let role_repo = RoleRepository;
-    let r = role_repo.insert(&db, make_role("管理员", "admin")).await.unwrap();
+    let r = role_repo
+        .insert(&db, make_role("管理员", "admin"))
+        .await
+        .unwrap();
     let role_id = r.id;
 
     // 分配菜单给角色
@@ -262,18 +220,8 @@ async fn test_menu_repo_find_filtered() {
     let db = setup_test_db().await;
     let repo = MenuRepository;
 
-    let m1 = make_menu(
-        "系统管理",
-        None,
-        1,
-        menu::Model::STATUS_NORMAL,
-    );
-    let m2 = make_menu(
-        "监控管理",
-        None,
-        2,
-        menu::Model::STATUS_DISABLED,
-    );
+    let m1 = make_menu("系统管理", None, 1, menu::Model::STATUS_NORMAL);
+    let m2 = make_menu("监控管理", None, 2, menu::Model::STATUS_DISABLED);
     repo.insert(&db, m1).await.unwrap();
     repo.insert(&db, m2).await.unwrap();
 

@@ -225,9 +225,18 @@ async fn test_permission_repo_assign_and_find_role_perms() {
     let perm_repo = PermissionRepository;
     let role_repo = RoleRepository;
 
-    let r = role_repo.insert(&db, make_role("测试角色", "test_role")).await.unwrap();
-    let p1 = perm_repo.insert(&db, make_permission("查询", "system:user:query", 1)).await.unwrap();
-    let p2 = perm_repo.insert(&db, make_permission("删除", "system:user:delete", 2)).await.unwrap();
+    let r = role_repo
+        .insert(&db, make_role("测试角色", "test_role"))
+        .await
+        .unwrap();
+    let p1 = perm_repo
+        .insert(&db, make_permission("查询", "system:user:query", 1))
+        .await
+        .unwrap();
+    let p2 = perm_repo
+        .insert(&db, make_permission("删除", "system:user:delete", 2))
+        .await
+        .unwrap();
 
     perm_repo
         .assign_perms(&db, r.id, &[p1.id, p2.id])
@@ -248,9 +257,12 @@ async fn test_permission_repo_find_all() {
     let repo = PermissionRepository;
 
     for i in 0..3 {
-        repo.insert(&db, make_permission(&format!("perm_{}", i), &format!("code:{}", i), i))
-            .await
-            .unwrap();
+        repo.insert(
+            &db,
+            make_permission(&format!("perm_{}", i), &format!("code:{}", i), i),
+        )
+        .await
+        .unwrap();
     }
     let all = repo.find_all(&db).await.unwrap();
     assert_eq!(all.len(), 3);
@@ -296,9 +308,12 @@ async fn test_post_repo_filtered_pagination() {
     repo.insert(&db, make_post("经理", "mgr", post::Model::STATUS_NORMAL))
         .await
         .unwrap();
-    repo.insert(&db, make_post("实习生", "intern", post::Model::STATUS_DISABLED))
-        .await
-        .unwrap();
+    repo.insert(
+        &db,
+        make_post("实习生", "intern", post::Model::STATUS_DISABLED),
+    )
+    .await
+    .unwrap();
 
     let page = repo
         .find_by_page_filtered(&db, PageQuery::default(), Some("经理"), None, None)
@@ -333,20 +348,35 @@ async fn test_config_repo_pagination_boundary() {
     let repo = ConfigRepository;
 
     for i in 0..25 {
-        repo.insert(&db, make_config(&format!("config_{:02}", i), &format!("v{}", i)))
-            .await
-            .unwrap();
+        repo.insert(
+            &db,
+            make_config(&format!("config_{:02}", i), &format!("v{}", i)),
+        )
+        .await
+        .unwrap();
     }
 
     let p1 = repo
-        .find_by_page(&db, PageQuery { page: 1, page_size: 10 })
+        .find_by_page(
+            &db,
+            PageQuery {
+                page: 1,
+                page_size: 10,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(p1.records.len(), 10);
     assert_eq!(p1.total, 25);
 
     let p3 = repo
-        .find_by_page(&db, PageQuery { page: 3, page_size: 10 })
+        .find_by_page(
+            &db,
+            PageQuery {
+                page: 3,
+                page_size: 10,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(p3.records.len(), 5);
@@ -373,7 +403,10 @@ async fn test_dict_data_repo_find_by_type_code() {
     let type_repo = DictTypeRepository;
     let data_repo = DictDataRepository;
 
-    let dt = type_repo.insert(&db, make_dict_type("通用状态", "sys_normal_disable")).await.unwrap();
+    let dt = type_repo
+        .insert(&db, make_dict_type("通用状态", "sys_normal_disable"))
+        .await
+        .unwrap();
 
     for (label, value, sort) in [("正常", "0", 1), ("停用", "1", 2)] {
         data_repo
@@ -413,9 +446,15 @@ async fn test_notice_repo_filtered_pagination() {
     let db = setup_test_db().await;
     let repo = NoticeRepository;
 
-    repo.insert(&db, make_notice("通知A", Some("1"))).await.unwrap();
-    repo.insert(&db, make_notice("通知B", Some("1"))).await.unwrap();
-    repo.insert(&db, make_notice("公告C", Some("2"))).await.unwrap();
+    repo.insert(&db, make_notice("通知A", Some("1")))
+        .await
+        .unwrap();
+    repo.insert(&db, make_notice("通知B", Some("1")))
+        .await
+        .unwrap();
+    repo.insert(&db, make_notice("公告C", Some("2")))
+        .await
+        .unwrap();
 
     // 按类型过滤
     let page = repo
@@ -464,7 +503,10 @@ async fn test_job_repo_update_status() {
     let db = setup_test_db().await;
     let repo = JobRepository;
 
-    let j = repo.insert(&db, make_job("测试任务", job::Model::STATUS_NORMAL)).await.unwrap();
+    let j = repo
+        .insert(&db, make_job("测试任务", job::Model::STATUS_NORMAL))
+        .await
+        .unwrap();
 
     repo.update_status(&db, j.id, job::Model::STATUS_PAUSED.to_string())
         .await
@@ -479,9 +521,15 @@ async fn test_job_repo_find_all_enabled() {
     let db = setup_test_db().await;
     let repo = JobRepository;
 
-    repo.insert(&db, make_job("任务A", job::Model::STATUS_NORMAL)).await.unwrap();
-    repo.insert(&db, make_job("任务B", job::Model::STATUS_PAUSED)).await.unwrap();
-    repo.insert(&db, make_job("任务C", job::Model::STATUS_NORMAL)).await.unwrap();
+    repo.insert(&db, make_job("任务A", job::Model::STATUS_NORMAL))
+        .await
+        .unwrap();
+    repo.insert(&db, make_job("任务B", job::Model::STATUS_PAUSED))
+        .await
+        .unwrap();
+    repo.insert(&db, make_job("任务C", job::Model::STATUS_NORMAL))
+        .await
+        .unwrap();
 
     let enabled = repo.find_all_enabled(&db).await.unwrap();
     assert_eq!(enabled.len(), 2);
@@ -530,9 +578,24 @@ async fn test_login_info_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = LoginInfoRepository;
 
-    repo.insert(&db, make_login_info("admin", login_info::Model::STATUS_SUCCESS)).await.unwrap();
-    repo.insert(&db, make_login_info("user1", login_info::Model::STATUS_SUCCESS)).await.unwrap();
-    repo.insert(&db, make_login_info("user2", login_info::Model::STATUS_FAIL)).await.unwrap();
+    repo.insert(
+        &db,
+        make_login_info("admin", login_info::Model::STATUS_SUCCESS),
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        &db,
+        make_login_info("user1", login_info::Model::STATUS_SUCCESS),
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        &db,
+        make_login_info("user2", login_info::Model::STATUS_FAIL),
+    )
+    .await
+    .unwrap();
 
     // 分页查询
     let page = repo.find_by_page(&db, PageQuery::default()).await.unwrap();
@@ -595,9 +658,15 @@ async fn test_oper_log_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = OperLogRepository;
 
-    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS)).await.unwrap();
-    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS)).await.unwrap();
-    repo.insert(&db, make_oper_log("user1", oper_log::Model::STATUS_FAIL)).await.unwrap();
+    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS))
+        .await
+        .unwrap();
+    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS))
+        .await
+        .unwrap();
+    repo.insert(&db, make_oper_log("user1", oper_log::Model::STATUS_FAIL))
+        .await
+        .unwrap();
 
     let page = repo.find_by_page(&db, PageQuery::default()).await.unwrap();
     assert_eq!(page.total, 3);

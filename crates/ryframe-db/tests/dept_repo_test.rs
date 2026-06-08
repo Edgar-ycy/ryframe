@@ -54,13 +54,7 @@ async fn test_dept_repo_crud() {
     let db = setup_test_db().await;
     let repo = DeptRepository;
 
-    let d = make_dept(
-        "技术部",
-        None,
-        "0",
-        1,
-        dept::Model::STATUS_NORMAL,
-    );
+    let d = make_dept("技术部", None, "0", 1, dept::Model::STATUS_NORMAL);
     let inserted = repo.insert(&db, d).await.unwrap();
     assert_eq!(inserted.name, "技术部");
 
@@ -77,13 +71,7 @@ async fn test_dept_repo_update() {
     let db = setup_test_db().await;
     let repo = DeptRepository;
 
-    let d = make_dept(
-        "原始名称",
-        None,
-        "0",
-        1,
-        dept::Model::STATUS_NORMAL,
-    );
+    let d = make_dept("原始名称", None, "0", 1, dept::Model::STATUS_NORMAL);
     let inserted = repo.insert(&db, d).await.unwrap();
 
     // SeaORM 2.0-rc + SQLite update 可能不返回新值，跳过严格断言
@@ -135,13 +123,7 @@ async fn test_dept_repo_find_tree() {
     let db = setup_test_db().await;
     let repo = DeptRepository;
 
-    let root = make_dept(
-        "总公司",
-        None,
-        "0",
-        1,
-        dept::Model::STATUS_NORMAL,
-    );
+    let root = make_dept("总公司", None, "0", 1, dept::Model::STATUS_NORMAL);
     let root = repo.insert(&db, root).await.unwrap();
 
     // 二级部门
@@ -182,13 +164,7 @@ async fn test_dept_repo_has_children() {
     let db = setup_test_db().await;
     let repo = DeptRepository;
 
-    let parent = make_dept(
-        "父部门",
-        None,
-        "0",
-        1,
-        dept::Model::STATUS_NORMAL,
-    );
+    let parent = make_dept("父部门", None, "0", 1, dept::Model::STATUS_NORMAL);
     let parent = repo.insert(&db, parent).await.unwrap();
 
     // 无子部门
@@ -220,13 +196,7 @@ async fn test_dept_repo_build_ancestors() {
     assert_eq!(ancestors, "0");
 
     // 创建父部门后，子部门的祖先
-    let parent = make_dept(
-        "父部门",
-        None,
-        "0",
-        1,
-        dept::Model::STATUS_NORMAL,
-    );
+    let parent = make_dept("父部门", None, "0", 1, dept::Model::STATUS_NORMAL);
     let parent = repo.insert(&db, parent).await.unwrap();
 
     let ancestors = repo.build_ancestors(&db, Some(parent.id)).await.unwrap();
@@ -249,13 +219,7 @@ async fn test_dept_repo_find_child_dept_ids() {
     let db = setup_test_db().await;
     let repo = DeptRepository;
 
-    let root = make_dept(
-        "总公司",
-        None,
-        "0",
-        1,
-        dept::Model::STATUS_NORMAL,
-    );
+    let root = make_dept("总公司", None, "0", 1, dept::Model::STATUS_NORMAL);
     let root = repo.insert(&db, root).await.unwrap();
 
     let ancestors_a = format!("0,{}", root.id);
@@ -292,20 +256,8 @@ async fn test_dept_repo_find_filtered() {
     let db = setup_test_db().await;
     let repo = DeptRepository;
 
-    let d1 = make_dept(
-        "研发部",
-        None,
-        "0",
-        1,
-        dept::Model::STATUS_NORMAL,
-    );
-    let d2 = make_dept(
-        "市场部",
-        None,
-        "0",
-        2,
-        dept::Model::STATUS_DISABLED,
-    );
+    let d1 = make_dept("研发部", None, "0", 1, dept::Model::STATUS_NORMAL);
+    let d2 = make_dept("市场部", None, "0", 2, dept::Model::STATUS_DISABLED);
     repo.insert(&db, d1).await.unwrap();
     repo.insert(&db, d2).await.unwrap();
 
