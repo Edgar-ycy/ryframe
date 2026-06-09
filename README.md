@@ -7,6 +7,8 @@
 
 **RyFrame** —— 基于 Rust + Axum 的现代化企业级后端框架。提供开箱即用的认证授权、系统管理、监控运维、定时任务、代码生成等完整能力，采用 Cargo Workspace 分层架构，各 crate 职责清晰、边界明确。
 
+> 🔗 **配套前端**: [RyFrame Vue3](https://github.com/Edgar-ycy/ryframe-vue3) — 基于 Vue 3 + TypeScript + Element Plus 的企业级后台管理系统前端，与本项目配套使用。
+
 ## 目录
 
 - [特性](#特性)
