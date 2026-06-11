@@ -56,6 +56,12 @@ pub async fn auth_middleware(
         return Err(AppError::Authentication("令牌已被撤销，请重新登录".into()).into_response());
     }
 
+    // 检查用户级强退黑名单（阻止 refresh_token 绕过强退）
+    let force_logout_key = format!("force_logout:user:{}", claims.sub);
+    if auth_state.blacklist.is_blacklisted(&force_logout_key).await {
+        return Err(AppError::Authentication("账号已被强制下线，请重新登录".into()).into_response());
+    }
+
     request.extensions_mut().insert(claims);
     Ok(next.run(request).await)
 }

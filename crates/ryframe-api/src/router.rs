@@ -27,7 +27,7 @@ use crate::{
 /// 在线用户跟踪中间件
 ///
 /// 在 auth_middleware 之后运行（Claims 已在 extensions 中）。
-/// 优雅处理未认证请求（跳过跟踪）。
+/// 更新用户最后访问时间；若会话被服务重启清除（clear_all_on_startup），自动重新创建。
 async fn online_user_tracking(
     State(online_user_service): State<Arc<OnlineUserServiceImpl>>,
     request: Request,
@@ -35,7 +35,38 @@ async fn online_user_tracking(
 ) -> Response {
     // 尝试从 extensions 获取 Claims，未认证时跳过跟踪
     if let Some(claims) = request.extensions().get::<Claims>() {
-        online_user_service.touch_user(&claims.jti).await;
+        // 提取客户端 IP
+        let ip = request
+            .headers()
+            .get("x-forwarded-for")
+            .or_else(|| request.headers().get("x-real-ip"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // 提取 User-Agent
+        let user_agent = request
+            .headers()
+            .get("user-agent")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        // 构造会话并确保在线状态（touch + 自动补建）
+        let now = chrono::Utc::now();
+        online_user_service
+            .ensure_user(ryframe_service::system::UserSession {
+                token_id: claims.jti.clone(),
+                user_id: claims.sub.parse().unwrap_or(0),
+                username: claims.username.clone(),
+                dept_name: None,
+                ipaddr: ip,
+                login_location: None,
+                browser: ryframe_common::utils::user_agent::parse_browser(user_agent),
+                os: ryframe_common::utils::user_agent::parse_os(user_agent),
+                login_time: now,
+                last_access_time: now,
+            })
+            .await;
     }
     next.run(request).await
 }

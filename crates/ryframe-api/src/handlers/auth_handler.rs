@@ -238,6 +238,10 @@ pub async fn login(
             // 登录成功：清除失败计数
             clear_login_failures(&state.redis, &req.username, &ip).await;
 
+            // 登录成功：清除强退黑名单（防止用户重新登录后仍被拦截）
+            let force_logout_key = format!("force_logout:user:{}", result.user_info.id);
+            state.token_blacklist.remove(&force_logout_key).await;
+
             if let Err(e) = state
                 .login_info_service
                 .record_login(
@@ -365,6 +369,19 @@ pub async fn refresh(
     headers: HeaderMap,
     Json(req): Json<RefreshRequest>,
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
+    // 检查用户是否被强退（在 auth_service.refresh_token 之前，提前拦截）
+    if let Ok(claims) = ryframe_auth::jwt::decode_token(
+        &req.refresh_token,
+        &state.config.auth.jwt_secret,
+    ) {
+        let force_logout_key = format!("force_logout:user:{}", claims.sub);
+        if state.token_blacklist.is_blacklisted(&force_logout_key).await {
+            return Err(ryframe_common::AppError::Authentication(
+                "账号已被强制下线，请重新登录".into(),
+            ));
+        }
+    }
+
     let remote_addr = addr.to_string();
     let ip = ryframe_common::utils::ip::get_client_ip(&headers, &remote_addr);
     let user_agent = headers

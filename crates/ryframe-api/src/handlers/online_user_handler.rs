@@ -101,7 +101,19 @@ pub async fn force_logout(
     State(state): State<AppState>,
     Path(token_id): Path<String>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    state.online_user_service.force_logout(&token_id).await?;
+    // 强制下线并获取 user_id
+    let user_id = state.online_user_service.force_logout(&token_id).await?;
+
+    // 黑名单 access token 的 jti
+    let ttl = ryframe_auth::jwt::parse_duration(&state.config.auth.access_token_expire)
+        .unwrap_or(3600) as u64;
+    state.token_blacklist.blacklist(&token_id, ttl).await;
+
+    // 也黑名单 user 级别 key（阻止通过 refresh_token 绕过强退）
+    if user_id > 0 {
+        let user_key = format!("force_logout:user:{}", user_id);
+        state.token_blacklist.blacklist(&user_key, ttl).await;
+    }
 
     Ok(Json(ApiResponse::success_no_data_with_msg(
         "用户已强制下线",

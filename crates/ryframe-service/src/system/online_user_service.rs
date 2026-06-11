@@ -155,12 +155,21 @@ impl OnlineUserServiceImpl {
     }
 
     /// 强制下线用户
-    pub async fn force_logout(&self, token_id: &str) -> AppResult<()> {
+    /// 返回被下线用户的 user_id，用于后续的 Token 黑名单等操作。
+    pub async fn force_logout(&self, token_id: &str) -> AppResult<i64> {
         match self {
             Self::Redis { client } => {
                 let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, token_id);
+                // 先读取会话获取 user_id（删除前）
+                let user_id = match client.get(&key).await {
+                    Ok(Some(json)) => serde_json::from_str::<UserSession>(&json)
+                        .map(|s| s.user_id)
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                // 再删除
                 match client.del(&key).await {
-                    Ok(n) if n > 0 => Ok(()),
+                    Ok(n) if n > 0 => Ok(user_id),
                     Ok(_) => Err(AppError::NotFound("在线用户不存在".into())),
                     Err(e) => {
                         tracing::error!("Redis DEL 强制下线失败: {}", e);
@@ -170,8 +179,9 @@ impl OnlineUserServiceImpl {
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
+                let user_id = s.get(token_id).map(|s| s.user_id).unwrap_or(0);
                 if s.remove(token_id).is_some() {
-                    Ok(())
+                    Ok(user_id)
                 } else {
                     Err(AppError::NotFound("在线用户不存在".into()))
                 }
@@ -206,6 +216,42 @@ impl OnlineUserServiceImpl {
                 let mut s = sessions.write().await;
                 if let Some(session) = s.get_mut(token_id) {
                     session.last_access_time = Utc::now();
+                }
+            }
+        }
+    }
+
+    /// 确保在线用户会话存在（touch + 自动补建）
+    ///
+    /// 先尝试更新 last_access_time，如果会话不存在（如服务重启后被 clear_all_on_startup 清除），
+    /// 则自动重新创建会话。解决 JWT 仍有效但 Redis 会话丢失导致在线用户列表为空的问题。
+    pub async fn ensure_user(&self, session: UserSession) {
+        match self {
+            Self::Redis { client } => {
+                let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, session.token_id);
+                // 先尝试 touch：如果 key 存在则更新 last_access_time
+                match client.get(&key).await {
+                    Ok(Some(json)) => {
+                        if let Ok(mut existing) = serde_json::from_str::<UserSession>(&json) {
+                            existing.last_access_time = Utc::now();
+                            if let Ok(new_json) = serde_json::to_string(&existing) {
+                                let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
+                                let _ = client.set_ex(&key, &new_json, ttl as u64).await;
+                            }
+                        }
+                        return;
+                    }
+                    _ => {} // key 不存在或读取失败，走下方补建逻辑
+                }
+                // 会话不存在，重新创建
+                self.add_user(session).await;
+            }
+            Self::InMemory { sessions } => {
+                let mut s = sessions.write().await;
+                if let Some(existing) = s.get_mut(&session.token_id) {
+                    existing.last_access_time = Utc::now();
+                } else {
+                    s.insert(session.token_id.clone(), session);
                 }
             }
         }

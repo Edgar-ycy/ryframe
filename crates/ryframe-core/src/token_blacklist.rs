@@ -71,6 +71,16 @@ impl TokenBlacklist {
         }
     }
 
+    /// 从黑名单中移除指定 key（用于登录后清除强退标记等）
+    pub async fn remove(&self, jti: &str) {
+        if let Some(ref redis) = self.redis {
+            let key = blacklist_key(jti);
+            let _ = redis.del(key).await;
+        } else {
+            self.local.remove(jti);
+        }
+    }
+
     /// 启动后台 GC（仅内存模式需要）
     ///
     /// 每 60 秒清理一次过期条目。
