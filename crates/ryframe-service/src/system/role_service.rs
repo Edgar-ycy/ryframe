@@ -10,7 +10,8 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct RoleVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
     pub code: String,
     pub data_scope: String,
@@ -20,13 +21,13 @@ pub struct RoleVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// 自定义数据权限的部门ID列表（仅查询详情时填充）
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dept_ids: Option<Vec<i64>>,
+    pub dept_ids: Option<Vec<String>>,
 }
 
 impl From<role::Model> for RoleVo {
     fn from(r: role::Model) -> Self {
         Self {
-            id: r.id,
+            id: r.id.to_string(),
             name: r.name,
             code: r.code,
             data_scope: r.data_scope,
@@ -88,7 +89,7 @@ impl RoleServiceImpl {
                 // 如果是自定义数据权限，查出关联的部门ID列表
                 if vo.data_scope == "2" {
                     let dept_ids = self.role_repo.find_role_dept_ids(db, id).await?;
-                    vo.dept_ids = Some(dept_ids);
+                    vo.dept_ids = Some(dept_ids.iter().map(|d| d.to_string()).collect());
                 }
                 Ok(Some(vo))
             }

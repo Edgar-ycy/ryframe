@@ -1,8 +1,18 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use ryframe_common::AppResult;
 use serde::Serialize;
 use tokio::sync::Mutex;
+
+/// 任务执行历史持久化接口
+///
+/// 调度器每次执行完任务后调用此 trait 将历史记录写入外部存储（例如数据库）。
+#[async_trait]
+pub trait TaskHistoryPersister: Send + Sync {
+    async fn persist(&self, history: &TaskHistory) -> AppResult<()>;
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskHistory {

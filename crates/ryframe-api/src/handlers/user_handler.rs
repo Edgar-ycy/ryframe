@@ -161,6 +161,11 @@ async fn create(
     Json(dto): Json<CreateUserDto>,
 ) -> AppResult<Json<ApiResponse<UserVo>>> {
     dto.validate()?;
+    // 解析前端传来的 String ID 为 i64
+    let dept_id: Option<i64> = dto.dept_id.and_then(|s| s.parse().ok());
+    let role_ids: Option<Vec<i64>> = dto.role_ids.map(|ids| {
+        ids.iter().filter_map(|s| s.parse().ok()).collect()
+    });
     state
         .user_service
         .create(
@@ -171,8 +176,8 @@ async fn create(
                 nickname: &dto.nickname,
                 email: dto.email.as_deref().unwrap_or(""),
                 phone: dto.phone.as_deref().unwrap_or(""),
-                dept_id: dto.dept_id,
-                role_ids: dto.role_ids,
+                dept_id,
+                role_ids,
                 enable_pwd_complexity: state.config.auth.enable_password_complexity,
             },
         )
@@ -192,6 +197,11 @@ async fn update(
     Json(dto): Json<UpdateUserDto>,
 ) -> AppResult<Json<ApiResponse<UserVo>>> {
     dto.validate()?;
+    // 解析前端传来的 String ID 为 i64
+    let dept_id: Option<i64> = dto.dept_id.and_then(|s| s.parse().ok());
+    let role_ids: Option<Vec<i64>> = dto.role_ids.map(|ids| {
+        ids.iter().filter_map(|s| s.parse().ok()).collect()
+    });
     state
         .user_service
         .update(
@@ -201,9 +211,9 @@ async fn update(
                 nickname: &dto.nickname,
                 email: dto.email.as_deref().unwrap_or(""),
                 phone: dto.phone.as_deref().unwrap_or(""),
-                dept_id: dto.dept_id,
+                dept_id,
                 status: dto.status,
-                role_ids: dto.role_ids,
+                role_ids,
             },
         )
         .await
@@ -259,9 +269,13 @@ async fn change_status(
     State(state): State<AppState>,
     Json(dto): Json<ChangeStatusDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    let user_id: i64 = dto
+        .user_id
+        .parse()
+        .map_err(|_| ryframe_common::AppError::Validation("无效的用户ID".into()))?;
     state
         .user_service
-        .change_status(&state.db, dto.user_id, dto.status)
+        .change_status(&state.db, user_id, dto.status)
         .await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("状态修改成功")))
 }
@@ -386,7 +400,7 @@ async fn import_users(
                             nickname: &data.nickname,
                             email: &data.email,
                             phone: data.phone.as_deref().unwrap_or(""),
-                            dept_id: data.dept_id,
+                            dept_id: data.dept_id.as_ref().and_then(|s| s.parse().ok()),
                             role_ids: None,
                             enable_pwd_complexity: false, // 导入时不强制密码复杂度（使用默认密码）
                         },

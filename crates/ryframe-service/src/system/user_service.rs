@@ -19,7 +19,8 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct UserVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub username: String,
     pub nickname: String,
     pub email: String,
@@ -35,7 +36,7 @@ pub struct UserVo {
 impl From<user::Model> for UserVo {
     fn from(u: user::Model) -> Self {
         Self {
-            id: u.id,
+            id: u.id.to_string(),
             username: u.username,
             nickname: u.nickname,
             email: u.email,
@@ -61,7 +62,8 @@ pub struct UserDetailVo {
 /// 角色简要信息
 #[derive(Debug, Serialize)]
 pub struct RoleBriefVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
     pub code: String,
 }
@@ -69,7 +71,7 @@ pub struct RoleBriefVo {
 impl From<role::Model> for RoleBriefVo {
     fn from(r: role::Model) -> Self {
         Self {
-            id: r.id,
+            id: r.id.to_string(),
             name: r.name,
             code: r.code,
         }

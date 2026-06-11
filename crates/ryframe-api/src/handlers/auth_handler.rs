@@ -259,9 +259,10 @@ pub async fn login(
             }
 
             // 查询用户部门名称
+            let user_id: i64 = result.user_info.id.parse().unwrap_or(0);
             let dept_name = state
                 .user_service
-                .find_by_id(&state.db, result.user_info.id)
+                .find_by_id(&state.db, user_id)
                 .await
                 .ok()
                 .flatten()
@@ -276,7 +277,7 @@ pub async fn login(
                 .online_user_service
                 .add_user(ryframe_service::system::UserSession {
                     token_id: result.token_id.clone(),
-                    user_id: result.user_info.id,
+                    user_id,
                     username: result.user_info.username.clone(),
                     dept_name,
                     ipaddr: ip.to_string(),

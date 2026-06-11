@@ -206,8 +206,9 @@ async fn test_user_create_and_find() {
     assert!(err.to_string().contains("已存在"));
 
     // 按ID查询
+    let user_id: i64 = vo.id.parse().unwrap();
     let found = svc
-        .find_by_id(&db, vo.id)
+        .find_by_id(&db, user_id)
         .await
         .unwrap()
         .expect("查不到用户");
@@ -363,8 +364,9 @@ async fn test_role_crud() {
     assert!(err.to_string().contains("已存在"));
 
     // 查询
+    let role_id: i64 = vo.id.parse().unwrap();
     let found = svc
-        .find_by_id(&db, vo.id)
+        .find_by_id(&db, role_id)
         .await
         .unwrap()
         .expect("查不到角色");
@@ -373,7 +375,7 @@ async fn test_role_crud() {
     // 更新 - 用 ActiveModel 直接更新
     use sea_orm::ActiveValue as Av;
     let ra = role::ActiveModel {
-        id: Av::Unchanged(vo.id),
+        id: Av::Unchanged(vo.id.parse().unwrap()),
         name: Av::Set("superadmin".to_string()),
         data_scope: Av::Set("3".to_string()),
         updated_at: Av::Set(Utc::now()),
@@ -382,7 +384,7 @@ async fn test_role_crud() {
     ra.update(&db).await.expect("update role failed");
 
     let updated = svc
-        .find_by_id(&db, vo.id)
+        .find_by_id(&db, role_id)
         .await
         .unwrap()
         .expect("查不到角色");
@@ -718,8 +720,9 @@ async fn test_auth_login_flow() {
     assert!(err.to_string().contains("用户名或密码错误"));
 
     // 获取当前用户
+    let uid: i64 = result.user_info.id.parse().unwrap();
     let user_info = svc
-        .get_current_user(&db, result.user_info.id)
+        .get_current_user(&db, uid)
         .await
         .expect("获取用户失败");
     assert_eq!(user_info.username, "admin");
@@ -817,7 +820,8 @@ async fn test_post_crud() {
         .expect("创建失败");
     assert_eq!(vo.code, "engineer");
 
-    let found = svc.find_by_id(&db, vo.id).await.unwrap().expect("查不到");
+    let post_id: i64 = vo.id.parse().unwrap();
+    let found = svc.find_by_id(&db, post_id).await.unwrap().expect("查不到");
     assert_eq!(found.name, "工程师");
 
     let page = svc
@@ -849,8 +853,9 @@ async fn test_notice_crud() {
         .expect("分页失败");
     assert_eq!(page.total, 1);
 
-    svc.delete(&db, vo.id).await.expect("删除失败");
-    assert!(svc.find_by_id(&db, vo.id).await.unwrap().is_none());
+    let notice_id: i64 = vo.id.parse().unwrap();
+    svc.delete(&db, notice_id).await.expect("删除失败");
+    assert!(svc.find_by_id(&db, notice_id).await.unwrap().is_none());
 }
 
 // ==================== LoginInfoService 测试 ====================
@@ -987,8 +992,9 @@ async fn test_user_create_with_roles() {
         .expect("创建用户失败");
 
     // 验证角色分配
+    let user_id2: i64 = user.id.parse().unwrap();
     let detail = user_svc
-        .find_by_id_with_roles(&db, user.id)
+        .find_by_id_with_roles(&db, user_id2)
         .await
         .unwrap()
         .expect("查不到用户");
@@ -1030,7 +1036,7 @@ async fn test_user_profile_response_structure() {
     use ryframe_service::system::profile_service::UserProfileResponse;
 
     let profile = UserProfileResponse {
-        user_id: 1,
+        user_id: "1".into(),
         username: "testuser".into(),
         nickname: "测试".into(),
         email: "test@test.com".into(),
@@ -1048,7 +1054,7 @@ async fn test_user_profile_response_structure() {
     };
 
     let json = serde_json::to_value(&profile).unwrap();
-    assert_eq!(json["user_id"], 1);
+    assert_eq!(json["user_id"], "1");
     assert_eq!(json["username"], "testuser");
     assert_eq!(json["nickname"], "测试");
     assert_eq!(json["roles"].as_array().unwrap().len(), 2);
@@ -1103,14 +1109,18 @@ fn test_job_vo_serialization() {
     use ryframe_service::system::job_service::{JobLogVo, JobVo};
 
     let vo = JobVo {
-        id: 1,
+        id: "1".into(),
         name: "测试任务".into(),
         group_name: "default".into(),
         cron_expr: "0 0 * * * *".into(),
+        misfire_policy: "1".into(),
+        concurrent: "0".into(),
         status: "1".into(),
         description: "每小时执行".into(),
         next_fire_time: Some("2026-06-01T00:00:00Z".into()),
         remark: None,
+        create_time: chrono::Utc::now(),
+        update_time: chrono::Utc::now(),
     };
 
     let json = serde_json::to_value(&vo).unwrap();
@@ -1119,7 +1129,7 @@ fn test_job_vo_serialization() {
     assert_eq!(json["status"], "1");
 
     let log_vo = JobLogVo {
-        id: 1,
+        id: "1".into(),
         job_name: "测试任务".into(),
         job_group: "default".into(),
         message: "执行成功".into(),

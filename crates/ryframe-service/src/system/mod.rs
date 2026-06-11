@@ -24,7 +24,7 @@ pub use user_service::{
     CreateUserParams, RoleBriefVo, UpdateUserParams, UserDetailVo, UserServiceImpl, UserVo,
 };
 pub mod job_service;
-pub use job_service::{JobLogVo, JobServiceImpl, JobVo};
+pub use job_service::{JobLogPersister, JobLogVo, JobServiceImpl, JobVo};
 pub mod generator_service;
 pub use generator_service::GeneratorServiceImpl;
 pub mod profile_service;

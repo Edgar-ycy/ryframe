@@ -11,9 +11,10 @@ use crate::entities::dept;
 /// 部门树节点
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct DeptTreeNode {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<String>,
     pub sort: i32,
     pub status: String,
     pub children: Vec<DeptTreeNode>,
@@ -201,9 +202,9 @@ fn build_dept_tree(depts: &[dept::Model], parent_id: Option<i64>) -> Vec<DeptTre
         .iter()
         .filter(|d| d.parent_id == parent_id)
         .map(|d| DeptTreeNode {
-            id: d.id,
+            id: d.id.to_string(),
             name: d.name.clone(),
-            parent_id: d.parent_id,
+            parent_id: d.parent_id.map(|p| p.to_string()),
             sort: d.sort,
             status: d.status.clone(),
             children: build_dept_tree(depts, Some(d.id)),

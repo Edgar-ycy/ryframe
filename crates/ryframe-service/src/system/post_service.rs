@@ -10,7 +10,8 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct PostVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
     pub code: String,
     pub sort: i32,
@@ -22,7 +23,7 @@ pub struct PostVo {
 impl From<post::Model> for PostVo {
     fn from(p: post::Model) -> Self {
         Self {
-            id: p.id,
+            id: p.id.to_string(),
             name: p.name,
             code: p.code,
             sort: p.sort,

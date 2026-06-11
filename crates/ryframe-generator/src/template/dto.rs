@@ -9,7 +9,12 @@ pub fn render_dto(table: &TableInfo, base_name: &str) -> String {
         .iter()
         .map(|c| {
             let field_name = naming::safe_field_name(&c.name);
-            format!("    pub {}: {},", field_name, c.rust_type)
+            // id 字段使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+            if field_name == "id" {
+                format!("    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER\n    pub {}: String,", field_name)
+            } else {
+                format!("    pub {}: {},", field_name, c.rust_type)
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -52,8 +57,8 @@ pub struct Create{struct_name}Dto {{
 /// 更新 {struct_name} 请求
 #[derive(Debug, Deserialize)]
 pub struct Update{struct_name}Dto {{
-    pub id: i64,
-{create_fields}
+    pub id: String,
+{{create_fields}}
 }}
 "#,
         generator_version = crate::GENERATOR_VERSION,

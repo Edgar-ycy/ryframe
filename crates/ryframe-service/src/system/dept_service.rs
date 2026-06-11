@@ -16,9 +16,10 @@ const CACHE_TTL_SECS: u64 = 3600;
 /// 部门视图对象
 #[derive(Debug, Serialize)]
 pub struct DeptVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<String>,
     pub ancestors: String,
     pub sort: i32,
     pub status: String,
@@ -29,9 +30,9 @@ pub struct DeptVo {
 impl From<dept::Model> for DeptVo {
     fn from(d: dept::Model) -> Self {
         Self {
-            id: d.id,
+            id: d.id.to_string(),
             name: d.name,
-            parent_id: d.parent_id,
+            parent_id: d.parent_id.map(|p| p.to_string()),
             ancestors: d.ancestors,
             sort: d.sort,
             status: d.status,

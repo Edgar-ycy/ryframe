@@ -8,7 +8,8 @@ use serde::Serialize;
 /// 操作日志视图对象
 #[derive(Debug, Clone, Serialize)]
 pub struct OperLogVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub title: String,
     pub business_type: String,
     pub oper_name: String,
@@ -22,7 +23,7 @@ pub struct OperLogVo {
 impl From<oper_log::Model> for OperLogVo {
     fn from(log: oper_log::Model) -> Self {
         Self {
-            id: log.id,
+            id: log.id.to_string(),
             title: log.title,
             business_type: log.business_type,
             oper_name: log.oper_name,

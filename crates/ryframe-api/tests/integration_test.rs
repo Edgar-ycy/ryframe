@@ -673,7 +673,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let post_id = b["data"]["id"].as_i64().unwrap();
+    let post_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
 
     let (s, _) = auth_put(
         &db,
@@ -696,7 +696,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let cfg_id = b["data"]["id"].as_i64().unwrap();
+    let cfg_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
 
     let (s, _) = auth_put(
         &db,
@@ -724,7 +724,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let dict_type_id = b["data"]["id"].as_i64().unwrap();
+    let dict_type_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
 
     let (s, _) = auth_put(
         &db,
@@ -744,7 +744,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let dict_data_id = b["data"]["id"].as_i64().unwrap();
+    let dict_data_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
 
     // 更新字典数据
     let (s, _) = auth_put(
@@ -778,7 +778,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let notice_id = b["data"]["id"].as_i64().unwrap();
+    let notice_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
 
     let (s, _) = auth_put(
         &db,
@@ -797,7 +797,7 @@ async fn test_update_and_delete_operations() {
         &db,
         "/system/depts",
         &token,
-        serde_json::json!({"name": "子部门", "parent_id": 1, "sort": 0}),
+        serde_json::json!({"name": "子部门", "parent_id": "1", "sort": 0}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -807,7 +807,7 @@ async fn test_update_and_delete_operations() {
         &db,
         &format!("/system/depts/{}", dept_id),
         &token,
-        serde_json::json!({"name": "改名部门", "parent_id": 1, "sort": 1, "status": "1"}),
+        serde_json::json!({"name": "改名部门", "parent_id": "1", "sort": 1, "status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -843,7 +843,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let role_id = b["data"]["id"].as_i64().unwrap();
+    let role_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
 
     let (s, _) = auth_put(
         &db,
@@ -890,16 +890,16 @@ async fn test_update_and_delete_operations() {
     // ===== 用户：创建 → 更新 → 修改状态 → 重置密码 → 删除 =====
     let (s, b) = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "testupdate", "password": "123456", "nickname": "测试更新", "email": null, "phone": null, "dept_id": 1, "role_ids": null}),
+        serde_json::json!({"username": "testupdate", "password": "123456", "nickname": "测试更新", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let user_id = b["data"]["id"].as_i64().unwrap();
+    let user_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
 
     // 更新用户
     let (s, _) = auth_put(
         &db, &format!("/system/users/{}", user_id), &token,
-        serde_json::json!({"nickname": "已更新", "email": null, "phone": null, "dept_id": 1, "status": "1", "role_ids": null}),
+        serde_json::json!({"nickname": "已更新", "email": null, "phone": null, "dept_id": "1", "status": "1", "role_ids": null}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -909,7 +909,7 @@ async fn test_update_and_delete_operations() {
         &db,
         "/system/users/changeStatus",
         &token,
-        serde_json::json!({"user_id": user_id, "status": "0"}),
+        serde_json::json!({"user_id": user_id.to_string(), "status": "0"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1040,14 +1040,14 @@ async fn test_duplicate_key_conflicts() {
     // 创建已有的 username
     let _ = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "duplicate_user", "password": "123456", "nickname": "重复用户", "email": null, "phone": null, "dept_id": 1, "role_ids": null}),
+        serde_json::json!({"username": "duplicate_user", "password": "123456", "nickname": "重复用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
     )
     .await;
 
     // 尝试用相同 username 创建另一个 user
     let (s, _) = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "duplicate_user", "password": "123456", "nickname": "重名用户", "email": null, "phone": null, "dept_id": 1, "role_ids": null}),
+        serde_json::json!({"username": "duplicate_user", "password": "123456", "nickname": "重名用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
     )
     .await;
     assert!(!s.is_success(), "重复用户名应返回错误");

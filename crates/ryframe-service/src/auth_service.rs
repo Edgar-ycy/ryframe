@@ -22,7 +22,8 @@ pub struct LoginResult {
 /// 用户信息
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UserInfo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub username: String,
     pub nickname: String,
     pub email: String,
@@ -35,7 +36,7 @@ pub struct UserInfo {
 impl From<&user::Model> for UserInfo {
     fn from(u: &user::Model) -> Self {
         Self {
-            id: u.id,
+            id: u.id.to_string(),
             username: u.username.clone(),
             nickname: u.nickname.clone(),
             email: u.email.clone(),

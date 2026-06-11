@@ -567,9 +567,9 @@ async fn test_menu_repo_tree() {
 
     let tree = repo.find_tree(&db).await.unwrap();
     assert!(!tree.is_empty());
-    let root_node = tree.iter().find(|n| n.id == root.id).unwrap();
+    let root_node = tree.iter().find(|n| n.id == root.id.to_string()).unwrap();
     assert_eq!(root_node.children.len(), 1);
-    assert_eq!(root_node.children[0].id, child.id);
+    assert_eq!(root_node.children[0].id, child.id.to_string());
 }
 
 // ==================== DeptRepository ====================
@@ -610,7 +610,7 @@ async fn test_dept_repo_tree() {
 
     let tree = repo.find_tree(&db).await.unwrap();
     assert_eq!(tree.len(), 1);
-    assert_eq!(tree[0].id, root.id);
+    assert_eq!(tree[0].id, root.id.to_string());
     assert_eq!(tree[0].children.len(), 1);
-    assert_eq!(tree[0].children[0].id, child.id);
+    assert_eq!(tree[0].children[0].id, child.id.to_string());
 }

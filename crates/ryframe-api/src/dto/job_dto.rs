@@ -20,4 +20,6 @@ pub struct UpdateJobDto {
     pub cron_expr: Option<String>,
     pub status: Option<String>,
     pub remark: Option<String>,
+    pub misfire_policy: Option<String>,
+    pub concurrent: Option<String>,
 }

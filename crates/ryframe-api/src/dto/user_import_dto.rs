@@ -17,7 +17,7 @@ pub struct UserImportData {
     pub phone: Option<String>,
 
     pub sex: Option<String>,
-    pub dept_id: Option<i64>,
+    pub dept_id: Option<String>,
     pub status: Option<String>,
     pub remark: Option<String>,
 }
@@ -41,7 +41,7 @@ impl UserImportData {
 /// 用户导出数据
 #[derive(Debug, Clone, Serialize)]
 pub struct UserExportData {
-    pub user_id: i64,
+    pub user_id: String,
     pub username: String,
     pub nickname: String,
     pub email: String,

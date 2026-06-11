@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post, put},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
-use ryframe_core::{Repository, repository::PageQuery};
+use ryframe_core::repository::PageQuery;
 use ryframe_service::system::{JobLogVo, JobVo};
 use serde::Deserialize;
 use validator::Validate;
@@ -26,6 +26,23 @@ pub struct JobLogPageQuery {
     pub page_size: u64,
     pub job_name: Option<String>,
     pub status: Option<String>,
+    pub begin_time: Option<String>,
+    pub end_time: Option<String>,
+}
+
+/// 任务列表分页查询参数（带过滤）
+#[derive(Debug, Deserialize)]
+pub struct JobListQuery {
+    #[serde(default)]
+    pub page: u64,
+    #[serde(
+        default = "ryframe_core::repository::default_page_size",
+        alias = "pageSize"
+    )]
+    pub page_size: u64,
+    pub name: Option<String>,
+    pub group_name: Option<String>,
+    pub status: Option<String>,
 }
 
 pub fn job_router(state: AppState) -> Router {
@@ -37,7 +54,7 @@ pub fn job_router(state: AppState) -> Router {
         .route("/{id}/pause", post(pause_job))
         .route("/{id}/resume", post(resume_job))
         .route("/{id}/trigger", post(trigger))
-        .route("/logs", get(log_list))
+        .route("/logs", get(log_list).delete(clear_logs))
         .with_state(state)
 }
 
@@ -84,17 +101,23 @@ async fn remove(
     security(("bearer" = [])))]
 async fn list_page(
     State(state): State<AppState>,
-    Query(query): Query<PageQuery>,
+    Query(q): Query<JobListQuery>,
 ) -> AppResult<Json<ApiPageResponse<JobVo>>> {
-    let all = state.job_service.list_all(&state.db).await?;
-    let total = all.len() as u64;
-    let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
-    let rows: Vec<JobVo> = all
-        .into_iter()
-        .skip(offset)
-        .take(query.page_size as usize)
-        .collect();
-    Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
+    let query = PageQuery {
+        page: q.page,
+        page_size: q.page_size,
+    };
+    let result = state
+        .job_service
+        .list_page(
+            &state.db,
+            query,
+            q.name.as_deref(),
+            q.group_name.as_deref(),
+            q.status.as_deref(),
+        )
+        .await?;
+    Ok(Json(result.to_page_response("查询成功")))
 }
 
 /// 列出全部任务（不分页）
@@ -119,7 +142,15 @@ async fn update(
 ) -> AppResult<Json<ApiResponse<()>>> {
     state
         .job_service
-        .update(&state.db, id, dto.cron_expr, dto.status, dto.remark)
+        .update(
+            &state.db,
+            id,
+            dto.cron_expr,
+            dto.status,
+            dto.remark,
+            dto.misfire_policy,
+            dto.concurrent,
+        )
         .await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("更新成功")))
 }
@@ -157,15 +188,20 @@ async fn trigger(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<ryframe_task::TaskHistory>>> {
-    let entity = state
-        .job_service
-        .job_repo
-        .find_by_id(&state.db, id)
-        .await?
-        .ok_or_else(|| ryframe_common::AppError::NotFound("任务不存在".into()))?;
-
-    let history = state.job_service.trigger_once(&entity.name).await?;
+    let history = state.job_service.trigger_by_id(&state.db, id).await?;
     Ok(Json(ApiResponse::success(history)))
+}
+
+/// 清空所有任务执行日志
+#[utoipa::path(delete, path = "/api/v1/system/jobs/logs", tag = "定时任务",
+    responses((status = 200, description = "清空成功")),
+    security(("bearer" = [])))]
+async fn clear_logs(State(state): State<AppState>) -> AppResult<Json<ApiResponse<u64>>> {
+    let count = state.job_service.clean_logs(&state.db).await?;
+    Ok(Json(ApiResponse::success_msg(
+        format!("已清空 {} 条日志", count),
+        count,
+    )))
 }
 
 /// 任务执行历史分页
@@ -180,9 +216,21 @@ async fn log_list(
         page: q.page,
         page_size: q.page_size,
     };
+    let parse_time = |s: &Option<String>| -> Option<chrono::DateTime<chrono::Utc>> {
+        s.as_deref()
+            .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    };
     let result = state
         .job_service
-        .log_page(&state.db, query, q.job_name.as_deref(), q.status)
+        .log_page(
+            &state.db,
+            query,
+            q.job_name.as_deref(),
+            q.status,
+            parse_time(&q.begin_time),
+            parse_time(&q.end_time),
+        )
         .await?;
     Ok(Json(result.to_page_response("查询成功")))
 }

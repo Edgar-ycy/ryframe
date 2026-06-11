@@ -5,7 +5,8 @@ use utoipa::ToSchema;
 pub struct CreateMenuDto {
     #[validate(length(min = 1, message = "菜单名称不能为空"))]
     pub name: String,
-    pub parent_id: Option<i64>,
+    /// 父菜单ID（接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失）
+    pub parent_id: Option<String>,
     /// 菜单类型: M目录 C菜单 F按钮
     #[validate(length(min = 1, max = 1, message = "菜单类型不能为空"))]
     pub menu_type: String,
@@ -25,7 +26,8 @@ pub struct CreateMenuDto {
 pub struct UpdateMenuDto {
     #[validate(length(min = 1, message = "菜单名称不能为空"))]
     pub name: String,
-    pub parent_id: Option<i64>,
+    /// 父菜单ID（接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失）
+    pub parent_id: Option<String>,
     pub menu_type: String,
     pub path: Option<String>,
     pub component: Option<String>,

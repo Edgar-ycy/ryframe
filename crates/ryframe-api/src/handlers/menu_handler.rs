@@ -82,12 +82,13 @@ async fn create(
     Json(dto): Json<CreateMenuDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
     dto.validate()?;
+    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
     state
         .menu_service
         .create(
             &state.db,
             &dto.name,
-            dto.parent_id,
+            parent_id,
             &dto.menu_type,
             dto.path.as_deref(),
             dto.component.as_deref(),
@@ -113,13 +114,14 @@ async fn update(
     Json(dto): Json<UpdateMenuDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
     dto.validate()?;
+    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
     state
         .menu_service
         .update(
             &state.db,
             id,
             &dto.name,
-            dto.parent_id,
+            parent_id,
             &dto.menu_type,
             dto.path.as_deref(),
             dto.component.as_deref(),

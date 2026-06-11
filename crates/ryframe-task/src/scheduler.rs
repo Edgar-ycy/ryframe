@@ -7,7 +7,7 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 use crate::{
-    task_history::{TaskHistory, TaskHistoryStore},
+    task_history::{TaskHistory, TaskHistoryPersister, TaskHistoryStore},
     task_manager::{ScheduledTask, TaskContext},
 };
 
@@ -32,6 +32,8 @@ pub struct TaskScheduler {
     /// 优雅关闭通知
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    /// 日志持久化回调（写入 DB 等外部存储）
+    persister: Option<Arc<dyn TaskHistoryPersister>>,
 }
 
 struct RegisteredTask {
@@ -53,6 +55,7 @@ impl TaskScheduler {
             distributed_lock: None,
             shutdown_tx,
             shutdown_rx,
+            persister: None,
         }
     }
 
@@ -69,7 +72,13 @@ impl TaskScheduler {
             distributed_lock: Some(distributed_lock),
             shutdown_tx,
             shutdown_rx,
+            persister: None,
         }
+    }
+
+    /// 设置日志持久化回调（如写入 DB）
+    pub fn set_persister(&mut self, persister: Arc<dyn TaskHistoryPersister>) {
+        self.persister = Some(persister);
     }
 
     /// 发送优雅关闭信号
@@ -262,6 +271,14 @@ impl TaskScheduler {
         };
 
         self.history.push(history.clone()).await;
+
+        // 持久化到外部存储（如 DB）
+        if let Some(ref persister) = self.persister {
+            if let Err(e) = persister.persist(&history).await {
+                tracing::warn!("持久化任务执行历史失败 [task={}]: {}", name, e);
+            }
+        }
+
         Ok(history)
     }
 
@@ -343,7 +360,18 @@ impl TaskScheduler {
                 },
             };
 
-            self.history.push(history).await;
+            self.history.push(history.clone()).await;
+
+            // 持久化到外部存储（如 DB）
+            if let Some(ref persister) = self.persister {
+                if let Err(e) = persister.persist(&history).await {
+                    tracing::warn!(
+                        "持久化任务执行历史失败 [task={}]: {}",
+                        task.name(),
+                        e
+                    );
+                }
+            }
         }
     }
 }

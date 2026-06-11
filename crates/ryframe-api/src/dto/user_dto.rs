@@ -11,8 +11,10 @@ pub struct CreateUserDto {
     pub nickname: String,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub dept_id: Option<i64>,
-    pub role_ids: Option<Vec<i64>>,
+    /// 部门ID（接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失）
+    pub dept_id: Option<String>,
+    /// 角色ID列表（接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失）
+    pub role_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
@@ -21,9 +23,11 @@ pub struct UpdateUserDto {
     pub nickname: String,
     pub email: Option<String>,
     pub phone: Option<String>,
-    pub dept_id: Option<i64>,
+    /// 部门ID（接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失）
+    pub dept_id: Option<String>,
     pub status: String,
-    pub role_ids: Option<Vec<i64>>,
+    /// 角色ID列表（接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失）
+    pub role_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
@@ -35,6 +39,7 @@ pub struct ResetPasswordDto {
 /// 修改用户状态请求
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ChangeStatusDto {
-    pub user_id: i64,
+    /// 用户ID（接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失）
+    pub user_id: String,
     pub status: String,
 }

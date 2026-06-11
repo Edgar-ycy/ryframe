@@ -15,7 +15,8 @@ const CACHE_TTL_SECS: u64 = 3600;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
     pub key: String,
     pub value: String,
@@ -26,7 +27,7 @@ pub struct ConfigVo {
 impl From<config::Model> for ConfigVo {
     fn from(c: config::Model) -> Self {
         Self {
-            id: c.id,
+            id: c.id.to_string(),
             name: c.name,
             key: c.key,
             value: c.value,

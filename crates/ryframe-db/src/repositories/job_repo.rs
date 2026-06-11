@@ -77,6 +77,46 @@ impl JobRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
+    /// 查询所有任务（不限制状态，包含暂停任务）
+    pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<job::Model>> {
+        job::Entity::find()
+            .order_by_asc(job::Column::CreateTime)
+            .all(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// 带过滤条件的分页查询
+    #[allow(clippy::too_many_arguments)]
+    pub async fn find_by_page_filtered(
+        &self,
+        db: &DatabaseConnection,
+        query: &PageQuery,
+        name: Option<&str>,
+        group_name: Option<&str>,
+        status: Option<&str>,
+    ) -> AppResult<PageResult<job::Model>> {
+        let mut select = job::Entity::find();
+        if let Some(n) = name {
+            if !n.is_empty() {
+                select = select.filter(job::Column::Name.contains(n));
+            }
+        }
+        if let Some(g) = group_name {
+            if !g.is_empty() {
+                select = select.filter(job::Column::GroupName.eq(g));
+            }
+        }
+        if let Some(s) = status {
+            if !s.is_empty() {
+                select = select.filter(job::Column::Status.eq(s));
+            }
+        }
+        select = select.order_by_asc(job::Column::CreateTime);
+
+        crate::pagination::paginate(db, select, query).await
+    }
+
     pub async fn update_status(
         &self,
         db: &DatabaseConnection,
@@ -96,7 +136,8 @@ impl JobRepository {
         Ok(())
     }
 
-    /// 更新 cron 表达式（同时更新状态和备注）
+    /// 更新 cron 表达式（同时支持更新状态、备注、错过策略、并发策略）
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_cron(
         &self,
         db: &DatabaseConnection,
@@ -104,6 +145,8 @@ impl JobRepository {
         cron_expr: Option<String>,
         status: Option<String>,
         remark: Option<String>,
+        misfire_policy: Option<String>,
+        concurrent: Option<String>,
     ) -> AppResult<()> {
         let mut active = job::ActiveModel {
             id: sea_orm::ActiveValue::Unchanged(id),
@@ -118,6 +161,12 @@ impl JobRepository {
         }
         if let Some(r) = remark {
             active.remark = sea_orm::ActiveValue::Set(Some(r));
+        }
+        if let Some(mp) = misfire_policy {
+            active.misfire_policy = sea_orm::ActiveValue::Set(mp);
+        }
+        if let Some(cc) = concurrent {
+            active.concurrent = sea_orm::ActiveValue::Set(cc);
         }
         active
             .update(db)

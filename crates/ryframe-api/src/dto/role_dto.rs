@@ -23,12 +23,16 @@ pub struct UpdateRoleDto {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AssignPermsDto {
-    pub perm_ids: Vec<i64>,
+    /// 权限ID列表（接受 number|string，前端 Snowflake ID 以字符串传输）
+    #[serde(default)]
+    pub perm_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AssignMenusDto {
-    pub menu_ids: Vec<i64>,
+    /// 菜单ID列表（接受 number|string，前端 Snowflake ID 以字符串传输）
+    #[serde(default)]
+    pub menu_ids: Vec<String>,
 }
 
 /// 数据权限分配请求
@@ -36,7 +40,7 @@ pub struct AssignMenusDto {
 pub struct AssignDataScopeDto {
     /// 数据范围: "1"全部 "2"自定义 "3"本部门 "4"本部门及以下 "5"仅本人
     pub data_scope: String,
-    /// 自定义部门ID列表（仅 data_scope="2" 时有效）
+    /// 自定义部门ID列表（仅 data_scope="2" 时有效，接受 number|string）
     #[serde(default)]
-    pub dept_ids: Vec<i64>,
+    pub dept_ids: Vec<String>,
 }

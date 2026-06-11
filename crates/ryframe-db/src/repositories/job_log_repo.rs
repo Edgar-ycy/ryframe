@@ -8,6 +8,7 @@ use sea_orm::{
 
 use crate::entities::job_log;
 
+#[derive(Clone)]
 pub struct JobLogRepository;
 
 #[async_trait]

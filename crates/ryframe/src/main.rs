@@ -23,10 +23,10 @@ use ryframe_middleware::{
 use ryframe_service::{
     AuthServiceImpl,
     system::{
-        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
-        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, UserServiceImpl,
+        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobLogPersister,
+        JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
+        OnlineUserServiceImpl, OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
+        ProfileServiceImpl, RoleServiceImpl, UserServiceImpl,
     },
 };
 use ryframe_task::{
@@ -322,12 +322,19 @@ async fn main() -> Result<(), AppError> {
     let task_ctx = TaskContext {
         db: Arc::new(primary_db.clone()),
     };
-    let scheduler = Arc::new(TaskScheduler::new(task_ctx.clone()));
+    let job_log_repo = LoggedRepo::new(JobLogRepository);
+
+    let mut scheduler = TaskScheduler::new(task_ctx.clone());
+    scheduler.set_persister(Arc::new(JobLogPersister {
+        job_log_repo: job_log_repo.clone(),
+        db: Arc::new(primary_db.clone()),
+    }));
+    let scheduler = Arc::new(scheduler);
 
     // 7.y 创建 JobService（注入 scheduler）并初始化内置任务
     let job_service = Arc::new(JobServiceImpl {
         job_repo: LoggedRepo::new(JobRepository),
-        job_log_repo: LoggedRepo::new(JobLogRepository),
+        job_log_repo,
         scheduler: scheduler.clone(),
     });
 

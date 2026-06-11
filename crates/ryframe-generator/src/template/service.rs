@@ -11,7 +11,11 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
         .iter()
         .map(|c| {
             let fn_name = naming::safe_field_name(&c.name);
-            format!("            {}: m.{},", fn_name, fn_name)
+            if fn_name == "id" {
+                format!("            {}: m.{}.to_string(),", fn_name, fn_name)
+            } else {
+                format!("            {}: m.{},", fn_name, fn_name)
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");

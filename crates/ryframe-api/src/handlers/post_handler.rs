@@ -131,7 +131,7 @@ async fn remove(
 /// 岗位导出数据
 #[derive(Debug, Serialize)]
 struct PostExportData {
-    pub post_id: i64,
+    pub post_id: String,
     pub name: String,
     pub code: String,
     pub sort: i32,

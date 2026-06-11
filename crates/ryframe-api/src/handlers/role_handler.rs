@@ -228,7 +228,7 @@ async fn export_roles(State(state): State<AppState>) -> AppResult<axum::response
 /// 角色导出数据结构
 #[derive(Debug, Serialize)]
 struct RoleExportData {
-    pub role_id: i64,
+    pub role_id: String,
     pub role_name: String,
     pub role_code: String,
     pub data_scope: String,
@@ -264,9 +264,14 @@ async fn assign_permissions(
     Path(id): Path<i64>,
     Json(dto): Json<AssignPermsDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    let perm_ids: Vec<i64> = dto
+        .perm_ids
+        .iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     state
         .role_service
-        .assign_permissions(&state.db, id, dto.perm_ids)
+        .assign_permissions(&state.db, id, perm_ids)
         .await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
 }
@@ -282,9 +287,14 @@ async fn assign_menus(
     Path(id): Path<i64>,
     Json(dto): Json<AssignMenusDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    let menu_ids: Vec<i64> = dto
+        .menu_ids
+        .iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     state
         .role_service
-        .assign_menus(&state.db, id, dto.menu_ids)
+        .assign_menus(&state.db, id, menu_ids)
         .await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("菜单分配成功")))
 }
@@ -300,9 +310,14 @@ async fn assign_data_scope(
     Path(id): Path<i64>,
     Json(dto): Json<AssignDataScopeDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    let dept_ids: Vec<i64> = dto
+        .dept_ids
+        .iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     state
         .role_service
-        .assign_data_scope(&state.db, id, &dto.data_scope, dto.dept_ids)
+        .assign_data_scope(&state.db, id, &dto.data_scope, dept_ids)
         .await?;
     Ok(Json(ApiResponse::success_no_data_with_msg(
         "数据权限设置成功",

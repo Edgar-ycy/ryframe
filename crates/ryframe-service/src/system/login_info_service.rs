@@ -8,7 +8,8 @@ use serde::Serialize;
 /// 登录日志视图对象
 #[derive(Debug, Clone, Serialize)]
 pub struct LoginInfoVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub user_name: String,
     pub ipaddr: String,
     pub login_location: Option<String>,
@@ -22,7 +23,7 @@ pub struct LoginInfoVo {
 impl From<login_info::Model> for LoginInfoVo {
     fn from(log: login_info::Model) -> Self {
         Self {
-            id: log.id,
+            id: log.id.to_string(),
             user_name: log.user_name,
             ipaddr: log.ipaddr,
             login_location: log.login_location,

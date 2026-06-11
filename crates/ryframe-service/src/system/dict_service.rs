@@ -18,7 +18,8 @@ const CACHE_TTL_SECS: u64 = 3600;
 
 #[derive(Debug, Serialize)]
 pub struct DictTypeVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
     pub code: String,
     pub status: String,
@@ -29,7 +30,7 @@ pub struct DictTypeVo {
 impl From<dict_type::Model> for DictTypeVo {
     fn from(t: dict_type::Model) -> Self {
         Self {
-            id: t.id,
+            id: t.id.to_string(),
             name: t.name,
             code: t.code,
             status: t.status,
@@ -41,7 +42,8 @@ impl From<dict_type::Model> for DictTypeVo {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DictDataVo {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub type_code: String,
     pub label: String,
     pub value: String,
@@ -53,7 +55,7 @@ pub struct DictDataVo {
 impl From<dict_data::Model> for DictDataVo {
     fn from(d: dict_data::Model) -> Self {
         Self {
-            id: d.id,
+            id: d.id.to_string(),
             type_code: d.type_code,
             label: d.label,
             value: d.value,

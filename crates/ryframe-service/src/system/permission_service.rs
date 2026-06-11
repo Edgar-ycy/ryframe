@@ -6,10 +6,11 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct PermissionTreeNode {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
     pub code: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<String>,
     pub perm_type: String,
     pub path: Option<String>,
     pub icon: Option<String>,
@@ -48,10 +49,10 @@ pub fn build_perm_tree(
         .iter()
         .filter(|p| p.parent_id == parent_id)
         .map(|p| PermissionTreeNode {
-            id: p.id,
+            id: p.id.to_string(),
             name: p.name.clone(),
             code: p.code.clone(),
-            parent_id: p.parent_id,
+            parent_id: p.parent_id.map(|p| p.to_string()),
             perm_type: p.perm_type.clone(),
             path: p.path.clone(),
             icon: p.icon.clone(),

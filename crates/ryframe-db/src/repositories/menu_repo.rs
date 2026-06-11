@@ -11,9 +11,10 @@ use crate::entities::menu;
 /// 菜单树节点
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MenuTreeNode {
-    pub id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub id: String,
     pub name: String,
-    pub parent_id: Option<i64>,
+    pub parent_id: Option<String>,
     pub menu_type: String,
     pub path: Option<String>,
     pub component: Option<String>,
@@ -153,9 +154,9 @@ fn build_menu_tree(menus: &[menu::Model], parent_id: Option<i64>) -> Vec<MenuTre
         .iter()
         .filter(|m| m.parent_id == parent_id)
         .map(|m| MenuTreeNode {
-            id: m.id,
+            id: m.id.to_string(),
             name: m.name.clone(),
-            parent_id: m.parent_id,
+            parent_id: m.parent_id.map(|p| p.to_string()),
             menu_type: m.menu_type.clone(),
             path: m.path.clone(),
             component: m.component.clone(),

@@ -561,6 +561,8 @@ async fn test_job_repo_update_cron() {
         Some("0 0 3 * * ?".into()),
         Some(job::Model::STATUS_PAUSED.to_string()),
         Some("已暂停".into()),
+        None,
+        None,
     )
     .await
     .unwrap();

@@ -11,7 +11,8 @@ use serde::Serialize;
 /// 用户个人信息响应
 #[derive(Debug, Clone, Serialize)]
 pub struct UserProfileResponse {
-    pub user_id: i64,
+    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    pub user_id: String,
     pub username: String,
     pub nickname: String,
     pub email: String,
@@ -68,7 +69,7 @@ impl ProfileServiceImpl {
         let permissions: Vec<String> = perms.iter().map(|p| p.code.clone()).collect();
 
         Ok(UserProfileResponse {
-            user_id: user.id,
+            user_id: user.id.to_string(),
             username: user.username,
             nickname: user.nickname,
             email: user.email,

@@ -85,9 +85,10 @@ async fn create(
     Json(dto): Json<CreateDeptDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
     dto.validate()?;
+    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
     state
         .dept_service
-        .create(&state.db, &dto.name, dto.parent_id, dto.sort.unwrap_or(0))
+        .create(&state.db, &dto.name, parent_id, dto.sort.unwrap_or(0))
         .await
         .map(|v| Json(ApiResponse::success(v)))
 }
@@ -102,13 +103,14 @@ async fn update(
     Json(dto): Json<UpdateDeptDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
     dto.validate()?;
+    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
     state
         .dept_service
         .update(
             &state.db,
             id,
             &dto.name,
-            dto.parent_id,
+            parent_id,
             dto.sort.unwrap_or(0),
             dto.status,
         )
