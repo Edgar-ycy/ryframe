@@ -370,12 +370,15 @@ pub async fn refresh(
     Json(req): Json<RefreshRequest>,
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
     // 检查用户是否被强退（在 auth_service.refresh_token 之前，提前拦截）
-    if let Ok(claims) = ryframe_auth::jwt::decode_token(
-        &req.refresh_token,
-        &state.config.auth.jwt_secret,
-    ) {
+    if let Ok(claims) =
+        ryframe_auth::jwt::decode_token(&req.refresh_token, &state.config.auth.jwt_secret)
+    {
         let force_logout_key = format!("force_logout:user:{}", claims.sub);
-        if state.token_blacklist.is_blacklisted(&force_logout_key).await {
+        if state
+            .token_blacklist
+            .is_blacklisted(&force_logout_key)
+            .await
+        {
             return Err(ryframe_common::AppError::Authentication(
                 "账号已被强制下线，请重新登录".into(),
             ));

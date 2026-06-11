@@ -230,19 +230,16 @@ impl OnlineUserServiceImpl {
             Self::Redis { client } => {
                 let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, session.token_id);
                 // 先尝试 touch：如果 key 存在则更新 last_access_time
-                match client.get(&key).await {
-                    Ok(Some(json)) => {
-                        if let Ok(mut existing) = serde_json::from_str::<UserSession>(&json) {
-                            existing.last_access_time = Utc::now();
-                            if let Ok(new_json) = serde_json::to_string(&existing) {
-                                let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
-                                let _ = client.set_ex(&key, &new_json, ttl as u64).await;
-                            }
+                if let Ok(Some(json)) = client.get(&key).await {
+                    if let Ok(mut existing) = serde_json::from_str::<UserSession>(&json) {
+                        existing.last_access_time = Utc::now();
+                        if let Ok(new_json) = serde_json::to_string(&existing) {
+                            let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
+                            let _ = client.set_ex(&key, &new_json, ttl as u64).await;
                         }
-                        return;
                     }
-                    _ => {} // key 不存在或读取失败，走下方补建逻辑
-                }
+                    return;
+                } // key 不存在或读取失败，走下方补建逻辑
                 // 会话不存在，重新创建
                 self.add_user(session).await;
             }
