@@ -5,7 +5,7 @@ use axum::{
 };
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
-use ryframe_core::{PageQuery, Repository};
+use ryframe_core::PageQuery;
 use ryframe_service::system::{CreateUserParams, UpdateUserParams, UserDetailVo, UserVo};
 use serde::Deserialize;
 use validator::Validate;
@@ -62,58 +62,24 @@ async fn list(
         .parse::<i64>()
         .map_err(|_| ryframe_common::AppError::Authentication("令牌无效".into()))?;
 
-    // 查当前用户信息和部门
-    let user = state
-        .user_service
-        .user_repo
-        .find_by_id(&state.db, user_id)
-        .await?
-        .ok_or_else(|| ryframe_common::AppError::Authentication("用户不存在".into()))?;
-
-    // 查角色
-    let roles = state
-        .user_service
-        .role_repo
-        .find_user_roles(&state.db, user_id)
-        .await?;
-
-    // 构建数据权限上下文
-    let scope_ctx = state
-        .user_service
-        .build_data_scope_context(&state.db, user_id, user.dept_id, &roles)
-        .await?;
-
     let page_query = PageQuery {
         page: query.page,
         page_size: query.page_size,
     };
 
-    // 如果有搜索条件，使用 filtered 版本；否则用 data_scope 版本
-    let has_filter = query.username.is_some()
-        || query.phone.is_some()
-        || query.status.is_some()
-        || query.dept_id.is_some();
-
-    if has_filter {
-        state
-            .user_service
-            .find_by_page_filtered(
-                &state.db,
-                page_query,
-                query.username.as_deref(),
-                query.phone.as_deref(),
-                query.status.as_deref(),
-                query.dept_id,
-            )
-            .await
-            .map(|p| Json(p.to_page_response("查询成功")))
-    } else {
-        state
-            .user_service
-            .find_by_page_with_data_scope(&state.db, page_query, &scope_ctx)
-            .await
-            .map(|p| Json(p.to_page_response("查询成功")))
-    }
+    state
+        .user_service
+        .find_by_page_with_user_scope(
+            &state.db,
+            user_id,
+            page_query,
+            query.username.as_deref(),
+            query.phone.as_deref(),
+            query.status.as_deref(),
+            query.dept_id,
+        )
+        .await
+        .map(|p| Json(p.to_page_response("查询成功")))
 }
 
 /// 用户列表不分页查询（返回全部数据）
@@ -163,9 +129,9 @@ async fn create(
     dto.validate()?;
     // 解析前端传来的 String ID 为 i64
     let dept_id: Option<i64> = dto.dept_id.and_then(|s| s.parse().ok());
-    let role_ids: Option<Vec<i64>> = dto.role_ids.map(|ids| {
-        ids.iter().filter_map(|s| s.parse().ok()).collect()
-    });
+    let role_ids: Option<Vec<i64>> = dto
+        .role_ids
+        .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect());
     state
         .user_service
         .create(
@@ -199,9 +165,9 @@ async fn update(
     dto.validate()?;
     // 解析前端传来的 String ID 为 i64
     let dept_id: Option<i64> = dto.dept_id.and_then(|s| s.parse().ok());
-    let role_ids: Option<Vec<i64>> = dto.role_ids.map(|ids| {
-        ids.iter().filter_map(|s| s.parse().ok()).collect()
-    });
+    let role_ids: Option<Vec<i64>> = dto
+        .role_ids
+        .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect());
     state
         .user_service
         .update(

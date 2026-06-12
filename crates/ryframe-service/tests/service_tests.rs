@@ -704,6 +704,7 @@ async fn test_auth_login_flow() {
         role_repo: LoggedRepo::new(RoleRepository),
         perm_repo: LoggedRepo::new(PermissionRepository),
         config: config.clone(),
+        redis: None,
     };
 
     // 创建用户
@@ -721,10 +722,7 @@ async fn test_auth_login_flow() {
 
     // 获取当前用户
     let uid: i64 = result.user_info.id.parse().unwrap();
-    let user_info = svc
-        .get_current_user(&db, uid)
-        .await
-        .expect("获取用户失败");
+    let user_info = svc.get_current_user(&db, uid).await.expect("获取用户失败");
     assert_eq!(user_info.username, "admin");
 
     // 刷新令牌
@@ -968,6 +966,7 @@ async fn test_user_create_with_roles() {
         role_repo: LoggedRepo::new(RoleRepository),
         perm_repo: LoggedRepo::new(PermissionRepository),
         config,
+        redis: None,
     };
 
     // 创建角色

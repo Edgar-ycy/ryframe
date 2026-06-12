@@ -264,11 +264,7 @@ async fn assign_permissions(
     Path(id): Path<i64>,
     Json(dto): Json<AssignPermsDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let perm_ids: Vec<i64> = dto
-        .perm_ids
-        .iter()
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let perm_ids: Vec<i64> = dto.perm_ids.iter().filter_map(|s| s.parse().ok()).collect();
     state
         .role_service
         .assign_permissions(&state.db, id, perm_ids)
@@ -287,11 +283,7 @@ async fn assign_menus(
     Path(id): Path<i64>,
     Json(dto): Json<AssignMenusDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let menu_ids: Vec<i64> = dto
-        .menu_ids
-        .iter()
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let menu_ids: Vec<i64> = dto.menu_ids.iter().filter_map(|s| s.parse().ok()).collect();
     state
         .role_service
         .assign_menus(&state.db, id, menu_ids)
@@ -310,11 +302,7 @@ async fn assign_data_scope(
     Path(id): Path<i64>,
     Json(dto): Json<AssignDataScopeDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let dept_ids: Vec<i64> = dto
-        .dept_ids
-        .iter()
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let dept_ids: Vec<i64> = dto.dept_ids.iter().filter_map(|s| s.parse().ok()).collect();
     state
         .role_service
         .assign_data_scope(&state.db, id, &dto.data_scope, dept_ids)

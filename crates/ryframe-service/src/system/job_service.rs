@@ -8,7 +8,10 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult, Repository},
 };
-use ryframe_db::{JobLogRepository, JobRepository, entities::{job, job_log}};
+use ryframe_db::{
+    JobLogRepository, JobRepository,
+    entities::{job, job_log},
+};
 use ryframe_task::{ScheduledTask, TaskHistory, TaskHistoryPersister, TaskScheduler};
 use sea_orm::{ActiveModelTrait, DatabaseConnection};
 use serde::Serialize;
@@ -286,6 +289,7 @@ impl JobServiceImpl {
     ///
     /// 执行顺序：校验 cron → 同步调度器 → 持久化 DB，
     /// 确保不会因 cron 无效或调度器操作失败导致 DB 和内存不一致。
+    #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
         db: &DatabaseConnection,
@@ -303,13 +307,13 @@ impl JobServiceImpl {
             .ok_or_else(|| ryframe_common::AppError::NotFound("任务不存在".into()))?;
 
         // 校验 cron 表达式
-        if let Some(ref cron) = cron_expr {
-            if cron::Schedule::from_str(cron).is_err() {
-                return Err(AppError::Validation(format!(
-                    "无效的 cron 表达式: {}",
-                    cron
-                )));
-            }
+        if let Some(ref cron) = cron_expr
+            && cron::Schedule::from_str(cron).is_err()
+        {
+            return Err(AppError::Validation(format!(
+                "无效的 cron 表达式: {}",
+                cron
+            )));
         }
 
         // 先同步状态到调度器（确保调度器操作不会失败后再写 DB）
@@ -328,7 +332,15 @@ impl JobServiceImpl {
 
         // 调度器同步成功后，持久化到 DB
         self.job_repo
-            .update_cron(db, id, cron_expr, status, remark, misfire_policy, concurrent)
+            .update_cron(
+                db,
+                id,
+                cron_expr,
+                status,
+                remark,
+                misfire_policy,
+                concurrent,
+            )
             .await
     }
 

@@ -97,20 +97,20 @@ impl JobRepository {
         status: Option<&str>,
     ) -> AppResult<PageResult<job::Model>> {
         let mut select = job::Entity::find();
-        if let Some(n) = name {
-            if !n.is_empty() {
-                select = select.filter(job::Column::Name.contains(n));
-            }
+        if let Some(n) = name
+            && !n.is_empty()
+        {
+            select = select.filter(job::Column::Name.contains(n));
         }
-        if let Some(g) = group_name {
-            if !g.is_empty() {
-                select = select.filter(job::Column::GroupName.eq(g));
-            }
+        if let Some(g) = group_name
+            && !g.is_empty()
+        {
+            select = select.filter(job::Column::GroupName.eq(g));
         }
-        if let Some(s) = status {
-            if !s.is_empty() {
-                select = select.filter(job::Column::Status.eq(s));
-            }
+        if let Some(s) = status
+            && !s.is_empty()
+        {
+            select = select.filter(job::Column::Status.eq(s));
         }
         select = select.order_by_asc(job::Column::CreateTime);
 

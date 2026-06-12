@@ -192,6 +192,45 @@ impl UserServiceImpl {
         Ok(PageResult::new(records, page.total, &query))
     }
 
+    /// 分页查询用户列表（自动处理数据权限与过滤）
+    ///
+    /// Handler 只需传入当前用户 ID 和查询参数即可，本方法内部完成：
+    /// 1. 查找用户信息 → 2. 查角色 → 3. 构建 DataScopeContext → 4. 路由查询
+    #[allow(clippy::too_many_arguments)]
+    pub async fn find_by_page_with_user_scope(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i64,
+        query: PageQuery,
+        username: Option<&str>,
+        phone: Option<&str>,
+        status: Option<&str>,
+        dept_id: Option<i64>,
+    ) -> AppResult<PageResult<UserVo>> {
+        let user = self
+            .user_repo
+            .find_by_id(db, user_id)
+            .await?
+            .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
+
+        let roles = self.role_repo.find_user_roles(db, user_id).await?;
+
+        let scope_ctx = self
+            .build_data_scope_context(db, user_id, user.dept_id, &roles)
+            .await?;
+
+        let has_filter =
+            username.is_some() || phone.is_some() || status.is_some() || dept_id.is_some();
+
+        if has_filter {
+            self.find_by_page_filtered(db, query, username, phone, status, dept_id)
+                .await
+        } else {
+            self.find_by_page_with_data_scope(db, query, &scope_ctx)
+                .await
+        }
+    }
+
     /// 构建用户的数据权限上下文
     ///
     /// 根据用户的所有角色合并数据权限范围，查询自定义部门列表。

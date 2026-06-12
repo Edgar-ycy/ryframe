@@ -1,3 +1,4 @@
+pub mod captcha_service;
 pub mod config_service;
 pub mod dept_service;
 pub mod dict_service;
@@ -10,6 +11,7 @@ pub mod post_service;
 pub mod role_service;
 pub mod user_service;
 
+pub use captcha_service::{CaptchaEntry, CaptchaStore};
 pub use config_service::{ConfigServiceImpl, ConfigVo};
 pub use dept_service::{DeptServiceImpl, DeptVo};
 pub use dict_service::{DictDataVo, DictServiceImpl, DictTypeVo};
@@ -29,5 +31,7 @@ pub mod generator_service;
 pub use generator_service::GeneratorServiceImpl;
 pub mod profile_service;
 pub use profile_service::ProfileServiceImpl;
+pub mod file_service;
+pub use file_service::{AVATAR_BUCKET, FileService, UPLOAD_BUCKET, UploadResponse};
 pub mod online_user_service;
 pub use online_user_service::{OnlineUserServiceImpl, OnlineUserVo, UserSession};

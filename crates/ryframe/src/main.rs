@@ -2,8 +2,7 @@ mod app;
 
 use std::{net::SocketAddr, sync::Arc};
 
-use ryframe_api::handlers::captcha_handler::CaptchaStore;
-use ryframe_common::{AppError, utils::create_storage_from_config};
+use ryframe_common::{AppError, utils::object_storage::create_storage_from_config};
 use ryframe_config::AppConfig;
 use ryframe_core::{
     AppContext, DataSourceManager, HotConfig, LoggedRepo, TokenBlacklist, create_redis_client,
@@ -16,15 +15,14 @@ use ryframe_db::{
     UserRepository,
 };
 use ryframe_middleware::{
-    RateLimiter,
-    rate_limit::RateLimitState,
+    RateLimitState, RateLimiter,
     telemetry::{TelemetryConfig, init_tracer_provider},
 };
 use ryframe_service::{
     AuthServiceImpl,
     system::{
-        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobLogPersister,
-        JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
+        CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
+        JobLogPersister, JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
         OnlineUserServiceImpl, OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
         ProfileServiceImpl, RoleServiceImpl, UserServiceImpl,
     },
@@ -246,13 +244,6 @@ async fn main() -> Result<(), AppError> {
     let config_arc = Arc::new(config.clone());
 
     // 7. 创建 Service（构造注入 Repository + Config）
-    let auth_service = Arc::new(AuthServiceImpl {
-        user_repo: LoggedRepo::new(UserRepository),
-        role_repo: LoggedRepo::new(RoleRepository),
-        perm_repo: LoggedRepo::new(PermissionRepository),
-        config: Arc::new(config.clone()),
-    });
-
     let user_service = Arc::new(UserServiceImpl {
         user_repo: LoggedRepo::new(UserRepository),
         role_repo: LoggedRepo::new(RoleRepository),
@@ -284,6 +275,15 @@ async fn main() -> Result<(), AppError> {
     if redis_client.is_none() {
         token_blacklist.spawn_gc(); // 内存模式需要后台 GC
     }
+
+    // 7.0 创建 AuthService（需在 redis_client 之后初始化以注入暴力破解防护）
+    let auth_service = Arc::new(AuthServiceImpl {
+        user_repo: LoggedRepo::new(UserRepository),
+        role_repo: LoggedRepo::new(RoleRepository),
+        perm_repo: LoggedRepo::new(PermissionRepository),
+        config: Arc::new(config.clone()),
+        redis: redis_client.clone(),
+    });
 
     let menu_service = Arc::new(MenuServiceImpl {
         menu_repo: LoggedRepo::new(MenuRepository),

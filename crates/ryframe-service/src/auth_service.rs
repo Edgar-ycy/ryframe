@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ryframe_auth::{jwt, password};
 use ryframe_common::{AppError, AppResult};
 use ryframe_config::AppConfig;
-use ryframe_core::{LoggedRepo, Repository};
+use ryframe_core::{LoggedRepo, RedisClient, Repository};
 use ryframe_db::{PermissionRepository, RoleRepository, UserRepository, entities::user};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
@@ -54,6 +54,8 @@ pub struct AuthServiceImpl {
     pub role_repo: LoggedRepo<RoleRepository>,
     pub perm_repo: LoggedRepo<PermissionRepository>,
     pub config: Arc<AppConfig>,
+    /// Redis 客户端（用于登录暴力破解防护，可空）
+    pub redis: Option<RedisClient>,
 }
 
 impl AuthServiceImpl {
@@ -185,5 +187,82 @@ impl AuthServiceImpl {
         user_info.perms = perm_codes;
 
         Ok(user_info)
+    }
+
+    // ==================== 暴力破解防护 ====================
+
+    /// 检查登录暴力破解
+    ///
+    /// 使用 Redis 记录失败次数，按用户名/IP 维度分别限流。
+    /// - 连续失败超限后锁定指定分钟
+    /// - Redis 不可用时降级为无条件放行
+    pub async fn check_brute_force(&self, username: &str, ip: &str) -> AppResult<()> {
+        let max_attempts = self.config.auth.max_login_attempts;
+        let lockout_seconds = (self.config.auth.lockout_duration_minutes * 60) as u64;
+
+        let redis = match &self.redis {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+
+        // 按用户名限流
+        let user_key = format!("login_fail:user:{}", username);
+        if let Ok(Some(count)) = redis.get(&user_key).await
+            && let Ok(c) = count.parse::<u32>()
+            && c >= max_attempts
+        {
+            let ttl = redis.ttl(&user_key).await.unwrap_or(lockout_seconds as i64);
+            if ttl > 0 {
+                return Err(AppError::Authentication(format!(
+                    "账户已被锁定，请 {} 秒后再试",
+                    ttl
+                )));
+            }
+        }
+
+        // 按 IP 限流
+        let ip_key = format!("login_fail:ip:{}", ip);
+        if let Ok(Some(count)) = redis.get(&ip_key).await
+            && let Ok(c) = count.parse::<u32>()
+            && c >= max_attempts * 2
+        {
+            let ttl = redis.ttl(&ip_key).await.unwrap_or(lockout_seconds as i64);
+            if ttl > 0 {
+                return Err(AppError::Authentication(format!(
+                    "IP 已被临时限制，请 {} 秒后再试",
+                    ttl
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 记录登录失败（递增 Redis 计数器）
+    pub async fn record_login_failure(&self, username: &str, ip: &str) {
+        let redis = match &self.redis {
+            Some(r) => r,
+            None => return,
+        };
+        let lockout_seconds = (self.config.auth.lockout_duration_minutes * 60) as u64;
+        let user_key = format!("login_fail:user:{}", username);
+        let ip_key = format!("login_fail:ip:{}", ip);
+
+        let _ = redis.incr(&user_key).await;
+        let _ = redis.expire(&user_key, lockout_seconds).await;
+        let _ = redis.incr(&ip_key).await;
+        let _ = redis.expire(&ip_key, lockout_seconds).await;
+    }
+
+    /// 登录成功后清除失败计数
+    pub async fn clear_login_failures(&self, username: &str, ip: &str) {
+        let redis = match &self.redis {
+            Some(r) => r,
+            None => return,
+        };
+        let user_key = format!("login_fail:user:{}", username);
+        let ip_key = format!("login_fail:ip:{}", ip);
+        let _ = redis.del(&user_key).await;
+        let _ = redis.del(&ip_key).await;
     }
 }

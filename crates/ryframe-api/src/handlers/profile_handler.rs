@@ -3,17 +3,9 @@ use axum::{
     extract::{Multipart, State},
     routing::{get, put},
 };
-use chrono::Utc;
 use ryframe_auth::jwt::Claims;
-use ryframe_common::{
-    ApiResponse, AppError, AppResult,
-    utils::file_upload::{
-        compress_image, generate_storage_filename, get_content_type, validate_extension,
-    },
-};
-use ryframe_core::repository::Repository;
-use ryframe_db::{FileRepository, entities::sys_file};
-use ryframe_service::system::profile_service::UserProfileResponse;
+use ryframe_common::{ApiResponse, AppError, AppResult};
+use ryframe_service::system::{file_service::FileService, profile_service::UserProfileResponse};
 
 use crate::{
     dto::profile_dto::{ChangePasswordRequest, UpdateProfileRequest},
@@ -123,12 +115,6 @@ pub async fn update_avatar(
         .parse::<i64>()
         .map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
-    const BUCKET: &str = "avatar";
-    let allowed_extensions: Vec<String> = vec!["jpg", "jpeg", "png", "gif", "bmp", "webp"]
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect();
-
     let mut avatar_url = String::new();
 
     while let Some(field) = multipart
@@ -146,75 +132,15 @@ pub async fn update_avatar(
             .await
             .map_err(|e| AppError::Internal(format!("读取文件数据失败: {}", e)))?;
 
-        // 文件大小限制 5MB
-        if data.len() > 5 * 1024 * 1024 {
-            return Err(AppError::Validation("头像文件大小不能超过 5MB".into()));
-        }
-
-        // 验证图片类型
-        validate_extension(&filename, &allowed_extensions)?;
-
-        // 图片压缩
-        let (final_data, final_name) = compress_image(&data, &filename).unwrap_or_else(|e| {
-            tracing::warn!("头像压缩失败，使用原始数据: {}", e);
-            (data.to_vec(), filename.clone())
-        });
-        let content_type = get_content_type(&final_name);
-
-        // 生成存储路径
-        let storage_name = generate_storage_filename(&final_name);
-        let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
-        let object_key = format!("{}/{}", date_prefix, storage_name);
-
-        // 确保 bucket 存在
-        state
-            .object_storage
-            .ensure_bucket(BUCKET)
-            .await
-            .map_err(|e| AppError::Internal(format!("创建存储桶失败: {}", e)))?;
-
-        // 上传到对象存储
-        state
-            .object_storage
-            .put(BUCKET, &object_key, &final_data, &content_type)
-            .await
-            .map_err(|e| AppError::Internal(format!("保存头像失败: {}", e)))?;
-
-        // 生成公开访问 URL（用于 sys_user.avatar）
-        let public_url = state.object_storage.public_url(BUCKET, &object_key);
-        avatar_url = if public_url.is_empty() || public_url == "/" {
-            format!(
-                "/api/v1/common/file/download?bucket={}&path={}",
-                BUCKET, object_key
-            )
-        } else {
-            public_url
-        };
-
-        // 写入 sys_file 元数据表
-        let relative_file_url = format!("{}/{}", BUCKET, object_key);
-        let file_id = ryframe_common::utils::snowflake::next_snowflake_id();
-        let model = sys_file::Model {
-            id: file_id,
-            original_name: filename.clone(),
-            storage_name,
-            storage_path: object_key.clone(),
-            bucket: BUCKET.to_string(),
-            file_url: relative_file_url,
-            file_size: final_data.len() as i64,
-            content_type,
-            file_md5: None,
-            upload_by: Some(user_id.to_string()),
-            del_flag: sys_file::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        FileRepository
-            .insert(&state.db, model)
-            .await
-            .map_err(|e| AppError::Internal(format!("写入文件元数据失败: {}", e)))?;
-
-        // 只处理第一个文件
+        // 委托 FileService 处理上传逻辑
+        avatar_url = FileService::upload_avatar(
+            &state.db,
+            &state.object_storage,
+            filename,
+            data.to_vec(),
+            Some(user_id.to_string()),
+        )
+        .await?;
         break;
     }
 

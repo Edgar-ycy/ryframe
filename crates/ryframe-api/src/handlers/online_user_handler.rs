@@ -32,25 +32,10 @@ pub async fn list_online_users(
     State(state): State<AppState>,
     Query(query): Query<OnlineUserQuery>,
 ) -> AppResult<Json<ApiResponse<Vec<OnlineUserVo>>>> {
-    let users = state.online_user_service.list_online_users().await;
-
-    // 过滤
-    let filtered = users
-        .into_iter()
-        .filter(|u| {
-            if let Some(username) = &query.username
-                && !u.username.contains(username)
-            {
-                return false;
-            }
-            if let Some(ipaddr) = &query.ipaddr
-                && !u.ipaddr.contains(ipaddr)
-            {
-                return false;
-            }
-            true
-        })
-        .collect();
+    let filtered = state
+        .online_user_service
+        .list_filtered(query.username.as_deref(), query.ipaddr.as_deref())
+        .await;
 
     Ok(Json(ApiResponse::success(filtered)))
 }
@@ -63,33 +48,15 @@ pub async fn list_online_users_page(
     State(state): State<AppState>,
     Query(query): Query<OnlineUserQuery>,
 ) -> AppResult<Json<ApiPageResponse<OnlineUserVo>>> {
-    let users = state.online_user_service.list_online_users().await;
-
-    // 过滤
-    let filtered: Vec<OnlineUserVo> = users
-        .into_iter()
-        .filter(|u| {
-            if let Some(username) = &query.username
-                && !u.username.contains(username)
-            {
-                return false;
-            }
-            if let Some(ipaddr) = &query.ipaddr
-                && !u.ipaddr.contains(ipaddr)
-            {
-                return false;
-            }
-            true
-        })
-        .collect();
-
-    let total = filtered.len() as u64;
-    let offset = ((query.page.saturating_sub(1)) * query.page_size) as usize;
-    let rows: Vec<OnlineUserVo> = filtered
-        .into_iter()
-        .skip(offset)
-        .take(query.page_size as usize)
-        .collect();
+    let (rows, total) = state
+        .online_user_service
+        .list_filtered_page(
+            query.username.as_deref(),
+            query.ipaddr.as_deref(),
+            query.page,
+            query.page_size,
+        )
+        .await;
     Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
 }
 

@@ -118,6 +118,50 @@ impl OnlineUserServiceImpl {
         }
     }
 
+    /// 获取过滤后的在线用户列表
+    pub async fn list_filtered(
+        &self,
+        username: Option<&str>,
+        ipaddr: Option<&str>,
+    ) -> Vec<OnlineUserVo> {
+        let users = self.list_online_users().await;
+        users
+            .into_iter()
+            .filter(|u| {
+                if let Some(username) = username
+                    && !u.username.contains(username)
+                {
+                    return false;
+                }
+                if let Some(ipaddr) = ipaddr
+                    && !u.ipaddr.contains(ipaddr)
+                {
+                    return false;
+                }
+                true
+            })
+            .collect()
+    }
+
+    /// 获取过滤并分页的在线用户列表
+    pub async fn list_filtered_page(
+        &self,
+        username: Option<&str>,
+        ipaddr: Option<&str>,
+        page: u64,
+        page_size: u64,
+    ) -> (Vec<OnlineUserVo>, u64) {
+        let filtered = self.list_filtered(username, ipaddr).await;
+        let total = filtered.len() as u64;
+        let offset = ((page.saturating_sub(1)) * page_size) as usize;
+        let rows: Vec<OnlineUserVo> = filtered
+            .into_iter()
+            .skip(offset)
+            .take(page_size as usize)
+            .collect();
+        (rows, total)
+    }
+
     /// 获取所有在线用户列表
     pub async fn list_online_users(&self) -> Vec<OnlineUserVo> {
         match self {

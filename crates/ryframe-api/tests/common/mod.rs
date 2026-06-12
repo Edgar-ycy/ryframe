@@ -11,10 +11,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use ryframe_api::{
-    handlers::{auth_handler::AppState, captcha_handler::CaptchaStore},
-    router::api_router,
-};
+use ryframe_api::{handlers::auth_handler::AppState, router::api_router};
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
@@ -29,10 +26,10 @@ use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
     AuthServiceImpl,
     system::{
-        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
-        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, UserServiceImpl,
+        CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
+        JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
+        OnlineUserServiceImpl, OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
+        ProfileServiceImpl, RoleServiceImpl, UserServiceImpl,
     },
 };
 use ryframe_task::{TaskContext, TaskScheduler};
@@ -230,6 +227,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
             role_repo: LoggedRepo::new(RoleRepository),
             perm_repo: LoggedRepo::new(PermissionRepository),
             config: Arc::new(config.clone()),
+            redis: None,
         }),
         user_service: Arc::new(UserServiceImpl {
             user_repo: LoggedRepo::new(UserRepository),

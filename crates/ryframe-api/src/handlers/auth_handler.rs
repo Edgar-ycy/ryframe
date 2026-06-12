@@ -13,21 +13,16 @@ use ryframe_middleware::RateLimiter;
 use ryframe_service::{
     AuthServiceImpl, UserInfo,
     system::{
-        ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl, JobServiceImpl,
-        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, UserServiceImpl,
+        CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
+        JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
+        OnlineUserServiceImpl, OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
+        ProfileServiceImpl, RoleServiceImpl, UserServiceImpl,
     },
 };
 use sea_orm::DatabaseConnection;
 use validator::Validate;
 
-use ryframe_common::utils::user_agent::{parse_browser, parse_os};
-
-use crate::{
-    dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest},
-    handlers::captcha_handler::CaptchaStore,
-};
+use crate::dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest};
 
 /// API 共享状态
 #[derive(Clone)]
@@ -90,83 +85,152 @@ impl AppState {
     }
 }
 
-/// 检查登录暴力破解
-///
-/// 使用 Redis 记录失败次数，按用户名/IP 维度分别限流。
-/// - 连续失败超限后锁定指定分钟
-/// - Redis 不可用时降级为无条件放行
-async fn check_brute_force(
-    redis: &Option<RedisClient>,
-    config: &Arc<AppConfig>,
-    username: &str,
-    ip: &str,
-) -> AppResult<()> {
-    let max_attempts = config.auth.max_login_attempts;
-    let lockout_seconds = (config.auth.lockout_duration_minutes * 60) as u64;
+// ==================== 登录辅助：参数提取 ====================
 
-    if let Some(redis) = redis {
-        // 按用户名限流
-        let user_key = format!("login_fail:user:{}", username);
-        if let Ok(Some(count)) = redis.get(&user_key).await
-            && let Ok(c) = count.parse::<u32>()
-            && c >= max_attempts
-        {
-            let ttl = redis.ttl(&user_key).await.unwrap_or(lockout_seconds as i64);
-            if ttl > 0 {
-                return Err(AppError::Authentication(format!(
-                    "账户已被锁定，请 {} 秒后再试",
-                    ttl
-                )));
-            }
-        }
+/// 提取客户端 IP
+fn extract_ip(headers: &HeaderMap, remote_addr: &str) -> String {
+    ryframe_common::utils::ip::get_client_ip(headers, remote_addr)
+}
 
-        // 按 IP 限流
-        let ip_key = format!("login_fail:ip:{}", ip);
-        if let Ok(Some(count)) = redis.get(&ip_key).await
-            && let Ok(c) = count.parse::<u32>()
-            && c >= max_attempts * 2
-        {
-            let ttl = redis.ttl(&ip_key).await.unwrap_or(lockout_seconds as i64);
-            if ttl > 0 {
-                return Err(AppError::Authentication(format!(
-                    "IP 已被临时限制，请 {} 秒后再试",
-                    ttl
-                )));
-            }
-        }
+/// 提取 User-Agent
+fn extract_user_agent(headers: &HeaderMap) -> &str {
+    headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+}
+
+/// 验证码校验（HTTP 安全校验，保留在 Handler）
+async fn verify_captcha_if_enabled(state: &AppState, req: &LoginRequest) -> AppResult<()> {
+    let captcha_enabled = state
+        .config_service
+        .find_by_key(&state.db, "sys.account.captchaEnabled")
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.value == "true")
+        .unwrap_or(true);
+    if !captcha_enabled {
+        return Ok(());
     }
 
+    let captcha_id = req
+        .captcha_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::Validation("验证码ID不能为空".into()))?;
+    let captcha_code = req
+        .captcha_code
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::Validation("验证码不能为空".into()))?;
+    let valid = state.captcha_store.verify(captcha_id, captcha_code).await;
+    if !valid {
+        return Err(AppError::Validation("验证码错误或已过期".into()));
+    }
     Ok(())
 }
 
-/// 记录登录失败（递增 Redis 计数器）
-async fn record_login_failure(
-    redis: &Option<RedisClient>,
-    config: &Arc<AppConfig>,
-    username: &str,
-    ip: &str,
-) {
-    if let Some(redis) = redis {
-        let lockout_seconds = (config.auth.lockout_duration_minutes * 60) as u64;
-        let user_key = format!("login_fail:user:{}", username);
-        let ip_key = format!("login_fail:ip:{}", ip);
+// ==================== 认证接口 ====================
 
-        // 递增计数器并设置过期时间
-        let _ = redis.incr(&user_key).await;
-        let _ = redis.expire(&user_key, lockout_seconds).await;
-        let _ = redis.incr(&ip_key).await;
-        let _ = redis.expire(&ip_key, lockout_seconds).await;
+/// 记录登录成功日志
+async fn record_login_success(state: &AppState, username: &str, ip: &str, ua: &str) {
+    if let Err(e) = state
+        .login_info_service
+        .record_login(
+            &state.db,
+            username,
+            ip,
+            ryframe_common::utils::user_agent::parse_browser(ua).as_deref(),
+            ryframe_common::utils::user_agent::parse_os(ua).as_deref(),
+            ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
+            None,
+        )
+        .await
+    {
+        tracing::error!("记录登录成功日志失败: {}", e);
     }
 }
 
-/// 登录成功后清除失败计数
-async fn clear_login_failures(redis: &Option<RedisClient>, username: &str, ip: &str) {
-    if let Some(redis) = redis {
-        let user_key = format!("login_fail:user:{}", username);
-        let ip_key = format!("login_fail:ip:{}", ip);
-        let _ = redis.del(&user_key).await;
-        let _ = redis.del(&ip_key).await;
+/// 记录登录失败日志
+async fn record_login_failure_log(
+    state: &AppState,
+    username: &str,
+    ip: &str,
+    ua: &str,
+    err: &ryframe_common::AppError,
+) {
+    if let Err(e) = state
+        .login_info_service
+        .record_login(
+            &state.db,
+            username,
+            ip,
+            ryframe_common::utils::user_agent::parse_browser(ua).as_deref(),
+            ryframe_common::utils::user_agent::parse_os(ua).as_deref(),
+            ryframe_db::entities::login_info::Model::STATUS_FAIL,
+            Some(&err.to_string()),
+        )
+        .await
+    {
+        tracing::error!("记录登录失败日志失败: {}", e);
     }
+}
+
+/// 添加在线用户
+async fn add_online_user(
+    state: &AppState,
+    result: &ryframe_service::LoginResult,
+    ip: &str,
+    ua: &str,
+) {
+    use ryframe_service::system::UserSession;
+
+    let user_id: i64 = result.user_info.id.parse().unwrap_or(0);
+    let dept_name = state
+        .user_service
+        .find_by_id(&state.db, user_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|u| u.dept_name);
+    let login_location = ryframe_common::utils::ip::get_ip_location(ip);
+    let now = chrono::Utc::now();
+
+    state
+        .online_user_service
+        .add_user(UserSession {
+            token_id: result.token_id.clone(),
+            user_id,
+            username: result.user_info.username.clone(),
+            dept_name,
+            ipaddr: ip.to_string(),
+            login_location,
+            browser: ryframe_common::utils::user_agent::parse_browser(ua),
+            os: ryframe_common::utils::user_agent::parse_os(ua),
+            login_time: now,
+            last_access_time: now,
+        })
+        .await;
+}
+
+/// 检查用户是否被强制下线
+async fn check_force_logout(state: &AppState, refresh_token: &str) -> AppResult<()> {
+    if let Ok(claims) =
+        ryframe_auth::jwt::decode_token(refresh_token, &state.config.auth.jwt_secret)
+    {
+        let force_logout_key = format!("force_logout:user:{}", claims.sub);
+        if state
+            .token_blacklist
+            .is_blacklisted(&force_logout_key)
+            .await
+        {
+            return Err(AppError::Authentication(
+                "账号已被强制下线，请重新登录".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// 用户登录
@@ -191,44 +255,20 @@ pub async fn login(
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
     req.validate()?;
 
-    // 检查验证码开关：开启时校验验证码
-    {
-        let captcha_enabled = state
-            .config_service
-            .find_by_key(&state.db, "sys.account.captchaEnabled")
-            .await
-            .ok()
-            .flatten()
-            .map(|c| c.value == "true")
-            .unwrap_or(true);
-        if captcha_enabled {
-            let captcha_id = req
-                .captcha_id
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| AppError::Validation("验证码ID不能为空".into()))?;
-            let captcha_code = req
-                .captcha_code
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| AppError::Validation("验证码不能为空".into()))?;
-            let valid = state.captcha_store.verify(captcha_id, captcha_code).await;
-            if !valid {
-                return Err(AppError::Validation("验证码错误或已过期".into()));
-            }
-        }
-    }
+    // HTTP 安全校验：验证码
+    verify_captcha_if_enabled(&state, &req).await?;
 
-    let remote_addr = addr.to_string();
-    let ip = ryframe_common::utils::ip::get_client_ip(&headers, &remote_addr);
-    let user_agent = headers
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    // HTTP 参数提取
+    let ip = extract_ip(&headers, &addr.to_string());
+    let ua = extract_user_agent(&headers);
 
-    // 暴力破解防护：登录前检查
-    check_brute_force(&state.redis, &state.config, &req.username, &ip).await?;
+    // 暴力破解防护（委托 Service）
+    state
+        .auth_service
+        .check_brute_force(&req.username, &ip)
+        .await?;
 
+    // 认证（委托 Service）
     match state
         .auth_service
         .login(&state.db, &req.username, &req.password)
@@ -236,80 +276,27 @@ pub async fn login(
     {
         Ok(result) => {
             // 登录成功：清除失败计数
-            clear_login_failures(&state.redis, &req.username, &ip).await;
-
-            // 登录成功：清除强退黑名单（防止用户重新登录后仍被拦截）
+            state
+                .auth_service
+                .clear_login_failures(&req.username, &ip)
+                .await;
+            // 清除强退黑名单
             let force_logout_key = format!("force_logout:user:{}", result.user_info.id);
             state.token_blacklist.remove(&force_logout_key).await;
-
-            if let Err(e) = state
-                .login_info_service
-                .record_login(
-                    &state.db,
-                    &req.username,
-                    &ip,
-                    parse_browser(user_agent).as_deref(),
-                    parse_os(user_agent).as_deref(),
-                    ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
-                    None,
-                )
-                .await
-            {
-                tracing::error!("记录登录成功日志失败: {}", e);
-            }
-
-            // 查询用户部门名称
-            let user_id: i64 = result.user_info.id.parse().unwrap_or(0);
-            let dept_name = state
-                .user_service
-                .find_by_id(&state.db, user_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|u| u.dept_name);
-
-            // IP 归属地解析
-            let login_location = ryframe_common::utils::ip::get_ip_location(&ip);
-
+            // 记录登录日志
+            record_login_success(&state, &req.username, &ip, ua).await;
             // 添加在线用户
-            let now = chrono::Utc::now();
-            state
-                .online_user_service
-                .add_user(ryframe_service::system::UserSession {
-                    token_id: result.token_id.clone(),
-                    user_id,
-                    username: result.user_info.username.clone(),
-                    dept_name,
-                    ipaddr: ip.to_string(),
-                    login_location,
-                    browser: ryframe_common::utils::user_agent::parse_browser(user_agent),
-                    os: ryframe_common::utils::user_agent::parse_os(user_agent),
-                    login_time: now,
-                    last_access_time: now,
-                })
-                .await;
+            add_online_user(&state, &result, &ip, ua).await;
 
             Ok(Json(ApiResponse::success(LoginResponse::from(result))))
         }
         Err(e) => {
-            // 登录失败：记录失败次数
-            record_login_failure(&state.redis, &state.config, &req.username, &ip).await;
-
-            if let Err(err) = state
-                .login_info_service
-                .record_login(
-                    &state.db,
-                    &req.username,
-                    &ip,
-                    parse_browser(user_agent).as_deref(),
-                    parse_os(user_agent).as_deref(),
-                    ryframe_db::entities::login_info::Model::STATUS_FAIL,
-                    Some(&e.to_string()),
-                )
-                .await
-            {
-                tracing::error!("记录登录失败日志失败: {}", err);
-            }
+            // 登录失败：记录失败次数 + 记录失败日志
+            state
+                .auth_service
+                .record_login_failure(&req.username, &ip)
+                .await;
+            record_login_failure_log(&state, &req.username, &ip, ua, &e).await;
             Err(e)
         }
     }
@@ -370,68 +357,25 @@ pub async fn refresh(
     headers: HeaderMap,
     Json(req): Json<RefreshRequest>,
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
-    // 检查用户是否被强退（在 auth_service.refresh_token 之前，提前拦截）
-    if let Ok(claims) =
-        ryframe_auth::jwt::decode_token(&req.refresh_token, &state.config.auth.jwt_secret)
-    {
-        let force_logout_key = format!("force_logout:user:{}", claims.sub);
-        if state
-            .token_blacklist
-            .is_blacklisted(&force_logout_key)
-            .await
-        {
-            return Err(ryframe_common::AppError::Authentication(
-                "账号已被强制下线，请重新登录".into(),
-            ));
-        }
-    }
+    // 检查强退
+    check_force_logout(&state, &req.refresh_token).await?;
 
-    let remote_addr = addr.to_string();
-    let ip = ryframe_common::utils::ip::get_client_ip(&headers, &remote_addr);
-    let user_agent = headers
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    // HTTP 参数提取
+    let ip = extract_ip(&headers, &addr.to_string());
+    let ua = extract_user_agent(&headers);
 
+    // 刷新令牌（委托 Service）
     match state
         .auth_service
         .refresh_token(&state.db, &req.refresh_token)
         .await
     {
         Ok(result) => {
-            if let Err(e) = state
-                .login_info_service
-                .record_login(
-                    &state.db,
-                    &result.user_info.username,
-                    &ip,
-                    parse_browser(user_agent).as_deref(),
-                    parse_os(user_agent).as_deref(),
-                    ryframe_db::entities::login_info::Model::STATUS_SUCCESS,
-                    Some("令牌刷新"),
-                )
-                .await
-            {
-                tracing::error!("记录令牌刷新日志失败: {}", e);
-            }
+            record_login_success(&state, &result.user_info.username, &ip, ua).await;
             Ok(Json(ApiResponse::success(LoginResponse::from(result))))
         }
         Err(e) => {
-            if let Err(err) = state
-                .login_info_service
-                .record_login(
-                    &state.db,
-                    "unknown",
-                    &ip,
-                    parse_browser(user_agent).as_deref(),
-                    parse_os(user_agent).as_deref(),
-                    ryframe_db::entities::login_info::Model::STATUS_FAIL,
-                    Some(&e.to_string()),
-                )
-                .await
-            {
-                tracing::error!("记录令牌刷新失败日志失败: {}", err);
-            }
+            record_login_failure_log(&state, "unknown", &ip, ua, &e).await;
             Err(e)
         }
     }

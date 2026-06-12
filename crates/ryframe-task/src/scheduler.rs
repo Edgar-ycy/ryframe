@@ -273,10 +273,10 @@ impl TaskScheduler {
         self.history.push(history.clone()).await;
 
         // 持久化到外部存储（如 DB）
-        if let Some(ref persister) = self.persister {
-            if let Err(e) = persister.persist(&history).await {
-                tracing::warn!("持久化任务执行历史失败 [task={}]: {}", name, e);
-            }
+        if let Some(ref persister) = self.persister
+            && let Err(e) = persister.persist(&history).await
+        {
+            tracing::warn!("持久化任务执行历史失败 [task={}]: {}", name, e);
         }
 
         Ok(history)
@@ -363,14 +363,10 @@ impl TaskScheduler {
             self.history.push(history.clone()).await;
 
             // 持久化到外部存储（如 DB）
-            if let Some(ref persister) = self.persister {
-                if let Err(e) = persister.persist(&history).await {
-                    tracing::warn!(
-                        "持久化任务执行历史失败 [task={}]: {}",
-                        task.name(),
-                        e
-                    );
-                }
+            if let Some(ref persister) = self.persister
+                && let Err(e) = persister.persist(&history).await
+            {
+                tracing::warn!("持久化任务执行历史失败 [task={}]: {}", task.name(), e);
             }
         }
     }
