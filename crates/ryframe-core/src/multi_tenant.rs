@@ -1,7 +1,7 @@
 //! 多租户支持
 //!
 //! 提供租户识别、上下文传递和数据隔离能力：
-//! - **租户识别**：从请求 Header / Subdomain / Path 提取 tenant_id
+//! - **租户识别**：从请求 Header / Subdomain 提取 tenant_id
 //! - **租户上下文**：通过 `axum::Extension<TenantContext>` 在请求生命周期中传递
 //! - **数据隔离**：共享表 + tenant_id 列过滤策略
 //!
@@ -11,7 +11,6 @@
 //! |------|------|----------|
 //! | `SharedTable` | 共享表 + tenant_id 列过滤 | 中小规模 SaaS |
 //! | `DatabasePerTenant` | 独立数据库 | 高隔离要求 |
-//! | `SchemaPerTenant` | PostgreSQL Schema 隔离 | PG 专属 |
 //!
 //! # 使用示例
 //!
@@ -81,8 +80,6 @@ pub enum ExtractionMethod {
     Header(String),
     /// 从子域名提取（如 tenant1.example.com → tenant1）
     Subdomain,
-    /// 从 URL 路径提取（如 /api/tenant1/users）
-    PathPrefix,
 }
 
 /// 数据隔离策略
@@ -92,8 +89,6 @@ pub enum IsolationStrategy {
     SharedTable,
     /// 独立数据库（需数据源路由支持）
     DatabasePerTenant,
-    /// PostgreSQL Schema 隔离
-    SchemaPerTenant,
 }
 
 /// 租户配置
@@ -166,24 +161,6 @@ fn extract_tenant_id(request: &axum::extract::Request, config: &TenantConfig) ->
                 .unwrap_or("");
             // 提取第一个 "." 之前的部分作为租户 ID
             host.split('.').next().map(|s| s.to_string())
-        }
-
-        ExtractionMethod::PathPrefix => {
-            let path = request.uri().path();
-            // 提取 /api/{tenant_id}/... 中的 tenant_id
-            let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-            if segments.len() >= 2 && segments[0] == "api" {
-                // 检查是否为已知租户前缀
-                let candidate = segments[1];
-                // 排除已知路由前缀
-                if !matches!(
-                    candidate,
-                    "v1" | "v2" | "auth" | "system" | "monitor" | "common"
-                ) {
-                    return Some(candidate.to_string());
-                }
-            }
-            None
         }
     }
     .or_else(|| config.default_tenant.clone())
