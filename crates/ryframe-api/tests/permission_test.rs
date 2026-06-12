@@ -151,7 +151,7 @@ async fn test_user_crud_flow() {
     )
     .await;
     assert_eq!(s, StatusCode::OK, "创建用户失败: {:?}", b);
-    let user_id = b["data"]["id"].as_i64().expect("创建用户应返回 id");
+    let user_id = b["data"]["id"].as_str().expect("创建用户应返回 id");
     assert_eq!(b["data"]["username"], "newuser");
 
     // 2. 按 ID 查询
@@ -333,7 +333,7 @@ async fn test_role_crud_flow() {
     )
     .await;
     assert_eq!(s, StatusCode::OK, "创建角色失败: {:?}", b);
-    let role_id = b["data"]["id"].as_i64().expect("创建角色应返回 id");
+    let role_id = b["data"]["id"].as_str().expect("创建角色应返回 id");
     assert_eq!(b["data"]["code"], "test_role");
 
     // 2. 按 ID 查询

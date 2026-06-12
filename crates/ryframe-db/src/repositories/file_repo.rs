@@ -13,7 +13,7 @@ use crate::entities::sys_file;
 /// 文件元数据 Repository
 ///
 /// 始终使用主数据库（`sys_file` 表仅存在于 primary 数据源）。
-/// 上层调用可通过 `#[datasource("primary")]` 注解确保路由到主库。
+/// 上层调用时应显式传入主库连接。
 pub struct FileRepository;
 
 #[async_trait]

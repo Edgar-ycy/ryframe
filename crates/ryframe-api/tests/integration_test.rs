@@ -181,7 +181,6 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
     let scheduler = Arc::new(TaskScheduler::new(task_ctx));
 
     AppState {
-        datasource_manager: Default::default(),
         db: db.clone(),
         config: config_arc,
         context,

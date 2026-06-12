@@ -13,7 +13,6 @@ use ryframe_db::{
     DeptRepository, RoleRepository, UserRepository,
     entities::{role, user},
 };
-use ryframe_macro::datasource;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, TransactionTrait};
 use serde::Serialize;
 
@@ -503,41 +502,5 @@ impl UserServiceImpl {
         user.fill_on_update(&FillContext::new());
         self.user_repo.update(db, user).await?;
         Ok(())
-    }
-
-    /// 从从库查询用户（演示 `#[datasource]` 多数据源注解）
-    ///
-    /// 注解 `#[datasource("replica_0")]` 使此方法内所有 `repo.db()` 调用
-    /// 自动走第一个从库连接，无需显式传递 `&DatabaseConnection`。
-    ///
-    /// # 验证方法
-    ///
-    /// 1. 确保 `app.dev.toml` 中配置了 `[[database.connections]]`（至少 2 个）
-    /// 2. 在两个库的 `sys_user` 表中插入不同数据
-    /// 3. 调用本方法 → 返回的是从库的数据
-    /// 4. 调用不带注解的 `find_by_page` → 返回的是主库的数据
-    #[datasource("db_1")]
-    pub async fn find_by_page_from_replica(
-        &self,
-        query: PageQuery,
-    ) -> AppResult<PageResult<UserVo>> {
-        let db = self.user_repo.db(); // ← 从 task-local 解析为 db_1 连接
-        let page = self.user_repo.find_by_page(&db, query.clone()).await?;
-        let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
-        self.fill_dept_names(&db, &mut records).await;
-        Ok(PageResult::new(records, page.total, &query))
-    }
-
-    /// 从命名数据源查询（演示多数据源切换）
-    #[datasource("db_2")]
-    pub async fn find_by_page_from_order_db(
-        &self,
-        query: PageQuery,
-    ) -> AppResult<PageResult<UserVo>> {
-        let db = self.user_repo.db(); // ← 从 task-local 解析为 db_2 连接
-        let page = self.user_repo.find_by_page(&db, query.clone()).await?;
-        let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
-        self.fill_dept_names(&db, &mut records).await;
-        Ok(PageResult::new(records, page.total, &query))
     }
 }

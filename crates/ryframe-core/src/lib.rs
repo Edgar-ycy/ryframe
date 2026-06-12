@@ -22,7 +22,7 @@ pub use cache::{
 };
 pub use config_watcher::{ConfigChangeCallback, HotConfig, spawn_config_watcher};
 pub use context::AppContext;
-pub use datasource::{DATA_SOURCE_NAME, DataSourceContext, DataSourceManager, current_db, get_db};
+pub use datasource::DataSourceManager;
 pub use distributed_lock::{
     DistributedLock, LockGuard, NoopLock, RedisDistributedLock, create_distributed_lock,
 };

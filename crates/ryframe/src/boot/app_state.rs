@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use ryframe_config::AppConfig;
-use ryframe_core::{AppContext, DataSourceManager, RedisClient, TokenBlacklist};
+use ryframe_core::{AppContext, RedisClient, TokenBlacklist};
 use ryframe_middleware::RateLimiter;
 use sea_orm::DatabaseConnection;
 
 use super::services::Services;
 
 /// 将所有已初始化的组件聚合为 AppState
+#[allow(clippy::too_many_arguments)]
 pub fn assemble(
-    ds_manager: DataSourceManager,
     primary_db: DatabaseConnection,
     extra_dbs: Vec<DatabaseConnection>,
     config: Arc<AppConfig>,
@@ -21,7 +21,6 @@ pub fn assemble(
     object_storage: Arc<dyn ryframe_common::utils::ObjectStorage>,
 ) -> ryframe_api::AppState {
     ryframe_api::AppState {
-        datasource_manager: ds_manager.clone(),
         db: primary_db.clone(),
         config,
         context,

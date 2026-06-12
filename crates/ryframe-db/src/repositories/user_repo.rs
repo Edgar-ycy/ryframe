@@ -13,16 +13,6 @@ use crate::entities::user;
 
 pub struct UserRepository;
 
-impl UserRepository {
-    /// 从全局 DataSourceManager 解析当前数据源连接
-    ///
-    /// 配合 `#[datasource("name")]` 注解使用时，
-    /// 此方法从 task-local 上下文自动获取对应数据源的连接。
-    pub fn db(&self) -> DatabaseConnection {
-        ryframe_core::current_db()
-    }
-}
-
 #[async_trait]
 impl Repository<user::Model, i64> for UserRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<user::Model>> {

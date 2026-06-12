@@ -1,11 +1,9 @@
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::DataSourceManager;
 use sea_orm::DatabaseConnection;
 
 /// 数据源连接结果
 pub struct DataSources {
-    pub manager: DataSourceManager,
     pub primary: DatabaseConnection,
     /// 额外数据源连接（db_1, db_2...）
     pub extras: Vec<DatabaseConnection>,
@@ -13,14 +11,11 @@ pub struct DataSources {
 
 /// 连接所有数据源并执行健康检查 + 表校验
 pub async fn connect(config: &AppConfig) -> Result<DataSources, AppError> {
-    let ds_manager = DataSourceManager::new();
-
     // 连接主库（connections[0]）
     let primary_config = &config.database.connections[0];
     let primary_db =
         ryframe_db::connection::connect_with_level(primary_config, config.database.sql_log_level)
             .await?;
-    ds_manager.register("primary", primary_db.clone());
     tracing::info!("数据源 'primary' 连接成功: {}", primary_config.database);
 
     // 连接额外数据源（connections[1..]），命名为 db_1, db_2...
@@ -31,7 +26,6 @@ pub async fn connect(config: &AppConfig) -> Result<DataSources, AppError> {
             .await
         {
             Ok(db) => {
-                ds_manager.register(&name, db.clone());
                 tracing::info!("数据源 '{}' 连接成功: {}", name, conn_config.database);
                 extra_dbs.push(db);
             }
@@ -46,14 +40,7 @@ pub async fn connect(config: &AppConfig) -> Result<DataSources, AppError> {
         }
     }
 
-    tracing::info!(
-        "DataSourceManager 初始化完成, 共 {} 个数据源: {:?}",
-        ds_manager.len(),
-        ds_manager.names()
-    );
-
-    // 设为全局单例，业务代码可通过 ryframe_core::current_db() 直接访问
-    ds_manager.clone().set_global();
+    tracing::info!("数据库连接初始化完成, 额外数据源: {} 个", extra_dbs.len());
 
     // 健康检查 primary
     ryframe_db::connection::ping(&primary_db).await?;
@@ -62,7 +49,6 @@ pub async fn connect(config: &AppConfig) -> Result<DataSources, AppError> {
     verify_tables(&primary_db).await?;
 
     Ok(DataSources {
-        manager: ds_manager,
         primary: primary_db,
         extras: extra_dbs,
     })

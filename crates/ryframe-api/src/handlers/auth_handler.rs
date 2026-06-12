@@ -8,7 +8,7 @@ use axum::{
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_config::AppConfig;
-use ryframe_core::{DataSourceManager, RedisClient, TokenBlacklist};
+use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_middleware::RateLimiter;
 use ryframe_service::{
     AuthServiceImpl, UserInfo,
@@ -27,11 +27,6 @@ use crate::dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest};
 /// API 共享状态
 #[derive(Clone)]
 pub struct AppState {
-    /// 多数据源管理器（新增）
-    ///
-    /// 配合 `#[datasource("name")]` 注解实现透明数据源切换。
-    pub datasource_manager: DataSourceManager,
-
     /// 主库连接（向后兼容，指向 primary 数据源）
     pub db: DatabaseConnection,
     pub config: Arc<AppConfig>,

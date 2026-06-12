@@ -225,14 +225,19 @@ let applied = MigrationManager::status(&db).await?;
 
 ## 多数据源
 
-通过 `DataSourceManager` 支持读写分离和多数据源动态路由：
+通过 `DataSourceManager` 注册多数据源连接，Handler 层使用 `AppState::write_db()` / `AppState::read_db()` 显式选择连接，
+传入 Service → Repository 调用链。
 
 ```rust,ignore
-use ryframe_core::datasource::{DataSourceManager, current_db, get_db};
+use ryframe_core::DataSourceManager;
 
-// 获取当前上下文的数据源
-let db = current_db();           // 默认（主库）
-let read_db = get_db("replica"); // 指定从库
+let manager = DataSourceManager::new();
+manager.register("primary", primary_db);
+manager.register("db_device", device_db);
+
+// Handler 层：显式传入连接
+state.user_service.find_by_page(state.write_db(), query).await?;   // 写库
+state.user_service.find_by_page(state.read_db(), query).await?;    // 读库
 ```
 
 ## 连接管理

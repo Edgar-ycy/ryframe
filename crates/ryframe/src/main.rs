@@ -52,7 +52,6 @@ async fn main() -> Result<(), AppError> {
 
     // 11. 聚合 AppState + 构建 Router
     let state = boot::app_state::assemble(
-        ds.manager.clone(),
         ds.primary.clone(),
         ds.extras,
         config_arc,
