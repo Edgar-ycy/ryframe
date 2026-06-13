@@ -19,6 +19,9 @@ pub struct RoleVo {
     pub sort: i32,
     pub remark: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 已分配的菜单ID列表（仅查询详情时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub menu_ids: Option<Vec<String>>,
     /// 自定义数据权限的部门ID列表（仅查询详情时填充）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dept_ids: Option<Vec<String>>,
@@ -35,6 +38,7 @@ impl From<role::Model> for RoleVo {
             sort: r.sort,
             remark: r.remark,
             created_at: r.created_at,
+            menu_ids: None,
             dept_ids: None,
         }
     }
@@ -86,6 +90,9 @@ impl RoleServiceImpl {
         match self.role_repo.find_by_id(db, id).await? {
             Some(r) => {
                 let mut vo = RoleVo::from(r);
+                // 查询已分配的菜单ID列表
+                let menu_ids = self.role_repo.find_role_menu_ids(db, id).await?;
+                vo.menu_ids = Some(menu_ids.iter().map(|m| m.to_string()).collect());
                 // 如果是自定义数据权限，查出关联的部门ID列表
                 if vo.data_scope == "2" {
                     let dept_ids = self.role_repo.find_role_dept_ids(db, id).await?;

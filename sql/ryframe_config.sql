@@ -10,9 +10,36 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- ============================================================
+-- 第一步：清除所有旧表（确保幂等，可重复导入）
+-- ============================================================
+DROP TABLE IF EXISTS `sys_role_dept`;
+DROP TABLE IF EXISTS `sys_role_menu`;
+DROP TABLE IF EXISTS `sys_role_permission`;
+DROP TABLE IF EXISTS `sys_user_role`;
+DROP TABLE IF EXISTS `role_menu`;
+DROP TABLE IF EXISTS `role_permission`;
+DROP TABLE IF EXISTS `user_role`;
+DROP TABLE IF EXISTS `sys_job_log`;
+DROP TABLE IF EXISTS `sys_job`;
+DROP TABLE IF EXISTS `sys_file`;
+DROP TABLE IF EXISTS `sys_login_info`;
+DROP TABLE IF EXISTS `sys_oper_log`;
+DROP TABLE IF EXISTS `sys_notice`;
+DROP TABLE IF EXISTS `sys_dict_data`;
+DROP TABLE IF EXISTS `sys_dict_type`;
+DROP TABLE IF EXISTS `sys_config`;
+DROP TABLE IF EXISTS `sys_post`;
+DROP TABLE IF EXISTS `sys_menu`;
+DROP TABLE IF EXISTS `sys_permission`;
+DROP TABLE IF EXISTS `sys_role`;
+DROP TABLE IF EXISTS `sys_user`;
+DROP TABLE IF EXISTS `sys_dept`;
+
+-- ============================================================
 -- 1. 部门表 (sys_dept)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_dept` (
+DROP TABLE IF EXISTS `sys_dept`;
+CREATE TABLE `sys_dept` (
     `id`          BIGINT       NOT NULL                    COMMENT '部门ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '部门名称',
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父部门ID',
@@ -29,7 +56,8 @@ CREATE TABLE IF NOT EXISTS `sys_dept` (
 -- ============================================================
 -- 2. 用户表 (sys_user)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_user` (
+DROP TABLE IF EXISTS `sys_user`;
+CREATE TABLE `sys_user` (
     `id`             BIGINT       NOT NULL                  COMMENT '用户ID',
     `username`       VARCHAR(64)  NOT NULL                  COMMENT '用户名',
     `password_hash`  VARCHAR(255) NOT NULL                  COMMENT '密码哈希(argon2)',
@@ -53,7 +81,8 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
 -- ============================================================
 -- 3. 角色表 (sys_role)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_role` (
+DROP TABLE IF EXISTS `sys_role`;
+CREATE TABLE `sys_role` (
     `id`          BIGINT       NOT NULL                    COMMENT '角色ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '角色名称',
     `code`        VARCHAR(64)  NOT NULL                    COMMENT '角色编码',
@@ -71,20 +100,22 @@ CREATE TABLE IF NOT EXISTS `sys_role` (
 -- ============================================================
 -- 4. 权限表 (sys_permission)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_permission` (
+DROP TABLE IF EXISTS `sys_permission`;
+CREATE TABLE `sys_permission` (
     `id`          BIGINT       NOT NULL                    COMMENT '权限ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '权限名称',
     `code`        VARCHAR(128) NOT NULL                    COMMENT '权限编码',
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父权限ID(树形)',
     `perm_type`   VARCHAR(16)  NOT NULL                    COMMENT '权限类型: menu/api',
-    `path`        VARCHAR(255)          DEFAULT NULL       COMMENT '路由路径',
+    `path`        VARCHAR(255)          DEFAULT NULL       COMMENT '路由路径(API类型为接口路径)',
+    `http_method` VARCHAR(10)           DEFAULT NULL       COMMENT 'HTTP方法: GET/POST/PUT/DELETE (API类型必填)',
     `icon`        VARCHAR(64)           DEFAULT NULL       COMMENT '图标',
     `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
     `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_code` (`code`),
+    KEY `idx_code` (`code`),
     KEY `idx_parent_id` (`parent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='权限表';
 
@@ -92,7 +123,8 @@ CREATE TABLE IF NOT EXISTS `sys_permission` (
 -- 5. 菜单表 (sys_menu)
 -- 统一管理目录(M)、菜单(C)、按钮(F)，前端通过 menu_type 区分
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_menu` (
+DROP TABLE IF EXISTS `sys_menu`;
+CREATE TABLE `sys_menu` (
     `id`          BIGINT       NOT NULL                    COMMENT '菜单ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '菜单名称',
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID',
@@ -118,7 +150,8 @@ CREATE TABLE IF NOT EXISTS `sys_menu` (
 -- ============================================================
 -- 6. 岗位表 (sys_post)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_post` (
+DROP TABLE IF EXISTS `sys_post`;
+CREATE TABLE `sys_post` (
     `id`          BIGINT       NOT NULL                    COMMENT '岗位ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '岗位名称',
     `code`        VARCHAR(64)  NOT NULL                    COMMENT '岗位编码',
@@ -135,7 +168,8 @@ CREATE TABLE IF NOT EXISTS `sys_post` (
 -- ============================================================
 -- 7. 参数配置表 (sys_config)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_config` (
+DROP TABLE IF EXISTS `sys_config`;
+CREATE TABLE `sys_config` (
     `id`          BIGINT       NOT NULL                    COMMENT '配置ID',
     `name`        VARCHAR(128) NOT NULL                    COMMENT '配置名称',
     `key`         VARCHAR(128) NOT NULL                    COMMENT '配置键',
@@ -151,7 +185,8 @@ CREATE TABLE IF NOT EXISTS `sys_config` (
 -- ============================================================
 -- 8. 字典类型表 (sys_dict_type)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_dict_type` (
+DROP TABLE IF EXISTS `sys_dict_type`;
+CREATE TABLE `sys_dict_type` (
     `id`          BIGINT       NOT NULL                    COMMENT '字典类型ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '字典名称',
     `code`        VARCHAR(64)  NOT NULL                    COMMENT '字典类型编码',
@@ -167,7 +202,8 @@ CREATE TABLE IF NOT EXISTS `sys_dict_type` (
 -- ============================================================
 -- 9. 字典数据表 (sys_dict_data)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_dict_data` (
+DROP TABLE IF EXISTS `sys_dict_data`;
+CREATE TABLE `sys_dict_data` (
     `id`          BIGINT       NOT NULL                    COMMENT '字典数据ID',
     `type_code`   VARCHAR(64)  NOT NULL                    COMMENT '所属字典类型编码',
     `label`       VARCHAR(64)  NOT NULL                    COMMENT '字典标签',
@@ -186,7 +222,8 @@ CREATE TABLE IF NOT EXISTS `sys_dict_data` (
 -- ============================================================
 -- 10. 通知公告表 (sys_notice)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_notice` (
+DROP TABLE IF EXISTS `sys_notice`;
+CREATE TABLE `sys_notice` (
     `id`           BIGINT       NOT NULL                   COMMENT '公告ID',
     `title`        VARCHAR(128) NOT NULL                   COMMENT '公告标题',
     `content`      TEXT         NOT NULL                   COMMENT '公告内容',
@@ -202,7 +239,8 @@ CREATE TABLE IF NOT EXISTS `sys_notice` (
 -- ============================================================
 -- 11. 操作日志表 (sys_oper_log)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_oper_log` (
+DROP TABLE IF EXISTS `sys_oper_log`;
+CREATE TABLE `sys_oper_log` (
     `id`              BIGINT       NOT NULL                COMMENT '日志ID',
     `title`           VARCHAR(64)  NOT NULL                COMMENT '模块标题',
     `business_type`   VARCHAR(32)  NOT NULL                COMMENT '业务类型(INSERT/UPDATE/DELETE等)',
@@ -226,7 +264,8 @@ CREATE TABLE IF NOT EXISTS `sys_oper_log` (
 -- ============================================================
 -- 12. 登录信息表 (sys_login_info)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_login_info` (
+DROP TABLE IF EXISTS `sys_login_info`;
+CREATE TABLE `sys_login_info` (
     `id`              BIGINT       NOT NULL                COMMENT '日志ID',
     `user_name`       VARCHAR(64)  NOT NULL                COMMENT '用户名',
     `ipaddr`          VARCHAR(128) NOT NULL                COMMENT '登录IP',
@@ -244,7 +283,8 @@ CREATE TABLE IF NOT EXISTS `sys_login_info` (
 -- ============================================================
 -- 13. 定时任务表 (sys_job)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_job` (
+DROP TABLE IF EXISTS `sys_job`;
+CREATE TABLE `sys_job` (
     `id`              BIGINT       NOT NULL                COMMENT '任务ID',
     `name`            VARCHAR(64)  NOT NULL                COMMENT '任务名称（与代码注册名对应）',
     `group_name`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '任务分组',
@@ -262,7 +302,8 @@ CREATE TABLE IF NOT EXISTS `sys_job` (
 -- ============================================================
 -- 14. 定时任务执行日志表 (sys_job_log)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_job_log` (
+DROP TABLE IF EXISTS `sys_job_log`;
+CREATE TABLE `sys_job_log` (
     `id`           BIGINT       NOT NULL                   COMMENT '日志ID',
     `job_name`     VARCHAR(64)  NOT NULL                   COMMENT '任务名称',
     `job_group`    VARCHAR(64)  NOT NULL DEFAULT 'system'  COMMENT '任务分组',
@@ -279,7 +320,8 @@ CREATE TABLE IF NOT EXISTS `sys_job_log` (
 -- ============================================================
 -- 15. 用户-角色关联表 (user_role)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `user_role` (
+DROP TABLE IF EXISTS `sys_user_role`;
+CREATE TABLE `sys_user_role` (
     `user_id`  BIGINT NOT NULL  COMMENT '用户ID',
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     PRIMARY KEY (`user_id`, `role_id`),
@@ -289,7 +331,8 @@ CREATE TABLE IF NOT EXISTS `user_role` (
 -- ============================================================
 -- 16. 角色-权限关联表 (role_permission)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `role_permission` (
+DROP TABLE IF EXISTS `sys_role_permission`;
+CREATE TABLE `sys_role_permission` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     `perm_id`  BIGINT NOT NULL  COMMENT '权限ID',
     PRIMARY KEY (`role_id`, `perm_id`),
@@ -299,7 +342,8 @@ CREATE TABLE IF NOT EXISTS `role_permission` (
 -- ============================================================
 -- 17. 角色-菜单关联表 (role_menu)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `role_menu` (
+DROP TABLE IF EXISTS `sys_role_menu`;
+CREATE TABLE `sys_role_menu` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     `menu_id`  BIGINT NOT NULL  COMMENT '菜单ID',
     PRIMARY KEY (`role_id`, `menu_id`),
@@ -309,7 +353,8 @@ CREATE TABLE IF NOT EXISTS `role_menu` (
 -- ============================================================
 -- 18. 角色-部门关联表 (sys_role_dept) — 自定义数据权限
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_role_dept` (
+DROP TABLE IF EXISTS `sys_role_dept`;
+CREATE TABLE `sys_role_dept` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     `dept_id`  BIGINT NOT NULL  COMMENT '部门ID',
     PRIMARY KEY (`role_id`, `dept_id`),
@@ -320,7 +365,8 @@ CREATE TABLE IF NOT EXISTS `sys_role_dept` (
 -- 19. 文件元数据表 (sys_file)
 -- 存储所有上传文件的元信息，仅存在于主数据库
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_file` (
+DROP TABLE IF EXISTS `sys_file`;
+CREATE TABLE `sys_file` (
     `id`            BIGINT       NOT NULL                    COMMENT '文件ID',
     `original_name` VARCHAR(255) NOT NULL                    COMMENT '原始文件名',
     `storage_name`  VARCHAR(255) NOT NULL                    COMMENT '存储文件名(UUID)',
@@ -387,38 +433,103 @@ INSERT INTO `sys_user` (`id`, `username`, `password_hash`, `nickname`, `email`, 
 -- -----------------------------------------------------------
 -- 默认权限 (sys_permission)
 -- -----------------------------------------------------------
-INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `path`, `icon`, `sort`, `status`) VALUES
+INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `path`, `http_method`, `icon`, `sort`, `status`) VALUES
     -- 系统管理
-    (1,  '系统管理',   'system',            NULL, 'menu', '/system',  'Setting', 1, '1'),
-    (2,  '用户管理',   'system:user',       1,    'menu', '/system/user',  'User',   1, '1'),
-    (3,  '角色管理',   'system:role',       1,    'menu', '/system/role',  'UserFilled', 2, '1'),
-    (4,  '菜单管理',   'system:menu',       1,    'menu', '/system/menu',  'Menu',   3, '1'),
-    (5,  '部门管理',   'system:dept',       1,    'menu', '/system/dept',  'Grid', 4, '1'),
-    (6,  '岗位管理',   'system:post',       1,    'menu', '/system/post',  'Management',   5, '1'),
+    (1,  '系统管理',   'system',            NULL, 'menu', '/system',  NULL, 'Setting', 1, '1'),
+    (2,  '用户管理',   'system:user',       1,    'menu', '/system/user',  NULL, 'User',   1, '1'),
+    (3,  '角色管理',   'system:role',       1,    'menu', '/system/role',  NULL, 'UserFilled', 2, '1'),
+    (4,  '菜单管理',   'system:menu',       1,    'menu', '/system/menu',  NULL, 'Menu',   3, '1'),
+    (5,  '部门管理',   'system:dept',       1,    'menu', '/system/dept',  NULL, 'Grid', 4, '1'),
+    (6,  '岗位管理',   'system:post',       1,    'menu', '/system/post',  NULL, 'Management',   5, '1'),
     -- 用户管理按钮权限
-    (7,  '用户查询',   'system:user:list',   2,    'api', NULL, NULL, 1, '1'),
-    (8,  '用户新增',   'system:user:add',    2,    'api', NULL, NULL, 2, '1'),
-    (9,  '用户修改',   'system:user:edit',   2,    'api', NULL, NULL, 3, '1'),
-    (10, '用户删除',   'system:user:remove', 2,    'api', NULL, NULL, 4, '1'),
+    (7,  '用户查询',   'system:user:list',   2,    'api', 'system/users', 'GET', NULL, 1, '1'),
+    (8,  '用户新增',   'system:user:add',    2,    'api', 'system/users', 'POST', NULL, 2, '1'),
+    (9,  '用户修改',   'system:user:edit',   2,    'api', 'system/users/{id}', 'PUT', NULL, 3, '1'),
+    (10, '用户删除',   'system:user:remove', 2,    'api', 'system/users/{id}', 'DELETE', NULL, 4, '1'),
     -- 超级管理员通配符权限
-    (11, '全部权限',   '*:*:*',             NULL, 'api', NULL, NULL, 0, '1'),
+    (11, '全部权限',   '*:*:*',             NULL, 'api', NULL, NULL, NULL, 0, '1'),
+    -- 角色管理API权限 (parent: 3)
+    (22, '角色查询',   'system:role:list',   3,    'api', 'system/roles', 'GET', NULL, 1, '1'),
+    (23, '角色新增',   'system:role:add',    3,    'api', 'system/roles', 'POST', NULL, 2, '1'),
+    (24, '角色修改',   'system:role:edit',   3,    'api', 'system/roles/{id}', 'PUT', NULL, 3, '1'),
+    (25, '角色删除',   'system:role:remove', 3,    'api', 'system/roles/{id}', 'DELETE', NULL, 4, '1'),
+    (26, '角色导出',   'system:role:export', 3,    'api', 'system/roles/export', 'GET', NULL, 5, '1'),
+    -- 菜单管理API权限 (parent: 4)
+    (27, '菜单查询',   'system:menu:list',   4,    'api', 'system/menus/tree', 'GET', NULL, 1, '1'),
+    (28, '菜单新增',   'system:menu:add',    4,    'api', 'system/menus', 'POST', NULL, 2, '1'),
+    (29, '菜单修改',   'system:menu:edit',   4,    'api', 'system/menus/{id}', 'PUT', NULL, 3, '1'),
+    (30, '菜单删除',   'system:menu:remove', 4,    'api', 'system/menus/{id}', 'DELETE', NULL, 4, '1'),
+    -- 部门管理API权限 (parent: 5)
+    (31, '部门查询',   'system:dept:list',   5,    'api', 'system/depts/tree', 'GET', NULL, 1, '1'),
+    (32, '部门新增',   'system:dept:add',    5,    'api', 'system/depts', 'POST', NULL, 2, '1'),
+    (33, '部门修改',   'system:dept:edit',   5,    'api', 'system/depts/{id}', 'PUT', NULL, 3, '1'),
+    (34, '部门删除',   'system:dept:remove', 5,    'api', 'system/depts/{id}', 'DELETE', NULL, 4, '1'),
+    -- 岗位管理API权限 (parent: 6)
+    (35, '岗位查询',   'system:post:list',   6,    'api', 'system/posts', 'GET', NULL, 1, '1'),
+    (36, '岗位新增',   'system:post:add',    6,    'api', 'system/posts', 'POST', NULL, 2, '1'),
+    (37, '岗位修改',   'system:post:edit',   6,    'api', 'system/posts/{id}', 'PUT', NULL, 3, '1'),
+    (38, '岗位删除',   'system:post:remove', 6,    'api', 'system/posts/{id}', 'DELETE', NULL, 4, '1'),
+    (39, '岗位导出',   'system:post:export', 6,    'api', 'system/posts/export', 'GET', NULL, 5, '1'),
+    -- 参数配置API权限 (parent: 19)
+    (40, '参数查询',   'system:config:list',   19,   'api', 'system/configs', 'GET', NULL, 1, '1'),
+    (41, '参数新增',   'system:config:add',    19,   'api', 'system/configs', 'POST', NULL, 2, '1'),
+    (42, '参数修改',   'system:config:edit',   19,   'api', 'system/configs/{id}', 'PUT', NULL, 3, '1'),
+    (43, '参数删除',   'system:config:remove', 19,   'api', 'system/configs/{id}', 'DELETE', NULL, 4, '1'),
+    (44, '参数导出',   'system:config:export', 19,   'api', 'system/configs/export', 'GET', NULL, 5, '1'),
+    -- 字典管理API权限 (parent: 18)
+    (45, '字典查询',   'system:dict:list',   18,   'api', 'system/dict/data', 'GET', NULL, 1, '1'),
+    (46, '字典新增',   'system:dict:add',    18,   'api', 'system/dict/data', 'POST', NULL, 2, '1'),
+    (47, '字典修改',   'system:dict:edit',   18,   'api', 'system/dict/data/{id}', 'PUT', NULL, 3, '1'),
+    (48, '字典删除',   'system:dict:remove', 18,   'api', 'system/dict/data/{id}', 'DELETE', NULL, 4, '1'),
+    (49, '字典导出',   'system:dict:export', 18,   'api', 'system/dict/types/export', 'GET', NULL, 5, '1'),
+    -- 通知公告API权限 (parent: 20)
+    (50, '通知查询',   'system:notice:list',   20,   'api', 'system/notices', 'GET', NULL, 1, '1'),
+    (51, '通知新增',   'system:notice:add',    20,   'api', 'system/notices', 'POST', NULL, 2, '1'),
+    (52, '通知修改',   'system:notice:edit',   20,   'api', 'system/notices/{id}', 'PUT', NULL, 3, '1'),
+    (53, '通知删除',   'system:notice:remove', 20,   'api', 'system/notices/{id}', 'DELETE', NULL, 4, '1'),
+    -- 操作日志API权限 (parent: 15)
+    (54, '操作日志查询', 'system:operlog:list',   15,   'api', 'system/operlogs', 'GET', NULL, 1, '1'),
+    (55, '操作日志导出', 'system:operlog:export', 15,   'api', 'system/operlogs/export', 'GET', NULL, 2, '1'),
+    (56, '操作日志清空', 'system:operlog:remove', 15,   'api', 'system/operlogs/clean', 'DELETE', NULL, 3, '1'),
+    -- 登录日志API权限 (parent: 16)
+    (57, '登录日志查询', 'system:logininfor:list',   16,   'api', 'system/loginlogs', 'GET', NULL, 1, '1'),
+    (58, '登录日志导出', 'system:logininfor:export', 16,   'api', 'system/loginlogs/export', 'GET', NULL, 2, '1'),
+    (59, '登录日志清空', 'system:logininfor:remove', 16,   'api', 'system/loginlogs/clean', 'DELETE', NULL, 3, '1'),
+    -- 定时任务API权限 (parent: 17)
+    (60, '任务查询',   'system:job:list',   17,   'api', 'system/jobs', 'GET', NULL, 1, '1'),
+    (61, '任务新增',   'system:job:add',    17,   'api', 'system/jobs', 'POST', NULL, 2, '1'),
+    (62, '任务修改',   'system:job:edit',   17,   'api', 'system/jobs/{id}', 'PUT', NULL, 3, '1'),
+    (63, '任务删除',   'system:job:remove', 17,   'api', 'system/jobs/{id}', 'DELETE', NULL, 4, '1'),
+    -- 在线用户API权限 (parent: 13)
+    (64, '在线用户查询', 'monitor:online:list',        13,   'api', 'system/online', 'GET', NULL, 1, '1'),
+    (71, '在线用户分页', 'monitor:online:list',        13,   'api', 'system/online/list', 'GET', NULL, 2, '1'),
+    (72, '在线用户全量', 'monitor:online:list',        13,   'api', 'system/online/listNoPage', 'GET', NULL, 3, '1'),
+    (65, '在线用户强退', 'monitor:online:force-logout', 13,   'api', 'system/online/{token_id}', 'DELETE', NULL, 4, '1'),
+    -- 代码生成API权限 (parent: 21)
+    (66, '代码生成查询', 'tools:gen:list', 21,   'api', 'tools/gen/tables', 'GET', NULL, 1, '1'),
+    (67, '代码生成写入', 'tools:gen:add',  21,   'api', 'tools/gen/generate', 'POST', NULL, 2, '1'),
+    -- 用户导出API权限 (parent: 2)
+    (68, '用户导出',   'system:user:export', 2,    'api', 'system/users/export', 'GET', NULL, 5, '1'),
     -- 系统监控
-    (12, '系统监控',   'monitor',           NULL, 'menu', '/monitor', 'Monitor', 2, '1'),
-    (13, '在线用户',   'monitor:online',    12,   'menu', '/monitor/online', 'Connection', 1, '1'),
-    (14, '服务器监控', 'monitor:server',    12,   'menu', '/monitor/server', 'DataAnalysis', 2, '1'),
+    (12, '系统监控',   'monitor',           NULL, 'menu', '/monitor', NULL, 'Monitor', 2, '1'),
+    (13, '在线用户',   'monitor:online',    12,   'menu', '/monitor/online', NULL, 'Connection', 1, '1'),
+    (14, '服务器监控', 'monitor:server',    12,   'menu', '/monitor/server', NULL, 'DataAnalysis', 2, '1'),
     -- 日志管理
-    (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', 'Document', 6, '1'),
-    (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', 'Notebook', 7, '1'),
+    (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', NULL, 'Document', 6, '1'),
+    (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', NULL, 'Notebook', 7, '1'),
     -- 定时任务
-    (17, '定时任务',   'system:job',        1,    'menu', '/system/job', 'Timer', 8, '1'),
+    (17, '定时任务',   'system:job',        1,    'menu', '/system/job', NULL, 'Timer', 8, '1'),
     -- 字典管理
-    (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', 'Collection', 9, '1'),
+    (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', NULL, 'Collection', 9, '1'),
     -- 参数设置
-    (19, '参数设置',   'system:config',     1,    'menu', '/system/config', 'EditPen', 10, '1'),
+    (19, '参数设置',   'system:config',     1,    'menu', '/system/config', NULL, 'EditPen', 10, '1'),
     -- 通知公告
-    (20, '通知公告',   'system:notice',     1,    'menu', '/system/notice', 'Bell', 11, '1'),
+    (20, '通知公告',   'system:notice',     1,    'menu', '/system/notice', NULL, 'Bell', 11, '1'),
     -- 代码生成
-    (21, '代码生成',   'tools:gen',         NULL, 'menu', '/tools/gen', 'MagicStick', 3, '1');
+    (21, '代码生成',   'tools:gen',         NULL, 'menu', '/tools/gen', NULL, 'MagicStick', 3, '1'),
+    -- 权限管理
+    (69, '权限管理',   'system:permission', 1,    'menu', '/system/permission', NULL, 'Key', 12, '1'),
+    (70, '权限查询',   'system:permission:list', 69,   'api', 'system/permissions/tree', 'GET', NULL, 1, '1');
 
 -- -----------------------------------------------------------
 -- 默认菜单 (sys_menu)
@@ -442,6 +553,7 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `path`, `compone
     (12, '操作日志', 1, 'C', '/system/operlog',   'system/operlog/index',   NULL,  'system:operlog:list','Document',      0, 0, 9, 1, '1'),
     (13, '登录日志', 1, 'C', '/system/logininfor','system/logininfor/index',NULL,  'system:logininfor:list','Notebook',  0, 0, 10, 1, '1'),
     (14, '定时任务', 1, 'C', '/system/job',       'system/job/index',       NULL,  'system:job:list',    'Timer',         0, 0, 11, 1, '1'),
+    (23, '权限管理', 1, 'C', '/system/permission', 'system/permission/index', NULL,  'system:permission:list', 'Key',      0, 0, 12, 1, '1'),
     -- 系统监控子菜单
     (15, '在线用户', 2, 'C', '/monitor/online',   'monitor/online/index',   NULL,  'monitor:online:list','Connection',    0, 0, 1, 1, '1'),
     (16, '服务监控', 2, 'C', '/monitor/server',   'monitor/server/index',   NULL,  'monitor:server:list','DataAnalysis',  0, 0, 2, 1, '1'),
@@ -469,8 +581,8 @@ INSERT INTO `sys_post` (`id`, `name`, `code`, `sort`, `status`, `remark`) VALUES
 INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `remark`) VALUES
     (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
     (2, '用户管理-账号初始密码', 'sys.user.initPassword',  '123456',   '初始化密码'),
-    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-dark',   'dark主题theme-dark，light主题theme-light'),
-    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'true',       '是否开启验证码功能（true开启，false关闭）'),
+    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-light',   'dark主题theme-dark，light主题theme-light'),
+    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'false',       '是否开启验证码功能（true开启，false关闭）'),
     (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      '是否开启注册功能（true开启，false关闭）');
 
 -- -----------------------------------------------------------
@@ -528,7 +640,7 @@ INSERT INTO `sys_dict_data` (`id`, `type_code`, `label`, `value`, `sort`, `statu
 -- -----------------------------------------------------------
 -- 用户-角色关联 (user_role)
 -- -----------------------------------------------------------
-INSERT INTO `user_role` (`user_id`, `role_id`) VALUES
+INSERT INTO `sys_user_role` (`user_id`, `role_id`) VALUES
     (1, 1),  -- admin -> 超级管理员
     (2, 2);  -- user  -> 普通用户
 
@@ -536,7 +648,7 @@ INSERT INTO `user_role` (`user_id`, `role_id`) VALUES
 -- 角色-权限关联 (role_permission)
 -- 超级管理员拥有全部权限通配符
 -- -----------------------------------------------------------
-INSERT INTO `role_permission` (`role_id`, `perm_id`) VALUES
+INSERT INTO `sys_role_permission` (`role_id`, `perm_id`) VALUES
     (1, 11),  -- admin -> *:*:*
     -- 普通用户拥有基础查看权限
     (2, 7),   -- common -> system:user:list
@@ -546,7 +658,7 @@ INSERT INTO `role_permission` (`role_id`, `perm_id`) VALUES
 -- 角色-菜单关联 (role_menu)
 -- 超级管理员拥有全部菜单（含按钮）
 -- -----------------------------------------------------------
-INSERT INTO `role_menu` (`role_id`, `menu_id`) VALUES
+INSERT INTO `sys_role_menu` (`role_id`, `menu_id`) VALUES
     -- 超级管理员 - 全部菜单
     (1, 0),
     (1, 1),
@@ -571,6 +683,7 @@ INSERT INTO `role_menu` (`role_id`, `menu_id`) VALUES
     (1, 20),
     (1, 21),
     (1, 22),
+    (1, 23),
     -- 普通用户 - 首页 + 系统监控菜单
     (2, 0),
     (2, 2),

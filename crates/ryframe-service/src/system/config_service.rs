@@ -198,4 +198,15 @@ impl ConfigServiceImpl {
             let _ = redis.del(&cache_key).await;
         }
     }
+
+    /// 启动时清除前端主题/皮肤相关的配置缓存
+    /// 确保数据库中的值与缓存一致，避免因缓存未过期导致主题不生效
+    pub async fn invalidate_skin_cache_on_startup(&self) {
+        if let Some(ref redis) = self.redis {
+            for key in &["sys.index.sideTheme", "sys.index.skinName"] {
+                let cache_key = format!("{}{}", CONFIG_CACHE_KEY_PREFIX, key);
+                let _ = redis.del(&cache_key).await;
+            }
+        }
+    }
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// 用户-角色关联表（联合主键）
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
-#[sea_orm(table_name = "user_role")]
+#[sea_orm(table_name = "sys_user_role")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: i64,

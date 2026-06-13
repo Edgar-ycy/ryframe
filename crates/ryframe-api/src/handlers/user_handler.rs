@@ -3,7 +3,6 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     routing::{delete, get, post, put},
 };
-use ryframe_auth::jwt::Claims;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::{CreateUserParams, UpdateUserParams, UserDetailVo, UserVo};
@@ -15,6 +14,7 @@ use crate::dto::{
     user_dto::{ChangeStatusDto, CreateUserDto, ResetPasswordDto, UpdateUserDto},
     user_import_dto::{UserExportData, UserImportData},
 };
+use crate::extractors::CurrentUser;
 
 /// 用户列表分页查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -34,12 +34,14 @@ pub struct UserListQuery {
 
 pub fn user_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list).post(create))
+        .route("/", get(list))
+        .route("/", post(create))
         .route("/list", get(list))
         .route("/listNoPage", get(list_no_page))
-        .route("/{id}", get(detail).put(update))
-        .route("/batch/{ids}", delete(batch_remove))
+        .route("/{id}", get(detail))
+        .route("/{id}", put(update))
         .route("/{id}", delete(remove))
+        .route("/batch/{ids}", delete(batch_remove))
         .route("/{id}/password", put(reset_password))
         .route("/changeStatus", put(change_status))
         .route("/export", get(export_users))
@@ -54,32 +56,40 @@ pub fn user_router(state: AppState) -> Router {
     security(("bearer" = [])))]
 async fn list(
     State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
+    Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<UserListQuery>,
 ) -> AppResult<Json<ApiPageResponse<UserVo>>> {
-    let user_id = claims
-        .sub
-        .parse::<i64>()
-        .map_err(|_| ryframe_common::AppError::Authentication("令牌无效".into()))?;
-
     let page_query = PageQuery {
         page: query.page,
         page_size: query.page_size,
     };
 
-    state
-        .user_service
-        .find_by_page_with_user_scope(
-            &state.db,
-            user_id,
-            page_query,
-            query.username.as_deref(),
-            query.phone.as_deref(),
-            query.status.as_deref(),
-            query.dept_id,
-        )
-        .await
-        .map(|p| Json(p.to_page_response("查询成功")))
+    let scope_ctx = current_user.to_data_scope_context();
+    let has_filter = query.username.is_some()
+        || query.phone.is_some()
+        || query.status.is_some()
+        || query.dept_id.is_some();
+
+    if has_filter {
+        state
+            .user_service
+            .find_by_page_filtered(
+                &state.db,
+                page_query,
+                query.username.as_deref(),
+                query.phone.as_deref(),
+                query.status.as_deref(),
+                query.dept_id,
+            )
+            .await
+            .map(|p| Json(p.to_page_response("查询成功")))
+    } else {
+        state
+            .user_service
+            .find_by_page_with_data_scope(&state.db, page_query, &scope_ctx)
+            .await
+            .map(|p| Json(p.to_page_response("查询成功")))
+    }
 }
 
 /// 用户列表不分页查询（返回全部数据）

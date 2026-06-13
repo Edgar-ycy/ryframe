@@ -16,6 +16,8 @@
 //! ```
 
 pub mod m20260101_000001_init_tables;
+pub mod m20260613_000002_add_http_method;
+pub mod m20260613_000003_seed_permission_menu;
 
 use sea_orm::{DatabaseConnection, DbErr, EntityTrait, QueryOrder};
 use sea_orm_migration::prelude::*;
@@ -26,7 +28,11 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m20260101_000001_init_tables::Migration)]
+        vec![
+            Box::new(m20260101_000001_init_tables::Migration),
+            Box::new(m20260613_000002_add_http_method::Migration),
+            Box::new(m20260613_000003_seed_permission_menu::Migration),
+        ]
     }
 }
 

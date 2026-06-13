@@ -48,6 +48,15 @@ impl MenuServiceImpl {
         self.menu_repo.find_by_role_ids(db, role_ids).await
     }
 
+    /// 按角色查询菜单树（只返回角色有权限的菜单）
+    pub async fn find_tree_by_roles(
+        &self,
+        db: &DatabaseConnection,
+        role_ids: &[i64],
+    ) -> AppResult<Vec<MenuTreeNode>> {
+        self.menu_repo.find_tree_by_roles(db, role_ids).await
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
@@ -165,8 +174,8 @@ impl MenuServiceImpl {
         self.menu_repo.find_by_id(db, id).await
     }
 
-    /// 清除菜单树缓存
-    fn invalidate_menu_cache(&self) {
+    /// 清除菜单树缓存（公开方法，启动时调用以确保缓存与数据库一致）
+    pub fn invalidate_menu_cache(&self) {
         if let Some(ref redis) = self.redis {
             let redis = redis.clone();
             tokio::spawn(async move {

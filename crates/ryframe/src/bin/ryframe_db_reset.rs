@@ -13,8 +13,13 @@ use std::{fs, path::PathBuf, time::Duration};
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
 
 /// 需要删除的全部表（按外键依赖从子到父排列）
+/// 包含旧表名(无sys前缀)以兼容历史数据库，确保清理干净
 const ALL_TABLES: &[&str] = &[
     "sys_role_dept",
+    "sys_role_menu",
+    "sys_role_permission",
+    "sys_user_role",
+    // ---- 历史旧表名（无 sys_ 前缀），兼容清理 ----
     "role_menu",
     "role_permission",
     "user_role",

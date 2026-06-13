@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::repository::PageQuery;
@@ -47,14 +47,17 @@ pub struct JobListQuery {
 
 pub fn job_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list_no_page).post(create_job))
+        .route("/", get(list_no_page))
+        .route("/", post(create_job))
         .route("/list", get(list_page))
         .route("/listNoPage", get(list_no_page))
-        .route("/{id}", put(update).delete(remove))
+        .route("/{id}", put(update))
+        .route("/{id}", delete(remove))
         .route("/{id}/pause", post(pause_job))
         .route("/{id}/resume", post(resume_job))
         .route("/{id}/trigger", post(trigger))
-        .route("/logs", get(log_list).delete(clear_logs))
+        .route("/logs", get(log_list))
+        .route("/logs", axum::routing::delete(clear_logs))
         .with_state(state)
 }
 

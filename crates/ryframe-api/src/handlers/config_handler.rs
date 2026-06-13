@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get},
+    routing::{delete, get, post, put},
 };
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::PageQuery;
@@ -14,13 +14,16 @@ use crate::dto::config_dto::{CreateConfigDto, UpdateConfigDto};
 
 pub fn config_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list).post(create))
+        .route("/", get(list))
+        .route("/", post(create))
         .route("/list", get(list))
         .route("/listNoPage", get(list_no_page))
         .route("/export", get(export_configs))
         .route("/refreshCache", delete(refresh_cache))
         .route("/configKey/{key}", get(get_by_key))
-        .route("/{id}", get(detail).put(update).delete(remove))
+        .route("/{id}", get(detail))
+        .route("/{id}", put(update))
+        .route("/{id}", delete(remove))
         .with_state(state)
 }
 

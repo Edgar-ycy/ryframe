@@ -1,7 +1,7 @@
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::{delete, get, post, put},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_db::{entities::menu, repositories::menu_repo::MenuTreeNode};
@@ -9,6 +9,7 @@ use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
+use crate::extractors::CurrentUser;
 use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub MenuListQuery {
@@ -19,10 +20,13 @@ list_query!(pub MenuListQuery {
 pub fn menu_router(state: AppState) -> Router {
     Router::new()
         .route("/tree", get(tree))
+        .route("/user-tree", get(user_tree))
         .route("/list", get(list_page))
         .route("/listNoPage", get(list_no_page))
         .route("/", post(create))
-        .route("/{id}", get(detail).put(update).delete(remove))
+        .route("/{id}", get(detail))
+        .route("/{id}", put(update))
+        .route("/{id}", delete(remove))
         .with_state(state)
 }
 
@@ -35,6 +39,27 @@ async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<M
         .find_tree(&state.db)
         .await
         .map(|v| Json(ApiResponse::success(v)))
+}
+
+/// 当前用户可见的菜单树（按角色过滤，前端用）
+#[utoipa::path(get, path = "/api/v1/system/menus/user-tree", tag = "菜单管理",
+    responses((status = 200, description = "用户菜单树")), security(("bearer" = [])))]
+async fn user_tree(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+) -> AppResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
+    let tree = if current_user.is_super_admin {
+        // 超级管理员看全部菜单树
+        state.menu_service.find_tree(&state.db).await?
+    } else if current_user.role_ids.is_empty() {
+        vec![]
+    } else {
+        state
+            .menu_service
+            .find_tree_by_roles(&state.db, &current_user.role_ids)
+            .await?
+    };
+    Ok(Json(ApiResponse::success(tree)))
 }
 
 /// 菜单列表分页查询

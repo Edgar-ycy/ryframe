@@ -226,6 +226,7 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(ColumnDef::new(SysPermission::Path).string_len(255))
+                    .col(ColumnDef::new(SysPermission::HttpMethod).string_len(10))
                     .col(ColumnDef::new(SysPermission::Icon).string_len(64))
                     .col(
                         ColumnDef::new(SysPermission::Sort)
@@ -943,6 +944,8 @@ enum SysPermission {
     ParentId,
     PermType,
     Path,
+    #[iden = "http_method"]
+    HttpMethod,
     Icon,
     Sort,
     Status,

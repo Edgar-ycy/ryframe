@@ -84,9 +84,9 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_job_log",
     "sys_file",
     "sys_role_dept",
-    "user_role",
-    "role_permission",
-    "role_menu",
+    "sys_user_role",
+    "sys_role_permission",
+    "sys_role_menu",
 ];
 
 #[derive(Debug, FromQueryResult)]

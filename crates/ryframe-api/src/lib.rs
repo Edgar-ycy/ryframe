@@ -6,6 +6,7 @@ pub mod macros;
 pub mod openapi;
 pub mod oper_log_middleware;
 pub mod router;
+pub mod user_context_middleware;
 pub mod versioning;
 
 pub use handlers::{

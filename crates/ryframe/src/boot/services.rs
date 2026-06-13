@@ -84,6 +84,8 @@ pub async fn build_all(
         menu_repo: LoggedRepo::new(MenuRepository),
         redis: redis_client.clone(),
     });
+    // 启动时清除菜单树缓存，确保迁移新增的菜单项能立即显示
+    menu_service.invalidate_menu_cache();
 
     let dept_service = Arc::new(DeptServiceImpl {
         dept_repo: LoggedRepo::new(DeptRepository),
@@ -98,6 +100,8 @@ pub async fn build_all(
         config_repo: LoggedRepo::new(ConfigRepository),
         redis: redis_client.clone(),
     });
+    // 启动时清除皮肤/主题配置缓存，确保与数据库一致
+    config_service.invalidate_skin_cache_on_startup().await;
 
     let dict_service = Arc::new(DictServiceImpl {
         dict_type_repo: LoggedRepo::new(DictTypeRepository),

@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, put},
+    routing::{delete, get, post, put},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
@@ -23,13 +23,16 @@ list_query!(pub RoleListQuery {
 
 pub fn role_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list).post(create))
+        .route("/", get(list))
+        .route("/", post(create))
         .route("/list", get(list))
         .route("/listNoPage", get(list_no_page))
         .route("/export", get(export_roles))
-        .route("/{id}", get(detail).put(update))
-        .route("/batch/{ids}", delete(batch_remove))
+        .route("/{id}", get(detail))
+        .route("/{id}", put(update))
         .route("/{id}", delete(remove))
+        .route("/batch/{ids}", delete(batch_remove))
+        .route("/{id}/permissions", get(get_role_perms))
         .route("/{id}/permissions", put(assign_permissions))
         .route("/{id}/menus", put(assign_menus))
         .route("/{id}/data-scope", put(assign_data_scope))
@@ -270,6 +273,24 @@ async fn assign_permissions(
         .assign_permissions(&state.db, id, perm_ids)
         .await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
+}
+
+/// 查询角色已分配的权限ID列表
+#[utoipa::path(get, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
+    params(("id" = i64, Path)),
+    responses((status = 200, description = "角色权限ID列表")),
+    security(("bearer" = [])))]
+async fn get_role_perms(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> AppResult<Json<ApiResponse<Vec<String>>>> {
+    let perm_ids = state
+        .permission_service
+        .perm_repo
+        .find_role_perm_ids(&state.db, id)
+        .await?;
+    let ids: Vec<String> = perm_ids.iter().map(|p| p.to_string()).collect();
+    Ok(Json(ApiResponse::success(ids)))
 }
 
 /// 分配菜单给角色
