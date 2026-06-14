@@ -4,22 +4,18 @@ use ryframe_common::AppError;
 use ryframe_config::AppConfig;
 use ryframe_core::{LoggedRepo, RedisClient};
 use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
-    JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
-    PermissionRepository, PostRepository, RoleRepository, UserRepository,
+    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
+    MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
+    RoleRepository, UserRepository,
 };
 use ryframe_service::{
     AuthServiceImpl,
     system::{
         CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-        JobLogPersister, JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
-        OnlineUserServiceImpl, OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
-        ProfileServiceImpl, RoleServiceImpl, UserServiceImpl,
+        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+        RoleServiceImpl, UserServiceImpl,
     },
-};
-use ryframe_task::{
-    ScheduledTask, TaskContext, TaskScheduler,
-    builtin::{CleanLoginInfoTask, CleanOperLogTask, CleanTempFilesTask, DatabaseBackupTask},
 };
 use sea_orm::DatabaseConnection;
 
@@ -37,12 +33,10 @@ pub struct Services {
     pub notice_service: Arc<NoticeServiceImpl>,
     pub oper_log_service: Arc<OperLogServiceImpl>,
     pub login_info_service: Arc<LoginInfoServiceImpl>,
-    pub job_service: Arc<JobServiceImpl>,
     pub generator_service: Arc<GeneratorServiceImpl>,
     pub profile_service: Arc<ProfileServiceImpl>,
     pub online_user_service: Arc<OnlineUserServiceImpl>,
     pub captcha_store: CaptchaStore,
-    pub scheduler: Arc<TaskScheduler>,
 }
 
 /// 构造所有 Service 实例
@@ -51,7 +45,7 @@ pub struct Services {
 pub async fn build_all(
     config: &AppConfig,
     redis_client: &Option<RedisClient>,
-    primary_db: &DatabaseConnection,
+    _primary_db: &DatabaseConnection,
 ) -> Result<Services, AppError> {
     let oper_log_repo = LoggedRepo::new(OperLogRepository);
     let login_info_repo = LoggedRepo::new(LoginInfoRepository);
@@ -113,37 +107,6 @@ pub async fn build_all(
 
     let login_info_service = Arc::new(LoginInfoServiceImpl { login_info_repo });
 
-    // -- TaskScheduler + JobService --
-    let task_ctx = TaskContext {
-        db: Arc::new(primary_db.clone()),
-    };
-    let job_log_repo = LoggedRepo::new(JobLogRepository);
-
-    let mut scheduler = TaskScheduler::new(task_ctx.clone());
-    scheduler.set_persister(Arc::new(JobLogPersister {
-        job_log_repo: job_log_repo.clone(),
-        db: Arc::new(primary_db.clone()),
-    }));
-    let scheduler = Arc::new(scheduler);
-
-    let job_service = Arc::new(JobServiceImpl {
-        job_repo: LoggedRepo::new(JobRepository),
-        job_log_repo,
-        scheduler: scheduler.clone(),
-    });
-
-    // 从数据库加载配置并注册内置任务
-    let builtin_tasks: Vec<Arc<dyn ScheduledTask>> = vec![
-        Arc::new(CleanOperLogTask),
-        Arc::new(CleanLoginInfoTask),
-        Arc::new(CleanTempFilesTask),
-        Arc::new(DatabaseBackupTask),
-    ];
-    job_service
-        .init_builtin_tasks(primary_db, &builtin_tasks)
-        .await?;
-    tracing::info!("已注册 {} 个内置定时任务", scheduler.list().await.len());
-
     // -- GeneratorService --
     let workspace_root = std::env::current_dir()
         .map_err(|e| AppError::Internal(format!("无法获取 workspace root: {}", e)))?;
@@ -187,11 +150,9 @@ pub async fn build_all(
         notice_service,
         oper_log_service,
         login_info_service,
-        job_service,
         generator_service,
         profile_service,
         online_user_service,
         captcha_store,
-        scheduler,
     })
 }

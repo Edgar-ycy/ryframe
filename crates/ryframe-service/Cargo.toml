@@ -13,21 +13,14 @@ ryframe-core = { path = "../ryframe-core" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-config = { path = "../ryframe-config" }
-ryframe-task = { path = "../ryframe-task" }
 ryframe-generator = { path = "../ryframe-generator" }
-ryframe-macro = { path = "../ryframe-macro" }
 zip = { workspace = true }
-async-trait = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-validator = { workspace = true }
 utoipa = { workspace = true }
-redis = { workspace = true }
 tracing = { workspace = true }
-cron = { workspace = true }
 
 [dev-dependencies]
-sea-orm-migration = { workspace = true }

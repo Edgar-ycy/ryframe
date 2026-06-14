@@ -16,7 +16,6 @@ argon2 = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
-tracing = { workspace = true }
 rand_core = { workspace = true}
 
 [dev-dependencies]

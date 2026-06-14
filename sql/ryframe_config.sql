@@ -10,6 +10,27 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- ============================================================
+-- 清理所有已有表 (先删关联表再删主表，避免外键依赖问题)
+-- ============================================================
+DROP TABLE IF EXISTS `sys_user_role`;
+DROP TABLE IF EXISTS `sys_role_permission`;
+DROP TABLE IF EXISTS `sys_role_menu`;
+DROP TABLE IF EXISTS `sys_role_dept`;
+DROP TABLE IF EXISTS `sys_dept`;
+DROP TABLE IF EXISTS `sys_user`;
+DROP TABLE IF EXISTS `sys_role`;
+DROP TABLE IF EXISTS `sys_permission`;
+DROP TABLE IF EXISTS `sys_menu`;
+DROP TABLE IF EXISTS `sys_post`;
+DROP TABLE IF EXISTS `sys_config`;
+DROP TABLE IF EXISTS `sys_dict_type`;
+DROP TABLE IF EXISTS `sys_dict_data`;
+DROP TABLE IF EXISTS `sys_notice`;
+DROP TABLE IF EXISTS `sys_oper_log`;
+DROP TABLE IF EXISTS `sys_login_info`;
+DROP TABLE IF EXISTS `sys_file`;
+
+-- ============================================================
 -- 1. 部门表 (sys_dept)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS `sys_dept` (
@@ -242,44 +263,9 @@ CREATE TABLE IF NOT EXISTS `sys_login_info` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='登录信息表';
 
 -- ============================================================
--- 13. 定时任务表 (sys_job)
+-- 13. 用户-角色关联表 (user_role)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_job` (
-    `id`              BIGINT       NOT NULL                COMMENT '任务ID',
-    `name`            VARCHAR(64)  NOT NULL                COMMENT '任务名称（与代码注册名对应）',
-    `group_name`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '任务分组',
-    `cron_expr`       VARCHAR(128) NOT NULL                COMMENT 'Cron 表达式',
-    `misfire_policy`  CHAR(1)      NOT NULL DEFAULT '1'    COMMENT '失败策略: 1立即执行 2执行一次 3放弃',
-    `concurrent`      CHAR(1)      NOT NULL DEFAULT '0'    COMMENT '并发执行: 0禁止 1允许',
-    `status`          CHAR(1)      NOT NULL DEFAULT '1'    COMMENT '状态: 0暂停 1正常',
-    `remark`          VARCHAR(512)          DEFAULT NULL   COMMENT '备注',
-    `create_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
-    `update_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='定时任务表';
-
--- ============================================================
--- 14. 定时任务执行日志表 (sys_job_log)
--- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_job_log` (
-    `id`           BIGINT       NOT NULL                   COMMENT '日志ID',
-    `job_name`     VARCHAR(64)  NOT NULL                   COMMENT '任务名称',
-    `job_group`    VARCHAR(64)  NOT NULL DEFAULT 'system'  COMMENT '任务分组',
-    `message`      TEXT         NOT NULL                   COMMENT '执行消息',
-    `status`       CHAR(1)      NOT NULL DEFAULT '0'       COMMENT '状态: 0失败 1成功',
-    `error_msg`    TEXT                  DEFAULT NULL      COMMENT '错误信息',
-    `cost_ms`      BIGINT       NOT NULL DEFAULT 0         COMMENT '耗时(毫秒)',
-    `start_time`   DATETIME     NOT NULL                   COMMENT '开始时间',
-    PRIMARY KEY (`id`),
-    KEY `idx_job_name` (`job_name`),
-    KEY `idx_start_time` (`start_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='定时任务执行日志表';
-
--- ============================================================
--- 15. 用户-角色关联表 (user_role)
--- ============================================================
-CREATE TABLE IF NOT EXISTS `user_role` (
+CREATE TABLE IF NOT EXISTS `sys_user_role` (
     `user_id`  BIGINT NOT NULL  COMMENT '用户ID',
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     PRIMARY KEY (`user_id`, `role_id`),
@@ -287,9 +273,9 @@ CREATE TABLE IF NOT EXISTS `user_role` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户-角色关联表';
 
 -- ============================================================
--- 16. 角色-权限关联表 (role_permission)
+-- 14. 角色-权限关联表 (role_permission)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `role_permission` (
+CREATE TABLE IF NOT EXISTS `sys_role_permission` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     `perm_id`  BIGINT NOT NULL  COMMENT '权限ID',
     PRIMARY KEY (`role_id`, `perm_id`),
@@ -297,9 +283,9 @@ CREATE TABLE IF NOT EXISTS `role_permission` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-权限关联表';
 
 -- ============================================================
--- 17. 角色-菜单关联表 (role_menu)
+-- 15. 角色-菜单关联表 (role_menu)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS `role_menu` (
+CREATE TABLE IF NOT EXISTS `sys_role_menu` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     `menu_id`  BIGINT NOT NULL  COMMENT '菜单ID',
     PRIMARY KEY (`role_id`, `menu_id`),
@@ -307,7 +293,7 @@ CREATE TABLE IF NOT EXISTS `role_menu` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-菜单关联表';
 
 -- ============================================================
--- 18. 角色-部门关联表 (sys_role_dept) — 自定义数据权限
+-- 16. 角色-部门关联表 (sys_role_dept) — 自定义数据权限
 -- ============================================================
 CREATE TABLE IF NOT EXISTS `sys_role_dept` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
@@ -317,7 +303,7 @@ CREATE TABLE IF NOT EXISTS `sys_role_dept` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-部门关联表(自定义数据权限)';
 
 -- ============================================================
--- 19. 文件元数据表 (sys_file)
+-- 17. 文件元数据表 (sys_file)
 -- 存储所有上传文件的元信息，仅存在于主数据库
 -- ============================================================
 CREATE TABLE IF NOT EXISTS `sys_file` (
@@ -409,8 +395,6 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `p
     -- 日志管理
     (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', 'Document', 6, '1'),
     (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', 'Notebook', 7, '1'),
-    -- 定时任务
-    (17, '定时任务',   'system:job',        1,    'menu', '/system/job', 'Timer', 8, '1'),
     -- 字典管理
     (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', 'Collection', 9, '1'),
     -- 参数设置
@@ -441,7 +425,6 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `path`, `compone
     (11, '通知公告', 1, 'C', '/system/notice',    'system/notice/index',    NULL,  'system:notice:list', 'Bell',          0, 0, 8, 1, '1'),
     (12, '操作日志', 1, 'C', '/system/operlog',   'system/operlog/index',   NULL,  'system:operlog:list','Document',      0, 0, 9, 1, '1'),
     (13, '登录日志', 1, 'C', '/system/logininfor','system/logininfor/index',NULL,  'system:logininfor:list','Notebook',  0, 0, 10, 1, '1'),
-    (14, '定时任务', 1, 'C', '/system/job',       'system/job/index',       NULL,  'system:job:list',    'Timer',         0, 0, 11, 1, '1'),
     -- 系统监控子菜单
     (15, '在线用户', 2, 'C', '/monitor/online',   'monitor/online/index',   NULL,  'monitor:online:list','Connection',    0, 0, 1, 1, '1'),
     (16, '服务监控', 2, 'C', '/monitor/server',   'monitor/server/index',   NULL,  'monitor:server:list','DataAnalysis',  0, 0, 2, 1, '1'),
@@ -469,8 +452,8 @@ INSERT INTO `sys_post` (`id`, `name`, `code`, `sort`, `status`, `remark`) VALUES
 INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `remark`) VALUES
     (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
     (2, '用户管理-账号初始密码', 'sys.user.initPassword',  '123456',   '初始化密码'),
-    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-dark',   'dark主题theme-dark，light主题theme-light'),
-    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'true',       '是否开启验证码功能（true开启，false关闭）'),
+    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-light',  'dark主题theme-dark，light主题theme-light'),
+    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'false',      '是否开启验证码功能（true开启，false关闭）'),
     (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      '是否开启注册功能（true开启，false关闭）');
 
 -- -----------------------------------------------------------
@@ -480,7 +463,6 @@ INSERT INTO `sys_dict_type` (`id`, `name`, `code`, `status`, `remark`) VALUES
     (1, '用户性别',   'sys_user_sex',    '1', '用户性别列表'),
     (2, '菜单状态',   'sys_show_hide',   '1', '菜单状态列表'),
     (3, '系统开关',   'sys_normal_disable', '1', '系统正常停用状态'),
-    (4, '任务状态',   'sys_job_status',  '1', '定时任务状态'),
     (5, '系统是否',   'sys_yes_no',      '1', '系统是否列表'),
     (6, '通知类型',   'sys_notice_type', '1', '通知类型列表'),
     (7, '通知状态',   'sys_notice_status', '1', '通知状态列表'),
@@ -501,9 +483,6 @@ INSERT INTO `sys_dict_data` (`id`, `type_code`, `label`, `value`, `sort`, `statu
     -- 系统开关
     (6,  'sys_normal_disable', '正常', '1', 1, '1', 'primary'),
     (7,  'sys_normal_disable', '停用', '0', 2, '1', 'danger'),
-    -- 任务状态
-    (8,  'sys_job_status', '正常', '1', 1, '1', 'primary'),
-    (9,  'sys_job_status', '暂停', '0', 2, '1', 'danger'),
     -- 系统是否
     (10, 'sys_yes_no', '是', 'Y', 1, '1', 'primary'),
     (11, 'sys_yes_no', '否', 'N', 2, '1', 'danger'),
@@ -528,7 +507,7 @@ INSERT INTO `sys_dict_data` (`id`, `type_code`, `label`, `value`, `sort`, `statu
 -- -----------------------------------------------------------
 -- 用户-角色关联 (user_role)
 -- -----------------------------------------------------------
-INSERT INTO `user_role` (`user_id`, `role_id`) VALUES
+INSERT INTO `sys_user_role` (`user_id`, `role_id`) VALUES
     (1, 1),  -- admin -> 超级管理员
     (2, 2);  -- user  -> 普通用户
 
@@ -536,7 +515,7 @@ INSERT INTO `user_role` (`user_id`, `role_id`) VALUES
 -- 角色-权限关联 (role_permission)
 -- 超级管理员拥有全部权限通配符
 -- -----------------------------------------------------------
-INSERT INTO `role_permission` (`role_id`, `perm_id`) VALUES
+INSERT INTO `sys_role_permission` (`role_id`, `perm_id`) VALUES
     (1, 11),  -- admin -> *:*:*
     -- 普通用户拥有基础查看权限
     (2, 7),   -- common -> system:user:list
@@ -546,7 +525,7 @@ INSERT INTO `role_permission` (`role_id`, `perm_id`) VALUES
 -- 角色-菜单关联 (role_menu)
 -- 超级管理员拥有全部菜单（含按钮）
 -- -----------------------------------------------------------
-INSERT INTO `role_menu` (`role_id`, `menu_id`) VALUES
+INSERT INTO `sys_role_menu` (`role_id`, `menu_id`) VALUES
     -- 超级管理员 - 全部菜单
     (1, 0),
     (1, 1),
@@ -562,7 +541,6 @@ INSERT INTO `role_menu` (`role_id`, `menu_id`) VALUES
     (1, 11),
     (1, 12),
     (1, 13),
-    (1, 14),
     (1, 15),
     (1, 16),
     (1, 17),

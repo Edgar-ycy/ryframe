@@ -23,7 +23,3 @@ pub use permission_repo::PermissionRepository;
 pub use post_repo::PostRepository;
 pub use role_repo::RoleRepository;
 pub use user_repo::UserRepository;
-pub mod job_log_repo;
-pub mod job_repo;
-pub use job_log_repo::JobLogRepository;
-pub use job_repo::JobRepository;

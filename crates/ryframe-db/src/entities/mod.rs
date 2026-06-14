@@ -2,8 +2,6 @@ pub mod config;
 pub mod dept;
 pub mod dict_data;
 pub mod dict_type;
-pub mod job;
-pub mod job_log;
 pub mod login_info;
 pub mod menu;
 pub mod notice;

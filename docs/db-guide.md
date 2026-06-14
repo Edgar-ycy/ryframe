@@ -64,13 +64,6 @@ MySQL 使用 `utf8mb4_general_ci`，建议在数据库初始化时配置：
 | `sys_oper_log` | `entities/oper_log.rs` | 操作日志 |
 | `sys_login_info` | `entities/login_info.rs` | 登录日志 |
 
-### 任务表
-
-| 表名 | 实体文件 | 说明 |
-|------|----------|------|
-| `sys_job` | `entities/job.rs` | 定时任务 |
-| `sys_job_log` | `entities/job_log.rs` | 任务执行日志 |
-
 ## 实体定义
 
 所有实体使用 SeaORM 派生宏，位于 `crates/ryframe-db/src/entities/`：

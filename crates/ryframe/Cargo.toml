@@ -17,26 +17,16 @@ ryframe-service = { path = "../ryframe-service" }
 ryframe-api = { path = "../ryframe-api" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-middleware = { path = "../ryframe-middleware" }
-ryframe-task = { path = "../ryframe-task" }
-ryframe-generator = { path = "../ryframe-generator" }
 axum = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"]}
 tracing-appender = { workspace = true }
 sea-orm = { workspace = true}
-sea-orm-migration = { workspace = true }
-chrono = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-tracing-opentelemetry = { workspace = true }
 
 [[bin]]
 name = "ryframe"
 path = "src/main.rs"
-
-[[bin]]
-name = "ryframe-migrate"
-path = "src/bin/ryframe_migrate.rs"
 
 [[bin]]
 name = "ryframe-db-reset"

@@ -13,18 +13,13 @@ use ryframe_db::{
     entities::{dept, role, user},
 };
 use sea_orm::{Database, DatabaseConnection};
-use sea_orm_migration::MigratorTrait;
 
 // ==================== 辅助函数 ====================
 
 async fn setup_test_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
+    Database::connect("sqlite::memory:")
         .await
-        .expect("连接 SQLite 内存数据库失败");
-    ryframe_db::migration::Migrator::up(&db, None)
-        .await
-        .expect("数据库迁移失败");
-    db
+        .expect("连接 SQLite 内存数据库失败")
 }
 
 fn make_user(username: &str, password_hash: &str, status: &str) -> user::Model {

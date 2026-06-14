@@ -54,7 +54,6 @@ ryframe/
 │   ├── ryframe-middleware/  # 中间件 (限流/XSS/CORS/日志)
 │   ├── ryframe-monitor/     # 监控 (健康检查/服务器信息)
 │   ├── ryframe-service/     # 业务服务层
-│   └── ryframe-task/        # 定时任务
 ├── config/                  # 配置文件 (dev/prod/test)
 ├── sql/                     # 数据库初始化脚本
 ├── locales/                 # 国际化资源 (zh-CN / en-US)

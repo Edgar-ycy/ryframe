@@ -1,32 +1,27 @@
 //! ryframe-db Repository 层集成测试
 //!
-//! 使用 SQLite 内存数据库测试 Permission/Post/Config/Dict/Notice/Job/Log Repo 的 CRUD 行为。
+//! 使用 SQLite 内存数据库测试 Permission/Post/Config/Dict/Notice/Log Repo 的 CRUD 行为。
 
 use chrono::Utc;
 use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::{
-    ConfigRepository, DictDataRepository, DictTypeRepository, JobRepository, LoginInfoRepository,
+    ConfigRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
     NoticeRepository, OperLogRepository, PermissionRepository, PostRepository, RoleRepository,
     entities::{
-        config, dict_data, dict_type, job, login_info, notice, oper_log, permission, post, role,
+        config, dict_data, dict_type, login_info, notice, oper_log, permission, post, role,
     },
 };
 use sea_orm::{Database, DatabaseConnection};
-use sea_orm_migration::MigratorTrait;
 
 fn now() -> chrono::DateTime<Utc> {
     Utc::now()
 }
 
 async fn setup_test_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
+    Database::connect("sqlite::memory:")
         .await
-        .expect("连接 SQLite 内存数据库失败");
-    ryframe_db::migration::Migrator::up(&db, None)
-        .await
-        .expect("数据库迁移失败");
-    db
+        .expect("连接 SQLite 内存数据库失败")
 }
 
 // ==================== 辅助构造器（使用 AutoFill 自动生成雪花 ID） ====================
@@ -141,23 +136,6 @@ fn make_notice(title: &str, ntype: Option<&str>) -> notice::Model {
         del_flag: notice::Model::DEL_FLAG_NORMAL.to_string(),
         created_at: now(),
         updated_at: now(),
-    };
-    m.fill_on_insert(&FillContext::new());
-    m
-}
-
-fn make_job(name: &str, status: &str) -> job::Model {
-    let mut m = job::Model {
-        id: 0,
-        name: name.into(),
-        group_name: "DEFAULT".into(),
-        cron_expr: "0/30 * * * * ?".into(),
-        misfire_policy: "1".into(),
-        concurrent: "1".into(),
-        status: status.into(),
-        remark: None,
-        create_time: now(),
-        update_time: now(),
     };
     m.fill_on_insert(&FillContext::new());
     m
@@ -469,108 +447,6 @@ async fn test_notice_repo_filtered_pagination() {
         .await
         .unwrap();
     assert_eq!(page.records.len(), 2);
-}
-
-// ==================== JobRepository ====================
-
-#[tokio::test]
-async fn test_job_repo_crud() {
-    let db = setup_test_db().await;
-    let repo = JobRepository;
-
-    let mut j = job::Model {
-        id: 0,
-        name: "日志清理".into(),
-        group_name: "DEFAULT".into(),
-        cron_expr: "0 0 2 * * ?".into(),
-        misfire_policy: "1".into(),
-        concurrent: "1".into(),
-        status: job::Model::STATUS_NORMAL.to_string(),
-        remark: None,
-        create_time: now(),
-        update_time: now(),
-    };
-    j.fill_on_insert(&FillContext::new());
-    let inserted = repo.insert(&db, j).await.unwrap();
-    assert_eq!(inserted.cron_expr, "0 0 2 * * ?");
-
-    repo.delete(&db, inserted.id).await.unwrap();
-    assert!(repo.find_by_id(&db, inserted.id).await.unwrap().is_none());
-}
-
-#[tokio::test]
-async fn test_job_repo_update_status() {
-    let db = setup_test_db().await;
-    let repo = JobRepository;
-
-    let j = repo
-        .insert(&db, make_job("测试任务", job::Model::STATUS_NORMAL))
-        .await
-        .unwrap();
-
-    repo.update_status(&db, j.id, job::Model::STATUS_PAUSED.to_string())
-        .await
-        .unwrap();
-
-    let found = repo.find_by_id(&db, j.id).await.unwrap().unwrap();
-    assert_eq!(found.status, job::Model::STATUS_PAUSED);
-}
-
-#[tokio::test]
-async fn test_job_repo_find_all_enabled() {
-    let db = setup_test_db().await;
-    let repo = JobRepository;
-
-    repo.insert(&db, make_job("任务A", job::Model::STATUS_NORMAL))
-        .await
-        .unwrap();
-    repo.insert(&db, make_job("任务B", job::Model::STATUS_PAUSED))
-        .await
-        .unwrap();
-    repo.insert(&db, make_job("任务C", job::Model::STATUS_NORMAL))
-        .await
-        .unwrap();
-
-    let enabled = repo.find_all_enabled(&db).await.unwrap();
-    assert_eq!(enabled.len(), 2);
-}
-
-#[tokio::test]
-async fn test_job_repo_update_cron() {
-    let db = setup_test_db().await;
-    let repo = JobRepository;
-
-    let mut j = job::Model {
-        id: 0,
-        name: "动态任务".into(),
-        group_name: "DEFAULT".into(),
-        cron_expr: "0 0 1 * * ?".into(),
-        misfire_policy: "1".into(),
-        concurrent: "1".into(),
-        status: job::Model::STATUS_NORMAL.to_string(),
-        remark: None,
-        create_time: now(),
-        update_time: now(),
-    };
-    j.fill_on_insert(&FillContext::new());
-    let j = repo.insert(&db, j).await.unwrap();
-
-    repo.update_cron(
-        &db,
-        j.id,
-        Some("0 0 3 * * ?".into()),
-        Some(job::Model::STATUS_PAUSED.to_string()),
-        Some("已暂停".into()),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-
-    let found = repo.find_by_id(&db, j.id).await.unwrap().unwrap();
-    assert_eq!(found.cron_expr, "0 0 3 * * ?");
-    assert_eq!(found.status, job::Model::STATUS_PAUSED);
-    assert_eq!(found.remark.as_deref(), Some("已暂停"));
 }
 
 // ==================== LoginInfoRepository ====================

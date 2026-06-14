@@ -16,9 +16,9 @@ use ryframe_config::{
 };
 use ryframe_core::{AppContext, LoggedRepo};
 use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
-    JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
-    PermissionRepository, PostRepository, RoleRepository, UserRepository,
+    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
+    MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
+    RoleRepository, UserRepository,
     entities::{config, dept, role, user},
 };
 use ryframe_middleware::rate_limit::RateLimitState;
@@ -26,28 +26,20 @@ use ryframe_service::{
     AuthServiceImpl,
     system::{
         CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-        JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
-        OnlineUserServiceImpl, OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
-        ProfileServiceImpl, RoleServiceImpl, UserServiceImpl,
+        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+        RoleServiceImpl, UserServiceImpl,
     },
 };
-use ryframe_task::{TaskContext, TaskScheduler};
 use sea_orm::{Database, DatabaseConnection, EntityTrait};
-use sea_orm_migration::MigratorTrait;
 use std::net::SocketAddr;
 use tower::ServiceExt;
 
 /// 创建 SQLite 内存数据库并运行迁移
 async fn setup_test_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
+    Database::connect("sqlite::memory:")
         .await
-        .expect("连接 SQLite 内存数据库失败");
-
-    ryframe_db::migration::Migrator::up(&db, None)
-        .await
-        .expect("数据库迁移失败");
-
-    db
+        .expect("连接 SQLite 内存数据库失败")
 }
 
 /// 填充测试数据：管理员 + 部门
@@ -175,10 +167,6 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
     let config = test_config();
     let config_arc = Arc::new(config.clone());
     let context = AppContext::new(config.clone());
-    let task_ctx = TaskContext {
-        db: Arc::new(db.clone()),
-    };
-    let scheduler = Arc::new(TaskScheduler::new(task_ctx));
 
     AppState {
         db: db.clone(),
@@ -233,11 +221,6 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
         login_info_service: Arc::new(LoginInfoServiceImpl {
             login_info_repo: LoggedRepo::new(LoginInfoRepository),
         }),
-        job_service: Arc::new(JobServiceImpl {
-            job_repo: LoggedRepo::new(JobRepository),
-            job_log_repo: LoggedRepo::new(JobLogRepository),
-            scheduler: scheduler.clone(),
-        }),
         generator_service: Arc::new(GeneratorServiceImpl {
             workspace_root: std::env::current_dir().unwrap(),
         }),
@@ -248,7 +231,6 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
         }),
         online_user_service: Arc::new(OnlineUserServiceImpl::new_in_memory()),
         captcha_store: CaptchaStore::new_in_memory(300),
-        scheduler,
         monitor_db: db,
         redis: None,
         token_blacklist: ryframe_core::TokenBlacklist::new(None),

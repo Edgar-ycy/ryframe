@@ -15,11 +15,9 @@ use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
 /// 需要删除的全部表（按外键依赖从子到父排列）
 const ALL_TABLES: &[&str] = &[
     "sys_role_dept",
-    "role_menu",
-    "role_permission",
-    "user_role",
-    "sys_job_log",
-    "sys_job",
+    "sys_role_menu",
+    "sys_role_permission",
+    "sys_user_role",
     "sys_login_info",
     "sys_oper_log",
     "sys_notice",

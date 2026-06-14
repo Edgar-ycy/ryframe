@@ -14,9 +14,9 @@ use ryframe_service::{
     AuthServiceImpl, UserInfo,
     system::{
         CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-        JobServiceImpl, LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl,
-        OnlineUserServiceImpl, OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl,
-        ProfileServiceImpl, RoleServiceImpl, UserServiceImpl,
+        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
+        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
+        RoleServiceImpl, UserServiceImpl,
     },
 };
 use sea_orm::DatabaseConnection;
@@ -43,12 +43,10 @@ pub struct AppState {
     pub notice_service: Arc<NoticeServiceImpl>,
     pub oper_log_service: Arc<OperLogServiceImpl>,
     pub login_info_service: Arc<LoginInfoServiceImpl>,
-    pub job_service: Arc<JobServiceImpl>,
     pub generator_service: Arc<GeneratorServiceImpl>,
     pub profile_service: Arc<ProfileServiceImpl>,
     pub online_user_service: Arc<OnlineUserServiceImpl>,
     pub captcha_store: CaptchaStore,
-    pub scheduler: Arc<ryframe_task::TaskScheduler>,
     pub monitor_db: DatabaseConnection,
     pub redis: Option<RedisClient>,
     /// Token 黑名单（JWT 主动撤销）

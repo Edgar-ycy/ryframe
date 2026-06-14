@@ -254,7 +254,6 @@ fn resource_to_title(module: &str, resource: &str) -> String {
         ("system", "notices") => "通知公告".into(),
         ("system", "operlogs") => "操作日志".into(),
         ("system", "loginlogs") => "登录日志".into(),
-        ("system", "jobs") => "定时任务".into(),
         ("system", "online") => "在线用户".into(),
         ("monitor", _) => "服务监控".into(),
         ("tools", "gen") => "代码生成".into(),

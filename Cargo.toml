@@ -4,7 +4,7 @@ default-members = ["crates/ryframe"]
 members = [
     "crates/ryframe",
     "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-middleware", "crates/ryframe-service",
-    "crates/ryframe-task", "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro"]
+    "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro"]
 resolver = "3"
 [workspace.package]
 version = "0.1.0"
@@ -22,7 +22,6 @@ async-trait = { version = "0.1" }
 chrono = { version = "0.4" }
 sea-orm = { version = "2.0.0-rc", features = ["sqlx-mysql", "sqlx-postgres", "sqlx-sqlite",
     "runtime-tokio-rustls", "macros", "mock", ] }
-sea-orm-migration = { version = "2.0.0-rc" }
 rand = "0.10"
 rand_core = { version = "0.10" }
 serde = "1"
@@ -43,10 +42,8 @@ uuid = "1"
 
 thiserror = "2"
 http = "1"
-bytes = "1"
 
 sysinfo = "0.39"
-cron = "0.16"
 
 image = { version = "0.25" }
 calamine = { version = "0.34" }
@@ -63,10 +60,8 @@ dashmap = "6"
 zip = "8.6"
 prometheus = "0.14"
 lazy_static = "1"
-ryframe-macro = { path = "crates/ryframe-macro" }
 criterion = { version = "0.8", default-features = false }
 futures-util = "0.3"
-tokio-stream = "0.1"
 # OpenTelemetry 链路追踪
 opentelemetry = { version = "0.32", features = ["trace"] }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
@@ -76,19 +71,15 @@ tracing-opentelemetry = "0.33"
 # SMTP 邮件发送
 lettre = { version = "0.11", default-features = false, features = ["builder", "rustls-tls", "smtp-transport", "tokio1", "tokio1-rustls"] }
 # gRPC
-prost = "0.14"
 tonic = { version = "0.14", default-features = false, features = ["transport", "server", "codegen", "router"] }
-tonic-build = "0.14"
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 aes-gcm = "0.10"
 hmac = "0.13"
 sha2 = "0.11"
-digest = "0.11"
 hex = "0.4"
 # 消息队列 (Kafka, 可选 feature)
 rdkafka = { version = "0.39", features = ["tokio"] }
-tower-service = "0.3"
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"

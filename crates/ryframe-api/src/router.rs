@@ -17,9 +17,9 @@ use crate::{
     handlers::{
         auth_handler::{self, AppState},
         captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
-        generator_handler, job_handler, login_log_handler, menu_handler, notice_handler,
-        online_user_handler, oper_log_handler, permission_handler, post_handler, profile_handler,
-        role_handler, user_handler,
+        generator_handler, login_log_handler, menu_handler, notice_handler, online_user_handler,
+        oper_log_handler, permission_handler, post_handler, profile_handler, role_handler,
+        user_handler,
     },
     oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware},
 };
@@ -222,7 +222,6 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
             "/loginlogs",
             login_log_handler::login_log_router(state.clone()),
         )
-        .nest("/jobs", job_handler::job_router(state.clone()))
         .nest(
             "/online",
             online_user_handler::online_user_router(state.clone()),

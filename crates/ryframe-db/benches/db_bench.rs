@@ -1,16 +1,11 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use ryframe_core::repository::PageQuery;
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait};
-use sea_orm_migration::MigratorTrait;
 
 async fn setup_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
+    Database::connect("sqlite::memory:")
         .await
-        .expect("连接 SQLite 失败");
-    ryframe_db::migration::Migrator::up(&db, None)
-        .await
-        .expect("迁移失败");
-    db
+        .expect("连接 SQLite 失败")
 }
 
 fn bench_db_insert(c: &mut Criterion) {

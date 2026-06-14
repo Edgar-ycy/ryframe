@@ -47,10 +47,7 @@ async fn main() -> Result<(), AppError> {
     // 9. 初始化对象存储
     let object_storage = boot::storage::init(&config);
 
-    // 10. 提前提取 scheduler (在 state move 之前)
-    let scheduler = services.scheduler.clone();
-
-    // 11. 聚合 AppState + 构建 Router
+    // 10. 聚合 AppState + 构建 Router
     let state = boot::app_state::assemble(
         ds.primary.clone(),
         ds.extras,
@@ -64,18 +61,14 @@ async fn main() -> Result<(), AppError> {
     );
     let router = app::build_app(state, limit.limiter, limit.rate_limit_state, &config.cors);
 
-    // 12. 启动 Scheduler 后台
-    scheduler.clone().spawn();
-    tracing::info!("TaskScheduler 已启动");
-
-    // 13. 启动 HTTP 服务
+    // 11. 启动 HTTP 服务
     let addr = format!("{}:{}", config.app.host, config.app.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| AppError::Internal(format!("绑定地址 {} 失败: {}", addr, e)))?;
     tracing::info!("服务启动: http://{}", addr);
 
-    // 14. 启动配置文件热加载
+    // 12. 启动配置文件热加载
     spawn_config_watcher(
         hot_config,
         "config".to_string(),
@@ -98,7 +91,6 @@ async fn main() -> Result<(), AppError> {
         }
     }
 
-    scheduler.shutdown();
     tracing::info!("服务已停止");
     Ok(())
 }

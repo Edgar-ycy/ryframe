@@ -21,4 +21,3 @@ sea-orm = { workspace = true }
 chrono = { workspace = true }
 redis = { workspace = true }
 tracing = { workspace = true }
-prometheus = { workspace = true }

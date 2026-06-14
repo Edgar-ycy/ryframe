@@ -13,9 +13,9 @@ use ryframe_config::{
 };
 use ryframe_core::{LoggedRepo, Repository, repository::PageQuery};
 use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, JobLogRepository,
-    JobRepository, LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
-    PermissionRepository, PostRepository, RoleRepository, UserRepository,
+    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
+    MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
+    RoleRepository, UserRepository,
     entities::{dept, role, user},
 };
 use ryframe_service::{
@@ -27,19 +27,14 @@ use ryframe_service::{
     },
 };
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait};
-use sea_orm_migration::MigratorTrait;
 
 // ==================== 辅助函数 ====================
 
 /// 创建 SQLite 内存数据库并运行迁移
 async fn setup_test_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
+    Database::connect("sqlite::memory:")
         .await
-        .expect("连接 SQLite 内存数据库失败");
-    ryframe_db::migration::Migrator::up(&db, None)
-        .await
-        .expect("数据库迁移失败");
-    db
+        .expect("连接 SQLite 内存数据库失败")
 }
 
 /// 创建测试配置
@@ -1082,84 +1077,4 @@ fn test_generator_service_construction() {
     let _svc = ryframe_service::system::GeneratorServiceImpl {
         workspace_root: workspace,
     };
-}
-
-// ==================== JobService 测试 ====================
-
-/// cron 表达式验证（纯逻辑测试）
-#[test]
-fn test_cron_expression_validation() {
-    use std::str::FromStr;
-
-    // 有效 cron 表达式
-    assert!(cron::Schedule::from_str("0 0 * * * *").is_ok()); // 每小时
-    assert!(cron::Schedule::from_str("*/5 * * * * *").is_ok()); // 每5秒
-    assert!(cron::Schedule::from_str("0 30 9 * * Mon-Fri *").is_ok()); // 工作日9:30
-
-    // 无效 cron 表达式
-    assert!(cron::Schedule::from_str("invalid").is_err());
-    assert!(cron::Schedule::from_str("").is_err());
-    assert!(cron::Schedule::from_str("99 99 99 * * * *").is_err());
-}
-
-/// JobVo / JobLogVo 序列化测试
-#[test]
-fn test_job_vo_serialization() {
-    use ryframe_service::system::job_service::{JobLogVo, JobVo};
-
-    let vo = JobVo {
-        id: "1".into(),
-        name: "测试任务".into(),
-        group_name: "default".into(),
-        cron_expr: "0 0 * * * *".into(),
-        misfire_policy: "1".into(),
-        concurrent: "0".into(),
-        status: "1".into(),
-        description: "每小时执行".into(),
-        next_fire_time: Some("2026-06-01T00:00:00Z".into()),
-        remark: None,
-        create_time: chrono::Utc::now(),
-        update_time: chrono::Utc::now(),
-    };
-
-    let json = serde_json::to_value(&vo).unwrap();
-    assert_eq!(json["name"], "测试任务");
-    assert_eq!(json["cron_expr"], "0 0 * * * *");
-    assert_eq!(json["status"], "1");
-
-    let log_vo = JobLogVo {
-        id: "1".into(),
-        job_name: "测试任务".into(),
-        job_group: "default".into(),
-        message: "执行成功".into(),
-        status: "1".into(),
-        error_msg: None,
-        cost_ms: 150,
-        start_time: chrono::Utc::now(),
-    };
-
-    let json = serde_json::to_value(&log_vo).unwrap();
-    assert_eq!(json["job_name"], "测试任务");
-    assert_eq!(json["status"], "1");
-    assert_eq!(json["cost_ms"], 150);
-}
-
-/// JobService 构造检查
-#[tokio::test]
-async fn test_job_service_construction() {
-    use std::sync::Arc;
-
-    use ryframe_core::LoggedRepo;
-    use ryframe_service::system::job_service::JobServiceImpl;
-
-    let db = setup_test_db().await;
-    let ctx = ryframe_task::TaskContext { db: Arc::new(db) };
-    let scheduler = Arc::new(ryframe_task::TaskScheduler::new(ctx));
-    let db_for_svc = setup_test_db().await;
-    let _svc = JobServiceImpl {
-        job_repo: LoggedRepo::new(JobRepository),
-        job_log_repo: LoggedRepo::new(JobLogRepository),
-        scheduler,
-    };
-    let _ = db_for_svc;
 }

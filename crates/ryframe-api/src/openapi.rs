@@ -41,7 +41,6 @@ use utoipa::OpenApi;
         (name = "通知公告", description = "通知公告 CRUD，支持草稿/发布/关闭状态。"),
         (name = "操作日志", description = "POST/PUT/DELETE 请求自动记录，支持分页查询和批量清空。"),
         (name = "登录日志", description = "登录成功/失败记录，含 IP、浏览器、操作系统信息。"),
-        (name = "定时任务", description = "定时任务 CRUD、暂停/恢复/立即执行。cron 表达式驱动。"),
         (name = "在线用户", description = "查看当前在线用户列表，支持强制下线(token 加入黑名单)。"),
         (name = "服务器监控", description = "/health(健康检查) + /metrics(Prometheus) 公开；/server(CPU/内存/磁盘), /cache, /db-pool 需认证。"),
         (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
@@ -129,16 +128,6 @@ use utoipa::OpenApi;
         // 登录日志
         crate::handlers::login_log_handler::list,
         crate::handlers::login_log_handler::clean,
-        // 定时任务
-        crate::handlers::job_handler::list_no_page,
-        crate::handlers::job_handler::list_page,
-        crate::handlers::job_handler::create_job,
-        crate::handlers::job_handler::update,
-        crate::handlers::job_handler::remove,
-        crate::handlers::job_handler::pause_job,
-        crate::handlers::job_handler::resume_job,
-        crate::handlers::job_handler::trigger,
-        crate::handlers::job_handler::log_list,
         // 在线用户
         crate::handlers::online_user_handler::list_online_users,
         crate::handlers::online_user_handler::list_online_users_page,
@@ -188,9 +177,6 @@ use utoipa::OpenApi;
         // 通知 DTO
         crate::dto::notice_dto::CreateNoticeDto,
         crate::dto::notice_dto::UpdateNoticeDto,
-        // 任务 DTO
-        crate::dto::job_dto::CreateJobDto,
-        crate::dto::job_dto::UpdateJobDto,
         // 日志 DTO
         crate::dto::oper_log_dto::OperLogPageQuery,
         crate::dto::login_log_dto::LoginLogPageQuery,

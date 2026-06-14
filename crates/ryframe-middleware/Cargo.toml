@@ -19,7 +19,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true, features = ["v7"] }
 http = { workspace = true }
-bytes = { workspace = true }
 ammonia = { workspace = true }
 dashmap = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -35,7 +34,6 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 futures-util = { workspace = true }
-tokio-stream = { workspace = true }
 sha2 = { workspace = true }
 sysinfo = { workspace = true }
 

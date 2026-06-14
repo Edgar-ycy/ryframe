@@ -10,20 +10,15 @@ use ryframe_db::{
     entities::{role, user},
 };
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, TransactionTrait};
-use sea_orm_migration::MigratorTrait;
 
 fn now() -> chrono::DateTime<Utc> {
     Utc::now()
 }
 
 async fn setup_test_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
+    Database::connect("sqlite::memory:")
         .await
-        .expect("连接 SQLite 内存数据库失败");
-    ryframe_db::migration::Migrator::up(&db, None)
-        .await
-        .expect("数据库迁移失败");
-    db
+        .expect("连接 SQLite 内存数据库失败")
 }
 
 /// 创建测试用户

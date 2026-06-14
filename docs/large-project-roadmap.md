@@ -21,10 +21,8 @@
 - ✅ **安全防护**：XSS 过滤、安全响应头（CSP/HSTS/X-Frame）、幂等性、重放防护、CSRF
 
 ### 业务功能
-- ✅ **19 张表**：15 核心 + job/job_log/role_dept
+- ✅ **15 张表**：15 核心 + role_dept
 - ✅ **80+ REST API**：auth / system / monitor / tools / common 完整路由
-- ✅ **代码生成器**：实体/仓库/服务/Handler 模板
-- ✅ **定时任务**：Cron 调度 + 任务管理 + 执行历史
 - ✅ **对象存储**：本地 + MinIO/S3
 
 ### 中间件（16 个）
@@ -127,7 +125,6 @@
 ### 6. 数据治理
 
 - [x] 数据库备份脚本（`deploy.sh` 内置）
-- [x] 操作日志自动归档/清理（CleanOperLogTask + CleanLoginInfoTask 内置定时任务）
 - [x] 连接池健康检查增强
 - [x] 数据库慢查询监控集成（`slow_query_threshold_ms` 配置项）
 

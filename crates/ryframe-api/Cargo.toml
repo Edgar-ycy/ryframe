@@ -16,9 +16,7 @@ ryframe-db = { path = "../ryframe-db" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-monitor = { path = "../ryframe-monitor" }
 ryframe-middleware = { path = "../ryframe-middleware" }
-ryframe-task = { path = "../ryframe-task" }
 ryframe-generator = { path = "../ryframe-generator" }
-ryframe-macro = { path = "../ryframe-macro" }
 axum = { workspace = true, features = ["multipart"] }
 serde = { workspace = true, features = ["derive"] }
 validator = { workspace = true, features = ["derive"] }
@@ -35,4 +33,3 @@ http-body-util = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
-sea-orm-migration = { workspace = true }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// 角色-权限关联表（联合主键）
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
-#[sea_orm(table_name = "role_permission")]
+#[sea_orm(table_name = "sys_role_permission")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub role_id: i64,

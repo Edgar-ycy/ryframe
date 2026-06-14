@@ -33,6 +33,7 @@ impl ConfigCrypto {
     /// # 参数
     /// - `master_key`: 32 字节的密钥
     /// - `plaintext`: 要加密的明文
+    #[allow(deprecated)]
     pub fn encrypt(master_key: &[u8], plaintext: &str) -> AppResult<String> {
         let key = Key::<Aes256Gcm>::from_slice(master_key);
         let cipher = Aes256Gcm::new(key);
@@ -63,6 +64,7 @@ impl ConfigCrypto {
     /// 解密 `ENC[base64(...)]` 格式的值
     ///
     /// 如果值不以 `ENC[` 开头，则原样返回（明文模式）。
+    #[allow(deprecated)]
     pub fn decrypt(master_key: &[u8], value: &str) -> AppResult<String> {
         // 非加密值原样返回
         if !value.starts_with(ENCRYPTED_PREFIX) || !value.ends_with(ENCRYPTED_SUFFIX) {

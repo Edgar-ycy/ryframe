@@ -5,7 +5,7 @@
 [![CI](https://github.com/Edgar-ycy/ryframe/actions/workflows/ci.yml/badge.svg)](https://github.com/Edgar-ycy/ryframe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Edgar-ycy/ryframe/branch/main/graph/badge.svg)](https://codecov.io/gh/Edgar-ycy/ryframe)
 
-**RyFrame** —— 基于 Rust + Axum 的现代化企业级后端框架。提供开箱即用的认证授权、系统管理、监控运维、定时任务、代码生成等完整能力，采用 Cargo Workspace 分层架构，各 crate 职责清晰、边界明确。
+**RyFrame** —— 基于 Rust + Axum 的现代化企业级后端框架。提供开箱即用的认证授权、系统管理、监控运维、代码生成等完整能力，采用 Cargo Workspace 分层架构，各 crate 职责清晰、边界明确。
 
 > 🔗 **配套前端**: [RyFrame Vue3](https://github.com/Edgar-ycy/ryframe-vue3) — 基于 Vue 3 + TypeScript + Element Plus 的企业级后台管理系统前端，与本项目配套使用。
 
@@ -31,7 +31,6 @@
 - **Redis 缓存**：配置/字典/菜单树/部门树 读缓存 + 写失效 + 缓存预热 + 缓存击穿保护
 - **监控运维**：服务器信息、增强健康检查（DB+Redis 连通性）、DB 连接池、在线用户、缓存统计、Prometheus Metrics
 - **链路追踪**：OpenTelemetry 分布式追踪（可配置采样率）
-- **定时任务**：Cron 调度 + 任务管理 + 执行历史 + 内置清理任务
 - **代码生成**：读取表结构自动生成 CRUD 代码
 - **弹性容错**：重试（指数退避）+ 熔断器 + 降级
 - **多数据源**：动态数据源注册/切换 + 读写分离
@@ -151,7 +150,6 @@ ryframe/
 │   │                       #   请求体限制 / 超时 / 压缩 / 安全头 / 幂等性 /
 │   │                       #   防重放 / WebSocket / 链路追踪 / 缓存控制）
 │   ├── ryframe-monitor/ # 服务监控（服务器信息 / 健康检查 / 缓存统计 / DB 连接池）
-│   ├── ryframe-task/    # 定时任务（Cron 调度 / 任务管理 / 内置清理任务）
 │   ├── ryframe-generator/ # 代码生成器
 │   └── ryframe-macro/   # 过程宏
 ```
@@ -169,7 +167,7 @@ ryframe/
   ryframe-db / ryframe-core / ryframe-config
         │
 基础共享层（Foundation）
-  ryframe-common / ryframe-task / ryframe-generator / ryframe-macro
+  ryframe-common / ryframe-generator / ryframe-macro
 ```
 
 - **上层可见下层，下层对上层无感知**
@@ -206,7 +204,6 @@ ryframe/
 | 通知公告 | `/notices`     | 列表/创建/更新/删除                     |
 | 操作日志 | `/operlogs`    | 分页查询/清空                         |
 | 登录日志 | `/loginlogs`   | 分页查询/清空                         |
-| 定时任务 | `/jobs`        | CRUD/暂停/恢复/立即触发                 |
 | 在线用户 | `/online`      | 列表/强制踢出                         |
 
 ### 监控 (`/api/v1/monitor`)
@@ -349,7 +346,7 @@ mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS ryframe_config \
 mysql -u root -p ryframe_config < sql/ryframe_config.sql
 ```
 
-### 数据表清单（18 张表）
+### 数据表清单（16 张表）
 
 | 表名                | 说明            |
 |-------------------|---------------|
@@ -365,8 +362,6 @@ mysql -u root -p ryframe_config < sql/ryframe_config.sql
 | `sys_notice`      | 通知公告          |
 | `sys_oper_log`    | 操作日志          |
 | `sys_login_info`  | 登录日志          |
-| `sys_job`         | 定时任务          |
-| `sys_job_log`     | 任务执行日志        |
 | `user_role`       | 用户-角色关联       |
 | `role_permission` | 角色-权限关联       |
 | `role_menu`       | 角色-菜单关联       |
@@ -537,7 +532,6 @@ cargo audit
 | Excel  | Calamine（读）+ XlsxWriter（写）        | 0.34 / 0.94                      |
 | 安全     | Ammonia XSS + AES-GCM + HMAC      | 4.x / 0.10 / 0.13                |
 | 验证     | Validator 自动校验                    | 0.20                             |
-| 任务调度   | Cron                              | 0.16                             |
 | UUID   | uuid（v4 / v7）                     | 1.x                              |
 
 ## Star History
