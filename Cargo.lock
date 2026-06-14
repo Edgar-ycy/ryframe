@@ -4473,6 +4473,7 @@ dependencies = [
  "ryframe-db",
  "sea-orm",
  "serde",
+ "tracing",
 ]
 
 [[package]]

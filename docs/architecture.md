@@ -364,7 +364,6 @@ ryframe/
     │       │   ├── dict_repo.rs, notice_repo.rs
     │       │   ├── oper_log_repo.rs, login_info_repo.rs
     │       │   ├── permission_repo.rs, job_repo.rs, job_log_repo.rs
-    │       └── migration/              # 数据库迁移
     │
     ├── ryframe-service/                # 业务逻辑层
     │   ├── Cargo.toml

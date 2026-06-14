@@ -4,7 +4,7 @@
 
 - **ORM**: SeaORM 2.0-rc
 - **支持的数据库**: MySQL 8.0+, PostgreSQL 14+, SQLite 3.35+
-- **迁移工具**: sea-orm-migration
+- **数据库重置**: `cargo run --bin ryframe-db-reset`
 - **连接池**: SQLx 连接池（tokio 异步）
 - **驱动**: sqlx-mysql / sqlx-postgres / sqlx-sqlite
 
@@ -155,45 +155,12 @@ if result.is_ok() && result2.is_ok() {
 }
 ```
 
-## 数据库迁移
+## 数据库重置
 
-`crates/ryframe-db/src/migration/` 包含迁移管理器。
-
-### 命名规范
-
-```
-mYYYYMMDD_HHMMSS_<description>.rs
-```
-
-示例：`m20260101_000001_init_tables.rs`
-
-### 命令
+项目不使用 migration 管理表结构。表结构变更直接维护 `sql/ryframe_config.sql`，需要重建开发数据库时运行：
 
 ```bash
-# 执行迁移
-cargo run --bin ryframe-migration -- up
-
-# 回滚
-cargo run --bin ryframe-migration -- down
-
-# 查看状态
-cargo run --bin ryframe-migration -- status
-
-# 重建数据库
-cargo run --bin ryframe-migration -- fresh
-
-# 生成新迁移文件
-sea-orm-cli migrate generate <migration_name>
-```
-
-### 编程式迁移管理
-
-```rust,ignore
-use ryframe_db::migration::MigrationManager;
-
-let up_to_date = MigrationManager::is_up_to_date(&db).await?;
-let pending = MigrationManager::pending_count(&db).await?;
-let applied = MigrationManager::status(&db).await?;
+cargo run --bin ryframe-db-reset
 ```
 
 ## 软删除
@@ -347,4 +314,4 @@ slow_query_threshold_ms = 100  # 超过 100ms 的查询输出 WARN
 5. **批量操作**: 批量删除/更新使用事务包裹
 6. **SQL 注入防护**: SeaORM 参数化查询，无 SQL 注入风险
 7. **连接池调优**: 生产环境建议 max_connections=20-50，根据数据库规格调整
-8. **数据迁移**: 所有表结构变更通过 sea-orm-migration 管理，确保可复现
+8. **表结构变更**: 直接维护 `sql/ryframe_config.sql`，开发库通过 `cargo run --bin ryframe-db-reset` 重建

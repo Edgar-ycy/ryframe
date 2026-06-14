@@ -3,6 +3,7 @@ mod boot;
 
 use std::{net::SocketAddr, sync::Arc};
 
+use ryframe_auth::route_registry::PermissionRouteRegistry;
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
 use ryframe_core::{AppContext, HotConfig, spawn_config_watcher};
@@ -47,7 +48,10 @@ async fn main() -> Result<(), AppError> {
     // 9. 初始化对象存储
     let object_storage = boot::storage::init(&config);
 
-    // 10. 聚合 AppState + 构建 Router
+    // 10. 加载权限路由注册表
+    let permission_registry = Arc::new(PermissionRouteRegistry::load_from_db(&ds.primary).await?);
+
+    // 11. 聚合 AppState + 构建 Router
     let state = boot::app_state::assemble(
         ds.primary.clone(),
         ds.extras,
@@ -58,17 +62,18 @@ async fn main() -> Result<(), AppError> {
         services,
         limit.limiter.clone(),
         object_storage,
+        permission_registry,
     );
     let router = app::build_app(state, limit.limiter, limit.rate_limit_state, &config.cors);
 
-    // 11. 启动 HTTP 服务
+    // 12. 启动 HTTP 服务
     let addr = format!("{}:{}", config.app.host, config.app.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| AppError::Internal(format!("绑定地址 {} 失败: {}", addr, e)))?;
     tracing::info!("服务启动: http://{}", addr);
 
-    // 12. 启动配置文件热加载
+    // 13. 启动配置文件热加载
     spawn_config_watcher(
         hot_config,
         "config".to_string(),

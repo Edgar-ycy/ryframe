@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS `sys_permission` (
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父权限ID(树形)',
     `perm_type`   VARCHAR(16)  NOT NULL                    COMMENT '权限类型: menu/api',
     `path`        VARCHAR(255)          DEFAULT NULL       COMMENT '路由路径',
+    `http_method` VARCHAR(10)           DEFAULT NULL       COMMENT 'HTTP方法',
     `icon`        VARCHAR(64)           DEFAULT NULL       COMMENT '图标',
     `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
     `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
@@ -373,36 +374,36 @@ INSERT INTO `sys_user` (`id`, `username`, `password_hash`, `nickname`, `email`, 
 -- -----------------------------------------------------------
 -- 默认权限 (sys_permission)
 -- -----------------------------------------------------------
-INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `path`, `icon`, `sort`, `status`) VALUES
+INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `path`, `http_method`, `icon`, `sort`, `status`) VALUES
     -- 系统管理
-    (1,  '系统管理',   'system',            NULL, 'menu', '/system',  'Setting', 1, '1'),
-    (2,  '用户管理',   'system:user',       1,    'menu', '/system/user',  'User',   1, '1'),
-    (3,  '角色管理',   'system:role',       1,    'menu', '/system/role',  'UserFilled', 2, '1'),
-    (4,  '菜单管理',   'system:menu',       1,    'menu', '/system/menu',  'Menu',   3, '1'),
-    (5,  '部门管理',   'system:dept',       1,    'menu', '/system/dept',  'Grid', 4, '1'),
-    (6,  '岗位管理',   'system:post',       1,    'menu', '/system/post',  'Management',   5, '1'),
+    (1,  '系统管理',   'system',            NULL, 'menu', '/system',  NULL, 'Setting', 1, '1'),
+    (2,  '用户管理',   'system:user',       1,    'menu', '/system/user',  NULL, 'User',   1, '1'),
+    (3,  '角色管理',   'system:role',       1,    'menu', '/system/role',  NULL, 'UserFilled', 2, '1'),
+    (4,  '菜单管理',   'system:menu',       1,    'menu', '/system/menu',  NULL, 'Menu',   3, '1'),
+    (5,  '部门管理',   'system:dept',       1,    'menu', '/system/dept',  NULL, 'Grid', 4, '1'),
+    (6,  '岗位管理',   'system:post',       1,    'menu', '/system/post',  NULL, 'Management',   5, '1'),
     -- 用户管理按钮权限
-    (7,  '用户查询',   'system:user:list',   2,    'api', NULL, NULL, 1, '1'),
-    (8,  '用户新增',   'system:user:add',    2,    'api', NULL, NULL, 2, '1'),
-    (9,  '用户修改',   'system:user:edit',   2,    'api', NULL, NULL, 3, '1'),
-    (10, '用户删除',   'system:user:remove', 2,    'api', NULL, NULL, 4, '1'),
+    (7,  '用户查询',   'system:user:list',   2,    'api', NULL, NULL, NULL, 1, '1'),
+    (8,  '用户新增',   'system:user:add',    2,    'api', NULL, NULL, NULL, 2, '1'),
+    (9,  '用户修改',   'system:user:edit',   2,    'api', NULL, NULL, NULL, 3, '1'),
+    (10, '用户删除',   'system:user:remove', 2,    'api', NULL, NULL, NULL, 4, '1'),
     -- 超级管理员通配符权限
-    (11, '全部权限',   '*:*:*',             NULL, 'api', NULL, NULL, 0, '1'),
+    (11, '全部权限',   '*:*:*',             NULL, 'api', NULL, NULL, NULL, 0, '1'),
     -- 系统监控
-    (12, '系统监控',   'monitor',           NULL, 'menu', '/monitor', 'Monitor', 2, '1'),
-    (13, '在线用户',   'monitor:online',    12,   'menu', '/monitor/online', 'Connection', 1, '1'),
-    (14, '服务器监控', 'monitor:server',    12,   'menu', '/monitor/server', 'DataAnalysis', 2, '1'),
+    (12, '系统监控',   'monitor',           NULL, 'menu', '/monitor', NULL, 'Monitor', 2, '1'),
+    (13, '在线用户',   'monitor:online',    12,   'menu', '/monitor/online', NULL, 'Connection', 1, '1'),
+    (14, '服务器监控', 'monitor:server',    12,   'menu', '/monitor/server', NULL, 'DataAnalysis', 2, '1'),
     -- 日志管理
-    (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', 'Document', 6, '1'),
-    (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', 'Notebook', 7, '1'),
+    (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', NULL, 'Document', 6, '1'),
+    (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', NULL, 'Notebook', 7, '1'),
     -- 字典管理
-    (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', 'Collection', 9, '1'),
+    (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', NULL, 'Collection', 9, '1'),
     -- 参数设置
-    (19, '参数设置',   'system:config',     1,    'menu', '/system/config', 'EditPen', 10, '1'),
+    (19, '参数设置',   'system:config',     1,    'menu', '/system/config', NULL, 'EditPen', 10, '1'),
     -- 通知公告
-    (20, '通知公告',   'system:notice',     1,    'menu', '/system/notice', 'Bell', 11, '1'),
+    (20, '通知公告',   'system:notice',     1,    'menu', '/system/notice', NULL, 'Bell', 11, '1'),
     -- 代码生成
-    (21, '代码生成',   'tools:gen',         NULL, 'menu', '/tools/gen', 'MagicStick', 3, '1');
+    (21, '代码生成',   'tools:gen',         NULL, 'menu', '/tools/gen', NULL, 'MagicStick', 3, '1');
 
 -- -----------------------------------------------------------
 -- 默认菜单 (sys_menu)

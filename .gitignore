@@ -5,7 +5,7 @@ target
 **/mutants.out*/
 .idea/
 .claude
-
+AGENTS.md
 # Code coverage profiler data (large files)
 *.profraw
 example
