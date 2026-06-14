@@ -84,3 +84,11 @@ syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 tempfile = "3"
+
+# Dev profile: 轻微优化以降低 rustc 单态化栈压力，
+# 解决 Windows MSVC 下 ryframe-core 测试编译时栈溢出问题
+[profile.dev]
+opt-level = 1
+
+[profile.test]
+opt-level = 1
