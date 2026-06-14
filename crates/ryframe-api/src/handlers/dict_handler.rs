@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{get, put},
+    routing::{delete, get, post, put},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
@@ -23,14 +23,18 @@ list_query!(pub DictTypeListQuery {
 
 pub fn dict_router(state: AppState) -> Router {
     Router::new()
-        .route("/types", get(list_types).post(create_type))
+        .route("/types", get(list_types))
+        .route("/types", post(create_type))
         .route("/types/list", get(list_types))
         .route("/types/listNoPage", get(list_types_no_page))
         .route("/types/export", get(export_dict_types))
-        .route("/types/{id}", put(update_type).delete(delete_type))
-        .route("/data", get(list_data).post(create_data))
+        .route("/types/{id}", put(update_type))
+        .route("/types/{id}", delete(delete_type))
+        .route("/data", get(list_data))
+        .route("/data", post(create_data))
         .route("/data/type/{dict_type}", get(list_data_by_type_path))
-        .route("/data/{id}", put(update_data).delete(delete_data))
+        .route("/data/{id}", put(update_data))
+        .route("/data/{id}", delete(delete_data))
         .with_state(state)
 }
 

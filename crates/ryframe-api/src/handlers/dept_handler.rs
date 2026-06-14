@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::{delete, get, post, put},
 };
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
@@ -24,7 +24,9 @@ pub fn dept_router(state: AppState) -> Router {
         .route("/list", get(list_page))
         .route("/listNoPage", get(list_no_page))
         .route("/", post(create))
-        .route("/{id}", get(detail).put(update).delete(remove))
+        .route("/{id}", get(detail))
+        .route("/{id}", put(update))
+        .route("/{id}", delete(remove))
         .with_state(state)
 }
 

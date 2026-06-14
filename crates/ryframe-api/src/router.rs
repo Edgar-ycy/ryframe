@@ -22,6 +22,7 @@ use crate::{
         user_handler,
     },
     oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware},
+    user_context_middleware::user_context_middleware,
 };
 
 /// 在线用户跟踪中间件
@@ -187,14 +188,16 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .route("/swagger-ui", get(swagger_ui))
 }
 
-/// 系统管理路由（需认证 + 用户限流 + 在线跟踪 + 操作日志）
+/// 系统管理路由（需认证 + 用户上下文 + 用户限流 + 在线跟踪 + 操作日志）
 ///
 /// .layer() 链的语义：后注册的 layer 包裹先注册的，即后注册的先执行（外层先执行）。
 /// 执行顺序（从外到内）：
 ///   1. auth_middleware（最外层，先执行 → 注入 Claims）
-///   2. user_rate_limit_middleware（用户级限流，使用 Claims）
-///   3. online_user_tracking（在线跟踪，使用 Claims）
-///   4. oper_log_middleware（最内层，后执行 → 使用 Claims 记录操作者）
+///   2. user_context_middleware（查询数据权限 → 注入 CurrentUser）
+///   3. dynamic_permission_middleware（路径→权限码匹配，校验用户权限）
+///   4. user_rate_limit_middleware（用户级限流，使用 Claims）
+///   5. online_user_tracking（在线跟踪，使用 Claims）
+///   6. oper_log_middleware（最内层，后执行 → 使用 Claims 记录操作者）
 fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
@@ -240,14 +243,19 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
             user_rate_limit_middleware,
         ))
         .layer(from_fn_with_state(
+            state.permission_registry.clone(),
+            ryframe_auth::route_registry::dynamic_permission_middleware,
+        ))
+        .layer(from_fn_with_state(state.clone(), user_context_middleware))
+        .layer(from_fn_with_state(
             auth_state,
             ryframe_auth::middleware::auth_middleware,
         ))
 }
 
-/// 工具路由（需认证 + 用户限流 + 操作日志）
+/// 工具路由（需认证 + 用户上下文 + 用户限流 + 操作日志）
 ///
-/// 执行顺序（从外到内）：auth → user_rate_limit → oper_log
+/// 执行顺序（从外到内）：auth → user_context → dynamic_permission → user_rate_limit → oper_log
 fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
@@ -264,6 +272,11 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
             rate_limit_state,
             user_rate_limit_middleware,
         ))
+        .layer(from_fn_with_state(
+            state.permission_registry.clone(),
+            ryframe_auth::route_registry::dynamic_permission_middleware,
+        ))
+        .layer(from_fn_with_state(state.clone(), user_context_middleware))
         .layer(from_fn_with_state(
             auth_state,
             ryframe_auth::middleware::auth_middleware,
@@ -286,9 +299,10 @@ fn common_router(state: AppState) -> Router {
     // 上传路由（公开，不记录操作日志以避免大文件 body 缓冲）
     let upload = common_handler::upload_router(state.clone());
 
-    // 下载路由（需认证，记录操作日志）
+    // 下载路由（需认证 + 用户上下文，记录操作日志）
     let download = common_handler::download_router(state.clone())
         .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
+        .layer(from_fn_with_state(state.clone(), user_context_middleware))
         .layer(middleware::from_fn_with_state(
             auth_state,
             ryframe_auth::middleware::auth_middleware,

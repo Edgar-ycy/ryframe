@@ -76,11 +76,10 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
 
 /// 权限守卫中间件工厂
 ///
-/// 使用方式（路由级）：
+/// 使用方式（路由级，无需 State）：
 /// ```
 /// # use ryframe_auth::middleware::require_permission;
-/// // .route("/users", get(list_users).route_layer(middleware::from_fn_with_state(
-/// //     auth_state.clone(),
+/// // .route("/users", get(list_users).route_layer(middleware::from_fn(
 /// //     require_permission("system:user:list"),
 /// // )))
 /// ```
@@ -88,12 +87,11 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
 pub fn require_permission(
     perm: &'static str,
 ) -> impl Fn(
-    State<AuthState>,
     Request,
     Next,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, Response>> + Send>>
 + Clone {
-    move |_state: State<AuthState>, request: Request, next: Next| {
+    move |request: Request, next: Next| {
         let perm = perm;
         Box::pin(async move {
             let claims = request.extensions().get::<Claims>().ok_or_else(|| {

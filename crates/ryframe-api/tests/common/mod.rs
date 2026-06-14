@@ -276,6 +276,9 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
         object_storage: Arc::new(ryframe_common::utils::LocalObjectStorage::new(
             "uploads", "",
         )),
+        permission_registry: Arc::new(
+            ryframe_auth::route_registry::PermissionRouteRegistry::empty(),
+        ),
     }
 }
 

@@ -10,6 +10,7 @@ fn make_perm(id: i64, name: &str, code: &str, parent_id: Option<i64>) -> permiss
         parent_id,
         perm_type: "api".into(),
         path: None,
+        http_method: None,
         icon: None,
         sort: 0,
         status: "1".into(),

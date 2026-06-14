@@ -126,6 +126,16 @@ impl MenuRepository {
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
+
+    /// 按角色查询菜单树（只返回角色可见的菜单）
+    pub async fn find_tree_by_roles(
+        &self,
+        db: &DatabaseConnection,
+        role_ids: &[i64],
+    ) -> AppResult<Vec<MenuTreeNode>> {
+        let menus = self.find_by_role_ids(db, role_ids).await?;
+        Ok(build_menu_tree(&menus, None))
+    }
     /// 带搜索条件的查询（返回全部，用于列表/搜索）
     pub async fn find_filtered(
         &self,
