@@ -2,6 +2,9 @@
 //!
 //! 使用 SQLite 内存数据库测试 Permission/Post/Config/Dict/Notice/Log Repo 的 CRUD 行为。
 
+mod common;
+use common::setup_test_db;
+
 use chrono::Utc;
 use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
@@ -12,16 +15,9 @@ use ryframe_db::{
         config, dict_data, dict_type, login_info, notice, oper_log, permission, post, role,
     },
 };
-use sea_orm::{Database, DatabaseConnection};
 
 fn now() -> chrono::DateTime<Utc> {
     Utc::now()
-}
-
-async fn setup_test_db() -> DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败")
 }
 
 // ==================== 辅助构造器（使用 AutoFill 自动生成雪花 ID） ====================

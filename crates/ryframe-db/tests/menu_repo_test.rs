@@ -2,6 +2,9 @@
 //!
 //! 使用 SQLite 内存数据库测试菜单仓库的 CRUD、树形结构、角色菜单关联等功能。
 
+mod common;
+use common::setup_test_db;
+
 use chrono::Utc;
 use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
@@ -9,16 +12,10 @@ use ryframe_db::{
     MenuRepository, RoleRepository,
     entities::{menu, role, role_menu},
 };
-use sea_orm::{ActiveModelTrait, ActiveValue, Database};
+use sea_orm::{ActiveModelTrait, ActiveValue};
 
 fn now() -> chrono::DateTime<Utc> {
     Utc::now()
-}
-
-async fn setup_test_db() -> sea_orm::DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败")
 }
 
 fn make_menu(name: &str, parent_id: Option<i64>, sort: i32, status: &str) -> menu::Model {

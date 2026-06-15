@@ -3,23 +3,18 @@
 //! 使用 SQLite 内存数据库测试 Repository、Entity、分页、数据权限等核心功能。
 
 use chrono::Utc;
-use ryframe_common::{
-    annotations::data_scope::{DataScope, DataScopeContext},
-    utils::snowflake,
-};
+use ryframe_common::{DataScope, DataScopeContext, utils::snowflake};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::{
     DeptRepository, MenuRepository, RoleRepository, UserRepository,
     entities::{dept, role, user},
 };
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::DatabaseConnection;
 
-// ==================== 辅助函数 ====================
+mod common;
 
 async fn setup_test_db() -> DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败")
+    common::setup_test_db().await
 }
 
 fn make_user(username: &str, password_hash: &str, status: &str) -> user::Model {

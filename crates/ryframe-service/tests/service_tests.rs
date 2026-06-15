@@ -3,6 +3,9 @@
 //! 使用 SQLite 内存数据库测试核心 Service 业务逻辑。
 //! 每个测试验证一个用户场景，不与 HTTP 层耦合。
 
+mod common;
+use common::setup_test_db;
+
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -26,16 +29,9 @@ use ryframe_service::{
         PostServiceImpl, RoleServiceImpl, UserServiceImpl,
     },
 };
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
 
 // ==================== 辅助函数 ====================
-
-/// 创建 SQLite 内存数据库并运行迁移
-async fn setup_test_db() -> DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败")
-}
 
 /// 创建测试配置
 fn test_config() -> AppConfig {

@@ -146,13 +146,12 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   # ============================================================
-  # Windows 测试 (仅 PR)
+  # Windows tests
   # ============================================================
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
     needs: check
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
 

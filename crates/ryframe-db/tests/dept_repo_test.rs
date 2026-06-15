@@ -2,21 +2,17 @@
 //!
 //! 使用 SQLite 内存数据库测试部门仓库的 CRUD、树形结构、祖先路径等功能。
 
+mod common;
+use common::setup_test_db;
+
 use chrono::Utc;
 use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::DeptRepository;
 use ryframe_db::entities::dept;
-use sea_orm::Database;
 
 fn now() -> chrono::DateTime<Utc> {
     Utc::now()
-}
-
-async fn setup_test_db() -> sea_orm::DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败")
 }
 
 fn make_dept(

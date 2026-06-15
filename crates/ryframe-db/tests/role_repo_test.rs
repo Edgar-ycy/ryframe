@@ -2,6 +2,9 @@
 //!
 //! 使用 SQLite 内存数据库测试角色仓库的 CRUD、角色分配、数据权限等功能。
 
+mod common;
+use common::setup_test_db;
+
 use chrono::Utc;
 use ryframe_common::utils::snowflake;
 use ryframe_core::repository::{PageQuery, Repository};
@@ -9,16 +12,10 @@ use ryframe_db::{
     RoleRepository,
     entities::{role, user},
 };
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, TransactionTrait};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, TransactionTrait};
 
 fn now() -> chrono::DateTime<Utc> {
     Utc::now()
-}
-
-async fn setup_test_db() -> DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败")
 }
 
 /// 创建测试用户
