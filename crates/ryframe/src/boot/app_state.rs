@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ryframe_auth::route_registry::PermissionRouteRegistry;
 use ryframe_config::AppConfig;
 use ryframe_core::{AppContext, RedisClient, TokenBlacklist};
 use ryframe_middleware::RateLimiter;
@@ -20,7 +19,6 @@ pub fn assemble(
     services: Services,
     limiter: Arc<RateLimiter>,
     object_storage: Arc<dyn ryframe_common::utils::ObjectStorage>,
-    permission_registry: Arc<PermissionRouteRegistry>,
 ) -> ryframe_api::AppState {
     ryframe_api::AppState {
         db: primary_db.clone(),
@@ -48,6 +46,5 @@ pub fn assemble(
         replica_dbs: extra_dbs,
         rate_limiter: limiter.clone(),
         object_storage,
-        permission_registry,
     }
 }

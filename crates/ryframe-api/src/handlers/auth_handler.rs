@@ -57,8 +57,6 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     /// 对象存储（本地/MinIO/S3，通过配置切换）
     pub object_storage: Arc<dyn ryframe_common::utils::ObjectStorage>,
-    /// 权限路由注册表（启动时从 DB 加载，动态权限中间件使用）
-    pub permission_registry: Arc<ryframe_auth::route_registry::PermissionRouteRegistry>,
 }
 
 impl AppState {

@@ -3,6 +3,7 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     routing::{delete, get, post, put},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::{CreateUserParams, UpdateUserParams, UserDetailVo, UserVo};
@@ -34,19 +35,37 @@ pub struct UserListQuery {
 
 pub fn user_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/", post(create))
-        .route("/list", get(list))
-        .route("/listNoPage", get(list_no_page))
-        .route("/{id}", get(detail))
-        .route("/{id}", put(update))
-        .route("/{id}", delete(remove))
-        .route("/batch/{ids}", delete(batch_remove))
-        .route("/{id}/password", put(reset_password))
-        .route("/changeStatus", put(change_status))
-        .route("/export", get(export_users))
-        .route("/import", post(import_users))
-        .route("/import-template", get(download_import_template))
+        .route("/", perm_route(get(list), "system:user:list"))
+        .route("/", perm_route(post(create), "system:user:add"))
+        .route("/list", perm_route(get(list), "system:user:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:user:list"),
+        )
+        .route("/{id}", perm_route(get(detail), "system:user:list"))
+        .route("/{id}", perm_route(put(update), "system:user:edit"))
+        .route("/{id}", perm_route(delete(remove), "system:user:remove"))
+        .route(
+            "/batch/{ids}",
+            perm_route(delete(batch_remove), "system:user:remove"),
+        )
+        .route(
+            "/{id}/password",
+            perm_route(put(reset_password), "system:user:edit"),
+        )
+        .route(
+            "/changeStatus",
+            perm_route(put(change_status), "system:user:edit"),
+        )
+        .route(
+            "/export",
+            perm_route(get(export_users), "system:user:export"),
+        )
+        .route("/import", perm_route(post(import_users), "system:user:add"))
+        .route(
+            "/import-template",
+            perm_route(get(download_import_template), "system:user:add"),
+        )
         .with_state(state)
 }
 

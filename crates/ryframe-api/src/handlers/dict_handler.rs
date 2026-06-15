@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::{DictDataVo, DictTypeVo};
@@ -23,18 +24,42 @@ list_query!(pub DictTypeListQuery {
 
 pub fn dict_router(state: AppState) -> Router {
     Router::new()
-        .route("/types", get(list_types))
-        .route("/types", post(create_type))
-        .route("/types/list", get(list_types))
-        .route("/types/listNoPage", get(list_types_no_page))
-        .route("/types/export", get(export_dict_types))
-        .route("/types/{id}", put(update_type))
-        .route("/types/{id}", delete(delete_type))
-        .route("/data", get(list_data))
-        .route("/data", post(create_data))
-        .route("/data/type/{dict_type}", get(list_data_by_type_path))
-        .route("/data/{id}", put(update_data))
-        .route("/data/{id}", delete(delete_data))
+        .route("/types", perm_route(get(list_types), "system:dict:list"))
+        .route("/types", perm_route(post(create_type), "system:dict:add"))
+        .route(
+            "/types/list",
+            perm_route(get(list_types), "system:dict:list"),
+        )
+        .route(
+            "/types/listNoPage",
+            perm_route(get(list_types_no_page), "system:dict:list"),
+        )
+        .route(
+            "/types/export",
+            perm_route(get(export_dict_types), "system:dict:export"),
+        )
+        .route(
+            "/types/{id}",
+            perm_route(put(update_type), "system:dict:edit"),
+        )
+        .route(
+            "/types/{id}",
+            perm_route(delete(delete_type), "system:dict:remove"),
+        )
+        .route("/data", perm_route(get(list_data), "system:dict:list"))
+        .route("/data", perm_route(post(create_data), "system:dict:add"))
+        .route(
+            "/data/type/{dict_type}",
+            perm_route(get(list_data_by_type_path), "system:dict:list"),
+        )
+        .route(
+            "/data/{id}",
+            perm_route(put(update_data), "system:dict:edit"),
+        )
+        .route(
+            "/data/{id}",
+            perm_route(delete(delete_data), "system:dict:remove"),
+        )
         .with_state(state)
 }
 

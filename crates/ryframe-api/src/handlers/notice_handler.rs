@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::NoticeVo;
@@ -20,13 +21,16 @@ list_query!(pub NoticeListQuery {
 
 pub fn notice_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/", post(create))
-        .route("/list", get(list))
-        .route("/listNoPage", get(list_no_page))
-        .route("/{id}", get(detail))
-        .route("/{id}", put(update))
-        .route("/{id}", delete(remove))
+        .route("/", perm_route(get(list), "system:notice:list"))
+        .route("/", perm_route(post(create), "system:notice:add"))
+        .route("/list", perm_route(get(list), "system:notice:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:notice:list"),
+        )
+        .route("/{id}", perm_route(get(detail), "system:notice:list"))
+        .route("/{id}", perm_route(put(update), "system:notice:edit"))
+        .route("/{id}", perm_route(delete(remove), "system:notice:remove"))
         .with_state(state)
 }
 

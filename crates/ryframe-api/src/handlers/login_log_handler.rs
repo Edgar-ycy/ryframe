@@ -3,6 +3,7 @@ use axum::{
     extract::{Query, State},
     routing::get,
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_service::system::LoginInfoVo;
 use serde::Serialize;
@@ -12,11 +13,20 @@ use crate::dto::login_log_dto::LoginLogPageQuery;
 
 pub fn login_log_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/list", get(list))
-        .route("/listNoPage", get(list_no_page))
-        .route("/export", get(export_login_logs))
-        .route("/clean", axum::routing::delete(clean))
+        .route("/", perm_route(get(list), "system:logininfor:list"))
+        .route("/list", perm_route(get(list), "system:logininfor:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:logininfor:list"),
+        )
+        .route(
+            "/export",
+            perm_route(get(export_login_logs), "system:logininfor:export"),
+        )
+        .route(
+            "/clean",
+            perm_route(axum::routing::delete(clean), "system:logininfor:remove"),
+        )
         .with_state(state)
 }
 

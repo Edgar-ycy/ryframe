@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_db::{entities::menu, repositories::menu_repo::MenuTreeNode};
 use validator::Validate;
@@ -19,14 +20,17 @@ list_query!(pub MenuListQuery {
 
 pub fn menu_router(state: AppState) -> Router {
     Router::new()
-        .route("/tree", get(tree))
+        .route("/tree", perm_route(get(tree), "system:menu:list"))
         .route("/user-tree", get(user_tree))
-        .route("/list", get(list_page))
-        .route("/listNoPage", get(list_no_page))
-        .route("/", post(create))
-        .route("/{id}", get(detail))
-        .route("/{id}", put(update))
-        .route("/{id}", delete(remove))
+        .route("/list", perm_route(get(list_page), "system:menu:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:menu:list"),
+        )
+        .route("/", perm_route(post(create), "system:menu:add"))
+        .route("/{id}", perm_route(get(detail), "system:menu:list"))
+        .route("/{id}", perm_route(put(update), "system:menu:edit"))
+        .route("/{id}", perm_route(delete(remove), "system:menu:remove"))
         .with_state(state)
 }
 

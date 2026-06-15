@@ -98,8 +98,6 @@ CREATE TABLE IF NOT EXISTS `sys_permission` (
     `code`        VARCHAR(128) NOT NULL                    COMMENT '权限编码',
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父权限ID(树形)',
     `perm_type`   VARCHAR(16)  NOT NULL                    COMMENT '权限类型: menu/api',
-    `path`        VARCHAR(255)          DEFAULT NULL       COMMENT '路由路径',
-    `http_method` VARCHAR(10)           DEFAULT NULL       COMMENT 'HTTP方法',
     `icon`        VARCHAR(64)           DEFAULT NULL       COMMENT '图标',
     `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
     `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
@@ -374,36 +372,95 @@ INSERT INTO `sys_user` (`id`, `username`, `password_hash`, `nickname`, `email`, 
 -- -----------------------------------------------------------
 -- 默认权限 (sys_permission)
 -- -----------------------------------------------------------
-INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `path`, `http_method`, `icon`, `sort`, `status`) VALUES
+INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`) VALUES
     -- 系统管理
-    (1,  '系统管理',   'system',            NULL, 'menu', '/system',  NULL, 'Setting', 1, '1'),
-    (2,  '用户管理',   'system:user',       1,    'menu', '/system/user',  NULL, 'User',   1, '1'),
-    (3,  '角色管理',   'system:role',       1,    'menu', '/system/role',  NULL, 'UserFilled', 2, '1'),
-    (4,  '菜单管理',   'system:menu',       1,    'menu', '/system/menu',  NULL, 'Menu',   3, '1'),
-    (5,  '部门管理',   'system:dept',       1,    'menu', '/system/dept',  NULL, 'Grid', 4, '1'),
-    (6,  '岗位管理',   'system:post',       1,    'menu', '/system/post',  NULL, 'Management',   5, '1'),
-    -- 用户管理按钮权限
-    (7,  '用户查询',   'system:user:list',   2,    'api', NULL, NULL, NULL, 1, '1'),
-    (8,  '用户新增',   'system:user:add',    2,    'api', NULL, NULL, NULL, 2, '1'),
-    (9,  '用户修改',   'system:user:edit',   2,    'api', NULL, NULL, NULL, 3, '1'),
-    (10, '用户删除',   'system:user:remove', 2,    'api', NULL, NULL, NULL, 4, '1'),
-    -- 超级管理员通配符权限
-    (11, '全部权限',   '*:*:*',             NULL, 'api', NULL, NULL, NULL, 0, '1'),
+    (1, '系统管理', 'system', NULL, 'menu', 'Setting', 1, '1'),
+    (2, '用户管理', 'system:user', 1, 'menu', 'User', 1, '1'),
+    (3, '角色管理', 'system:role', 1, 'menu', 'UserFilled', 2, '1'),
+    (4, '菜单管理', 'system:menu', 1, 'menu', 'Menu', 3, '1'),
+    (5, '部门管理', 'system:dept', 1, 'menu', 'Grid', 4, '1'),
+    (6, '岗位管理', 'system:post', 1, 'menu', 'Management', 5, '1'),
+    -- 用户管理接口权限
+    (7, '用户查询', 'system:user:list', 2, 'api', NULL, 1, '1'),
+    (8, '用户新增', 'system:user:add', 2, 'api', NULL, 2, '1'),
+    (9, '用户修改', 'system:user:edit', 2, 'api', NULL, 3, '1'),
+    (10, '用户删除', 'system:user:remove', 2, 'api', NULL, 4, '1'),
+    (11, '用户导出', 'system:user:export', 2, 'api', NULL, 5, '1'),
+    (12, '全部权限', '*:*:*', NULL, 'api', NULL, 0, '1'),
     -- 系统监控
-    (12, '系统监控',   'monitor',           NULL, 'menu', '/monitor', NULL, 'Monitor', 2, '1'),
-    (13, '在线用户',   'monitor:online',    12,   'menu', '/monitor/online', NULL, 'Connection', 1, '1'),
-    (14, '服务器监控', 'monitor:server',    12,   'menu', '/monitor/server', NULL, 'DataAnalysis', 2, '1'),
+    (13, '系统监控', 'monitor', NULL, 'menu', 'Monitor', 2, '1'),
+    (14, '在线用户', 'monitor:online', 13, 'menu', 'Connection', 1, '1'),
+    (15, '服务器监控', 'monitor:server', 13, 'menu', 'DataAnalysis', 2, '1'),
+    (16, '缓存监控', 'monitor:cache', 13, 'menu', 'Coin', 3, '1'),
+    (17, '连接池监控', 'monitor:db-pool', 13, 'menu', 'Connection', 4, '1'),
     -- 日志管理
-    (15, '操作日志',   'system:operlog',    1,    'menu', '/system/operlog', NULL, 'Document', 6, '1'),
-    (16, '登录日志',   'system:logininfor', 1,    'menu', '/system/logininfor', NULL, 'Notebook', 7, '1'),
+    (18, '操作日志', 'system:operlog', 1, 'menu', 'Document', 6, '1'),
+    (19, '登录日志', 'system:logininfor', 1, 'menu', 'Notebook', 7, '1'),
     -- 字典管理
-    (18, '字典管理',   'system:dict',       1,    'menu', '/system/dict', NULL, 'Collection', 9, '1'),
+    (20, '字典管理', 'system:dict', 1, 'menu', 'Collection', 9, '1'),
     -- 参数设置
-    (19, '参数设置',   'system:config',     1,    'menu', '/system/config', NULL, 'EditPen', 10, '1'),
+    (21, '参数设置', 'system:config', 1, 'menu', 'EditPen', 10, '1'),
     -- 通知公告
-    (20, '通知公告',   'system:notice',     1,    'menu', '/system/notice', NULL, 'Bell', 11, '1'),
+    (22, '通知公告', 'system:notice', 1, 'menu', 'Bell', 11, '1'),
     -- 代码生成
-    (21, '代码生成',   'tools:gen',         NULL, 'menu', '/tools/gen', NULL, 'MagicStick', 3, '1');
+    (23, '代码生成', 'tools:gen', NULL, 'menu', 'MagicStick', 3, '1'),
+    -- 角色管理接口权限
+    (24, '角色查询', 'system:role:list', 3, 'api', NULL, 1, '1'),
+    (25, '角色新增', 'system:role:add', 3, 'api', NULL, 2, '1'),
+    (26, '角色修改', 'system:role:edit', 3, 'api', NULL, 3, '1'),
+    (27, '角色删除', 'system:role:remove', 3, 'api', NULL, 4, '1'),
+    (28, '角色导出', 'system:role:export', 3, 'api', NULL, 5, '1'),
+    -- 菜单管理接口权限
+    (29, '菜单查询', 'system:menu:list', 4, 'api', NULL, 1, '1'),
+    (30, '菜单新增', 'system:menu:add', 4, 'api', NULL, 2, '1'),
+    (31, '菜单修改', 'system:menu:edit', 4, 'api', NULL, 3, '1'),
+    (32, '菜单删除', 'system:menu:remove', 4, 'api', NULL, 4, '1'),
+    -- 权限管理接口权限
+    (33, '权限查询', 'system:permission:list', 4, 'api', NULL, 5, '1'),
+    -- 部门管理接口权限
+    (34, '部门查询', 'system:dept:list', 5, 'api', NULL, 1, '1'),
+    (35, '部门新增', 'system:dept:add', 5, 'api', NULL, 2, '1'),
+    (36, '部门修改', 'system:dept:edit', 5, 'api', NULL, 3, '1'),
+    (37, '部门删除', 'system:dept:remove', 5, 'api', NULL, 4, '1'),
+    -- 岗位管理接口权限
+    (38, '岗位查询', 'system:post:list', 6, 'api', NULL, 1, '1'),
+    (39, '岗位新增', 'system:post:add', 6, 'api', NULL, 2, '1'),
+    (40, '岗位修改', 'system:post:edit', 6, 'api', NULL, 3, '1'),
+    (41, '岗位删除', 'system:post:remove', 6, 'api', NULL, 4, '1'),
+    (42, '岗位导出', 'system:post:export', 6, 'api', NULL, 5, '1'),
+    -- 参数配置接口权限
+    (43, '参数查询', 'system:config:list', 21, 'api', NULL, 1, '1'),
+    (44, '参数新增', 'system:config:add', 21, 'api', NULL, 2, '1'),
+    (45, '参数修改', 'system:config:edit', 21, 'api', NULL, 3, '1'),
+    (46, '参数删除', 'system:config:remove', 21, 'api', NULL, 4, '1'),
+    (47, '参数导出', 'system:config:export', 21, 'api', NULL, 5, '1'),
+    -- 字典管理接口权限
+    (48, '字典查询', 'system:dict:list', 20, 'api', NULL, 1, '1'),
+    (49, '字典新增', 'system:dict:add', 20, 'api', NULL, 2, '1'),
+    (50, '字典修改', 'system:dict:edit', 20, 'api', NULL, 3, '1'),
+    (51, '字典删除', 'system:dict:remove', 20, 'api', NULL, 4, '1'),
+    (52, '字典导出', 'system:dict:export', 20, 'api', NULL, 5, '1'),
+    -- 通知公告接口权限
+    (53, '通知查询', 'system:notice:list', 22, 'api', NULL, 1, '1'),
+    (54, '通知新增', 'system:notice:add', 22, 'api', NULL, 2, '1'),
+    (55, '通知修改', 'system:notice:edit', 22, 'api', NULL, 3, '1'),
+    (56, '通知删除', 'system:notice:remove', 22, 'api', NULL, 4, '1'),
+    -- 日志接口权限
+    (57, '操作日志查询', 'system:operlog:list', 18, 'api', NULL, 1, '1'),
+    (58, '操作日志导出', 'system:operlog:export', 18, 'api', NULL, 2, '1'),
+    (59, '操作日志清空', 'system:operlog:remove', 18, 'api', NULL, 3, '1'),
+    (60, '登录日志查询', 'system:logininfor:list', 19, 'api', NULL, 1, '1'),
+    (61, '登录日志导出', 'system:logininfor:export', 19, 'api', NULL, 2, '1'),
+    (62, '登录日志清空', 'system:logininfor:remove', 19, 'api', NULL, 3, '1'),
+    -- 在线用户与监控接口权限
+    (63, '在线用户查询', 'monitor:online:list', 14, 'api', NULL, 1, '1'),
+    (64, '在线用户强退', 'monitor:online:force-logout', 14, 'api', NULL, 2, '1'),
+    (65, '服务器监控查询', 'monitor:server:list', 15, 'api', NULL, 1, '1'),
+    (66, '缓存监控查询', 'monitor:cache:list', 16, 'api', NULL, 1, '1'),
+    (67, '连接池监控查询', 'monitor:db-pool:list', 17, 'api', NULL, 1, '1'),
+    -- 代码生成接口权限
+    (68, '代码生成查询', 'tools:gen:list', 23, 'api', NULL, 1, '1'),
+    (69, '代码生成操作', 'tools:gen:add', 23, 'api', NULL, 2, '1');
 
 -- -----------------------------------------------------------
 -- 默认菜单 (sys_menu)
@@ -517,7 +574,7 @@ INSERT INTO `sys_user_role` (`user_id`, `role_id`) VALUES
 -- 超级管理员拥有全部权限通配符
 -- -----------------------------------------------------------
 INSERT INTO `sys_role_permission` (`role_id`, `perm_id`) VALUES
-    (1, 11),  -- admin -> *:*:*
+    (1, 12),  -- admin -> *:*:*
     -- 普通用户拥有基础查看权限
     (2, 7),   -- common -> system:user:list
     (2, 1);   -- common -> system (查看)

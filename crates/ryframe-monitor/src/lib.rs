@@ -2,37 +2,53 @@ mod cache_monitor;
 pub mod server_info;
 
 use axum::{Json, extract::State};
-use ryframe_auth::middleware::AuthState;
+use ryframe_auth::middleware::{AuthState, perm_route};
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::RedisClient;
 use sea_orm::DatabaseConnection;
 pub use server_info::ServerInfo;
 
-/// 监控路由状态
+#[derive(Debug, sea_orm::FromQueryResult)]
+struct ActiveConnectionRow {
+    value: i64,
+}
+
+/// Monitor route state.
 #[derive(Clone)]
 pub struct MonitorState {
     pub db: DatabaseConnection,
     pub redis: Option<RedisClient>,
 }
 
-/// 监控路由
+/// Build monitor routes.
 ///
-/// `auth_state` 为 `Some` 时，敏感路由（/server, /cache, /db-pool）需认证。
-/// `/health` 和 `/metrics` 始终公开。
+/// When `auth_state` is `Some`, sensitive routes (`/server`, `/cache`,
+/// `/cache/commands`, `/db-pool`) require authentication and permissions.
+/// `/health` and `/metrics` are always public.
 pub fn monitor_router(state: MonitorState, auth_state: Option<AuthState>) -> axum::Router {
     use axum::{middleware, routing::get};
 
-    // 公开路由（健康检查 + Prometheus 指标）
     let public = axum::Router::new()
         .route("/health", get(health_check_handler))
         .route("/metrics", get(metrics_handler));
 
-    // 受保护路由（服务器信息、缓存、DB 连接池）
     let mut protected = axum::Router::new()
-        .route("/server", get(server_info_handler))
-        .route("/cache", get(cache_info_handler))
-        .route("/cache/commands", get(cache_commands_handler))
-        .route("/db-pool", get(db_pool_handler));
+        .route(
+            "/server",
+            perm_route(get(server_info_handler), "monitor:server:list"),
+        )
+        .route(
+            "/cache",
+            perm_route(get(cache_info_handler), "monitor:cache:list"),
+        )
+        .route(
+            "/cache/commands",
+            perm_route(get(cache_commands_handler), "monitor:cache:list"),
+        )
+        .route(
+            "/db-pool",
+            perm_route(get(db_pool_handler), "monitor:db-pool:list"),
+        );
 
     if let Some(auth) = auth_state {
         protected = protected.route_layer(middleware::from_fn_with_state(
@@ -47,12 +63,10 @@ pub fn monitor_router(state: MonitorState, auth_state: Option<AuthState>) -> axu
         .with_state(state)
 }
 
-/// 服务器信息
 async fn server_info_handler() -> AppResult<Json<ApiResponse<ServerInfo>>> {
     Ok(Json(ApiResponse::success(ServerInfo::collect())))
 }
 
-/// 增强健康检查（含 DB + Redis 连通性）
 async fn health_check_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -76,7 +90,6 @@ async fn health_check_handler(
     }))))
 }
 
-/// 缓存信息
 async fn cache_info_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<cache_monitor::CacheInfo>>> {
@@ -84,7 +97,6 @@ async fn cache_info_handler(
     Ok(Json(ApiResponse::success(info)))
 }
 
-/// 缓存命令统计
 async fn cache_commands_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -92,16 +104,15 @@ async fn cache_commands_handler(
         Some(redis) => {
             let stats = cache_monitor::get_cache_command_stats(redis).await;
             Ok(Json(ApiResponse::success(stats.unwrap_or(
-                serde_json::json!({"error": "无法获取命令统计"}),
+                serde_json::json!({"error": "failed to fetch command stats"}),
             ))))
         }
         None => Ok(Json(ApiResponse::success(
-            serde_json::json!({"error": "Redis 未配置"}),
+            serde_json::json!({"error": "Redis not configured"}),
         ))),
     }
 }
 
-/// Prometheus Metrics 端点
 async fn metrics_handler() -> axum::response::Response {
     let text = ryframe_middleware::metrics::metrics_text();
     axum::response::Response::builder()
@@ -110,43 +121,37 @@ async fn metrics_handler() -> axum::response::Response {
         .unwrap()
 }
 
-/// 数据库连接池状态
 async fn db_pool_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    use sea_orm::{FromQueryResult, Statement};
+    use sea_orm::Statement;
 
     let backend = state.db.get_database_backend();
     let ping_ok = ryframe_db::connection::ping(&state.db).await.is_ok();
 
-    // 尝试查询活跃连接数
     let active_connections = match backend {
         sea_orm::DatabaseBackend::MySql => {
             let sql = "SHOW STATUS WHERE Variable_name = 'Threads_connected'";
-            #[derive(Debug, FromQueryResult)]
-            struct Row {
-                value: i64,
-            }
-            Row::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
-                .one(&state.db)
-                .await
-                .ok()
-                .flatten()
-                .map(|r| r.value)
+            <ActiveConnectionRow as sea_orm::FromQueryResult>::find_by_statement(
+                Statement::from_sql_and_values(backend, sql, []),
+            )
+            .one(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|row| row.value)
         }
         sea_orm::DatabaseBackend::Postgres => {
             let sql =
                 "SELECT count(*)::bigint AS value FROM pg_stat_activity WHERE state = 'active'";
-            #[derive(Debug, FromQueryResult)]
-            struct Row {
-                value: i64,
-            }
-            Row::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
-                .one(&state.db)
-                .await
-                .ok()
-                .flatten()
-                .map(|r| r.value)
+            <ActiveConnectionRow as sea_orm::FromQueryResult>::find_by_statement(
+                Statement::from_sql_and_values(backend, sql, []),
+            )
+            .one(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|row| row.value)
         }
         _ => None,
     };

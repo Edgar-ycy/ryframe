@@ -3,6 +3,7 @@ use axum::{
     extract::{Query, State},
     routing::get,
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_service::system::OperLogVo;
 use serde::Serialize;
@@ -12,11 +13,20 @@ use crate::dto::oper_log_dto::OperLogPageQuery;
 
 pub fn oper_log_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/list", get(list))
-        .route("/listNoPage", get(list_no_page))
-        .route("/export", get(export_oper_logs))
-        .route("/clean", axum::routing::delete(clean))
+        .route("/", perm_route(get(list), "system:operlog:list"))
+        .route("/list", perm_route(get(list), "system:operlog:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:operlog:list"),
+        )
+        .route(
+            "/export",
+            perm_route(get(export_oper_logs), "system:operlog:export"),
+        )
+        .route(
+            "/clean",
+            perm_route(axum::routing::delete(clean), "system:operlog:remove"),
+        )
         .with_state(state)
 }
 

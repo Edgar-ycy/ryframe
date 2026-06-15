@@ -29,8 +29,6 @@ fn make_permission(name: &str, code: &str, sort: i32) -> permission::Model {
         code: code.into(),
         parent_id: None,
         perm_type: "api".into(),
-        path: None,
-        http_method: None,
         icon: None,
         sort,
         status: "1".into(),

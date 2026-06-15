@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_db::repositories::dept_repo::DeptTreeNode;
@@ -20,13 +21,16 @@ list_query!(pub DeptListQuery {
 
 pub fn dept_router(state: AppState) -> Router {
     Router::new()
-        .route("/tree", get(tree))
-        .route("/list", get(list_page))
-        .route("/listNoPage", get(list_no_page))
-        .route("/", post(create))
-        .route("/{id}", get(detail))
-        .route("/{id}", put(update))
-        .route("/{id}", delete(remove))
+        .route("/tree", perm_route(get(tree), "system:dept:list"))
+        .route("/list", perm_route(get(list_page), "system:dept:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:dept:list"),
+        )
+        .route("/", perm_route(post(create), "system:dept:add"))
+        .route("/{id}", perm_route(get(detail), "system:dept:list"))
+        .route("/{id}", perm_route(put(update), "system:dept:edit"))
+        .route("/{id}", perm_route(delete(remove), "system:dept:remove"))
         .with_state(state)
 }
 

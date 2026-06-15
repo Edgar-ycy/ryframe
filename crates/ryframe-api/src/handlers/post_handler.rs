@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::PostVo;
@@ -21,14 +22,20 @@ list_query!(pub PostListQuery {
 
 pub fn post_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/", post(create))
-        .route("/list", get(list))
-        .route("/listNoPage", get(list_no_page))
-        .route("/export", get(export_posts))
-        .route("/{id}", get(detail))
-        .route("/{id}", put(update))
-        .route("/{id}", delete(remove))
+        .route("/", perm_route(get(list), "system:post:list"))
+        .route("/", perm_route(post(create), "system:post:add"))
+        .route("/list", perm_route(get(list), "system:post:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:post:list"),
+        )
+        .route(
+            "/export",
+            perm_route(get(export_posts), "system:post:export"),
+        )
+        .route("/{id}", perm_route(get(detail), "system:post:list"))
+        .route("/{id}", perm_route(put(update), "system:post:edit"))
+        .route("/{id}", perm_route(delete(remove), "system:post:remove"))
         .with_state(state)
 }
 

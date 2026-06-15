@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_service::system::online_user_service::OnlineUserVo;
 
@@ -17,10 +18,22 @@ list_query!(pub OnlineUserQuery {
 /// 在线用户路由
 pub fn online_user_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list_online_users))
-        .route("/list", get(list_online_users_page))
-        .route("/listNoPage", get(list_online_users))
-        .route("/{token_id}", delete(force_logout))
+        .route(
+            "/",
+            perm_route(get(list_online_users), "monitor:online:list"),
+        )
+        .route(
+            "/list",
+            perm_route(get(list_online_users_page), "monitor:online:list"),
+        )
+        .route(
+            "/listNoPage",
+            perm_route(get(list_online_users), "monitor:online:list"),
+        )
+        .route(
+            "/{token_id}",
+            perm_route(delete(force_logout), "monitor:online:force-logout"),
+        )
         .with_state(state)
 }
 

@@ -4242,14 +4242,10 @@ dependencies = [
  "criterion",
  "jsonwebtoken",
  "rand_core 0.10.1",
- "regex",
  "ryframe-common",
  "ryframe-config",
  "ryframe-core",
- "ryframe-db",
- "sea-orm",
  "serde",
- "tracing",
 ]
 
 [[package]]

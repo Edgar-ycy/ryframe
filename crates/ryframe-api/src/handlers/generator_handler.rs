@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_generator::{GenerateOptions, GeneratedFile};
 
@@ -13,10 +14,10 @@ use crate::handlers::auth_handler::AppState;
 
 pub fn generator_router(state: AppState) -> Router {
     Router::new()
-        .route("/tables", get(list_tables))
-        .route("/preview", post(preview))
-        .route("/generate", post(generate))
-        .route("/download", post(download))
+        .route("/tables", perm_route(get(list_tables), "tools:gen:list"))
+        .route("/preview", perm_route(post(preview), "tools:gen:list"))
+        .route("/generate", perm_route(post(generate), "tools:gen:add"))
+        .route("/download", perm_route(post(download), "tools:gen:add"))
         .with_state(state)
 }
 

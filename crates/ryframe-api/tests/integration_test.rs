@@ -19,7 +19,7 @@ use ryframe_db::{
     ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
     MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
     RoleRepository, UserRepository,
-    entities::{config, dept, role, user},
+    entities::{config, dept, permission, role, role_permission, user},
 };
 use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
@@ -132,6 +132,21 @@ async fn seed_test_data(db: &DatabaseConnection) {
     let active: role::ActiveModel = role_model.into();
     role::Entity::insert(active).exec(db).await.unwrap();
 
+    let all_permission = permission::Model {
+        id: 1,
+        name: "全部权限".into(),
+        code: "*:*:*".into(),
+        parent_id: None,
+        perm_type: "api".into(),
+        icon: None,
+        sort: 0,
+        status: "1".into(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    let active: permission::ActiveModel = all_permission.into();
+    permission::Entity::insert(active).exec(db).await.unwrap();
+
     // 分配角色
     let user_role_model = ryframe_db::entities::user_role::Model {
         user_id: 1,
@@ -139,6 +154,16 @@ async fn seed_test_data(db: &DatabaseConnection) {
     };
     let active: ryframe_db::entities::user_role::ActiveModel = user_role_model.into();
     ryframe_db::entities::user_role::Entity::insert(active)
+        .exec(db)
+        .await
+        .unwrap();
+
+    let role_permission_model = role_permission::Model {
+        role_id: 1,
+        perm_id: 1,
+    };
+    let active: role_permission::ActiveModel = role_permission_model.into();
+    role_permission::Entity::insert(active)
         .exec(db)
         .await
         .unwrap();
@@ -273,9 +298,6 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
         object_storage: Arc::new(ryframe_common::utils::LocalObjectStorage::new(
             "uploads", "",
         )),
-        permission_registry: Arc::new(
-            ryframe_auth::route_registry::PermissionRouteRegistry::empty(),
-        ),
     }
 }
 

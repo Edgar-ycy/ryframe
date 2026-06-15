@@ -102,8 +102,7 @@ async fn test_permission_non_admin_access() {
     assert_eq!(status, StatusCode::OK, "normal 用户应可以登录");
     let normal_token = body["data"]["access_token"].as_str().unwrap().to_string();
 
-    // 尝试访问系统管理接口（当前中间件不按角色拦截，只验证 token 有效性）
-    // 无角色用户仍能通过认证中间件，权限控制在 handler 层
+    // 尝试访问系统管理接口：无角色/无权限用户应被路由权限层拦截
     let system_endpoints = vec![
         "/system/users/list?page=1&pageSize=10",
         "/system/roles/list?page=1&pageSize=10",
@@ -114,11 +113,10 @@ async fn test_permission_non_admin_access() {
 
     for uri in system_endpoints {
         let (status, _) = auth_get(&db, uri, &normal_token).await;
-        // 当前中间件层不强制角色校验，允许已认证用户访问查询接口
         assert_eq!(
             status,
-            StatusCode::OK,
-            "已认证用户应能访问查询接口 {}，实际返回 {}",
+            StatusCode::FORBIDDEN,
+            "无权限用户访问 {} 应返回 403，实际返回 {}",
             uri,
             status
         );

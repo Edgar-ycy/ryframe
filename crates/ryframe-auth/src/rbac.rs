@@ -19,22 +19,20 @@ pub fn has_permission(user_perms: &[String], required: &str) -> bool {
         return true;
     }
 
-    user_perms.iter().any(|p| {
-        // 精确匹配
-        if p == required {
-            return true;
-        }
-        // 全局超级权限
-        if p == "*:*:*" || p == "admin" {
-            return true;
-        }
-        // 通配符匹配
-        if p.ends_with(":*") {
-            let prefix = &p[..p.len() - 2];
-            return required.starts_with(prefix);
-        }
-        false
-    })
+    user_perms
+        .iter()
+        .any(|p| p == required || p == "admin" || wildcard_match(p, required))
+}
+
+fn wildcard_match(pattern: &str, required: &str) -> bool {
+    let pattern_parts: Vec<&str> = pattern.split(':').collect();
+    let required_parts: Vec<&str> = required.split(':').collect();
+
+    pattern_parts.len() == required_parts.len()
+        && pattern_parts
+            .iter()
+            .zip(required_parts.iter())
+            .all(|(pattern, required)| *pattern == "*" || pattern == required)
 }
 
 /// 检查用户是否拥有指定角色

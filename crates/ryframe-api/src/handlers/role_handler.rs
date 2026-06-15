@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
 };
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::RoleVo;
@@ -23,19 +24,40 @@ list_query!(pub RoleListQuery {
 
 pub fn role_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/", post(create))
-        .route("/list", get(list))
-        .route("/listNoPage", get(list_no_page))
-        .route("/export", get(export_roles))
-        .route("/{id}", get(detail))
-        .route("/{id}", put(update))
-        .route("/{id}", delete(remove))
-        .route("/batch/{ids}", delete(batch_remove))
-        .route("/{id}/permissions", get(get_role_perms))
-        .route("/{id}/permissions", put(assign_permissions))
-        .route("/{id}/menus", put(assign_menus))
-        .route("/{id}/data-scope", put(assign_data_scope))
+        .route("/", perm_route(get(list), "system:role:list"))
+        .route("/", perm_route(post(create), "system:role:add"))
+        .route("/list", perm_route(get(list), "system:role:list"))
+        .route(
+            "/listNoPage",
+            perm_route(get(list_no_page), "system:role:list"),
+        )
+        .route(
+            "/export",
+            perm_route(get(export_roles), "system:role:export"),
+        )
+        .route("/{id}", perm_route(get(detail), "system:role:list"))
+        .route("/{id}", perm_route(put(update), "system:role:edit"))
+        .route("/{id}", perm_route(delete(remove), "system:role:remove"))
+        .route(
+            "/batch/{ids}",
+            perm_route(delete(batch_remove), "system:role:remove"),
+        )
+        .route(
+            "/{id}/permissions",
+            perm_route(get(get_role_perms), "system:role:list"),
+        )
+        .route(
+            "/{id}/permissions",
+            perm_route(put(assign_permissions), "system:role:edit"),
+        )
+        .route(
+            "/{id}/menus",
+            perm_route(put(assign_menus), "system:role:edit"),
+        )
+        .route(
+            "/{id}/data-scope",
+            perm_route(put(assign_data_scope), "system:role:edit"),
+        )
         .with_state(state)
 }
 

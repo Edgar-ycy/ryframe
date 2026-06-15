@@ -13,8 +13,6 @@ pub struct Model {
     pub code: String,
     pub parent_id: Option<i64>,
     pub perm_type: String,
-    pub path: Option<String>,
-    pub http_method: Option<String>,
     pub icon: Option<String>,
     pub sort: i32,
     pub status: String,

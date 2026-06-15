@@ -1,11 +1,14 @@
 use axum::{Json, Router, extract::State, routing::get};
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_service::system::PermissionTreeNode;
 
 use super::auth_handler::AppState;
 
 pub fn permission_router(state: AppState) -> Router {
-    Router::new().route("/tree", get(tree)).with_state(state)
+    Router::new()
+        .route("/tree", perm_route(get(tree), "system:permission:list"))
+        .with_state(state)
 }
 
 /// 权限树查询

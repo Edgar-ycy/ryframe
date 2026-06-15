@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Request, State},
-    middleware::Next,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
+    routing::MethodRouter,
 };
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
@@ -103,4 +104,11 @@ pub fn require_permission(
             Ok(next.run(request).await)
         })
     }
+}
+
+pub fn perm_route<S>(route: MethodRouter<S>, perm: &'static str) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    route.route_layer(middleware::from_fn(require_permission(perm)))
 }
