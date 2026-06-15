@@ -13,7 +13,6 @@ ryframe-config = { path = "../ryframe-config" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-macro = { path = "../ryframe-macro" }
 sea-orm = { workspace = true }
-tokio = { workspace = true }
 async-trait = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
@@ -24,6 +23,8 @@ rand = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 
 [[bench]]
 name = "db_bench"

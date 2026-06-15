@@ -16,7 +16,7 @@ async-trait = {workspace = true}
 sea-orm = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 redis = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "fs"] }
 tracing = { workspace = true }
 dashmap = { workspace = true }
 axum = { workspace = true }
@@ -31,7 +31,7 @@ kafka = ["dep:rdkafka"]
 
 [dev-dependencies]
 criterion = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [[bench]]
 name = "core_bench"

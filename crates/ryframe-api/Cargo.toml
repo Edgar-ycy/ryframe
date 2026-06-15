@@ -22,7 +22,7 @@ serde = { workspace = true, features = ["derive"] }
 validator = { workspace = true, features = ["derive"] }
 sea-orm = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["rt"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v7"] }
 base64 = { workspace = true }
@@ -33,3 +33,5 @@ http-body-util = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }

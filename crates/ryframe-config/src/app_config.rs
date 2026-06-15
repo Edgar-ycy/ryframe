@@ -57,23 +57,9 @@ impl AppConfig {
     /// 环境配置文件仅需包含要覆盖的字段，不要求完整。
     pub fn load(config_dir: &str) -> AppResult<Self> {
         let env = std::env::var("APP_ENV").unwrap_or_else(|_| "dev".to_string());
+        let mut table = load_merged_table(config_dir, &env)?;
+        apply_env_overrides(&mut table)?;
 
-        // 第一层：加载默认配置为 TOML Table
-        let base_path = format!("{}/app.toml", config_dir);
-        let base_toml = std::fs::read_to_string(&base_path)
-            .map_err(|e| AppError::Config(format!("无法读取 {}: {}", base_path, e)))?;
-        let mut table: toml::Table = toml::from_str(&base_toml)
-            .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", base_path, e)))?;
-
-        // 第二层：加载环境配置文件，merge 到 base table
-        let env_path = format!("{}/app.{}.toml", config_dir, env);
-        if let Ok(env_toml) = std::fs::read_to_string(&env_path) {
-            let env_table: toml::Table = toml::from_str(&env_toml)
-                .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", env_path, e)))?;
-            merge_tables(&mut table, &env_table);
-        }
-
-        // Table → AppConfig
         let mut config: AppConfig = table
             .try_into()
             .map_err(|e| AppError::Config(format!("配置反序列化失败: {}", e)))?;
@@ -89,29 +75,10 @@ impl AppConfig {
 
     /// 仅重新加载可热更新的配置字段（不包含 database、app.host/port 等）
     ///
-    /// 只加载环境配置文件（不加载默认 + 环境变量的完整覆盖），
-    /// 返回的 AppConfig 中只填充了可热更新的字段。
+    /// 复用完整加载流程，确保环境配置文件可以只写差异字段，并继续支持 APP_* 覆盖。
+    /// 调用方仍只应用可热更新字段。
     pub fn reload_hot(config_dir: &str) -> AppResult<Self> {
-        let env = std::env::var("APP_ENV").unwrap_or_else(|_| "dev".to_string());
-
-        // 读取环境配置文件
-        let env_path = format!("{}/app.{}.toml", config_dir, env);
-        if let Ok(env_toml) = std::fs::read_to_string(&env_path) {
-            let env_table: toml::Table = toml::from_str(&env_toml)
-                .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", env_path, e)))?;
-            let config: AppConfig = env_table
-                .try_into()
-                .map_err(|e| AppError::Config(format!("热加载配置反序列化失败: {}", e)))?;
-            return Ok(config);
-        }
-
-        // 回退到默认配置
-        let base_path = format!("{}/app.toml", config_dir);
-        let base_toml = std::fs::read_to_string(&base_path)
-            .map_err(|e| AppError::Config(format!("无法读取 {}: {}", base_path, e)))?;
-        let config: AppConfig = toml::from_str(&base_toml)
-            .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", base_path, e)))?;
-        Ok(config)
+        Self::load(config_dir)
     }
 
     /// 校验必填配置项
@@ -151,6 +118,388 @@ impl AppConfig {
         }
         Ok(())
     }
+}
+
+fn load_merged_table(config_dir: &str, env: &str) -> AppResult<toml::Table> {
+    // 第一层：加载默认配置为 TOML Table
+    let base_path = format!("{}/app.toml", config_dir);
+    let base_toml = std::fs::read_to_string(&base_path)
+        .map_err(|e| AppError::Config(format!("无法读取 {}: {}", base_path, e)))?;
+    let mut table: toml::Table = toml::from_str(&base_toml)
+        .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", base_path, e)))?;
+
+    // 第二层：加载环境配置文件，merge 到 base table
+    let env_path = format!("{}/app.{}.toml", config_dir, env);
+    if let Ok(env_toml) = std::fs::read_to_string(&env_path) {
+        let env_table: toml::Table = toml::from_str(&env_toml)
+            .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", env_path, e)))?;
+        merge_tables(&mut table, &env_table);
+    }
+
+    Ok(table)
+}
+
+fn apply_env_overrides(table: &mut toml::Table) -> AppResult<()> {
+    for spec in ENV_OVERRIDES {
+        let Ok(value) = std::env::var(spec.name) else {
+            continue;
+        };
+        let value = parse_env_value(spec.name, &value, spec.value_type)?;
+        insert_toml_path(table, spec.path, value);
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct EnvOverride {
+    name: &'static str,
+    path: &'static [&'static str],
+    value_type: EnvValueType,
+}
+
+#[derive(Clone, Copy)]
+enum EnvValueType {
+    String,
+    Integer,
+    Bool,
+    StringArray,
+}
+
+const ENV_OVERRIDES: &[EnvOverride] = &[
+    EnvOverride {
+        name: "APP_APP_NAME",
+        path: &["app", "name"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_APP_VERSION",
+        path: &["app", "version"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_APP_HOST",
+        path: &["app", "host"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_APP_PORT",
+        path: &["app", "port"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_SQL_LOG_LEVEL",
+        path: &["database", "sql_log_level"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_DRIVER",
+        path: &["database", "connections", "0", "driver"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_HOST",
+        path: &["database", "connections", "0", "host"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_PORT",
+        path: &["database", "connections", "0", "port"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_NAME",
+        path: &["database", "connections", "0", "database"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_USERNAME",
+        path: &["database", "connections", "0", "username"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_PASSWORD",
+        path: &["database", "connections", "0", "password"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_MAX_CONNECTIONS",
+        path: &["database", "connections", "0", "max_connections"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_MIN_CONNECTIONS",
+        path: &["database", "connections", "0", "min_connections"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_ACQUIRE_TIMEOUT_SECS",
+        path: &["database", "connections", "0", "acquire_timeout_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_IDLE_TIMEOUT_SECS",
+        path: &["database", "connections", "0", "idle_timeout_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_MAX_LIFETIME_SECS",
+        path: &["database", "connections", "0", "max_lifetime_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_CONNECT_TIMEOUT_SECS",
+        path: &["database", "connections", "0", "connect_timeout_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_AUTH_JWT_SECRET",
+        path: &["auth", "jwt_secret"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_AUTH_ACCESS_TOKEN_EXPIRE",
+        path: &["auth", "access_token_expire"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_AUTH_REFRESH_TOKEN_EXPIRE",
+        path: &["auth", "refresh_token_expire"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_AUTH_MAX_LOGIN_ATTEMPTS",
+        path: &["auth", "max_login_attempts"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_AUTH_LOCKOUT_DURATION_MINUTES",
+        path: &["auth", "lockout_duration_minutes"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_AUTH_ENABLE_PASSWORD_COMPLEXITY",
+        path: &["auth", "enable_password_complexity"],
+        value_type: EnvValueType::Bool,
+    },
+    EnvOverride {
+        name: "APP_REDIS_HOST",
+        path: &["redis", "host"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_REDIS_PORT",
+        path: &["redis", "port"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_REDIS_PASSWORD",
+        path: &["redis", "password"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_REDIS_DATABASE",
+        path: &["redis", "database"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_REDIS_MAX_POOL_SIZE",
+        path: &["redis", "max_pool_size"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_REDIS_TIMEOUT_SECS",
+        path: &["redis", "timeout_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_LOGGER_LEVEL",
+        path: &["logger", "level"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_LOGGER_FORMAT",
+        path: &["logger", "format"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_LOGGER_OUTPUT",
+        path: &["logger", "output"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_CORS_ALLOW_ORIGINS",
+        path: &["cors", "allow_origins"],
+        value_type: EnvValueType::StringArray,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_ENABLED",
+        path: &["rate_limit", "enabled"],
+        value_type: EnvValueType::Bool,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_CAPACITY",
+        path: &["rate_limit", "capacity"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_REFILL_PER_SEC",
+        path: &["rate_limit", "refill_per_sec"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_WINDOW_SECS",
+        path: &["rate_limit", "window_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_ENABLE_USER_RATE_LIMIT",
+        path: &["rate_limit", "enable_user_rate_limit"],
+        value_type: EnvValueType::Bool,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_USER_WINDOW_SECS",
+        path: &["rate_limit", "user_window_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_USER_CAPACITY",
+        path: &["rate_limit", "user_capacity"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_RATE_LIMIT_API_WINDOW_SECS",
+        path: &["rate_limit", "api_window_secs"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_BACKEND",
+        path: &["object_storage", "backend"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_LOCAL_BASE_DIR",
+        path: &["object_storage", "local_base_dir"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_PUBLIC_BASE_URL",
+        path: &["object_storage", "public_base_url"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_ENDPOINT",
+        path: &["object_storage", "endpoint"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_ACCESS_KEY",
+        path: &["object_storage", "access_key"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_SECRET_KEY",
+        path: &["object_storage", "secret_key"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_USE_SSL",
+        path: &["object_storage", "use_ssl"],
+        value_type: EnvValueType::Bool,
+    },
+    EnvOverride {
+        name: "APP_OBJECT_STORAGE_REGION",
+        path: &["object_storage", "region"],
+        value_type: EnvValueType::String,
+    },
+];
+
+fn parse_env_value(name: &str, value: &str, value_type: EnvValueType) -> AppResult<toml::Value> {
+    match value_type {
+        EnvValueType::String => Ok(toml::Value::String(value.to_string())),
+        EnvValueType::Integer => value
+            .parse::<i64>()
+            .map(toml::Value::Integer)
+            .map_err(|e| AppError::Config(format!("环境变量 {} 不是有效整数: {}", name, e))),
+        EnvValueType::Bool => value
+            .parse::<bool>()
+            .map(toml::Value::Boolean)
+            .map_err(|e| AppError::Config(format!("环境变量 {} 不是有效布尔值: {}", name, e))),
+        EnvValueType::StringArray => {
+            let values = value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(|item| toml::Value::String(item.to_string()))
+                .collect();
+            Ok(toml::Value::Array(values))
+        }
+    }
+}
+
+fn insert_toml_path(table: &mut toml::Table, path: &[&str], value: toml::Value) {
+    if path.is_empty() {
+        return;
+    }
+
+    insert_toml_path_inner(table, path, value);
+}
+
+fn insert_toml_path_inner(table: &mut toml::Table, path: &[&str], value: toml::Value) {
+    if path.len() == 1 {
+        table.insert(path[0].to_string(), value);
+        return;
+    }
+
+    if path.len() >= 3
+        && let Ok(index) = path[1].parse::<usize>()
+    {
+        let child = ensure_array_table(table, path[0], index);
+        insert_toml_path_inner(child, &path[2..], value);
+        return;
+    }
+
+    let child = ensure_table(table, path[0]);
+    insert_toml_path_inner(child, &path[1..], value);
+}
+
+fn ensure_table<'a>(table: &'a mut toml::Table, key: &str) -> &'a mut toml::Table {
+    let value = table
+        .entry(key.to_string())
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    if !value.is_table() {
+        *value = toml::Value::Table(toml::Table::new());
+    }
+    let toml::Value::Table(table) = value else {
+        unreachable!("table was initialized above");
+    };
+    table
+}
+
+fn ensure_array_table<'a>(
+    table: &'a mut toml::Table,
+    key: &str,
+    index: usize,
+) -> &'a mut toml::Table {
+    let array = table
+        .entry(key.to_string())
+        .or_insert_with(|| toml::Value::Array(Vec::new()));
+    if !array.is_array() {
+        *array = toml::Value::Array(Vec::new());
+    }
+    let toml::Value::Array(array) = array else {
+        unreachable!("array was initialized above");
+    };
+    while array.len() <= index {
+        array.push(toml::Value::Table(toml::Table::new()));
+    }
+    if !array[index].is_table() {
+        array[index] = toml::Value::Table(toml::Table::new());
+    }
+    let toml::Value::Table(table) = &mut array[index] else {
+        unreachable!("array item was initialized above");
+    };
+    table
 }
 
 /// 递归合并两个 TOML Table，env 的值覆盖 base 对应位置的值

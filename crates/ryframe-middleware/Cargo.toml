@@ -24,7 +24,7 @@ dashmap = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 prometheus = { workspace = true }
 lazy_static = { workspace = true }
 redis = { workspace = true }
@@ -38,7 +38,7 @@ sha2 = { workspace = true }
 sysinfo = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
 criterion = { workspace = true }
 
 [[bench]]
