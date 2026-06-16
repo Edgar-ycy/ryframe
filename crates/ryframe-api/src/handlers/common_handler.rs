@@ -1,5 +1,5 @@
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Multipart, Query, State},
     http::{HeaderMap, header},
     response::IntoResponse,
@@ -14,7 +14,9 @@ use ryframe_service::system::file_service::{
 };
 use serde::Deserialize;
 
+use crate::extractors::CurrentUser;
 use crate::handlers::auth_handler::AppState;
+use crate::runtime::FileUploadedEvent;
 
 /// 多文件上传响应
 pub type MultiUploadResponse = Vec<UploadResponse>;
@@ -54,15 +56,26 @@ pub fn download_router(state: AppState) -> Router {
 /// 通用文件上传（支持多文件、动态桶名）
 pub async fn upload_file(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig::default();
-    process_multipart_upload(state, multipart, &config, None, false).await
+    process_multipart_upload(
+        state,
+        multipart,
+        &config,
+        None,
+        false,
+        current_user.username,
+        current_user.tenant_id,
+    )
+    .await
 }
 
 /// 图片上传（仅允许图片类型，自动压缩）
 pub async fn upload_image(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig {
@@ -77,12 +90,22 @@ pub async fn upload_image(
         max_file_size: 5 * 1024 * 1024, // 5MB
         ..Default::default()
     };
-    process_multipart_upload(state, multipart, &config, None, true).await
+    process_multipart_upload(
+        state,
+        multipart,
+        &config,
+        None,
+        true,
+        current_user.username,
+        current_user.tenant_id,
+    )
+    .await
 }
 
 /// 头像上传（固定使用 `avatar` 桶）
 pub async fn upload_avatar(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig {
@@ -103,6 +126,8 @@ pub async fn upload_avatar(
         &config,
         Some(AVATAR_BUCKET.to_string()),
         true,
+        current_user.username,
+        current_user.tenant_id,
     )
     .await
 }
@@ -114,7 +139,22 @@ async fn process_multipart_upload(
     config: &UploadConfig,
     force_bucket: Option<String>,
     compress: bool,
+    upload_by: String,
+    tenant_id: String,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
+    if !state
+        .runtime
+        .feature_flags
+        .is_enabled_or("file_upload", true)
+    {
+        return Err(AppError::Authorization("文件上传功能已关闭".into()));
+    }
+    if !state.runtime.upload_circuit_breaker.allow_request() {
+        return Err(AppError::Conflict(
+            "文件上传服务暂时不可用，请稍后再试".into(),
+        ));
+    }
+
     let mut form_bucket = String::new();
     let mut results: MultiUploadResponse = Vec::new();
     let mut bucket_ensured = false;
@@ -154,7 +194,7 @@ async fn process_multipart_upload(
         }
 
         // 委托 FileService 处理业务逻辑
-        let result = FileService::upload_single(
+        let result = match FileService::upload_single(
             &state.db,
             &state.object_storage,
             filename,
@@ -162,9 +202,31 @@ async fn process_multipart_upload(
             config,
             &effective_bucket,
             compress,
-            None,
+            Some(upload_by.clone()),
         )
-        .await?;
+        .await
+        {
+            Ok(result) => {
+                state.runtime.upload_circuit_breaker.record_success();
+                result
+            }
+            Err(err) => {
+                state.runtime.upload_circuit_breaker.record_failure();
+                return Err(err);
+            }
+        };
+
+        state
+            .runtime
+            .emit_file_uploaded(FileUploadedEvent {
+                tenant_id: tenant_id.clone(),
+                operator: upload_by.clone(),
+                file_id: result.file_id,
+                file_url: result.file_url.clone(),
+                bucket: effective_bucket.clone(),
+                occurred_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .await;
 
         results.push(result);
     }

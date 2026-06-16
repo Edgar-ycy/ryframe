@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ryframe_api::runtime::RuntimeComponents;
 use ryframe_config::AppConfig;
 use ryframe_core::{AppContext, RedisClient, TokenBlacklist};
 use ryframe_middleware::RateLimiter;
@@ -46,5 +47,6 @@ pub fn assemble(
         replica_dbs: extra_dbs,
         rate_limiter: limiter.clone(),
         object_storage,
+        runtime: RuntimeComponents::new(redis_client),
     }
 }

@@ -26,8 +26,7 @@ Authorization: Bearer <access_token>
 export interface ApiResponse<T = any> {
   code: number
   data: T
-  msg?: string
-  message?: string
+  msg: string
   rows?: any[]
   total?: number
 }
@@ -36,9 +35,9 @@ export interface ApiResponse<T = any> {
 约定：
 
 - `code === 200` 表示成功。
-- 错误提示优先读取 `msg`，其次读取 `message`。
-- 分页接口建议返回 `{ code, msg, data: { rows, total } }`。
-- 为兼容表格组件，请求封装会把 `data.rows` 和 `data.total` 提升到响应顶层。
+- 错误提示统一读取 `msg`。
+- 普通接口返回 `{ code, msg, data }`；分页接口返回 `{ code, msg, rows, total }`。
+
 - 下载接口使用 `responseType: 'blob'` 时直接返回原始 `AxiosResponse`，不走 JSON 业务码判断。
 
 分页类型建议：
@@ -259,7 +258,7 @@ Content-Type: application/json
 
 ## 上传、下载与导出
 
-上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`：
+上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。上传接口均需登录，并会触发魔数校验、MD5 去重、审计事件和后台任务：
 
 ```http
 POST /common/upload
@@ -295,6 +294,7 @@ Content-Disposition: attachment; filename="users.xlsx"
 | `GET /monitor/cache` | JSON | Redis 或缓存概览。 |
 | `GET /monitor/cache/commands` | JSON | 缓存命令统计。 |
 | `GET /monitor/db-pool` | JSON | 数据库连接池状态。 |
+| `GET /monitor/runtime` | JSON | 功能开关、消息队列、任务队列和上传熔断器状态。 |
 
 除健康检查和指标采集外，管理端页面应按后端权限要求携带 token 并校验 `perms`。
 
@@ -303,8 +303,7 @@ Content-Disposition: attachment; filename="users.xlsx"
 - 新增后端菜单组件时，同步维护 `componentMap.ts`。
 - 页面按钮权限统一使用后端返回的 `perms`，不要在页面硬编码角色名。
 - 表格接口统一读取 `rows` 和 `total`，新增模块不要自定义分页字段。
-- 错误提示兼容 `msg` 和 `message`，后端新接口优先返回 `msg`。
+- 错误提示统一读取 `msg`。
 - 下载接口设置 `responseType: 'blob'`，不要按统一 JSON 解析。
 - 后端 64 位 ID 在前端按字符串处理。
 - 菜单 `status` 只有启用值 `"1"` 才生成路由。
-

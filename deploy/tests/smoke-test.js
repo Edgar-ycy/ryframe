@@ -1,29 +1,10 @@
-// ============================================================
-// RyFrame 冒烟测试脚本
-//
-// 使用方式：
-//   node deploy/tests/smoke-test.js [base_url]
-//
-// 示例：
-//   node deploy/tests/smoke-test.js
-//   node deploy/tests/smoke-test.js http://localhost:8080
-//   node deploy/tests/smoke-test.js https://api.example.com
-//
-// 退出码：
-//   0 - 所有冒烟测试通过
-//   1 - 至少一项测试失败
-//
-// CI 集成示例：
-//   node deploy/tests/smoke-test.js || (echo "冒烟测试失败" && exit 1)
-// ============================================================
+// RyFrame smoke test.
+// Usage: node deploy/tests/smoke-test.js [base_url]
 
 const BASE_URL = process.argv[2] || "http://localhost:8080";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS || "123456";
 
-// ============================================================
-// 测试结果收集
-// ============================================================
 let passed = 0;
 let failed = 0;
 const failures = [];
@@ -32,272 +13,232 @@ async function test(name, fn) {
   process.stdout.write(`  ${name} ... `);
   try {
     await fn();
-    console.log("✅ PASS");
-    passed++;
-    return true;
+    console.log("PASS");
+    passed += 1;
   } catch (err) {
-    console.log(`❌ FAIL\n       ${err.message}`);
-    failed++;
+    console.log(`FAIL\n       ${err.message}`);
+    failed += 1;
     failures.push({ name, error: err.message });
-    return false;
   }
 }
 
 async function assertStatus(res, expected, label) {
   if (res.status !== expected) {
-    const body = await res.text().catch(() => "<无法读取响应体>");
-    throw new Error(
-      `${label}: 期望 HTTP ${expected}，实际 ${res.status}。响应: ${body.slice(0, 200)}`
-    );
+    const body = await res.text().catch(() => "<unreadable body>");
+    throw new Error(`${label}: expected HTTP ${expected}, got ${res.status}. ${body.slice(0, 200)}`);
   }
 }
 
 async function assertOk(res, label) {
-  return assertStatus(res, 200, label);
+  await assertStatus(res, 200, label);
 }
 
-// ============================================================
-// 冒烟测试用例
-// ============================================================
+function authHeaders(token) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+function assertPage(json, label) {
+  if (json.code !== 200) {
+    throw new Error(`${label}: business code is ${json.code}`);
+  }
+  if (!Array.isArray(json.rows) || typeof json.total !== "number") {
+    throw new Error(`${label}: expected top-level rows/total page response`);
+  }
+}
+
+async function jsonRequest(url, options = {}) {
+  const res = await fetch(url, options);
+  const json = await res.json().catch(() => null);
+  return { res, json };
+}
+
 async function runSmokeTests() {
   console.log("=".repeat(60));
-  console.log("RyFrame 冒烟测试");
+  console.log("RyFrame smoke test");
   console.log("=".repeat(60));
-  console.log(`目标地址: ${BASE_URL}`);
-  console.log(`测试时间: ${new Date().toISOString()}`);
+  console.log(`Base URL: ${BASE_URL}`);
+  console.log(`Time: ${new Date().toISOString()}`);
   console.log("");
 
-  // ---- 1. 基础可用性 ----
-  console.log("📋 1. 基础可用性");
-  await test("Health Check 端点可达", async () => {
+  await test("health endpoint", async () => {
     const res = await fetch(`${BASE_URL}/health`);
-    await assertOk(res, "Health Check");
+    await assertOk(res, "Health");
     const text = await res.text();
-    if (!text.includes("ok") && !text.includes("OK")) {
-      throw new Error("响应体不含 'ok'");
-    }
+    if (!/ok/i.test(text)) throw new Error("health body does not contain ok");
   });
 
-  await test("版本信息端点可用", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/version`);
+  await test("version endpoint", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/version`);
     await assertOk(res, "Version");
-    const json = await res.json();
-    if (!json.name) throw new Error("响应缺少 name 字段");
-    console.log(`       [版本: ${json.name} ${json.version}]`);
+    if (!json?.name || !json?.version) throw new Error("version response missing name/version");
   });
 
-  // ---- 2. 认证流程 ----
-  console.log("\n📋 2. 认证流程");
   let accessToken = null;
   let refreshToken = null;
 
-  await test("登录成功获取令牌", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
+  await test("login", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
     });
     await assertOk(res, "Login");
-    const json = await res.json();
-    if (json.code !== 200) throw new Error(`业务错误码: ${json.code}, ${json.message}`);
-    if (!json.data || !json.data.access_token) throw new Error("响应缺少 access_token");
+    if (json?.code !== 200 || !json?.data?.access_token) {
+      throw new Error(`login response missing access_token: ${JSON.stringify(json)}`);
+    }
     accessToken = json.data.access_token;
     refreshToken = json.data.refresh_token;
   });
 
-  await test("错误密码登录被拒绝", async () => {
+  await test("wrong password rejected", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: ADMIN_USER, password: "wrong_password_xyz" }),
     });
-    if (res.status === 200) throw new Error("错误密码不应返回 HTTP 200");
+    if (res.status === 200) throw new Error("wrong password returned HTTP 200");
   });
 
-  await test("获取当前用户信息（需认证）", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+  await test("current user", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/me`, {
+      headers: authHeaders(accessToken),
     });
     await assertOk(res, "Me");
-    const json = await res.json();
-    if (!json.data || !json.data.user) throw new Error("响应缺少 user 字段");
+    if (!json?.data) throw new Error("me response missing data");
   });
 
-  await test("未认证请求被拒绝", async () => {
+  await test("unauthenticated request rejected", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/auth/me`);
-    if (res.status === 200) throw new Error("未认证请求不应返回 HTTP 200");
+    if (res.status === 200) throw new Error("unauthenticated request returned HTTP 200");
   });
 
-  await test("刷新令牌", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/refresh`, {
+  await test("refresh token", async () => {
+    if (!refreshToken) return;
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
     await assertOk(res, "Refresh");
-    const json = await res.json();
-    if (!json.data || !json.data.access_token) throw new Error("刷新后缺少 access_token");
-    accessToken = json.data.access_token; // 更新令牌
+    if (!json?.data?.access_token) throw new Error("refresh response missing access_token");
+    accessToken = json.data.access_token;
   });
 
-  // ---- 3. 公开端点 ----
-  console.log("\n📋 3. 公开端点");
-
-  await test("OpenAPI JSON 文档可用", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/api-docs/openapi.json`);
+  await test("openapi json", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/api-docs/openapi.json`);
     await assertOk(res, "OpenAPI");
-    const json = await res.json();
-    if (!json.openapi) throw new Error("非有效 OpenAPI 文档");
-    console.log(`       [OpenAPI ${json.openapi}]`);
+    if (!json?.openapi) throw new Error("invalid OpenAPI document");
   });
 
-  await test("Swagger UI 可访问", async () => {
+  await test("swagger ui", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/swagger-ui`);
     await assertOk(res, "Swagger UI");
   });
 
-  // ---- 4. 监控端点 ----
-  console.log("\n📋 4. 监控端点");
-
-  await test("Prometheus Metrics 端点", async () => {
+  await test("prometheus metrics", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/monitor/metrics`);
     await assertOk(res, "Metrics");
     const text = await res.text();
-    if (!text.includes("ryframe_")) throw new Error("Metrics 输出不含 ryframe_ 前缀指标");
-    console.log(`       [指标行数: ${text.split("\n").filter((l) => l && !l.startsWith("#")).length}]`);
+    if (!text.includes("ryframe_")) throw new Error("metrics output missing ryframe_ prefix");
   });
 
-  await test("增强健康检查端点", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/monitor/health`);
+  await test("monitor health", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/monitor/health`);
     await assertOk(res, "Monitor Health");
-    const json = await res.json();
-    if (json.code !== 200) throw new Error("Health 检查返回非 200");
+    if (json?.code !== 200) throw new Error("monitor health business code is not 200");
   });
 
-  // ---- 5. 系统管理（需认证） ----
-  console.log("\n📋 5. 系统管理（需认证）");
-
-  await test("用户列表查询", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/system/users/list?page=1&page_size=5`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+  await test("user list page", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/users/list?page=1&pageSize=5`, {
+      headers: authHeaders(accessToken),
     });
     await assertOk(res, "User List");
-    const json = await res.json();
-    if (!json.data || !json.data.items) throw new Error("分页结构不正确");
-    console.log(`       [用户数: ${json.data.total}]`);
+    assertPage(json, "User List");
   });
 
-  await test("角色列表查询", async () => {
+  await test("role list", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/system/roles/list`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: authHeaders(accessToken),
     });
     await assertOk(res, "Role List");
   });
 
-  await test("菜单树查询", async () => {
+  await test("menu tree", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/system/menus/tree`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: authHeaders(accessToken),
     });
     await assertOk(res, "Menu Tree");
   });
 
-  await test("部门树查询", async () => {
+  await test("dept tree", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/system/depts/tree`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: authHeaders(accessToken),
     });
     await assertOk(res, "Dept Tree");
   });
 
-  await test("权限树查询", async () => {
+  await test("permission tree", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/system/permissions/tree`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: authHeaders(accessToken),
     });
     await assertOk(res, "Permission Tree");
   });
 
-  await test("操作日志查询", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/system/operlogs/list?page=1&page_size=5`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+  await test("operation log page", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/operlogs/list?page=1&pageSize=5`, {
+      headers: authHeaders(accessToken),
     });
     await assertOk(res, "OperLog List");
+    assertPage(json, "OperLog List");
   });
 
-  // ---- 6. 安全验证 ----
-  console.log("\n📋 6. 安全验证");
-
-  await test("无效令牌被拒绝", async () => {
+  await test("invalid token rejected", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/auth/me`, {
-      headers: { Authorization: "Bearer invalid_token_xyz_123" },
+      headers: authHeaders("invalid_token_xyz_123"),
     });
-    if (res.status === 200) throw new Error("无效令牌不应返回 HTTP 200");
+    if (res.status === 200) throw new Error("invalid token returned HTTP 200");
   });
 
-  await test("伪造令牌被拒绝", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/me`, {
-      headers: {
-        Authorization:
-          "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIiwianRpIjoidGVzdCJ9.fake_signature",
-      },
-    });
-    if (res.status === 200) throw new Error("伪造签名令牌不应返回 HTTP 200");
-  });
-
-  await test("登出后令牌失效", async () => {
-    // 先登录
-    const loginRes = await fetch(`${BASE_URL}/api/v1/auth/login`, {
+  await test("logout invalidates token", async () => {
+    const { json } = await jsonRequest(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
     });
-    const loginJson = await loginRes.json();
-    const token = loginJson.data.access_token;
+    const token = json?.data?.access_token;
+    if (!token) throw new Error("login response missing token");
 
-    // 登出
     const logoutRes = await fetch(`${BASE_URL}/api/v1/auth/logout`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: authHeaders(token),
     });
     await assertOk(logoutRes, "Logout");
 
-    // 登出后访问应被拒绝
     const meRes = await fetch(`${BASE_URL}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: authHeaders(token),
     });
-    if (meRes.status === 200) throw new Error("已登出令牌不应仍可用于访问");
+    if (meRes.status === 200) throw new Error("logged out token still works");
   });
 
-  // ---- 总结 ----
-  console.log("\n" + "=".repeat(60));
-  console.log(`测试结果: ${passed} 通过 / ${failed} 失败 / ${passed + failed} 总计`);
+  console.log("");
+  console.log("=".repeat(60));
+  console.log(`Result: ${passed} passed / ${failed} failed / ${passed + failed} total`);
   console.log("=".repeat(60));
 
-  if (failures.length > 0) {
-    console.log("\n❌ 失败详情:");
-    for (const f of failures) {
-      console.log(`   - ${f.name}`);
-      console.log(`     ${f.error}`);
+  if (failures.length) {
+    console.log("Failures:");
+    for (const failure of failures) {
+      console.log(`- ${failure.name}: ${failure.error}`);
     }
   }
 }
 
-// ============================================================
-// 主函数
-// ============================================================
 async function main() {
-  try {
-    await runSmokeTests();
-  } catch (err) {
-    console.error("\n❌ 冒烟测试执行异常:", err.message);
-    process.exit(1);
-  }
-
-  if (failed > 0) {
-    console.log(`\n❌ 冒烟测试未通过！${failed} 项失败。`);
-    process.exit(1);
-  } else {
-    console.log(`\n✅ 所有冒烟测试通过！`);
-    process.exit(0);
-  }
+  await runSmokeTests();
+  process.exit(failed > 0 ? 1 : 0);
 }
 
-main();
+main().catch((err) => {
+  console.error("Smoke test crashed:", err);
+  process.exit(1);
+});

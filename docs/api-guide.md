@@ -91,7 +91,7 @@ Handler (user_handler::list)
 | API 前缀 | 所有接口统一为 `/api/v1` |
 | 公开路由 | `/api/v1/auth/login`、`/api/v1/auth/refresh`、`/api/v1/auth/captcha/**`、`/health`、`/metrics` |
 | 受保护路由 | 需在请求头携带 `Authorization: Bearer <access_token>` |
-| 文件上传 | 公开（避免大文件请求体缓冲），不记录操作日志 |
+| 文件上传 | 需认证，记录操作日志，上传成功后发布业务事件并投递后台任务 |
 | 文件下载 | 需认证，记录操作日志 |
 | OpenAPI JSON | `GET /api/v1/api-docs/openapi.json` |
 | Swagger UI | `GET /api/v1/swagger-ui` |
@@ -106,7 +106,7 @@ Handler (user_handler::list)
 后注册的 layer 为外层，先执行：
 
 ```
-RateLimit(IP) → ApiRateLimit(per-endpoint) → BodyLimit(10MB) → Timeout(30s)
+RateLimit(IP) → ApiRateLimit(per-endpoint) → Tenant → SecurityHeaders → Idempotency → ReplayProtection → CacheControl → BodyLimit(10MB) → Timeout(30s)
   → XssFilter → RequestLog → CORS → Compression → RequestId → Telemetry → Metrics
 ```
 
@@ -135,7 +135,7 @@ Auth → UserRateLimit → OperLog → Handler
 
 | 路由组 | 中间件顺序 |
 |--------|-----------|
-| upload (`/upload/*`) | 无中间件（公开，避免大文件缓冲） |
+| upload (`/upload/*`) | Auth → UserContext → OperLog → Handler |
 | download (`/file/download`) | Auth → OperLog → Handler |
 
 ---
@@ -161,7 +161,7 @@ Content-Type: application/json
 ```json
 {
     "code": 200,
-    "message": "操作成功",
+    "msg": "操作成功",
     "data": {
         "access_token": "eyJhbGciOiJIUzI1NiIs...",
         "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
@@ -447,7 +447,7 @@ GET /api/v1/system/users/list?page=1&pageSize=10&username=&phone=&status=&dept_i
 ```json
 {
     "code": 200,
-    "message": "查询成功",
+    "msg": "查询成功",
     "data": {
         "rows": [{
             "id": 1,
@@ -719,7 +719,7 @@ GET /api/v1/system/roles/list?page=1&pageSize=10&name=&code=&status=
 ```json
 {
     "code": 200,
-    "message": "查询成功",
+    "msg": "查询成功",
     "data": {
         "rows": [{
             "id": 1,
@@ -1504,8 +1504,8 @@ GET /api/v1/system/roles/export
 
 | 方法 | 路径 | 说明 | 认证 | 操作日志 |
 |------|------|------|------|----------|
-| `POST` | `/upload` | 文件上传（multipart/form-data） | 否 | 不记录 |
-| `POST` | `/upload/image` | 图片上传（自动压缩，限 jpg/png/gif/bmp/webp） | 否 | 不记录 |
+| `POST` | `/upload` | 文件上传（multipart/form-data） | 是 | 记录 |
+| `POST` | `/upload/image` | 图片上传（自动压缩，限 jpg/png/gif/bmp/webp） | 是 | 记录 |
 | `GET` | `/file/download?path=...&bucket=...` | 文件下载 | 是 | 记录 |
 
 ---
@@ -1519,7 +1519,7 @@ GET /api/v1/system/roles/export
 ```json
 {
     "code": 200,
-    "message": "操作成功",
+    "msg": "操作成功",
     "data": { ... }
 }
 ```
@@ -1529,11 +1529,9 @@ GET /api/v1/system/roles/export
 ```json
 {
     "code": 200,
-    "message": "查询成功",
-    "data": {
-        "rows": [...],
-        "total": 100
-    }
+    "msg": "查询成功",
+    "rows": [...],
+    "total": 100
 }
 ```
 
@@ -1542,7 +1540,7 @@ GET /api/v1/system/roles/export
 ```json
 {
     "code": 400,
-    "message": "用户名不能为空",
+    "msg": "用户名不能为空",
     "data": null
 }
 ```
@@ -1582,7 +1580,7 @@ GET /api/v1/system/users/list?page=1&pageSize=10&sort_field=id&sort_order=desc
 ```json
 {
     "code": 200,
-    "message": "查询成功",
+    "msg": "查询成功",
     "data": {
         "rows": [
             { "id": 1, "username": "admin", "nickname": "超级管理员", ... }
@@ -1768,7 +1766,7 @@ POST/PUT/DELETE 请求通过 `oper_log_middleware` 自动记录到 `sys_oper_log
 | `error_msg` | 错误信息 |
 | `cost_time` | 耗时（毫秒） |
 
-**排除项**：文件上传路由（`/api/v1/common/upload/*`）不经过操作日志中间件，避免 multipart 请求体缓冲。
+**说明**：文件上传路由（`/api/v1/common/upload/*`）已经接入认证、用户上下文和操作日志；大文件请求体处理由上传 handler 控制。
 
 ---
 

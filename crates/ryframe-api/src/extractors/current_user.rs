@@ -9,6 +9,7 @@ use ryframe_common::{
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
     pub user_id: i64,
+    pub tenant_id: String,
     pub username: String,
     pub roles: Vec<String>,
     /// 角色ID列表（用于菜单/权限过滤查询）

@@ -23,6 +23,7 @@ use sea_orm::DatabaseConnection;
 use validator::Validate;
 
 use crate::dto::auth_dto::{LoginRequest, LoginResponse, RefreshRequest};
+use crate::runtime::RuntimeComponents;
 
 /// API 共享状态
 #[derive(Clone)]
@@ -57,6 +58,8 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     /// 对象存储（本地/MinIO/S3，通过配置切换）
     pub object_storage: Arc<dyn ryframe_common::utils::ObjectStorage>,
+    /// Runtime components shared by business workflows.
+    pub runtime: RuntimeComponents,
 }
 
 impl AppState {

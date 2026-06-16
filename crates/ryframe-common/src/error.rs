@@ -121,15 +121,40 @@ impl<T: Serialize> ApiPageResponse<T> {
 }
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        let is_prod = std::env::var("APP_ENV")
+            .map(|env| matches!(env.as_str(), "prod" | "production"))
+            .unwrap_or(false);
+
         let (status, code, msg) = match &self {
             AppError::Validation(s) => (StatusCode::BAD_REQUEST, 400, s.clone()),
             AppError::Authentication(s) => (StatusCode::UNAUTHORIZED, 401, s.clone()),
             AppError::Authorization(s) => (StatusCode::FORBIDDEN, 403, s.clone()),
             AppError::NotFound(s) => (StatusCode::NOT_FOUND, 404, s.clone()),
             AppError::Conflict(s) => (StatusCode::CONFLICT, 409, s.clone()),
-            AppError::Database(s) => (StatusCode::INTERNAL_SERVER_ERROR, 500, s.clone()),
-            AppError::Config(s) => (StatusCode::INTERNAL_SERVER_ERROR, 500, s.clone()),
-            AppError::Internal(s) => (StatusCode::INTERNAL_SERVER_ERROR, 500, s.clone()),
+            AppError::Database(s) => {
+                tracing::error!(error = %s, "database error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    500,
+                    internal_error_message(is_prod, s),
+                )
+            }
+            AppError::Config(s) => {
+                tracing::error!(error = %s, "config error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    500,
+                    internal_error_message(is_prod, s),
+                )
+            }
+            AppError::Internal(s) => {
+                tracing::error!(error = %s, "internal error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    500,
+                    internal_error_message(is_prod, s),
+                )
+            }
         };
         let body = ApiResponse::<()>::fail(code, msg);
         let json = serde_json::to_string(&body)
@@ -142,6 +167,14 @@ impl IntoResponse for AppError {
             http::HeaderValue::from_static("application/json"),
         );
         response
+    }
+}
+
+fn internal_error_message(is_prod: bool, detail: &str) -> String {
+    if is_prod {
+        "服务器内部错误".to_string()
+    } else {
+        detail.to_string()
     }
 }
 

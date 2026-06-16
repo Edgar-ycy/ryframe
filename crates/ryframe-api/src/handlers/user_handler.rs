@@ -4,7 +4,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use ryframe_auth::middleware::perm_route;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_common::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_service::system::{CreateUserParams, UpdateUserParams, UserDetailVo, UserVo};
 use serde::Deserialize;
@@ -19,6 +19,7 @@ use crate::extractors::CurrentUser;
 use crate::handler_utils::{
     excel_response, parse_csv_i64, parse_i64_strings, parse_optional_i64, parse_optional_i64_str,
 };
+use crate::runtime::UserImportCompletedEvent;
 
 /// 用户列表分页查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -95,13 +96,14 @@ async fn list(
     if has_filter {
         state
             .user_service
-            .find_by_page_filtered(
+            .find_by_page_filtered_with_data_scope(
                 &state.db,
                 page_query,
                 query.username.as_deref(),
                 query.phone.as_deref(),
                 query.status.as_deref(),
                 query.dept_id,
+                &scope_ctx,
             )
             .await
             .map(|p| Json(p.to_page_response("查询成功")))
@@ -118,11 +120,15 @@ async fn list(
 #[utoipa::path(get, path = "/api/v1/system/users/listNoPage", tag = "用户管理",
     responses((status = 200, description = "用户列表")),
     security(("bearer" = [])))]
-async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<UserVo>>>> {
+async fn list_no_page(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+) -> AppResult<Json<ApiResponse<Vec<UserVo>>>> {
     let page_query = PageQuery::all_records();
+    let scope_ctx = current_user.to_data_scope_context();
     state
         .user_service
-        .find_by_page(&state.db, page_query)
+        .find_by_page_with_data_scope(&state.db, page_query, &scope_ctx)
         .await
         .map(|p| Json(ApiResponse::success(p.records)))
 }
@@ -295,13 +301,26 @@ async fn reset_password(
 /// 导出用户数据为 Excel
 async fn export_users(
     State(state): State<AppState>,
-    Query(_query): Query<PageQuery>,
+    Extension(current_user): Extension<CurrentUser>,
+    Query(query): Query<UserListQuery>,
 ) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
     // 查询所有用户（不分页）- 需要通过分页查询获取全部
-    let query = PageQuery::all_records();
-    let page_result = state.user_service.find_by_page(&state.db, query).await?;
+    let page_query = PageQuery::all_records();
+    let scope_ctx = current_user.to_data_scope_context();
+    let page_result = state
+        .user_service
+        .find_by_page_filtered_with_data_scope(
+            &state.db,
+            page_query,
+            query.username.as_deref(),
+            query.phone.as_deref(),
+            query.status.as_deref(),
+            query.dept_id,
+            &scope_ctx,
+        )
+        .await?;
 
     // 转换为导出数据
     let export_data: Vec<UserExportData> = page_result
@@ -332,10 +351,28 @@ async fn export_users(
 /// 从 Excel 导入用户数据
 async fn import_users(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     mut multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     use ryframe_common::utils::ExcelImporter;
+    use std::time::Duration;
     use validator::Validate;
+
+    if !state
+        .runtime
+        .feature_flags
+        .is_enabled_or("user_import", true)
+    {
+        return Err(AppError::Authorization("用户导入功能已关闭".into()));
+    }
+
+    let lock_key = format!("tenant:{}:system:user:import", current_user.tenant_id);
+    let _guard = state
+        .runtime
+        .distributed_lock
+        .try_acquire(&lock_key, Duration::from_secs(300))
+        .await?
+        .ok_or_else(|| AppError::Conflict("当前租户正在执行用户导入，请稍后再试".into()))?;
 
     while let Some(field) = multipart
         .next_field()
@@ -371,13 +408,13 @@ async fn import_users(
                         &state.db,
                         CreateUserParams {
                             username: &data.username,
-                            password: "123456", // 默认密码
+                            password: &data.password,
                             nickname: &data.nickname,
                             email: &data.email,
                             phone: data.phone.as_deref().unwrap_or(""),
                             dept_id: parse_optional_i64_str(data.dept_id.as_deref()),
                             role_ids: None,
-                            enable_pwd_complexity: false, // 导入时不强制密码复杂度（使用默认密码）
+                            enable_pwd_complexity: true,
                         },
                     )
                     .await
@@ -389,6 +426,17 @@ async fn import_users(
                     }
                 }
             }
+
+            state
+                .runtime
+                .emit_user_import_completed(UserImportCompletedEvent {
+                    tenant_id: current_user.tenant_id,
+                    operator: current_user.username,
+                    success_count,
+                    fail_count,
+                    occurred_at: chrono::Utc::now().to_rfc3339(),
+                })
+                .await;
 
             return Ok(Json(ApiResponse::success_msg(
                 "导入完成",

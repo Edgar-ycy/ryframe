@@ -137,6 +137,35 @@ impl UserServiceImpl {
         Ok(PageResult::new(records, page.total, &query))
     }
 
+    /// 带搜索条件和数据权限过滤的分页查询。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn find_by_page_filtered_with_data_scope(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+        username: Option<&str>,
+        phone: Option<&str>,
+        status: Option<&str>,
+        dept_id: Option<i64>,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<PageResult<UserVo>> {
+        let page = self
+            .user_repo
+            .find_by_page_filtered_with_data_scope(
+                db,
+                query.clone(),
+                username,
+                phone,
+                status,
+                dept_id,
+                scope_ctx,
+            )
+            .await?;
+        let mut records: Vec<UserVo> = page.records.into_iter().map(UserVo::from).collect();
+        self.fill_dept_names(db, &mut records).await;
+        Ok(PageResult::new(records, page.total, &query))
+    }
+
     /// 批量删除用户
     pub async fn delete_many(&self, db: &DatabaseConnection, ids: &[i64]) -> AppResult<u64> {
         if ids.is_empty() {
@@ -218,16 +247,10 @@ impl UserServiceImpl {
             .build_data_scope_context(db, user_id, user.dept_id, &roles)
             .await?;
 
-        let has_filter =
-            username.is_some() || phone.is_some() || status.is_some() || dept_id.is_some();
-
-        if has_filter {
-            self.find_by_page_filtered(db, query, username, phone, status, dept_id)
-                .await
-        } else {
-            self.find_by_page_with_data_scope(db, query, &scope_ctx)
-                .await
-        }
+        self.find_by_page_filtered_with_data_scope(
+            db, query, username, phone, status, dept_id, &scope_ctx,
+        )
+        .await
     }
 
     /// 构建用户的数据权限上下文

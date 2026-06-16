@@ -1,5 +1,172 @@
 use utoipa::OpenApi;
 
+#[allow(dead_code)]
+mod extra_paths {
+    #[utoipa::path(
+        get,
+        path = "/api/v1/monitor/health",
+        tag = "服务器监控",
+        responses((status = 200, description = "运行健康状态"))
+    )]
+    pub fn monitor_health() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/monitor/metrics",
+        tag = "服务器监控",
+        responses((status = 200, description = "Prometheus 指标文本"))
+    )]
+    pub fn monitor_metrics() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/monitor/server",
+        tag = "服务器监控",
+        responses((status = 200, description = "服务器 CPU、内存、磁盘信息")),
+        security(("bearer" = []))
+    )]
+    pub fn monitor_server() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/monitor/cache",
+        tag = "服务器监控",
+        responses((status = 200, description = "缓存运行状态")),
+        security(("bearer" = []))
+    )]
+    pub fn monitor_cache() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/monitor/cache/commands",
+        tag = "服务器监控",
+        responses((status = 200, description = "Redis 命令统计")),
+        security(("bearer" = []))
+    )]
+    pub fn monitor_cache_commands() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/monitor/db-pool",
+        tag = "服务器监控",
+        responses((status = 200, description = "数据库连接池状态")),
+        security(("bearer" = []))
+    )]
+    pub fn monitor_db_pool() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/monitor/runtime",
+        tag = "服务器监控",
+        responses((status = 200, description = "主应用运行时组件状态")),
+        security(("bearer" = []))
+    )]
+    pub fn monitor_runtime() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/tools/gen/tables",
+        tag = "代码生成",
+        responses((status = 200, description = "数据库表结构列表")),
+        security(("bearer" = []))
+    )]
+    pub fn gen_tables() {}
+
+    #[utoipa::path(
+        post,
+        path = "/api/v1/tools/gen/preview",
+        tag = "代码生成",
+        responses((status = 200, description = "预览生成文件")),
+        security(("bearer" = []))
+    )]
+    pub fn gen_preview() {}
+
+    #[utoipa::path(
+        post,
+        path = "/api/v1/tools/gen/generate",
+        tag = "代码生成",
+        responses((status = 200, description = "生成代码并写入磁盘")),
+        security(("bearer" = []))
+    )]
+    pub fn gen_generate() {}
+
+    #[utoipa::path(
+        post,
+        path = "/api/v1/tools/gen/download",
+        tag = "代码生成",
+        responses((status = 200, description = "下载生成代码 zip")),
+        security(("bearer" = []))
+    )]
+    pub fn gen_download() {}
+
+    #[utoipa::path(
+        post,
+        path = "/api/v1/common/upload",
+        tag = "通用",
+        responses((status = 200, description = "鉴权文件上传")),
+        security(("bearer" = []))
+    )]
+    pub fn common_upload() {}
+
+    #[utoipa::path(
+        post,
+        path = "/api/v1/common/upload/image",
+        tag = "通用",
+        responses((status = 200, description = "鉴权图片上传并压缩")),
+        security(("bearer" = []))
+    )]
+    pub fn common_upload_image() {}
+
+    #[utoipa::path(
+        post,
+        path = "/api/v1/common/upload/avatar",
+        tag = "通用",
+        responses((status = 200, description = "鉴权头像上传")),
+        security(("bearer" = []))
+    )]
+    pub fn common_upload_avatar() {}
+
+    #[utoipa::path(
+        get,
+        path = "/api/v1/common/file/download",
+        tag = "通用",
+        params(
+            ("path" = String, Query, description = "对象存储 key"),
+            ("bucket" = Option<String>, Query, description = "对象存储 bucket")
+        ),
+        responses((status = 200, description = "文件下载")),
+        security(("bearer" = []))
+    )]
+    pub fn common_file_download() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/users/export", tag = "用户管理", responses((status = 200, description = "导出用户 Excel")), security(("bearer" = [])))]
+    pub fn users_export() {}
+
+    #[utoipa::path(post, path = "/api/v1/system/users/import", tag = "用户管理", responses((status = 200, description = "导入用户 Excel")), security(("bearer" = [])))]
+    pub fn users_import() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/users/import-template", tag = "用户管理", responses((status = 200, description = "下载用户导入模板")), security(("bearer" = [])))]
+    pub fn users_import_template() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/roles/export", tag = "角色管理", responses((status = 200, description = "导出角色 Excel")), security(("bearer" = [])))]
+    pub fn roles_export() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/posts/export", tag = "岗位管理", responses((status = 200, description = "导出岗位 Excel")), security(("bearer" = [])))]
+    pub fn posts_export() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/configs/export", tag = "参数配置", responses((status = 200, description = "导出参数配置 Excel")), security(("bearer" = [])))]
+    pub fn configs_export() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/dict/types/export", tag = "字典管理", responses((status = 200, description = "导出字典类型 Excel")), security(("bearer" = [])))]
+    pub fn dict_types_export() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/operlogs/export", tag = "操作日志", responses((status = 200, description = "导出操作日志 Excel")), security(("bearer" = [])))]
+    pub fn operlogs_export() {}
+
+    #[utoipa::path(get, path = "/api/v1/system/loginlogs/export", tag = "登录日志", responses((status = 200, description = "导出登录日志 Excel")), security(("bearer" = [])))]
+    pub fn loginlogs_export() {}
+}
+
 /// RyFrame API 文档
 ///
 /// 访问 `/swagger-ui` 查看交互式 API 文档
@@ -16,9 +183,9 @@ use utoipa::OpenApi;
 
 ## 响应格式
 ```json
-{ "code": 200, "message": "操作成功", "data": { ... } }
+{ "code": 200, "msg": "操作成功", "data": { ... } }
 ```
-分页接口额外包含 `total`、`page`、`page_size`、`total_pages` 字段。
+分页接口返回 `{ "code": 200, "msg": "查询成功", "rows": [...], "total": 100 }`。
 
 ## 菜单类型
 菜单管理使用 `menu_type` 字段区分节点类型：
@@ -42,10 +209,10 @@ use utoipa::OpenApi;
         (name = "操作日志", description = "POST/PUT/DELETE 请求自动记录，支持分页查询和批量清空。"),
         (name = "登录日志", description = "登录成功/失败记录，含 IP、浏览器、操作系统信息。"),
         (name = "在线用户", description = "查看当前在线用户列表，支持强制下线(token 加入黑名单)。"),
-        (name = "服务器监控", description = "/health(健康检查) + /metrics(Prometheus) 公开；/server(CPU/内存/磁盘), /cache, /db-pool 需认证。"),
+        (name = "服务器监控", description = "/health(健康检查) + /metrics(Prometheus) 公开；/server、/cache、/db-pool、/runtime 需认证。"),
         (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
         (name = "个人中心", description = "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。"),
-        (name = "通用", description = "/upload(公开文件上传) + /upload/image(公开图片上传+压缩) + /file/download(需认证下载)。")
+        (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重、审计事件和任务投递。")
     ),
     paths(
         // 认证接口
@@ -132,6 +299,31 @@ use utoipa::OpenApi;
         crate::handlers::online_user_handler::list_online_users,
         crate::handlers::online_user_handler::list_online_users_page,
         crate::handlers::online_user_handler::force_logout,
+        // 监控、生成器、通用上传下载和导出导入
+        extra_paths::monitor_health,
+        extra_paths::monitor_metrics,
+        extra_paths::monitor_server,
+        extra_paths::monitor_cache,
+        extra_paths::monitor_cache_commands,
+        extra_paths::monitor_db_pool,
+        extra_paths::monitor_runtime,
+        extra_paths::gen_tables,
+        extra_paths::gen_preview,
+        extra_paths::gen_generate,
+        extra_paths::gen_download,
+        extra_paths::common_upload,
+        extra_paths::common_upload_image,
+        extra_paths::common_upload_avatar,
+        extra_paths::common_file_download,
+        extra_paths::users_export,
+        extra_paths::users_import,
+        extra_paths::users_import_template,
+        extra_paths::roles_export,
+        extra_paths::posts_export,
+        extra_paths::configs_export,
+        extra_paths::dict_types_export,
+        extra_paths::operlogs_export,
+        extra_paths::loginlogs_export,
         // 个人中心
         crate::handlers::profile_handler::get_profile,
         crate::handlers::profile_handler::update_profile,

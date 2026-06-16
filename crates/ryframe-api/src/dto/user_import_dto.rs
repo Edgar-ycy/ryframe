@@ -1,19 +1,21 @@
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-/// 用户导入数据
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct UserImportData {
-    #[validate(length(min = 2, max = 64, message = "用户名长度为2-64个字符"))]
+    #[validate(length(min = 2, max = 64, message = "用户名长度必须为 2-64 个字符"))]
     pub username: String,
 
-    #[validate(length(min = 1, max = 64, message = "昵称为1-64个字符"))]
+    #[validate(length(min = 1, max = 64, message = "昵称长度必须为 1-64 个字符"))]
     pub nickname: String,
+
+    #[validate(length(min = 8, max = 128, message = "密码长度必须为 8-128 个字符"))]
+    pub password: String,
 
     #[validate(email(message = "邮箱格式不正确"))]
     pub email: String,
 
-    #[validate(length(max = 32, message = "手机号最多32个字符"))]
+    #[validate(length(max = 32, message = "手机号最大 32 个字符"))]
     pub phone: Option<String>,
 
     pub sex: Option<String>,
@@ -23,11 +25,11 @@ pub struct UserImportData {
 }
 
 impl UserImportData {
-    /// Excel 表头定义
     pub fn excel_headers() -> &'static [(&'static str, &'static str)] {
         &[
             ("username", "用户名"),
             ("nickname", "昵称"),
+            ("password", "初始密码"),
             ("email", "邮箱"),
             ("phone", "手机号"),
             ("sex", "性别"),
@@ -38,7 +40,6 @@ impl UserImportData {
     }
 }
 
-/// 用户导出数据
 #[derive(Debug, Clone, Serialize)]
 pub struct UserExportData {
     pub user_id: String,
@@ -54,7 +55,6 @@ pub struct UserExportData {
 }
 
 impl UserExportData {
-    /// Excel 表头定义
     pub fn excel_headers() -> &'static [(&'static str, &'static str)] {
         &[
             ("user_id", "用户ID"),

@@ -10,7 +10,9 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use ryframe_api::{handlers::auth_handler::AppState, router::api_router};
+use ryframe_api::{
+    handlers::auth_handler::AppState, router::api_router, runtime::RuntimeComponents,
+};
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
@@ -298,6 +300,7 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
         object_storage: Arc::new(ryframe_common::utils::LocalObjectStorage::new(
             "uploads", "",
         )),
+        runtime: RuntimeComponents::new(None),
     }
 }
 

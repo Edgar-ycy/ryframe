@@ -5,6 +5,7 @@ use axum::{
 };
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{AppError, annotations::data_scope::DataScopeContext};
+use ryframe_core::TenantContext;
 
 use crate::{extractors::CurrentUser, handlers::auth_handler::AppState};
 
@@ -32,6 +33,11 @@ pub async fn user_context_middleware(
 
     let is_super_admin =
         claims.roles.contains(&"admin".to_string()) || claims.perms.contains(&"*:*:*".to_string());
+    let tenant_id = request
+        .extensions()
+        .get::<TenantContext>()
+        .map(|ctx| ctx.tenant_id.clone())
+        .unwrap_or_else(|| "system".to_string());
 
     // 构建数据权限上下文（复用 UserServiceImpl 已有逻辑）
     let (scope_ctx, role_ids) = if is_super_admin {
@@ -45,6 +51,7 @@ pub async fn user_context_middleware(
 
     let current_user = CurrentUser {
         user_id,
+        tenant_id,
         username: claims.username.clone(),
         roles: claims.roles.clone(),
         role_ids,

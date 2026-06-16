@@ -7,7 +7,7 @@ use ryframe_common::{
         ObjectStorage,
         file_upload::{
             UploadConfig, UploadFileInfo, compress_image, generate_storage_filename,
-            get_content_type, validate_extension,
+            get_content_type, validate_extension, validate_file_signature,
         },
     },
 };
@@ -65,6 +65,7 @@ impl FileService {
 
         // 验证文件类型
         validate_extension(&original_name, &config.allowed_extensions)?;
+        validate_file_signature(&original_name, &data)?;
 
         // 图片压缩（可选）
         let (final_data, final_name, content_type) = if compress {
@@ -90,6 +91,22 @@ impl FileService {
         };
 
         // 生成存储文件名 + 日期路径
+        let file_md5 = format!("{:x}", md5::compute(&final_data));
+        if let Some(existing) = FileRepository.find_by_md5(db, bucket, &file_md5).await? {
+            return Ok(UploadResponse {
+                file_id: existing.id,
+                file_url: FileRepository::resolve_public_url(storage, &existing),
+                file_info: UploadFileInfo {
+                    original_name: existing.original_name,
+                    storage_name: existing.storage_name,
+                    file_path: existing.storage_path,
+                    file_size: existing.file_size as u64,
+                    content_type: existing.content_type,
+                    upload_time: existing.created_at.to_rfc3339(),
+                },
+            });
+        }
+
         let storage_name = generate_storage_filename(&final_name);
         let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
         let object_key = format!("{}/{}", date_prefix, storage_name);
@@ -115,7 +132,7 @@ impl FileService {
             file_url: relative_file_url,
             file_size: final_data.len() as i64,
             content_type: content_type.clone(),
-            file_md5: None,
+            file_md5: Some(file_md5),
             upload_by: upload_by.clone(),
             del_flag: sys_file::Model::DEL_FLAG_NORMAL.to_string(),
             created_at: Utc::now(),

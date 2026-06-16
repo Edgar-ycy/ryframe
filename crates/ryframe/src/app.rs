@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use axum::{Router, middleware::from_fn, routing::get};
 use ryframe_config::CorsConfig;
-use ryframe_middleware::rate_limit::RateLimitState;
+use ryframe_core::multi_tenant::{TenantConfig, tenant_middleware};
+use ryframe_middleware::{
+    CacheControlConfig, IdempotencyState, ReplayProtectionState, SecurityHeadersConfig,
+    rate_limit::RateLimitState,
+};
 
 /// 健康检查 Handler
 async fn health_check() -> &'static str {
@@ -21,6 +25,22 @@ pub fn build_app(
 ) -> Router {
     // 克隆一份传给 api_router（用于子路由的用户级限流）
     let rate_limit_state_for_api = rate_limit_state.clone();
+    let tenant_config = Arc::new(TenantConfig {
+        default_tenant: Some("system".to_string()),
+        ..TenantConfig::default()
+    });
+    let security_headers_config = SecurityHeadersConfig::default();
+    let idempotency_state = IdempotencyState::new(state.redis.clone(), 300);
+    idempotency_state.spawn_gc();
+    let replay_state = ReplayProtectionState::new(state.redis.clone(), 300);
+    replay_state.spawn_gc();
+    let cache_config = Arc::new(
+        CacheControlConfig::no_cache()
+            .with_rule("/health", "no-store")
+            .with_rule("/api/v1/version", "public, max-age=60")
+            .with_rule("/api/v1/api-docs/", "public, max-age=300")
+            .with_rule("/api/v1/swagger-ui", "public, max-age=300"),
+    );
 
     Router::new()
         .route("/", get(health_check))
@@ -36,6 +56,26 @@ pub fn build_app(
         .layer(axum::middleware::from_fn_with_state(
             rate_limit_state,
             ryframe_middleware::api_rate_limit_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            tenant_config,
+            tenant_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            security_headers_config,
+            ryframe_middleware::security_headers_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            idempotency_state,
+            ryframe_middleware::idempotency_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            replay_state,
+            ryframe_middleware::replay_protection_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            cache_config,
+            ryframe_middleware::cache_control_middleware,
         ))
         // 3. 请求体大小限制 (10MB)
         .layer(axum::middleware::from_fn(

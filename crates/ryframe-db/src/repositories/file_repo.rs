@@ -82,6 +82,21 @@ impl FileRepository {
     ///
     /// - 若 `file_url` 已是完整 URL（以 "http" 开头），直接返回（旧数据兼容）
     /// - 否则根据存储后端动态拼接完整 URL
+    pub async fn find_by_md5(
+        &self,
+        db: &DatabaseConnection,
+        bucket: &str,
+        file_md5: &str,
+    ) -> AppResult<Option<sys_file::Model>> {
+        sys_file::Entity::find()
+            .filter(sys_file::Column::Bucket.eq(bucket))
+            .filter(sys_file::Column::FileMd5.eq(file_md5))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .one(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     pub fn resolve_public_url(storage: &Arc<dyn ObjectStorage>, model: &sys_file::Model) -> String {
         // 兼容旧数据：如果已经存储了完整 URL，直接返回
         if model.file_url.starts_with("http://") || model.file_url.starts_with("https://") {

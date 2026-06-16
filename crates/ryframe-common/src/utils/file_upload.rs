@@ -72,6 +72,37 @@ pub fn validate_extension(filename: &str, allowed: &[String]) -> AppResult<()> {
     }
 }
 
+pub fn validate_file_signature(filename: &str, data: &[u8]) -> AppResult<()> {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    let valid = match ext.as_str() {
+        "jpg" | "jpeg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "png" => data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+        "gif" => data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a"),
+        "bmp" => data.starts_with(b"BM"),
+        "webp" => data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP",
+        "pdf" => data.starts_with(b"%PDF-"),
+        "zip" | "docx" | "xlsx" => {
+            data.starts_with(&[0x50, 0x4B, 0x03, 0x04])
+                || data.starts_with(&[0x50, 0x4B, 0x05, 0x06])
+                || data.starts_with(&[0x50, 0x4B, 0x07, 0x08])
+        }
+        "rar" => data.starts_with(&[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07]),
+        "7z" => data.starts_with(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]),
+        "txt" => std::str::from_utf8(data).is_ok() && !data.contains(&0),
+        "doc" | "xls" => data.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]),
+        _ => false,
+    };
+
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::Validation(format!(
+            "文件内容与扩展名不匹配: .{}",
+            ext
+        )))
+    }
+}
+
 /// 生成存储文件名（UUID + 原始扩展名）
 pub fn generate_storage_filename(original_name: &str) -> String {
     let ext = original_name

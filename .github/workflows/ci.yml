@@ -136,7 +136,6 @@ jobs:
 
       - name: Run tests with coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 60
-        continue-on-error: true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

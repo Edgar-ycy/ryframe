@@ -9,6 +9,8 @@ use axum::{
     routing::{get, post},
 };
 use ryframe_auth::{jwt::Claims, middleware::AuthState};
+use ryframe_common::{ApiResponse, AppResult};
+use ryframe_core::MessageQueue;
 use ryframe_middleware::rate_limit::{RateLimitState, user_rate_limit_middleware};
 use ryframe_service::system::OnlineUserServiceImpl;
 use serde_json::json;
@@ -173,7 +175,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         .nest(
             "/monitor",
-            ryframe_monitor::monitor_router(monitor_state, Some(auth_state)),
+            monitor_router(state.clone(), monitor_state, auth_state),
         )
         .nest(
             "/tools",
@@ -186,6 +188,46 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
         // Swagger UI 交互文档: /swagger-ui
         .route("/swagger-ui", get(swagger_ui))
+}
+
+fn monitor_router(
+    state: AppState,
+    monitor_state: ryframe_monitor::MonitorState,
+    auth_state: AuthState,
+) -> Router {
+    let runtime = Router::new()
+        .route(
+            "/runtime",
+            ryframe_auth::middleware::perm_route(get(runtime_status), "monitor:runtime:list"),
+        )
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            ryframe_auth::middleware::auth_middleware,
+        ))
+        .with_state(state);
+
+    ryframe_monitor::monitor_router(monitor_state, Some(auth_state)).merge(runtime)
+}
+
+async fn runtime_status(
+    State(state): State<AppState>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let message_queue_ok = state.runtime.message_queue.health_check().await;
+    let task_queue_len = state.runtime.task_queue.len().await.ok();
+    let features = state.runtime.feature_flags.list_all();
+
+    Ok(Json(ApiResponse::success(json!({
+        "message_queue": {
+            "healthy": message_queue_ok,
+        },
+        "task_queue": {
+            "len": task_queue_len,
+        },
+        "feature_flags": features,
+        "upload_circuit_breaker": {
+            "state": format!("{:?}", state.runtime.upload_circuit_breaker.current_state()),
+        },
+    }))))
 }
 
 /// 系统管理路由（需认证 + 用户上下文 + 用户限流 + 在线跟踪 + 操作日志）
@@ -288,7 +330,16 @@ fn common_router(state: AppState) -> Router {
     let oper_log_state = OperLogMiddlewareState::new_arc(state.db.clone());
 
     // 上传路由（公开，不记录操作日志以避免大文件 body 缓冲）
-    let upload = common_handler::upload_router(state.clone());
+    let upload = common_handler::upload_router(state.clone())
+        .layer(from_fn_with_state(
+            oper_log_state.clone(),
+            oper_log_middleware,
+        ))
+        .layer(from_fn_with_state(state.clone(), user_context_middleware))
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            ryframe_auth::middleware::auth_middleware,
+        ));
 
     // 下载路由（需认证 + 用户上下文，记录操作日志）
     let download = common_handler::download_router(state.clone())
