@@ -500,7 +500,7 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
 -- -----------------------------------------------------------
 INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `path`, `component`, `query`, `perms`, `icon`, `is_frame`, `is_cache`, `sort`, `visible`, `status`) VALUES
     -- 主页
-    (0,  '首页',   NULL, 'C', '/dashboard',    'dashboard/index',   NULL,  NULL,          'HomeFilled',    0, 0, 0, 1, '1'),
+    (0,  '首页',   NULL, 'C', '/index',    'index',   NULL,  NULL,          'HomeFilled',    0, 0, 0, 1, '1'),
     -- 一级目录
     (1,  '系统管理', NULL, 'M', '/system',  'Layout', NULL,  NULL,          'Setting',    0, 0, 1, 1, '1'),
     (2,  '系统监控', NULL, 'M', '/monitor', 'Layout', NULL,  NULL,          'Monitor',    0, 0, 2, 1, '1'),
