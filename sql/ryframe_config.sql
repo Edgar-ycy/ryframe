@@ -490,7 +490,10 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     (67, '连接池监控查询', 'monitor:db-pool:list', 17, 'api', NULL, 1, '1'),
     -- 代码生成接口权限
     (68, '代码生成查询', 'tools:gen:list', 23, 'api', NULL, 1, '1'),
-    (69, '代码生成操作', 'tools:gen:add', 23, 'api', NULL, 2, '1');
+    (69, '代码生成操作', 'tools:gen:add', 23, 'api', NULL, 2, '1'),
+    -- 运行时监控
+    (70, '运行时监控', 'monitor:runtime', 13, 'menu', 'Operation', 5, '1'),
+    (71, '运行时监控查询', 'monitor:runtime:list', 70, 'api', NULL, 1, '1');
 
 -- -----------------------------------------------------------
 -- 默认菜单 (sys_menu)
@@ -516,6 +519,9 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `path`, `compone
     -- 系统监控子菜单
     (15, '在线用户', 2, 'C', '/monitor/online',   'monitor/online/index',   NULL,  'monitor:online:list','Connection',    0, 0, 1, 1, '1'),
     (16, '服务监控', 2, 'C', '/monitor/server',   'monitor/server/index',   NULL,  'monitor:server:list','DataAnalysis',  0, 0, 2, 1, '1'),
+    (14, '运行时监控', 2, 'C', '/monitor/runtime', 'monitor/runtime/index',  NULL,  'monitor:runtime:list','Operation',     0, 0, 3, 1, '1'),
+    (23, '缓存监控', 2, 'C', '/monitor/cache',     'monitor/cache/index',    NULL,  'monitor:cache:list', 'Coin',          0, 0, 4, 1, '1'),
+    (24, '连接池监控', 2, 'C', '/monitor/db-pool', 'monitor/db-pool/index',  NULL,  'monitor:db-pool:list','Connection',   0, 0, 5, 1, '1'),
     -- 系统工具子菜单
     (17, '代码生成', 3, 'C', '/tools/gen',        'tools/gen/index',        NULL,  'tools:gen:list',     'MagicStick',    0, 0, 1, 1, '1'),
     -- 用户管理按钮
@@ -605,9 +611,18 @@ INSERT INTO `sys_user_role` (`user_id`, `role_id`) VALUES
 -- -----------------------------------------------------------
 INSERT INTO `sys_role_permission` (`role_id`, `perm_id`) VALUES
     (1, 12),  -- admin -> *:*:*
-    -- 普通用户拥有基础查看权限
-    (2, 7),   -- common -> system:user:list
-    (2, 1);   -- common -> system (查看)
+    -- 普通用户拥有系统监控只读权限，菜单与 API 保持一致
+    (2, 13),  -- common -> monitor
+    (2, 14),  -- common -> monitor:online
+    (2, 63),  -- common -> monitor:online:list
+    (2, 15),  -- common -> monitor:server
+    (2, 65),  -- common -> monitor:server:list
+    (2, 70),  -- common -> monitor:runtime
+    (2, 71),  -- common -> monitor:runtime:list
+    (2, 16),  -- common -> monitor:cache
+    (2, 66),  -- common -> monitor:cache:list
+    (2, 17),  -- common -> monitor:db-pool
+    (2, 67);  -- common -> monitor:db-pool:list
 
 -- -----------------------------------------------------------
 -- 角色-菜单关联 (role_menu)
@@ -629,9 +644,12 @@ INSERT INTO `sys_role_menu` (`role_id`, `menu_id`) VALUES
     (1, 11),
     (1, 12),
     (1, 13),
+    (1, 14),
     (1, 15),
     (1, 16),
     (1, 17),
+    (1, 23),
+    (1, 24),
     (1, 18),
     (1, 19),
     (1, 20),
@@ -640,7 +658,10 @@ INSERT INTO `sys_role_menu` (`role_id`, `menu_id`) VALUES
     -- 普通用户 - 首页 + 系统监控菜单
     (2, 0),
     (2, 2),
+    (2, 14),
     (2, 15),
-    (2, 16);
+    (2, 16),
+    (2, 23),
+    (2, 24);
 
 SET FOREIGN_KEY_CHECKS = 1;
