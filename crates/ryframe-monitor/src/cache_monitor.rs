@@ -5,7 +5,7 @@
 //! - 键统计（DBSIZE）
 //! - 内存分析
 
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use ryframe_core::RedisClient;
 use serde::Serialize;
@@ -57,6 +57,19 @@ pub struct CacheKeysInfo {
     pub config_cache: u64,
 }
 
+impl CacheKeysInfo {
+    fn empty() -> Self {
+        Self {
+            total_keys: 0,
+            online_users: 0,
+            captchas: 0,
+            rate_limits: 0,
+            dict_cache: 0,
+            config_cache: 0,
+        }
+    }
+}
+
 /// Redis 内存信息
 #[derive(Debug, Serialize)]
 pub struct RedisMemoryInfo {
@@ -84,6 +97,26 @@ fn parse_info_map(info: &str) -> HashMap<String, String> {
     map
 }
 
+fn info_string(map: &HashMap<String, String>, key: &str, default: &str) -> String {
+    map.get(key).cloned().unwrap_or_else(|| default.to_string())
+}
+
+fn info_parse<T>(map: &HashMap<String, String>, key: &str, default: T) -> T
+where
+    T: FromStr,
+{
+    map.get(key).and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+async fn redis_info(client: &RedisClient, section: Option<&str>) -> redis::RedisResult<String> {
+    let mut conn = client.conn().clone();
+    let mut cmd = redis::cmd("INFO");
+    if let Some(section) = section {
+        cmd.arg(section);
+    }
+    cmd.query_async(&mut conn).await
+}
+
 /// 获取缓存信息
 pub async fn get_cache_info(client: Option<&RedisClient>) -> CacheInfo {
     match client {
@@ -95,10 +128,7 @@ pub async fn get_cache_info(client: Option<&RedisClient>) -> CacheInfo {
 /// Redis 模式缓存信息
 async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
     // 获取 INFO 输出
-    let info_result: Result<String, _> = {
-        let mut conn = client.conn().clone();
-        redis::cmd("INFO").query_async(&mut conn).await
-    };
+    let info_result = redis_info(client, None).await;
 
     let info = match info_result {
         Ok(i) => i,
@@ -108,14 +138,7 @@ async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
                 available: false,
                 mode: "redis".to_string(),
                 server: None,
-                keys: CacheKeysInfo {
-                    total_keys: 0,
-                    online_users: 0,
-                    captchas: 0,
-                    rate_limits: 0,
-                    dict_cache: 0,
-                    config_cache: 0,
-                },
+                keys: CacheKeysInfo::empty(),
                 memory: None,
             };
         }
@@ -125,46 +148,19 @@ async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
 
     // 解析服务器信息
     let server = RedisServerInfo {
-        version: info_map
-            .get("redis_version")
-            .cloned()
-            .unwrap_or_else(|| "unknown".to_string()),
-        mode: info_map
-            .get("redis_mode")
-            .cloned()
-            .unwrap_or_else(|| "standalone".to_string()),
-        os: info_map
-            .get("os")
-            .cloned()
-            .unwrap_or_else(|| "unknown".to_string()),
-        uptime_days: info_map
-            .get("uptime_in_days")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0),
-        connected_clients: info_map
-            .get("connected_clients")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0),
+        version: info_string(&info_map, "redis_version", "unknown"),
+        mode: info_string(&info_map, "redis_mode", "standalone"),
+        os: info_string(&info_map, "os", "unknown"),
+        uptime_days: info_parse(&info_map, "uptime_in_days", 0),
+        connected_clients: info_parse(&info_map, "connected_clients", 0),
     };
 
     // 解析内存信息
     let memory = RedisMemoryInfo {
-        used_memory_human: info_map
-            .get("used_memory_human")
-            .cloned()
-            .unwrap_or_else(|| "0B".to_string()),
-        used_memory_peak_human: info_map
-            .get("used_memory_peak_human")
-            .cloned()
-            .unwrap_or_else(|| "0B".to_string()),
-        mem_fragmentation_ratio: info_map
-            .get("mem_fragmentation_ratio")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0),
-        used_memory: info_map
-            .get("used_memory")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0),
+        used_memory_human: info_string(&info_map, "used_memory_human", "0B"),
+        used_memory_peak_human: info_string(&info_map, "used_memory_peak_human", "0B"),
+        mem_fragmentation_ratio: info_parse(&info_map, "mem_fragmentation_ratio", 0.0),
+        used_memory: info_parse(&info_map, "used_memory", 0),
     };
 
     // 获取 DBSIZE
@@ -203,14 +199,7 @@ async fn get_memory_cache_info() -> CacheInfo {
         available: true,
         mode: "memory".to_string(),
         server: None,
-        keys: CacheKeysInfo {
-            total_keys: 0,
-            online_users: 0,
-            captchas: 0,
-            rate_limits: 0,
-            dict_cache: 0,
-            config_cache: 0,
-        },
+        keys: CacheKeysInfo::empty(),
         memory: None,
     }
 }
@@ -225,13 +214,7 @@ async fn count_keys(client: &RedisClient, pattern: &str) -> u64 {
 
 /// 获取 Redis 命令统计信息
 pub async fn get_cache_command_stats(client: &RedisClient) -> Option<serde_json::Value> {
-    let info_result: Result<String, _> = {
-        let mut conn = client.conn().clone();
-        redis::cmd("INFO")
-            .arg("commandstats")
-            .query_async(&mut conn)
-            .await
-    };
+    let info_result = redis_info(client, Some("commandstats")).await;
 
     match info_result {
         Ok(info) => {

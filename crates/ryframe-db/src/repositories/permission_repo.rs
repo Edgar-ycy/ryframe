@@ -35,11 +35,7 @@ impl Repository<permission::Model, i64> for PermissionRepository {
         db: &DatabaseConnection,
         entity: permission::Model,
     ) -> AppResult<permission::Model> {
-        let active: permission::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+        insert_entity!(permission, db, entity)
     }
 
     async fn update(
@@ -47,11 +43,7 @@ impl Repository<permission::Model, i64> for PermissionRepository {
         db: &DatabaseConnection,
         entity: permission::Model,
     ) -> AppResult<permission::Model> {
-        let active: permission::ActiveModel = entity.into();
-        active
-            .update(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+        update_entity!(permission, db, entity)
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {

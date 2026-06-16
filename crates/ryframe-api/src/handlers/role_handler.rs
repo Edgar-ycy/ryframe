@@ -14,6 +14,7 @@ use super::auth_handler::AppState;
 use crate::dto::role_dto::{
     AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto,
 };
+use crate::handler_utils::{excel_response, parse_csv_i64, parse_i64_strings};
 use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub RoleListQuery {
@@ -102,10 +103,7 @@ async fn list(
     responses((status = 200, description = "角色列表")),
     security(("bearer" = [])))]
 async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<RoleVo>>>> {
-    let page_query = PageQuery {
-        page: 1,
-        page_size: 10000,
-    };
+    let page_query = PageQuery::all_records();
     state
         .role_service
         .find_by_page(&state.db, page_query)
@@ -187,10 +185,7 @@ async fn batch_remove(
     State(state): State<AppState>,
     Path(ids_str): Path<String>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let ids: Vec<i64> = ids_str
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
+    let ids = parse_csv_i64(&ids_str);
 
     if ids.is_empty() {
         return Err(ryframe_common::AppError::Validation(
@@ -210,10 +205,7 @@ async fn export_roles(State(state): State<AppState>) -> AppResult<axum::response
     use ryframe_common::utils::ExcelExporter;
 
     // 查询所有角色
-    let query = PageQuery {
-        page: 1,
-        page_size: 10000,
-    };
+    let query = PageQuery::all_records();
     let page_result = state.role_service.find_by_page(&state.db, query).await?;
 
     // 转换为导出数据
@@ -237,17 +229,7 @@ async fn export_roles(State(state): State<AppState>) -> AppResult<axum::response
         ExcelExporter::export_to_bytes(&export_data, "角色数据", &RoleExportData::excel_headers())?;
 
     // 返回文件
-    let response = axum::response::Response::builder()
-        .status(200)
-        .header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header("Content-Disposition", "attachment; filename=roles.xlsx")
-        .body(axum::body::Body::from(bytes))
-        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
-
-    Ok(response)
+    excel_response(bytes, "roles.xlsx")
 }
 
 /// 角色导出数据结构
@@ -289,7 +271,7 @@ async fn assign_permissions(
     Path(id): Path<i64>,
     Json(dto): Json<AssignPermsDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let perm_ids: Vec<i64> = dto.perm_ids.iter().filter_map(|s| s.parse().ok()).collect();
+    let perm_ids = parse_i64_strings(&dto.perm_ids);
     state
         .role_service
         .assign_permissions(&state.db, id, perm_ids)
@@ -326,7 +308,7 @@ async fn assign_menus(
     Path(id): Path<i64>,
     Json(dto): Json<AssignMenusDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let menu_ids: Vec<i64> = dto.menu_ids.iter().filter_map(|s| s.parse().ok()).collect();
+    let menu_ids = parse_i64_strings(&dto.menu_ids);
     state
         .role_service
         .assign_menus(&state.db, id, menu_ids)
@@ -345,7 +327,7 @@ async fn assign_data_scope(
     Path(id): Path<i64>,
     Json(dto): Json<AssignDataScopeDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let dept_ids: Vec<i64> = dto.dept_ids.iter().filter_map(|s| s.parse().ok()).collect();
+    let dept_ids = parse_i64_strings(&dto.dept_ids);
     state
         .role_service
         .assign_data_scope(&state.db, id, &dto.data_scope, dept_ids)

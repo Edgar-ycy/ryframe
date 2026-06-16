@@ -12,6 +12,7 @@ use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::config_dto::{CreateConfigDto, UpdateConfigDto};
+use crate::handler_utils::excel_response;
 
 pub fn config_router(state: AppState) -> Router {
     Router::new()
@@ -210,15 +211,5 @@ async fn export_configs(State(state): State<AppState>) -> AppResult<axum::respon
         &ConfigExportData::excel_headers(),
     )?;
 
-    let response = axum::response::Response::builder()
-        .status(200)
-        .header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header("Content-Disposition", "attachment; filename=configs.xlsx")
-        .body(axum::body::Body::from(bytes))
-        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
-
-    Ok(response)
+    excel_response(bytes, "configs.xlsx")
 }

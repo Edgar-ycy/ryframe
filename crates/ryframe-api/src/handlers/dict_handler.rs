@@ -14,6 +14,7 @@ use super::auth_handler::AppState;
 use crate::dto::dict_dto::{
     CreateDictDataDto, CreateDictTypeDto, UpdateDictDataDto, UpdateDictTypeDto,
 };
+use crate::handler_utils::excel_response;
 use crate::list_query;
 
 list_query!(pub DictTypeListQuery {
@@ -88,10 +89,7 @@ async fn list_types(
 async fn list_types_no_page(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<DictTypeVo>>>> {
-    let page_query = PageQuery {
-        page: 1,
-        page_size: 10000,
-    };
+    let page_query = PageQuery::all_records();
     let page_result = state
         .dict_service
         .find_types_by_page(&state.db, page_query)
@@ -273,10 +271,7 @@ impl DictTypeExportData {
 async fn export_dict_types(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
-    let query = PageQuery {
-        page: 1,
-        page_size: 10000,
-    };
+    let query = PageQuery::all_records();
     let page_result = state
         .dict_service
         .find_types_by_page(&state.db, query)
@@ -299,18 +294,5 @@ async fn export_dict_types(State(state): State<AppState>) -> AppResult<axum::res
         &DictTypeExportData::excel_headers(),
     )?;
 
-    let response = axum::response::Response::builder()
-        .status(200)
-        .header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header(
-            "Content-Disposition",
-            "attachment; filename=dict_types.xlsx",
-        )
-        .body(axum::body::Body::from(bytes))
-        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
-
-    Ok(response)
+    excel_response(bytes, "dict_types.xlsx")
 }

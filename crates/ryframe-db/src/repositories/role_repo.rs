@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder,
 };
 
 use crate::entities::{role, user_role};
@@ -34,33 +34,15 @@ impl Repository<role::Model, i64> for RoleRepository {
     }
 
     async fn insert(&self, db: &DatabaseConnection, entity: role::Model) -> AppResult<role::Model> {
-        let active: role::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+        insert_entity!(role, db, entity)
     }
 
     async fn update(&self, db: &DatabaseConnection, entity: role::Model) -> AppResult<role::Model> {
-        let active: role::ActiveModel = entity.into();
-        active
-            .update(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+        update_entity!(role, db, entity)
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        let active = role::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            del_flag: ActiveValue::Set(role::Model::DEL_FLAG_DELETED.to_string()),
-            updated_at: ActiveValue::Set(chrono::Utc::now()),
-            ..Default::default()
-        };
-        active
-            .update(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-        Ok(())
+        soft_delete_entity!(role, db, id)
     }
 }
 

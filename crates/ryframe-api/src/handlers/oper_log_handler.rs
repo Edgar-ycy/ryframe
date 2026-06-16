@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use super::auth_handler::AppState;
 use crate::dto::oper_log_dto::OperLogPageQuery;
+use crate::handler_utils::excel_response;
 
 pub fn oper_log_router(state: AppState) -> Router {
     Router::new()
@@ -149,15 +150,5 @@ async fn export_oper_logs(
         &OperLogExportData::excel_headers(),
     )?;
 
-    let response = axum::response::Response::builder()
-        .status(200)
-        .header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header("Content-Disposition", "attachment; filename=oper_logs.xlsx")
-        .body(axum::body::Body::from(bytes))
-        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
-
-    Ok(response)
+    excel_response(bytes, "oper_logs.xlsx")
 }

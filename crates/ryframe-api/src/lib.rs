@@ -1,5 +1,6 @@
 pub mod dto;
 pub mod extractors;
+mod handler_utils;
 pub mod handlers;
 #[macro_use]
 pub mod macros;

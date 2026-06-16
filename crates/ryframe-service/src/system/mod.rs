@@ -2,6 +2,7 @@ pub mod captcha_service;
 pub mod config_service;
 pub mod dept_service;
 pub mod dict_service;
+mod log_time_range;
 pub mod login_info_service;
 pub mod menu_service;
 pub mod notice_service;

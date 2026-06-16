@@ -74,10 +74,7 @@ async fn list(
 async fn list_no_page(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<NoticeVo>>>> {
-    let page_query = PageQuery {
-        page: 1,
-        page_size: 10000,
-    };
+    let page_query = PageQuery::all_records();
     state
         .notice_service
         .find_by_page(&state.db, page_query)

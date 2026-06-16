@@ -2,8 +2,7 @@ use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
 };
 
 use crate::entities::{dict_data, dict_type};
@@ -43,11 +42,7 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
         db: &DatabaseConnection,
         entity: dict_type::Model,
     ) -> AppResult<dict_type::Model> {
-        let active: dict_type::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        insert_entity!(dict_type, db, entity)
     }
 
     async fn update(
@@ -55,25 +50,11 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
         db: &DatabaseConnection,
         entity: dict_type::Model,
     ) -> AppResult<dict_type::Model> {
-        let active: dict_type::ActiveModel = entity.into();
-        active
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        update_entity!(dict_type, db, entity)
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        let active = dict_type::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            del_flag: ActiveValue::Set(dict_type::Model::DEL_FLAG_DELETED.to_string()),
-            updated_at: ActiveValue::Set(chrono::Utc::now()),
-            ..Default::default()
-        };
-        active
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
+        soft_delete_entity!(dict_type, db, id)
     }
 }
 
@@ -138,11 +119,7 @@ impl Repository<dict_data::Model, i64> for DictDataRepository {
         db: &DatabaseConnection,
         entity: dict_data::Model,
     ) -> AppResult<dict_data::Model> {
-        let active: dict_data::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        insert_entity!(dict_data, db, entity)
     }
 
     async fn update(
@@ -150,25 +127,11 @@ impl Repository<dict_data::Model, i64> for DictDataRepository {
         db: &DatabaseConnection,
         entity: dict_data::Model,
     ) -> AppResult<dict_data::Model> {
-        let active: dict_data::ActiveModel = entity.into();
-        active
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        update_entity!(dict_data, db, entity)
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        let active = dict_data::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            del_flag: ActiveValue::Set(dict_data::Model::DEL_FLAG_DELETED.to_string()),
-            updated_at: ActiveValue::Set(chrono::Utc::now()),
-            ..Default::default()
-        };
-        active
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
+        soft_delete_entity!(dict_data, db, id)
     }
 }
 

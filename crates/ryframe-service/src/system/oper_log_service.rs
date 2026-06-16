@@ -5,6 +5,8 @@ use ryframe_db::{OperLogRepository, entities::oper_log};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 
+use super::log_time_range::parse_log_time_range;
+
 /// 操作日志视图对象
 #[derive(Debug, Clone, Serialize)]
 pub struct OperLogVo {
@@ -88,24 +90,7 @@ impl OperLogServiceImpl {
         begin_time: Option<&str>,
         end_time: Option<&str>,
     ) -> AppResult<PageResult<OperLogVo>> {
-        let begin = begin_time
-            .and_then(|s| {
-                chrono::NaiveDateTime::parse_from_str(
-                    &format!("{} 00:00:00", s),
-                    "%Y-%m-%d %H:%M:%S",
-                )
-                .ok()
-            })
-            .map(|d| d.and_utc());
-        let end = end_time
-            .and_then(|s| {
-                chrono::NaiveDateTime::parse_from_str(
-                    &format!("{} 23:59:59", s),
-                    "%Y-%m-%d %H:%M:%S",
-                )
-                .ok()
-            })
-            .map(|d| d.and_utc());
+        let (begin, end) = parse_log_time_range(begin_time, end_time);
 
         let result = self
             .oper_log_repo
@@ -132,10 +117,7 @@ impl OperLogServiceImpl {
         begin_time: Option<&str>,
         end_time: Option<&str>,
     ) -> AppResult<Vec<OperLogVo>> {
-        let query = PageQuery {
-            page: 1,
-            page_size: 10000,
-        };
+        let query = PageQuery::all_records();
         let result = self
             .find_by_page(db, query, oper_name, status, begin_time, end_time)
             .await?;

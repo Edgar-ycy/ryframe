@@ -1,3 +1,6 @@
+#[macro_use]
+mod macros;
+
 pub mod config_repo;
 pub mod dept_repo;
 pub mod dict_repo;

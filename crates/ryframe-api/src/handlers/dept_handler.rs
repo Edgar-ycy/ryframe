@@ -12,6 +12,7 @@ use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
+use crate::handler_utils::parse_optional_i64;
 use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub DeptListQuery {
@@ -91,7 +92,7 @@ async fn create(
     Json(dto): Json<CreateDeptDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
     dto.validate()?;
-    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
+    let parent_id = parse_optional_i64(dto.parent_id);
     state
         .dept_service
         .create(&state.db, &dto.name, parent_id, dto.sort.unwrap_or(0))
@@ -109,7 +110,7 @@ async fn update(
     Json(dto): Json<UpdateDeptDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::dept::Model>>> {
     dto.validate()?;
-    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
+    let parent_id = parse_optional_i64(dto.parent_id);
     state
         .dept_service
         .update(

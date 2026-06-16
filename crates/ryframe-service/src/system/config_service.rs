@@ -183,10 +183,7 @@ impl ConfigServiceImpl {
 
     /// 查询所有参数（用于导出）
     pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<ConfigVo>> {
-        let query = PageQuery {
-            page: 1,
-            page_size: 10000,
-        };
+        let query = PageQuery::all_records();
         let page = self.config_repo.find_by_page(db, query).await?;
         Ok(page.records.into_iter().map(ConfigVo::from).collect())
     }

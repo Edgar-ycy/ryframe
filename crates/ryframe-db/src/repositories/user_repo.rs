@@ -37,33 +37,15 @@ impl Repository<user::Model, i64> for UserRepository {
     }
 
     async fn insert(&self, db: &DatabaseConnection, entity: user::Model) -> AppResult<user::Model> {
-        let active: user::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+        insert_entity!(user, db, entity)
     }
 
     async fn update(&self, db: &DatabaseConnection, entity: user::Model) -> AppResult<user::Model> {
-        let active: user::ActiveModel = entity.into();
-        active
-            .update(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+        update_entity!(user, db, entity)
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        let active = user::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            del_flag: ActiveValue::Set(user::Model::DEL_FLAG_DELETED.to_string()),
-            updated_at: ActiveValue::Set(chrono::Utc::now()),
-            ..Default::default()
-        };
-        active
-            .update(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-        Ok(())
+        soft_delete_entity!(user, db, id)
     }
 }
 

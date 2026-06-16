@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use axum::{
-    http::{HeaderName, HeaderValue, header},
+    http::{HeaderMap, HeaderName, HeaderValue, header},
     middleware::Next,
     response::Response,
 };
@@ -121,6 +121,26 @@ impl SecurityHeadersConfig {
     }
 }
 
+struct HeaderWriter;
+
+impl HeaderWriter {
+    fn insert_static(headers: &mut HeaderMap, name: HeaderName, value: &'static str) {
+        headers.insert(name, HeaderValue::from_static(value));
+    }
+
+    fn insert_optional(headers: &mut HeaderMap, name: HeaderName, value: Option<&str>) {
+        if let Some(value) = value {
+            Self::insert_value(headers, name, value);
+        }
+    }
+
+    fn insert_value(headers: &mut HeaderMap, name: HeaderName, value: &str) {
+        if let Ok(value) = HeaderValue::from_str(value) {
+            headers.insert(name, value);
+        }
+    }
+}
+
 /// 安全响应头中间件
 ///
 /// 为每个响应注入安全头。在 response 返回前修改 headers。
@@ -132,28 +152,31 @@ pub async fn security_headers_middleware(
     let mut response = next.run(request).await;
 
     // ========== X-Content-Type-Options ==========
-    response.headers_mut().insert(
+    HeaderWriter::insert_static(
+        response.headers_mut(),
         header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
+        "nosniff",
     );
 
     // ========== X-XSS-Protection ==========
-    response.headers_mut().insert(
+    HeaderWriter::insert_static(
+        response.headers_mut(),
         HeaderName::from_static("x-xss-protection"),
-        HeaderValue::from_static("1; mode=block"),
+        "1; mode=block",
     );
 
     // ========== X-Frame-Options ==========
-    if let Some(ref frame_options) = config.x_frame_options
-        && let Ok(val) = HeaderValue::from_str(frame_options)
-    {
-        response.headers_mut().insert(header::X_FRAME_OPTIONS, val);
-    }
+    HeaderWriter::insert_optional(
+        response.headers_mut(),
+        header::X_FRAME_OPTIONS,
+        config.x_frame_options.as_deref(),
+    );
 
     // ========== X-DNS-Prefetch-Control ==========
-    response.headers_mut().insert(
+    HeaderWriter::insert_static(
+        response.headers_mut(),
         HeaderName::from_static("x-dns-prefetch-control"),
-        HeaderValue::from_static("off"),
+        "off",
     );
 
     // ========== HSTS ==========
@@ -163,47 +186,45 @@ pub async fn security_headers_middleware(
         } else {
             format!("max-age={}", max_age)
         };
-        if let Ok(val) = HeaderValue::from_str(&hsts) {
-            response
-                .headers_mut()
-                .insert(header::STRICT_TRANSPORT_SECURITY, val);
-        }
+        HeaderWriter::insert_value(
+            response.headers_mut(),
+            header::STRICT_TRANSPORT_SECURITY,
+            &hsts,
+        );
     }
 
     // ========== Content-Security-Policy ==========
-    if let Some(ref csp) = config.content_security_policy
-        && let Ok(val) = HeaderValue::from_str(csp)
-    {
-        response
-            .headers_mut()
-            .insert(header::CONTENT_SECURITY_POLICY, val);
-    }
-
-    // ========== Referrer-Policy ==========
-    if let Some(ref policy) = config.referrer_policy
-        && let Ok(val) = HeaderValue::from_str(policy)
-    {
-        response.headers_mut().insert(header::REFERRER_POLICY, val);
-    }
-
-    // ========== Permissions-Policy ==========
-    if let Some(ref policy) = config.permissions_policy
-        && let Ok(val) = HeaderValue::from_str(policy)
-    {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static("permissions-policy"), val);
-    }
-
-    // ========== Cross-Origin-* ==========
-    response.headers_mut().insert(
-        HeaderName::from_static("cross-origin-opener-policy"),
-        HeaderValue::from_static("same-origin"),
+    HeaderWriter::insert_optional(
+        response.headers_mut(),
+        header::CONTENT_SECURITY_POLICY,
+        config.content_security_policy.as_deref(),
     );
 
-    response.headers_mut().insert(
+    // ========== Referrer-Policy ==========
+    HeaderWriter::insert_optional(
+        response.headers_mut(),
+        header::REFERRER_POLICY,
+        config.referrer_policy.as_deref(),
+    );
+
+    // ========== Permissions-Policy ==========
+    HeaderWriter::insert_optional(
+        response.headers_mut(),
+        HeaderName::from_static("permissions-policy"),
+        config.permissions_policy.as_deref(),
+    );
+
+    // ========== Cross-Origin-* ==========
+    HeaderWriter::insert_static(
+        response.headers_mut(),
+        HeaderName::from_static("cross-origin-opener-policy"),
+        "same-origin",
+    );
+
+    HeaderWriter::insert_static(
+        response.headers_mut(),
         HeaderName::from_static("cross-origin-resource-policy"),
-        HeaderValue::from_static("same-origin"),
+        "same-origin",
     );
 
     // ========== 自定义头 ==========

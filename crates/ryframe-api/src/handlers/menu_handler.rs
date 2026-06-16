@@ -11,6 +11,7 @@ use validator::Validate;
 use super::auth_handler::AppState;
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
 use crate::extractors::CurrentUser;
+use crate::handler_utils::parse_optional_i64;
 use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub MenuListQuery {
@@ -111,7 +112,7 @@ async fn create(
     Json(dto): Json<CreateMenuDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
     dto.validate()?;
-    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
+    let parent_id = parse_optional_i64(dto.parent_id);
     state
         .menu_service
         .create(
@@ -143,7 +144,7 @@ async fn update(
     Json(dto): Json<UpdateMenuDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
     dto.validate()?;
-    let parent_id: Option<i64> = dto.parent_id.and_then(|s| s.parse().ok());
+    let parent_id = parse_optional_i64(dto.parent_id);
     state
         .menu_service
         .update(

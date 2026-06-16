@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::entities::config;
 
@@ -42,11 +40,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
         db: &DatabaseConnection,
         entity: config::Model,
     ) -> AppResult<config::Model> {
-        let active: config::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        insert_entity!(config, db, entity)
     }
 
     async fn update(
@@ -77,17 +71,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        let active = config::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            del_flag: ActiveValue::Set(config::Model::DEL_FLAG_DELETED.to_string()),
-            updated_at: ActiveValue::Set(chrono::Utc::now()),
-            ..Default::default()
-        };
-        active
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
+        soft_delete_entity!(config, db, id)
     }
 }
 

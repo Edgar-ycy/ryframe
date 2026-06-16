@@ -37,8 +37,8 @@ pub fn encode_access(
     config: &AuthConfig,
 ) -> AppResult<(String, String)> {
     let ttl = parse_duration(&config.access_token_expire)?;
-    let now = Utc::now().timestamp() as usize;
-    let jti = ryframe_common::utils::snowflake::next_snowflake_id().to_string();
+    let now = current_timestamp();
+    let jti = new_jti();
     let claims = Claims {
         sub: user_id.to_string(),
         username: username.to_string(),
@@ -49,12 +49,7 @@ pub fn encode_access(
         iat: now,
         exp: now + ttl,
     };
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| AppError::Internal(format!("JWT 编码失败: {}", e)))?;
+    let token = encode_claims(&claims, config)?;
     Ok((token, jti))
 }
 
@@ -64,24 +59,35 @@ pub fn encode_access(
 /// 刷新时重新查询数据库获取最新角色权限。
 pub fn encode_refresh(user_id: i64, username: &str, config: &AuthConfig) -> AppResult<String> {
     let ttl = parse_duration(&config.refresh_token_expire)?;
-    let now = Utc::now().timestamp() as usize;
-    let jti = ryframe_common::utils::snowflake::next_snowflake_id().to_string();
+    let now = current_timestamp();
     let claims = Claims {
         sub: user_id.to_string(),
         username: username.to_string(),
         roles: vec![],
         perms: vec![],
         token_type: "refresh".into(),
-        jti,
+        jti: new_jti(),
         iat: now,
         exp: now + ttl,
     };
+    encode_claims(&claims, config)
+}
+
+fn current_timestamp() -> usize {
+    Utc::now().timestamp() as usize
+}
+
+fn new_jti() -> String {
+    ryframe_common::utils::snowflake::next_snowflake_id().to_string()
+}
+
+fn encode_claims(claims: &Claims, config: &AuthConfig) -> AppResult<String> {
     encode(
         &Header::default(),
-        &claims,
+        claims,
         &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
     )
-    .map_err(|e| AppError::Internal(format!("JWT 编码失败: {}", e)))
+    .map_err(|e| AppError::Internal(format!("JWT encode failed: {}", e)))
 }
 
 /// 验证并解码 JWT

@@ -210,7 +210,7 @@ pub async fn idempotency_middleware(
                 Response::builder()
                     .status(500)
                     .body(Body::from("Internal Server Error"))
-                    .unwrap()
+                    .unwrap_or_else(|_| Response::new(Body::from("Internal Server Error")))
             }
         }
     } else {

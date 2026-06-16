@@ -26,6 +26,13 @@ pub fn default_page_size() -> u64 {
 }
 
 impl PageQuery {
+    pub fn all_records() -> Self {
+        Self {
+            page: 1,
+            page_size: 10000,
+        }
+    }
+
     /// 计算 SQL OFFSET 值
     pub fn offset(&self) -> u64 {
         (self.page.saturating_sub(1)) * self.page_size

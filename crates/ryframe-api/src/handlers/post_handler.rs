@@ -12,6 +12,7 @@ use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
+use crate::handler_utils::excel_response;
 use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub PostListQuery {
@@ -185,15 +186,5 @@ async fn export_posts(State(state): State<AppState>) -> AppResult<axum::response
     let bytes =
         ExcelExporter::export_to_bytes(&export_data, "岗位数据", &PostExportData::excel_headers())?;
 
-    let response = axum::response::Response::builder()
-        .status(200)
-        .header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header("Content-Disposition", "attachment; filename=posts.xlsx")
-        .body(axum::body::Body::from(bytes))
-        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
-
-    Ok(response)
+    excel_response(bytes, "posts.xlsx")
 }

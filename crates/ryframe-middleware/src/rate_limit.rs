@@ -211,6 +211,20 @@ impl RateLimiter {
         }
     }
 
+    async fn acquire_configured(
+        &self,
+        key: &str,
+        window_secs: u64,
+        limit: u32,
+        use_sliding_window: bool,
+    ) -> bool {
+        if use_sliding_window {
+            self.sliding_window_acquire(key, window_secs, limit).await
+        } else {
+            self.try_acquire(key).await
+        }
+    }
+
     /// 生成用户级限流 key
     pub fn user_key(user_id: &str) -> String {
         format!("user:{}", user_id)
@@ -300,14 +314,10 @@ pub async fn user_rate_limit_middleware(
     let limit = state.config.user_capacity;
     let window = state.config.user_window_secs;
 
-    let passed = if state.config.window_secs > 0 {
-        state
-            .limiter
-            .sliding_window_acquire(&user_key, window, limit)
-            .await
-    } else {
-        state.limiter.try_acquire(&user_key).await
-    };
+    let passed = state
+        .limiter
+        .acquire_configured(&user_key, window, limit, state.config.window_secs > 0)
+        .await;
 
     if passed {
         Ok(next.run(request).await)
@@ -355,14 +365,10 @@ pub async fn api_rate_limit_middleware(
     };
 
     let key = RateLimiter::api_key(&exact_key);
-    let passed = if state.config.window_secs > 0 {
-        state
-            .limiter
-            .sliding_window_acquire(&key, window, limit)
-            .await
-    } else {
-        state.limiter.try_acquire(&key).await
-    };
+    let passed = state
+        .limiter
+        .acquire_configured(&key, window, limit, state.config.window_secs > 0)
+        .await;
 
     if passed {
         Ok(next.run(request).await)

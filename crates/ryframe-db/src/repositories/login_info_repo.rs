@@ -41,11 +41,7 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
         db: &DatabaseConnection,
         entity: login_info::Model,
     ) -> AppResult<login_info::Model> {
-        let active: login_info::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        insert_entity!(login_info, db, entity)
     }
 
     async fn update(

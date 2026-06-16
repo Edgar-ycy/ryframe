@@ -41,11 +41,7 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
         db: &DatabaseConnection,
         entity: oper_log::Model,
     ) -> AppResult<oper_log::Model> {
-        let active: oper_log::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        insert_entity!(oper_log, db, entity)
     }
 
     async fn update(

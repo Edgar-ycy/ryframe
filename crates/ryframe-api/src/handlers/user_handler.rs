@@ -16,6 +16,9 @@ use crate::dto::{
     user_import_dto::{UserExportData, UserImportData},
 };
 use crate::extractors::CurrentUser;
+use crate::handler_utils::{
+    excel_response, parse_csv_i64, parse_i64_strings, parse_optional_i64, parse_optional_i64_str,
+};
 
 /// 用户列表分页查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
@@ -116,10 +119,7 @@ async fn list(
     responses((status = 200, description = "用户列表")),
     security(("bearer" = [])))]
 async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<UserVo>>>> {
-    let page_query = PageQuery {
-        page: 1,
-        page_size: 10000,
-    };
+    let page_query = PageQuery::all_records();
     state
         .user_service
         .find_by_page(&state.db, page_query)
@@ -157,10 +157,8 @@ async fn create(
 ) -> AppResult<Json<ApiResponse<UserVo>>> {
     dto.validate()?;
     // 解析前端传来的 String ID 为 i64
-    let dept_id: Option<i64> = dto.dept_id.and_then(|s| s.parse().ok());
-    let role_ids: Option<Vec<i64>> = dto
-        .role_ids
-        .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect());
+    let dept_id = parse_optional_i64(dto.dept_id);
+    let role_ids = dto.role_ids.map(|ids| parse_i64_strings(&ids));
     state
         .user_service
         .create(
@@ -193,10 +191,8 @@ async fn update(
 ) -> AppResult<Json<ApiResponse<UserVo>>> {
     dto.validate()?;
     // 解析前端传来的 String ID 为 i64
-    let dept_id: Option<i64> = dto.dept_id.and_then(|s| s.parse().ok());
-    let role_ids: Option<Vec<i64>> = dto
-        .role_ids
-        .map(|ids| ids.iter().filter_map(|s| s.parse().ok()).collect());
+    let dept_id = parse_optional_i64(dto.dept_id);
+    let role_ids = dto.role_ids.map(|ids| parse_i64_strings(&ids));
     state
         .user_service
         .update(
@@ -237,10 +233,7 @@ async fn batch_remove(
     State(state): State<AppState>,
     Path(ids_str): Path<String>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let ids: Vec<i64> = ids_str
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
+    let ids = parse_csv_i64(&ids_str);
 
     if ids.is_empty() {
         return Err(ryframe_common::AppError::Validation(
@@ -307,10 +300,7 @@ async fn export_users(
     use ryframe_common::utils::ExcelExporter;
 
     // 查询所有用户（不分页）- 需要通过分页查询获取全部
-    let query = PageQuery {
-        page: 1,
-        page_size: 10000,
-    };
+    let query = PageQuery::all_records();
     let page_result = state.user_service.find_by_page(&state.db, query).await?;
 
     // 转换为导出数据
@@ -336,17 +326,7 @@ async fn export_users(
         ExcelExporter::export_to_bytes(&export_data, "用户数据", UserExportData::excel_headers())?;
 
     // 返回文件
-    let response = axum::response::Response::builder()
-        .status(200)
-        .header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header("Content-Disposition", "attachment; filename=users.xlsx")
-        .body(axum::body::Body::from(bytes))
-        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
-
-    Ok(response)
+    excel_response(bytes, "users.xlsx")
 }
 
 /// 从 Excel 导入用户数据
@@ -395,7 +375,7 @@ async fn import_users(
                             nickname: &data.nickname,
                             email: &data.email,
                             phone: data.phone.as_deref().unwrap_or(""),
-                            dept_id: data.dept_id.as_ref().and_then(|s| s.parse().ok()),
+                            dept_id: parse_optional_i64_str(data.dept_id.as_deref()),
                             role_ids: None,
                             enable_pwd_complexity: false, // 导入时不强制密码复杂度（使用默认密码）
                         },
@@ -432,18 +412,5 @@ async fn download_import_template() -> AppResult<axum::response::Response> {
 
     let bytes = ExcelExporter::export_template("用户数据", UserImportData::excel_headers())?;
 
-    let response = axum::response::Response::builder()
-        .status(200)
-        .header(
-            "Content-Type",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        .header(
-            "Content-Disposition",
-            "attachment; filename=user_template.xlsx",
-        )
-        .body(axum::body::Body::from(bytes))
-        .map_err(|e| ryframe_common::AppError::Internal(format!("构建响应失败: {}", e)))?;
-
-    Ok(response)
+    excel_response(bytes, "user_template.xlsx")
 }

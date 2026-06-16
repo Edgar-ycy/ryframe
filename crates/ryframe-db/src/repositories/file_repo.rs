@@ -4,8 +4,7 @@ use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult, utils::ObjectStorage};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
 };
 
 use crate::entities::sys_file;
@@ -47,11 +46,7 @@ impl Repository<sys_file::Model, i64> for FileRepository {
         db: &DatabaseConnection,
         entity: sys_file::Model,
     ) -> AppResult<sys_file::Model> {
-        let active: sys_file::ActiveModel = entity.into();
-        active
-            .insert(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        insert_entity!(sys_file, db, entity)
     }
 
     async fn update(
@@ -59,25 +54,11 @@ impl Repository<sys_file::Model, i64> for FileRepository {
         db: &DatabaseConnection,
         entity: sys_file::Model,
     ) -> AppResult<sys_file::Model> {
-        let active: sys_file::ActiveModel = entity.into();
-        active
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        update_entity!(sys_file, db, entity)
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        let active = sys_file::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            del_flag: ActiveValue::Set(sys_file::Model::DEL_FLAG_DELETED.to_string()),
-            updated_at: ActiveValue::Set(chrono::Utc::now()),
-            ..Default::default()
-        };
-        active
-            .update(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
+        soft_delete_entity!(sys_file, db, id)
     }
 }
 

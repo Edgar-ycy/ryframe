@@ -5,7 +5,7 @@ use axum::{Json, extract::State};
 use ryframe_auth::middleware::{AuthState, perm_route};
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::RedisClient;
-use sea_orm::DatabaseConnection;
+use sea_orm::{DatabaseBackend, DatabaseConnection, Statement};
 pub use server_info::ServerInfo;
 
 #[derive(Debug, sea_orm::FromQueryResult)]
@@ -86,7 +86,7 @@ async fn health_check_handler(
         } else {
             "not_configured"
         },
-        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "timestamp": current_timestamp(),
     }))))
 }
 
@@ -115,43 +115,24 @@ async fn cache_commands_handler(
 
 async fn metrics_handler() -> axum::response::Response {
     let text = ryframe_middleware::metrics::metrics_text();
-    axum::response::Response::builder()
-        .header("Content-Type", "text/plain; version=0.0.4")
-        .body(axum::body::Body::from(text))
-        .unwrap()
+    text_response(text, "text/plain; version=0.0.4")
 }
 
 async fn db_pool_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    use sea_orm::Statement;
-
     let backend = state.db.get_database_backend();
     let ping_ok = ryframe_db::connection::ping(&state.db).await.is_ok();
 
     let active_connections = match backend {
-        sea_orm::DatabaseBackend::MySql => {
+        DatabaseBackend::MySql => {
             let sql = "SHOW STATUS WHERE Variable_name = 'Threads_connected'";
-            <ActiveConnectionRow as sea_orm::FromQueryResult>::find_by_statement(
-                Statement::from_sql_and_values(backend, sql, []),
-            )
-            .one(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .map(|row| row.value)
+            active_connection_count(&state.db, backend, sql).await
         }
-        sea_orm::DatabaseBackend::Postgres => {
+        DatabaseBackend::Postgres => {
             let sql =
                 "SELECT count(*)::bigint AS value FROM pg_stat_activity WHERE state = 'active'";
-            <ActiveConnectionRow as sea_orm::FromQueryResult>::find_by_statement(
-                Statement::from_sql_and_values(backend, sql, []),
-            )
-            .one(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .map(|row| row.value)
+            active_connection_count(&state.db, backend, sql).await
         }
         _ => None,
     };
@@ -159,6 +140,32 @@ async fn db_pool_handler(
     Ok(Json(ApiResponse::success(serde_json::json!({
         "status": if ping_ok { "connected" } else { "disconnected" },
         "active_connections": active_connections,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "timestamp": current_timestamp(),
     }))))
+}
+
+fn current_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+fn text_response(text: String, content_type: &str) -> axum::response::Response {
+    axum::response::Response::builder()
+        .header("Content-Type", content_type)
+        .body(axum::body::Body::from(text))
+        .unwrap()
+}
+
+async fn active_connection_count(
+    db: &DatabaseConnection,
+    backend: DatabaseBackend,
+    sql: &str,
+) -> Option<i64> {
+    <ActiveConnectionRow as sea_orm::FromQueryResult>::find_by_statement(
+        Statement::from_sql_and_values(backend, sql, []),
+    )
+    .one(db)
+    .await
+    .ok()
+    .flatten()
+    .map(|row| row.value)
 }
