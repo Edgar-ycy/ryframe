@@ -1,5 +1,35 @@
 # Changelog
 
+## [v0.2.0] - 2026-06-17
+
+### 稳定版发布
+
+本次发布主要补齐了权限管理、租户隔离和前端权限联动，完成稳定版所需的收口。
+
+### Added
+
+- 权限资源 CRUD
+- 接口权限自动扫描和同步
+- CI 校验新增接口是否遗漏权限码
+- 前端 `v-permission` 支持通配符
+- 租户 ID 真正落到实体和查询层
+- 角色分配时增加越权防护
+- 权限变更后自动刷新菜单和按钮权限
+
+### Fixed
+
+- 修复系统权限页面路由和菜单不可见问题
+- 补齐权限与菜单的初始化 SQL
+- 修复前端权限变更后的刷新逻辑
+
+### Validation
+
+- `cargo check --workspace --all-targets`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace --lib --tests`
+- `pnpm build`
+- `vue-tsc -p ryframe-vue3/tsconfig.json --noEmit`
+
 所有值得注意的项目变更都将记录在此文件中。
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
