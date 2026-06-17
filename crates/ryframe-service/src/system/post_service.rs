@@ -66,6 +66,7 @@ impl PostServiceImpl {
 
         let mut new_post = post::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: "system".to_string(),
             name: name.to_string(),
             code: code.to_string(),
             sort,

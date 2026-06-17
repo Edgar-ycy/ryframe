@@ -9,6 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     #[auto_fill(snowflake)]
     pub id: i64,
+    pub tenant_id: String,
     #[sea_orm(unique)]
     pub username: String,
     #[serde(skip_serializing)]

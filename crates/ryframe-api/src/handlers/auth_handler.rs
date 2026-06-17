@@ -229,6 +229,28 @@ async fn check_force_logout(state: &AppState, refresh_token: &str) -> AppResult<
     Ok(())
 }
 
+fn force_logout_ttl_seconds(state: &AppState) -> u64 {
+    ryframe_auth::jwt::parse_duration(&state.config.auth.refresh_token_expire)
+        .unwrap_or(7 * 24 * 3600) as u64
+}
+
+pub async fn invalidate_user_tokens(state: &AppState, user_id: i64) {
+    let key = format!("force_logout:user:{}", user_id);
+    state
+        .token_blacklist
+        .blacklist(&key, force_logout_ttl_seconds(state))
+        .await;
+}
+
+pub async fn invalidate_users_tokens(state: &AppState, user_ids: &[i64]) {
+    let mut ids = user_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    for user_id in ids {
+        invalidate_user_tokens(state, user_id).await;
+    }
+}
+
 /// 用户登录
 ///
 /// POST /api/v1/auth/login

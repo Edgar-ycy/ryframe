@@ -12,6 +12,7 @@ use sea_orm::{
 use crate::entities::user;
 
 pub struct UserRepository;
+const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<user::Model, i64> for UserRepository {
@@ -51,7 +52,9 @@ impl Repository<user::Model, i64> for UserRepository {
 
 impl UserRepository {
     fn base_select() -> Select<user::Entity> {
-        user::Entity::find().filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+        user::Entity::find()
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .filter(user::Column::TenantId.eq(DEFAULT_TENANT_ID))
     }
 
     fn apply_filters(
@@ -171,6 +174,23 @@ impl UserRepository {
     ) -> AppResult<PageResult<user::Model>> {
         self.find_by_page_filtered_with_data_scope(db, query, None, None, None, None, scope_ctx)
             .await
+    }
+
+    pub async fn find_by_id_with_data_scope(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<Option<user::Model>> {
+        let select = Self::base_select().filter(user::Column::Id.eq(id));
+        let Some(select) = Self::apply_data_scope(select, scope_ctx) else {
+            return Ok(None);
+        };
+
+        select
+            .one(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub async fn delete_many(&self, db: &DatabaseConnection, ids: &[i64]) -> AppResult<u64> {

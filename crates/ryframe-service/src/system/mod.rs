@@ -20,7 +20,7 @@ pub use login_info_service::{LoginInfoServiceImpl, LoginInfoVo};
 pub use menu_service::MenuServiceImpl;
 pub use notice_service::{NoticeServiceImpl, NoticeVo};
 pub use oper_log_service::{OperLogServiceImpl, OperLogVo};
-pub use permission_service::{PermissionServiceImpl, PermissionTreeNode};
+pub use permission_service::{PermissionServiceImpl, PermissionSyncReport, PermissionTreeNode};
 pub use post_service::{PostServiceImpl, PostVo};
 pub use role_service::{RoleServiceImpl, RoleVo};
 pub use user_service::{

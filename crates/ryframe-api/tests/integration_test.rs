@@ -83,6 +83,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
     // 创建根部门
     let dept_model = dept::Model {
         id: 1,
+        tenant_id: "system".into(),
         name: "总公司".into(),
         parent_id: Some(0),
         ancestors: "0".into(),
@@ -100,6 +101,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
     let password_hash = ryframe_auth::password::hash("test123").unwrap();
     let user_model = user::Model {
         id: 1,
+        tenant_id: "system".into(),
         username: "admin".into(),
         password_hash,
         nickname: "管理员".into(),
@@ -121,6 +123,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
     // 创建 admin 角色
     let role_model = role::Model {
         id: 1,
+        tenant_id: "system".into(),
         name: "超级管理员".into(),
         code: "admin".into(),
         data_scope: "1".into(),
@@ -136,6 +139,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
 
     let all_permission = permission::Model {
         id: 1,
+        tenant_id: "system".into(),
         name: "全部权限".into(),
         code: "*:*:*".into(),
         parent_id: None,

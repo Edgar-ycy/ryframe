@@ -331,6 +331,11 @@ mod extra_paths {
         crate::handlers::profile_handler::update_avatar,
         // 权限管理
         crate::handlers::permission_handler::tree,
+        crate::handlers::permission_handler::detail,
+        crate::handlers::permission_handler::create,
+        crate::handlers::permission_handler::update,
+        crate::handlers::permission_handler::remove,
+        crate::handlers::permission_handler::sync_api_permissions,
     ),
     components(schemas(
         // 认证 DTO
@@ -358,6 +363,8 @@ mod extra_paths {
         // 菜单 DTO
         crate::dto::menu_dto::CreateMenuDto,
         crate::dto::menu_dto::UpdateMenuDto,
+        crate::dto::permission_dto::CreatePermissionDto,
+        crate::dto::permission_dto::UpdatePermissionDto,
         // 参数配置 DTO
         crate::dto::config_dto::CreateConfigDto,
         crate::dto::config_dto::UpdateConfigDto,

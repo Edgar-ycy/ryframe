@@ -29,12 +29,14 @@ pub struct MenuTreeNode {
 }
 
 pub struct MenuRepository;
+const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<menu::Model, i64> for MenuRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<menu::Model>> {
         menu::Entity::find_by_id(id)
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -47,7 +49,9 @@ impl Repository<menu::Model, i64> for MenuRepository {
     ) -> AppResult<PageResult<menu::Model>> {
         crate::pagination::paginate(
             db,
-            menu::Entity::find().filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL)),
+            menu::Entity::find()
+                .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+                .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID)),
             &query,
         )
         .await
@@ -71,6 +75,7 @@ impl MenuRepository {
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
         let all = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
@@ -99,6 +104,7 @@ impl MenuRepository {
         }
 
         menu::Entity::find()
+            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .filter(menu::Column::Id.is_in(menu_ids))
             .filter(menu::Column::Status.eq(menu::Model::STATUS_NORMAL))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
@@ -124,8 +130,9 @@ impl MenuRepository {
         name: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<Vec<menu::Model>> {
-        let mut select =
-            menu::Entity::find().filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL));
+        let mut select = menu::Entity::find()
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID));
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(menu::Column::Name.like(format!("%{}%", n)));
         }

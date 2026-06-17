@@ -51,6 +51,22 @@ pub struct RoleServiceImpl {
 }
 
 impl RoleServiceImpl {
+    async fn ensure_not_admin_role(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+    ) -> AppResult<role::Model> {
+        let role = self
+            .role_repo
+            .find_by_id(db, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        if role.code == "admin" {
+            return Err(AppError::Authorization("禁止操作超级管理员角色".into()));
+        }
+        Ok(role)
+    }
+
     /// 带搜索条件的分页查询
     pub async fn find_by_page_filtered(
         &self,
@@ -72,6 +88,9 @@ impl RoleServiceImpl {
     pub async fn delete_many(&self, db: &DatabaseConnection, ids: &[i64]) -> AppResult<u64> {
         if ids.is_empty() {
             return Err(AppError::Validation("请选择要删除的角色".into()));
+        }
+        for id in ids {
+            self.ensure_not_admin_role(db, *id).await?;
         }
         self.role_repo.delete_many(db, ids).await
     }
@@ -118,6 +137,7 @@ impl RoleServiceImpl {
 
         let mut new_role = role::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: "system".to_string(),
             name: name.to_string(),
             code: code.to_string(),
             data_scope: data_scope.unwrap_or_else(|| "1".to_string()),
@@ -143,11 +163,7 @@ impl RoleServiceImpl {
         status: String,
         data_scope: Option<String>,
     ) -> AppResult<RoleVo> {
-        let mut role = self
-            .role_repo
-            .find_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        let mut role = self.ensure_not_admin_role(db, id).await?;
 
         role.name = name.to_string();
         role.sort = sort;
@@ -162,10 +178,7 @@ impl RoleServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        self.role_repo
-            .find_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        self.ensure_not_admin_role(db, id).await?;
         self.role_repo.delete(db, id).await
     }
 
@@ -175,10 +188,13 @@ impl RoleServiceImpl {
         role_id: i64,
         perm_ids: Vec<i64>,
     ) -> AppResult<()> {
-        self.role_repo
-            .find_by_id(db, role_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        self.ensure_not_admin_role(db, role_id).await?;
+        for perm_id in &perm_ids {
+            self.perm_repo
+                .find_by_id(db, *perm_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound(format!("权限不存在: {}", perm_id)))?;
+        }
         self.perm_repo.assign_perms(db, role_id, &perm_ids).await
     }
 
@@ -192,10 +208,13 @@ impl RoleServiceImpl {
         use ryframe_db::entities::role_menu;
         use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 
-        self.role_repo
-            .find_by_id(db, role_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        self.ensure_not_admin_role(db, role_id).await?;
+        for menu_id in &menu_ids {
+            self.menu_repo
+                .find_by_id(db, *menu_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound(format!("菜单不存在: {}", menu_id)))?;
+        }
 
         let txn = db
             .begin()
@@ -243,10 +262,7 @@ impl RoleServiceImpl {
             _ => return Err(AppError::Validation("无效的数据范围值".into())),
         }
 
-        self.role_repo
-            .find_by_id(db, role_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        self.ensure_not_admin_role(db, role_id).await?;
 
         // 更新 data_scope 字段
         self.role_repo

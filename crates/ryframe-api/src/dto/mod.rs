@@ -6,6 +6,7 @@ pub mod login_log_dto;
 pub mod menu_dto;
 pub mod notice_dto;
 pub mod oper_log_dto;
+pub mod permission_dto;
 pub mod post_dto;
 pub mod profile_dto;
 pub mod role_dto;

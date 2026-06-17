@@ -76,6 +76,7 @@ impl MenuServiceImpl {
     ) -> AppResult<menu::Model> {
         let mut new_menu = menu::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: "system".to_string(),
             name: name.to_string(),
             parent_id,
             menu_type: menu_type.to_string(),

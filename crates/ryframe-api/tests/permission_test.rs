@@ -123,6 +123,194 @@ async fn test_permission_non_admin_access() {
     }
 }
 
+// ==================== 权限资源 CRUD / 同步 ====================
+
+#[tokio::test]
+async fn test_permission_crud_and_sync_flow() {
+    let db = setup_test_db().await;
+    seed_test_data(&db).await;
+    let token = login_get_token(&db).await;
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/permissions",
+        &token,
+        json!({
+            "name": "测试权限",
+            "code": "system:test:crud",
+            "parent_id": null,
+            "perm_type": "api",
+            "icon": null,
+            "sort": 10,
+            "status": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "创建权限失败: {:?}", body);
+    let perm_id = body["data"]["id"]
+        .as_i64()
+        .map(|v| v.to_string())
+        .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
+        .expect("权限ID应存在");
+
+    let (status, body) = auth_get(&db, &format!("/system/permissions/{}", perm_id), &token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["code"], "system:test:crud");
+
+    let (status, body) = auth_put(
+        &db,
+        &format!("/system/permissions/{}", perm_id),
+        &token,
+        json!({
+            "name": "测试权限更新",
+            "code": "system:test:crud:updated",
+            "parent_id": null,
+            "perm_type": "api",
+            "icon": "Setting",
+            "sort": 11,
+            "status": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "更新权限失败: {:?}", body);
+    assert_eq!(body["data"]["code"], "system:test:crud:updated");
+
+    let (status, body) =
+        auth_delete(&db, &format!("/system/permissions/{}", perm_id), &token).await;
+    assert_eq!(status, StatusCode::OK, "删除权限失败: {:?}", body);
+
+    let (status, _) = auth_post(&db, "/system/permissions/sync", &token, json!({})).await;
+    assert_eq!(status, StatusCode::OK, "权限同步失败");
+}
+
+#[tokio::test]
+async fn test_permission_scanner_detects_known_codes() {
+    let codes = ryframe_service::system::PermissionServiceImpl::scan_permission_codes()
+        .expect("扫描权限码失败");
+    assert!(
+        codes.contains(&"system:user:list".to_string()),
+        "扫描结果应包含用户列表权限码"
+    );
+    assert!(
+        codes.contains(&"system:permission:sync".to_string()),
+        "扫描结果应包含权限同步权限码"
+    );
+}
+
+#[tokio::test]
+async fn test_role_permission_assignment_and_validation() {
+    let db = setup_test_db().await;
+    seed_test_data(&db).await;
+    let token = login_get_token(&db).await;
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/permissions",
+        &token,
+        json!({
+            "name": "角色绑定权限",
+            "code": "system:test:role-perm",
+            "parent_id": null,
+            "perm_type": "api",
+            "icon": null,
+            "sort": 20,
+            "status": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "创建权限失败: {:?}", body);
+    let perm_id = body["data"]["id"]
+        .as_i64()
+        .map(|v| v.to_string())
+        .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
+        .expect("权限ID应存在");
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/roles",
+        &token,
+        json!({
+            "name": "权限测试角色",
+            "code": "perm_test_role",
+            "sort": 1,
+            "status": "1",
+            "data_scope": "5"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "创建角色失败: {:?}", body);
+    let role_id = body["data"]["id"]
+        .as_i64()
+        .map(|v| v.to_string())
+        .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
+        .expect("角色ID应存在");
+
+    let (status, body) = auth_put(
+        &db,
+        &format!("/system/roles/{}/permissions", role_id),
+        &token,
+        json!({ "perm_ids": [perm_id.clone()] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "分配权限失败: {:?}", body);
+
+    let (status, body) = auth_get(
+        &db,
+        &format!("/system/roles/{}/permissions", role_id),
+        &token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "查询角色权限失败: {:?}", body);
+    let ids = body["data"].as_array().unwrap();
+    assert!(
+        ids.iter().any(|v| v.as_str() == Some(perm_id.as_str())),
+        "角色权限列表应包含已分配权限"
+    );
+
+    let (status, body) = auth_put(
+        &db,
+        &format!("/system/roles/{}/permissions", role_id),
+        &token,
+        json!({ "perm_ids": [999999999999i64] }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "非法权限ID应返回 422: {:?}",
+        body
+    );
+}
+
+#[tokio::test]
+async fn test_permission_requires_permission_code() {
+    let db = setup_test_db().await;
+    seed_test_data(&db).await;
+
+    common::seed_user(&db, 100, "normal_perm", "普通用户", None).await;
+    let state = common::build_test_app(db.clone()).await;
+    let router = ryframe_api::router::api_router(state, test_rate_limit_state());
+
+    let req = Request::builder()
+        .uri("/auth/login")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "username": "normal_perm",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, body) = common::send_request(router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let normal_token = body["data"]["access_token"].as_str().unwrap().to_string();
+
+    let (status, _) = auth_get(&db, "/system/permissions/tree", &normal_token).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
 // ==================== 用户 CRUD 全流程测试 ====================
 
 /// 用户 CrUD 全流程：创建 → 查询 → 更新 → 删除 → 验证删除

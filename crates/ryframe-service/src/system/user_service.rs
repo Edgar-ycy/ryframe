@@ -344,6 +344,49 @@ impl UserServiceImpl {
         }
     }
 
+    pub async fn ensure_user_accessible(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<user::Model> {
+        self.user_repo
+            .find_by_id_with_data_scope(db, id, scope_ctx)
+            .await?
+            .ok_or_else(|| AppError::Authorization("无权访问该用户数据".into()))
+    }
+
+    pub async fn find_by_id_with_roles_with_data_scope(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<Option<UserDetailVo>> {
+        match self
+            .user_repo
+            .find_by_id_with_data_scope(db, id, scope_ctx)
+            .await?
+        {
+            Some(u) => {
+                let mut vo = UserVo::from(u.clone());
+                self.fill_dept_names(db, std::slice::from_mut(&mut vo))
+                    .await;
+                let roles = self.role_repo.find_user_roles(db, id).await?;
+                let role_vos: Vec<RoleBriefVo> = roles.into_iter().map(RoleBriefVo::from).collect();
+                Ok(Some(UserDetailVo {
+                    user: vo,
+                    roles: role_vos,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn is_super_admin_user(&self, db: &DatabaseConnection, id: i64) -> AppResult<bool> {
+        let roles = self.role_repo.find_user_roles_all_status(db, id).await?;
+        Ok(roles.iter().any(|r| r.code == "admin"))
+    }
+
     pub async fn create(
         &self,
         db: &DatabaseConnection,
@@ -378,6 +421,7 @@ impl UserServiceImpl {
         let password_hash = password::hash(password)?;
         let mut new_user = user::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: "system".to_string(),
             username: username.to_string(),
             password_hash,
             nickname: nickname.to_string(),

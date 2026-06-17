@@ -79,6 +79,9 @@ impl AuthServiceImpl {
         if !valid {
             return Err(AppError::Authentication("用户名或密码错误".into()));
         }
+        if !user.is_enabled() {
+            return Err(AppError::Authentication("账号已停用或锁定".into()));
+        }
 
         let roles = self.role_repo.find_user_roles(db, user.id).await?;
         let role_codes: Vec<String> = roles.iter().map(|r| r.code.clone()).collect();
@@ -134,6 +137,9 @@ impl AuthServiceImpl {
             .find_by_id(db, user_id)
             .await?
             .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
+        if !user.is_enabled() {
+            return Err(AppError::Authentication("账号已停用或锁定".into()));
+        }
 
         let roles = self.role_repo.find_user_roles(db, user.id).await?;
         let role_codes: Vec<String> = roles.iter().map(|r| r.code.clone()).collect();
@@ -174,6 +180,9 @@ impl AuthServiceImpl {
             .find_by_id(db, user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+        if !user.is_enabled() {
+            return Err(AppError::Authentication("账号已停用或锁定".into()));
+        }
 
         let roles = self.role_repo.find_user_roles(db, user.id).await?;
         let role_codes: Vec<String> = roles.iter().map(|r| r.code.clone()).collect();

@@ -447,6 +447,10 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     (32, '菜单删除', 'system:menu:remove', 4, 'api', NULL, 4, '1'),
     -- 权限管理接口权限
     (33, '权限查询', 'system:permission:list', 4, 'api', NULL, 5, '1'),
+    (72, '权限新增', 'system:permission:add', 4, 'api', NULL, 6, '1'),
+    (73, '权限修改', 'system:permission:edit', 4, 'api', NULL, 7, '1'),
+    (74, '权限删除', 'system:permission:remove', 4, 'api', NULL, 8, '1'),
+    (75, '权限同步', 'system:permission:sync', 4, 'api', NULL, 9, '1'),
     -- 部门管理接口权限
     (34, '部门查询', 'system:dept:list', 5, 'api', NULL, 1, '1'),
     (35, '部门新增', 'system:dept:add', 5, 'api', NULL, 2, '1'),
@@ -514,8 +518,9 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `path`, `compone
     (9,  '字典管理', 1, 'C', '/system/dict',      'system/dict/index',      NULL,  'system:dict:list',   'Collection',    0, 0, 6, 1, '1'),
     (10, '参数设置', 1, 'C', '/system/config',    'system/config/index',    NULL,  'system:config:list', 'EditPen',       0, 0, 7, 1, '1'),
     (11, '通知公告', 1, 'C', '/system/notice',    'system/notice/index',    NULL,  'system:notice:list', 'Bell',          0, 0, 8, 1, '1'),
-    (12, '操作日志', 1, 'C', '/system/operlog',   'system/operlog/index',   NULL,  'system:operlog:list','Document',      0, 0, 9, 1, '1'),
-    (13, '登录日志', 1, 'C', '/system/logininfor','system/logininfor/index',NULL,  'system:logininfor:list','Notebook',  0, 0, 10, 1, '1'),
+    (25, '权限管理', 1, 'C', '/system/permission', 'system/permission/index', NULL, 'system:permission:list', 'Lock', 0, 0, 9, 1, '1'),
+    (12, '操作日志', 1, 'C', '/system/operlog',   'system/operlog/index',   NULL,  'system:operlog:list','Document',      0, 0, 10, 1, '1'),
+    (13, '登录日志', 1, 'C', '/system/logininfor','system/logininfor/index',NULL,  'system:logininfor:list','Notebook',  0, 0, 11, 1, '1'),
     -- 系统监控子菜单
     (15, '在线用户', 2, 'C', '/monitor/online',   'monitor/online/index',   NULL,  'monitor:online:list','Connection',    0, 0, 1, 1, '1'),
     (16, '服务监控', 2, 'C', '/monitor/server',   'monitor/server/index',   NULL,  'monitor:server:list','DataAnalysis',  0, 0, 2, 1, '1'),
@@ -648,6 +653,7 @@ INSERT INTO `sys_role_menu` (`role_id`, `menu_id`) VALUES
     (1, 15),
     (1, 16),
     (1, 17),
+    (1, 25),
     (1, 23),
     (1, 24),
     (1, 18),

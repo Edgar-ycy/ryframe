@@ -15,13 +15,21 @@ use crate::dto::role_dto::{
     AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto,
 };
 use crate::handler_utils::{excel_response, parse_csv_i64, parse_i64_strings};
-use crate::{detail_body, list_query, remove_body};
+use crate::{detail_body, list_query};
 
 list_query!(pub RoleListQuery {
     name: String,
     code: String,
     status: String,
 });
+
+async fn affected_user_ids_by_roles(state: &AppState, role_ids: &[i64]) -> AppResult<Vec<i64>> {
+    state
+        .role_service
+        .role_repo
+        .find_user_ids_by_role_ids(&state.db, role_ids)
+        .await
+}
 
 pub fn role_router(state: AppState) -> Router {
     Router::new()
@@ -152,7 +160,8 @@ async fn update(
     Json(dto): Json<UpdateRoleDto>,
 ) -> AppResult<Json<ApiResponse<RoleVo>>> {
     dto.validate()?;
-    state
+    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
+    let result = state
         .role_service
         .update(
             &state.db,
@@ -162,8 +171,9 @@ async fn update(
             dto.status,
             dto.data_scope,
         )
-        .await
-        .map(|v| Json(ApiResponse::success(v)))
+        .await?;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
+    Ok(Json(ApiResponse::success(result)))
 }
 
 /// 删除角色
@@ -173,7 +183,10 @@ async fn remove(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    remove_body!(state, id, role_service)
+    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
+    state.role_service.delete(&state.db, id).await?;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
+    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 /// 批量删除角色
@@ -193,7 +206,9 @@ async fn batch_remove(
         ));
     }
 
+    let affected_user_ids = affected_user_ids_by_roles(&state, &ids).await?;
     let count = state.role_service.delete_many(&state.db, &ids).await?;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
     Ok(Json(ApiResponse::success_no_data_with_msg(format!(
         "成功删除 {} 个角色",
         count
@@ -272,10 +287,12 @@ async fn assign_permissions(
     Json(dto): Json<AssignPermsDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let perm_ids = parse_i64_strings(&dto.perm_ids);
+    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
     state
         .role_service
         .assign_permissions(&state.db, id, perm_ids)
         .await?;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
     Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
 }
 
@@ -309,10 +326,12 @@ async fn assign_menus(
     Json(dto): Json<AssignMenusDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let menu_ids = parse_i64_strings(&dto.menu_ids);
+    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
     state
         .role_service
         .assign_menus(&state.db, id, menu_ids)
         .await?;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
     Ok(Json(ApiResponse::success_no_data_with_msg("菜单分配成功")))
 }
 
@@ -328,10 +347,12 @@ async fn assign_data_scope(
     Json(dto): Json<AssignDataScopeDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let dept_ids = parse_i64_strings(&dto.dept_ids);
+    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
     state
         .role_service
         .assign_data_scope(&state.db, id, &dto.data_scope, dept_ids)
         .await?;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
     Ok(Json(ApiResponse::success_no_data_with_msg(
         "数据权限设置成功",
     )))

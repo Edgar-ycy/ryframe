@@ -10,15 +10,14 @@ async fn setup_db() -> DatabaseConnection {
 
 fn bench_db_insert(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-
     c.bench_function("db_insert_user", |b| {
         b.iter_batched(
             || {
                 rt.block_on(async {
                     let db = setup_db().await;
-                    // 预创建部门
                     let dept = ryframe_db::entities::dept::Model {
                         id: 1,
+                        tenant_id: "system".into(),
                         name: "测试部门".into(),
                         parent_id: Some(0),
                         ancestors: "0".into(),
@@ -43,6 +42,7 @@ fn bench_db_insert(c: &mut Criterion) {
                         id: std::hint::black_box(
                             ryframe_common::utils::snowflake::next_snowflake_id(),
                         ),
+                        tenant_id: "system".into(),
                         username: format!("bench_user_{}", rand::random::<u32>()),
                         password_hash: "bench_hash".into(),
                         nickname: "Bench User".into(),
@@ -69,12 +69,12 @@ fn bench_db_insert(c: &mut Criterion) {
 
 fn bench_db_select_by_id(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-
     c.bench_function("db_select_user_by_id", |b| {
         let (db, user_id) = rt.block_on(async {
             let db = setup_db().await;
             let dept = ryframe_db::entities::dept::Model {
                 id: 1,
+                tenant_id: "system".into(),
                 name: "测试部门".into(),
                 parent_id: Some(0),
                 ancestors: "0".into(),
@@ -93,6 +93,7 @@ fn bench_db_select_by_id(c: &mut Criterion) {
 
             let user = ryframe_db::entities::user::Model {
                 id: 1,
+                tenant_id: "system".into(),
                 username: "bench_user".into(),
                 password_hash: "hash".into(),
                 nickname: "Bench".into(),
@@ -126,14 +127,13 @@ fn bench_db_select_by_id(c: &mut Criterion) {
 
 fn bench_db_pagination(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-
     c.bench_function("db_paginate_100_rows", |b| {
         let db = rt.block_on(async {
             let db = setup_db().await;
-            // 插入 100 条记录
             for i in 1..=100 {
                 let user = ryframe_db::entities::user::Model {
                     id: i,
+                    tenant_id: "system".into(),
                     username: format!("user_{}", i),
                     password_hash: "hash".into(),
                     nickname: format!("User {}", i),
@@ -175,7 +175,6 @@ fn bench_db_pagination(c: &mut Criterion) {
 
 fn bench_db_update(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-
     c.bench_function("db_update_user", |b| {
         b.iter_batched(
             || {
@@ -183,6 +182,7 @@ fn bench_db_update(c: &mut Criterion) {
                     let db = setup_db().await;
                     let user = ryframe_db::entities::user::Model {
                         id: 1,
+                        tenant_id: "system".into(),
                         username: "update_bench".into(),
                         password_hash: "hash".into(),
                         nickname: "Old Name".into(),
@@ -208,9 +208,7 @@ fn bench_db_update(c: &mut Criterion) {
                     use sea_orm::{ActiveModelTrait, ActiveValue};
                     let active = ryframe_db::entities::user::ActiveModel {
                         id: ActiveValue::Unchanged(1),
-                        nickname: ActiveValue::Set(
-                            std::hint::black_box("Updated Name").to_string(),
-                        ),
+                        nickname: ActiveValue::Set("Updated Name".to_string()),
                         updated_at: ActiveValue::Set(chrono::Utc::now()),
                         ..Default::default()
                     };

@@ -8,6 +8,7 @@ use sea_orm::{
 use crate::entities::{permission, role_permission};
 
 pub struct PermissionRepository;
+const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<permission::Model, i64> for PermissionRepository {
@@ -17,6 +18,7 @@ impl Repository<permission::Model, i64> for PermissionRepository {
         id: i64,
     ) -> AppResult<Option<permission::Model>> {
         permission::Entity::find_by_id(id)
+            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -56,6 +58,19 @@ impl Repository<permission::Model, i64> for PermissionRepository {
 }
 
 impl PermissionRepository {
+    pub async fn find_by_code(
+        &self,
+        db: &DatabaseConnection,
+        code: &str,
+    ) -> AppResult<Option<permission::Model>> {
+        permission::Entity::find()
+            .filter(permission::Column::Code.eq(code))
+            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .one(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+    }
+
     /// 批量查询角色的权限码（去重）
     ///
     /// 返回所有角色拥有的权限实体列表，权限码已去重。
@@ -82,8 +97,9 @@ impl PermissionRepository {
         }
 
         permission::Entity::find()
+            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .filter(permission::Column::Id.is_in(perm_ids))
-            .filter(permission::Column::Status.eq(1))
+            .filter(permission::Column::Status.eq("1"))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -142,6 +158,7 @@ impl PermissionRepository {
     /// 查询所有权限
     pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<permission::Model>> {
         permission::Entity::find()
+            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .order_by_asc(permission::Column::Sort)
             .all(db)
             .await

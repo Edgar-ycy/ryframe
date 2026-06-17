@@ -9,12 +9,14 @@ use sea_orm::{
 use crate::entities::{role, user_role};
 
 pub struct RoleRepository;
+const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<role::Model, i64> for RoleRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<role::Model>> {
         role::Entity::find_by_id(id)
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -56,8 +58,9 @@ impl RoleRepository {
         code: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<role::Model>> {
-        let mut select =
-            role::Entity::find().filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL));
+        let mut select = role::Entity::find()
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID));
 
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(role::Column::Name.like(format!("%{}%", n)));
@@ -116,9 +119,62 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Id.is_in(role_ids))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+    }
+
+    /// 查询用户拥有的角色列表（包含停用角色，用于危险操作保护）
+    pub async fn find_user_roles_all_status(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i64,
+    ) -> AppResult<Vec<role::Model>> {
+        let role_ids: Vec<i64> = user_role::Entity::find()
+            .filter(user_role::Column::UserId.eq(user_id))
+            .all(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .into_iter()
+            .map(|ur| ur.role_id)
+            .collect();
+
+        if role_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        role::Entity::find()
+            .filter(role::Column::Id.is_in(role_ids))
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .all(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+    }
+
+    /// 查询拥有任意指定角色的用户ID列表
+    pub async fn find_user_ids_by_role_ids(
+        &self,
+        db: &DatabaseConnection,
+        role_ids: &[i64],
+    ) -> AppResult<Vec<i64>> {
+        if role_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut user_ids: Vec<i64> = user_role::Entity::find()
+            .filter(user_role::Column::RoleId.is_in(role_ids.to_vec()))
+            .all(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .into_iter()
+            .map(|ur| ur.user_id)
+            .collect();
+        user_ids.sort_unstable();
+        user_ids.dedup();
+        Ok(user_ids)
     }
 
     /// 清除用户全部角色关联
@@ -196,6 +252,7 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Code.eq(code))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))

@@ -21,6 +21,40 @@ use crate::handler_utils::{
 };
 use crate::runtime::UserImportCompletedEvent;
 
+async fn ensure_target_user_access(
+    state: &AppState,
+    current_user: &CurrentUser,
+    target_user_id: i64,
+) -> AppResult<ryframe_db::entities::user::Model> {
+    let scope_ctx = current_user.to_data_scope_context();
+    state
+        .user_service
+        .ensure_user_accessible(&state.db, target_user_id, &scope_ctx)
+        .await
+}
+
+fn ensure_not_self_operation(
+    current_user: &CurrentUser,
+    target_user_id: i64,
+    action: &str,
+) -> AppResult<()> {
+    if current_user.user_id == target_user_id {
+        return Err(AppError::Authorization(format!("禁止{}自己", action)));
+    }
+    Ok(())
+}
+
+async fn ensure_not_super_admin_target(state: &AppState, target_user_id: i64) -> AppResult<()> {
+    if state
+        .user_service
+        .is_super_admin_user(&state.db, target_user_id)
+        .await?
+    {
+        return Err(AppError::Authorization("禁止操作超级管理员".into()));
+    }
+    Ok(())
+}
+
 /// 用户列表分页查询参数（支持搜索过滤）
 #[derive(Debug, Deserialize)]
 pub struct UserListQuery {
@@ -140,11 +174,13 @@ async fn list_no_page(
     security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<UserDetailVo>>> {
+    let scope_ctx = current_user.to_data_scope_context();
     match state
         .user_service
-        .find_by_id_with_roles(&state.db, id)
+        .find_by_id_with_roles_with_data_scope(&state.db, id, &scope_ctx)
         .await?
     {
         Some(user) => Ok(Json(ApiResponse::success(user))),
@@ -192,14 +228,21 @@ async fn create(
     security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateUserDto>,
 ) -> AppResult<Json<ApiResponse<UserVo>>> {
     dto.validate()?;
+    ensure_target_user_access(&state, &current_user, id).await?;
+    if id == current_user.user_id && dto.status != ryframe_db::entities::user::Model::STATUS_NORMAL
+    {
+        return Err(AppError::Authorization("禁止停用自己".into()));
+    }
+    ensure_not_super_admin_target(&state, id).await?;
     // 解析前端传来的 String ID 为 i64
     let dept_id = parse_optional_i64(dto.dept_id);
     let role_ids = dto.role_ids.map(|ids| parse_i64_strings(&ids));
-    state
+    let result = state
         .user_service
         .update(
             &state.db,
@@ -213,8 +256,9 @@ async fn update(
                 role_ids,
             },
         )
-        .await
-        .map(|v| Json(ApiResponse::success(v)))
+        .await?;
+    super::auth_handler::invalidate_user_tokens(&state, id).await;
+    Ok(Json(ApiResponse::success(result)))
 }
 
 /// 删除用户
@@ -224,9 +268,14 @@ async fn update(
     security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    ensure_target_user_access(&state, &current_user, id).await?;
+    ensure_not_self_operation(&current_user, id, "删除")?;
+    ensure_not_super_admin_target(&state, id).await?;
     state.user_service.delete(&state.db, id).await?;
+    super::auth_handler::invalidate_user_tokens(&state, id).await;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
@@ -237,6 +286,7 @@ async fn remove(
     security(("bearer" = [])))]
 async fn batch_remove(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(ids_str): Path<String>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let ids = parse_csv_i64(&ids_str);
@@ -247,7 +297,14 @@ async fn batch_remove(
         ));
     }
 
+    for id in &ids {
+        ensure_target_user_access(&state, &current_user, *id).await?;
+        ensure_not_self_operation(&current_user, *id, "删除")?;
+        ensure_not_super_admin_target(&state, *id).await?;
+    }
+
     let count = state.user_service.delete_many(&state.db, &ids).await?;
+    super::auth_handler::invalidate_users_tokens(&state, &ids).await;
     Ok(Json(ApiResponse::success_no_data_with_msg(format!(
         "成功删除 {} 个用户",
         count
@@ -261,16 +318,25 @@ async fn batch_remove(
     security(("bearer" = [])))]
 async fn change_status(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Json(dto): Json<ChangeStatusDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let user_id: i64 = dto
         .user_id
         .parse()
         .map_err(|_| ryframe_common::AppError::Validation("无效的用户ID".into()))?;
+    ensure_target_user_access(&state, &current_user, user_id).await?;
+    if user_id == current_user.user_id
+        && dto.status != ryframe_db::entities::user::Model::STATUS_NORMAL
+    {
+        return Err(AppError::Authorization("禁止停用自己".into()));
+    }
+    ensure_not_super_admin_target(&state, user_id).await?;
     state
         .user_service
         .change_status(&state.db, user_id, dto.status)
         .await?;
+    super::auth_handler::invalidate_user_tokens(&state, user_id).await;
     Ok(Json(ApiResponse::success_no_data_with_msg("状态修改成功")))
 }
 
@@ -282,10 +348,13 @@ async fn change_status(
     security(("bearer" = [])))]
 async fn reset_password(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Json(dto): Json<ResetPasswordDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     dto.validate()?;
+    ensure_target_user_access(&state, &current_user, id).await?;
+    ensure_not_super_admin_target(&state, id).await?;
     state
         .user_service
         .reset_password(
@@ -295,6 +364,7 @@ async fn reset_password(
             state.config.auth.enable_password_complexity,
         )
         .await?;
+    super::auth_handler::invalidate_user_tokens(&state, id).await;
     Ok(Json(ApiResponse::success_no_data_with_msg("密码重置成功")))
 }
 

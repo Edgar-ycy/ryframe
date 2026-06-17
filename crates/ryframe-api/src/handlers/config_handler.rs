@@ -31,7 +31,10 @@ pub fn config_router(state: AppState) -> Router {
             "/refreshCache",
             perm_route(delete(refresh_cache), "system:config:edit"),
         )
-        .route("/configKey/{key}", get(get_by_key))
+        .route(
+            "/configKey/{key}",
+            perm_route(get(get_by_key), "system:config:list"),
+        )
         .route("/{id}", perm_route(get(detail), "system:config:list"))
         .route("/{id}", perm_route(put(update), "system:config:edit"))
         .route("/{id}", perm_route(delete(remove), "system:config:remove"))

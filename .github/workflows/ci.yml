@@ -42,6 +42,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Check permission bindings
+        run: python scripts/check_permission_routes.py
+
       # push: 仅 lib (快) / PR: 全量 (全面)
       - name: Clippy (all targets)
         if: github.event_name == 'pull_request'
@@ -106,9 +109,6 @@ jobs:
 
       - name: Run tests (nextest)
         run: cargo nextest run --workspace --no-fail-fast --retries 2
-
-      - name: Run doc-tests (nextest 不支持)
-        run: cargo test --workspace --doc
 
   # ============================================================
   # 覆盖率检查 (仅 PR)

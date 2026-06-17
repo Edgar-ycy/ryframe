@@ -78,6 +78,9 @@ async fn build_scope_ctx(
         .find_by_id(&state.db, user_id)
         .await?
         .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
+    if user_vo.status != ryframe_db::entities::user::Model::STATUS_NORMAL {
+        return Err(AppError::Authentication("账号已停用或锁定".into()));
+    }
 
     // 查用户角色（通过 role_repo 获取 Model，含 data_scope 值）
     let roles = state

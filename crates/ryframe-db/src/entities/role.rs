@@ -9,6 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     #[auto_fill(snowflake)]
     pub id: i64,
+    pub tenant_id: String,
     pub name: String,
     #[sea_orm(unique)]
     pub code: String,
@@ -23,6 +24,9 @@ pub struct Model {
 
 /// 数据范围常量
 impl Model {
+    pub const STATUS_DISABLED: &str = "0";
+    pub const STATUS_NORMAL: &str = "1";
+
     pub const DATA_SCOPE_ALL: &str = "1";
     pub const DATA_SCOPE_CUSTOM: &str = "2";
     pub const DATA_SCOPE_DEPT: &str = "3";
