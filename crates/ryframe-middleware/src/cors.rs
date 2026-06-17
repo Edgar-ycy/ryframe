@@ -9,7 +9,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 /// 示例：
 /// ```toml
 /// [cors]
-/// allow_origins = ["http://localhost:5173", "http://localhost:3000"]
+/// allow_origins = ["http://localhost:80", "http://localhost:3000"]
 /// ```
 pub fn cors_layer(config: &CorsConfig) -> CorsLayer {
     let allow_origin = if config.allow_origins.is_empty() {

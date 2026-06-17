@@ -8,7 +8,7 @@ use serde::Deserialize;
 pub struct CorsConfig {
     /// 允许的来源列表（逗号分隔的字符串列表）
     ///
-    /// 示例：`["http://localhost:5173", "http://localhost:3000"]`
+    /// 示例：`["http://localhost:80", "http://localhost:3000"]`
     /// 为空时使用 mirror_request 模式（回显请求 Origin，兼容 credentials）
     #[serde(default)]
     pub allow_origins: Vec<String>,
