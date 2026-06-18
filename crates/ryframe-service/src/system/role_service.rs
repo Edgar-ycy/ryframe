@@ -4,7 +4,7 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
-use ryframe_db::{MenuRepository, PermissionRepository, RoleRepository, entities::role};
+use ryframe_db::{PermissionRepository, RoleRepository, entities::role};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 
@@ -19,9 +19,6 @@ pub struct RoleVo {
     pub sort: i32,
     pub remark: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
-    /// 已分配的菜单ID列表（仅查询详情时填充）
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub menu_ids: Option<Vec<String>>,
     /// 自定义数据权限的部门ID列表（仅查询详情时填充）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dept_ids: Option<Vec<String>>,
@@ -38,7 +35,6 @@ impl From<role::Model> for RoleVo {
             sort: r.sort,
             remark: r.remark,
             created_at: r.created_at,
-            menu_ids: None,
             dept_ids: None,
         }
     }
@@ -47,7 +43,6 @@ impl From<role::Model> for RoleVo {
 pub struct RoleServiceImpl {
     pub role_repo: LoggedRepo<RoleRepository>,
     pub perm_repo: LoggedRepo<PermissionRepository>,
-    pub menu_repo: LoggedRepo<MenuRepository>,
 }
 
 impl RoleServiceImpl {
@@ -109,9 +104,6 @@ impl RoleServiceImpl {
         match self.role_repo.find_by_id(db, id).await? {
             Some(r) => {
                 let mut vo = RoleVo::from(r);
-                // 查询已分配的菜单ID列表
-                let menu_ids = self.role_repo.find_role_menu_ids(db, id).await?;
-                vo.menu_ids = Some(menu_ids.iter().map(|m| m.to_string()).collect());
                 // 如果是自定义数据权限，查出关联的部门ID列表
                 if vo.data_scope == "2" {
                     let dept_ids = self.role_repo.find_role_dept_ids(db, id).await?;
@@ -196,53 +188,6 @@ impl RoleServiceImpl {
                 .ok_or_else(|| AppError::NotFound(format!("权限不存在: {}", perm_id)))?;
         }
         self.perm_repo.assign_perms(db, role_id, &perm_ids).await
-    }
-
-    pub async fn assign_menus(
-        &self,
-        db: &DatabaseConnection,
-        role_id: i64,
-        menu_ids: Vec<i64>,
-    ) -> AppResult<()> {
-        // 使用交易进行 assign
-        use ryframe_db::entities::role_menu;
-        use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
-
-        self.ensure_not_admin_role(db, role_id).await?;
-        for menu_id in &menu_ids {
-            self.menu_repo
-                .find_by_id(db, *menu_id)
-                .await?
-                .ok_or_else(|| AppError::NotFound(format!("菜单不存在: {}", menu_id)))?;
-        }
-
-        let txn = db
-            .begin()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 删除旧关联
-        role_menu::Entity::delete_many()
-            .filter(role_menu::Column::RoleId.eq(role_id))
-            .exec(&txn)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        // 插入新关联
-        for menu_id in menu_ids {
-            let rm = role_menu::ActiveModel {
-                role_id: sea_orm::ActiveValue::Set(role_id),
-                menu_id: sea_orm::ActiveValue::Set(menu_id),
-            };
-            rm.insert(&txn)
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
-        }
-
-        txn.commit()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
     }
 
     /// 设置角色数据权限

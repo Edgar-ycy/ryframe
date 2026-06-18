@@ -70,8 +70,8 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role::Entity);
     create!(ryframe_db::entities::menu::Entity);
     create!(ryframe_db::entities::user::Entity);
+    create!(ryframe_db::entities::password_reset_request::Entity);
     create!(ryframe_db::entities::user_role::Entity);
-    create!(ryframe_db::entities::role_menu::Entity);
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::sys_file::Entity);
@@ -252,7 +252,6 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
         role_service: Arc::new(RoleServiceImpl {
             role_repo: LoggedRepo::new(RoleRepository),
             perm_repo: LoggedRepo::new(PermissionRepository),
-            menu_repo: LoggedRepo::new(MenuRepository),
         }),
         permission_service: Arc::new(PermissionServiceImpl {
             perm_repo: LoggedRepo::new(PermissionRepository),
@@ -862,19 +861,36 @@ async fn test_update_and_delete_operations() {
 
     // ===== 菜单：创建 → 更新 → 删除 =====
     let (s, b) = auth_post(
-        &db, "/system/menus", &token,
-        serde_json::json!({"name": "测试菜单", "parent_id": null, "menu_type": "C", "path": null, "component": null, "query": null, "perms": null, "icon": null, "is_frame": false, "is_cache": false, "sort": 0, "visible": true}),
+        &db,
+        "/system/menus",
+        &token,
+        serde_json::json!({"name": "测试菜单", "parent_id": null, "menu_type": "C", "icon": null, "sort": 0, "visible": true}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     let menu_id = b["data"]["id"].as_i64().unwrap();
 
     let (s, _) = auth_put(
-        &db, &format!("/system/menus/{}", menu_id), &token,
-        serde_json::json!({"name": "改名菜单", "parent_id": null, "menu_type": "C", "path": null, "component": null, "query": null, "perms": null, "icon": null, "is_frame": false, "is_cache": false, "sort": 1, "visible": true, "status": "1"}),
+        &db,
+        &format!("/system/menus/{}", menu_id),
+        &token,
+        serde_json::json!({"name": "改名菜单", "parent_id": null, "menu_type": "C", "icon": null, "sort": 1, "visible": true, "status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
+
+    // 旧菜单底层字段不再被接受
+    let (s, _) = auth_post(
+        &db,
+        "/system/menus",
+        &token,
+        serde_json::json!({"name": "旧字段菜单", "parent_id": null, "menu_type": "C", "path": "/legacy", "icon": null, "sort": 0, "visible": true}),
+    )
+    .await;
+    assert!(
+        !s.is_success(),
+        "菜单创建请求不应再接受 path/component/perms 等旧字段"
+    );
 
     let (s, _) = auth_delete(&db, &format!("/system/menus/{}", menu_id), &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -909,7 +925,7 @@ async fn test_update_and_delete_operations() {
     .await;
     assert_eq!(s, StatusCode::OK);
 
-    // 分配菜单
+    // 旧角色菜单分配接口不再注册
     let (s, _) = auth_put(
         &db,
         &format!("/system/roles/{}/menus", role_id),
@@ -917,7 +933,7 @@ async fn test_update_and_delete_operations() {
         serde_json::json!({"menu_ids": []}),
     )
     .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, StatusCode::NOT_FOUND);
 
     // 设置数据权限
     let (s, _) = auth_put(
@@ -935,11 +951,32 @@ async fn test_update_and_delete_operations() {
     // ===== 用户：创建 → 更新 → 修改状态 → 重置密码 → 删除 =====
     let (s, b) = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "testupdate", "password": "123456", "nickname": "测试更新", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "testupdate", "nickname": "测试更新", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
     let user_id = b["data"]["id"].as_str().unwrap().parse::<i64>().unwrap();
+    assert_eq!(b["data"]["status"], "pending_activation");
+
+    // 旧创建用户密码字段不再被接受
+    let (s, _) = auth_post(
+        &db,
+        "/system/users",
+        &token,
+        serde_json::json!({"username": "legacy_password_user", "nickname": "旧密码字段", "password": "newpass123", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+    )
+    .await;
+    assert!(!s.is_success(), "创建用户请求不应再接受 password 字段");
+
+    // 旧创建用户 sex 字段不再被接受
+    let (s, _) = auth_post(
+        &db,
+        "/system/users",
+        &token,
+        serde_json::json!({"username": "legacy_sex_user", "nickname": "旧性别字段", "sex": "0", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+    )
+    .await;
+    assert!(!s.is_success(), "创建用户请求不应再接受 sex 字段");
 
     // 更新用户
     let (s, _) = auth_put(
@@ -959,7 +996,7 @@ async fn test_update_and_delete_operations() {
     .await;
     assert_eq!(s, StatusCode::OK);
 
-    // 重置密码
+    // 旧管理员重置密码接口不可用
     let (s, _) = auth_put(
         &db,
         &format!("/system/users/{}/password", user_id),
@@ -967,6 +1004,39 @@ async fn test_update_and_delete_operations() {
         serde_json::json!({"password": "newpass123"}),
     )
     .await;
+    assert!(!s.is_success());
+
+    // 发起密码重置请求
+    let (s, body) = auth_post(
+        &db,
+        &format!("/system/users/{}/password-reset-requests", user_id),
+        &token,
+        serde_json::json!({"reason": "用户忘记密码"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let reset_data = &body["data"];
+    assert!(reset_data["request_id"].as_str().is_some());
+    assert!(reset_data["reset_token"].as_str().is_some());
+    assert!(reset_data["reset_url"].as_str().is_some());
+
+    // 用户通过公开链接完成密码重置
+    let state = build_test_app(db.clone()).await;
+    let router = api_router(state, test_rate_limit_state());
+    let req = Request::builder()
+        .uri("/auth/password-reset/complete")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "request_id": reset_data["request_id"].as_str().unwrap(),
+                "token": reset_data["reset_token"].as_str().unwrap(),
+                "new_password": "newpass123"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (s, _) = send_request(router, req).await;
     assert_eq!(s, StatusCode::OK);
 
     // 删除用户
@@ -1085,14 +1155,14 @@ async fn test_duplicate_key_conflicts() {
     // 创建已有的 username
     let _ = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "duplicate_user", "password": "123456", "nickname": "重复用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "duplicate_user", "nickname": "重复用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
     )
     .await;
 
     // 尝试用相同 username 创建另一个 user
     let (s, _) = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "duplicate_user", "password": "123456", "nickname": "重名用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "duplicate_user", "nickname": "重名用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
     )
     .await;
     assert!(!s.is_success(), "重复用户名应返回错误");
@@ -1258,9 +1328,9 @@ async fn test_log_endpoints() {
     let (s, _) = auth_get(&db, "/system/loginlogs/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
 
-    // 清空登录日志
+    // 清空登录日志路由不再对业务管理端开放
     let (s, _) = auth_delete(&db, "/system/loginlogs/clean", &token).await;
-    assert_eq!(s, StatusCode::OK);
+    assert!(!s.is_success());
 
     // 操作日志列表
     let (s, b) = auth_get(&db, "/system/operlogs/list?page=1&pageSize=10", &token).await;
@@ -1271,9 +1341,9 @@ async fn test_log_endpoints() {
     let (s, _) = auth_get(&db, "/system/operlogs/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
 
-    // 清空操作日志
+    // 清空操作日志路由不再对业务管理端开放
     let (s, _) = auth_delete(&db, "/system/operlogs/clean", &token).await;
-    assert_eq!(s, StatusCode::OK);
+    assert!(!s.is_success());
 }
 
 // ==================== 个人中心端点测试 ====================
@@ -1430,6 +1500,34 @@ async fn test_openapi_json_endpoint() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["info"].is_object(), "OpenAPI JSON 应包含 info");
     assert!(body["paths"].is_object(), "OpenAPI JSON 应包含 paths");
+
+    let paths = body["paths"]
+        .as_object()
+        .expect("paths should be an object");
+    assert!(
+        paths.contains_key("/api/v1/system/users/{id}/password-reset-requests"),
+        "OpenAPI 应包含新的密码重置请求接口"
+    );
+    assert!(
+        paths.contains_key("/api/v1/auth/password-reset/complete"),
+        "OpenAPI 应包含公开密码重置完成接口"
+    );
+    assert!(
+        !paths.contains_key("/api/v1/system/users/{id}/password"),
+        "OpenAPI 不应再暴露旧管理员重置密码接口"
+    );
+    assert!(
+        !paths.contains_key("/api/v1/system/operlogs/clean"),
+        "OpenAPI 不应暴露操作日志清空接口"
+    );
+    assert!(
+        !paths.contains_key("/api/v1/system/loginlogs/clean"),
+        "OpenAPI 不应暴露登录日志清空接口"
+    );
+    assert!(
+        !paths.contains_key("/api/v1/system/roles/{id}/menus"),
+        "OpenAPI 不应再暴露旧角色菜单分配接口"
+    );
 }
 
 /// Token 黑名单：登出后 Token 失效

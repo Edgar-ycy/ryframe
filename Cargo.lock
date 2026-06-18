@@ -4185,7 +4185,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "ryframe"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "ryframe-api",
@@ -4205,7 +4205,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-api"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "base64",
@@ -4234,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-auth"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "axum",
@@ -4250,7 +4250,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-common"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -4281,7 +4281,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-config"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -4293,7 +4293,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -4317,7 +4317,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-db"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4337,7 +4337,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-generator"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "log",
  "ryframe-common",
@@ -4348,7 +4348,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-macro"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4358,7 +4358,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-middleware"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "ammonia",
  "axum",
@@ -4393,7 +4393,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-monitor"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "chrono",
@@ -4412,7 +4412,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-service"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "md5",
@@ -4428,6 +4428,7 @@ dependencies = [
  "tokio",
  "tracing",
  "utoipa",
+ "uuid",
  "zip 8.6.0",
 ]
 

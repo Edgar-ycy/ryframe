@@ -59,9 +59,18 @@ async fn user_tree(
     } else if current_user.role_ids.is_empty() {
         vec![]
     } else {
+        let permissions = state
+            .permission_service
+            .perm_repo
+            .find_role_perms(&state.db, &current_user.role_ids)
+            .await?;
+        let permission_codes = permissions
+            .into_iter()
+            .map(|permission| permission.code)
+            .collect::<Vec<_>>();
         state
             .menu_service
-            .find_tree_by_roles(&state.db, &current_user.role_ids)
+            .find_tree_by_permissions(&state.db, &permission_codes)
             .await?
     };
     Ok(Json(ApiResponse::success(tree)))
@@ -120,13 +129,7 @@ async fn create(
             &dto.name,
             parent_id,
             &dto.menu_type,
-            dto.path.as_deref(),
-            dto.component.as_deref(),
-            dto.query.as_deref(),
-            dto.perms.as_deref(),
             dto.icon.as_deref(),
-            dto.is_frame.unwrap_or(false),
-            dto.is_cache.unwrap_or(false),
             dto.sort.unwrap_or(0),
             dto.visible.unwrap_or(true),
         )
@@ -153,13 +156,7 @@ async fn update(
             &dto.name,
             parent_id,
             &dto.menu_type,
-            dto.path.as_deref(),
-            dto.component.as_deref(),
-            dto.query.as_deref(),
-            dto.perms.as_deref(),
             dto.icon.as_deref(),
-            dto.is_frame.unwrap_or(false),
-            dto.is_cache.unwrap_or(false),
             dto.sort.unwrap_or(0),
             dto.visible.unwrap_or(true),
             dto.status,

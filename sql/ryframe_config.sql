@@ -14,8 +14,8 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- ============================================================
 DROP TABLE IF EXISTS `sys_user_role`;
 DROP TABLE IF EXISTS `sys_role_permission`;
-DROP TABLE IF EXISTS `sys_role_menu`;
 DROP TABLE IF EXISTS `sys_role_dept`;
+DROP TABLE IF EXISTS `password_reset_requests`;
 DROP TABLE IF EXISTS `sys_dept`;
 DROP TABLE IF EXISTS `sys_user`;
 DROP TABLE IF EXISTS `sys_role`;
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `email`          VARCHAR(128) NOT NULL DEFAULT ''       COMMENT '邮箱',
     `phone`          VARCHAR(32)  NOT NULL DEFAULT ''       COMMENT '手机号',
     `avatar`         VARCHAR(255)          DEFAULT NULL     COMMENT '头像URL',
-    `status`         CHAR(1)      NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定',
+    `status`         VARCHAR(32)  NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定 pending_activation待激活 must_reset_password需改密',
     `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID',
     `remark`         VARCHAR(512)          DEFAULT NULL     COMMENT '备注',
     `login_ip`       VARCHAR(128)          DEFAULT NULL     COMMENT '最后登录IP',
@@ -74,6 +74,28 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_dept_id` (`dept_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户表';
+
+-- ============================================================
+-- 2.1. 密码重置请求表 (password_reset_requests)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `password_reset_requests` (
+    `id`             BIGINT       NOT NULL                  COMMENT '重置请求ID',
+    `target_user_id` BIGINT       NOT NULL                  COMMENT '目标用户ID',
+    `requested_by`   BIGINT       NOT NULL                  COMMENT '发起管理员ID',
+    `reason`         VARCHAR(512) NOT NULL                  COMMENT '发起原因',
+    `token_hash`     VARCHAR(255) NOT NULL                  COMMENT '重置令牌哈希',
+    `expires_at`     DATETIME     NOT NULL                  COMMENT '过期时间',
+    `completed_at`   DATETIME              DEFAULT NULL     COMMENT '完成时间',
+    `request_ip`     VARCHAR(128)          DEFAULT NULL     COMMENT '发起IP',
+    `status`         VARCHAR(32)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/completed/expired',
+    `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_target_user_id` (`target_user_id`),
+    KEY `idx_requested_by` (`requested_by`),
+    KEY `idx_status` (`status`),
+    KEY `idx_expires_at` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='密码重置请求表';
 
 -- ============================================================
 -- 3. 角色表 (sys_role)
@@ -126,13 +148,7 @@ CREATE TABLE IF NOT EXISTS `sys_menu` (
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '菜单名称',
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID',
     `menu_type`   CHAR(1)      NOT NULL DEFAULT ''         COMMENT '菜单类型: M目录 C菜单 F按钮',
-    `path`        VARCHAR(255)          DEFAULT NULL       COMMENT '路由路径(目录/菜单)或接口路径(按钮)',
-    `component`   VARCHAR(255)          DEFAULT NULL       COMMENT '组件路径(仅菜单类型)',
-    `query`       VARCHAR(255)          DEFAULT NULL       COMMENT '路由参数(如 id=1)',
-    `perms`       VARCHAR(128)          DEFAULT NULL       COMMENT '权限标识(如 system:user:list)',
     `icon`        VARCHAR(128)          DEFAULT NULL       COMMENT '图标',
-    `is_frame`    TINYINT(1)   NOT NULL DEFAULT 0          COMMENT '是否外链: 0否 1是',
-    `is_cache`    TINYINT(1)   NOT NULL DEFAULT 0          COMMENT '是否缓存: 0否 1是',
     `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
     `visible`     TINYINT(1)   NOT NULL DEFAULT 1          COMMENT '是否可见: 0隐藏 1显示',
     `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
@@ -307,19 +323,7 @@ CREATE TABLE IF NOT EXISTS `sys_role_permission` (
     KEY `idx_perm_id` (`perm_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-权限关联表';
 
--- ============================================================
--- 15. 角色-菜单关联表 (role_menu)
--- ============================================================
-CREATE TABLE IF NOT EXISTS `sys_role_menu` (
-    `tenant_id` VARCHAR(64) NOT NULL DEFAULT 'system' COMMENT '租户ID',
-    `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
-    `menu_id`  BIGINT NOT NULL  COMMENT '菜单ID',
-    PRIMARY KEY (`tenant_id`, `role_id`, `menu_id`),
-    KEY `idx_menu_id` (`menu_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-菜单关联表';
-
--- ============================================================
--- 16. 角色-部门关联表 (sys_role_dept) — 自定义数据权限
+-- 16. 角色-部门关联表 (sys_role_dept) - 自定义数据权限
 -- ============================================================
 CREATE TABLE IF NOT EXISTS `sys_role_dept` (
     `tenant_id` VARCHAR(64) NOT NULL DEFAULT 'system' COMMENT '租户ID',
@@ -482,10 +486,8 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     -- 日志接口权限
     (57, '操作日志查询', 'system:operlog:list', 18, 'api', NULL, 1, '1'),
     (58, '操作日志导出', 'system:operlog:export', 18, 'api', NULL, 2, '1'),
-    (59, '操作日志清空', 'system:operlog:remove', 18, 'api', NULL, 3, '1'),
     (60, '登录日志查询', 'system:logininfor:list', 19, 'api', NULL, 1, '1'),
     (61, '登录日志导出', 'system:logininfor:export', 19, 'api', NULL, 2, '1'),
-    (62, '登录日志清空', 'system:logininfor:remove', 19, 'api', NULL, 3, '1'),
     -- 在线用户与监控接口权限
     (63, '在线用户查询', 'monitor:online:list', 14, 'api', NULL, 1, '1'),
     (64, '在线用户强退', 'monitor:online:force-logout', 14, 'api', NULL, 2, '1'),
@@ -502,39 +504,39 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
 -- -----------------------------------------------------------
 -- 默认菜单 (sys_menu)
 -- -----------------------------------------------------------
-INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `path`, `component`, `query`, `perms`, `icon`, `is_frame`, `is_cache`, `sort`, `visible`, `status`) VALUES
+INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `icon`, `sort`, `visible`, `status`) VALUES
     -- 主页
-    (0,  '首页',   NULL, 'C', '/index',    'index',   NULL,  NULL,          'HomeFilled',    0, 0, 0, 1, '1'),
+    (0,  '首页',   NULL, 'C', 'HomeFilled', 0, 1, '1'),
     -- 一级目录
-    (1,  '系统管理', NULL, 'M', '/system',  'Layout', NULL,  NULL,          'Setting',    0, 0, 1, 1, '1'),
-    (2,  '系统监控', NULL, 'M', '/monitor', 'Layout', NULL,  NULL,          'Monitor',    0, 0, 2, 1, '1'),
-    (3,  '系统工具', NULL, 'M', '/tools',   'Layout', NULL,  NULL,          'Tools',      0, 0, 3, 1, '1'),
+    (1,  '系统管理', NULL, 'M', 'Setting', 1, 1, '1'),
+    (2,  '系统监控', NULL, 'M', 'Monitor', 2, 1, '1'),
+    (3,  '系统工具', NULL, 'M', 'Tools', 3, 1, '1'),
     -- 系统管理子菜单
-    (4,  '用户管理', 1, 'C', '/system/user',      'system/user/index',      NULL,  'system:user:list',   'User',          0, 0, 1, 1, '1'),
-    (5,  '角色管理', 1, 'C', '/system/role',      'system/role/index',      NULL,  'system:role:list',   'UserFilled',    0, 0, 2, 1, '1'),
-    (6,  '菜单管理', 1, 'C', '/system/menu',      'system/menu/index',      NULL,  'system:menu:list',   'Grid',          0, 0, 3, 1, '1'),
-    (7,  '部门管理', 1, 'C', '/system/dept',      'system/dept/index',      NULL,  'system:dept:list',   'Menu',          0, 0, 4, 1, '1'),
-    (8,  '岗位管理', 1, 'C', '/system/post',      'system/post/index',      NULL,  'system:post:list',   'Management',    0, 0, 5, 1, '1'),
-    (9,  '字典管理', 1, 'C', '/system/dict',      'system/dict/index',      NULL,  'system:dict:list',   'Collection',    0, 0, 6, 1, '1'),
-    (10, '参数设置', 1, 'C', '/system/config',    'system/config/index',    NULL,  'system:config:list', 'EditPen',       0, 0, 7, 1, '1'),
-    (11, '通知公告', 1, 'C', '/system/notice',    'system/notice/index',    NULL,  'system:notice:list', 'Bell',          0, 0, 8, 1, '1'),
-    (25, '权限管理', 1, 'C', '/system/permission', 'system/permission/index', NULL, 'system:permission:list', 'Lock', 0, 0, 9, 1, '1'),
-    (12, '操作日志', 1, 'C', '/system/operlog',   'system/operlog/index',   NULL,  'system:operlog:list','Document',      0, 0, 10, 1, '1'),
-    (13, '登录日志', 1, 'C', '/system/logininfor','system/logininfor/index',NULL,  'system:logininfor:list','Notebook',  0, 0, 11, 1, '1'),
+    (4,  '用户管理', 1, 'C', 'User', 1, 1, '1'),
+    (5,  '角色管理', 1, 'C', 'UserFilled', 2, 1, '1'),
+    (6,  '菜单管理', 1, 'C', 'Grid', 3, 1, '1'),
+    (7,  '部门管理', 1, 'C', 'Menu', 4, 1, '1'),
+    (8,  '岗位管理', 1, 'C', 'Management', 5, 1, '1'),
+    (9,  '字典管理', 1, 'C', 'Collection', 6, 1, '1'),
+    (10, '参数设置', 1, 'C', 'EditPen', 7, 1, '1'),
+    (11, '通知公告', 1, 'C', 'Bell', 8, 1, '1'),
+    (25, '权限管理', 1, 'C', 'Lock', 9, 1, '1'),
+    (12, '操作日志', 1, 'C', 'Document', 10, 1, '1'),
+    (13, '登录日志', 1, 'C', 'Notebook', 11, 1, '1'),
     -- 系统监控子菜单
-    (15, '在线用户', 2, 'C', '/monitor/online',   'monitor/online/index',   NULL,  'monitor:online:list','Connection',    0, 0, 1, 1, '1'),
-    (16, '服务监控', 2, 'C', '/monitor/server',   'monitor/server/index',   NULL,  'monitor:server:list','DataAnalysis',  0, 0, 2, 1, '1'),
-    (14, '运行时监控', 2, 'C', '/monitor/runtime', 'monitor/runtime/index',  NULL,  'monitor:runtime:list','Operation',     0, 0, 3, 1, '1'),
-    (23, '缓存监控', 2, 'C', '/monitor/cache',     'monitor/cache/index',    NULL,  'monitor:cache:list', 'Coin',          0, 0, 4, 1, '1'),
-    (24, '连接池监控', 2, 'C', '/monitor/db-pool', 'monitor/db-pool/index',  NULL,  'monitor:db-pool:list','Connection',   0, 0, 5, 1, '1'),
+    (15, '在线用户', 2, 'C', 'Connection', 1, 1, '1'),
+    (16, '服务监控', 2, 'C', 'DataAnalysis', 2, 1, '1'),
+    (14, '运行时监控', 2, 'C', 'Operation', 3, 1, '1'),
+    (23, '缓存监控', 2, 'C', 'Coin', 4, 1, '1'),
+    (24, '连接池监控', 2, 'C', 'Connection', 5, 1, '1'),
     -- 系统工具子菜单
-    (17, '代码生成', 3, 'C', '/tools/gen',        'tools/gen/index',        NULL,  'tools:gen:list',     'MagicStick',    0, 0, 1, 1, '1'),
+    (17, '代码生成', 3, 'C', 'MagicStick', 1, 1, '1'),
     -- 用户管理按钮
-    (18, '用户查询', 4, 'F', NULL,  NULL, NULL, 'system:user:list',   NULL, 0, 0, 1, 1, '1'),
-    (19, '用户新增', 4, 'F', NULL,  NULL, NULL, 'system:user:add',    NULL, 0, 0, 2, 1, '1'),
-    (20, '用户修改', 4, 'F', NULL,  NULL, NULL, 'system:user:edit',   NULL, 0, 0, 3, 1, '1'),
-    (21, '用户删除', 4, 'F', NULL,  NULL, NULL, 'system:user:remove', NULL, 0, 0, 4, 1, '1'),
-    (22, '用户导出', 4, 'F', NULL,  NULL, NULL, 'system:user:export', NULL, 0, 0, 5, 1, '1');
+    (18, '用户查询', 4, 'F', NULL, 1, 1, '1'),
+    (19, '用户新增', 4, 'F', NULL, 2, 1, '1'),
+    (20, '用户修改', 4, 'F', NULL, 3, 1, '1'),
+    (21, '用户删除', 4, 'F', NULL, 4, 1, '1'),
+    (22, '用户导出', 4, 'F', NULL, 5, 1, '1');
 
 -- -----------------------------------------------------------
 -- 默认岗位 (sys_post)
@@ -550,7 +552,6 @@ INSERT INTO `sys_post` (`id`, `name`, `code`, `sort`, `status`, `remark`) VALUES
 -- -----------------------------------------------------------
 INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `remark`) VALUES
     (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
-    (2, '用户管理-账号初始密码', 'sys.user.initPassword',  '123456',   '初始化密码'),
     (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-light',  'dark主题theme-dark，light主题theme-light'),
     (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'false',      '是否开启验证码功能（true开启，false关闭）'),
     (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      '是否开启注册功能（true开启，false关闭）');
@@ -559,7 +560,6 @@ INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `remark`) VALUES
 -- 默认字典类型 (sys_dict_type)
 -- -----------------------------------------------------------
 INSERT INTO `sys_dict_type` (`id`, `name`, `code`, `status`, `remark`) VALUES
-    (1, '用户性别',   'sys_user_sex',    '1', '用户性别列表'),
     (2, '菜单状态',   'sys_show_hide',   '1', '菜单状态列表'),
     (3, '系统开关',   'sys_normal_disable', '1', '系统正常停用状态'),
     (5, '系统是否',   'sys_yes_no',      '1', '系统是否列表'),
@@ -572,10 +572,6 @@ INSERT INTO `sys_dict_type` (`id`, `name`, `code`, `status`, `remark`) VALUES
 -- 默认字典数据 (sys_dict_data)
 -- -----------------------------------------------------------
 INSERT INTO `sys_dict_data` (`id`, `type_code`, `label`, `value`, `sort`, `status`, `css_class`) VALUES
-    -- 用户性别
-    (1,  'sys_user_sex', '男',   '0', 1, '1', ''),
-    (2,  'sys_user_sex', '女',   '1', 2, '1', ''),
-    (3,  'sys_user_sex', '未知', '2', 3, '1', ''),
     -- 菜单状态
     (4,  'sys_show_hide', '显示', '1', 1, '1', 'primary'),
     (5,  'sys_show_hide', '隐藏', '0', 2, '1', 'danger'),
@@ -628,46 +624,5 @@ INSERT INTO `sys_role_permission` (`role_id`, `perm_id`) VALUES
     (2, 66),  -- common -> monitor:cache:list
     (2, 17),  -- common -> monitor:db-pool
     (2, 67);  -- common -> monitor:db-pool:list
-
--- -----------------------------------------------------------
--- 角色-菜单关联 (role_menu)
--- 超级管理员拥有全部菜单（含按钮）
--- -----------------------------------------------------------
-INSERT INTO `sys_role_menu` (`role_id`, `menu_id`) VALUES
-    -- 超级管理员 - 全部菜单
-    (1, 0),
-    (1, 1),
-    (1, 2),
-    (1, 3),
-    (1, 4),
-    (1, 5),
-    (1, 6),
-    (1, 7),
-    (1, 8),
-    (1, 9),
-    (1, 10),
-    (1, 11),
-    (1, 12),
-    (1, 13),
-    (1, 14),
-    (1, 15),
-    (1, 16),
-    (1, 17),
-    (1, 25),
-    (1, 23),
-    (1, 24),
-    (1, 18),
-    (1, 19),
-    (1, 20),
-    (1, 21),
-    (1, 22),
-    -- 普通用户 - 首页 + 系统监控菜单
-    (2, 0),
-    (2, 2),
-    (2, 14),
-    (2, 15),
-    (2, 16),
-    (2, 23),
-    (2, 24);
 
 SET FOREIGN_KEY_CHECKS = 1;

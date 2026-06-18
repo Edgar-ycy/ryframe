@@ -37,8 +37,8 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role::Entity);
     create!(ryframe_db::entities::menu::Entity);
     create!(ryframe_db::entities::user::Entity);
+    create!(ryframe_db::entities::password_reset_request::Entity);
     create!(ryframe_db::entities::user_role::Entity);
-    create!(ryframe_db::entities::role_menu::Entity);
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::sys_file::Entity);

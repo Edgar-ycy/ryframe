@@ -6,9 +6,7 @@ use ryframe_core::{
 use ryframe_db::{MenuRepository, entities::menu, repositories::menu_repo::MenuTreeNode};
 use sea_orm::DatabaseConnection;
 
-/// 菜单树缓存 Redis key
 const MENU_TREE_CACHE_KEY: &str = "sys_menu:tree";
-/// 缓存过期时间（1 小时）
 const CACHE_TTL_SECS: u64 = 3600;
 
 pub struct MenuServiceImpl {
@@ -18,7 +16,6 @@ pub struct MenuServiceImpl {
 
 impl MenuServiceImpl {
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
-        // 尝试从 Redis 缓存读取
         if let Some(ref redis) = self.redis
             && let Ok(Some(json)) = redis.get(MENU_TREE_CACHE_KEY).await
             && let Ok(cached) = serde_json::from_str::<Vec<MenuTreeNode>>(&json)
@@ -28,7 +25,6 @@ impl MenuServiceImpl {
 
         let tree = self.menu_repo.find_tree(db).await?;
 
-        // 写入缓存
         if let Some(ref redis) = self.redis
             && let Ok(json) = serde_json::to_string(&tree)
         {
@@ -40,21 +36,14 @@ impl MenuServiceImpl {
         Ok(tree)
     }
 
-    pub async fn find_by_role(
+    pub async fn find_tree_by_permissions(
         &self,
         db: &DatabaseConnection,
-        role_ids: &[i64],
-    ) -> AppResult<Vec<menu::Model>> {
-        self.menu_repo.find_by_role_ids(db, role_ids).await
-    }
-
-    /// 按角色查询菜单树（只返回角色有权限的菜单）
-    pub async fn find_tree_by_roles(
-        &self,
-        db: &DatabaseConnection,
-        role_ids: &[i64],
+        permission_codes: &[String],
     ) -> AppResult<Vec<MenuTreeNode>> {
-        self.menu_repo.find_tree_by_roles(db, role_ids).await
+        self.menu_repo
+            .find_tree_by_permission_codes(db, permission_codes)
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -64,13 +53,7 @@ impl MenuServiceImpl {
         name: &str,
         parent_id: Option<i64>,
         menu_type: &str,
-        path: Option<&str>,
-        component: Option<&str>,
-        query: Option<&str>,
-        perms: Option<&str>,
         icon: Option<&str>,
-        is_frame: bool,
-        is_cache: bool,
         sort: i32,
         visible: bool,
     ) -> AppResult<menu::Model> {
@@ -80,13 +63,7 @@ impl MenuServiceImpl {
             name: name.to_string(),
             parent_id,
             menu_type: menu_type.to_string(),
-            path: path.map(|s| s.to_string()),
-            component: component.map(|s| s.to_string()),
-            query: query.map(|s| s.to_string()),
-            perms: perms.map(|s| s.to_string()),
-            icon: icon.map(|s| s.to_string()),
-            is_frame,
-            is_cache,
+            icon: icon.map(str::to_string),
             sort,
             visible,
             status: menu::Model::STATUS_NORMAL.to_string(),
@@ -95,6 +72,7 @@ impl MenuServiceImpl {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
+
         new_menu.fill_on_insert(&FillContext::new());
         self.menu_repo.insert(db, new_menu).await.inspect(|_| {
             self.invalidate_menu_cache();
@@ -109,13 +87,7 @@ impl MenuServiceImpl {
         name: &str,
         parent_id: Option<i64>,
         menu_type: &str,
-        path: Option<&str>,
-        component: Option<&str>,
-        query: Option<&str>,
-        perms: Option<&str>,
         icon: Option<&str>,
-        is_frame: bool,
-        is_cache: bool,
         sort: i32,
         visible: bool,
         status: String,
@@ -129,13 +101,7 @@ impl MenuServiceImpl {
         menu.name = name.to_string();
         menu.parent_id = parent_id;
         menu.menu_type = menu_type.to_string();
-        menu.path = path.map(|s| s.to_string());
-        menu.component = component.map(|s| s.to_string());
-        menu.query = query.map(|s| s.to_string());
-        menu.perms = perms.map(|s| s.to_string());
-        menu.icon = icon.map(|s| s.to_string());
-        menu.is_frame = is_frame;
-        menu.is_cache = is_cache;
+        menu.icon = icon.map(str::to_string);
         menu.sort = sort;
         menu.visible = visible;
         menu.status = status;
@@ -151,12 +117,12 @@ impl MenuServiceImpl {
             .find_by_id(db, id)
             .await?
             .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
+
         self.menu_repo.delete(db, id).await.map(|_| {
             self.invalidate_menu_cache();
         })
     }
 
-    /// 按名称/状态搜索菜单列表（返回平铺列表）
     pub async fn find_filtered(
         &self,
         db: &DatabaseConnection,
@@ -166,7 +132,6 @@ impl MenuServiceImpl {
         self.menu_repo.find_filtered(db, name, status).await
     }
 
-    /// 按 ID 查询菜单详情
     pub async fn find_by_id(
         &self,
         db: &DatabaseConnection,
@@ -175,7 +140,6 @@ impl MenuServiceImpl {
         self.menu_repo.find_by_id(db, id).await
     }
 
-    /// 清除菜单树缓存（公开方法，启动时调用以确保缓存与数据库一致）
     pub fn invalidate_menu_cache(&self) {
         if let Some(ref redis) = self.redis {
             let redis = redis.clone();

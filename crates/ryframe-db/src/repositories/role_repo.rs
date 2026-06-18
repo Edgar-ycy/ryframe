@@ -277,25 +277,6 @@ impl RoleRepository {
         Ok(ids)
     }
 
-    /// 查询角色已分配的菜单ID列表
-    pub async fn find_role_menu_ids(
-        &self,
-        db: &DatabaseConnection,
-        role_id: i64,
-    ) -> AppResult<Vec<i64>> {
-        use crate::entities::role_menu;
-
-        let ids = role_menu::Entity::find()
-            .filter(role_menu::Column::RoleId.eq(role_id))
-            .all(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
-            .into_iter()
-            .map(|rm| rm.menu_id)
-            .collect();
-        Ok(ids)
-    }
-
     /// 查询多个角色的所有自定义部门ID（合并去重）
     pub async fn find_roles_dept_ids(
         &self,

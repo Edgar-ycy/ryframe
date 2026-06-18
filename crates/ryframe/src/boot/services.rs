@@ -59,7 +59,6 @@ pub async fn build_all(
     let role_service = Arc::new(RoleServiceImpl {
         role_repo: LoggedRepo::new(RoleRepository),
         perm_repo: LoggedRepo::new(PermissionRepository),
-        menu_repo: LoggedRepo::new(MenuRepository),
     });
 
     let permission_service = Arc::new(PermissionServiceImpl {

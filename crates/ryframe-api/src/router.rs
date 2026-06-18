@@ -98,6 +98,10 @@ pub fn auth_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/login", post(auth_handler::login))
         .route("/refresh", post(auth_handler::refresh))
+        .route(
+            "/password-reset/complete",
+            post(auth_handler::complete_password_reset),
+        )
         .layer(from_fn_with_state(
             oper_log_state.clone(),
             oper_log_middleware,

@@ -28,13 +28,6 @@ pub struct AssignPermsDto {
     pub perm_ids: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct AssignMenusDto {
-    /// 菜单ID列表（接受 number|string，前端 Snowflake ID 以字符串传输）
-    #[serde(default)]
-    pub menu_ids: Vec<String>,
-}
-
 /// 数据权限分配请求
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AssignDataScopeDto {

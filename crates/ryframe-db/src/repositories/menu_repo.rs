@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use std::collections::{HashMap, HashSet};
+
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
@@ -7,21 +9,14 @@ use sea_orm::{
 
 use crate::entities::menu;
 
-/// 菜单树节点
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MenuTreeNode {
-    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    /// String avoids precision loss for Snowflake IDs in JavaScript.
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
     pub menu_type: String,
-    pub path: Option<String>,
-    pub component: Option<String>,
-    pub query: Option<String>,
-    pub perms: Option<String>,
     pub icon: Option<String>,
-    pub is_frame: bool,
-    pub is_cache: bool,
     pub sort: i32,
     pub visible: bool,
     pub status: String,
@@ -29,7 +24,32 @@ pub struct MenuTreeNode {
 }
 
 pub struct MenuRepository;
+
 const DEFAULT_TENANT_ID: &str = "system";
+const MENU_PERMISSION_CODES: &[(i64, &str)] = &[
+    (4, "system:user:list"),
+    (5, "system:role:list"),
+    (6, "system:menu:list"),
+    (7, "system:dept:list"),
+    (8, "system:post:list"),
+    (9, "system:dict:list"),
+    (10, "system:config:list"),
+    (11, "system:notice:list"),
+    (12, "system:operlog:list"),
+    (13, "system:logininfor:list"),
+    (14, "monitor:runtime:list"),
+    (15, "monitor:online:list"),
+    (16, "monitor:server:list"),
+    (17, "tools:gen:list"),
+    (18, "system:user:list"),
+    (19, "system:user:add"),
+    (20, "system:user:edit"),
+    (21, "system:user:remove"),
+    (22, "system:user:export"),
+    (23, "monitor:cache:list"),
+    (24, "monitor:db-pool:list"),
+    (25, "system:permission:list"),
+];
 
 #[async_trait]
 impl Repository<menu::Model, i64> for MenuRepository {
@@ -71,7 +91,6 @@ impl Repository<menu::Model, i64> for MenuRepository {
 }
 
 impl MenuRepository {
-    /// 查询菜单树
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
         let all = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
@@ -80,50 +99,68 @@ impl MenuRepository {
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(build_menu_tree(&all, None))
     }
 
-    /// 按角色查询菜单
-    pub async fn find_by_role_ids(
+    pub async fn find_by_permission_codes(
         &self,
         db: &DatabaseConnection,
-        role_ids: &[i64],
+        permission_codes: &[String],
     ) -> AppResult<Vec<menu::Model>> {
-        use crate::entities::role_menu;
-        let menu_ids: Vec<i64> = role_menu::Entity::find()
-            .filter(role_menu::Column::RoleId.is_in(role_ids.iter().copied()))
-            .all(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .into_iter()
-            .map(|rm| rm.menu_id)
-            .collect();
-
-        if menu_ids.is_empty() {
+        if permission_codes.is_empty() {
             return Ok(vec![]);
         }
 
-        menu::Entity::find()
+        let all = menu::Entity::find()
             .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID))
-            .filter(menu::Column::Id.is_in(menu_ids))
             .filter(menu::Column::Status.eq(menu::Model::STATUS_NORMAL))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let permission_set: HashSet<&str> = permission_codes.iter().map(String::as_str).collect();
+        if permission_set.contains("*:*:*") {
+            return Ok(all);
+        }
+
+        let by_id: HashMap<i64, &menu::Model> = all.iter().map(|menu| (menu.id, menu)).collect();
+        let mut visible_ids = HashSet::new();
+
+        for item in &all {
+            let Some(permission_code) = menu_permission_code(item.id) else {
+                continue;
+            };
+            if !permission_set.contains(permission_code) {
+                continue;
+            }
+
+            let mut current_id = Some(item.id);
+            while let Some(id) = current_id {
+                if !visible_ids.insert(id) {
+                    break;
+                }
+                current_id = by_id.get(&id).and_then(|item| item.parent_id);
+            }
+        }
+
+        Ok(all
+            .into_iter()
+            .filter(|item| visible_ids.contains(&item.id))
+            .collect())
     }
 
-    /// 按角色查询菜单树（只返回角色可见的菜单）
-    pub async fn find_tree_by_roles(
+    pub async fn find_tree_by_permission_codes(
         &self,
         db: &DatabaseConnection,
-        role_ids: &[i64],
+        permission_codes: &[String],
     ) -> AppResult<Vec<MenuTreeNode>> {
-        let menus = self.find_by_role_ids(db, role_ids).await?;
+        let menus = self.find_by_permission_codes(db, permission_codes).await?;
         Ok(build_menu_tree(&menus, None))
     }
-    /// 带搜索条件的查询（返回全部，用于列表/搜索）
+
     pub async fn find_filtered(
         &self,
         db: &DatabaseConnection,
@@ -133,14 +170,16 @@ impl MenuRepository {
         let mut select = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID));
+
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(menu::Column::Name.like(format!("%{}%", n)));
         }
         if let Some(s) = status.filter(|s| !s.is_empty()) {
             select = select.filter(menu::Column::Status.eq(s));
         }
-        select = select.order_by_asc(menu::Column::Sort);
+
         select
+            .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -156,17 +195,17 @@ fn build_menu_tree(menus: &[menu::Model], parent_id: Option<i64>) -> Vec<MenuTre
             name: m.name.clone(),
             parent_id: m.parent_id.map(|p| p.to_string()),
             menu_type: m.menu_type.clone(),
-            path: m.path.clone(),
-            component: m.component.clone(),
-            query: m.query.clone(),
-            perms: m.perms.clone(),
             icon: m.icon.clone(),
-            is_frame: m.is_frame,
-            is_cache: m.is_cache,
             sort: m.sort,
             visible: m.visible,
             status: m.status.clone(),
             children: build_menu_tree(menus, Some(m.id)),
         })
         .collect()
+}
+
+fn menu_permission_code(menu_id: i64) -> Option<&'static str> {
+    MENU_PERMISSION_CODES
+        .iter()
+        .find_map(|(id, code)| (*id == menu_id).then_some(*code))
 }

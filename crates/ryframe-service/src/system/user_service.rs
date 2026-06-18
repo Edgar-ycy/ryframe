@@ -10,11 +10,12 @@ use ryframe_core::{
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{
-    DeptRepository, RoleRepository, UserRepository,
-    entities::{role, user},
+    DeptRepository, PasswordResetRequestRepository, RoleRepository, UserRepository,
+    entities::{password_reset_request, role, user},
 };
-use sea_orm::{ActiveModelTrait, DatabaseConnection, TransactionTrait};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, Set, TransactionTrait};
 use serde::Serialize;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
 pub struct UserVo {
@@ -30,6 +31,12 @@ pub struct UserVo {
     pub dept_name: Option<String>,
     pub remark: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug)]
+pub struct PasswordResetRequestOutcome {
+    pub request: password_reset_request::Model,
+    pub token: String,
 }
 
 impl From<user::Model> for UserVo {
@@ -86,13 +93,11 @@ pub struct UserServiceImpl {
 /// 创建用户参数
 pub struct CreateUserParams<'a> {
     pub username: &'a str,
-    pub password: &'a str,
     pub nickname: &'a str,
     pub email: &'a str,
     pub phone: &'a str,
     pub dept_id: Option<i64>,
     pub role_ids: Option<Vec<i64>>,
-    pub enable_pwd_complexity: bool,
 }
 
 /// 更新用户参数
@@ -394,19 +399,12 @@ impl UserServiceImpl {
     ) -> AppResult<UserVo> {
         let CreateUserParams {
             username,
-            password,
             nickname,
             email,
             phone,
             dept_id,
             role_ids,
-            enable_pwd_complexity,
         } = params;
-
-        // 密码复杂度校验
-        if enable_pwd_complexity {
-            password::validate_complexity(password)?;
-        }
 
         // 检查用户名唯一
         if self
@@ -418,7 +416,9 @@ impl UserServiceImpl {
             return Err(AppError::Conflict("用户名已存在".into()));
         }
 
-        let password_hash = password::hash(password)?;
+        let activation_secret = format!("pending:{}", Uuid::new_v4());
+        let password_hash = password::hash(&activation_secret)?;
+        let status = user::Model::STATUS_PENDING_ACTIVATION;
         let mut new_user = user::Model {
             id: snowflake::next_snowflake_id(),
             tenant_id: "system".to_string(),
@@ -428,7 +428,7 @@ impl UserServiceImpl {
             email: email.to_string(),
             phone: phone.to_string(),
             avatar: None,
-            status: user::Model::STATUS_NORMAL.to_string(),
+            status: status.to_string(),
             dept_id,
             remark: None,
             login_ip: None,
@@ -474,6 +474,155 @@ impl UserServiceImpl {
             .await
             .map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
         Ok(UserVo::from(saved))
+    }
+
+    pub async fn request_password_reset(
+        &self,
+        db: &DatabaseConnection,
+        target_user_id: i64,
+        requested_by: i64,
+        reason: &str,
+        request_ip: Option<String>,
+    ) -> AppResult<PasswordResetRequestOutcome> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(AppError::Validation("密码重置原因不能为空".into()));
+        }
+
+        self.user_repo
+            .find_by_id(db, target_user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+
+        if self.is_super_admin_user(db, target_user_id).await? {
+            return Err(AppError::Authorization("禁止操作超级管理员".into()));
+        }
+
+        let token = Uuid::new_v4().to_string();
+        let mut request = password_reset_request::Model {
+            id: snowflake::next_snowflake_id(),
+            target_user_id,
+            requested_by,
+            reason: reason.to_string(),
+            token_hash: password::hash(&token)?,
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+            completed_at: None,
+            request_ip,
+            status: password_reset_request::Model::STATUS_PENDING.to_string(),
+            created_at: Default::default(),
+            updated_at: Default::default(),
+        };
+        request.fill_on_insert(&FillContext::new());
+
+        let request = PasswordResetRequestRepository.insert(db, request).await?;
+        Ok(PasswordResetRequestOutcome { request, token })
+    }
+
+    pub async fn complete_password_reset(
+        &self,
+        db: &DatabaseConnection,
+        request_id: i64,
+        token: &str,
+        new_password: &str,
+        enable_pwd_complexity: bool,
+    ) -> AppResult<i64> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(AppError::Validation("密码重置令牌不能为空".into()));
+        }
+        if enable_pwd_complexity {
+            password::validate_complexity(new_password)?;
+        }
+
+        let mut reset_request = PasswordResetRequestRepository
+            .find_by_id(db, request_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("密码重置请求不存在".into()))?;
+
+        if reset_request.status != password_reset_request::Model::STATUS_PENDING
+            || reset_request.completed_at.is_some()
+        {
+            return Err(AppError::Validation("密码重置请求已处理".into()));
+        }
+
+        if reset_request.expires_at <= chrono::Utc::now() {
+            reset_request.status = password_reset_request::Model::STATUS_EXPIRED.to_string();
+            reset_request.fill_on_update(&FillContext::new());
+            PasswordResetRequestRepository
+                .update(db, reset_request)
+                .await?;
+            return Err(AppError::Validation("密码重置请求已过期".into()));
+        }
+
+        if !password::verify(token, &reset_request.token_hash)? {
+            return Err(AppError::Authentication("密码重置令牌无效".into()));
+        }
+
+        let mut target_user = self
+            .user_repo
+            .find_by_id(db, reset_request.target_user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+
+        if self.is_super_admin_user(db, target_user.id).await? {
+            return Err(AppError::Authorization("禁止操作超级管理员".into()));
+        }
+
+        let target_user_id = target_user.id;
+        target_user.password_hash = password::hash(new_password)?;
+        if target_user.status == user::Model::STATUS_PENDING_ACTIVATION
+            || target_user.status == user::Model::STATUS_MUST_RESET_PASSWORD
+        {
+            target_user.status = user::Model::STATUS_NORMAL.to_string();
+        }
+        target_user.fill_on_update(&FillContext::new());
+
+        reset_request.status = password_reset_request::Model::STATUS_COMPLETED.to_string();
+        reset_request.completed_at = Some(chrono::Utc::now());
+        reset_request.fill_on_update(&FillContext::new());
+
+        let password_hash = target_user.password_hash.clone();
+        let user_status = target_user.status.clone();
+        let user_updated_at = target_user.updated_at;
+        let request_status = reset_request.status.clone();
+        let request_completed_at = reset_request.completed_at;
+        let request_updated_at = reset_request.updated_at;
+
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| AppError::Database(format!("开启事务失败: {}", e)))?;
+
+        let mut user_active: user::ActiveModel = target_user.into();
+        user_active.password_hash = Set(password_hash);
+        user_active.status = Set(user_status);
+        user_active.updated_at = Set(user_updated_at);
+        if let Err(err) = user_active
+            .update(&txn)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+        {
+            let _ = txn.rollback().await;
+            return Err(err);
+        }
+
+        let mut request_active: password_reset_request::ActiveModel = reset_request.into();
+        request_active.status = Set(request_status);
+        request_active.completed_at = Set(request_completed_at);
+        request_active.updated_at = Set(request_updated_at);
+        if let Err(err) = request_active
+            .update(&txn)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+        {
+            let _ = txn.rollback().await;
+            return Err(err);
+        }
+
+        txn.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
+        Ok(target_user_id)
     }
 
     pub async fn update(
@@ -546,28 +695,5 @@ impl UserServiceImpl {
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         self.user_repo.delete(db, id).await
-    }
-
-    pub async fn reset_password(
-        &self,
-        db: &DatabaseConnection,
-        id: i64,
-        new_password: &str,
-        enable_pwd_complexity: bool,
-    ) -> AppResult<()> {
-        // 密码复杂度校验
-        if enable_pwd_complexity {
-            password::validate_complexity(new_password)?;
-        }
-
-        let mut user = self
-            .user_repo
-            .find_by_id(db, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
-        user.password_hash = password::hash(new_password)?;
-        user.fill_on_update(&FillContext::new());
-        self.user_repo.update(db, user).await?;
-        Ok(())
     }
 }

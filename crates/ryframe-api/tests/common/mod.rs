@@ -74,9 +74,9 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role::Entity);
     create!(ryframe_db::entities::menu::Entity);
     create!(ryframe_db::entities::user::Entity);
+    create!(ryframe_db::entities::password_reset_request::Entity);
     create!(ryframe_db::entities::config::Entity);
     create!(ryframe_db::entities::user_role::Entity);
-    create!(ryframe_db::entities::role_menu::Entity);
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::sys_file::Entity);
@@ -291,7 +291,6 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
         role_service: Arc::new(RoleServiceImpl {
             role_repo: LoggedRepo::new(RoleRepository),
             perm_repo: LoggedRepo::new(PermissionRepository),
-            menu_repo: LoggedRepo::new(MenuRepository),
         }),
         permission_service: Arc::new(PermissionServiceImpl {
             perm_repo: LoggedRepo::new(PermissionRepository),

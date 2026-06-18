@@ -303,7 +303,7 @@ Authorization: Bearer {token}
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/` | 获取个人信息（含角色、权限、部门） |
-| `PUT` | `/` | 更新个人信息（昵称、邮箱、手机号、性别） |
+| `PUT` | `/` | 更新个人信息（昵称、邮箱、手机号） |
 | `PUT` | `/password` | 修改密码（需提供旧密码） |
 | `PUT` | `/avatar` | 更新头像 URL |
 
@@ -351,7 +351,6 @@ PUT /api/v1/auth/profile
 | `nickname` | string | 是 | 长度 1-64 | 昵称 |
 | `email` | string | 否 | 邮箱格式 | 邮箱 |
 | `phone` | string | 否 | 正则 ^1[3-9]\d{9}$ | 手机号 |
-| `sex` | string | 否 | - | 性别：0=男 1=女 2=未知 |
 
 **请求示例**：
 
@@ -359,8 +358,7 @@ PUT /api/v1/auth/profile
 {
     "nickname": "新昵称",
     "email": "new@example.com",
-    "phone": "13800138000",
-    "sex": "0"
+    "phone": "13800138000"
 }
 ```
 
@@ -421,7 +419,7 @@ PUT /api/v1/auth/profile/avatar
 | `PUT` | `/{id}` | 更新用户 | `system:user:edit` |
 | `DELETE` | `/{id}` | 删除用户（软删除） | `system:user:remove` |
 | `DELETE` | `/batch/{ids}` | 批量删除用户（逗号分隔ID） | `system:user:remove` |
-| `PUT` | `/{id}/password` | 重置密码（管理员操作） | `system:user:edit` |
+| `POST` | `/{id}/password-reset-requests` | 发起密码重置请求 | `system:user:edit` |
 | `PUT` | `/changeStatus` | 修改状态（正常/停用/锁定） | `system:user:edit` |
 | `GET` | `/export` | 导出用户数据为 Excel | `system:user:export` |
 | `POST` | `/import` | 从 Excel 导入用户（multipart/form-data） | `system:user:import` |
@@ -508,7 +506,6 @@ POST /api/v1/system/users
 | 参数 | 类型 | 必填 | 验证 | 说明 |
 |------|------|------|------|------|
 | `username` | string | 是 | 长度 1-50 | 用户名（唯一） |
-| `password` | string | 是 | 长度 6-100 | 密码（可启用复杂度校验） |
 | `nickname` | string | 是 | 长度 ≥1 | 用户昵称 |
 | `email` | string | 否 | - | 邮箱 |
 | `phone` | string | 否 | - | 手机号 |
@@ -520,7 +517,6 @@ POST /api/v1/system/users
 ```json
 {
     "username": "new_user",
-    "password": "123456",
     "nickname": "新用户",
     "email": "user@example.com",
     "phone": "13900000000",
@@ -585,25 +581,40 @@ DELETE /api/v1/system/users/batch/1,2,3
 
 **HTTP 状态码**: 200 | 400（ID列表为空）| 401 | 403
 
-#### 5.4.7 重置密码
+#### 5.4.7 发起密码重置请求
 
 ```
-PUT /api/v1/system/users/{id}/password
+POST /api/v1/system/users/{id}/password-reset-requests
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `password` | string | 是 | 长度 6-100，新密码 |
+| `reason` | string | 是 | 重置原因 |
 
 **请求示例**：
 
 ```json
 {
-    "password": "NewPass123"
+    "reason": "用户忘记密码"
 }
 ```
 
-**HTTP 状态码**: 200 | 400（密码不符合规范）| 401 | 403 | 404
+**响应示例**：
+
+```json
+{
+    "code": 200,
+    "message": "password reset request created",
+    "data": {
+        "request_id": "123",
+        "reset_token": "one-time-token",
+        "reset_url": "/reset-password?requestId=123&token=one-time-token",
+        "expires_at": "2026-06-19T12:00:00Z"
+    }
+}
+```
+
+**HTTP 状态码**: 200 | 400（原因为空）| 401 | 403 | 404
 
 #### 5.4.8 修改用户状态
 
@@ -635,7 +646,7 @@ GET /api/v1/system/users/export
 
 返回 `.xlsx` 二进制文件（`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`）。
 
-导出字段：user_id, username, nickname, email, phone, sex, dept_name, status, remark, created_at。
+导出字段：user_id, username, nickname, email, phone, dept_name, status, remark, created_at。
 
 **HTTP 状态码**: 200 | 401 | 403
 
@@ -646,7 +657,7 @@ POST /api/v1/system/users/import
 Content-Type: multipart/form-data
 ```
 
-上传字段名：`file`（.xlsx 文件）。导入模板列：username, nickname, email, phone, sex, dept_id, status, remark。
+上传字段名：`file`（.xlsx 文件）。导入模板列：username, nickname, email, phone, dept_id。
 
 **响应示例**：
 
@@ -697,7 +708,6 @@ GET /api/v1/system/users/import-template
 | `DELETE` | `/{id}` | 删除角色 | `system:role:remove` |
 | `DELETE` | `/batch/{ids}` | 批量删除（逗号分隔ID） | `system:role:remove` |
 | `PUT` | `/{id}/permissions` | 分配权限（role_permission） | `system:role:edit` |
-| `PUT` | `/{id}/menus` | 分配菜单（role_menu） | `system:role:edit` |
 | `PUT` | `/{id}/data-scope` | 设置数据权限 | `system:role:edit` |
 
 #### 5.5.1 分页查询角色
@@ -814,27 +824,7 @@ PUT /api/v1/system/roles/{id}/permissions
 
 **HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
-#### 5.5.7 分配菜单
-
-```
-PUT /api/v1/system/roles/{id}/menus
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `menu_ids` | i64[] | 是 | 菜单 ID 列表（全量覆盖） |
-
-**请求示例**：
-
-```json
-{
-    "menu_ids": [0, 1, 4]
-}
-```
-
-**HTTP 状态码**: 200 | 400 | 401 | 403 | 404
-
-#### 5.5.8 设置数据权限
+#### 5.5.7 设置数据权限
 
 ```
 PUT /api/v1/system/roles/{id}/data-scope
@@ -856,7 +846,7 @@ PUT /api/v1/system/roles/{id}/data-scope
 
 **HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
-#### 5.5.9 导出角色
+#### 5.5.8 导出角色
 
 ```
 GET /api/v1/system/roles/export
@@ -918,13 +908,7 @@ GET /api/v1/system/roles/export
 | `name` | string | 必填 | 必填 | 菜单名称 |
 | `parent_id` | i64/null | 选填 | 选填 | 父菜单 ID，顶级为 null |
 | `menu_type` | string | 必填 | 必填 | `M`=目录 `C`=菜单 `F`=按钮 |
-| `path` | string/null | 选填 | 选填 | 路由路径（目录/菜单） |
-| `component` | string/null | 选填 | 选填 | 前端组件路径（仅菜单类型） |
-| `query` | string/null | 选填 | 选填 | 路由参数，如 `id=1` |
-| `perms` | string/null | 选填 | 选填 | 权限标识，如 `system:user:list` |
 | `icon` | string/null | 选填 | 选填 | 图标名称 |
-| `is_frame` | bool | 选填 | 选填 | 是否外链（0=否 1=是） |
-| `is_cache` | bool | 选填 | 选填 | 是否缓存页面（0=否 1=是） |
 | `sort` | i32 | 选填 | 选填 | 显示顺序，默认 0 |
 | `visible` | bool | 选填 | 选填 | 是否可见，默认 true |
 | `status` | string | 自动 | 必填 | `1`=正常 `0`=停用 |
@@ -936,7 +920,6 @@ GET /api/v1/system/roles/export
     "name": "内容管理",
     "menu_type": "M",
     "parent_id": null,
-    "path": "/content",
     "icon": "Document",
     "sort": 4,
     "visible": true
@@ -950,12 +933,8 @@ GET /api/v1/system/roles/export
     "name": "文章管理",
     "menu_type": "C",
     "parent_id": 23,
-    "path": "/content/article",
-    "component": "content/article/index",
-    "perms": "content:article:list",
     "icon": "Notebook",
     "sort": 1,
-    "is_cache": true,
     "visible": true
 }
 ```
@@ -967,7 +946,6 @@ GET /api/v1/system/roles/export
     "name": "文章新增",
     "menu_type": "F",
     "parent_id": 24,
-    "perms": "content:article:add",
     "sort": 1,
     "visible": true
 }
@@ -1160,9 +1138,8 @@ GET /api/v1/system/roles/export
 | Key | 值 | 说明 |
 |-----|-----|------|
 | `sys.index.skinName` | `skin-blue` | 默认皮肤样式 |
-| `sys.user.initPassword` | `123456` | 新增用户初始密码 |
-| `sys.index.sideTheme` | `theme-dark` | 侧边栏主题 |
-| `sys.account.captchaEnabled` | `true` | 验证码开关 |
+| `sys.index.sideTheme` | `theme-light` | 侧边栏主题 |
+| `sys.account.captchaEnabled` | `false` | 验证码开关 |
 
 ### 5.11 字典管理
 
@@ -1209,22 +1186,21 @@ GET /api/v1/system/roles/export
 
 ```json
 {
-    "type_code": "sys_user_sex",
-    "label": "男",
+    "type_code": "sys_normal_disable",
+    "label": "正常",
     "value": "0",
     "sort": 0
 }
 ```
 
-**字典数据路径查询** `GET /api/v1/system/dict/data/type/sys_user_sex`：
+**字典数据路径查询** `GET /api/v1/system/dict/data/type/sys_normal_disable`：
 
 ```json
 {
     "code": 200,
     "data": [
-        { "dictLabel": "男", "dictValue": "0", "cssClass": null },
-        { "dictLabel": "女", "dictValue": "1", "cssClass": null },
-        { "dictLabel": "未知", "dictValue": "2", "cssClass": null }
+        { "dictLabel": "正常", "dictValue": "0", "cssClass": null },
+        { "dictLabel": "停用", "dictValue": "1", "cssClass": null }
     ]
 }
 ```
@@ -1307,7 +1283,6 @@ GET /api/v1/system/roles/export
 | `GET` | `/list?page=1&pageSize=10&oper_name=&status=&begin_time=&end_time=` | 操作日志分页查询 |
 | `GET` | `/listNoPage` | 操作日志不分页查询 |
 | `GET` | `/export` | 导出操作日志 Excel |
-| `DELETE` | `/clean` | 清空全部操作日志 |
 
 **查询参数**：
 
@@ -1333,7 +1308,6 @@ GET /api/v1/system/roles/export
 | `GET` | `/list?page=1&pageSize=10&user_name=&status=&begin_time=&end_time=` | 登录日志分页查询 |
 | `GET` | `/listNoPage` | 登录日志不分页查询 |
 | `GET` | `/export` | 导出登录日志 Excel |
-| `DELETE` | `/clean` | 清空全部登录日志 |
 
 **查询参数**：
 
@@ -1516,7 +1490,7 @@ GET /api/v1/system/roles/export
 
 **成功响应**：
 
-```json
+```json,ignore
 {
     "code": 200,
     "msg": "操作成功",
@@ -1577,7 +1551,7 @@ GET /api/v1/system/users/list?page=1&pageSize=10&sort_field=id&sort_order=desc
 
 **响应格式**：
 
-```json
+```json,ignore
 {
     "code": 200,
     "msg": "查询成功",
@@ -1600,13 +1574,13 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
 
 | 类型 | `menu_type` | 前端渲染 | 路由 | 权限控制 |
 |------|-------------|----------|------|----------|
-| 目录 | `M` | 侧边栏分组标题（不可点击） | 有 `path`，无实际页面 | 无 |
-| 菜单 | `C` | 侧边栏菜单项（可点击导航） | 有 `path` + `component` | 通过 `perms` 控制可见性 |
-| 按钮 | `F` | 页面内操作按钮（新增/编辑/删除等） | 无路由 | 通过 `perms` 控制显示/隐藏 |
+| 目录 | `M` | 侧边栏分组标题（不可点击） | 前端通过菜单 ID 的 page registry 解析分组路径 | 无 |
+| 菜单 | `C` | 侧边栏菜单项（可点击导航） | 前端通过菜单 ID 的 page registry 解析页面组件 | 由角色权限码决定可见菜单 |
+| 按钮 | `F` | 页面内操作按钮（新增/编辑/删除等） | 无路由 | 通过独立权限码控制显示/隐藏 |
 
 ### 8.2 菜单树接口
 
-`GET /api/v1/system/menus/tree` 返回完整的菜单树，前端根据 `menu_type` 递归渲染：
+`GET /api/v1/system/menus/tree` 返回完整的菜单结构树。后端不再返回 `path`、`component`、`perms`、`is_frame`、`is_cache` 等运行时路由字段；前端通过 `ryframe-vue3/src/router/pageRegistry.ts` 按菜单 ID 解析页面路径和组件。
 
 ```json
 {
@@ -1616,11 +1590,7 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
             "id": 0,
             "name": "首页",
             "menu_type": "C",
-            "path": "/dashboard",
-            "component": "dashboard/index",
             "icon": "HomeFilled",
-            "is_frame": false,
-            "is_cache": false,
             "visible": true,
             "children": []
         },
@@ -1628,7 +1598,6 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
             "id": 1,
             "name": "系统管理",
             "menu_type": "M",
-            "path": "/system",
             "icon": "Setting",
             "visible": true,
             "children": [
@@ -1636,16 +1605,12 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
                     "id": 4,
                     "name": "用户管理",
                     "menu_type": "C",
-                    "path": "/system/user",
-                    "component": "system/user/index",
-                    "perms": "system:user:list",
                     "visible": true,
                     "children": [
                         {
                             "id": 18,
                             "name": "用户查询",
                             "menu_type": "F",
-                            "perms": "system:user:list",
                             "visible": true,
                             "children": []
                         }
@@ -1662,12 +1627,14 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
 ```
 for each node in menu_tree:
     if node.menu_type == "M":
+        resolve page registry by node.id
         render <el-sub-menu> (可折叠分组)
         recursively render children
     else if node.menu_type == "C":
+        resolve page registry by node.id
         render <el-menu-item> (路由链接)
     else if node.menu_type == "F":
-        render <el-button v-if="hasPerm(node.perms)"> (权限按钮)
+        skip route generation; buttons use independent permission codes
 ```
 
 ### 8.4 菜单缓存

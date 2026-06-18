@@ -126,11 +126,10 @@ export interface UserInfo {
   avatar?: string
   roles?: string[]
   perms?: string[]
-  permissions?: string[]
 }
 ```
 
-前端会兼容 `perms` 和 `permissions`。后端优先返回 `perms`，避免同一含义字段长期并存。
+`/auth/login` 和 `/auth/me` 只返回 `perms` 作为当前用户权限码列表。
 
 ## 动态菜单与权限
 
@@ -145,21 +144,15 @@ GET /system/menus/user-tree
 ```ts
 export interface MenuTreeNode {
   id: string | number
-  parent_id?: string | number
-  name: string
+  parent_id?: string | number | null
+  name?: string
   menu_name?: string
-  path?: string
-  component?: string
-  redirect?: string
   menu_type?: 'M' | 'C' | 'F'
-  perms?: string
   icon?: string
   visible?: boolean | string | number
   status?: string | number
   sort?: number
   order_num?: number
-  is_frame?: boolean | string | number
-  is_cache?: boolean | string | number
   children?: MenuTreeNode[]
 }
 ```
@@ -169,47 +162,40 @@ export interface MenuTreeNode {
 | 字段 | 用途 |
 | --- | --- |
 | `name` / `menu_name` | 菜单显示名，前端优先读取 `name`，兼容 `menu_name`。 |
-| `menu_type` | `M` 目录、`C` 菜单、`F` 按钮。按钮不生成路由，只收集 `perms`。 |
-| `path` | 前端路由路径。目录和菜单必须提供稳定路径。 |
-| `component` | 页面组件标识，必须能在前端 `componentMap.ts` 中找到。 |
-| `perms` | 按钮或接口权限标识，例如 `system:user:add`。 |
+| `menu_type` | `M` 目录、`C` 菜单、`F` 按钮。按钮不生成路由。 |
 | `icon` | 菜单图标名，由前端图标组件解析。 |
 | `visible` | `false`、`0`、`"0"` 表示隐藏菜单；缺省表示显示。 |
 | `status` | `"1"` 表示启用，其他值前端默认不生成路由。 |
 | `sort` / `order_num` | 菜单排序字段，优先使用 `sort`，兼容 `order_num`。 |
-| `is_cache` | 是否缓存页面，对应路由 `meta.noCache`。 |
 | `children` | 子菜单树。 |
 
-当前前端支持的特殊组件：
-
-- `Layout`：一级布局。
-- `ParentView`：只承载子路由的父级页面。
-- `InnerLink`：内链页面。
-
-当前前端已注册的业务组件标识包括：
+后端不再返回菜单路由字段。前端在 `ryframe-vue3/src/router/pageRegistry.ts` 中按菜单 ID 维护页面路径和组件映射，当前已注册页面包括：
 
 ```txt
-dashboard/index
-system/user/index
-system/role/index
-system/menu/index
-system/dept/index
-system/post/index
-system/config/index
-system/dict/index
-system/notice/index
-system/permission/index
-system/operlog/index
-system/logininfor/index
-monitor/server/index
-monitor/operlog/index
-monitor/loginlog/index
-monitor/online/index
-tools/gen/index
-profile/index
+0  -> /index
+1  -> /system
+2  -> /monitor
+3  -> /tools
+4  -> /system/user
+5  -> /system/role
+6  -> /system/menu
+7  -> /system/dept
+8  -> /system/post
+9  -> /system/dict
+10 -> /system/config
+11 -> /system/notice
+12 -> /system/operlog
+13 -> /system/logininfor
+14 -> /monitor/runtime
+15 -> /monitor/online
+16 -> /monitor/server
+17 -> /tools/gen
+23 -> /monitor/cache
+24 -> /monitor/db-pool
+25 -> /system/permission
 ```
 
-后端 `sys_menu.component` 新增值时，需要同步更新 `ryframe-vue3/src/router/componentMap.ts`。
+新增页面菜单时，需要先在前端 page registry 注册菜单 ID；后端 `sys_menu` 只维护结构字段。
 
 ## 常用模块路径
 
@@ -300,7 +286,7 @@ Content-Disposition: attachment; filename="users.xlsx"
 
 ## 前端开发检查清单
 
-- 新增后端菜单组件时，同步维护 `componentMap.ts`。
+- 新增菜单页面时，同步维护 `ryframe-vue3/src/router/pageRegistry.ts`。
 - 页面按钮权限统一使用后端返回的 `perms`，不要在页面硬编码角色名。
 - 表格接口统一读取 `rows` 和 `total`，新增模块不要自定义分页字段。
 - 错误提示统一读取 `msg`。

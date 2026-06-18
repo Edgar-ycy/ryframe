@@ -70,6 +70,7 @@ pub async fn ping(db: &DatabaseConnection) -> AppResult<()> {
 const REQUIRED_TABLES: &[&str] = &[
     "sys_dept",
     "sys_user",
+    "password_reset_requests",
     "sys_role",
     "sys_permission",
     "sys_menu",
@@ -84,7 +85,6 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_role_dept",
     "sys_user_role",
     "sys_role_permission",
-    "sys_role_menu",
 ];
 
 #[derive(Debug, FromQueryResult)]

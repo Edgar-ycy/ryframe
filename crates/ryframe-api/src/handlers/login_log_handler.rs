@@ -24,10 +24,6 @@ pub fn login_log_router(state: AppState) -> Router {
             "/export",
             perm_route(get(export_login_logs), "system:logininfor:export"),
         )
-        .route(
-            "/clean",
-            perm_route(axum::routing::delete(clean), "system:logininfor:remove"),
-        )
         .with_state(state)
 }
 
@@ -71,17 +67,6 @@ async fn list_no_page(
         )
         .await?;
     Ok(Json(ApiResponse::success(logs)))
-}
-
-/// 清空登录日志
-#[utoipa::path(delete, path = "/api/v1/system/loginlogs/clean", tag = "登录日志",
-    responses((status = 200, description = "清空成功")), security(("bearer" = [])))]
-async fn clean(State(state): State<AppState>) -> AppResult<Json<ApiResponse<()>>> {
-    let count = state.login_info_service.clean(&state.db).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
-        "成功清空 {} 条登录日志",
-        count
-    ))))
 }
 
 /// 登录日志导出数据

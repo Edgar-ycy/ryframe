@@ -1,6 +1,6 @@
 use axum::{
     Extension, Json, Router,
-    extract::{Multipart, Path, Query, State},
+    extract::{ConnectInfo, Multipart, Path, Query, State},
     routing::{delete, get, post, put},
 };
 use ryframe_auth::middleware::perm_route;
@@ -11,8 +11,13 @@ use serde::Deserialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
+use std::net::SocketAddr;
+
 use crate::dto::{
-    user_dto::{ChangeStatusDto, CreateUserDto, ResetPasswordDto, UpdateUserDto},
+    user_dto::{
+        ChangeStatusDto, CreateUserDto, PasswordResetRequestDto, PasswordResetRequestResponse,
+        UpdateUserDto,
+    },
     user_import_dto::{UserExportData, UserImportData},
 };
 use crate::extractors::CurrentUser;
@@ -88,8 +93,8 @@ pub fn user_router(state: AppState) -> Router {
             perm_route(delete(batch_remove), "system:user:remove"),
         )
         .route(
-            "/{id}/password",
-            perm_route(put(reset_password), "system:user:edit"),
+            "/{id}/password-reset-requests",
+            perm_route(post(request_password_reset), "system:user:edit"),
         )
         .route(
             "/changeStatus",
@@ -207,13 +212,11 @@ async fn create(
             &state.db,
             CreateUserParams {
                 username: &dto.username,
-                password: &dto.password,
                 nickname: &dto.nickname,
                 email: dto.email.as_deref().unwrap_or(""),
                 phone: dto.phone.as_deref().unwrap_or(""),
                 dept_id,
                 role_ids,
-                enable_pwd_complexity: state.config.auth.enable_password_complexity,
             },
         )
         .await
@@ -340,32 +343,45 @@ async fn change_status(
     Ok(Json(ApiResponse::success_no_data_with_msg("状态修改成功")))
 }
 
-/// 重置用户密码
-#[utoipa::path(put, path = "/api/v1/system/users/{id}/password", tag = "用户管理",
+/// 发起用户密码重置请求
+#[utoipa::path(post, path = "/api/v1/system/users/{id}/password-reset-requests", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
-    request_body = ResetPasswordDto,
-    responses((status = 200, description = "密码重置成功")),
+    request_body = PasswordResetRequestDto,
+    responses((status = 200, description = "密码重置请求已发起")),
     security(("bearer" = [])))]
-async fn reset_password(
+async fn request_password_reset(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
     Path(id): Path<i64>,
-    Json(dto): Json<ResetPasswordDto>,
-) -> AppResult<Json<ApiResponse<()>>> {
+    Json(dto): Json<PasswordResetRequestDto>,
+) -> AppResult<Json<ApiResponse<PasswordResetRequestResponse>>> {
     dto.validate()?;
     ensure_target_user_access(&state, &current_user, id).await?;
     ensure_not_super_admin_target(&state, id).await?;
-    state
+    let outcome = state
         .user_service
-        .reset_password(
+        .request_password_reset(
             &state.db,
             id,
-            &dto.password,
-            state.config.auth.enable_password_complexity,
+            current_user.user_id,
+            &dto.reason,
+            Some(remote_addr.ip().to_string()),
         )
         .await?;
-    super::auth_handler::invalidate_user_tokens(&state, id).await;
-    Ok(Json(ApiResponse::success_no_data_with_msg("密码重置成功")))
+    let response = PasswordResetRequestResponse {
+        request_id: outcome.request.id.to_string(),
+        reset_token: outcome.token.clone(),
+        reset_url: format!(
+            "/reset-password?requestId={}&token={}",
+            outcome.request.id, outcome.token
+        ),
+        expires_at: outcome.request.expires_at.to_rfc3339(),
+    };
+    Ok(Json(ApiResponse::success_msg(
+        "password reset request created",
+        response,
+    )))
 }
 
 /// 导出用户数据为 Excel
@@ -402,7 +418,6 @@ async fn export_users(
             nickname: u.nickname,
             email: u.email,
             phone: u.phone,
-            sex: "0".to_string(), // user 表没有 sex 字段，使用默认值
             dept_name: u.dept_name,
             status: u.status,
             remark: u.remark,
@@ -478,13 +493,11 @@ async fn import_users(
                         &state.db,
                         CreateUserParams {
                             username: &data.username,
-                            password: &data.password,
                             nickname: &data.nickname,
                             email: &data.email,
                             phone: data.phone.as_deref().unwrap_or(""),
                             dept_id: parse_optional_i64_str(data.dept_id.as_deref()),
                             role_ids: None,
-                            enable_pwd_complexity: true,
                         },
                     )
                     .await

@@ -15,9 +15,6 @@ pub const CAPTCHA_KEY_PREFIX: &str = "ryframe:captcha:";
 /// 系统超级管理员角色标识
 pub const SUPER_ADMIN_ROLE: &str = "admin";
 
-/// 默认密码（新建用户时的初始密码）
-pub const DEFAULT_PASSWORD: &str = "123456";
-
 /// 请求 ID 响应头名称
 pub const REQUEST_ID_HEADER: &str = "X-Request-Id";
 

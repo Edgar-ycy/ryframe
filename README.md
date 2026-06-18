@@ -72,6 +72,8 @@ cargo check --workspace --all-targets
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+# 构建 Linux 可执行文件
+cross build --release --target x86_64-unknown-linux-gnu
 ```
 
 如果安装了 `cargo-nextest`，推荐使用：

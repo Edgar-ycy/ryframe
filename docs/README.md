@@ -6,5 +6,4 @@
 - [API 使用指南](api-guide.md)：后端接口、认证和业务模块说明。
 - [架构说明](architecture.md)：工作区 crate 分层、核心模块和运行链路。
 - [数据库指南](db-guide.md)：实体、仓储、迁移和 SQL 初始化说明。
-- [大型项目路线图](large-project-roadmap.md)：后续演进计划。
 

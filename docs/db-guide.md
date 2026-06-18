@@ -47,6 +47,7 @@ MySQL 使用 `utf8mb4_general_ci`，建议在数据库初始化时配置：
 | `sys_dict_type` | `entities/dict_type.rs` | 字典类型 |
 | `sys_dict_data` | `entities/dict_data.rs` | 字典数据 |
 | `sys_notice` | `entities/notice.rs` | 通知公告 |
+| `password_reset_requests` | `entities/password_reset_request.rs` | 密码重置请求 |
 
 ### 关联表
 
@@ -54,7 +55,6 @@ MySQL 使用 `utf8mb4_general_ci`，建议在数据库初始化时配置：
 |------|----------|------|
 | `user_role` | `entities/user_role.rs` | 用户-角色关联 |
 | `role_permission` | `entities/role_permission.rs` | 角色-权限关联 |
-| `role_menu` | `entities/role_menu.rs` | 角色-菜单关联 |
 | `role_dept` | `entities/role_dept.rs` | 角色-部门数据权限关联 |
 
 ### 日志表 (monitor)

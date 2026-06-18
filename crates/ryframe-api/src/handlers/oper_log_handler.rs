@@ -24,10 +24,6 @@ pub fn oper_log_router(state: AppState) -> Router {
             "/export",
             perm_route(get(export_oper_logs), "system:operlog:export"),
         )
-        .route(
-            "/clean",
-            perm_route(axum::routing::delete(clean), "system:operlog:remove"),
-        )
         .with_state(state)
 }
 
@@ -71,17 +67,6 @@ async fn list_no_page(
         )
         .await?;
     Ok(Json(ApiResponse::success(logs)))
-}
-
-/// 清空操作日志
-#[utoipa::path(delete, path = "/api/v1/system/operlogs/clean", tag = "操作日志",
-    responses((status = 200, description = "清空成功")), security(("bearer" = [])))]
-async fn clean(State(state): State<AppState>) -> AppResult<Json<ApiResponse<()>>> {
-    let count = state.oper_log_service.clean(&state.db).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
-        "成功清空 {} 条操作日志",
-        count
-    ))))
 }
 
 /// 操作日志导出数据

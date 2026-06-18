@@ -11,9 +11,7 @@ use serde::Serialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
-use crate::dto::role_dto::{
-    AssignDataScopeDto, AssignMenusDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto,
-};
+use crate::dto::role_dto::{AssignDataScopeDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto};
 use crate::handler_utils::{excel_response, parse_csv_i64, parse_i64_strings};
 use crate::{detail_body, list_query};
 
@@ -58,10 +56,6 @@ pub fn role_router(state: AppState) -> Router {
         .route(
             "/{id}/permissions",
             perm_route(put(assign_permissions), "system:role:edit"),
-        )
-        .route(
-            "/{id}/menus",
-            perm_route(put(assign_menus), "system:role:edit"),
         )
         .route(
             "/{id}/data-scope",
@@ -312,27 +306,6 @@ async fn get_role_perms(
         .await?;
     let ids: Vec<String> = perm_ids.iter().map(|p| p.to_string()).collect();
     Ok(Json(ApiResponse::success(ids)))
-}
-
-/// 分配菜单给角色
-#[utoipa::path(put, path = "/api/v1/system/roles/{id}/menus", tag = "角色管理",
-    params(("id" = i64, Path)),
-    request_body = AssignMenusDto,
-    responses((status = 200, description = "菜单分配成功")),
-    security(("bearer" = [])))]
-async fn assign_menus(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(dto): Json<AssignMenusDto>,
-) -> AppResult<Json<ApiResponse<()>>> {
-    let menu_ids = parse_i64_strings(&dto.menu_ids);
-    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
-    state
-        .role_service
-        .assign_menus(&state.db, id, menu_ids)
-        .await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
-    Ok(Json(ApiResponse::success_no_data_with_msg("菜单分配成功")))
 }
 
 /// 设置角色数据权限

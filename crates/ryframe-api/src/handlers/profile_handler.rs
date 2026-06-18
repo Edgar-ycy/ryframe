@@ -6,6 +6,7 @@ use axum::{
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_service::system::{file_service::FileService, profile_service::UserProfileResponse};
+use validator::Validate;
 
 use crate::{
     dto::profile_dto::{ChangePasswordRequest, UpdateProfileRequest},
@@ -53,6 +54,7 @@ pub async fn update_profile(
     claims: axum::Extension<Claims>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    req.validate()?;
     let user_id = claims
         .sub
         .parse::<i64>()

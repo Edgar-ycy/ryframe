@@ -328,17 +328,17 @@ async fn test_user_crud_flow() {
         json!({
             "username": "newuser",
             "nickname": "新用户",
-            "password": "P@ssw0rd1!",
             "email": "newuser@test.com",
             "phone": "13900000001",
-            "status": "1",
-            "deptId": 1,
+            "dept_id": "1",
+            "role_ids": null,
         }),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "创建用户失败: {:?}", b);
     let user_id = b["data"]["id"].as_str().expect("创建用户应返回 id");
     assert_eq!(b["data"]["username"], "newuser");
+    assert_eq!(b["data"]["status"], "pending_activation");
 
     // 2. 按 ID 查询
     let (s, b) = auth_get(&db, &format!("/system/users/{}", user_id), &token).await;
@@ -364,8 +364,6 @@ async fn test_user_crud_flow() {
         &format!("/system/users/{}", user_id),
         &token,
         json!({
-            "id": user_id,
-            "username": "newuser",
             "nickname": "更新昵称",
             "email": "updated@test.com",
             "phone": "13900000002",
@@ -375,7 +373,7 @@ async fn test_user_crud_flow() {
     .await;
     assert_eq!(s, StatusCode::OK, "更新用户失败: {:?}", b);
 
-    // 5. 重置用户密码
+    // 5. 旧管理员重置密码接口不可用
     let (s, _) = auth_put(
         &db,
         &format!("/system/users/{}/password", user_id),
@@ -386,7 +384,35 @@ async fn test_user_crud_flow() {
         }),
     )
     .await;
-    assert_eq!(s, StatusCode::OK, "重置密码失败");
+    assert!(!s.is_success(), "旧管理员重置密码接口不应可用");
+
+    // 5.1 发起密码重置请求
+    let (s, _) = auth_post(
+        &db,
+        &format!("/system/users/{}/password-reset-requests", user_id),
+        &token,
+        json!({"reason": "用户忘记密码"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "发起密码重置请求失败");
+
+    let (s, _) = auth_post(
+        &db,
+        &format!("/system/users/{}/password-reset-requests", user_id),
+        &token,
+        json!({"reason": ""}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "空原因应被拒绝");
+
+    let (s, _) = auth_post(
+        &db,
+        "/system/users/1/password-reset-requests",
+        &token,
+        json!({"reason": "不能重置超级管理员"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "超级管理员目标应被拒绝");
 
     // 6. 修改用户状态
     let (s, _) = auth_put(
@@ -439,7 +465,6 @@ async fn test_user_create_validation() {
         &token,
         json!({
             "nickname": "缺少用户名",
-            "password": "P@ssw0rd1!"
         }),
     )
     .await;
@@ -452,26 +477,25 @@ async fn test_user_create_validation() {
         &token,
         json!({
             "username": "admin",
-            "nickname": "重名",
-            "password": "P@ssw0rd1!"
+            "nickname": "重名"
         }),
     )
     .await;
     assert_eq!(s, StatusCode::CONFLICT, "重名用户名应返回 409: {:?}", b);
 
-    // 弱密码
+    // 创建用户不再要求管理员输入密码
     let (s, b) = auth_post(
         &db,
         "/system/users",
         &token,
         json!({
-            "username": "weakpwd",
-            "nickname": "弱密码",
-            "password": "123"
+            "username": "nopassword",
+            "nickname": "无初始密码"
         }),
     )
     .await;
-    assert!(s.is_client_error(), "弱密码应返回 4xx: {:?}", b);
+    assert_eq!(s, StatusCode::OK, "不传密码应创建成功: {:?}", b);
+    assert_eq!(b["data"]["status"], "pending_activation");
 }
 
 /// 用户列表分页查询

@@ -191,22 +191,22 @@ mod extra_paths {
 菜单管理使用 `menu_type` 字段区分节点类型：
 - `M`（目录）：侧边栏一级分组，无实际页面
 - `C`（菜单）：可点击的页面路由
-- `F`（按钮）：页面内的操作按钮，通过 `perms` 字段关联权限标识
+- `F`（按钮）：页面内的操作按钮，显示与授权由独立权限码控制
 "#,
         license(name = "MIT")
     ),
     tags(
         (name = "认证", description = "登录/登出/刷新令牌/验证码获取。登录需验证码（可通过配置关闭），支持暴力破解防护。"),
-        (name = "用户管理", description = "用户 CRUD、分页查询、详情、导入导出、密码重置、状态变更。"),
-        (name = "角色管理", description = "角色 CRUD、权限分配(role_permission)、菜单分配(role_menu)、数据权限设置(data_scope + sys_role_dept)。"),
-        (name = "菜单管理", description = "菜单树管理（含目录M/菜单C/按钮F），支持路由参数(query)、权限标识(perms)、外链(is_frame)、缓存(is_cache)配置。"),
+        (name = "用户管理", description = "用户 CRUD、分页查询、详情、导入导出、密码重置请求、状态变更。"),
+        (name = "角色管理", description = "角色 CRUD、权限分配(role_permission)、数据权限设置(data_scope + sys_role_dept)。"),
+        (name = "菜单管理", description = "菜单树管理（含目录M/菜单C/按钮F）。管理端只允许维护上级菜单、名称、图标、排序、可见和状态。"),
         (name = "权限管理", description = "权限码树查询，用于角色分配权限时展示可选权限列表。"),
         (name = "部门管理", description = "部门树 CRUD，支持祖级列表(ancestors)快速查询子部门。"),
         (name = "岗位管理", description = "岗位 CRUD，用户可关联岗位。"),
         (name = "字典管理", description = "字典类型 + 字典数据 CRUD，前端可据此渲染下拉选项。"),
         (name = "参数配置", description = "系统参数键值对 CRUD，支持按 key 精确查询。"),
         (name = "通知公告", description = "通知公告 CRUD，支持草稿/发布/关闭状态。"),
-        (name = "操作日志", description = "POST/PUT/DELETE 请求自动记录，支持分页查询和批量清空。"),
+        (name = "操作日志", description = "POST/PUT/DELETE 请求自动记录，支持分页查询、详情和导出；业务管理端不提供清空入口。"),
         (name = "登录日志", description = "登录成功/失败记录，含 IP、浏览器、操作系统信息。"),
         (name = "在线用户", description = "查看当前在线用户列表，支持强制下线(token 加入黑名单)。"),
         (name = "服务器监控", description = "/health(健康检查) + /metrics(Prometheus) 公开；/server、/cache、/db-pool、/runtime 需认证。"),
@@ -219,6 +219,7 @@ mod extra_paths {
         crate::handlers::auth_handler::login,
         crate::handlers::auth_handler::logout,
         crate::handlers::auth_handler::refresh,
+        crate::handlers::auth_handler::complete_password_reset,
         crate::handlers::auth_handler::me,
         // 用户管理
         crate::handlers::user_handler::list,
@@ -228,7 +229,7 @@ mod extra_paths {
         crate::handlers::user_handler::update,
         crate::handlers::user_handler::remove,
         crate::handlers::user_handler::batch_remove,
-        crate::handlers::user_handler::reset_password,
+        crate::handlers::user_handler::request_password_reset,
         crate::handlers::user_handler::change_status,
         // 角色管理
         crate::handlers::role_handler::list,
@@ -239,7 +240,6 @@ mod extra_paths {
         crate::handlers::role_handler::remove,
         crate::handlers::role_handler::batch_remove,
         crate::handlers::role_handler::assign_permissions,
-        crate::handlers::role_handler::assign_menus,
         crate::handlers::role_handler::assign_data_scope,
         // 部门管理
         crate::handlers::dept_handler::tree,
@@ -291,10 +291,8 @@ mod extra_paths {
         crate::handlers::notice_handler::remove,
         // 操作日志
         crate::handlers::oper_log_handler::list,
-        crate::handlers::oper_log_handler::clean,
         // 登录日志
         crate::handlers::login_log_handler::list,
-        crate::handlers::login_log_handler::clean,
         // 在线用户
         crate::handlers::online_user_handler::list_online_users,
         crate::handlers::online_user_handler::list_online_users_page,
@@ -341,18 +339,19 @@ mod extra_paths {
         // 认证 DTO
         crate::dto::auth_dto::LoginRequest,
         crate::dto::auth_dto::RefreshRequest,
+        crate::dto::auth_dto::CompletePasswordResetRequest,
         crate::dto::auth_dto::LoginResponse,
         ryframe_service::UserInfo,
         // 用户 DTO
         crate::dto::user_dto::CreateUserDto,
         crate::dto::user_dto::UpdateUserDto,
-        crate::dto::user_dto::ResetPasswordDto,
+        crate::dto::user_dto::PasswordResetRequestDto,
+        crate::dto::user_dto::PasswordResetRequestResponse,
         crate::dto::user_dto::ChangeStatusDto,
         // 角色 DTO
         crate::dto::role_dto::CreateRoleDto,
         crate::dto::role_dto::UpdateRoleDto,
         crate::dto::role_dto::AssignPermsDto,
-        crate::dto::role_dto::AssignMenusDto,
         crate::dto::role_dto::AssignDataScopeDto,
         // 部门 DTO
         crate::dto::dept_dto::CreateDeptDto,

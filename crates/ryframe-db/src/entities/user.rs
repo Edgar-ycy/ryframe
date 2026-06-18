@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_macro::AutoFill;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
 #[auto_fill(login_date, skip)]
 #[sea_orm(table_name = "sys_user")]
@@ -28,11 +29,12 @@ pub struct Model {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 用户状态常量
 impl Model {
     pub const STATUS_DISABLED: &str = "0";
     pub const STATUS_NORMAL: &str = "1";
     pub const STATUS_LOCKED: &str = "2";
+    pub const STATUS_PENDING_ACTIVATION: &str = "pending_activation";
+    pub const STATUS_MUST_RESET_PASSWORD: &str = "must_reset_password";
 
     pub const DEL_FLAG_NORMAL: &str = "0";
     pub const DEL_FLAG_DELETED: &str = "2";

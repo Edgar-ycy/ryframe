@@ -357,7 +357,8 @@ ryframe/
     │       │   ├── dict_type.rs, dict_data.rs, notice.rs
     │       │   ├── oper_log.rs, login_info.rs
     │       │   ├── job.rs, job_log.rs
-    │       │   ├── user_role.rs, role_permission.rs, role_menu.rs, role_dept.rs
+    │       │   ├── user_role.rs, role_permission.rs, role_dept.rs
+    │       │   ├── password_reset_request.rs
     │       ├── repositories/           # Repository 实现（14 个文件）
     │       │   ├── user_repo.rs, role_repo.rs, menu_repo.rs
     │       │   ├── dept_repo.rs, post_repo.rs, config_repo.rs
@@ -547,7 +548,7 @@ crates/
 │       │   ├── notice.rs               # 通知公告实体
 │       │   ├── user_role.rs            # 用户-角色关联
 │       │   ├── role_permission.rs      # 角色-权限关联
-│       │   ├── role_menu.rs            # 角色-菜单关联
+│       │   ├── password_reset_request.rs # 密码重置请求
 │       │   ├── oper_log.rs             # 操作日志实体
 │       │   └── login_info.rs           # 登录日志实体
 │       └── repositories/               # Repository 实现
@@ -781,20 +782,20 @@ Transaction::run(&db, |tx| async {
 └────────────┘     │ status       │     │ status   │    │ path            │
                    └──────────────┘     └──────────┘    │ icon            │
                                                          │ sort            │
-┌────────────┐     ┌──────────────┐                      │ status          │
-│ sys_menu   │     │ role_menu    │                      └────────────────┘
-├────────────┤     ├──────────────┤
-│ id (PK)    │────→│ role_id (FK) │      ┌──────────────┐
-│ name       │     │ menu_id (FK) │      │ sys_config   │
-│ parent_id  │     └──────────────┘      ├──────────────┤
-│ path       │                           │ id (PK)      │
-│ component  │      ┌──────────────┐      │ name         │
+┌────────────┐                                            │ status          │
+│ sys_menu   │                                            └────────────────┘
+├────────────┤
+│ id (PK)    │                         ┌──────────────┐
+│ tenant_id  │                         │ sys_config   │
+│ name       │                         ├──────────────┤
+│ parent_id  │                         │ id (PK)      │
+│ menu_type  │      ┌──────────────┐      │ name         │
 │ icon       │      │ sys_dict_type│      │ key          │
 │ sort       │      ├──────────────┤      │ value        │
 │ visible    │      │ id (PK)      │      │ remark       │
 │ status     │      │ name         │      └──────────────┘
-└────────────┘      │ code         │
-                    │ status       │      ┌──────────────┐
+│ del_flag   │      │ code         │
+└────────────┘      │ status       │      ┌──────────────┐
                     └──────┬───────┘      │ sys_dict_data│
                            │              ├──────────────┤
                     ┌──────┴───────┐      │ id (PK)      │
@@ -839,7 +840,7 @@ Transaction::run(&db, |tx| async {
 | `sys_notice` | `entities/notice.rs` | system | 通知公告 |
 | `user_role` | `entities/user_role.rs` | system | 用户-角色关联 |
 | `role_permission` | `entities/role_permission.rs` | system | 角色-权限关联 |
-| `role_menu` | `entities/role_menu.rs` | system | 角色-菜单关联 |
+| `password_reset_requests` | `entities/password_reset_request.rs` | system | 密码重置请求 |
 | `sys_oper_log` | `entities/oper_log.rs` | monitor | 操作日志 |
 | `sys_login_info` | `entities/login_info.rs` | monitor | 登录日志 |
 
@@ -887,7 +888,7 @@ UserService trait (定义于 ryframe-core):
   - create(dto: CreateUserDto) → AppResult<UserVo>
   - update(id: Uuid, dto: UpdateUserDto) → AppResult<UserVo>
   - delete(id: Uuid) → AppResult<()>
-  - reset_password(id: Uuid, password: String) → AppResult<()>
+  - request_password_reset(id: Uuid, reason: String) → AppResult<PasswordResetRequestOutcome>
   - assign_roles(user_id: Uuid, role_ids: Vec<Uuid>) → AppResult<()>
 ```
 
@@ -916,7 +917,7 @@ UserService trait (定义于 ryframe-core):
 | `POST` | `/api/v1/system/users` | 创建用户 |
 | `PUT` | `/api/v1/system/users/:id` | 更新用户 |
 | `DELETE` | `/api/v1/system/users/:id` | 删除用户 |
-| `PUT` | `/api/v1/system/users/:id/password` | 重置用户密码 |
+| `POST` | `/api/v1/system/users/:id/password-reset-requests` | 发起密码重置请求 |
 | `GET` | `/api/v1/system/roles` | 角色列表 |
 | `POST` | `/api/v1/system/roles` | 创建角色 |
 | `PUT` | `/api/v1/system/roles/:id` | 更新角色 |
@@ -949,7 +950,6 @@ UserService trait (定义于 ryframe-core):
 | `GET` | `/api/v1/monitor/server` | 服务器信息 |
 | `GET` | `/api/v1/monitor/health` | 应用健康检查 |
 | `GET` | `/api/v1/monitor/logs/oper` | 操作日志分页查询 |
-| `DELETE` | `/api/v1/monitor/logs/oper` | 清空操作日志 |
 | `GET` | `/api/v1/monitor/logs/login` | 登录日志分页查询 |
 | `GET` | `/api/v1/monitor/online` | 在线用户列表 |
 
