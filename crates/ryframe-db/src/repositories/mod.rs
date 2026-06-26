@@ -13,6 +13,7 @@ pub mod password_reset_request_repo;
 pub mod permission_repo;
 pub mod post_repo;
 pub mod role_repo;
+pub mod tenant_repo;
 pub mod user_repo;
 
 pub use config_repo::ConfigRepository;
@@ -27,4 +28,5 @@ pub use password_reset_request_repo::PasswordResetRequestRepository;
 pub use permission_repo::PermissionRepository;
 pub use post_repo::PostRepository;
 pub use role_repo::RoleRepository;
+pub use tenant_repo::TenantRepository;
 pub use user_repo::UserRepository;

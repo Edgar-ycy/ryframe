@@ -8,7 +8,6 @@ use sea_orm::{
 use crate::entities::{permission, role_permission};
 
 pub struct PermissionRepository;
-const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<permission::Model, i64> for PermissionRepository {
@@ -18,7 +17,7 @@ impl Repository<permission::Model, i64> for PermissionRepository {
         id: i64,
     ) -> AppResult<Option<permission::Model>> {
         permission::Entity::find_by_id(id)
-            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -29,7 +28,13 @@ impl Repository<permission::Model, i64> for PermissionRepository {
         db: &DatabaseConnection,
         query: PageQuery,
     ) -> AppResult<PageResult<permission::Model>> {
-        crate::pagination::paginate(db, permission::Entity::find(), &query).await
+        crate::pagination::paginate(
+            db,
+            permission::Entity::find()
+                .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id())),
+            &query,
+        )
+        .await
     }
 
     async fn insert(
@@ -49,7 +54,9 @@ impl Repository<permission::Model, i64> for PermissionRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        permission::Entity::delete_by_id(id)
+        permission::Entity::delete_many()
+            .filter(permission::Column::Id.eq(id))
+            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
@@ -65,7 +72,7 @@ impl PermissionRepository {
     ) -> AppResult<Option<permission::Model>> {
         permission::Entity::find()
             .filter(permission::Column::Code.eq(code))
-            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -85,6 +92,7 @@ impl PermissionRepository {
 
         let perm_ids: Vec<i64> = role_permission::Entity::find()
             .filter(role_permission::Column::RoleId.is_in(role_ids.iter().copied()))
+            .filter(role_permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -97,7 +105,7 @@ impl PermissionRepository {
         }
 
         permission::Entity::find()
-            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .filter(permission::Column::Id.is_in(perm_ids))
             .filter(permission::Column::Status.eq("1"))
             .all(db)
@@ -113,6 +121,7 @@ impl PermissionRepository {
     ) -> AppResult<Vec<i64>> {
         let ids = role_permission::Entity::find()
             .filter(role_permission::Column::RoleId.eq(role_id))
+            .filter(role_permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -132,6 +141,7 @@ impl PermissionRepository {
         // 清除现有权限
         role_permission::Entity::delete_many()
             .filter(role_permission::Column::RoleId.eq(role_id))
+            .filter(role_permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
@@ -143,6 +153,7 @@ impl PermissionRepository {
         let models: Vec<role_permission::ActiveModel> = perm_ids
             .iter()
             .map(|pid| role_permission::ActiveModel {
+                tenant_id: sea_orm::ActiveValue::Set(ryframe_core::current_tenant_id()),
                 role_id: sea_orm::ActiveValue::Set(role_id),
                 perm_id: sea_orm::ActiveValue::Set(*pid),
             })
@@ -158,7 +169,7 @@ impl PermissionRepository {
     /// 查询所有权限
     pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<permission::Model>> {
         permission::Entity::find()
-            .filter(permission::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .order_by_asc(permission::Column::Sort)
             .all(db)
             .await

@@ -107,6 +107,14 @@ impl FileService {
             });
         }
 
+        ryframe_db::TenantRepository
+            .ensure_storage_quota(
+                db,
+                &ryframe_core::current_tenant_id(),
+                final_data.len() as u64,
+            )
+            .await?;
+
         let storage_name = generate_storage_filename(&final_name);
         let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
         let object_key = format!("{}/{}", date_prefix, storage_name);
@@ -125,6 +133,7 @@ impl FileService {
         let file_id = ryframe_common::utils::snowflake::next_snowflake_id();
         let model = sys_file::Model {
             id: file_id,
+            tenant_id: ryframe_core::current_tenant_id(),
             original_name: original_name.clone(),
             storage_name: storage_name.clone(),
             storage_path: object_key.clone(),

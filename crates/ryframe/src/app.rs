@@ -1,12 +1,57 @@
 use std::sync::Arc;
 
-use axum::{Router, middleware::from_fn, routing::get};
+use axum::{
+    Router,
+    extract::{Request, State},
+    http::StatusCode,
+    middleware::{Next, from_fn},
+    response::{IntoResponse, Response},
+    routing::get,
+};
 use ryframe_config::CorsConfig;
-use ryframe_core::multi_tenant::{TenantConfig, tenant_middleware};
+use ryframe_core::multi_tenant::{TenantConfig, TenantRateLimitCache, tenant_middleware};
 use ryframe_middleware::{
     CacheControlConfig, IdempotencyState, ReplayProtectionState, SecurityHeadersConfig,
     rate_limit::RateLimitState,
 };
+
+#[derive(Clone)]
+struct TenantRateLimitState {
+    db: sea_orm::DatabaseConnection,
+    limiter: Arc<ryframe_middleware::RateLimiter>,
+    cache: TenantRateLimitCache,
+}
+
+async fn tenant_rate_limit_middleware(
+    State(state): State<TenantRateLimitState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let tenant_id = ryframe_core::current_tenant_id();
+    let limit = if let Some(limit) = state.cache.get(&tenant_id) {
+        limit
+    } else {
+        match ryframe_db::TenantRepository
+            .find_by_tenant_id(&state.db, &tenant_id)
+            .await
+        {
+            Ok(Some(tenant)) => {
+                let limit = tenant.max_requests_per_min.max(1) as u32;
+                state.cache.insert(tenant_id.clone(), limit);
+                limit
+            }
+            // Authentication provides the definitive tenant-existence error.
+            // Do not mask it as a rate-limit failure here.
+            _ => return next.run(request).await,
+        }
+    };
+    let key = format!("tenant:{}", tenant_id);
+    if state.limiter.sliding_window_acquire(&key, 60, limit).await {
+        next.run(request).await
+    } else {
+        (StatusCode::TOO_MANY_REQUESTS, "租户请求频率超过配额").into_response()
+    }
+}
 
 /// 健康检查 Handler
 async fn health_check() -> &'static str {
@@ -25,8 +70,13 @@ pub fn build_app(
 ) -> Router {
     // 克隆一份传给 api_router（用于子路由的用户级限流）
     let rate_limit_state_for_api = rate_limit_state.clone();
+    let tenant_rate_limit_state = TenantRateLimitState {
+        db: state.db.clone(),
+        limiter: limiter.clone(),
+        cache: state.tenant_rate_limit_cache.clone(),
+    };
     let tenant_config = Arc::new(TenantConfig {
-        default_tenant: Some("system".to_string()),
+        default_tenant: None,
         ..TenantConfig::default()
     });
     let security_headers_config = SecurityHeadersConfig::default();
@@ -45,6 +95,14 @@ pub fn build_app(
     Router::new()
         .route("/", get(health_check))
         .route("/health", get(health_check))
+        // Register application routes before applying the global middleware
+        // stack. In Axum, `layer` wraps the routes already present in the
+        // router; nesting after it would bypass tenant extraction (and every
+        // other global middleware) for `/api/v1`.
+        .nest(
+            "/api/v1",
+            ryframe_api::api_router(state, rate_limit_state_for_api),
+        )
         // 中间件层（从下到上执行，即从内到外）：
         // 后注册的 layer 包裹先注册的 → 后注册的先执行（最外层）
         // 1. 限流（最外层，最先执行，IP 维度）
@@ -56,6 +114,10 @@ pub fn build_app(
         .layer(axum::middleware::from_fn_with_state(
             rate_limit_state,
             ryframe_middleware::api_rate_limit_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            tenant_rate_limit_state,
+            tenant_rate_limit_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
             tenant_config,
@@ -101,8 +163,4 @@ pub fn build_app(
         .layer(from_fn(ryframe_middleware::telemetry::telemetry_middleware))
         // 11. HTTP Metrics（最内层，最先开始计时，最后结束计时，捕获完整请求耗时）
         .layer(from_fn(ryframe_middleware::metrics::metrics_middleware))
-        .nest(
-            "/api/v1",
-            ryframe_api::api_router(state, rate_limit_state_for_api),
-        )
 }

@@ -9,14 +9,13 @@ use sea_orm::{
 use crate::entities::{role, user_role};
 
 pub struct RoleRepository;
-const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<role::Model, i64> for RoleRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<role::Model>> {
         role::Entity::find_by_id(id)
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -60,7 +59,7 @@ impl RoleRepository {
     ) -> AppResult<PageResult<role::Model>> {
         let mut select = role::Entity::find()
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID));
+            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()));
 
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(role::Column::Name.like(format!("%{}%", n)));
@@ -91,6 +90,7 @@ impl RoleRepository {
                 sea_orm::sea_query::Expr::value(chrono::Utc::now()),
             )
             .filter(role::Column::Id.is_in(ids.to_vec()))
+            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -105,6 +105,7 @@ impl RoleRepository {
     ) -> AppResult<Vec<role::Model>> {
         let role_ids: Vec<i64> = user_role::Entity::find()
             .filter(user_role::Column::UserId.eq(user_id))
+            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -119,7 +120,7 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Id.is_in(role_ids))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
             .all(db)
             .await
@@ -134,6 +135,7 @@ impl RoleRepository {
     ) -> AppResult<Vec<role::Model>> {
         let role_ids: Vec<i64> = user_role::Entity::find()
             .filter(user_role::Column::UserId.eq(user_id))
+            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -148,7 +150,7 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Id.is_in(role_ids))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -166,6 +168,7 @@ impl RoleRepository {
 
         let mut user_ids: Vec<i64> = user_role::Entity::find()
             .filter(user_role::Column::RoleId.is_in(role_ids.to_vec()))
+            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -181,6 +184,7 @@ impl RoleRepository {
     pub async fn clear_user_roles(&self, db: &DatabaseConnection, user_id: i64) -> AppResult<()> {
         user_role::Entity::delete_many()
             .filter(user_role::Column::UserId.eq(user_id))
+            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
@@ -197,6 +201,7 @@ impl RoleRepository {
         // 清除旧关联
         user_role::Entity::delete_many()
             .filter(user_role::Column::UserId.eq(user_id))
+            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(txn)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
@@ -206,6 +211,7 @@ impl RoleRepository {
             let models: Vec<user_role::ActiveModel> = role_ids
                 .iter()
                 .map(|rid| user_role::ActiveModel {
+                    tenant_id: sea_orm::ActiveValue::Set(ryframe_core::current_tenant_id()),
                     user_id: sea_orm::ActiveValue::Set(user_id),
                     role_id: sea_orm::ActiveValue::Set(*rid),
                 })
@@ -231,6 +237,7 @@ impl RoleRepository {
         let models: Vec<user_role::ActiveModel> = role_ids
             .iter()
             .map(|rid| user_role::ActiveModel {
+                tenant_id: sea_orm::ActiveValue::Set(ryframe_core::current_tenant_id()),
                 user_id: sea_orm::ActiveValue::Set(user_id),
                 role_id: sea_orm::ActiveValue::Set(*rid),
             })
@@ -252,7 +259,7 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Code.eq(code))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -268,6 +275,7 @@ impl RoleRepository {
 
         let ids = role_dept::Entity::find()
             .filter(role_dept::Column::RoleId.eq(role_id))
+            .filter(role_dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -291,6 +299,7 @@ impl RoleRepository {
 
         let ids = role_dept::Entity::find()
             .filter(role_dept::Column::RoleId.is_in(role_ids.to_vec()))
+            .filter(role_dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -322,6 +331,7 @@ impl RoleRepository {
         // 删除旧关联
         role_dept::Entity::delete_many()
             .filter(role_dept::Column::RoleId.eq(role_id))
+            .filter(role_dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(&txn)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
@@ -329,6 +339,7 @@ impl RoleRepository {
         // 插入新关联
         for dept_id in dept_ids {
             let rd = role_dept::ActiveModel {
+                tenant_id: ActiveValue::Set(ryframe_core::current_tenant_id()),
                 role_id: ActiveValue::Set(role_id),
                 dept_id: ActiveValue::Set(*dept_id),
             };

@@ -89,6 +89,7 @@ async fn test_permission_non_admin_access() {
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_string(&json!({
@@ -294,6 +295,7 @@ async fn test_permission_requires_permission_code() {
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_string(&json!({

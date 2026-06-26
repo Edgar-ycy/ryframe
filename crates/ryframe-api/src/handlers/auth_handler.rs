@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+﻿use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     Extension, Json,
@@ -8,7 +8,10 @@ use axum::{
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_config::AppConfig;
-use ryframe_core::{RedisClient, TokenBlacklist};
+use ryframe_core::{
+    RedisClient, TenantContext, TenantRateLimitCache, TokenBlacklist, with_tenant_context,
+};
+use ryframe_db::entities::password_reset_request;
 use ryframe_middleware::RateLimiter;
 use ryframe_service::{
     AuthServiceImpl, UserInfo,
@@ -16,10 +19,10 @@ use ryframe_service::{
         CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
         LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
         OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, UserServiceImpl,
+        RoleServiceImpl, TenantServiceImpl, UserServiceImpl,
     },
 };
-use sea_orm::DatabaseConnection;
+use sea_orm::{DatabaseConnection, EntityTrait};
 use validator::Validate;
 
 use crate::dto::auth_dto::{
@@ -27,16 +30,16 @@ use crate::dto::auth_dto::{
 };
 use crate::runtime::RuntimeComponents;
 
-/// API 共享状态
 #[derive(Clone)]
 pub struct AppState {
-    /// 主库连接（向后兼容，指向 primary 数据源）
+    /// 主数据库连接（向后兼容，指向 primary 数据源）
     pub db: DatabaseConnection,
     pub config: Arc<AppConfig>,
     pub context: ryframe_core::AppContext,
     pub auth_service: Arc<AuthServiceImpl>,
     pub user_service: Arc<UserServiceImpl>,
     pub role_service: Arc<RoleServiceImpl>,
+    pub tenant_service: Arc<TenantServiceImpl>,
     pub permission_service: Arc<PermissionServiceImpl>,
     pub menu_service: Arc<MenuServiceImpl>,
     pub dept_service: Arc<DeptServiceImpl>,
@@ -52,25 +55,21 @@ pub struct AppState {
     pub captcha_store: CaptchaStore,
     pub monitor_db: DatabaseConnection,
     pub redis: Option<RedisClient>,
-    /// Token 黑名单（JWT 主动撤销）
     pub token_blacklist: TokenBlacklist,
     /// 从库连接池列表（用于读写分离的读操作，向后兼容）
     pub replica_dbs: Vec<DatabaseConnection>,
-    /// 限流器（用于验证码等接口的细粒度限流）
     pub rate_limiter: Arc<RateLimiter>,
-    /// 对象存储（本地/MinIO/S3，通过配置切换）
+    pub tenant_rate_limit_cache: TenantRateLimitCache,
     pub object_storage: Arc<dyn ryframe_common::utils::ObjectStorage>,
     /// Runtime components shared by business workflows.
     pub runtime: RuntimeComponents,
 }
 
 impl AppState {
-    /// 获取写库连接（向后兼容：始终返回 primary）
     pub fn write_db(&self) -> &DatabaseConnection {
         &self.db
     }
 
-    /// 获取读库连接（向后兼容：轮询 replicas，无 replicas 回退 primary）
     pub fn read_db(&self) -> &DatabaseConnection {
         if self.replica_dbs.is_empty() {
             &self.db
@@ -98,7 +97,6 @@ fn extract_user_agent(headers: &HeaderMap) -> &str {
         .unwrap_or("")
 }
 
-/// 验证码校验（HTTP 安全校验，保留在 Handler）
 async fn verify_captcha_if_enabled(state: &AppState, req: &LoginRequest) -> AppResult<()> {
     let captcha_enabled = state
         .config_service
@@ -132,11 +130,18 @@ async fn verify_captcha_if_enabled(state: &AppState, req: &LoginRequest) -> AppR
 // ==================== 认证接口 ====================
 
 /// 记录登录成功日志
-async fn record_login_success(state: &AppState, username: &str, ip: &str, ua: &str) {
+async fn record_login_success(
+    state: &AppState,
+    tenant_id: &str,
+    username: &str,
+    ip: &str,
+    ua: &str,
+) {
     if let Err(e) = state
         .login_info_service
         .record_login(
             &state.db,
+            tenant_id,
             username,
             ip,
             ryframe_common::utils::user_agent::parse_browser(ua).as_deref(),
@@ -153,15 +158,17 @@ async fn record_login_success(state: &AppState, username: &str, ip: &str, ua: &s
 /// 记录登录失败日志
 async fn record_login_failure_log(
     state: &AppState,
+    tenant_id: &str,
     username: &str,
     ip: &str,
     ua: &str,
-    err: &ryframe_common::AppError,
+    err: &AppError,
 ) {
     if let Err(e) = state
         .login_info_service
         .record_login(
             &state.db,
+            tenant_id,
             username,
             ip,
             ryframe_common::utils::user_agent::parse_browser(ua).as_deref(),
@@ -271,40 +278,62 @@ pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    tenant_context: Option<Extension<TenantContext>>,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<ApiResponse<LoginResponse>>> {
     req.validate()?;
 
-    // HTTP 安全校验：验证码
-    verify_captcha_if_enabled(&state, &req).await?;
+    // HTTP 安全检查：验证码
 
     // HTTP 参数提取
     let ip = extract_ip(&headers, &addr.to_string());
     let ua = extract_user_agent(&headers);
+    let tenant_id = tenant_context
+        .map(|Extension(context)| context.tenant_id)
+        .or_else(|| {
+            headers
+                .get("X-Tenant-Id")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .ok_or_else(|| AppError::Validation("缺少租户信息".into()))?;
 
-    // 暴力破解防护（委托 Service）
+    with_tenant_context(
+        TenantContext {
+            tenant_id: tenant_id.clone(),
+            is_admin: false,
+        },
+        verify_captcha_if_enabled(&state, &req),
+    )
+    .await?;
+
     state
         .auth_service
         .check_brute_force(&req.username, &ip)
         .await?;
 
-    // 认证（委托 Service）
-    match state
-        .auth_service
-        .login(&state.db, &req.username, &req.password)
-        .await
+    match with_tenant_context(
+        TenantContext {
+            tenant_id: tenant_id.clone(),
+            is_admin: false,
+        },
+        state
+            .auth_service
+            .login(&state.db, &tenant_id, &req.username, &req.password),
+    )
+    .await
     {
         Ok(result) => {
-            // 登录成功：清除失败计数
             state
                 .auth_service
                 .clear_login_failures(&req.username, &ip)
                 .await;
-            // 清除强退黑名单
             let force_logout_key = format!("force_logout:user:{}", result.user_info.id);
             state.token_blacklist.remove(&force_logout_key).await;
-            // 记录登录日志
-            record_login_success(&state, &req.username, &ip, ua).await;
+            // 记录登录成功日志
+            record_login_success(&state, &tenant_id, &req.username, &ip, ua).await;
             // 添加在线用户
             add_online_user(&state, &result, &ip, ua).await;
 
@@ -316,7 +345,7 @@ pub async fn login(
                 .auth_service
                 .record_login_failure(&req.username, &ip)
                 .await;
-            record_login_failure_log(&state, &req.username, &ip, ua, &e).await;
+            record_login_failure_log(&state, &tenant_id, &req.username, &ip, ua, &e).await;
             Err(e)
         }
     }
@@ -325,7 +354,6 @@ pub async fn login(
 /// 用户登出
 ///
 /// POST /api/v1/auth/logout
-/// 将当前 token 加入黑名单，实现 JWT 主动撤销。
 #[utoipa::path(
     post,
     path = "/api/v1/auth/logout",
@@ -339,7 +367,6 @@ pub async fn logout(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    // 将当前 token 加入黑名单（JWT 主动撤销）
     let now = chrono::Utc::now().timestamp() as usize;
     let remaining = if claims.exp > now {
         (claims.exp - now) as u64
@@ -384,18 +411,28 @@ pub async fn refresh(
     let ip = extract_ip(&headers, &addr.to_string());
     let ua = extract_user_agent(&headers);
 
-    // 刷新令牌（委托 Service）
     match state
         .auth_service
         .refresh_token(&state.db, &req.refresh_token)
         .await
     {
         Ok(result) => {
-            record_login_success(&state, &result.user_info.username, &ip, ua).await;
+            record_login_success(
+                &state,
+                &result.user_info.tenant_id,
+                &result.user_info.username,
+                &ip,
+                ua,
+            )
+            .await;
             Ok(Json(ApiResponse::success(LoginResponse::from(result))))
         }
         Err(e) => {
-            record_login_failure_log(&state, "unknown", &ip, ua, &e).await;
+            let tenant_id =
+                ryframe_auth::jwt::decode_token(&req.refresh_token, &state.config.auth.jwt_secret)
+                    .map(|claims| claims.tenant_id)
+                    .unwrap_or_else(|_| "__unknown__".to_string());
+            record_login_failure_log(&state, &tenant_id, "unknown", &ip, ua, &e).await;
             Err(e)
         }
     }
@@ -421,16 +458,26 @@ pub async fn complete_password_reset(
         .request_id
         .parse::<i64>()
         .map_err(|_| AppError::Validation("无效的重置请求ID".into()))?;
-    let user_id = state
-        .user_service
-        .complete_password_reset(
+    let tenant_id = password_reset_request::Entity::find_by_id(request_id)
+        .one(&state.db)
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?
+        .ok_or_else(|| AppError::NotFound("密码重置请求不存在".into()))?
+        .tenant_id;
+    let user_id = with_tenant_context(
+        TenantContext {
+            tenant_id,
+            is_admin: false,
+        },
+        state.user_service.complete_password_reset(
             &state.db,
             request_id,
             &req.token,
             &req.new_password,
             state.config.auth.enable_password_complexity,
-        )
-        .await?;
+        ),
+    )
+    .await?;
     invalidate_user_tokens(&state, user_id).await;
     Ok(Json(ApiResponse::success_no_data_with_msg(
         "password reset completed",
@@ -440,7 +487,6 @@ pub async fn complete_password_reset(
 /// 获取当前用户信息
 ///
 /// GET /api/v1/auth/me
-/// 需要认证中间件预先注入 Claims 到 request extensions。
 #[utoipa::path(
     get,
     path = "/api/v1/auth/me",
@@ -454,15 +500,15 @@ pub async fn complete_password_reset(
 pub async fn me(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
-) -> AppResult<Json<ApiResponse<ryframe_service::UserInfo>>> {
+) -> AppResult<Json<ApiResponse<UserInfo>>> {
     let user_id = claims
         .sub
         .parse::<i64>()
-        .map_err(|_| ryframe_common::AppError::Authentication("令牌无效".into()))?;
+        .map_err(|_| AppError::Authentication("令牌无效".into()))?;
 
     let user_info = state
         .auth_service
-        .get_current_user(&state.db, user_id)
+        .get_current_user(&state.db, &claims.tenant_id, user_id)
         .await?;
 
     Ok(Json(ApiResponse::success(user_info)))

@@ -10,6 +10,7 @@ pub mod oper_log_service;
 pub mod permission_service;
 pub mod post_service;
 pub mod role_service;
+pub mod tenant_service;
 pub mod user_service;
 
 pub use captcha_service::{CaptchaEntry, CaptchaStore};
@@ -23,6 +24,7 @@ pub use oper_log_service::{OperLogServiceImpl, OperLogVo};
 pub use permission_service::{PermissionServiceImpl, PermissionSyncReport, PermissionTreeNode};
 pub use post_service::{PostServiceImpl, PostVo};
 pub use role_service::{RoleServiceImpl, RoleVo};
+pub use tenant_service::{CreateTenantParams, TenantServiceImpl, UpdateTenantParams};
 pub use user_service::{
     CreateUserParams, RoleBriefVo, UpdateUserParams, UserDetailVo, UserServiceImpl, UserVo,
 };

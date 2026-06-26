@@ -15,6 +15,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS `sys_user_role`;
 DROP TABLE IF EXISTS `sys_role_permission`;
 DROP TABLE IF EXISTS `sys_role_dept`;
+DROP TABLE IF EXISTS `sys_tenant`;
 DROP TABLE IF EXISTS `password_reset_requests`;
 DROP TABLE IF EXISTS `sys_dept`;
 DROP TABLE IF EXISTS `sys_user`;
@@ -31,7 +32,33 @@ DROP TABLE IF EXISTS `sys_login_info`;
 DROP TABLE IF EXISTS `sys_file`;
 
 -- ============================================================
--- 1. 部门表 (sys_dept)
+-- 1. 租户表 (sys_tenant)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `sys_tenant` (
+    `id`                     BIGINT       NOT NULL COMMENT '租户ID',
+    `tenant_id`              VARCHAR(64)  NOT NULL COMMENT '租户标识',
+    `name`                   VARCHAR(128) NOT NULL COMMENT '租户名称',
+    `domain`                 VARCHAR(255)          DEFAULT NULL COMMENT '绑定域名',
+    `status`                 CHAR(1)      NOT NULL DEFAULT '1' COMMENT '状态: 0停用 1正常',
+    `expire_at`              DATETIME              DEFAULT NULL COMMENT '到期时间',
+    `max_users`              INT          NOT NULL DEFAULT 100 COMMENT '最大用户数',
+    `max_roles`              INT          NOT NULL DEFAULT 20 COMMENT '最大角色数',
+    `max_storage_mb`         BIGINT       NOT NULL DEFAULT 1024 COMMENT '最大存储容量(MB)',
+    `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
+    `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
+    `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_tenant_id` (`tenant_id`),
+    UNIQUE KEY `uk_tenant_domain` (`domain`),
+    KEY `idx_tenant_status` (`status`, `expire_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户表';
+
+INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
+VALUES (1, 'system', '系统租户', '1');
+
+-- ============================================================
+-- 2. 部门表 (sys_dept)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS `sys_dept` (
     `id`          BIGINT       NOT NULL                    COMMENT '部门ID',
@@ -80,6 +107,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS `password_reset_requests` (
     `id`             BIGINT       NOT NULL                  COMMENT '重置请求ID',
+    `tenant_id`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
     `target_user_id` BIGINT       NOT NULL                  COMMENT '目标用户ID',
     `requested_by`   BIGINT       NOT NULL                  COMMENT '发起管理员ID',
     `reason`         VARCHAR(512) NOT NULL                  COMMENT '发起原因',
@@ -91,6 +119,7 @@ CREATE TABLE IF NOT EXISTS `password_reset_requests` (
     `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    KEY `idx_password_reset_tenant` (`tenant_id`),
     KEY `idx_target_user_id` (`target_user_id`),
     KEY `idx_requested_by` (`requested_by`),
     KEY `idx_status` (`status`),

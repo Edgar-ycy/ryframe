@@ -16,6 +16,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
     ) -> AppResult<Option<config::Model>> {
         config::Entity::find_by_id(id)
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+            .filter(config::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -29,7 +30,8 @@ impl Repository<config::Model, i64> for ConfigRepository {
         crate::pagination::paginate(
             db,
             config::Entity::find()
-                .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL)),
+                .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+                .filter(config::Column::TenantId.eq(ryframe_core::current_tenant_id())),
             &query,
         )
         .await
@@ -59,6 +61,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
             .col_expr(config::Column::Remark, Expr::value(entity.remark.clone()))
             .col_expr(config::Column::UpdatedAt, Expr::value(now))
             .filter(config::Column::Id.eq(entity.id))
+            .filter(config::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -84,6 +87,7 @@ impl ConfigRepository {
     ) -> AppResult<Option<config::Model>> {
         config::Entity::find()
             .filter(config::Column::Key.eq(key))
+            .filter(config::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await

@@ -18,6 +18,7 @@ impl Repository<notice::Model, i64> for NoticeRepository {
     ) -> AppResult<Option<notice::Model>> {
         notice::Entity::find_by_id(id)
             .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL))
+            .filter(notice::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -69,7 +70,8 @@ impl NoticeRepository {
         status: Option<&str>,
     ) -> AppResult<PageResult<notice::Model>> {
         let mut select = notice::Entity::find()
-            .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL));
+            .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL))
+            .filter(notice::Column::TenantId.eq(ryframe_core::current_tenant_id()));
         if let Some(t) = title.filter(|t| !t.is_empty()) {
             select = select.filter(notice::Column::Title.like(format!("%{}%", t)));
         }

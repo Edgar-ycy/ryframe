@@ -14,4 +14,5 @@ pub mod permission_handler;
 pub mod post_handler;
 pub mod profile_handler;
 pub mod role_handler;
+pub mod tenant_handler;
 pub mod user_handler;

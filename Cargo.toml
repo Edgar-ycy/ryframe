@@ -3,7 +3,7 @@ default-members = ["crates/ryframe"]
 
 members = [
     "crates/ryframe",
-    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-middleware", "crates/ryframe-service",
+    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-middleware", "crates/ryframe-service",
     "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro"]
 resolver = "3"
 [workspace.package]
@@ -27,6 +27,7 @@ sea-orm = { version = "2.0.0-rc", default-features = false, features = [
     "sqlx-mysql",
     "sqlx-postgres",
 ] }
+sea-orm-migration = { version = "2.0.0-rc", default-features = false, features = ["runtime-tokio-rustls", "sqlx-mysql", "sqlx-postgres", "sqlx-sqlite"] }
 rand = "0.10"
 rand_core = { version = "0.10" }
 serde = "1"

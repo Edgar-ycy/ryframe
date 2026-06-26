@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_api::runtime::RuntimeComponents;
 use ryframe_config::AppConfig;
-use ryframe_core::{AppContext, RedisClient, TokenBlacklist};
+use ryframe_core::{AppContext, RedisClient, TenantRateLimitCache, TokenBlacklist};
 use ryframe_middleware::RateLimiter;
 use sea_orm::DatabaseConnection;
 
@@ -28,6 +28,7 @@ pub fn assemble(
         auth_service: services.auth_service,
         user_service: services.user_service,
         role_service: services.role_service,
+        tenant_service: services.tenant_service,
         permission_service: services.permission_service,
         menu_service: services.menu_service,
         dept_service: services.dept_service,
@@ -46,6 +47,7 @@ pub fn assemble(
         token_blacklist,
         replica_dbs: extra_dbs,
         rate_limiter: limiter.clone(),
+        tenant_rate_limit_cache: TenantRateLimitCache::default(),
         object_storage,
         runtime: RuntimeComponents::new(redis_client),
     }

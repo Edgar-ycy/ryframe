@@ -62,6 +62,7 @@ impl OperLogServiceImpl {
     ) -> AppResult<()> {
         let log = oper_log::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: ryframe_core::current_tenant_id(),
             title: title.to_string(),
             business_type: business_type.to_string(),
             method: method.to_string(),

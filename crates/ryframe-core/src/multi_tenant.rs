@@ -45,7 +45,21 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use std::sync::Arc;
+use dashmap::DashMap;
+use std::{
+    sync::Arc,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
+
+tokio::task_local! {
+    /// Request-scoped tenant identity. Repository code reads this instead of a
+    /// process-wide default so concurrent requests cannot leak tenant scope.
+    static REQUEST_TENANT_CONTEXT: TenantContext;
+}
+
+#[cfg(debug_assertions)]
+static DEBUG_TENANT_FALLBACK: OnceLock<String> = OnceLock::new();
 
 // ============ 核心类型 ============
 
@@ -70,6 +84,91 @@ impl TenantContext {
             tenant_id: "system".into(),
             is_admin: true,
         }
+    }
+}
+
+/// Returns the request tenant for repository and service code.
+///
+/// Code that runs outside an HTTP request must wrap its work in
+/// `with_tenant_context`; otherwise it receives a sentinel tenant that cannot
+/// accidentally match or write system-owned data.
+pub fn current_tenant_id() -> String {
+    REQUEST_TENANT_CONTEXT
+        .try_with(|context| context.tenant_id.clone())
+        .unwrap_or_else(|_| {
+            #[cfg(debug_assertions)]
+            if let Some(tenant_id) = DEBUG_TENANT_FALLBACK.get() {
+                return tenant_id.clone();
+            }
+            tracing::error!("missing tenant context; refusing to fall back to system tenant");
+            "__missing_tenant_context__".to_string()
+        })
+}
+
+#[cfg(debug_assertions)]
+pub fn set_debug_tenant_fallback(tenant_id: impl Into<String>) {
+    let _ = DEBUG_TENANT_FALLBACK.set(tenant_id.into());
+}
+
+/// Runs a future with an explicit tenant scope. Middleware uses this to make
+/// the authenticated tenant available throughout asynchronous repository calls.
+pub async fn with_tenant_context<F>(context: TenantContext, future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    REQUEST_TENANT_CONTEXT.scope(context, future).await
+}
+
+#[derive(Clone, Debug)]
+pub struct TenantRateLimitCache {
+    ttl: Duration,
+    entries: Arc<DashMap<String, TenantRateLimitEntry>>,
+}
+
+#[derive(Clone, Debug)]
+struct TenantRateLimitEntry {
+    limit_per_minute: u32,
+    expires_at: Instant,
+}
+
+impl Default for TenantRateLimitCache {
+    fn default() -> Self {
+        Self::new(Duration::from_secs(30))
+    }
+}
+
+impl TenantRateLimitCache {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            entries: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn get(&self, tenant_id: &str) -> Option<u32> {
+        let now = Instant::now();
+        let cached = self.entries.get(tenant_id)?;
+        if cached.expires_at > now {
+            Some(cached.limit_per_minute)
+        } else {
+            drop(cached);
+            self.entries.remove(tenant_id);
+            None
+        }
+    }
+
+    pub fn insert(&self, tenant_id: impl Into<String>, limit_per_minute: u32) {
+        self.entries.insert(
+            tenant_id.into(),
+            TenantRateLimitEntry {
+                limit_per_minute,
+                expires_at: Instant::now() + self.ttl,
+            },
+        );
+    }
+
+    pub fn invalidate(&self, tenant_id: &str) {
+        self.entries.remove(tenant_id);
     }
 }
 
@@ -123,15 +222,25 @@ pub async fn tenant_middleware(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    let path = request.uri().path();
+    if matches!(path, "/" | "/health")
+        || path.starts_with("/api/v1/api-docs/")
+        || path.starts_with("/api/v1/swagger-ui")
+        || path == "/api/v1/version"
+    {
+        return next.run(request).await;
+    }
+
     let tenant_id = extract_tenant_id(&request, &config);
 
     match tenant_id {
         Some(id) => {
-            request.extensions_mut().insert(TenantContext {
+            let context = TenantContext {
                 tenant_id: id,
                 is_admin: false,
-            });
-            next.run(request).await
+            };
+            request.extensions_mut().insert(context.clone());
+            with_tenant_context(context, next.run(request)).await
         }
         None => {
             // 无租户信息 → 403

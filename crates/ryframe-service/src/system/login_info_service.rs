@@ -47,6 +47,7 @@ impl LoginInfoServiceImpl {
     pub async fn record_login(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         user_name: &str,
         ipaddr: &str,
         browser: Option<&str>,
@@ -56,6 +57,7 @@ impl LoginInfoServiceImpl {
     ) -> AppResult<()> {
         let log = login_info::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: tenant_id.to_string(),
             user_name: user_name.to_string(),
             ipaddr: ipaddr.to_string(),
             login_location: None,

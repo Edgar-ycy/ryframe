@@ -18,6 +18,7 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
     ) -> AppResult<Option<dict_type::Model>> {
         dict_type::Entity::find_by_id(id)
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
+            .filter(dict_type::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -63,6 +64,7 @@ impl DictTypeRepository {
     pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<dict_type::Model>> {
         dict_type::Entity::find()
             .filter(dict_type::Column::Status.eq(dict_type::Model::STATUS_NORMAL))
+            .filter(dict_type::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .all(db)
             .await
@@ -77,6 +79,7 @@ impl DictTypeRepository {
     ) -> AppResult<Option<dict_type::Model>> {
         dict_type::Entity::find()
             .filter(dict_type::Column::Code.eq(code))
+            .filter(dict_type::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
@@ -95,6 +98,7 @@ impl Repository<dict_data::Model, i64> for DictDataRepository {
     ) -> AppResult<Option<dict_data::Model>> {
         dict_data::Entity::find_by_id(id)
             .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
+            .filter(dict_data::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -144,6 +148,7 @@ impl DictDataRepository {
     ) -> AppResult<Vec<dict_data::Model>> {
         dict_data::Entity::find()
             .filter(dict_data::Column::TypeCode.eq(type_code))
+            .filter(dict_data::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .filter(dict_data::Column::Status.eq(dict_data::Model::STATUS_NORMAL))
             .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
             .order_by_asc(dict_data::Column::Sort)

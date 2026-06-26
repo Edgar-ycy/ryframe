@@ -24,6 +24,7 @@ impl Repository<sys_file::Model, i64> for FileRepository {
     ) -> AppResult<Option<sys_file::Model>> {
         sys_file::Entity::find_by_id(id)
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -36,6 +37,7 @@ impl Repository<sys_file::Model, i64> for FileRepository {
     ) -> AppResult<PageResult<sys_file::Model>> {
         let paginator = sys_file::Entity::find()
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .order_by_desc(sys_file::Column::CreatedAt);
 
         crate::pagination::paginate(db, paginator, &query).await
@@ -72,6 +74,7 @@ impl FileRepository {
         sys_file::Entity::find()
             .filter(sys_file::Column::Bucket.eq(bucket))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .order_by_desc(sys_file::Column::CreatedAt)
             .all(db)
             .await
@@ -92,6 +95,7 @@ impl FileRepository {
             .filter(sys_file::Column::Bucket.eq(bucket))
             .filter(sys_file::Column::FileMd5.eq(file_md5))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))

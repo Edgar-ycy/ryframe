@@ -18,6 +18,7 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
         id: i64,
     ) -> AppResult<Option<login_info::Model>> {
         login_info::Entity::find_by_id(id)
+            .filter(login_info::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -30,7 +31,9 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
     ) -> AppResult<PageResult<login_info::Model>> {
         crate::pagination::paginate(
             db,
-            login_info::Entity::find().order_by_desc(login_info::Column::LoginTime),
+            login_info::Entity::find()
+                .filter(login_info::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+                .order_by_desc(login_info::Column::LoginTime),
             &query,
         )
         .await
@@ -67,7 +70,8 @@ impl LoginInfoRepository {
         begin_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> AppResult<PageResult<login_info::Model>> {
-        let mut select = login_info::Entity::find();
+        let mut select = login_info::Entity::find()
+            .filter(login_info::Column::TenantId.eq(ryframe_core::current_tenant_id()));
         if let Some(name) = user_name.filter(|n| !n.is_empty()) {
             select = select.filter(login_info::Column::UserName.contains(name));
         }
@@ -86,6 +90,7 @@ impl LoginInfoRepository {
 
     pub async fn clean_all(&self, db: &DatabaseConnection) -> AppResult<u64> {
         login_info::Entity::delete_many()
+            .filter(login_info::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map(|r| r.rows_affected)

@@ -12,6 +12,7 @@ default-run = "ryframe"
 ryframe-common = { path = "../ryframe-common" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-db = { path = "../ryframe-db" }
+ryframe-db-migration = { path = "../ryframe-db-migration" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-service = { path = "../ryframe-service" }
 ryframe-api = { path = "../ryframe-api" }

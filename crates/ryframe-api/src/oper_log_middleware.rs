@@ -151,6 +151,7 @@ pub async fn oper_log_middleware(
     // 异步记录日志（spawn 独立任务，不阻塞响应）
     let log_entry = oper_log::Model {
         id: snowflake::next_snowflake_id(),
+        tenant_id: ryframe_core::current_tenant_id(),
         title,
         business_type,
         method: format!("{} {}", request_method, uri),

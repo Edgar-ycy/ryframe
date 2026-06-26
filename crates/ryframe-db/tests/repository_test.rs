@@ -76,6 +76,7 @@ fn make_post(name: &str, code: &str, status: &str) -> post::Model {
 fn make_config(key: &str, value: &str) -> config::Model {
     let mut m = config::Model {
         id: 0,
+        tenant_id: "system".into(),
         name: key.into(),
         key: key.into(),
         value: value.into(),
@@ -91,6 +92,7 @@ fn make_config(key: &str, value: &str) -> config::Model {
 fn make_dict_type(name: &str, code: &str) -> dict_type::Model {
     let mut m = dict_type::Model {
         id: 0,
+        tenant_id: "system".into(),
         name: name.into(),
         code: code.into(),
         status: dict_type::Model::STATUS_NORMAL.to_string(),
@@ -106,6 +108,7 @@ fn make_dict_type(name: &str, code: &str) -> dict_type::Model {
 fn make_dict_data(type_code: &str, label: &str, value: &str, sort: i32) -> dict_data::Model {
     let mut m = dict_data::Model {
         id: 0,
+        tenant_id: "system".into(),
         type_code: type_code.into(),
         label: label.into(),
         value: value.into(),
@@ -124,6 +127,7 @@ fn make_dict_data(type_code: &str, label: &str, value: &str, sort: i32) -> dict_
 fn make_notice(title: &str, ntype: Option<&str>) -> notice::Model {
     let mut m = notice::Model {
         id: 0,
+        tenant_id: "system".into(),
         title: title.into(),
         content: "内容".into(),
         r#type: ntype.map(|s| s.to_string()),
@@ -140,6 +144,7 @@ fn make_notice(title: &str, ntype: Option<&str>) -> notice::Model {
 fn make_login_info(user: &str, status: &str) -> login_info::Model {
     let mut m = login_info::Model {
         id: 0,
+        tenant_id: "system".into(),
         user_name: user.into(),
         ipaddr: "127.0.0.1".into(),
         login_location: Some("本地".into()),
@@ -156,6 +161,7 @@ fn make_login_info(user: &str, status: &str) -> login_info::Model {
 fn make_oper_log(oper_name: &str, status: &str) -> oper_log::Model {
     let mut m = oper_log::Model {
         id: 0,
+        tenant_id: "system".into(),
         title: format!("{}操作", oper_name),
         business_type: "INSERT".into(),
         method: "UserServiceImpl.create".into(),
@@ -489,6 +495,7 @@ async fn test_login_info_repo_clean_all() {
     for i in 0..3 {
         let mut m = login_info::Model {
             id: 0,
+            tenant_id: "system".into(),
             user_name: format!("user_{}", i),
             ipaddr: "127.0.0.1".into(),
             login_location: None,
@@ -555,6 +562,7 @@ async fn test_oper_log_repo_clean_all() {
     for i in 0..3 {
         let mut m = oper_log::Model {
             id: 0,
+            tenant_id: "system".into(),
             title: format!("操作{}", i),
             business_type: "QUERY".into(),
             method: "UserServiceImpl.find".into(),

@@ -186,7 +186,7 @@ impl PermissionServiceImpl {
         }
         let mut model = permission::Model {
             id: snowflake::next_snowflake_id(),
-            tenant_id: "system".to_string(),
+            tenant_id: ryframe_core::current_tenant_id(),
             name: name.to_string(),
             code: code.to_string(),
             parent_id,
@@ -273,7 +273,7 @@ impl PermissionServiceImpl {
             let name = code.rsplit(':').next().unwrap_or(&code).to_string();
             let mut model = permission::Model {
                 id: snowflake::next_snowflake_id(),
-                tenant_id: "system".to_string(),
+                tenant_id: ryframe_core::current_tenant_id(),
                 name,
                 code: code.clone(),
                 parent_id: None,

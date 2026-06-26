@@ -397,6 +397,9 @@ impl UserServiceImpl {
         db: &DatabaseConnection,
         params: CreateUserParams<'_>,
     ) -> AppResult<UserVo> {
+        ryframe_db::TenantRepository
+            .ensure_user_quota(db, &ryframe_core::current_tenant_id())
+            .await?;
         let CreateUserParams {
             username,
             nickname,
@@ -421,7 +424,7 @@ impl UserServiceImpl {
         let status = user::Model::STATUS_PENDING_ACTIVATION;
         let mut new_user = user::Model {
             id: snowflake::next_snowflake_id(),
-            tenant_id: "system".to_string(),
+            tenant_id: ryframe_core::current_tenant_id(),
             username: username.to_string(),
             password_hash,
             nickname: nickname.to_string(),
@@ -501,6 +504,7 @@ impl UserServiceImpl {
         let token = Uuid::new_v4().to_string();
         let mut request = password_reset_request::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: ryframe_core::current_tenant_id(),
             target_user_id,
             requested_by,
             reason: reason.to_string(),

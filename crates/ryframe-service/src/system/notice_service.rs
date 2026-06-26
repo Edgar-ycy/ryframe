@@ -71,6 +71,7 @@ impl NoticeServiceImpl {
     ) -> AppResult<NoticeVo> {
         let mut new_notice = notice::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: ryframe_core::current_tenant_id(),
             title: title.to_string(),
             content: content.to_string(),
             r#type: notice_type.map(|s| s.to_string()),

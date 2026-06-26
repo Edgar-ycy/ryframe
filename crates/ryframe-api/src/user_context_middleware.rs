@@ -5,7 +5,6 @@ use axum::{
 };
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{AppError, annotations::data_scope::DataScopeContext};
-use ryframe_core::TenantContext;
 
 use crate::{extractors::CurrentUser, handlers::auth_handler::AppState};
 
@@ -33,11 +32,9 @@ pub async fn user_context_middleware(
 
     let is_super_admin =
         claims.roles.contains(&"admin".to_string()) || claims.perms.contains(&"*:*:*".to_string());
-    let tenant_id = request
-        .extensions()
-        .get::<TenantContext>()
-        .map(|ctx| ctx.tenant_id.clone())
-        .unwrap_or_else(|| "system".to_string());
+    // The tenant in an authenticated request comes from the signed token, not
+    // from a client-controlled request header.
+    let tenant_id = claims.tenant_id.clone();
 
     // 构建数据权限上下文（复用 UserServiceImpl 已有逻辑）
     let (scope_ctx, role_ids) = if is_super_admin {

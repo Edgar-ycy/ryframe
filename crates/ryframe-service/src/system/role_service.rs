@@ -123,13 +123,16 @@ impl RoleServiceImpl {
         sort: i32,
         data_scope: Option<String>,
     ) -> AppResult<RoleVo> {
+        ryframe_db::TenantRepository
+            .ensure_role_quota(db, &ryframe_core::current_tenant_id())
+            .await?;
         if self.role_repo.find_by_code(db, code).await?.is_some() {
             return Err(AppError::Conflict("角色编码已存在".into()));
         }
 
         let mut new_role = role::Model {
             id: snowflake::next_snowflake_id(),
-            tenant_id: "system".to_string(),
+            tenant_id: ryframe_core::current_tenant_id(),
             name: name.to_string(),
             code: code.to_string(),
             data_scope: data_scope.unwrap_or_else(|| "1".to_string()),

@@ -8,7 +8,9 @@ use axum::{
 };
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::TokenBlacklist;
+use ryframe_core::{TenantContext, TokenBlacklist, with_tenant_context};
+use ryframe_db::TenantRepository;
+use sea_orm::DatabaseConnection;
 
 use crate::{
     jwt::{Claims, decode_token},
@@ -20,6 +22,7 @@ use crate::{
 pub struct AuthState {
     pub config: Arc<AppConfig>,
     pub blacklist: TokenBlacklist,
+    pub db: DatabaseConnection,
 }
 
 /// 认证中间件
@@ -65,8 +68,23 @@ pub async fn auth_middleware(
         );
     }
 
+    let tenant = TenantRepository
+        .ensure_available(&auth_state.db, &claims.tenant_id)
+        .await
+        .map_err(|error| error.into_response())?;
+    if claims.tenant_session_version != tenant.session_version {
+        return Err(AppError::Authentication("租户会话已失效，请重新登录".into()).into_response());
+    }
+
+    // Replace the unauthenticated, header-derived context with the tenant
+    // identity bound in the verified token.
+    let tenant_context = TenantContext {
+        tenant_id: claims.tenant_id.clone(),
+        is_admin: false,
+    };
+    request.extensions_mut().insert(tenant_context.clone());
     request.extensions_mut().insert(claims);
-    Ok(next.run(request).await)
+    Ok(with_tenant_context(tenant_context, next.run(request)).await)
 }
 
 /// 从请求头提取 Bearer token
@@ -87,10 +105,7 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
 #[allow(clippy::type_complexity)]
 pub fn require_permission(
     perm: &'static str,
-) -> impl Fn(
-    Request,
-    Next,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, Response>> + Send>>
+) -> impl Fn(Request, Next) -> std::pin::Pin<Box<dyn Future<Output = Result<Response, Response>> + Send>>
 + Clone {
     move |request: Request, next: Next| {
         let perm = perm;

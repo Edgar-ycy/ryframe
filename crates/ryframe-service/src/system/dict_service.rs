@@ -102,6 +102,7 @@ impl DictServiceImpl {
         }
         let mut new_type = dict_type::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: ryframe_core::current_tenant_id(),
             name: name.to_string(),
             code: code.to_string(),
             status: dict_type::Model::STATUS_NORMAL.to_string(),
@@ -183,6 +184,7 @@ impl DictServiceImpl {
     ) -> AppResult<DictDataVo> {
         let mut new_data = dict_data::Model {
             id: snowflake::next_snowflake_id(),
+            tenant_id: ryframe_core::current_tenant_id(),
             type_code: type_code.to_string(),
             label: label.to_string(),
             value: value.to_string(),

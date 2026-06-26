@@ -20,14 +20,13 @@ pub struct DeptTreeNode {
 }
 
 pub struct DeptRepository;
-const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<dept::Model, i64> for DeptRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<dept::Model>> {
         dept::Entity::find_by_id(id)
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -42,7 +41,7 @@ impl Repository<dept::Model, i64> for DeptRepository {
             db,
             dept::Entity::find()
                 .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-                .filter(dept::Column::TenantId.eq(DEFAULT_TENANT_ID)),
+                .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id())),
             &query,
         )
         .await
@@ -66,7 +65,7 @@ impl DeptRepository {
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<DeptTreeNode>> {
         let all = dept::Entity::find()
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
@@ -79,7 +78,7 @@ impl DeptRepository {
         let exists = dept::Entity::find()
             .filter(dept::Column::ParentId.eq(parent_id))
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -124,7 +123,7 @@ impl DeptRepository {
         let children = dept::Entity::find()
             .filter(dept::Column::Ancestors.like(&pattern))
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -175,7 +174,7 @@ impl DeptRepository {
     ) -> sea_orm::Select<dept::Entity> {
         let mut select = dept::Entity::find()
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(DEFAULT_TENANT_ID));
+            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()));
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(dept::Column::Name.like(format!("%{}%", n)));
         }

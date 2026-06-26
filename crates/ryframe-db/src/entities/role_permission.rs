@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 #[sea_orm(table_name = "sys_role_permission")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
+    pub tenant_id: String,
+    #[sea_orm(primary_key, auto_increment = false)]
     pub role_id: i64,
     #[sea_orm(primary_key, auto_increment = false)]
     pub perm_id: i64,

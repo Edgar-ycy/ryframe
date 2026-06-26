@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 pub struct Claims {
     /// 用户 UUID
     pub sub: String,
+    /// Tenant identity bound when the token is issued.
+    pub tenant_id: String,
+    /// Tenant session generation. A tenant status transition invalidates all
+    /// earlier access and refresh tokens by increasing this value.
+    pub tenant_session_version: i32,
     /// 用户名
     pub username: String,
     /// 角色编码列表
@@ -31,6 +36,8 @@ pub struct Claims {
 /// 返回 `(token_string, jti)` 元组，jti 用于在线用户管理。
 pub fn encode_access(
     user_id: i64,
+    tenant_id: &str,
+    tenant_session_version: i32,
     username: &str,
     roles: &[String],
     perms: &[String],
@@ -41,6 +48,8 @@ pub fn encode_access(
     let jti = new_jti();
     let claims = Claims {
         sub: user_id.to_string(),
+        tenant_id: tenant_id.to_string(),
+        tenant_session_version,
         username: username.to_string(),
         roles: roles.to_vec(),
         perms: perms.to_vec(),
@@ -57,11 +66,19 @@ pub fn encode_access(
 ///
 /// 刷新令牌仅包含用户身份信息，不含 roles/perms（避免权限过期问题）。
 /// 刷新时重新查询数据库获取最新角色权限。
-pub fn encode_refresh(user_id: i64, username: &str, config: &AuthConfig) -> AppResult<String> {
+pub fn encode_refresh(
+    user_id: i64,
+    tenant_id: &str,
+    tenant_session_version: i32,
+    username: &str,
+    config: &AuthConfig,
+) -> AppResult<String> {
     let ttl = parse_duration(&config.refresh_token_expire)?;
     let now = current_timestamp();
     let claims = Claims {
         sub: user_id.to_string(),
+        tenant_id: tenant_id.to_string(),
+        tenant_session_version,
         username: username.to_string(),
         roles: vec![],
         perms: vec![],

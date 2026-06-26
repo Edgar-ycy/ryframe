@@ -25,7 +25,6 @@ pub struct MenuTreeNode {
 
 pub struct MenuRepository;
 
-const DEFAULT_TENANT_ID: &str = "system";
 const MENU_PERMISSION_CODES: &[(i64, &str)] = &[
     (4, "system:user:list"),
     (5, "system:role:list"),
@@ -56,7 +55,7 @@ impl Repository<menu::Model, i64> for MenuRepository {
     async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<menu::Model>> {
         menu::Entity::find_by_id(id)
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -71,7 +70,7 @@ impl Repository<menu::Model, i64> for MenuRepository {
             db,
             menu::Entity::find()
                 .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-                .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID)),
+                .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id())),
             &query,
         )
         .await
@@ -94,7 +93,7 @@ impl MenuRepository {
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
         let all = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
@@ -113,7 +112,7 @@ impl MenuRepository {
         }
 
         let all = menu::Entity::find()
-            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .filter(menu::Column::Status.eq(menu::Model::STATUS_NORMAL))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .order_by_asc(menu::Column::Sort)
@@ -169,7 +168,7 @@ impl MenuRepository {
     ) -> AppResult<Vec<menu::Model>> {
         let mut select = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-            .filter(menu::Column::TenantId.eq(DEFAULT_TENANT_ID));
+            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()));
 
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(menu::Column::Name.like(format!("%{}%", n)));

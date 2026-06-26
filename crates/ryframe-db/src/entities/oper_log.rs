@@ -9,6 +9,8 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     #[auto_fill(snowflake)]
     pub id: i64,
+    /// Tenant bound in the authenticated request context.
+    pub tenant_id: String,
     /// 模块标题
     pub title: String,
     /// 业务类型（INSERT/UPDATE/DELETE/EXPORT/IMPORT/GRANT 等）

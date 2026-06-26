@@ -113,6 +113,7 @@ impl ConfigServiceImpl {
 
         let mut new_config = config::Model {
             id: ryframe_common::utils::snowflake::next_snowflake_id(),
+            tenant_id: ryframe_core::current_tenant_id(),
             name: name.to_string(),
             key: key.to_string(),
             value: value.to_string(),

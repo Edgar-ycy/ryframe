@@ -30,6 +30,9 @@ async fn main() -> Result<(), AppError> {
 
     // 4. 连接数据库 + 健康检查 + 表校验
     let ds = boot::datasource::connect(&config).await?;
+    ryframe_db_migration::run(&ds.primary)
+        .await
+        .map_err(|error| AppError::Database(format!("数据库迁移失败: {error}")))?;
 
     // 5. 创建应用上下文
     let context = AppContext::new(config.clone());

@@ -83,7 +83,7 @@ impl DeptServiceImpl {
 
         let mut new_dept = dept::Model {
             id: snowflake::next_snowflake_id(),
-            tenant_id: "system".to_string(),
+            tenant_id: ryframe_core::current_tenant_id(),
             name: name.to_string(),
             parent_id,
             ancestors,

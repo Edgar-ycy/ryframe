@@ -16,12 +16,12 @@ use ryframe_api::{
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
-use ryframe_core::{AppContext, LoggedRepo};
+use ryframe_core::{AppContext, LoggedRepo, TenantRateLimitCache};
 use ryframe_db::{
     ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
     MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
-    RoleRepository, UserRepository,
-    entities::{config, dept, permission, role, role_permission, user},
+    RoleRepository, TenantRepository, UserRepository,
+    entities::{config, dept, permission, role, role_permission, tenant, user},
 };
 use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
@@ -30,7 +30,7 @@ use ryframe_service::{
         CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
         LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
         OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, UserServiceImpl,
+        RoleServiceImpl, TenantServiceImpl, UserServiceImpl,
     },
 };
 use sea_orm::{
@@ -75,10 +75,31 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::sys_file::Entity);
+    create!(ryframe_db::entities::tenant::Entity);
 }
 
 async fn seed_test_data(db: &DatabaseConnection) {
     create_all_tables(db).await;
+
+    let system_tenant = tenant::Model {
+        id: 1,
+        tenant_id: "system".into(),
+        name: "系统租户".into(),
+        domain: None,
+        status: tenant::Model::STATUS_NORMAL.into(),
+        expire_at: None,
+        max_users: 100,
+        max_roles: 20,
+        max_storage_mb: 1024,
+        max_requests_per_min: 1000,
+        session_version: 1,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    tenant::Entity::insert(tenant::ActiveModel::from(system_tenant))
+        .exec(db)
+        .await
+        .unwrap();
 
     // 创建根部门
     let dept_model = dept::Model {
@@ -155,6 +176,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
 
     // 分配角色
     let user_role_model = ryframe_db::entities::user_role::Model {
+        tenant_id: "system".into(),
         user_id: 1,
         role_id: 1,
     };
@@ -165,6 +187,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
         .unwrap();
 
     let role_permission_model = role_permission::Model {
+        tenant_id: "system".into(),
         role_id: 1,
         perm_id: 1,
     };
@@ -176,6 +199,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
 
     // 创建默认配置：关闭验证码（测试环境）
     let captcha_config = config::Model {
+        tenant_id: "system".into(),
         id: 3,
         name: "账户验证码开关".into(),
         key: "sys.account.captchaEnabled".into(),
@@ -253,6 +277,9 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
             role_repo: LoggedRepo::new(RoleRepository),
             perm_repo: LoggedRepo::new(PermissionRepository),
         }),
+        tenant_service: Arc::new(TenantServiceImpl {
+            tenant_repo: TenantRepository,
+        }),
         permission_service: Arc::new(PermissionServiceImpl {
             perm_repo: LoggedRepo::new(PermissionRepository),
         }),
@@ -300,6 +327,7 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
         token_blacklist: ryframe_core::TokenBlacklist::new(None),
         replica_dbs: vec![],
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
+        tenant_rate_limit_cache: TenantRateLimitCache::default(),
         object_storage: Arc::new(ryframe_common::utils::LocalObjectStorage::new(
             "uploads", "",
         )),
@@ -350,6 +378,7 @@ async fn test_auth_full_flow() {
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
@@ -403,6 +432,7 @@ async fn test_auth_full_flow() {
     let bad_req = Request::builder()
         .uri("/auth/login")
         .method("POST")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
@@ -421,6 +451,7 @@ async fn test_auth_full_flow() {
     let notfound_req = Request::builder()
         .uri("/auth/login")
         .method("POST")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
@@ -454,6 +485,7 @@ async fn login_get_token(db: &DatabaseConnection) -> String {
     let req = Request::builder()
         .uri("/auth/login")
         .method("POST")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
@@ -479,6 +511,7 @@ async fn auth_get(
     let req = Request::builder()
         .uri(uri)
         .method("GET")
+        .header("X-Tenant-Id", "system")
         .header("authorization", format!("Bearer {}", token))
         .body(Body::empty())
         .unwrap();
@@ -497,6 +530,7 @@ async fn auth_post(
     let req = Request::builder()
         .uri(uri)
         .method("POST")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {}", token))
         .body(Body::from(serde_json::to_string(&body).unwrap()))
@@ -516,6 +550,7 @@ async fn auth_put(
     let req = Request::builder()
         .uri(uri)
         .method("PUT")
+        .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {}", token))
         .body(Body::from(serde_json::to_string(&body).unwrap()))
@@ -534,6 +569,7 @@ async fn auth_delete(
     let req = Request::builder()
         .uri(uri)
         .method("DELETE")
+        .header("X-Tenant-Id", "system")
         .header("authorization", format!("Bearer {}", token))
         .body(Body::empty())
         .unwrap();

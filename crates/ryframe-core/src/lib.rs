@@ -33,7 +33,8 @@ pub use message_queue::{
 };
 pub use multi_tenant::{
     ExtractionMethod, IsolationStrategy, QuotaCheck, TenantConfig, TenantContext, TenantFilter,
-    TenantIsolation, TenantQuota, tenant_middleware,
+    TenantIsolation, TenantQuota, TenantRateLimitCache, current_tenant_id, tenant_middleware,
+    with_tenant_context,
 };
 pub use redis_client::{RedisClient, create_redis_client};
 pub use repository::{

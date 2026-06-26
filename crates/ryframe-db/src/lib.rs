@@ -9,11 +9,11 @@ pub mod transaction;
 // 便捷导出
 pub use entities::{
     config, dept, dict_data, dict_type, login_info, menu, notice, oper_log, password_reset_request,
-    permission, post, role, role_dept, role_permission, sys_file, user, user_role,
+    permission, post, role, role_dept, role_permission, sys_file, tenant, user, user_role,
 };
 pub use repositories::{
     ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, FileRepository,
     LoginInfoRepository, MenuRepository, NoticeRepository, OperLogRepository,
     PasswordResetRequestRepository, PermissionRepository, PostRepository, RoleRepository,
-    UserRepository,
+    TenantRepository, UserRepository,
 };

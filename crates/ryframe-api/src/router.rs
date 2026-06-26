@@ -92,6 +92,7 @@ pub fn auth_router(state: AppState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
+        db: state.db.clone(),
     };
 
     // 公开路由（无认证，操作日志记录为 "anonymous"）
@@ -169,10 +170,18 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let auth_state = ryframe_auth::middleware::AuthState {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
+        db: state.db.clone(),
     };
+    let platform = crate::handlers::tenant_handler::tenant_router(state.clone()).layer(
+        middleware::from_fn_with_state(
+            auth_state.clone(),
+            ryframe_auth::middleware::auth_middleware,
+        ),
+    );
 
     Router::new()
         .nest("/auth", auth_router(state.clone()))
+        .nest("/platform/tenants", platform)
         .nest(
             "/system",
             system_router(state.clone(), rate_limit_state.clone()),
@@ -247,6 +256,7 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
+        db: state.db.clone(),
     };
 
     Router::new()
@@ -301,6 +311,7 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
+        db: state.db.clone(),
     };
 
     Router::new()
@@ -329,6 +340,7 @@ fn common_router(state: AppState) -> Router {
     let auth_state = AuthState {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
+        db: state.db.clone(),
     };
 
     let oper_log_state = OperLogMiddlewareState::new_arc(state.db.clone());

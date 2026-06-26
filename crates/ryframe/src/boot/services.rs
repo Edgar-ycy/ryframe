@@ -6,7 +6,7 @@ use ryframe_core::{LoggedRepo, RedisClient};
 use ryframe_db::{
     ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
     MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
-    RoleRepository, UserRepository,
+    RoleRepository, TenantRepository, UserRepository,
 };
 use ryframe_service::{
     AuthServiceImpl,
@@ -14,7 +14,7 @@ use ryframe_service::{
         CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
         LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
         OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, UserServiceImpl,
+        RoleServiceImpl, TenantServiceImpl, UserServiceImpl,
     },
 };
 use sea_orm::DatabaseConnection;
@@ -24,6 +24,7 @@ pub struct Services {
     pub auth_service: Arc<AuthServiceImpl>,
     pub user_service: Arc<UserServiceImpl>,
     pub role_service: Arc<RoleServiceImpl>,
+    pub tenant_service: Arc<TenantServiceImpl>,
     pub permission_service: Arc<PermissionServiceImpl>,
     pub menu_service: Arc<MenuServiceImpl>,
     pub dept_service: Arc<DeptServiceImpl>,
@@ -59,6 +60,10 @@ pub async fn build_all(
     let role_service = Arc::new(RoleServiceImpl {
         role_repo: LoggedRepo::new(RoleRepository),
         perm_repo: LoggedRepo::new(PermissionRepository),
+    });
+
+    let tenant_service = Arc::new(TenantServiceImpl {
+        tenant_repo: TenantRepository,
     });
 
     let permission_service = Arc::new(PermissionServiceImpl {
@@ -144,6 +149,7 @@ pub async fn build_all(
         auth_service,
         user_service,
         role_service,
+        tenant_service,
         permission_service,
         menu_service,
         dept_service,

@@ -52,6 +52,8 @@ fn bench_jwt_encode(c: &mut Criterion) {
         b.iter(|| {
             let _ = ryframe_auth::jwt::encode_access(
                 std::hint::black_box(1),
+                std::hint::black_box("system"),
+                std::hint::black_box(1),
                 std::hint::black_box("admin"),
                 std::hint::black_box(&roles),
                 std::hint::black_box(&perms),
@@ -73,7 +75,8 @@ fn bench_jwt_decode(c: &mut Criterion) {
     };
     let roles = vec!["admin".to_string()];
     let perms = vec!["system:user:list".to_string()];
-    let (token, _) = ryframe_auth::jwt::encode_access(1, "admin", &roles, &perms, &config).unwrap();
+    let (token, _) =
+        ryframe_auth::jwt::encode_access(1, "system", 1, "admin", &roles, &perms, &config).unwrap();
 
     c.bench_function("jwt_decode_access", |b| {
         b.iter(|| {

@@ -6,6 +6,8 @@ use ryframe_auth::{
 fn make_claims(perms: Vec<&str>, roles: Vec<&str>) -> Claims {
     Claims {
         sub: "1".to_string(),
+        tenant_id: "system".to_string(),
+        tenant_session_version: 1,
         username: "test".to_string(),
         roles: roles.into_iter().map(|s| s.to_string()).collect(),
         perms: perms.into_iter().map(|s| s.to_string()).collect(),

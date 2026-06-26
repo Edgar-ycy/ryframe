@@ -68,6 +68,7 @@ pub async fn ping(db: &DatabaseConnection) -> AppResult<()> {
 
 /// 所有必需的业务表（对应 ryframe_config.sql 中的 17 张表）
 const REQUIRED_TABLES: &[&str] = &[
+    "sys_tenant",
     "sys_dept",
     "sys_user",
     "password_reset_requests",

@@ -5,14 +5,13 @@ use ryframe_common::{
 };
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseConnection, EntityTrait,
-    QueryFilter, QueryOrder, Select,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder, Select,
 };
 
 use crate::entities::user;
 
 pub struct UserRepository;
-const DEFAULT_TENANT_ID: &str = "system";
 
 #[async_trait]
 impl Repository<user::Model, i64> for UserRepository {
@@ -54,7 +53,7 @@ impl UserRepository {
     fn base_select() -> Select<user::Entity> {
         user::Entity::find()
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
-            .filter(user::Column::TenantId.eq(DEFAULT_TENANT_ID))
+            .filter(user::Column::TenantId.eq(ryframe_core::current_tenant_id()))
     }
 
     fn apply_filters(
@@ -128,6 +127,38 @@ impl UserRepository {
     ) -> AppResult<Option<user::Model>> {
         Self::base_select()
             .filter(user::Column::Username.eq(username))
+            .one(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// Finds a user in exactly one tenant. Authentication must use this method
+    /// so that credentials cannot be resolved across tenant boundaries.
+    pub async fn find_by_username_in_tenant(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        username: &str,
+    ) -> AppResult<Option<user::Model>> {
+        user::Entity::find()
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::Username.eq(username))
+            .one(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// Resolves a user only when it belongs to the specified tenant.
+    pub async fn find_by_id_in_tenant(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<user::Model>> {
+        user::Entity::find_by_id(id)
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .filter(user::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -207,6 +238,7 @@ impl UserRepository {
                 sea_orm::sea_query::Expr::value(chrono::Utc::now()),
             )
             .filter(user::Column::Id.is_in(ids.to_vec()))
+            .filter(user::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -219,16 +251,23 @@ impl UserRepository {
         id: i64,
         status: String,
     ) -> AppResult<()> {
-        let active = user::ActiveModel {
-            id: ActiveValue::Unchanged(id),
-            status: ActiveValue::Set(status),
-            updated_at: ActiveValue::Set(chrono::Utc::now()),
-            ..Default::default()
-        };
-        active
-            .update(db)
+        let result = user::Entity::update_many()
+            .col_expr(
+                user::Column::Status,
+                sea_orm::sea_query::Expr::value(status),
+            )
+            .col_expr(
+                user::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+            )
+            .filter(user::Column::Id.eq(id))
+            .filter(user::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
+        if result.rows_affected == 0 {
+            return Err(AppError::NotFound("用户不存在".into()));
+        }
         Ok(())
     }
 }

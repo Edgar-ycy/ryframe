@@ -18,6 +18,7 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
         id: i64,
     ) -> AppResult<Option<oper_log::Model>> {
         oper_log::Entity::find_by_id(id)
+            .filter(oper_log::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -30,7 +31,9 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
     ) -> AppResult<PageResult<oper_log::Model>> {
         crate::pagination::paginate(
             db,
-            oper_log::Entity::find().order_by_desc(oper_log::Column::OperTime),
+            oper_log::Entity::find()
+                .filter(oper_log::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+                .order_by_desc(oper_log::Column::OperTime),
             &query,
         )
         .await
@@ -53,7 +56,9 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        oper_log::Entity::delete_by_id(id)
+        oper_log::Entity::delete_many()
+            .filter(oper_log::Column::Id.eq(id))
+            .filter(oper_log::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -71,7 +76,8 @@ impl OperLogRepository {
         begin_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> AppResult<PageResult<oper_log::Model>> {
-        let mut select = oper_log::Entity::find();
+        let mut select = oper_log::Entity::find()
+            .filter(oper_log::Column::TenantId.eq(ryframe_core::current_tenant_id()));
         if let Some(name) = oper_name.filter(|n| !n.is_empty()) {
             select = select.filter(oper_log::Column::OperName.contains(name));
         }
@@ -90,6 +96,7 @@ impl OperLogRepository {
 
     pub async fn clean_all(&self, db: &DatabaseConnection) -> AppResult<u64> {
         oper_log::Entity::delete_many()
+            .filter(oper_log::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .exec(db)
             .await
             .map(|r| r.rows_affected)
