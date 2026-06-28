@@ -1,10 +1,11 @@
-﻿use axum::{
+use axum::{
     Extension, Json, Router,
     extract::{Path, State},
     routing::{get, post, put},
 };
 use chrono::{DateTime, Utc};
 use ryframe_auth::jwt::Claims;
+use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_db::entities::{
     config, dept, dict_data, dict_type, menu, permission, post as post_entity, role,
@@ -92,10 +93,13 @@ fn platform_admin(claims: &Claims) -> AppResult<()> {
 
 pub fn tenant_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(list))
-        .route("/", post(create))
-        .route("/{tenant_id}", put(update))
-        .route("/{tenant_id}/status", put(update_status))
+        .route("/", perm_route(get(list), "tenant:manage"))
+        .route("/", perm_route(post(create), "tenant:manage"))
+        .route("/{tenant_id}", perm_route(put(update), "tenant:manage"))
+        .route(
+            "/{tenant_id}/status",
+            perm_route(put(update_status), "tenant:manage"),
+        )
         .with_state(state)
 }
 
