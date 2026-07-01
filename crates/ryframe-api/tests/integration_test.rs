@@ -34,7 +34,8 @@ use ryframe_service::{
     },
 };
 use sea_orm::{
-    ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, EntityTrait, Schema,
+    ColumnTrait, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, EntityTrait,
+    QueryFilter, Schema,
 };
 use std::net::SocketAddr;
 use tower::ServiceExt;
@@ -130,6 +131,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
         phone: "13800000000".into(),
         avatar: None,
         status: user::Model::STATUS_NORMAL.to_string(),
+        auth_version: 1,
         dept_id: Some(1),
         remark: None,
         login_ip: None,
@@ -699,7 +701,7 @@ async fn test_system_query_endpoints() {
     let (s, _) = auth_get(&db, "/system/menus/listNoPage", &token).await;
     assert_eq!(s, StatusCode::OK);
 
-    let (s, b) = auth_get(&db, "/system/permissions/tree", &token).await;
+    let (s, b) = auth_get(&db, "/system/perms/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].as_array().is_some());
 
@@ -900,7 +902,7 @@ async fn test_update_and_delete_operations() {
         &db,
         "/system/menus",
         &token,
-        serde_json::json!({"name": "测试菜单", "parent_id": null, "menu_type": "C", "icon": null, "sort": 0, "visible": true}),
+        serde_json::json!({"name": "测试菜单", "parent_id": null, "menu_type": "C", "perm_id": "1", "route_key": "test.menu", "icon": null, "sort": 0, "visible": true}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -910,7 +912,7 @@ async fn test_update_and_delete_operations() {
         &db,
         &format!("/system/menus/{}", menu_id),
         &token,
-        serde_json::json!({"name": "改名菜单", "parent_id": null, "menu_type": "C", "icon": null, "sort": 1, "visible": true, "status": "1"}),
+        serde_json::json!({"name": "改名菜单", "parent_id": null, "menu_type": "C", "perm_id": "1", "route_key": "test.menu", "icon": null, "sort": 1, "visible": true, "status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1056,6 +1058,37 @@ async fn test_update_and_delete_operations() {
     assert!(reset_data["reset_token"].as_str().is_some());
     assert!(reset_data["reset_url"].as_str().is_some());
 
+    let request_id = reset_data["request_id"]
+        .as_str()
+        .unwrap()
+        .parse::<i64>()
+        .unwrap();
+    let request_row = ryframe_db::entities::password_reset_request::Entity::find_by_id(request_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("密码重置请求应存在");
+    assert_eq!(request_row.target_user_id, user_id);
+    assert_eq!(request_row.tenant_id, "system");
+
+    let target_via_exact_filter = user::Entity::find_by_id(user_id)
+        .filter(user::Column::TenantId.eq("system"))
+        .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+        .one(&db)
+        .await
+        .unwrap();
+    assert!(
+        target_via_exact_filter.is_some(),
+        "密码重置前按 id+tenant+del_flag 精确查询应能找到用户"
+    );
+
+    let target_before_reset = user::Entity::find_by_id(user_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("密码重置前目标用户应存在");
+    assert_eq!(target_before_reset.del_flag, user::Model::DEL_FLAG_NORMAL);
+
     // 用户通过公开链接完成密码重置
     let state = build_test_app(db.clone()).await;
     let router = api_router(state, test_rate_limit_state());
@@ -1072,12 +1105,12 @@ async fn test_update_and_delete_operations() {
             .unwrap(),
         ))
         .unwrap();
-    let (s, _) = send_request(router, req).await;
-    assert_eq!(s, StatusCode::OK);
+    let (s, body) = send_request(router, req).await;
+    assert_eq!(s, StatusCode::OK, "完成密码重置失败: {body}");
 
     // 删除用户
-    let (s, _) = auth_delete(&db, &format!("/system/users/{}", user_id), &token).await;
-    assert_eq!(s, StatusCode::OK);
+    let (s, body) = auth_delete(&db, &format!("/system/users/{}", user_id), &token).await;
+    assert_eq!(s, StatusCode::OK, "删除用户失败: {body}");
 }
 
 /// 404 错误场景：访问不存在的资源
@@ -1623,7 +1656,7 @@ async fn test_authenticated_system_access() {
         "/system/roles/list?page=1&pageSize=5",
         "/system/depts/tree",
         "/system/menus/tree",
-        "/system/permissions/tree",
+        "/system/perms/tree",
         "/system/online",
         "/system/posts/listNoPage",
     ];

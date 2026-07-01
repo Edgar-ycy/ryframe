@@ -116,7 +116,7 @@ impl TenantServiceImpl {
         let system_permissions = permission::Entity::find()
             .filter(permission::Column::TenantId.eq("system"))
             .filter(permission::Column::Code.ne("*:*:*"))
-            .filter(permission::Column::Code.ne("tenant:manage"))
+            .filter(permission::Column::Code.not_like("tenant:%"))
             .order_by_asc(permission::Column::Id)
             .all(&txn)
             .await
@@ -205,32 +205,6 @@ impl TenantServiceImpl {
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
 
-        let mut menu_ids = HashMap::new();
-        for source in system_menus {
-            let id = snowflake::next_snowflake_id();
-            let parent_id = source
-                .parent_id
-                .and_then(|parent_id| menu_ids.get(&parent_id).copied());
-            menu::ActiveModel {
-                id: ActiveValue::Set(id),
-                tenant_id: ActiveValue::Set(tenant_id.clone()),
-                name: ActiveValue::Set(source.name),
-                parent_id: ActiveValue::Set(parent_id),
-                menu_type: ActiveValue::Set(source.menu_type),
-                icon: ActiveValue::Set(source.icon),
-                sort: ActiveValue::Set(source.sort),
-                visible: ActiveValue::Set(source.visible),
-                status: ActiveValue::Set(source.status),
-                remark: ActiveValue::Set(source.remark),
-                del_flag: ActiveValue::Set(source.del_flag),
-                ..Default::default()
-            }
-            .insert(&txn)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-            menu_ids.insert(source.id, id);
-        }
-
         let mut permission_ids = HashMap::new();
         for source in system_permissions {
             let id = snowflake::next_snowflake_id();
@@ -275,6 +249,37 @@ impl TenantServiceImpl {
                 .map_err(|error| AppError::Database(error.to_string()))?;
             }
             permission_ids.insert(source.id, id);
+        }
+
+        let mut menu_ids = HashMap::new();
+        for source in system_menus {
+            let id = snowflake::next_snowflake_id();
+            let parent_id = source
+                .parent_id
+                .and_then(|parent_id| menu_ids.get(&parent_id).copied());
+            let perm_id = source
+                .perm_id
+                .and_then(|perm_id| permission_ids.get(&perm_id).copied());
+            menu::ActiveModel {
+                id: ActiveValue::Set(id),
+                tenant_id: ActiveValue::Set(tenant_id.clone()),
+                name: ActiveValue::Set(source.name),
+                parent_id: ActiveValue::Set(parent_id),
+                menu_type: ActiveValue::Set(source.menu_type),
+                perm_id: ActiveValue::Set(perm_id),
+                route_key: ActiveValue::Set(source.route_key),
+                icon: ActiveValue::Set(source.icon),
+                sort: ActiveValue::Set(source.sort),
+                visible: ActiveValue::Set(source.visible),
+                status: ActiveValue::Set(source.status),
+                remark: ActiveValue::Set(source.remark),
+                del_flag: ActiveValue::Set(source.del_flag),
+                ..Default::default()
+            }
+            .insert(&txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+            menu_ids.insert(source.id, id);
         }
 
         for source in system_posts {

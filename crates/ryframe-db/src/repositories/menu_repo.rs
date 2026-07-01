@@ -7,7 +7,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
 };
 
-use crate::entities::menu;
+use crate::entities::{menu, permission};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MenuTreeNode {
@@ -16,6 +16,9 @@ pub struct MenuTreeNode {
     pub name: String,
     pub parent_id: Option<String>,
     pub menu_type: String,
+    pub perm_id: Option<String>,
+    pub perm_code: Option<String>,
+    pub route_key: Option<String>,
     pub icon: Option<String>,
     pub sort: i32,
     pub visible: bool,
@@ -24,31 +27,6 @@ pub struct MenuTreeNode {
 }
 
 pub struct MenuRepository;
-
-const MENU_PERMISSION_CODES: &[(i64, &str)] = &[
-    (4, "system:user:list"),
-    (5, "system:role:list"),
-    (6, "system:menu:list"),
-    (7, "system:dept:list"),
-    (8, "system:post:list"),
-    (9, "system:dict:list"),
-    (10, "system:config:list"),
-    (11, "system:notice:list"),
-    (12, "system:operlog:list"),
-    (13, "system:logininfor:list"),
-    (14, "monitor:runtime:list"),
-    (15, "monitor:online:list"),
-    (16, "monitor:server:list"),
-    (17, "tools:gen:list"),
-    (18, "system:user:list"),
-    (19, "system:user:add"),
-    (20, "system:user:edit"),
-    (21, "system:user:remove"),
-    (22, "system:user:export"),
-    (23, "monitor:cache:list"),
-    (24, "monitor:db-pool:list"),
-    (25, "system:permission:list"),
-];
 
 #[async_trait]
 impl Repository<menu::Model, i64> for MenuRepository {
@@ -90,6 +68,31 @@ impl Repository<menu::Model, i64> for MenuRepository {
 }
 
 impl MenuRepository {
+    pub async fn find_by_route_key(
+        &self,
+        db: &DatabaseConnection,
+        route_key: &str,
+    ) -> AppResult<Option<menu::Model>> {
+        menu::Entity::find()
+            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::RouteKey.eq(route_key))
+            .one(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub async fn has_children(&self, db: &DatabaseConnection, id: i64) -> AppResult<bool> {
+        menu::Entity::find()
+            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::ParentId.eq(id))
+            .one(db)
+            .await
+            .map(|row| row.is_some())
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
         let all = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
@@ -99,7 +102,8 @@ impl MenuRepository {
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        Ok(build_menu_tree(&all, None))
+        let permission_codes = self.permission_code_map(db, &all).await?;
+        Ok(build_menu_tree(&all, None, &permission_codes))
     }
 
     pub async fn find_by_permission_codes(
@@ -126,13 +130,17 @@ impl MenuRepository {
         }
 
         let by_id: HashMap<i64, &menu::Model> = all.iter().map(|menu| (menu.id, menu)).collect();
+        let menu_permission_codes = self.permission_code_map(db, &all).await?;
         let mut visible_ids = HashSet::new();
 
         for item in &all {
-            let Some(permission_code) = menu_permission_code(item.id) else {
+            let Some(permission_code) = item
+                .perm_id
+                .and_then(|perm_id| menu_permission_codes.get(&perm_id))
+            else {
                 continue;
             };
-            if !permission_set.contains(permission_code) {
+            if !permission_set.contains(permission_code.as_str()) {
                 continue;
             }
 
@@ -157,7 +165,8 @@ impl MenuRepository {
         permission_codes: &[String],
     ) -> AppResult<Vec<MenuTreeNode>> {
         let menus = self.find_by_permission_codes(db, permission_codes).await?;
-        Ok(build_menu_tree(&menus, None))
+        let menu_permission_codes = self.permission_code_map(db, &menus).await?;
+        Ok(build_menu_tree(&menus, None, &menu_permission_codes))
     }
 
     pub async fn find_filtered(
@@ -183,9 +192,32 @@ impl MenuRepository {
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
+
+    async fn permission_code_map(
+        &self,
+        db: &DatabaseConnection,
+        menus: &[menu::Model],
+    ) -> AppResult<HashMap<i64, String>> {
+        let perm_ids: HashSet<i64> = menus.iter().filter_map(|item| item.perm_id).collect();
+        if perm_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = permission::Entity::find()
+            .filter(permission::Column::Id.is_in(perm_ids))
+            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(permission::Column::Status.eq("1"))
+            .all(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(rows.into_iter().map(|row| (row.id, row.code)).collect())
+    }
 }
 
-fn build_menu_tree(menus: &[menu::Model], parent_id: Option<i64>) -> Vec<MenuTreeNode> {
+fn build_menu_tree(
+    menus: &[menu::Model],
+    parent_id: Option<i64>,
+    permission_codes: &HashMap<i64, String>,
+) -> Vec<MenuTreeNode> {
     menus
         .iter()
         .filter(|m| m.parent_id == parent_id)
@@ -194,17 +226,16 @@ fn build_menu_tree(menus: &[menu::Model], parent_id: Option<i64>) -> Vec<MenuTre
             name: m.name.clone(),
             parent_id: m.parent_id.map(|p| p.to_string()),
             menu_type: m.menu_type.clone(),
+            perm_id: m.perm_id.map(|id| id.to_string()),
+            perm_code: m
+                .perm_id
+                .and_then(|perm_id| permission_codes.get(&perm_id).cloned()),
+            route_key: m.route_key.clone(),
             icon: m.icon.clone(),
             sort: m.sort,
             visible: m.visible,
             status: m.status.clone(),
-            children: build_menu_tree(menus, Some(m.id)),
+            children: build_menu_tree(menus, Some(m.id), permission_codes),
         })
         .collect()
-}
-
-fn menu_permission_code(menu_id: i64) -> Option<&'static str> {
-    MENU_PERMISSION_CODES
-        .iter()
-        .find_map(|(id, code)| (*id == menu_id).then_some(*code))
 }

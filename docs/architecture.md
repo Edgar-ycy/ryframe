@@ -922,7 +922,7 @@ UserService trait (定义于 ryframe-core):
 | `POST` | `/api/v1/system/roles` | 创建角色 |
 | `PUT` | `/api/v1/system/roles/:id` | 更新角色 |
 | `DELETE` | `/api/v1/system/roles/:id` | 删除角色 |
-| `GET` | `/api/v1/system/permissions` | 权限树 |
+| `GET` | `/api/v1/system/perms` | 权限树 |
 | `GET` | `/api/v1/system/menus` | 菜单树 |
 | `POST` | `/api/v1/system/menus` | 创建菜单 |
 | `PUT` | `/api/v1/system/menus/:id` | 更新菜单 |
@@ -1005,7 +1005,7 @@ UserService trait (定义于 ryframe-core):
 ├── /system/             → system_router      (认证 + 权限)
 │   ├── /users/*         → user_router
 │   ├── /roles/*         → role_router
-│   ├── /permissions/*   → permission_router
+│   ├── /perms/*   → permission_router
 │   ├── /menus/*         → menu_router
 │   ├── /depts/*         → dept_router
 │   ├── /posts/*         → post_router

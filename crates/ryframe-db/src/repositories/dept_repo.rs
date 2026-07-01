@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder,
 };
 
 use crate::entities::dept;
@@ -73,6 +74,40 @@ impl DeptRepository {
         Ok(build_dept_tree(&all, None))
     }
 
+    /// 查询数据权限范围内的部门树，并补齐可见节点的祖先以保持树结构完整。
+    pub async fn find_tree_by_visible_ids(
+        &self,
+        db: &DatabaseConnection,
+        visible_ids: &[i64],
+    ) -> AppResult<Vec<DeptTreeNode>> {
+        if visible_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let all = dept::Entity::find()
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
+            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .order_by_asc(dept::Column::Sort)
+            .all(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut included = visible_ids.to_vec();
+        for item in all.iter().filter(|item| visible_ids.contains(&item.id)) {
+            included.extend(
+                item.ancestors
+                    .split(',')
+                    .filter_map(|id| id.parse::<i64>().ok())
+                    .filter(|id| *id != 0),
+            );
+        }
+        included.sort_unstable();
+        included.dedup();
+        let filtered = all
+            .into_iter()
+            .filter(|item| included.contains(&item.id))
+            .collect::<Vec<_>>();
+        Ok(build_dept_tree(&filtered, None))
+    }
+
     /// 检查是否有子部门
     pub async fn has_children(&self, db: &DatabaseConnection, parent_id: i64) -> AppResult<bool> {
         let exists = dept::Entity::find()
@@ -119,9 +154,13 @@ impl DeptRepository {
             .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
 
         // 查所有 ancestors 以本部门路径开头的子部门
-        let pattern = format!("{},{}%", dept.ancestors, dept_id);
+        let prefix = format!("{},{}", dept.ancestors, dept_id);
         let children = dept::Entity::find()
-            .filter(dept::Column::Ancestors.like(&pattern))
+            .filter(
+                Condition::any()
+                    .add(dept::Column::Ancestors.eq(&prefix))
+                    .add(dept::Column::Ancestors.like(format!("{},%", prefix))),
+            )
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
             .all(db)
@@ -135,6 +174,29 @@ impl DeptRepository {
         Ok(ids)
     }
 
+    pub async fn find_descendants(
+        &self,
+        db: &DatabaseConnection,
+        dept_id: i64,
+    ) -> AppResult<Vec<dept::Model>> {
+        let node = self
+            .find_by_id(db, dept_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
+        let prefix = format!("{},{}", node.ancestors, dept_id);
+        dept::Entity::find()
+            .filter(
+                Condition::any()
+                    .add(dept::Column::Ancestors.eq(&prefix))
+                    .add(dept::Column::Ancestors.like(format!("{},%", prefix))),
+            )
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
+            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .all(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     /// 带搜索条件的查询（按名称、状态过滤）
     pub async fn find_filtered(
         &self,
@@ -143,6 +205,24 @@ impl DeptRepository {
         status: Option<&str>,
     ) -> AppResult<Vec<dept::Model>> {
         self.build_filtered_query(name, status)
+            .order_by_asc(dept::Column::Sort)
+            .all(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub async fn find_filtered_by_ids(
+        &self,
+        db: &DatabaseConnection,
+        name: Option<&str>,
+        status: Option<&str>,
+        visible_ids: &[i64],
+    ) -> AppResult<Vec<dept::Model>> {
+        if visible_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.build_filtered_query(name, status)
+            .filter(dept::Column::Id.is_in(visible_ids.iter().copied()))
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
@@ -160,6 +240,27 @@ impl DeptRepository {
         crate::pagination::paginate(
             db,
             self.build_filtered_query(name, status)
+                .order_by_asc(dept::Column::Sort),
+            &query,
+        )
+        .await
+    }
+
+    pub async fn find_by_page_filtered_by_ids(
+        &self,
+        db: &DatabaseConnection,
+        query: PageQuery,
+        name: Option<&str>,
+        status: Option<&str>,
+        visible_ids: &[i64],
+    ) -> AppResult<PageResult<dept::Model>> {
+        if visible_ids.is_empty() {
+            return Ok(PageResult::new(Vec::new(), 0, &query));
+        }
+        crate::pagination::paginate(
+            db,
+            self.build_filtered_query(name, status)
+                .filter(dept::Column::Id.is_in(visible_ids.iter().copied()))
                 .order_by_asc(dept::Column::Sort),
             &query,
         )

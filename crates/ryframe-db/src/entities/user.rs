@@ -20,6 +20,7 @@ pub struct Model {
     pub phone: String,
     pub avatar: Option<String>,
     pub status: String,
+    pub auth_version: i32,
     pub dept_id: Option<i64>,
     pub remark: Option<String>,
     pub login_ip: Option<String>,
@@ -48,11 +49,23 @@ impl Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::user_role::Entity")]
     UserRole,
+    #[sea_orm(
+        belongs_to = "super::dept::Entity",
+        from = "Column::DeptId",
+        to = "super::dept::Column::Id"
+    )]
+    Dept,
 }
 
 impl Related<super::user_role::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::UserRole.def()
+    }
+}
+
+impl Related<super::dept::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Dept.def()
     }
 }
 

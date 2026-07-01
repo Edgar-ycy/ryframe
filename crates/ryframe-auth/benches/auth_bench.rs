@@ -47,14 +47,18 @@ fn bench_jwt_encode(c: &mut Criterion) {
     };
     let roles = vec!["admin".to_string()];
     let perms = vec!["system:user:list".to_string()];
+    let identity = ryframe_auth::jwt::TokenIdentity {
+        user_id: 1,
+        tenant_id: "system",
+        tenant_session_version: 1,
+        user_auth_version: 1,
+        username: "admin",
+    };
 
     c.bench_function("jwt_encode_access", |b| {
         b.iter(|| {
             let _ = ryframe_auth::jwt::encode_access(
-                std::hint::black_box(1),
-                std::hint::black_box("system"),
-                std::hint::black_box(1),
-                std::hint::black_box("admin"),
+                std::hint::black_box(&identity),
                 std::hint::black_box(&roles),
                 std::hint::black_box(&perms),
                 std::hint::black_box(&config),
@@ -75,8 +79,14 @@ fn bench_jwt_decode(c: &mut Criterion) {
     };
     let roles = vec!["admin".to_string()];
     let perms = vec!["system:user:list".to_string()];
-    let (token, _) =
-        ryframe_auth::jwt::encode_access(1, "system", 1, "admin", &roles, &perms, &config).unwrap();
+    let identity = ryframe_auth::jwt::TokenIdentity {
+        user_id: 1,
+        tenant_id: "system",
+        tenant_session_version: 1,
+        user_auth_version: 1,
+        username: "admin",
+    };
+    let (token, _) = ryframe_auth::jwt::encode_access(&identity, &roles, &perms, &config).unwrap();
 
     c.bench_function("jwt_decode_access", |b| {
         b.iter(|| {

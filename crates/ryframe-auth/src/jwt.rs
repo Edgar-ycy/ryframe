@@ -14,6 +14,9 @@ pub struct Claims {
     /// Tenant session generation. A tenant status transition invalidates all
     /// earlier access and refresh tokens by increasing this value.
     pub tenant_session_version: i32,
+    /// Per-user authentication generation. Role, permission and credential
+    /// changes increment it so existing access and refresh tokens expire.
+    pub user_auth_version: i32,
     /// 用户名
     pub username: String,
     /// 角色编码列表
@@ -30,15 +33,21 @@ pub struct Claims {
     pub exp: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TokenIdentity<'a> {
+    pub user_id: i64,
+    pub tenant_id: &'a str,
+    pub tenant_session_version: i32,
+    pub user_auth_version: i32,
+    pub username: &'a str,
+}
+
 /// 签发访问令牌
 ///
 /// `roles` 和 `perms` 嵌入 Claims，避免每次请求都查数据库。
 /// 返回 `(token_string, jti)` 元组，jti 用于在线用户管理。
 pub fn encode_access(
-    user_id: i64,
-    tenant_id: &str,
-    tenant_session_version: i32,
-    username: &str,
+    identity: &TokenIdentity<'_>,
     roles: &[String],
     perms: &[String],
     config: &AuthConfig,
@@ -47,10 +56,11 @@ pub fn encode_access(
     let now = current_timestamp();
     let jti = new_jti();
     let claims = Claims {
-        sub: user_id.to_string(),
-        tenant_id: tenant_id.to_string(),
-        tenant_session_version,
-        username: username.to_string(),
+        sub: identity.user_id.to_string(),
+        tenant_id: identity.tenant_id.to_string(),
+        tenant_session_version: identity.tenant_session_version,
+        user_auth_version: identity.user_auth_version,
+        username: identity.username.to_string(),
         roles: roles.to_vec(),
         perms: perms.to_vec(),
         token_type: "access".into(),
@@ -66,20 +76,15 @@ pub fn encode_access(
 ///
 /// 刷新令牌仅包含用户身份信息，不含 roles/perms（避免权限过期问题）。
 /// 刷新时重新查询数据库获取最新角色权限。
-pub fn encode_refresh(
-    user_id: i64,
-    tenant_id: &str,
-    tenant_session_version: i32,
-    username: &str,
-    config: &AuthConfig,
-) -> AppResult<String> {
+pub fn encode_refresh(identity: &TokenIdentity<'_>, config: &AuthConfig) -> AppResult<String> {
     let ttl = parse_duration(&config.refresh_token_expire)?;
     let now = current_timestamp();
     let claims = Claims {
-        sub: user_id.to_string(),
-        tenant_id: tenant_id.to_string(),
-        tenant_session_version,
-        username: username.to_string(),
+        sub: identity.user_id.to_string(),
+        tenant_id: identity.tenant_id.to_string(),
+        tenant_session_version: identity.tenant_session_version,
+        user_auth_version: identity.user_auth_version,
+        username: identity.username.to_string(),
         roles: vec![],
         perms: vec![],
         token_type: "refresh".into(),

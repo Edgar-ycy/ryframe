@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `phone`          VARCHAR(32)  NOT NULL DEFAULT ''       COMMENT '手机号',
     `avatar`         VARCHAR(255)          DEFAULT NULL     COMMENT '头像URL',
     `status`         VARCHAR(32)  NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定 pending_activation待激活 must_reset_password需改密',
+    `auth_version`   INT          NOT NULL DEFAULT 1        COMMENT '用户认证版本，权限变更时递增',
     `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID',
     `remark`         VARCHAR(512)          DEFAULT NULL     COMMENT '备注',
     `login_ip`       VARCHAR(128)          DEFAULT NULL     COMMENT '最后登录IP',
@@ -178,6 +179,8 @@ CREATE TABLE IF NOT EXISTS `sys_menu` (
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '菜单名称',
     `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID',
     `menu_type`   CHAR(1)      NOT NULL DEFAULT ''         COMMENT '菜单类型: M目录 C菜单 F按钮',
+    `perm_id`     BIGINT                DEFAULT NULL       COMMENT '关联sys_permission权限ID',
+    `route_key`   VARCHAR(100)          DEFAULT NULL       COMMENT '前端稳定页面标识',
     `icon`        VARCHAR(128)          DEFAULT NULL       COMMENT '图标',
     `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
     `visible`     TINYINT(1)   NOT NULL DEFAULT 1          COMMENT '是否可见: 0隐藏 1显示',
@@ -188,7 +191,9 @@ CREATE TABLE IF NOT EXISTS `sys_menu` (
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_tenant_id` (`tenant_id`),
-    KEY `idx_parent_id` (`parent_id`)
+    KEY `idx_parent_id` (`parent_id`),
+    KEY `idx_menu_tenant_perm` (`tenant_id`, `perm_id`),
+    KEY `idx_menu_tenant_route` (`tenant_id`, `route_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='菜单表(含目录/菜单/按钮)';
 
 -- ============================================================
@@ -444,6 +449,11 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     (4, '菜单管理', 'system:menu', 1, 'menu', 'Menu', 3, '1'),
     (5, '部门管理', 'system:dept', 1, 'menu', 'Grid', 4, '1'),
     (6, '岗位管理', 'system:post', 1, 'menu', 'Management', 5, '1'),
+    (76, '租户管理', 'tenant:manage', NULL, 'menu', 'OfficeBuilding', 12, '1'),
+    (77, '租户查询', 'tenant:list', 76, 'api', NULL, 1, '1'),
+    (78, '租户新增', 'tenant:add', 76, 'api', NULL, 2, '1'),
+    (79, '租户修改', 'tenant:edit', 76, 'api', NULL, 3, '1'),
+    (80, '租户状态', 'tenant:status', 76, 'api', NULL, 4, '1'),
     -- 用户管理接口权限
     (7, '用户查询', 'system:user:list', 2, 'api', NULL, 1, '1'),
     (8, '用户新增', 'system:user:add', 2, 'api', NULL, 2, '1'),
@@ -480,11 +490,11 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     (31, '菜单修改', 'system:menu:edit', 4, 'api', NULL, 3, '1'),
     (32, '菜单删除', 'system:menu:remove', 4, 'api', NULL, 4, '1'),
     -- 权限管理接口权限
-    (33, '权限查询', 'system:permission:list', 4, 'api', NULL, 5, '1'),
-    (72, '权限新增', 'system:permission:add', 4, 'api', NULL, 6, '1'),
-    (73, '权限修改', 'system:permission:edit', 4, 'api', NULL, 7, '1'),
-    (74, '权限删除', 'system:permission:remove', 4, 'api', NULL, 8, '1'),
-    (75, '权限同步', 'system:permission:sync', 4, 'api', NULL, 9, '1'),
+    (33, '权限查询', 'system:perm:list', 4, 'api', NULL, 5, '1'),
+    (72, '权限新增', 'system:perm:add', 4, 'api', NULL, 6, '1'),
+    (73, '权限修改', 'system:perm:edit', 4, 'api', NULL, 7, '1'),
+    (74, '权限删除', 'system:perm:remove', 4, 'api', NULL, 8, '1'),
+    (75, '权限同步', 'system:perm:sync', 4, 'api', NULL, 9, '1'),
     -- 部门管理接口权限
     (34, '部门查询', 'system:dept:list', 5, 'api', NULL, 1, '1'),
     (35, '部门新增', 'system:dept:add', 5, 'api', NULL, 2, '1'),
@@ -534,39 +544,40 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
 -- -----------------------------------------------------------
 -- 默认菜单 (sys_menu)
 -- -----------------------------------------------------------
-INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `icon`, `sort`, `visible`, `status`) VALUES
+INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`) VALUES
     -- 主页
-    (0,  '首页',   NULL, 'C', 'HomeFilled', 0, 1, '1'),
+    (0,  '首页',   NULL, 'C', NULL, 'home', 'HomeFilled', 0, 1, '1'),
     -- 一级目录
-    (1,  '系统管理', NULL, 'M', 'Setting', 1, 1, '1'),
-    (2,  '系统监控', NULL, 'M', 'Monitor', 2, 1, '1'),
-    (3,  '系统工具', NULL, 'M', 'Tools', 3, 1, '1'),
+    (1,  '系统管理', NULL, 'M', NULL, 'system', 'Setting', 1, 1, '1'),
+    (2,  '系统监控', NULL, 'M', NULL, 'monitor', 'Monitor', 2, 1, '1'),
+    (3,  '系统工具', NULL, 'M', NULL, 'tools', 'Tools', 3, 1, '1'),
     -- 系统管理子菜单
-    (4,  '用户管理', 1, 'C', 'User', 1, 1, '1'),
-    (5,  '角色管理', 1, 'C', 'UserFilled', 2, 1, '1'),
-    (6,  '菜单管理', 1, 'C', 'Grid', 3, 1, '1'),
-    (7,  '部门管理', 1, 'C', 'Menu', 4, 1, '1'),
-    (8,  '岗位管理', 1, 'C', 'Management', 5, 1, '1'),
-    (9,  '字典管理', 1, 'C', 'Collection', 6, 1, '1'),
-    (10, '参数设置', 1, 'C', 'EditPen', 7, 1, '1'),
-    (11, '通知公告', 1, 'C', 'Bell', 8, 1, '1'),
-    (25, '权限管理', 1, 'C', 'Lock', 9, 1, '1'),
-    (12, '操作日志', 1, 'C', 'Document', 10, 1, '1'),
-    (13, '登录日志', 1, 'C', 'Notebook', 11, 1, '1'),
+    (4,  '用户管理', 1, 'C', 7,  'system.user', 'User', 1, 1, '1'),
+    (5,  '角色管理', 1, 'C', 24, 'system.role', 'UserFilled', 2, 1, '1'),
+    (6,  '菜单管理', 1, 'C', 29, 'system.menu', 'Grid', 3, 1, '1'),
+    (7,  '部门管理', 1, 'C', 34, 'system.dept', 'Menu', 4, 1, '1'),
+    (8,  '岗位管理', 1, 'C', 38, 'system.post', 'Management', 5, 1, '1'),
+    (9,  '字典管理', 1, 'C', 48, 'system.dict', 'Collection', 6, 1, '1'),
+    (10, '参数设置', 1, 'C', 43, 'system.config', 'EditPen', 7, 1, '1'),
+    (11, '通知公告', 1, 'C', 53, 'system.notice', 'Bell', 8, 1, '1'),
+    (25, '权限管理', 1, 'C', 33, 'system.perm', 'Lock', 9, 1, '1'),
+    (12, '操作日志', 1, 'C', 57, 'system.operlog', 'Document', 10, 1, '1'),
+    (13, '登录日志', 1, 'C', 60, 'system.logininfor', 'Notebook', 11, 1, '1'),
+    (26, '租户管理', NULL, 'C', 76, 'platform.tenant', 'OfficeBuilding', 12, 1, '1'),
     -- 系统监控子菜单
-    (15, '在线用户', 2, 'C', 'Connection', 1, 1, '1'),
-    (16, '服务监控', 2, 'C', 'DataAnalysis', 2, 1, '1'),
-    (14, '运行时监控', 2, 'C', 'Operation', 3, 1, '1'),
-    (23, '缓存监控', 2, 'C', 'Coin', 4, 1, '1'),
-    (24, '连接池监控', 2, 'C', 'Connection', 5, 1, '1'),
+    (15, '在线用户', 2, 'C', 63, 'monitor.online', 'Connection', 1, 1, '1'),
+    (16, '服务监控', 2, 'C', 65, 'monitor.server', 'DataAnalysis', 2, 1, '1'),
+    (14, '运行时监控', 2, 'C', 71, 'monitor.runtime', 'Operation', 3, 1, '1'),
+    (23, '缓存监控', 2, 'C', 66, 'monitor.cache', 'Coin', 4, 1, '1'),
+    (24, '连接池监控', 2, 'C', 67, 'monitor.db-pool', 'Connection', 5, 1, '1'),
     -- 系统工具子菜单
-    (17, '代码生成', 3, 'C', 'MagicStick', 1, 1, '1'),
+    (17, '代码生成', 3, 'C', 68, 'tools.gen', 'MagicStick', 1, 1, '1'),
     -- 用户管理按钮
-    (18, '用户查询', 4, 'F', NULL, 1, 1, '1'),
-    (19, '用户新增', 4, 'F', NULL, 2, 1, '1'),
-    (20, '用户修改', 4, 'F', NULL, 3, 1, '1'),
-    (21, '用户删除', 4, 'F', NULL, 4, 1, '1'),
-    (22, '用户导出', 4, 'F', NULL, 5, 1, '1');
+    (18, '用户查询', 4, 'F', 7,  NULL, NULL, 1, 1, '1'),
+    (19, '用户新增', 4, 'F', 8,  NULL, NULL, 2, 1, '1'),
+    (20, '用户修改', 4, 'F', 9,  NULL, NULL, 3, 1, '1'),
+    (21, '用户删除', 4, 'F', 10, NULL, NULL, 4, 1, '1'),
+    (22, '用户导出', 4, 'F', 11, NULL, NULL, 5, 1, '1');
 
 -- -----------------------------------------------------------
 -- 默认岗位 (sys_post)
@@ -653,6 +664,7 @@ INSERT INTO `sys_role_permission` (`role_id`, `perm_id`) VALUES
     (2, 16),  -- common -> monitor:cache
     (2, 66),  -- common -> monitor:cache:list
     (2, 17),  -- common -> monitor:db-pool
-    (2, 67);  -- common -> monitor:db-pool:list
+    (2, 67),  -- common -> monitor:db-pool:list
+    (2, 43);  -- common -> system:config:list
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -261,9 +261,15 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 
     Router::new()
         .nest("/users", user_handler::user_router(state.clone()))
+        .nest(
+            "/user",
+            Router::new()
+                .route("/get-menus", get(menu_handler::user_tree))
+                .with_state(state.clone()),
+        )
         .nest("/roles", role_handler::role_router(state.clone()))
         .nest(
-            "/permissions",
+            "/perms",
             permission_handler::permission_router(state.clone()),
         )
         .nest("/menus", menu_handler::menu_router(state.clone()))

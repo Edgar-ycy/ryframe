@@ -18,22 +18,19 @@ pub struct PermissionListQuery {
 
 pub fn permission_router(state: AppState) -> Router {
     Router::new()
-        .route("/tree", perm_route(get(tree), "system:permission:list"))
-        .route("/", perm_route(post(create), "system:permission:add"))
-        .route("/{id}", perm_route(get(detail), "system:permission:list"))
-        .route("/{id}", perm_route(put(update), "system:permission:edit"))
-        .route(
-            "/{id}",
-            perm_route(delete(remove), "system:permission:remove"),
-        )
+        .route("/tree", perm_route(get(tree), "system:perm:list"))
+        .route("/", perm_route(post(create), "system:perm:add"))
+        .route("/{id}", perm_route(get(detail), "system:perm:list"))
+        .route("/{id}", perm_route(put(update), "system:perm:edit"))
+        .route("/{id}", perm_route(delete(remove), "system:perm:remove"))
         .route(
             "/sync",
-            perm_route(post(sync_api_permissions), "system:permission:sync"),
+            perm_route(post(sync_api_permissions), "system:perm:sync"),
         )
         .with_state(state)
 }
 
-#[utoipa::path(get, path = "/api/v1/system/permissions/tree", tag = "权限管理",
+#[utoipa::path(get, path = "/api/v1/system/perms/tree", tag = "权限管理",
     params(("perm_type" = Option<String>, Query)),
     responses((status = 200, description = "权限树")), security(("bearer" = [])))]
 pub async fn tree(
@@ -47,7 +44,7 @@ pub async fn tree(
     Ok(Json(ApiResponse::success(tree)))
 }
 
-#[utoipa::path(get, path = "/api/v1/system/permissions/{id}", tag = "权限管理",
+#[utoipa::path(get, path = "/api/v1/system/perms/{id}", tag = "权限管理",
     params(("id" = i64, Path)), responses((status = 200, description = "权限详情")),
     security(("bearer" = [])))]
 pub async fn detail(
@@ -61,7 +58,7 @@ pub async fn detail(
     }
 }
 
-#[utoipa::path(post, path = "/api/v1/system/permissions", tag = "权限管理",
+#[utoipa::path(post, path = "/api/v1/system/perms", tag = "权限管理",
     request_body = CreatePermissionDto, responses((status = 200, description = "创建成功")),
     security(("bearer" = [])))]
 pub async fn create(
@@ -85,7 +82,7 @@ pub async fn create(
     Ok(Json(ApiResponse::success(item)))
 }
 
-#[utoipa::path(put, path = "/api/v1/system/permissions/{id}", tag = "权限管理",
+#[utoipa::path(put, path = "/api/v1/system/perms/{id}", tag = "权限管理",
     params(("id" = i64, Path)), request_body = UpdatePermissionDto,
     responses((status = 200, description = "更新成功")), security(("bearer" = [])))]
 pub async fn update(
@@ -94,6 +91,11 @@ pub async fn update(
     Json(dto): Json<UpdatePermissionDto>,
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::permission::Model>>> {
     dto.validate()?;
+    let affected_user_ids = state
+        .permission_service
+        .perm_repo
+        .find_affected_user_ids(&state.db, &[id])
+        .await?;
     let item = state
         .permission_service
         .update(
@@ -108,10 +110,12 @@ pub async fn update(
             dto.status.as_deref().unwrap_or("1"),
         )
         .await?;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
+    state.menu_service.invalidate_menu_cache();
     Ok(Json(ApiResponse::success(item)))
 }
 
-#[utoipa::path(delete, path = "/api/v1/system/permissions/{id}", tag = "权限管理",
+#[utoipa::path(delete, path = "/api/v1/system/perms/{id}", tag = "权限管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")),
     security(("bearer" = [])))]
 pub async fn remove(
@@ -122,7 +126,7 @@ pub async fn remove(
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
-#[utoipa::path(post, path = "/api/v1/system/permissions/sync", tag = "权限管理",
+#[utoipa::path(post, path = "/api/v1/system/perms/sync", tag = "权限管理",
     responses((status = 200, description = "同步成功")), security(("bearer" = [])))]
 pub async fn sync_api_permissions(
     State(state): State<AppState>,

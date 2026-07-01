@@ -11,7 +11,7 @@ use validator::Validate;
 use super::auth_handler::AppState;
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
 use crate::extractors::CurrentUser;
-use crate::handler_utils::parse_optional_i64;
+use crate::handler_utils::{parse_optional_i64, parse_optional_i64_str};
 use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub MenuListQuery {
@@ -22,7 +22,6 @@ list_query!(pub MenuListQuery {
 pub fn menu_router(state: AppState) -> Router {
     Router::new()
         .route("/tree", perm_route(get(tree), "system:menu:list"))
-        .route("/user-tree", get(user_tree))
         .route("/list", perm_route(get(list_page), "system:menu:list"))
         .route(
             "/listNoPage",
@@ -47,9 +46,9 @@ async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<M
 }
 
 /// 当前用户可见的菜单树（按角色过滤，前端用）
-#[utoipa::path(get, path = "/api/v1/system/menus/user-tree", tag = "菜单管理",
+#[utoipa::path(get, path = "/api/v1/system/user/get-menus", tag = "菜单管理",
     responses((status = 200, description = "用户菜单树")), security(("bearer" = [])))]
-async fn user_tree(
+pub async fn user_tree(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
 ) -> AppResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
@@ -122,6 +121,7 @@ async fn create(
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id);
+    let perm_id = parse_optional_i64_str(dto.perm_id.as_deref());
     state
         .menu_service
         .create(
@@ -129,6 +129,8 @@ async fn create(
             &dto.name,
             parent_id,
             &dto.menu_type,
+            perm_id,
+            dto.route_key.as_deref(),
             dto.icon.as_deref(),
             dto.sort.unwrap_or(0),
             dto.visible.unwrap_or(true),
@@ -148,6 +150,7 @@ async fn update(
 ) -> AppResult<Json<ApiResponse<ryframe_db::entities::menu::Model>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id);
+    let perm_id = parse_optional_i64_str(dto.perm_id.as_deref());
     state
         .menu_service
         .update(
@@ -156,6 +159,8 @@ async fn update(
             &dto.name,
             parent_id,
             &dto.menu_type,
+            perm_id,
+            dto.route_key.as_deref(),
             dto.icon.as_deref(),
             dto.sort.unwrap_or(0),
             dto.visible.unwrap_or(true),

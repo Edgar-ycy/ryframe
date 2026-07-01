@@ -90,7 +90,6 @@ impl AuthServiceImpl {
         if !user.is_enabled() {
             return Err(AppError::Authentication("账号已停用或锁定".into()));
         }
-
         let (role_codes, perm_codes) = with_tenant_context(
             TenantContext {
                 tenant_id: tenant_id.to_string(),
@@ -108,22 +107,16 @@ impl AuthServiceImpl {
         )
         .await?;
 
-        let (access_token, token_id) = jwt::encode_access(
-            user.id,
-            &user.tenant_id,
-            tenant.session_version,
-            &user.username,
-            &role_codes,
-            &perm_codes,
-            &self.config.auth,
-        )?;
-        let refresh_token = jwt::encode_refresh(
-            user.id,
-            &user.tenant_id,
-            tenant.session_version,
-            &user.username,
-            &self.config.auth,
-        )?;
+        let identity = jwt::TokenIdentity {
+            user_id: user.id,
+            tenant_id: &user.tenant_id,
+            tenant_session_version: tenant.session_version,
+            user_auth_version: user.auth_version,
+            username: &user.username,
+        };
+        let (access_token, token_id) =
+            jwt::encode_access(&identity, &role_codes, &perm_codes, &self.config.auth)?;
+        let refresh_token = jwt::encode_refresh(&identity, &self.config.auth)?;
 
         let mut user_info = UserInfo::from(&user);
         user_info.tenant_name = tenant.name.clone();
@@ -175,6 +168,11 @@ impl AuthServiceImpl {
         if !user.is_enabled() {
             return Err(AppError::Authentication("账号已停用或锁定".into()));
         }
+        if claims.user_auth_version != user.auth_version {
+            return Err(AppError::Authentication(
+                "用户权限已变更，请重新登录".into(),
+            ));
+        }
 
         let (role_codes, perm_codes) = with_tenant_context(
             TenantContext {
@@ -193,22 +191,16 @@ impl AuthServiceImpl {
         )
         .await?;
 
-        let (access_token, token_id) = jwt::encode_access(
-            user.id,
-            &user.tenant_id,
-            tenant.session_version,
-            &user.username,
-            &role_codes,
-            &perm_codes,
-            &self.config.auth,
-        )?;
-        let refresh_token = jwt::encode_refresh(
-            user.id,
-            &user.tenant_id,
-            tenant.session_version,
-            &user.username,
-            &self.config.auth,
-        )?;
+        let identity = jwt::TokenIdentity {
+            user_id: user.id,
+            tenant_id: &user.tenant_id,
+            tenant_session_version: tenant.session_version,
+            user_auth_version: user.auth_version,
+            username: &user.username,
+        };
+        let (access_token, token_id) =
+            jwt::encode_access(&identity, &role_codes, &perm_codes, &self.config.auth)?;
+        let refresh_token = jwt::encode_refresh(&identity, &self.config.auth)?;
 
         let mut user_info = UserInfo::from(&user);
         user_info.tenant_name = tenant.name.clone();

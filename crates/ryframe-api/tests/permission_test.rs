@@ -34,7 +34,7 @@ async fn test_permission_no_token_returns_401() {
         "/system/posts/list?page=1&pageSize=10",
         "/system/configs/list?page=1&pageSize=10",
         "/system/notices/list?page=1&pageSize=10",
-        "/system/permissions/tree",
+        "/system/perms/tree",
         "/system/online",
     ];
 
@@ -134,7 +134,7 @@ async fn test_permission_crud_and_sync_flow() {
 
     let (status, body) = auth_post(
         &db,
-        "/system/permissions",
+        "/system/perms",
         &token,
         json!({
             "name": "测试权限",
@@ -154,13 +154,13 @@ async fn test_permission_crud_and_sync_flow() {
         .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
         .expect("权限ID应存在");
 
-    let (status, body) = auth_get(&db, &format!("/system/permissions/{}", perm_id), &token).await;
+    let (status, body) = auth_get(&db, &format!("/system/perms/{}", perm_id), &token).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["code"], "system:test:crud");
 
     let (status, body) = auth_put(
         &db,
-        &format!("/system/permissions/{}", perm_id),
+        &format!("/system/perms/{}", perm_id),
         &token,
         json!({
             "name": "测试权限更新",
@@ -176,25 +176,28 @@ async fn test_permission_crud_and_sync_flow() {
     assert_eq!(status, StatusCode::OK, "更新权限失败: {:?}", body);
     assert_eq!(body["data"]["code"], "system:test:crud:updated");
 
-    let (status, body) =
-        auth_delete(&db, &format!("/system/permissions/{}", perm_id), &token).await;
+    let (status, body) = auth_delete(&db, &format!("/system/perms/{}", perm_id), &token).await;
     assert_eq!(status, StatusCode::OK, "删除权限失败: {:?}", body);
 
-    let (status, _) = auth_post(&db, "/system/permissions/sync", &token, json!({})).await;
+    let (status, _) = auth_post(&db, "/system/perms/sync", &token, json!({})).await;
     assert_eq!(status, StatusCode::OK, "权限同步失败");
 }
 
 #[tokio::test]
 async fn test_permission_scanner_detects_known_codes() {
     let codes = ryframe_service::system::PermissionServiceImpl::scan_permission_codes()
-        .expect("扫描权限码失败");
+        .expect("scan permission codes failed");
     assert!(
         codes.contains(&"system:user:list".to_string()),
-        "扫描结果应包含用户列表权限码"
+        "scanner should include user list permission"
     );
     assert!(
-        codes.contains(&"system:permission:sync".to_string()),
-        "扫描结果应包含权限同步权限码"
+        codes.contains(&"system:perm:sync".to_string()),
+        "scanner should include permission sync code"
+    );
+    assert!(
+        codes.contains(&"tenant:list".to_string()),
+        "scanner should include tenant list permission"
     );
 }
 
@@ -206,7 +209,7 @@ async fn test_role_permission_assignment_and_validation() {
 
     let (status, body) = auth_post(
         &db,
-        "/system/permissions",
+        "/system/perms",
         &token,
         json!({
             "name": "角色绑定权限",
@@ -309,8 +312,81 @@ async fn test_permission_requires_permission_code() {
     assert_eq!(status, StatusCode::OK);
     let normal_token = body["data"]["access_token"].as_str().unwrap().to_string();
 
-    let (status, _) = auth_get(&db, "/system/permissions/tree", &normal_token).await;
+    let (status, _) = auth_get(&db, "/system/perms/tree", &normal_token).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_auth_version_invalidates_existing_access_and_refresh_tokens() {
+    let db = setup_test_db().await;
+    seed_test_data(&db).await;
+    common::seed_user(&db, 100, "versioned_user", "版本用户", None).await;
+
+    let state = common::build_test_app(db.clone()).await;
+    let router = ryframe_api::router::api_router(state.clone(), test_rate_limit_state());
+    let login_request = Request::builder()
+        .uri("/auth/login")
+        .method("POST")
+        .header("X-Tenant-Id", "system")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "username": "versioned_user",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, body) = common::send_request(router.clone(), login_request).await;
+    assert_eq!(status, StatusCode::OK);
+    let access_token = body["data"]["access_token"].as_str().unwrap().to_string();
+    let refresh_token = body["data"]["refresh_token"].as_str().unwrap().to_string();
+
+    ryframe_core::with_tenant_context(
+        ryframe_core::TenantContext {
+            tenant_id: "system".into(),
+            is_admin: false,
+        },
+        ryframe_api::handlers::auth_handler::invalidate_user_tokens(&state, 100),
+    )
+    .await
+    .unwrap();
+
+    let old_access_request = Request::builder()
+        .uri("/auth/me")
+        .method("GET")
+        .header("authorization", format!("Bearer {access_token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = common::send_request(router.clone(), old_access_request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let old_refresh_request = Request::builder()
+        .uri("/auth/refresh")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({ "refresh_token": refresh_token })).unwrap(),
+        ))
+        .unwrap();
+    let (status, _) = common::send_request(router.clone(), old_refresh_request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let relogin_request = Request::builder()
+        .uri("/auth/login")
+        .method("POST")
+        .header("X-Tenant-Id", "system")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "username": "versioned_user",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, _) = common::send_request(router, relogin_request).await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 // ==================== 用户 CRUD 全流程测试 ====================

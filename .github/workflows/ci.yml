@@ -17,6 +17,34 @@ env:
   CARGO_NET_RETRY: "5"
 
 jobs:
+  frontend:
+    name: Frontend Check & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ryframe-vue3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ryframe-vue3/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Production build
+        run: pnpm build
+
   # ============================================================
   # 代码质量门禁
   # ============================================================

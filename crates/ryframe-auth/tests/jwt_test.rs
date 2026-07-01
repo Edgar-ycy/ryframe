@@ -1,4 +1,4 @@
-use ryframe_auth::jwt::{decode_token, encode_access, parse_duration};
+use ryframe_auth::jwt::{TokenIdentity, decode_token, encode_access, parse_duration};
 use ryframe_config::AuthConfig;
 
 #[test]
@@ -19,13 +19,20 @@ fn test_encode_decode_roundtrip() {
     let roles = vec!["admin".to_string()];
     let perms = vec!["system:user:list".to_string()];
 
-    let (token, jti) =
-        encode_access(user_id, "tenant-a", 1, "admin", &roles, &perms, &config).unwrap();
+    let identity = TokenIdentity {
+        user_id,
+        tenant_id: "tenant-a",
+        tenant_session_version: 1,
+        user_auth_version: 1,
+        username: "admin",
+    };
+    let (token, jti) = encode_access(&identity, &roles, &perms, &config).unwrap();
     let claims = decode_token(&token, &config.jwt_secret).unwrap();
 
     assert_eq!(claims.sub, user_id.to_string());
     assert_eq!(claims.tenant_id, "tenant-a");
     assert_eq!(claims.tenant_session_version, 1);
+    assert_eq!(claims.user_auth_version, 1);
     assert_eq!(claims.username, "admin");
     assert_eq!(claims.roles, roles);
     assert_eq!(claims.perms, perms);

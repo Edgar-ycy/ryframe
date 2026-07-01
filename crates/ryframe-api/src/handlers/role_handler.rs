@@ -166,7 +166,7 @@ async fn update(
             dto.data_scope,
         )
         .await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success(result)))
 }
 
@@ -179,7 +179,7 @@ async fn remove(
 ) -> AppResult<Json<ApiResponse<()>>> {
     let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
     state.role_service.delete(&state.db, id).await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
@@ -202,7 +202,7 @@ async fn batch_remove(
 
     let affected_user_ids = affected_user_ids_by_roles(&state, &ids).await?;
     let count = state.role_service.delete_many(&state.db, &ids).await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg(format!(
         "成功删除 {} 个角色",
         count
@@ -286,7 +286,7 @@ async fn assign_permissions(
         .role_service
         .assign_permissions(&state.db, id, perm_ids)
         .await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
 }
 
@@ -325,7 +325,7 @@ async fn assign_data_scope(
         .role_service
         .assign_data_scope(&state.db, id, &dto.data_scope, dept_ids)
         .await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await;
+    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg(
         "数据权限设置成功",
     )))

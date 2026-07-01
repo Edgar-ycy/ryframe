@@ -232,6 +232,7 @@ pub async fn seed_user(
         phone: "13800000000".to_string(),
         avatar: None,
         status: user::Model::STATUS_NORMAL.to_string(),
+        auth_version: 1,
         dept_id,
         remark: None,
         login_ip: None,

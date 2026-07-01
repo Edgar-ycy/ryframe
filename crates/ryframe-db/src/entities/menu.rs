@@ -14,6 +14,9 @@ pub struct Model {
     pub parent_id: Option<i64>,
     /// Menu type: M directory, C page, F action.
     pub menu_type: String,
+    pub perm_id: Option<i64>,
+    /// Stable frontend page identifier. It must not depend on the database ID.
+    pub route_key: Option<String>,
     pub icon: Option<String>,
     pub sort: i32,
     pub visible: bool,
@@ -53,6 +56,19 @@ impl Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::permission::Entity",
+        from = "Column::PermId",
+        to = "super::permission::Column::Id"
+    )]
+    Permission,
+}
+
+impl Related<super::permission::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Permission.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

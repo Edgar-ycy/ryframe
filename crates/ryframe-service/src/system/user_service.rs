@@ -112,6 +112,30 @@ pub struct UpdateUserParams<'a> {
 }
 
 impl UserServiceImpl {
+    async fn validate_assignments(
+        &self,
+        db: &DatabaseConnection,
+        dept_id: Option<i64>,
+        role_ids: Option<&[i64]>,
+    ) -> AppResult<()> {
+        if let Some(dept_id) = dept_id
+            && self.dept_repo.find_by_id(db, dept_id).await?.is_none()
+        {
+            return Err(AppError::Validation("部门不存在或不属于当前租户".into()));
+        }
+        if let Some(role_ids) = role_ids {
+            let mut unique = role_ids.to_vec();
+            unique.sort_unstable();
+            unique.dedup();
+            for role_id in unique {
+                if self.role_repo.find_by_id(db, role_id).await?.is_none() {
+                    return Err(AppError::Validation("角色不存在或不属于当前租户".into()));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 批量补充 dept_name
     async fn fill_dept_names(&self, db: &DatabaseConnection, records: &mut [UserVo]) {
         for vo in records.iter_mut() {
@@ -409,6 +433,9 @@ impl UserServiceImpl {
             role_ids,
         } = params;
 
+        self.validate_assignments(db, dept_id, role_ids.as_deref())
+            .await?;
+
         // 检查用户名唯一
         if self
             .user_repo
@@ -432,6 +459,7 @@ impl UserServiceImpl {
             phone: phone.to_string(),
             avatar: None,
             status: status.to_string(),
+            auth_version: 1,
             dept_id,
             remark: None,
             login_ip: None,
@@ -643,6 +671,8 @@ impl UserServiceImpl {
             status,
             role_ids,
         } = params;
+        self.validate_assignments(db, dept_id, role_ids.as_deref())
+            .await?;
         let mut user = self
             .user_repo
             .find_by_id(db, id)

@@ -11,6 +11,11 @@ pub struct CreateMenuDto {
     /// Menu type: M directory, C page, F action.
     #[validate(length(min = 1, max = 1, message = "菜单类型不能为空"))]
     pub menu_type: String,
+    /// Permission ID. Buttons require it; directories/pages may also bind one.
+    pub perm_id: Option<String>,
+    /// Stable key used by the frontend page registry.
+    #[validate(length(max = 100, message = "页面标识长度不能超过100"))]
+    pub route_key: Option<String>,
     pub icon: Option<String>,
     pub sort: Option<i32>,
     pub visible: Option<bool>,
@@ -26,6 +31,9 @@ pub struct UpdateMenuDto {
     /// Menu type: M directory, C page, F action.
     #[validate(length(min = 1, max = 1, message = "菜单类型不能为空"))]
     pub menu_type: String,
+    pub perm_id: Option<String>,
+    #[validate(length(max = 100, message = "页面标识长度不能超过100"))]
+    pub route_key: Option<String>,
     pub icon: Option<String>,
     pub sort: Option<i32>,
     pub visible: Option<bool>,

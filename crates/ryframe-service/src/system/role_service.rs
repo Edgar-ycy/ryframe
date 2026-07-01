@@ -4,8 +4,11 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
-use ryframe_db::{PermissionRepository, RoleRepository, entities::role};
-use sea_orm::DatabaseConnection;
+use ryframe_db::{
+    PermissionRepository, RoleRepository,
+    entities::{dept, role},
+};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -212,23 +215,26 @@ impl RoleServiceImpl {
 
         self.ensure_not_admin_role(db, role_id).await?;
 
-        // 更新 data_scope 字段
-        self.role_repo
-            .update_data_scope(db, role_id, data_scope)
-            .await?;
-
-        // 如果是自定义权限，更新关联部门
-        if data_scope == "2" {
-            self.role_repo
-                .assign_data_scope_depts(db, role_id, &dept_ids)
-                .await?;
-        } else {
-            // 非自定义权限，清除旧的自定义部门关联
-            self.role_repo
-                .assign_data_scope_depts(db, role_id, &[])
-                .await?;
+        let mut unique_dept_ids = dept_ids;
+        unique_dept_ids.sort_unstable();
+        unique_dept_ids.dedup();
+        if data_scope == role::Model::DATA_SCOPE_CUSTOM {
+            let count = dept::Entity::find()
+                .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+                .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
+                .filter(dept::Column::Id.is_in(unique_dept_ids.iter().copied()))
+                .count(db)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if count != unique_dept_ids.len() as u64 {
+                return Err(AppError::Validation(
+                    "自定义数据权限包含不存在或跨租户的部门".into(),
+                ));
+            }
         }
 
-        Ok(())
+        self.role_repo
+            .replace_data_scope(db, role_id, data_scope, &unique_dept_ids)
+            .await
     }
 }

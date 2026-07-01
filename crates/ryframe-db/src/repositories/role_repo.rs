@@ -377,4 +377,60 @@ impl RoleRepository {
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
         Ok(())
     }
+
+    /// Atomically update the role scope and replace its custom departments.
+    pub async fn replace_data_scope(
+        &self,
+        db: &DatabaseConnection,
+        role_id: i64,
+        data_scope: &str,
+        dept_ids: &[i64],
+    ) -> AppResult<()> {
+        use crate::entities::role_dept;
+        use sea_orm::{ActiveModelTrait, ActiveValue, TransactionTrait};
+
+        let tenant_id = ryframe_core::current_tenant_id();
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        let model = role::Entity::find_by_id(role_id)
+            .filter(role::Column::TenantId.eq(&tenant_id))
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .one(&txn)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .ok_or_else(|| ryframe_common::AppError::NotFound("角色不存在".into()))?;
+
+        let mut active: role::ActiveModel = model.into();
+        active.data_scope = ActiveValue::Set(data_scope.to_string());
+        active.updated_at = ActiveValue::Set(chrono::Utc::now());
+        active
+            .update(&txn)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+
+        role_dept::Entity::delete_many()
+            .filter(role_dept::Column::RoleId.eq(role_id))
+            .filter(role_dept::Column::TenantId.eq(&tenant_id))
+            .exec(&txn)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        if data_scope == role::Model::DATA_SCOPE_CUSTOM {
+            for dept_id in dept_ids {
+                role_dept::ActiveModel {
+                    tenant_id: ActiveValue::Set(tenant_id.clone()),
+                    role_id: ActiveValue::Set(role_id),
+                    dept_id: ActiveValue::Set(*dept_id),
+                }
+                .insert(&txn)
+                .await
+                .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+            }
+        }
+        txn.commit()
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+        Ok(())
+    }
 }

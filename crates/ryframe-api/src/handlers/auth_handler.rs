@@ -1,4 +1,4 @@
-﻿use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     Extension, Json,
@@ -11,7 +11,7 @@ use ryframe_config::AppConfig;
 use ryframe_core::{
     RedisClient, TenantContext, TenantRateLimitCache, TokenBlacklist, with_tenant_context,
 };
-use ryframe_db::entities::password_reset_request;
+use ryframe_db::entities::{password_reset_request, user};
 use ryframe_middleware::RateLimiter;
 use ryframe_service::{
     AuthServiceImpl, UserInfo,
@@ -22,7 +22,9 @@ use ryframe_service::{
         RoleServiceImpl, TenantServiceImpl, UserServiceImpl,
     },
 };
-use sea_orm::{DatabaseConnection, EntityTrait};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, ExprTrait, QueryFilter, sea_query::Expr,
+};
 use validator::Validate;
 
 use crate::dto::auth_dto::{
@@ -238,26 +240,31 @@ async fn check_force_logout(state: &AppState, refresh_token: &str) -> AppResult<
     Ok(())
 }
 
-fn force_logout_ttl_seconds(state: &AppState) -> u64 {
-    ryframe_auth::jwt::parse_duration(&state.config.auth.refresh_token_expire)
-        .unwrap_or(7 * 24 * 3600) as u64
+pub async fn invalidate_user_tokens(state: &AppState, user_id: i64) -> AppResult<()> {
+    let result = user::Entity::update_many()
+        .col_expr(
+            user::Column::AuthVersion,
+            Expr::col(user::Column::AuthVersion).add(1),
+        )
+        .filter(user::Column::Id.eq(user_id))
+        .filter(user::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+        .exec(&state.db)
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    if result.rows_affected == 0 {
+        return Err(AppError::NotFound("用户不存在".into()));
+    }
+    Ok(())
 }
 
-pub async fn invalidate_user_tokens(state: &AppState, user_id: i64) {
-    let key = format!("force_logout:user:{}", user_id);
-    state
-        .token_blacklist
-        .blacklist(&key, force_logout_ttl_seconds(state))
-        .await;
-}
-
-pub async fn invalidate_users_tokens(state: &AppState, user_ids: &[i64]) {
+pub async fn invalidate_users_tokens(state: &AppState, user_ids: &[i64]) -> AppResult<()> {
     let mut ids = user_ids.to_vec();
     ids.sort_unstable();
     ids.dedup();
     for user_id in ids {
-        invalidate_user_tokens(state, user_id).await;
+        invalidate_user_tokens(state, user_id).await?;
     }
+    Ok(())
 }
 
 /// 用户登录
@@ -464,21 +471,27 @@ pub async fn complete_password_reset(
         .map_err(|error| AppError::Database(error.to_string()))?
         .ok_or_else(|| AppError::NotFound("密码重置请求不存在".into()))?
         .tenant_id;
-    let user_id = with_tenant_context(
+    with_tenant_context(
         TenantContext {
             tenant_id,
             is_admin: false,
         },
-        state.user_service.complete_password_reset(
-            &state.db,
-            request_id,
-            &req.token,
-            &req.new_password,
-            state.config.auth.enable_password_complexity,
-        ),
+        async {
+            let user_id = state
+                .user_service
+                .complete_password_reset(
+                    &state.db,
+                    request_id,
+                    &req.token,
+                    &req.new_password,
+                    state.config.auth.enable_password_complexity,
+                )
+                .await?;
+            invalidate_user_tokens(&state, user_id).await?;
+            Ok::<(), AppError>(())
+        },
     )
     .await?;
-    invalidate_user_tokens(&state, user_id).await;
     Ok(Json(ApiResponse::success_no_data_with_msg(
         "password reset completed",
     )))

@@ -1,14 +1,18 @@
-﻿mod common;
+mod common;
 
 use chrono::Utc;
 use ryframe_core::{TenantContext, repository::Repository, with_tenant_context};
-use ryframe_db::{MenuRepository, entities::menu};
+use ryframe_db::{
+    MenuRepository, PermissionRepository,
+    entities::{menu, permission},
+};
 
 fn make_menu(
     id: i64,
     name: &str,
     parent_id: Option<i64>,
     menu_type: &str,
+    perm_id: Option<i64>,
     status: &str,
     sort: i32,
 ) -> menu::Model {
@@ -19,6 +23,8 @@ fn make_menu(
         name: name.into(),
         parent_id,
         menu_type: menu_type.into(),
+        perm_id,
+        route_key: Some(format!("test.menu.{id}")),
         icon: None,
         sort,
         visible: true,
@@ -40,22 +46,65 @@ async fn find_tree_by_permission_codes_includes_matching_menus_and_ancestors() {
         async {
             let db = common::setup_test_db().await;
             let repo = MenuRepository;
+            PermissionRepository
+                .insert(
+                    &db,
+                    permission::Model {
+                        id: 100,
+                        tenant_id: "system".into(),
+                        name: "用户查询".into(),
+                        code: "system:user:list".into(),
+                        parent_id: None,
+                        perm_type: "api".into(),
+                        icon: None,
+                        sort: 1,
+                        status: "1".into(),
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
+                    },
+                )
+                .await
+                .unwrap();
 
             repo.insert(
                 &db,
-                make_menu(1, "系统管理", None, menu::Model::MENU_TYPE_DIR, "1", 1),
+                make_menu(
+                    1,
+                    "系统管理",
+                    None,
+                    menu::Model::MENU_TYPE_DIR,
+                    None,
+                    "1",
+                    1,
+                ),
             )
             .await
             .unwrap();
             repo.insert(
                 &db,
-                make_menu(4, "用户管理", Some(1), menu::Model::MENU_TYPE_MENU, "1", 1),
+                make_menu(
+                    4,
+                    "用户管理",
+                    Some(1),
+                    menu::Model::MENU_TYPE_MENU,
+                    Some(100),
+                    "1",
+                    1,
+                ),
             )
             .await
             .unwrap();
             repo.insert(
                 &db,
-                make_menu(5, "角色管理", Some(1), menu::Model::MENU_TYPE_MENU, "1", 2),
+                make_menu(
+                    5,
+                    "角色管理",
+                    Some(1),
+                    menu::Model::MENU_TYPE_MENU,
+                    None,
+                    "1",
+                    2,
+                ),
             )
             .await
             .unwrap();
@@ -87,13 +136,29 @@ async fn find_by_permission_codes_handles_empty_and_wildcard_permissions() {
 
             repo.insert(
                 &db,
-                make_menu(6, "菜单管理", None, menu::Model::MENU_TYPE_MENU, "1", 1),
+                make_menu(
+                    6,
+                    "菜单管理",
+                    None,
+                    menu::Model::MENU_TYPE_MENU,
+                    None,
+                    "1",
+                    1,
+                ),
             )
             .await
             .unwrap();
             repo.insert(
                 &db,
-                make_menu(7, "停用菜单", None, menu::Model::MENU_TYPE_MENU, "0", 2),
+                make_menu(
+                    7,
+                    "停用菜单",
+                    None,
+                    menu::Model::MENU_TYPE_MENU,
+                    None,
+                    "0",
+                    2,
+                ),
             )
             .await
             .unwrap();

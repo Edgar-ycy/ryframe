@@ -136,7 +136,7 @@ export interface UserInfo {
 前端通过用户菜单树生成动态路由：
 
 ```http
-GET /system/menus/user-tree
+GET /system/user/get-menus
 ```
 
 菜单节点类型建议：
@@ -206,13 +206,13 @@ export interface MenuTreeNode {
 | `auth.ts` | `/auth` | 登录、刷新 token、当前用户、验证码。 |
 | `user.ts` | `/system/users` | 用户管理。 |
 | `role.ts` | `/system/roles` | 角色管理、角色授权。 |
-| `menu.ts` | `/system/menus` | 菜单管理和用户菜单树。 |
+| `menu.ts` | `/system/menus` | 菜单管理。用户菜单树通过 `/system/user/get-menus` 获取。 |
 | `dept.ts` | `/system/depts` | 部门管理。 |
 | `post.ts` | `/system/posts` | 岗位管理。 |
 | `config.ts` | `/system/configs` | 参数配置。 |
 | `dict.ts` | `/system/dicts` | 字典类型和字典数据。 |
 | `notice.ts` | `/system/notices` | 通知公告。 |
-| `permission.ts` | `/system/permissions` | 权限管理。 |
+| `permission.ts` | `/system/perms` | 权限管理。 |
 | `monitor.ts` | `/monitor` | 服务、缓存、数据库连接池和指标。 |
 | `tools.ts` | `/tools` | 代码生成等工具接口。 |
 | `common.ts` | `/common` | 上传、下载、通用枚举等接口。 |

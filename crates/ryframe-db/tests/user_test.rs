@@ -13,6 +13,7 @@ fn make_user(status: &str) -> user::Model {
         phone: "13800000000".to_string(),
         avatar: None,
         status: status.to_string(),
+        auth_version: 1,
         dept_id: None,
         remark: None,
         login_ip: None,

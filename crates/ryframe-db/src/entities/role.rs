@@ -43,6 +43,8 @@ pub enum Relation {
     UserRole,
     #[sea_orm(has_many = "super::role_permission::Entity")]
     RolePermission,
+    #[sea_orm(has_many = "super::role_dept::Entity")]
+    RoleDept,
 }
 
 impl Related<super::user_role::Entity> for Entity {
@@ -54,6 +56,12 @@ impl Related<super::user_role::Entity> for Entity {
 impl Related<super::role_permission::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::RolePermission.def()
+    }
+}
+
+impl Related<super::role_dept::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::RoleDept.def()
     }
 }
 

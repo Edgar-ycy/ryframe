@@ -93,16 +93,34 @@ impl UserRepository {
             }
             DataScope::DeptAndChildren => {
                 let dept_id = scope_ctx.dept_id?;
+                let dept_id_text = dept_id.to_string();
+                let tenant_id = ryframe_core::current_tenant_id();
+                let descendant_condition = Condition::any()
+                    .add(crate::entities::dept::Column::Ancestors.eq(&dept_id_text))
+                    .add(
+                        crate::entities::dept::Column::Ancestors
+                            .like(format!("{},%", dept_id_text)),
+                    )
+                    .add(
+                        crate::entities::dept::Column::Ancestors
+                            .like(format!("%,{},%", dept_id_text)),
+                    )
+                    .add(
+                        crate::entities::dept::Column::Ancestors
+                            .like(format!("%,{}", dept_id_text)),
+                    );
                 select = select.filter(
                     Condition::any().add(user::Column::DeptId.eq(dept_id)).add(
                         user::Column::DeptId.in_subquery(
                             sea_orm::sea_query::Query::select()
                                 .column(crate::entities::dept::Column::Id)
                                 .from(crate::entities::dept::Entity)
+                                .and_where(crate::entities::dept::Column::TenantId.eq(tenant_id))
                                 .and_where(
-                                    crate::entities::dept::Column::Ancestors
-                                        .like(format!("%{}%", dept_id)),
+                                    crate::entities::dept::Column::DelFlag
+                                        .eq(crate::entities::dept::Model::DEL_FLAG_NORMAL),
                                 )
+                                .cond_where(descendant_condition)
                                 .take(),
                         ),
                     ),

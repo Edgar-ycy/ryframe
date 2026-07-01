@@ -21,10 +21,13 @@ pub fn has_permission(user_perms: &[String], required: &str) -> bool {
 
     user_perms
         .iter()
-        .any(|p| p == required || p == "admin" || wildcard_match(p, required))
+        .any(|p| p == required || p == "admin" || p == "*:*:*" || wildcard_match(p, required))
 }
 
 fn wildcard_match(pattern: &str, required: &str) -> bool {
+    if pattern == "*:*:*" {
+        return true;
+    }
     let pattern_parts: Vec<&str> = pattern.split(':').collect();
     let required_parts: Vec<&str> = required.split(':').collect();
 

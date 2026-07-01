@@ -868,7 +868,7 @@ GET /api/v1/system/roles/export
 
 ### 5.6 权限管理
 
-**基础路径**: `/api/v1/system/permissions` | **需要认证**
+**基础路径**: `/api/v1/system/perms` | **需要认证**
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -1581,6 +1581,8 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
 ### 8.2 菜单树接口
 
 `GET /api/v1/system/menus/tree` 返回完整的菜单结构树。后端不再返回 `path`、`component`、`perms`、`is_frame`、`is_cache` 等运行时路由字段；前端通过 `ryframe-vue3/src/router/pageRegistry.ts` 按菜单 ID 解析页面路径和组件。
+
+前端动态侧边栏当前调用 `GET /api/v1/system/user/get-menus`，返回值与菜单树接口一致，用于登录后的用户菜单渲染。
 
 ```json
 {

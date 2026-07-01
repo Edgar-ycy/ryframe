@@ -82,10 +82,9 @@ impl From<tenant::Model> for TenantVo {
 }
 
 fn platform_admin(claims: &Claims) -> AppResult<()> {
-    if claims.tenant_id != "system" || !claims.perms.iter().any(|permission| permission == "*:*:*")
-    {
+    if claims.tenant_id != "system" {
         return Err(AppError::Authorization(
-            "仅 system 超级管理员可管理租户".into(),
+            "only system tenant can manage tenants".into(),
         ));
     }
     Ok(())
@@ -93,12 +92,12 @@ fn platform_admin(claims: &Claims) -> AppResult<()> {
 
 pub fn tenant_router(state: AppState) -> Router {
     Router::new()
-        .route("/", perm_route(get(list), "tenant:manage"))
-        .route("/", perm_route(post(create), "tenant:manage"))
-        .route("/{tenant_id}", perm_route(put(update), "tenant:manage"))
+        .route("/", perm_route(get(list), "tenant:list"))
+        .route("/", perm_route(post(create), "tenant:add"))
+        .route("/{tenant_id}", perm_route(put(update), "tenant:edit"))
         .route(
             "/{tenant_id}/status",
-            perm_route(put(update_status), "tenant:manage"),
+            perm_route(put(update_status), "tenant:status"),
         )
         .with_state(state)
 }

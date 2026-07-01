@@ -21,7 +21,17 @@ async fn menu_service_create_only_persists_structure_fields() {
     };
 
     let menu = svc
-        .create(&db, "系统管理", None, "M", Some("Setting"), 1, true)
+        .create(
+            &db,
+            "系统管理",
+            None,
+            "M",
+            None,
+            Some("test.system"),
+            Some("Setting"),
+            1,
+            true,
+        )
         .await
         .unwrap();
 

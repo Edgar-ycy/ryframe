@@ -16,6 +16,7 @@ fn test_has_permission() {
     // 超管
     let perms = vec!["*:*:*".to_string()];
     assert!(has_permission(&perms, "anything:at:all"));
+    assert!(has_permission(&perms, "tenant:manage"));
 
     // 空权限
     assert!(has_permission(&Vec::<String>::new(), ""));

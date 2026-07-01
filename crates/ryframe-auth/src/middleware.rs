@@ -9,8 +9,8 @@ use axum::{
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
 use ryframe_core::{TenantContext, TokenBlacklist, with_tenant_context};
-use ryframe_db::TenantRepository;
-use sea_orm::DatabaseConnection;
+use ryframe_db::{TenantRepository, entities::user};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::{
     jwt::{Claims, decode_token},
@@ -74,6 +74,21 @@ pub async fn auth_middleware(
         .map_err(|error| error.into_response())?;
     if claims.tenant_session_version != tenant.session_version {
         return Err(AppError::Authentication("租户会话已失效，请重新登录".into()).into_response());
+    }
+
+    let user_id = claims
+        .sub
+        .parse::<i64>()
+        .map_err(|_| AppError::Authentication("令牌中的用户ID无效".into()).into_response())?;
+    let current_user = user::Entity::find_by_id(user_id)
+        .filter(user::Column::TenantId.eq(&claims.tenant_id))
+        .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+        .one(&auth_state.db)
+        .await
+        .map_err(|error| AppError::Database(error.to_string()).into_response())?
+        .ok_or_else(|| AppError::Authentication("用户不存在".into()).into_response())?;
+    if current_user.auth_version != claims.user_auth_version {
+        return Err(AppError::Authentication("用户权限已变更，请重新登录".into()).into_response());
     }
 
     // Replace the unauthenticated, header-derived context with the tenant

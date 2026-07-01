@@ -34,6 +34,23 @@ impl Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(has_many = "super::user::Entity")]
+    User,
+    #[sea_orm(has_many = "super::role_dept::Entity")]
+    RoleDept,
+}
+
+impl Related<super::user::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::User.def()
+    }
+}
+
+impl Related<super::role_dept::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::RoleDept.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

@@ -251,6 +251,11 @@ impl PermissionServiceImpl {
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
+        if self.perm_repo.is_referenced(db, id).await? {
+            return Err(AppError::Conflict(
+                "权限仍被角色或菜单引用，不能删除".into(),
+            ));
+        }
         self.perm_repo.delete(db, id).await
     }
 

@@ -12,8 +12,9 @@ use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
+use crate::extractors::CurrentUser;
 use crate::handler_utils::parse_optional_i64;
-use crate::{detail_body, list_query, remove_body};
+use crate::{list_query, remove_body};
 
 list_query!(pub DeptListQuery {
     name: String,
@@ -38,10 +39,13 @@ pub fn dept_router(state: AppState) -> Router {
 /// 部门树查询
 #[utoipa::path(get, path = "/api/v1/system/depts/tree", tag = "部门管理",
     responses((status = 200, description = "部门树")), security(("bearer" = [])))]
-async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
+async fn tree(
+    State(state): State<AppState>,
+    current_user: CurrentUser,
+) -> AppResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
     state
         .dept_service
-        .find_tree(&state.db)
+        .find_tree_with_data_scope(&state.db, &current_user.to_data_scope_context())
         .await
         .map(|v| Json(ApiResponse::success(v)))
 }
@@ -52,11 +56,12 @@ async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<D
     security(("bearer" = [])))]
 async fn list_page(
     State(state): State<AppState>,
+    current_user: CurrentUser,
     Query(query): Query<DeptListQuery>,
 ) -> AppResult<Json<ApiPageResponse<DeptVo>>> {
     state
         .dept_service
-        .find_by_page_filtered(
+        .find_by_page_filtered_with_data_scope(
             &state.db,
             PageQuery {
                 page: query.page,
@@ -64,6 +69,7 @@ async fn list_page(
             },
             query.name.as_deref(),
             query.status.as_deref(),
+            &current_user.to_data_scope_context(),
         )
         .await
         .map(|p| Json(p.to_page_response("查询成功")))
@@ -75,11 +81,17 @@ async fn list_page(
     security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
+    current_user: CurrentUser,
     Query(query): Query<DeptListQuery>,
 ) -> AppResult<Json<ApiResponse<Vec<DeptVo>>>> {
     state
         .dept_service
-        .find_filtered(&state.db, query.name.as_deref(), query.status.as_deref())
+        .find_filtered_with_data_scope(
+            &state.db,
+            query.name.as_deref(),
+            query.status.as_deref(),
+            &current_user.to_data_scope_context(),
+        )
         .await
         .map(|v| Json(ApiResponse::success(v)))
 }
@@ -132,9 +144,15 @@ async fn update(
     security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
+    current_user: CurrentUser,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<DeptVo>>> {
-    detail_body!(state, id, dept_service, DeptVo, "部门")
+    state
+        .dept_service
+        .find_by_id_with_data_scope(&state.db, id, &current_user.to_data_scope_context())
+        .await?
+        .ok_or_else(|| ryframe_common::AppError::NotFound("部门不存在".into()))
+        .map(|value| Json(ApiResponse::success(value)))
 }
 
 /// 删除部门

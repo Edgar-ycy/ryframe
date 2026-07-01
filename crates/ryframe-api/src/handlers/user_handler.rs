@@ -260,7 +260,7 @@ async fn update(
             },
         )
         .await?;
-    super::auth_handler::invalidate_user_tokens(&state, id).await;
+    super::auth_handler::invalidate_user_tokens(&state, id).await?;
     Ok(Json(ApiResponse::success(result)))
 }
 
@@ -278,7 +278,7 @@ async fn remove(
     ensure_not_self_operation(&current_user, id, "删除")?;
     ensure_not_super_admin_target(&state, id).await?;
     state.user_service.delete(&state.db, id).await?;
-    super::auth_handler::invalidate_user_tokens(&state, id).await;
+    super::auth_handler::invalidate_user_tokens(&state, id).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
@@ -307,7 +307,7 @@ async fn batch_remove(
     }
 
     let count = state.user_service.delete_many(&state.db, &ids).await?;
-    super::auth_handler::invalidate_users_tokens(&state, &ids).await;
+    super::auth_handler::invalidate_users_tokens(&state, &ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg(format!(
         "成功删除 {} 个用户",
         count
@@ -339,7 +339,7 @@ async fn change_status(
         .user_service
         .change_status(&state.db, user_id, dto.status)
         .await?;
-    super::auth_handler::invalidate_user_tokens(&state, user_id).await;
+    super::auth_handler::invalidate_user_tokens(&state, user_id).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("状态修改成功")))
 }
 
