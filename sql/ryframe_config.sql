@@ -73,7 +73,14 @@ CREATE TABLE IF NOT EXISTS `sys_dept` (
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    KEY `idx_tenant_id` (`tenant_id`)
+    KEY `idx_tenant_id` (`tenant_id`),
+    KEY `idx_parent_id` (`parent_id`),
+    CONSTRAINT `fk_sys_dept_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_dept_parent`
+        FOREIGN KEY (`parent_id`) REFERENCES `sys_dept` (`id`)
+        ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='部门表';
 
 -- ============================================================
@@ -100,7 +107,13 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
     KEY `idx_tenant_id` (`tenant_id`),
-    KEY `idx_dept_id` (`dept_id`)
+    KEY `idx_dept_id` (`dept_id`),
+    CONSTRAINT `fk_sys_user_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_user_dept`
+        FOREIGN KEY (`dept_id`) REFERENCES `sys_dept` (`id`)
+        ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户表';
 
 -- ============================================================
@@ -124,7 +137,16 @@ CREATE TABLE IF NOT EXISTS `password_reset_requests` (
     KEY `idx_target_user_id` (`target_user_id`),
     KEY `idx_requested_by` (`requested_by`),
     KEY `idx_status` (`status`),
-    KEY `idx_expires_at` (`expires_at`)
+    KEY `idx_expires_at` (`expires_at`),
+    CONSTRAINT `fk_password_reset_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_password_reset_target_user`
+        FOREIGN KEY (`target_user_id`) REFERENCES `sys_user` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT `fk_password_reset_requested_by`
+        FOREIGN KEY (`requested_by`) REFERENCES `sys_user` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='密码重置请求表';
 
 -- ============================================================
@@ -144,7 +166,10 @@ CREATE TABLE IF NOT EXISTS `sys_role` (
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
-    KEY `idx_tenant_id` (`tenant_id`)
+    KEY `idx_tenant_id` (`tenant_id`),
+    CONSTRAINT `fk_sys_role_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色表';
 
 -- ============================================================
@@ -166,7 +191,13 @@ CREATE TABLE IF NOT EXISTS `sys_permission` (
     UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_parent_id` (`parent_id`),
-    KEY `idx_perm_code` (`code`)
+    KEY `idx_perm_code` (`code`),
+    CONSTRAINT `fk_sys_permission_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_permission_parent`
+        FOREIGN KEY (`parent_id`) REFERENCES `sys_permission` (`id`)
+        ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='权限表';
 
 -- ============================================================
@@ -192,8 +223,18 @@ CREATE TABLE IF NOT EXISTS `sys_menu` (
     PRIMARY KEY (`id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_parent_id` (`parent_id`),
+    KEY `idx_perm_id` (`perm_id`),
     KEY `idx_menu_tenant_perm` (`tenant_id`, `perm_id`),
-    KEY `idx_menu_tenant_route` (`tenant_id`, `route_key`)
+    KEY `idx_menu_tenant_route` (`tenant_id`, `route_key`),
+    CONSTRAINT `fk_sys_menu_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_menu_parent`
+        FOREIGN KEY (`parent_id`) REFERENCES `sys_menu` (`id`)
+        ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT `fk_sys_menu_permission`
+        FOREIGN KEY (`perm_id`) REFERENCES `sys_permission` (`id`)
+        ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='菜单表(含目录/菜单/按钮)';
 
 -- ============================================================
@@ -212,7 +253,10 @@ CREATE TABLE IF NOT EXISTS `sys_post` (
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
-    KEY `idx_tenant_id` (`tenant_id`)
+    KEY `idx_tenant_id` (`tenant_id`),
+    CONSTRAINT `fk_sys_post_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='岗位表';
 
 -- ============================================================
@@ -230,7 +274,10 @@ CREATE TABLE IF NOT EXISTS `sys_config` (
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_tenant_key` (`tenant_id`, `key`),
-    KEY `idx_tenant_id` (`tenant_id`)
+    KEY `idx_tenant_id` (`tenant_id`),
+    CONSTRAINT `fk_sys_config_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='参数配置表';
 
 -- ============================================================
@@ -248,7 +295,10 @@ CREATE TABLE IF NOT EXISTS `sys_dict_type` (
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
-    KEY `idx_tenant_id` (`tenant_id`)
+    KEY `idx_tenant_id` (`tenant_id`),
+    CONSTRAINT `fk_sys_dict_type_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='字典类型表';
 
 -- ============================================================
@@ -269,7 +319,14 @@ CREATE TABLE IF NOT EXISTS `sys_dict_data` (
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_tenant_id` (`tenant_id`),
-    KEY `idx_type_code` (`type_code`)
+    KEY `idx_type_code` (`type_code`),
+    KEY `idx_dict_data_tenant_type` (`tenant_id`, `type_code`),
+    CONSTRAINT `fk_sys_dict_data_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_dict_data_type`
+        FOREIGN KEY (`tenant_id`, `type_code`) REFERENCES `sys_dict_type` (`tenant_id`, `code`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='字典数据表';
 
 -- ============================================================
@@ -287,7 +344,14 @@ CREATE TABLE IF NOT EXISTS `sys_notice` (
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP   COMMENT '创建时间',
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    KEY `idx_tenant_id` (`tenant_id`)
+    KEY `idx_tenant_id` (`tenant_id`),
+    KEY `idx_created_by` (`created_by`),
+    CONSTRAINT `fk_sys_notice_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_notice_created_by`
+        FOREIGN KEY (`created_by`) REFERENCES `sys_user` (`id`)
+        ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='通知公告表';
 
 -- ============================================================
@@ -313,7 +377,10 @@ CREATE TABLE IF NOT EXISTS `sys_oper_log` (
     PRIMARY KEY (`id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_oper_time` (`oper_time`),
-    KEY `idx_business_type` (`business_type`)
+    KEY `idx_business_type` (`business_type`),
+    CONSTRAINT `fk_sys_oper_log_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='操作日志表';
 
 -- ============================================================
@@ -333,7 +400,10 @@ CREATE TABLE IF NOT EXISTS `sys_login_info` (
     PRIMARY KEY (`id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_login_time` (`login_time`),
-    KEY `idx_user_name` (`user_name`)
+    KEY `idx_user_name` (`user_name`),
+    CONSTRAINT `fk_sys_login_info_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='登录信息表';
 
 -- ============================================================
@@ -344,7 +414,17 @@ CREATE TABLE IF NOT EXISTS `sys_user_role` (
     `user_id`  BIGINT NOT NULL  COMMENT '用户ID',
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     PRIMARY KEY (`tenant_id`, `user_id`, `role_id`),
-    KEY `idx_role_id` (`role_id`)
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_role_id` (`role_id`),
+    CONSTRAINT `fk_sys_user_role_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_user_role_user`
+        FOREIGN KEY (`user_id`) REFERENCES `sys_user` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT `fk_sys_user_role_role`
+        FOREIGN KEY (`role_id`) REFERENCES `sys_role` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户-角色关联表';
 
 -- ============================================================
@@ -355,7 +435,17 @@ CREATE TABLE IF NOT EXISTS `sys_role_permission` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     `perm_id`  BIGINT NOT NULL  COMMENT '权限ID',
     PRIMARY KEY (`tenant_id`, `role_id`, `perm_id`),
-    KEY `idx_perm_id` (`perm_id`)
+    KEY `idx_role_id` (`role_id`),
+    KEY `idx_perm_id` (`perm_id`),
+    CONSTRAINT `fk_sys_role_permission_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_role_permission_role`
+        FOREIGN KEY (`role_id`) REFERENCES `sys_role` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT `fk_sys_role_permission_permission`
+        FOREIGN KEY (`perm_id`) REFERENCES `sys_permission` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-权限关联表';
 
 -- 16. 角色-部门关联表 (sys_role_dept) - 自定义数据权限
@@ -365,7 +455,17 @@ CREATE TABLE IF NOT EXISTS `sys_role_dept` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     `dept_id`  BIGINT NOT NULL  COMMENT '部门ID',
     PRIMARY KEY (`tenant_id`, `role_id`, `dept_id`),
-    KEY `idx_dept_id` (`dept_id`)
+    KEY `idx_role_id` (`role_id`),
+    KEY `idx_dept_id` (`dept_id`),
+    CONSTRAINT `fk_sys_role_dept_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT `fk_sys_role_dept_role`
+        FOREIGN KEY (`role_id`) REFERENCES `sys_role` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT `fk_sys_role_dept_dept`
+        FOREIGN KEY (`dept_id`) REFERENCES `sys_dept` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-部门关联表(自定义数据权限)';
 
 -- ============================================================
@@ -391,7 +491,10 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_bucket` (`bucket`),
     KEY `idx_upload_by` (`upload_by`),
-    KEY `idx_del_flag` (`del_flag`)
+    KEY `idx_del_flag` (`del_flag`),
+    CONSTRAINT `fk_sys_file_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='文件元数据表';
 
 -- ============================================================
