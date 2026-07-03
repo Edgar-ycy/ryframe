@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `avatar`         VARCHAR(255)          DEFAULT NULL     COMMENT '头像URL',
     `status`         VARCHAR(32)  NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定 pending_activation待激活 must_reset_password需改密',
     `auth_version`   INT          NOT NULL DEFAULT 1        COMMENT '用户认证版本，权限变更时递增',
-    `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID',
+    `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID(软删除场景由代码校验合法性)',
     `remark`         VARCHAR(512)          DEFAULT NULL     COMMENT '备注',
     `login_ip`       VARCHAR(128)          DEFAULT NULL     COMMENT '最后登录IP',
     `login_date`     DATETIME              DEFAULT NULL     COMMENT '最后登录时间',
@@ -110,10 +110,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     KEY `idx_dept_id` (`dept_id`),
     CONSTRAINT `fk_sys_user_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
-        ON UPDATE CASCADE ON DELETE RESTRICT,
-    CONSTRAINT `fk_sys_user_dept`
-        FOREIGN KEY (`dept_id`) REFERENCES `sys_dept` (`id`)
-        ON UPDATE CASCADE ON DELETE SET NULL
+        ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户表';
 
 -- ============================================================
@@ -208,7 +205,7 @@ CREATE TABLE IF NOT EXISTS `sys_menu` (
     `id`          BIGINT       NOT NULL                    COMMENT '菜单ID',
     `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '菜单名称',
-    `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID',
+    `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID(由代码校验父子关系合法性)',
     `menu_type`   CHAR(1)      NOT NULL DEFAULT ''         COMMENT '菜单类型: M目录 C菜单 F按钮',
     `perm_id`     BIGINT                DEFAULT NULL       COMMENT '关联sys_permission权限ID',
     `route_key`   VARCHAR(100)          DEFAULT NULL       COMMENT '前端稳定页面标识',
@@ -229,9 +226,6 @@ CREATE TABLE IF NOT EXISTS `sys_menu` (
     CONSTRAINT `fk_sys_menu_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT,
-    CONSTRAINT `fk_sys_menu_parent`
-        FOREIGN KEY (`parent_id`) REFERENCES `sys_menu` (`id`)
-        ON UPDATE CASCADE ON DELETE SET NULL,
     CONSTRAINT `fk_sys_menu_permission`
         FOREIGN KEY (`perm_id`) REFERENCES `sys_permission` (`id`)
         ON UPDATE CASCADE ON DELETE SET NULL
@@ -505,7 +499,7 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
 --   sys_role:       1~100
 --   sys_user:       1~100
 --   sys_permission: 1~100
---   sys_menu:       1~100
+--   sys_menu:       1~1100
 --   sys_post:       1~100
 --   sys_config:     1~100
 --   sys_dict_type:  1~100
@@ -680,7 +674,72 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `rout
     (19, '用户新增', 4, 'F', 8,  NULL, NULL, 2, 1, '1'),
     (20, '用户修改', 4, 'F', 9,  NULL, NULL, 3, 1, '1'),
     (21, '用户删除', 4, 'F', 10, NULL, NULL, 4, 1, '1'),
-    (22, '用户导出', 4, 'F', 11, NULL, NULL, 5, 1, '1');
+    (22, '用户导出', 4, 'F', 11, NULL, NULL, 5, 1, '1'),
+    -- 角色管理按钮
+    (1024, '角色查询', 5, 'F', 24, NULL, NULL, 1, 1, '1'),
+    (1025, '角色新增', 5, 'F', 25, NULL, NULL, 2, 1, '1'),
+    (1026, '角色修改', 5, 'F', 26, NULL, NULL, 3, 1, '1'),
+    (1027, '角色删除', 5, 'F', 27, NULL, NULL, 4, 1, '1'),
+    (1028, '角色导出', 5, 'F', 28, NULL, NULL, 5, 1, '1'),
+    -- 菜单管理按钮
+    (1029, '菜单查询', 6, 'F', 29, NULL, NULL, 1, 1, '1'),
+    (1030, '菜单新增', 6, 'F', 30, NULL, NULL, 2, 1, '1'),
+    (1031, '菜单修改', 6, 'F', 31, NULL, NULL, 3, 1, '1'),
+    (1032, '菜单删除', 6, 'F', 32, NULL, NULL, 4, 1, '1'),
+    -- 权限管理按钮
+    (1033, '权限查询', 25, 'F', 33, NULL, NULL, 1, 1, '1'),
+    (1072, '权限新增', 25, 'F', 72, NULL, NULL, 2, 1, '1'),
+    (1073, '权限修改', 25, 'F', 73, NULL, NULL, 3, 1, '1'),
+    (1074, '权限删除', 25, 'F', 74, NULL, NULL, 4, 1, '1'),
+    (1075, '权限同步', 25, 'F', 75, NULL, NULL, 5, 1, '1'),
+    -- 部门管理按钮
+    (1034, '部门查询', 7, 'F', 34, NULL, NULL, 1, 1, '1'),
+    (1035, '部门新增', 7, 'F', 35, NULL, NULL, 2, 1, '1'),
+    (1036, '部门修改', 7, 'F', 36, NULL, NULL, 3, 1, '1'),
+    (1037, '部门删除', 7, 'F', 37, NULL, NULL, 4, 1, '1'),
+    -- 岗位管理按钮
+    (1038, '岗位查询', 8, 'F', 38, NULL, NULL, 1, 1, '1'),
+    (1039, '岗位新增', 8, 'F', 39, NULL, NULL, 2, 1, '1'),
+    (1040, '岗位修改', 8, 'F', 40, NULL, NULL, 3, 1, '1'),
+    (1041, '岗位删除', 8, 'F', 41, NULL, NULL, 4, 1, '1'),
+    (1042, '岗位导出', 8, 'F', 42, NULL, NULL, 5, 1, '1'),
+    -- 字典管理按钮
+    (1048, '字典查询', 9, 'F', 48, NULL, NULL, 1, 1, '1'),
+    (1049, '字典新增', 9, 'F', 49, NULL, NULL, 2, 1, '1'),
+    (1050, '字典修改', 9, 'F', 50, NULL, NULL, 3, 1, '1'),
+    (1051, '字典删除', 9, 'F', 51, NULL, NULL, 4, 1, '1'),
+    (1052, '字典导出', 9, 'F', 52, NULL, NULL, 5, 1, '1'),
+    -- 参数设置按钮
+    (1043, '参数查询', 10, 'F', 43, NULL, NULL, 1, 1, '1'),
+    (1044, '参数新增', 10, 'F', 44, NULL, NULL, 2, 1, '1'),
+    (1045, '参数修改', 10, 'F', 45, NULL, NULL, 3, 1, '1'),
+    (1046, '参数删除', 10, 'F', 46, NULL, NULL, 4, 1, '1'),
+    (1047, '参数导出', 10, 'F', 47, NULL, NULL, 5, 1, '1'),
+    -- 通知公告按钮
+    (1053, '通知查询', 11, 'F', 53, NULL, NULL, 1, 1, '1'),
+    (1054, '通知新增', 11, 'F', 54, NULL, NULL, 2, 1, '1'),
+    (1055, '通知修改', 11, 'F', 55, NULL, NULL, 3, 1, '1'),
+    (1056, '通知删除', 11, 'F', 56, NULL, NULL, 4, 1, '1'),
+    -- 日志管理按钮
+    (1057, '操作日志查询', 12, 'F', 57, NULL, NULL, 1, 1, '1'),
+    (1058, '操作日志导出', 12, 'F', 58, NULL, NULL, 2, 1, '1'),
+    (1060, '登录日志查询', 13, 'F', 60, NULL, NULL, 1, 1, '1'),
+    (1061, '登录日志导出', 13, 'F', 61, NULL, NULL, 2, 1, '1'),
+    -- 系统监控按钮
+    (1071, '运行时监控查询', 14, 'F', 71, NULL, NULL, 1, 1, '1'),
+    (1063, '在线用户查询', 15, 'F', 63, NULL, NULL, 1, 1, '1'),
+    (1064, '在线用户强退', 15, 'F', 64, NULL, NULL, 2, 1, '1'),
+    (1065, '服务器监控查询', 16, 'F', 65, NULL, NULL, 1, 1, '1'),
+    (1066, '缓存监控查询', 23, 'F', 66, NULL, NULL, 1, 1, '1'),
+    (1067, '连接池监控查询', 24, 'F', 67, NULL, NULL, 1, 1, '1'),
+    -- 系统工具按钮
+    (1068, '代码生成查询', 17, 'F', 68, NULL, NULL, 1, 1, '1'),
+    (1069, '代码生成操作', 17, 'F', 69, NULL, NULL, 2, 1, '1'),
+    -- 租户管理按钮
+    (1077, '租户查询', 26, 'F', 77, NULL, NULL, 1, 1, '1'),
+    (1078, '租户新增', 26, 'F', 78, NULL, NULL, 2, 1, '1'),
+    (1079, '租户修改', 26, 'F', 79, NULL, NULL, 3, 1, '1'),
+    (1080, '租户状态', 26, 'F', 80, NULL, NULL, 4, 1, '1');
 
 -- -----------------------------------------------------------
 -- 默认岗位 (sys_post)
