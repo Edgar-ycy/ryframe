@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -74,6 +74,9 @@ jobs:
 
       - name: License check
         run: cargo deny check licenses
+
+      - name: Bans & Sources check
+        run: cargo deny check bans sources
 
   # ============================================================
   # 快速测试 (Linux, nextest 并行)
@@ -159,5 +162,8 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      - name: Run tests
+      - name: Run tests (nextest)
         run: cargo nextest run --workspace --no-fail-fast --retries 2
+
+      - name: Run doctests
+        run: cargo test --workspace --doc
