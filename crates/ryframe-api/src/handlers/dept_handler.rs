@@ -1,12 +1,11 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
 use ryframe_db::repositories::dept_repo::DeptTreeNode;
+use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::DeptVo;
 use validator::Validate;
 
@@ -23,20 +22,19 @@ list_query!(pub DeptListQuery {
 
 pub fn dept_router(state: AppState) -> Router {
     Router::new()
-        .route("/tree", perm_route(get(tree), "system:dept:list"))
-        .route("/list", perm_route(get(list_page), "system:dept:list"))
-        .route(
-            "/listNoPage",
-            perm_route(get(list_no_page), "system:dept:list"),
-        )
-        .route("/", perm_route(post(create), "system:dept:add"))
-        .route("/{id}", perm_route(get(detail), "system:dept:list"))
-        .route("/{id}", perm_route(put(update), "system:dept:edit"))
-        .route("/{id}", perm_route(delete(remove), "system:dept:remove"))
+        .merge(route!(tree))
+        .merge(route!(list_page))
+        .merge(route!(list_no_page))
+        .merge(route!(detail))
+        .merge(route!(create))
+        .merge(route!(update))
+        .merge(route!(remove))
         .with_state(state)
 }
 
 /// 部门树查询
+#[get("/tree")]
+#[perm("system:dept:list")]
 #[utoipa::path(get, path = "/api/v1/system/depts/tree", tag = "部门管理",
     responses((status = 200, description = "部门树")), security(("bearer" = [])))]
 async fn tree(
@@ -45,12 +43,14 @@ async fn tree(
 ) -> AppResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
     state
         .dept_service
-        .find_tree_with_data_scope(&state.db, &current_user.to_data_scope_context())
+        .filter_dept_by_user(&state.db, &current_user.to_data_scope_context())
         .await
         .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 部门列表分页查询
+#[get("/list")]
+#[perm("system:dept:list")]
 #[utoipa::path(get, path = "/api/v1/system/depts/list", tag = "部门管理",
     responses((status = 200, description = "部门列表")),
     security(("bearer" = [])))]
@@ -76,6 +76,8 @@ async fn list_page(
 }
 
 /// 部门列表不分页查询（返回全部数据）
+#[get("/listNoPage")]
+#[perm("system:dept:list")]
 #[utoipa::path(get, path = "/api/v1/system/depts/listNoPage", tag = "部门管理",
     responses((status = 200, description = "部门列表")),
     security(("bearer" = [])))]
@@ -97,6 +99,8 @@ async fn list_no_page(
 }
 
 /// 创建部门
+#[post("/")]
+#[perm("system:dept:add")]
 #[utoipa::path(post, path = "/api/v1/system/depts", tag = "部门管理",
     request_body = CreateDeptDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create(
@@ -113,6 +117,8 @@ async fn create(
 }
 
 /// 更新部门
+#[put("/{id}")]
+#[perm("system:dept:edit")]
 #[utoipa::path(put, path = "/api/v1/system/depts/{id}", tag = "部门管理",
     params(("id" = i64, Path)), request_body = UpdateDeptDto,
     responses((status = 200, description = "更新成功")), security(("bearer" = [])))]
@@ -138,6 +144,8 @@ async fn update(
 }
 
 /// 部门详情
+#[get("/{id}")]
+#[perm("system:dept:list")]
 #[utoipa::path(get, path = "/api/v1/system/depts/{id}", tag = "部门管理",
     params(("id" = i64, Path)),
     responses((status = 200, description = "部门详情")),
@@ -156,6 +164,8 @@ async fn detail(
 }
 
 /// 删除部门
+#[delete("/{id}")]
+#[perm("system:dept:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/depts/{id}", tag = "部门管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
 async fn remove(

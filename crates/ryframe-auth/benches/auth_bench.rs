@@ -45,8 +45,6 @@ fn bench_jwt_encode(c: &mut Criterion) {
         lockout_duration_minutes: 30,
         enable_password_complexity: true,
     };
-    let roles = vec!["admin".to_string()];
-    let perms = vec!["system:user:list".to_string()];
     let identity = ryframe_auth::jwt::TokenIdentity {
         user_id: 1,
         tenant_id: "system",
@@ -59,8 +57,6 @@ fn bench_jwt_encode(c: &mut Criterion) {
         b.iter(|| {
             let _ = ryframe_auth::jwt::encode_access(
                 std::hint::black_box(&identity),
-                std::hint::black_box(&roles),
-                std::hint::black_box(&perms),
                 std::hint::black_box(&config),
             )
             .expect("jwt encode should succeed");
@@ -77,8 +73,6 @@ fn bench_jwt_decode(c: &mut Criterion) {
         lockout_duration_minutes: 30,
         enable_password_complexity: true,
     };
-    let roles = vec!["admin".to_string()];
-    let perms = vec!["system:user:list".to_string()];
     let identity = ryframe_auth::jwt::TokenIdentity {
         user_id: 1,
         tenant_id: "system",
@@ -86,7 +80,7 @@ fn bench_jwt_decode(c: &mut Criterion) {
         user_auth_version: 1,
         username: "admin",
     };
-    let (token, _) = ryframe_auth::jwt::encode_access(&identity, &roles, &perms, &config).unwrap();
+    let (token, _) = ryframe_auth::jwt::encode_access(&identity, &config).unwrap();
 
     c.bench_function("jwt_decode_access", |b| {
         b.iter(|| {

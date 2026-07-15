@@ -13,10 +13,7 @@ ALTER TABLE `sys_dept`
 ALTER TABLE `sys_user`
     ADD CONSTRAINT `fk_sys_user_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
-        ON UPDATE CASCADE ON DELETE RESTRICT,
-    ADD CONSTRAINT `fk_sys_user_dept`
-        FOREIGN KEY (`dept_id`) REFERENCES `sys_dept` (`id`)
-        ON UPDATE CASCADE ON DELETE SET NULL;
+        ON UPDATE CASCADE ON DELETE RESTRICT;
 
 ALTER TABLE `password_reset_requests`
     ADD CONSTRAINT `fk_password_reset_tenant`
@@ -47,9 +44,6 @@ ALTER TABLE `sys_menu`
     ADD CONSTRAINT `fk_sys_menu_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT,
-    ADD CONSTRAINT `fk_sys_menu_parent`
-        FOREIGN KEY (`parent_id`) REFERENCES `sys_menu` (`id`)
-        ON UPDATE CASCADE ON DELETE SET NULL,
     ADD CONSTRAINT `fk_sys_menu_permission`
         FOREIGN KEY (`perm_id`) REFERENCES `sys_permission` (`id`)
         ON UPDATE CASCADE ON DELETE SET NULL;
@@ -98,16 +92,7 @@ ALTER TABLE `sys_login_info`
         ON UPDATE CASCADE ON DELETE RESTRICT;
 
 ALTER TABLE `sys_user_role`
-    ADD KEY `idx_user_id` (`user_id`),
-    ADD CONSTRAINT `fk_sys_user_role_tenant`
-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
-        ON UPDATE CASCADE ON DELETE RESTRICT,
-    ADD CONSTRAINT `fk_sys_user_role_user`
-        FOREIGN KEY (`user_id`) REFERENCES `sys_user` (`id`)
-        ON UPDATE CASCADE ON DELETE CASCADE,
-    ADD CONSTRAINT `fk_sys_user_role_role`
-        FOREIGN KEY (`role_id`) REFERENCES `sys_role` (`id`)
-        ON UPDATE CASCADE ON DELETE CASCADE;
+    ADD KEY `idx_user_id` (`user_id`);
 
 ALTER TABLE `sys_role_permission`
     ADD KEY `idx_role_id` (`role_id`),

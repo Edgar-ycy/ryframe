@@ -61,6 +61,8 @@ pub struct DataScopeContext {
     pub ancestors: Option<String>,
     /// 自定义权限的部门 ID 列表（从 sys_role_dept 表查出）
     pub custom_dept_ids: Vec<i64>,
+    /// 多角色合并后是否还需要包含“仅本人”范围。
+    pub include_self: bool,
 }
 
 impl DataScopeContext {
@@ -72,6 +74,7 @@ impl DataScopeContext {
             dept_id: None,
             ancestors: None,
             custom_dept_ids: vec![],
+            include_self: false,
         }
     }
 
@@ -104,7 +107,7 @@ impl DataScopeContext {
                 }
             }
             DataScope::Custom => {
-                if self.custom_dept_ids.is_empty() {
+                if self.custom_dept_ids.is_empty() && !self.include_self {
                     Some("1 = 0".to_string())
                 } else {
                     let ids: Vec<String> = self
@@ -112,7 +115,19 @@ impl DataScopeContext {
                         .iter()
                         .map(|id| id.to_string())
                         .collect();
-                    Some(format!("{} IN ({})", dept_alias, ids.join(",")))
+                    let dept_condition = if ids.is_empty() {
+                        None
+                    } else {
+                        Some(format!("{} IN ({})", dept_alias, ids.join(",")))
+                    };
+                    match (dept_condition, self.include_self) {
+                        (Some(dept), true) => {
+                            Some(format!("({} OR {} = {})", dept, user_id_col, self.user_id))
+                        }
+                        (Some(dept), false) => Some(dept),
+                        (None, true) => Some(format!("{} = {}", user_id_col, self.user_id)),
+                        (None, false) => Some("1 = 0".to_string()),
+                    }
                 }
             }
         }
@@ -131,6 +146,7 @@ impl DataScopeContext {
                 dept_id: None,
                 ancestors: None,
                 custom_dept_ids: vec![],
+                include_self: true,
             };
         }
 
@@ -138,34 +154,39 @@ impl DataScopeContext {
         let dept_id = scopes[0].dept_id;
         let ancestors = scopes[0].ancestors.clone();
 
-        // 优先级排序
-        fn priority(s: &DataScope) -> u8 {
-            match s {
-                DataScope::All => 5,
-                DataScope::Custom => 4,
-                DataScope::DeptAndChildren => 3,
-                DataScope::Dept => 2,
-                DataScope::SelfOnly => 1,
-            }
+        if scopes.iter().any(|item| item.scope == DataScope::All) {
+            return DataScopeContext::super_admin(user_id);
         }
-
-        let best_scope = scopes.iter().max_by_key(|s| priority(&s.scope)).unwrap();
 
         let mut custom_dept_ids: Vec<i64> = vec![];
         for s in &scopes {
-            if s.scope == DataScope::Custom {
-                custom_dept_ids.extend(&s.custom_dept_ids);
+            match s.scope {
+                DataScope::Custom | DataScope::DeptAndChildren => {
+                    custom_dept_ids.extend(&s.custom_dept_ids);
+                }
+                DataScope::Dept => {
+                    if let Some(dept_id) = s.dept_id {
+                        custom_dept_ids.push(dept_id);
+                    }
+                }
+                DataScope::All | DataScope::SelfOnly => {}
             }
         }
         custom_dept_ids.sort();
         custom_dept_ids.dedup();
 
+        let include_self = scopes.iter().any(|item| item.scope == DataScope::SelfOnly);
         DataScopeContext {
-            scope: best_scope.scope.clone(),
+            scope: if custom_dept_ids.is_empty() {
+                DataScope::SelfOnly
+            } else {
+                DataScope::Custom
+            },
             user_id,
             dept_id,
             ancestors,
             custom_dept_ids,
+            include_self,
         }
     }
 }

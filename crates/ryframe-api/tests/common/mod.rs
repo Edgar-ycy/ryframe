@@ -130,6 +130,7 @@ pub async fn seed_test_data(db: &DatabaseConnection) {
         tenant_id: "system".into(),
         name: "超级管理员".into(),
         code: "admin".into(),
+        is_super: 1,
         data_scope: "1".into(),
         status: "1".into(),
         sort: 0,
@@ -147,6 +148,7 @@ pub async fn seed_test_data(db: &DatabaseConnection) {
         tenant_id: "system".into(),
         name: "普通用户".into(),
         code: "user".into(),
+        is_super: 0,
         data_scope: "5".into(),
         status: "1".into(),
         sort: 1,
@@ -311,16 +313,19 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
             user_repo: LoggedRepo::new(UserRepository),
             role_repo: LoggedRepo::new(RoleRepository),
             dept_repo: LoggedRepo::new(DeptRepository),
+            redis: None,
         }),
         role_service: Arc::new(RoleServiceImpl {
             role_repo: LoggedRepo::new(RoleRepository),
             perm_repo: LoggedRepo::new(PermissionRepository),
+            redis: None,
         }),
         tenant_service: Arc::new(TenantServiceImpl {
             tenant_repo: TenantRepository,
         }),
         permission_service: Arc::new(PermissionServiceImpl {
             perm_repo: LoggedRepo::new(PermissionRepository),
+            redis: None,
         }),
         menu_service: Arc::new(MenuServiceImpl {
             menu_repo: LoggedRepo::new(MenuRepository),

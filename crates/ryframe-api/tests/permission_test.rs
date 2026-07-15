@@ -124,6 +124,143 @@ async fn test_permission_non_admin_access() {
     }
 }
 
+/// 验证普通用户的菜单、按钮对应 API 权限及撤权实时生效。
+#[tokio::test]
+async fn test_operator_permission_and_menu_revocation_flow() {
+    let db = setup_test_db().await;
+    seed_test_data(&db).await;
+    let admin_token = login_get_token(&db).await;
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/perms",
+        &admin_token,
+        json!({
+            "name": "用户查询",
+            "code": "system:user:list",
+            "parent_id": null,
+            "perm_type": "api",
+            "icon": null,
+            "sort": 1,
+            "status": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "创建查询权限失败: {body:?}");
+    let perm_id = body["data"]["id"].as_i64().unwrap().to_string();
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/roles",
+        &admin_token,
+        json!({
+            "name": "普通运营",
+            "code": "operator",
+            "sort": 1,
+            "data_scope": "3"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "创建普通运营角色失败: {body:?}");
+    let role_id = body["data"]["id"].as_str().unwrap().to_string();
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/menus",
+        &admin_token,
+        json!({
+            "name": "用户管理",
+            "parent_id": null,
+            "menu_type": "C",
+            "perm_id": perm_id,
+            "route_key": "system.user",
+            "icon": "User",
+            "sort": 1,
+            "visible": true
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "创建用户菜单失败: {body:?}");
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/role/assign-perm",
+        &admin_token,
+        json!({ "role_id": role_id, "perm_ids": [perm_id] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "角色分配权限失败: {body:?}");
+
+    common::seed_user(&db, 100, "operator01", "普通运营", Some(1)).await;
+    common::seed_user(&db, 101, "outside_dept", "无部门用户", None).await;
+    let (status, body) = auth_post(
+        &db,
+        "/system/user/assign-role",
+        &admin_token,
+        json!({ "user_id": "100", "role_ids": [role_id] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "用户分配角色失败: {body:?}");
+
+    let state = common::build_test_app(db.clone()).await;
+    let router = ryframe_api::router::api_router(state, test_rate_limit_state());
+    let login_request = Request::builder()
+        .uri("/auth/login")
+        .method("POST")
+        .header("X-Tenant-Id", "system")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "username": "operator01",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, body) = common::send_request(router, login_request).await;
+    assert_eq!(status, StatusCode::OK, "普通运营登录失败: {body:?}");
+    let operator_token = body["data"]["access_token"].as_str().unwrap();
+
+    let (status, body) = auth_get(&db, "/system/user/get-menus", operator_token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"][0]["name"], "用户管理");
+
+    let (status, body) =
+        auth_get(&db, "/system/users/list?page=1&pageSize=10", operator_token).await;
+    assert_eq!(status, StatusCode::OK);
+    let records = body["rows"].as_array().unwrap();
+    assert!(records.iter().any(|item| item["username"] == "operator01"));
+    assert!(
+        !records
+            .iter()
+            .any(|item| item["username"] == "outside_dept"),
+        "本部门数据范围不应返回无部门用户"
+    );
+    let (status, _) = auth_post(
+        &db,
+        "/system/users",
+        operator_token,
+        json!({ "username": "forbidden", "nickname": "无权限新增" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, body) = auth_post(
+        &db,
+        "/system/role/assign-perm",
+        &admin_token,
+        json!({ "role_id": role_id, "perm_ids": [] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "撤销角色权限失败: {body:?}");
+
+    let (status, _) = auth_get(&db, "/system/users/list?page=1&pageSize=10", operator_token).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body) = auth_get(&db, "/system/user/get-menus", operator_token).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"], json!([]));
+}
+
 // ==================== 权限资源 CRUD / 同步 ====================
 
 #[tokio::test]
@@ -237,7 +374,6 @@ async fn test_role_permission_assignment_and_validation() {
             "name": "权限测试角色",
             "code": "perm_test_role",
             "sort": 1,
-            "status": "1",
             "data_scope": "5"
         }),
     )
@@ -249,11 +385,11 @@ async fn test_role_permission_assignment_and_validation() {
         .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
         .expect("角色ID应存在");
 
-    let (status, body) = auth_put(
+    let (status, body) = auth_post(
         &db,
-        &format!("/system/roles/{}/permissions", role_id),
+        "/system/role/assign-perm",
         &token,
-        json!({ "perm_ids": [perm_id.clone()] }),
+        json!({ "role_id": role_id.clone(), "perm_ids": [perm_id.clone()] }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "分配权限失败: {:?}", body);
@@ -271,11 +407,11 @@ async fn test_role_permission_assignment_and_validation() {
         "角色权限列表应包含已分配权限"
     );
 
-    let (status, body) = auth_put(
+    let (status, body) = auth_post(
         &db,
-        &format!("/system/roles/{}/permissions", role_id),
+        "/system/role/assign-perm",
         &token,
-        json!({ "perm_ids": [999999999999i64] }),
+        json!({ "role_id": role_id, "perm_ids": [999999999999i64] }),
     )
     .await;
     assert_eq!(
@@ -409,7 +545,6 @@ async fn test_user_crud_flow() {
             "email": "newuser@test.com",
             "phone": "13900000001",
             "dept_id": "1",
-            "role_ids": null,
         }),
     )
     .await;
@@ -615,8 +750,7 @@ async fn test_role_crud_flow() {
             "name": "测试角色",
             "code": "test_role",
             "sort": 10,
-            "status": "1",
-            "dataScope": "5"
+            "data_scope": "5"
         }),
     )
     .await;
@@ -635,12 +769,9 @@ async fn test_role_crud_flow() {
         &format!("/system/roles/{}", role_id),
         &token,
         json!({
-            "id": role_id,
             "name": "更新角色",
-            "code": "test_role_updated",
             "sort": 20,
-            "status": "1",
-            "dataScope": "5"
+            "status": "1"
         }),
     )
     .await;

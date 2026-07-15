@@ -2,9 +2,10 @@ mod cache_monitor;
 pub mod server_info;
 
 use axum::{Json, extract::State};
-use ryframe_auth::middleware::{AuthState, perm_route};
+use ryframe_auth::middleware::AuthState;
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::RedisClient;
+use ryframe_macro::{get, route};
 use sea_orm::{DatabaseBackend, DatabaseConnection, Statement};
 pub use server_info::ServerInfo;
 
@@ -26,29 +27,17 @@ pub struct MonitorState {
 /// `/cache/commands`, `/db-pool`) require authentication and permissions.
 /// `/health` and `/metrics` are always public.
 pub fn monitor_router(state: MonitorState, auth_state: Option<AuthState>) -> axum::Router {
-    use axum::{middleware, routing::get};
+    use axum::{middleware, routing::get as axum_get};
 
     let public = axum::Router::new()
-        .route("/health", get(health_check_handler))
-        .route("/metrics", get(metrics_handler));
+        .route("/health", axum_get(health_check_handler))
+        .route("/metrics", axum_get(metrics_handler));
 
     let mut protected = axum::Router::new()
-        .route(
-            "/server",
-            perm_route(get(server_info_handler), "monitor:server:list"),
-        )
-        .route(
-            "/cache",
-            perm_route(get(cache_info_handler), "monitor:cache:list"),
-        )
-        .route(
-            "/cache/commands",
-            perm_route(get(cache_commands_handler), "monitor:cache:list"),
-        )
-        .route(
-            "/db-pool",
-            perm_route(get(db_pool_handler), "monitor:db-pool:list"),
-        );
+        .merge(route!(server_info_handler))
+        .merge(route!(cache_info_handler))
+        .merge(route!(cache_commands_handler))
+        .merge(route!(db_pool_handler));
 
     if let Some(auth) = auth_state {
         protected = protected.route_layer(middleware::from_fn_with_state(
@@ -63,7 +52,11 @@ pub fn monitor_router(state: MonitorState, auth_state: Option<AuthState>) -> axu
         .with_state(state)
 }
 
-async fn server_info_handler() -> AppResult<Json<ApiResponse<ServerInfo>>> {
+#[get("/server")]
+#[perm("monitor:server:list")]
+async fn server_info_handler(
+    State(_state): State<MonitorState>,
+) -> AppResult<Json<ApiResponse<ServerInfo>>> {
     Ok(Json(ApiResponse::success(ServerInfo::collect())))
 }
 
@@ -90,6 +83,8 @@ async fn health_check_handler(
     }))))
 }
 
+#[get("/cache")]
+#[perm("monitor:cache:list")]
 async fn cache_info_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<cache_monitor::CacheInfo>>> {
@@ -97,6 +92,8 @@ async fn cache_info_handler(
     Ok(Json(ApiResponse::success(info)))
 }
 
+#[get("/cache/commands")]
+#[perm("monitor:cache:list")]
 async fn cache_commands_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -118,6 +115,8 @@ async fn metrics_handler() -> axum::response::Response {
     text_response(text, "text/plain; version=0.0.4")
 }
 
+#[get("/db-pool")]
+#[perm("monitor:db-pool:list")]
 async fn db_pool_handler(
     State(state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {

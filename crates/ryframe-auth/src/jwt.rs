@@ -19,10 +19,6 @@ pub struct Claims {
     pub user_auth_version: i32,
     /// 用户名
     pub username: String,
-    /// 角色编码列表
-    pub roles: Vec<String>,
-    /// 权限码列表
-    pub perms: Vec<String>,
     /// 令牌类型: "access" | "refresh"
     pub token_type: String,
     /// 令牌唯一标识（用于在线用户管理）
@@ -44,12 +40,9 @@ pub struct TokenIdentity<'a> {
 
 /// 签发访问令牌
 ///
-/// `roles` 和 `perms` 嵌入 Claims，避免每次请求都查数据库。
 /// 返回 `(token_string, jti)` 元组，jti 用于在线用户管理。
 pub fn encode_access(
     identity: &TokenIdentity<'_>,
-    roles: &[String],
-    perms: &[String],
     config: &AuthConfig,
 ) -> AppResult<(String, String)> {
     let ttl = parse_duration(&config.access_token_expire)?;
@@ -61,8 +54,6 @@ pub fn encode_access(
         tenant_session_version: identity.tenant_session_version,
         user_auth_version: identity.user_auth_version,
         username: identity.username.to_string(),
-        roles: roles.to_vec(),
-        perms: perms.to_vec(),
         token_type: "access".into(),
         jti: jti.clone(),
         iat: now,
@@ -74,8 +65,7 @@ pub fn encode_access(
 
 /// 签发刷新令牌
 ///
-/// 刷新令牌仅包含用户身份信息，不含 roles/perms（避免权限过期问题）。
-/// 刷新时重新查询数据库获取最新角色权限。
+/// 刷新令牌仅包含用户身份信息。
 pub fn encode_refresh(identity: &TokenIdentity<'_>, config: &AuthConfig) -> AppResult<String> {
     let ttl = parse_duration(&config.refresh_token_expire)?;
     let now = current_timestamp();
@@ -85,8 +75,6 @@ pub fn encode_refresh(identity: &TokenIdentity<'_>, config: &AuthConfig) -> AppR
         tenant_session_version: identity.tenant_session_version,
         user_auth_version: identity.user_auth_version,
         username: identity.username.to_string(),
-        roles: vec![],
-        perms: vec![],
         token_type: "refresh".into(),
         jti: new_jti(),
         iat: now,

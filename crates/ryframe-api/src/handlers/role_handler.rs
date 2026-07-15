@@ -1,17 +1,20 @@
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_auth::rbac;
+use ryframe_common::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::RoleVo;
 use serde::Serialize;
 use validator::Validate;
 
 use super::auth_handler::AppState;
-use crate::dto::role_dto::{AssignDataScopeDto, AssignPermsDto, CreateRoleDto, UpdateRoleDto};
+use crate::dto::role_dto::{
+    CreateRoleDto, RoleDataScopeUpdateDto, RoleDeptAssignDto, RolePermAssignDto, UpdateRoleDto,
+};
+use crate::extractors::CurrentUser;
 use crate::handler_utils::{excel_response, parse_csv_i64, parse_i64_strings};
 use crate::{detail_body, list_query};
 
@@ -21,50 +24,49 @@ list_query!(pub RoleListQuery {
     status: String,
 });
 
-async fn affected_user_ids_by_roles(state: &AppState, role_ids: &[i64]) -> AppResult<Vec<i64>> {
-    state
+async fn ensure_can_operate_role(
+    state: &AppState,
+    current_user: &CurrentUser,
+    role_id: i64,
+) -> AppResult<()> {
+    let role = state
         .role_service
-        .role_repo
-        .find_user_ids_by_role_ids(&state.db, role_ids)
-        .await
+        .get_role_model(&state.db, role_id)
+        .await?;
+    if role.is_super == 1
+        && !current_user.is_super_admin
+        && !rbac::has_permission(&current_user.permissions, "sys:role:editSuper")
+    {
+        return Err(AppError::Authorization("无权限操作超级管理员角色".into()));
+    }
+    Ok(())
 }
 
 pub fn role_router(state: AppState) -> Router {
     Router::new()
-        .route("/", perm_route(get(list), "system:role:list"))
-        .route("/", perm_route(post(create), "system:role:add"))
-        .route("/list", perm_route(get(list), "system:role:list"))
-        .route(
-            "/listNoPage",
-            perm_route(get(list_no_page), "system:role:list"),
-        )
-        .route(
-            "/export",
-            perm_route(get(export_roles), "system:role:export"),
-        )
-        .route("/{id}", perm_route(get(detail), "system:role:list"))
-        .route("/{id}", perm_route(put(update), "system:role:edit"))
-        .route("/{id}", perm_route(delete(remove), "system:role:remove"))
-        .route(
-            "/batch/{ids}",
-            perm_route(delete(batch_remove), "system:role:remove"),
-        )
-        .route(
-            "/{id}/permissions",
-            perm_route(get(get_role_perms), "system:role:list"),
-        )
-        .route(
-            "/{id}/permissions",
-            perm_route(put(assign_permissions), "system:role:edit"),
-        )
-        .route(
-            "/{id}/data-scope",
-            perm_route(put(assign_data_scope), "system:role:edit"),
-        )
+        .merge(route!(list))
+        .merge(route!(list_no_page))
+        .merge(route!(export_roles))
+        .merge(route!(detail))
+        .merge(route!(create))
+        .merge(route!(update))
+        .merge(route!(remove))
+        .merge(route!(batch_remove))
+        .merge(route!(get_role_perms))
+        .with_state(state)
+}
+
+pub fn role_assignment_router(state: AppState) -> Router {
+    Router::new()
+        .merge(route!(assign_perm))
+        .merge(route!(assign_dept))
+        .merge(route!(update_data_scope))
         .with_state(state)
 }
 
 /// 角色列表分页查询
+#[get("/", "/list")]
+#[perm("system:role:list")]
 #[utoipa::path(get, path = "/api/v1/system/roles", tag = "角色管理",
     responses((status = 200, description = "角色列表")), security(("bearer" = [])))]
 async fn list(
@@ -101,6 +103,8 @@ async fn list(
 }
 
 /// 角色列表不分页查询（返回全部数据）
+#[get("/listNoPage")]
+#[perm("system:role:list")]
 #[utoipa::path(get, path = "/api/v1/system/roles/listNoPage", tag = "角色管理",
     responses((status = 200, description = "角色列表")),
     security(("bearer" = [])))]
@@ -114,6 +118,8 @@ async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiRespon
 }
 
 /// 角色详情
+#[get("/{id}")]
+#[perm("system:role:list")]
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = i64, Path)), responses((status = 200, description = "角色详情")), security(("bearer" = [])))]
 async fn detail(
@@ -124,6 +130,8 @@ async fn detail(
 }
 
 /// 创建角色
+#[post("/")]
+#[perm("system:role:add")]
 #[utoipa::path(post, path = "/api/v1/system/roles", tag = "角色管理",
     request_body = CreateRoleDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create(
@@ -145,16 +153,19 @@ async fn create(
 }
 
 /// 更新角色
+#[put("/{id}")]
+#[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = i64, Path)), request_body = UpdateRoleDto,
     responses((status = 200, description = "更新成功")), security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateRoleDto>,
 ) -> AppResult<Json<ApiResponse<RoleVo>>> {
     dto.validate()?;
-    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
+    ensure_can_operate_role(&state, &current_user, id).await?;
     let result = state
         .role_service
         .update(
@@ -163,33 +174,37 @@ async fn update(
             &dto.name,
             dto.sort.unwrap_or(0),
             dto.status,
-            dto.data_scope,
+            None,
         )
         .await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success(result)))
 }
 
 /// 删除角色
+#[delete("/{id}")]
+#[perm("system:role:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
+    ensure_can_operate_role(&state, &current_user, id).await?;
     state.role_service.delete(&state.db, id).await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
 /// 批量删除角色
+#[delete("/batch/{ids}")]
+#[perm("system:role:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/batch/{ids}", tag = "角色管理",
     params(("ids" = String, Path)),
     responses((status = 200, description = "批量删除成功")),
     security(("bearer" = [])))]
 async fn batch_remove(
     State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
     Path(ids_str): Path<String>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let ids = parse_csv_i64(&ids_str);
@@ -200,9 +215,11 @@ async fn batch_remove(
         ));
     }
 
-    let affected_user_ids = affected_user_ids_by_roles(&state, &ids).await?;
+    for id in &ids {
+        ensure_can_operate_role(&state, &current_user, *id).await?;
+    }
+
     let count = state.role_service.delete_many(&state.db, &ids).await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg(format!(
         "成功删除 {} 个角色",
         count
@@ -210,6 +227,8 @@ async fn batch_remove(
 }
 
 /// 导出角色数据为 Excel
+#[get("/export")]
+#[perm("system:role:export")]
 async fn export_roles(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
@@ -270,27 +289,34 @@ impl RoleExportData {
 }
 
 /// 分配权限给角色
-#[utoipa::path(put, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
-    params(("id" = i64, Path)),
-    request_body = AssignPermsDto,
+#[post("/assign-perm")]
+#[perm("system:role:edit")]
+#[utoipa::path(post, path = "/api/v1/system/role/assign-perm", tag = "角色管理",
+    request_body = RolePermAssignDto,
     responses((status = 200, description = "权限分配成功")),
     security(("bearer" = [])))]
-async fn assign_permissions(
+async fn assign_perm(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(dto): Json<AssignPermsDto>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(dto): Json<RolePermAssignDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    dto.validate()?;
+    let role_id = dto
+        .role_id
+        .parse::<i64>()
+        .map_err(|_| ryframe_common::AppError::Validation("无效的角色ID".into()))?;
+    ensure_can_operate_role(&state, &current_user, role_id).await?;
     let perm_ids = parse_i64_strings(&dto.perm_ids);
-    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
     state
         .role_service
-        .assign_permissions(&state.db, id, perm_ids)
+        .assign_permissions(&state.db, role_id, perm_ids)
         .await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
 }
 
 /// 查询角色已分配的权限ID列表
+#[get("/{id}/permissions")]
+#[perm("system:role:list")]
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
     params(("id" = i64, Path)),
     responses((status = 200, description = "角色权限ID列表")),
@@ -308,25 +334,57 @@ async fn get_role_perms(
     Ok(Json(ApiResponse::success(ids)))
 }
 
-/// 设置角色数据权限
-#[utoipa::path(put, path = "/api/v1/system/roles/{id}/data-scope", tag = "角色管理",
-    params(("id" = i64, Path)),
-    request_body = AssignDataScopeDto,
-    responses((status = 200, description = "数据权限设置成功")),
+/// 分配角色自定义数据权限部门
+#[post("/assign-dept")]
+#[perm("system:role:edit")]
+#[utoipa::path(post, path = "/api/v1/system/role/assign-dept", tag = "角色管理",
+    request_body = RoleDeptAssignDto,
+    responses((status = 200, description = "自定义部门分配成功")),
     security(("bearer" = [])))]
-async fn assign_data_scope(
+async fn assign_dept(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(dto): Json<AssignDataScopeDto>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(dto): Json<RoleDeptAssignDto>,
 ) -> AppResult<Json<ApiResponse<()>>> {
+    dto.validate()?;
+    let role_id = dto
+        .role_id
+        .parse::<i64>()
+        .map_err(|_| ryframe_common::AppError::Validation("无效的角色ID".into()))?;
+    ensure_can_operate_role(&state, &current_user, role_id).await?;
     let dept_ids = parse_i64_strings(&dto.dept_ids);
-    let affected_user_ids = affected_user_ids_by_roles(&state, &[id]).await?;
     state
         .role_service
-        .assign_data_scope(&state.db, id, &dto.data_scope, dept_ids)
+        .assign_depts(&state.db, role_id, dept_ids)
         .await?;
-    super::auth_handler::invalidate_users_tokens(&state, &affected_user_ids).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg(
-        "数据权限设置成功",
+        "自定义部门分配成功",
+    )))
+}
+
+/// 更新角色数据权限范围
+#[post("/update-data-scope")]
+#[perm("system:role:edit")]
+#[utoipa::path(post, path = "/api/v1/system/role/update-data-scope", tag = "角色管理",
+    request_body = RoleDataScopeUpdateDto,
+    responses((status = 200, description = "数据权限范围更新成功")),
+    security(("bearer" = [])))]
+async fn update_data_scope(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(dto): Json<RoleDataScopeUpdateDto>,
+) -> AppResult<Json<ApiResponse<()>>> {
+    dto.validate()?;
+    let role_id = dto
+        .role_id
+        .parse::<i64>()
+        .map_err(|_| ryframe_common::AppError::Validation("无效的角色ID".into()))?;
+    ensure_can_operate_role(&state, &current_user, role_id).await?;
+    state
+        .role_service
+        .update_data_scope(&state.db, role_id, &dto.data_scope)
+        .await?;
+    Ok(Json(ApiResponse::success_no_data_with_msg(
+        "数据权限范围更新成功",
     )))
 }

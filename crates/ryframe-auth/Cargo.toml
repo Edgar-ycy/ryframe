@@ -19,6 +19,7 @@ serde = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 rand_core = { workspace = true}
 sea-orm = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

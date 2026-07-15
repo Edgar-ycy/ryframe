@@ -114,8 +114,7 @@ impl AuthServiceImpl {
             user_auth_version: user.auth_version,
             username: &user.username,
         };
-        let (access_token, token_id) =
-            jwt::encode_access(&identity, &role_codes, &perm_codes, &self.config.auth)?;
+        let (access_token, token_id) = jwt::encode_access(&identity, &self.config.auth)?;
         let refresh_token = jwt::encode_refresh(&identity, &self.config.auth)?;
 
         let mut user_info = UserInfo::from(&user);
@@ -198,8 +197,7 @@ impl AuthServiceImpl {
             user_auth_version: user.auth_version,
             username: &user.username,
         };
-        let (access_token, token_id) =
-            jwt::encode_access(&identity, &role_codes, &perm_codes, &self.config.auth)?;
+        let (access_token, token_id) = jwt::encode_access(&identity, &self.config.auth)?;
         let refresh_token = jwt::encode_refresh(&identity, &self.config.auth)?;
 
         let mut user_info = UserInfo::from(&user);

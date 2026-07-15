@@ -176,3 +176,111 @@ async fn find_by_permission_codes_handles_empty_and_wildcard_permissions() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn button_permission_does_not_grant_parent_page_access() {
+    with_tenant_context(
+        TenantContext {
+            tenant_id: "system".into(),
+            is_admin: false,
+        },
+        async {
+            let db = common::setup_test_db().await;
+            let repo = MenuRepository;
+            let permission_repo = PermissionRepository;
+
+            for (id, name, code) in [
+                (200, "菜单查询", "system:menu:list"),
+                (201, "菜单新增", "system:menu:add"),
+            ] {
+                permission_repo
+                    .insert(
+                        &db,
+                        permission::Model {
+                            id,
+                            tenant_id: "system".into(),
+                            name: name.into(),
+                            code: code.into(),
+                            parent_id: None,
+                            perm_type: "api".into(),
+                            icon: None,
+                            sort: 1,
+                            status: "1".into(),
+                            created_at: Utc::now(),
+                            updated_at: Utc::now(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+
+            repo.insert(
+                &db,
+                make_menu(
+                    10,
+                    "系统管理",
+                    None,
+                    menu::Model::MENU_TYPE_DIR,
+                    None,
+                    "1",
+                    1,
+                ),
+            )
+            .await
+            .unwrap();
+            repo.insert(
+                &db,
+                make_menu(
+                    11,
+                    "菜单管理",
+                    Some(10),
+                    menu::Model::MENU_TYPE_MENU,
+                    Some(200),
+                    "1",
+                    1,
+                ),
+            )
+            .await
+            .unwrap();
+            repo.insert(
+                &db,
+                make_menu(
+                    12,
+                    "菜单新增",
+                    Some(11),
+                    menu::Model::MENU_TYPE_BUTTON,
+                    Some(201),
+                    "1",
+                    1,
+                ),
+            )
+            .await
+            .unwrap();
+
+            let button_only = repo
+                .find_tree_by_permission_codes(&db, &[String::from("system:menu:add")])
+                .await
+                .unwrap();
+            assert!(button_only.is_empty(), "按钮权限不能授予父级菜单页面访问权");
+
+            let page_and_button = repo
+                .find_tree_by_permission_codes(
+                    &db,
+                    &[
+                        String::from("system:menu:list"),
+                        String::from("system:menu:add"),
+                    ],
+                )
+                .await
+                .unwrap();
+            assert_eq!(page_and_button.len(), 1);
+            assert_eq!(page_and_button[0].children.len(), 1);
+            assert_eq!(page_and_button[0].children[0].name, "菜单管理");
+            assert!(
+                page_and_button[0].children[0].children.is_empty(),
+                "用户菜单树不应返回按钮节点"
+            );
+        },
+    )
+    .await;
+}

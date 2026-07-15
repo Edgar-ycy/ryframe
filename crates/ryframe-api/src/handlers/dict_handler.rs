@@ -1,11 +1,10 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{DictDataVo, DictTypeVo};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -25,46 +24,23 @@ list_query!(pub DictTypeListQuery {
 
 pub fn dict_router(state: AppState) -> Router {
     Router::new()
-        .route("/types", perm_route(get(list_types), "system:dict:list"))
-        .route("/types", perm_route(post(create_type), "system:dict:add"))
-        .route(
-            "/types/list",
-            perm_route(get(list_types), "system:dict:list"),
-        )
-        .route(
-            "/types/listNoPage",
-            perm_route(get(list_types_no_page), "system:dict:list"),
-        )
-        .route(
-            "/types/export",
-            perm_route(get(export_dict_types), "system:dict:export"),
-        )
-        .route(
-            "/types/{id}",
-            perm_route(put(update_type), "system:dict:edit"),
-        )
-        .route(
-            "/types/{id}",
-            perm_route(delete(delete_type), "system:dict:remove"),
-        )
-        .route("/data", perm_route(get(list_data), "system:dict:list"))
-        .route("/data", perm_route(post(create_data), "system:dict:add"))
-        .route(
-            "/data/type/{dict_type}",
-            perm_route(get(list_data_by_type_path), "system:dict:list"),
-        )
-        .route(
-            "/data/{id}",
-            perm_route(put(update_data), "system:dict:edit"),
-        )
-        .route(
-            "/data/{id}",
-            perm_route(delete(delete_data), "system:dict:remove"),
-        )
+        .merge(route!(list_types))
+        .merge(route!(list_types_no_page))
+        .merge(route!(export_dict_types))
+        .merge(route!(create_type))
+        .merge(route!(update_type))
+        .merge(route!(delete_type))
+        .merge(route!(list_data))
+        .merge(route!(list_data_by_type_path))
+        .merge(route!(create_data))
+        .merge(route!(update_data))
+        .merge(route!(delete_data))
         .with_state(state)
 }
 
 /// 字典类型列表
+#[get("/types", "/types/list")]
+#[perm("system:dict:list")]
 #[utoipa::path(get, path = "/api/v1/system/dict/types", tag = "字典管理",
     responses((status = 200, description = "字典类型列表")), security(("bearer" = [])))]
 async fn list_types(
@@ -83,6 +59,8 @@ async fn list_types(
 }
 
 /// 字典类型不分页查询
+#[get("/types/listNoPage")]
+#[perm("system:dict:list")]
 #[utoipa::path(get, path = "/api/v1/system/dict/types/listNoPage", tag = "字典管理",
     responses((status = 200, description = "字典类型列表")),
     security(("bearer" = [])))]
@@ -98,6 +76,8 @@ async fn list_types_no_page(
 }
 
 /// 创建字典类型
+#[post("/types")]
+#[perm("system:dict:add")]
 #[utoipa::path(post, path = "/api/v1/system/dict/types", tag = "字典管理",
     request_body = CreateDictTypeDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create_type(
@@ -113,6 +93,8 @@ async fn create_type(
 }
 
 /// 更新字典类型
+#[put("/types/{id}")]
+#[perm("system:dict:edit")]
 #[utoipa::path(put, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
     params(("id" = i64, Path)),
     request_body = UpdateDictTypeDto,
@@ -132,6 +114,8 @@ async fn update_type(
 }
 
 /// 删除字典类型
+#[delete("/types/{id}")]
+#[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
     params(("id" = i64, Path)),
     responses((status = 200, description = "删除成功")),
@@ -149,6 +133,8 @@ struct ListDataQuery {
     type_code: String,
 }
 
+#[get("/data")]
+#[perm("system:dict:list")]
 async fn list_data(
     State(state): State<AppState>,
     Query(query): Query<ListDataQuery>,
@@ -162,6 +148,8 @@ async fn list_data(
 
 /// 通过字典类型编码查询字典数据
 /// 查询字典数据
+#[get("/data/type/{dict_type}")]
+#[perm("system:dict:list")]
 #[utoipa::path(get, path = "/api/v1/system/dict/data/type/{dict_type}", tag = "字典管理",
     params(("dict_type" = String, Path)), responses((status = 200, description = "字典数据")), security(("bearer" = [])))]
 async fn list_data_by_type_path(
@@ -186,6 +174,8 @@ async fn list_data_by_type_path(
 }
 
 /// 创建字典数据
+#[post("/data")]
+#[perm("system:dict:add")]
 #[utoipa::path(post, path = "/api/v1/system/dict/data", tag = "字典管理",
     request_body = CreateDictDataDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create_data(
@@ -207,6 +197,8 @@ async fn create_data(
 }
 
 /// 更新字典数据
+#[put("/data/{id}")]
+#[perm("system:dict:edit")]
 #[utoipa::path(put, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
     params(("id" = i64, Path)),
     request_body = UpdateDictDataDto,
@@ -233,6 +225,8 @@ async fn update_data(
 }
 
 /// 删除字典数据
+#[delete("/data/{id}")]
+#[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
     params(("id" = i64, Path)),
     responses((status = 200, description = "删除成功")),
@@ -268,6 +262,8 @@ impl DictTypeExportData {
 }
 
 /// 导出字典类型
+#[get("/types/export")]
+#[perm("system:dict:export")]
 async fn export_dict_types(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 

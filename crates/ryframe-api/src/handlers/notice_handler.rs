@@ -1,16 +1,16 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::NoticeVo;
 use validator::Validate;
 
 use super::auth_handler::AppState;
 use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};
+use crate::extractors::CurrentUser;
 use crate::{detail_body, list_query, remove_body};
 
 list_query!(pub NoticeListQuery {
@@ -21,24 +21,23 @@ list_query!(pub NoticeListQuery {
 
 pub fn notice_router(state: AppState) -> Router {
     Router::new()
-        .route("/", perm_route(get(list), "system:notice:list"))
-        .route("/", perm_route(post(create), "system:notice:add"))
-        .route("/list", perm_route(get(list), "system:notice:list"))
-        .route(
-            "/listNoPage",
-            perm_route(get(list_no_page), "system:notice:list"),
-        )
-        .route("/{id}", perm_route(get(detail), "system:notice:list"))
-        .route("/{id}", perm_route(put(update), "system:notice:edit"))
-        .route("/{id}", perm_route(delete(remove), "system:notice:remove"))
+        .merge(route!(list))
+        .merge(route!(list_no_page))
+        .merge(route!(detail))
+        .merge(route!(create))
+        .merge(route!(update))
+        .merge(route!(remove))
         .with_state(state)
 }
 
 /// 通知公告列表
+#[get("/", "/list")]
+#[perm("system:notice:list")]
 #[utoipa::path(get, path = "/api/v1/system/notices", tag = "通知公告",
     responses((status = 200, description = "公告列表")), security(("bearer" = [])))]
 async fn list(
     State(state): State<AppState>,
+    current_user: CurrentUser,
     Query(query): Query<NoticeListQuery>,
 ) -> AppResult<Json<ApiPageResponse<NoticeVo>>> {
     let page_query = PageQuery {
@@ -55,34 +54,40 @@ async fn list(
                 query.title.as_deref(),
                 query.notice_type.as_deref(),
                 query.status.as_deref(),
+                &current_user.to_data_scope_context(),
             )
             .await
             .map(|p| Json(p.to_page_response("查询成功")))
     } else {
         state
             .notice_service
-            .find_by_page(&state.db, page_query)
+            .find_by_page(&state.db, page_query, &current_user.to_data_scope_context())
             .await
             .map(|p| Json(p.to_page_response("查询成功")))
     }
 }
 
 /// 通知公告列表不分页查询（返回全部数据）
+#[get("/listNoPage")]
+#[perm("system:notice:list")]
 #[utoipa::path(get, path = "/api/v1/system/notices/listNoPage", tag = "通知公告",
     responses((status = 200, description = "公告列表")),
     security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
+    current_user: CurrentUser,
 ) -> AppResult<Json<ApiResponse<Vec<NoticeVo>>>> {
     let page_query = PageQuery::all_records();
     state
         .notice_service
-        .find_by_page(&state.db, page_query)
+        .find_by_page(&state.db, page_query, &current_user.to_data_scope_context())
         .await
         .map(|p| Json(ApiResponse::success(p.records)))
 }
 
 /// 通知公告详情
+#[get("/{id}")]
+#[perm("system:notice:list")]
 #[utoipa::path(get, path = "/api/v1/system/notices/{id}", tag = "通知公告",
     params(("id" = i64, Path)),
     responses((status = 200, description = "通知详情")),
@@ -95,6 +100,8 @@ async fn detail(
 }
 
 /// 创建通知公告
+#[post("/")]
+#[perm("system:notice:add")]
 #[utoipa::path(post, path = "/api/v1/system/notices", tag = "通知公告",
     request_body = CreateNoticeDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create(
@@ -116,6 +123,8 @@ async fn create(
 }
 
 /// 更新通知公告
+#[put("/{id}")]
+#[perm("system:notice:edit")]
 #[utoipa::path(put, path = "/api/v1/system/notices/{id}", tag = "通知公告",
     params(("id" = i64, Path)),
     request_body = UpdateNoticeDto,
@@ -142,6 +151,8 @@ async fn update(
 }
 
 /// 删除通知公告
+#[delete("/{id}")]
+#[perm("system:notice:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/notices/{id}", tag = "通知公告",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
 async fn remove(

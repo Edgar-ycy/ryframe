@@ -22,6 +22,17 @@ pub struct MenuServiceImpl {
 }
 
 impl MenuServiceImpl {
+    pub async fn invalidate_all_menu_caches(&self) {
+        let Some(redis) = &self.redis else {
+            return;
+        };
+        if let Ok(keys) = redis.keys("tenant:*:sys_menu:tree").await {
+            for key in keys {
+                let _ = redis.del(key).await;
+            }
+        }
+    }
+
     pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
         let cache_key = menu_tree_cache_key();
         if let Some(ref redis) = self.redis

@@ -8,6 +8,8 @@ use sea_orm_migration::prelude::*;
 mod m20260625_000001_tenant_completion;
 mod m20260701_000002_menu_permission_binding;
 mod m20260701_000003_user_auth_version;
+mod m20260705_000004_relation_foreign_keys;
+mod m20260714_000005_super_role_permissions;
 
 pub struct Migrator;
 
@@ -18,6 +20,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260625_000001_tenant_completion::Migration),
             Box::new(m20260701_000002_menu_permission_binding::Migration),
             Box::new(m20260701_000003_user_auth_version::Migration),
+            Box::new(m20260705_000004_relation_foreign_keys::Migration),
+            Box::new(m20260714_000005_super_role_permissions::Migration),
         ]
     }
 }
@@ -28,7 +32,7 @@ pub async fn run(db: &DatabaseConnection) -> Result<(), DbErr> {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::Database;
+    use sea_orm::{ConnectionTrait, Database, Statement, TryGetable};
     use sea_orm_migration::prelude::{Alias, ColumnDef, SchemaManager, Table};
 
     use super::run;
@@ -87,5 +91,34 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn sqlite_migration_backfills_all_api_buttons_and_skips_static_tenant_menu() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        db.execute_unprepared("CREATE TABLE sys_menu (id BIGINT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, parent_id BIGINT NULL, menu_type TEXT NOT NULL, perm_id BIGINT NULL, route_key TEXT NULL, icon TEXT NULL, sort INTEGER NOT NULL, visible BOOLEAN NOT NULL, status TEXT NOT NULL, remark TEXT NULL, del_flag TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").await.unwrap();
+        db.execute_unprepared("CREATE TABLE sys_permission (id BIGINT PRIMARY KEY, tenant_id TEXT NOT NULL, name TEXT NOT NULL, code TEXT NOT NULL, parent_id BIGINT NULL, perm_type TEXT NOT NULL, icon TEXT NULL, sort INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").await.unwrap();
+        db.execute_unprepared("INSERT INTO sys_menu VALUES (10, 'system', '用户管理', NULL, 'C', 1, 'system.user', 'User', 1, 1, '1', NULL, '0', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (20, 'system', '租户管理', NULL, 'C', 3, 'platform.tenant', NULL, 2, 1, '1', NULL, '0', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").await.unwrap();
+        db.execute_unprepared("INSERT INTO sys_permission VALUES (1, 'system', '用户查询', 'system:user:list', NULL, 'api', NULL, 1, '1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (2, 'system', '用户新增', 'system:user:add', NULL, 'api', NULL, 2, '1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (3, 'system', '租户查询', 'tenant:list', NULL, 'api', NULL, 1, '1', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").await.unwrap();
+
+        run(&db).await.unwrap();
+        let row = db
+            .query_one_raw(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT COUNT(*) FROM sys_menu WHERE menu_type = 'F'".to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(i64::try_get_by_index(&row, 0).unwrap(), 2);
+        let row = db
+            .query_one_raw(Statement::from_string(
+                sea_orm::DbBackend::Sqlite,
+                "SELECT COUNT(*) FROM sys_menu WHERE route_key = 'platform.tenant'".to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(i64::try_get_by_index(&row, 0).unwrap(), 0);
     }
 }

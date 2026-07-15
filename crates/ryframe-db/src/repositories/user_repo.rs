@@ -127,11 +127,18 @@ impl UserRepository {
                 );
             }
             DataScope::Custom => {
-                if scope_ctx.custom_dept_ids.is_empty() {
+                if scope_ctx.custom_dept_ids.is_empty() && !scope_ctx.include_self {
                     return None;
                 }
-                select =
-                    select.filter(user::Column::DeptId.is_in(scope_ctx.custom_dept_ids.clone()));
+                let mut condition = Condition::any();
+                if !scope_ctx.custom_dept_ids.is_empty() {
+                    condition = condition
+                        .add(user::Column::DeptId.is_in(scope_ctx.custom_dept_ids.clone()));
+                }
+                if scope_ctx.include_self {
+                    condition = condition.add(user::Column::Id.eq(scope_ctx.user_id));
+                }
+                select = select.filter(condition);
             }
         }
 

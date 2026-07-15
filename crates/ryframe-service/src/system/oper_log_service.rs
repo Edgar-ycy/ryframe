@@ -1,5 +1,5 @@
 use chrono::Utc;
-use ryframe_common::{AppResult, utils::snowflake};
+use ryframe_common::{AppResult, DataScopeContext, utils::snowflake};
 use ryframe_core::{LoggedRepo, PageQuery, PageResult, Repository};
 use ryframe_db::{OperLogRepository, entities::oper_log};
 use sea_orm::DatabaseConnection;
@@ -82,6 +82,7 @@ impl OperLogServiceImpl {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn find_by_page(
         &self,
         db: &DatabaseConnection,
@@ -90,12 +91,13 @@ impl OperLogServiceImpl {
         status: Option<String>,
         begin_time: Option<&str>,
         end_time: Option<&str>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<OperLogVo>> {
         let (begin, end) = parse_log_time_range(begin_time, end_time);
 
         let result = self
             .oper_log_repo
-            .find_by_page_filtered(db, query, oper_name, status, begin, end)
+            .find_by_page_filtered(db, query, oper_name, status, begin, end, scope_ctx)
             .await?;
         Ok(PageResult {
             records: result.records.into_iter().map(OperLogVo::from).collect(),
@@ -117,10 +119,13 @@ impl OperLogServiceImpl {
         status: Option<String>,
         begin_time: Option<&str>,
         end_time: Option<&str>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<Vec<OperLogVo>> {
         let query = PageQuery::all_records();
         let result = self
-            .find_by_page(db, query, oper_name, status, begin_time, end_time)
+            .find_by_page(
+                db, query, oper_name, status, begin_time, end_time, scope_ctx,
+            )
             .await?;
         Ok(result.records)
     }

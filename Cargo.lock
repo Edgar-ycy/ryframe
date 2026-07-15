@@ -4405,6 +4405,7 @@ dependencies = [
  "ryframe-core",
  "ryframe-db",
  "ryframe-generator",
+ "ryframe-macro",
  "ryframe-middleware",
  "ryframe-monitor",
  "ryframe-service",
@@ -4435,6 +4436,7 @@ dependencies = [
  "ryframe-db",
  "sea-orm",
  "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -4529,6 +4531,7 @@ name = "ryframe-db-migration"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "ryframe-common",
  "sea-orm",
  "sea-orm-migration",
  "tokio",
@@ -4601,6 +4604,7 @@ dependencies = [
  "ryframe-common",
  "ryframe-core",
  "ryframe-db",
+ "ryframe-macro",
  "ryframe-middleware",
  "sea-orm",
  "serde",

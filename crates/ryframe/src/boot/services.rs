@@ -55,11 +55,13 @@ pub async fn build_all(
         user_repo: LoggedRepo::new(UserRepository),
         role_repo: LoggedRepo::new(RoleRepository),
         dept_repo: LoggedRepo::new(DeptRepository),
+        redis: redis_client.clone(),
     });
 
     let role_service = Arc::new(RoleServiceImpl {
         role_repo: LoggedRepo::new(RoleRepository),
         perm_repo: LoggedRepo::new(PermissionRepository),
+        redis: redis_client.clone(),
     });
 
     let tenant_service = Arc::new(TenantServiceImpl {
@@ -68,6 +70,7 @@ pub async fn build_all(
 
     let permission_service = Arc::new(PermissionServiceImpl {
         perm_repo: LoggedRepo::new(PermissionRepository),
+        redis: redis_client.clone(),
     });
 
     let auth_service = Arc::new(AuthServiceImpl {
@@ -83,7 +86,7 @@ pub async fn build_all(
         redis: redis_client.clone(),
     });
     // 启动时清除菜单树缓存，确保迁移新增的菜单项能立即显示
-    menu_service.invalidate_menu_cache();
+    menu_service.invalidate_all_menu_caches().await;
 
     let dept_service = Arc::new(DeptServiceImpl {
         dept_repo: LoggedRepo::new(DeptRepository),

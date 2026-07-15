@@ -1,4 +1,4 @@
-use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_common::{AppError, AppResult, DataScopeContext, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
     auto_fill::{AutoFill, FillContext},
@@ -43,8 +43,12 @@ impl NoticeServiceImpl {
         &self,
         db: &DatabaseConnection,
         query: PageQuery,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<NoticeVo>> {
-        let page = self.notice_repo.find_by_page(db, query.clone()).await?;
+        let page = self
+            .notice_repo
+            .find_by_page_filtered(db, query.clone(), None, None, None, scope_ctx)
+            .await?;
         let records = page.records.into_iter().map(NoticeVo::from).collect();
         Ok(PageResult::new(records, page.total, &query))
     }
@@ -125,10 +129,11 @@ impl NoticeServiceImpl {
         title: Option<&str>,
         notice_type: Option<&str>,
         status: Option<&str>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<NoticeVo>> {
         let page = self
             .notice_repo
-            .find_by_page_filtered(db, query.clone(), title, notice_type, status)
+            .find_by_page_filtered(db, query.clone(), title, notice_type, status, scope_ctx)
             .await?;
         let records = page.records.into_iter().map(NoticeVo::from).collect();
         Ok(PageResult::new(records, page.total, &query))

@@ -149,6 +149,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
         tenant_id: "system".into(),
         name: "超级管理员".into(),
         code: "admin".into(),
+        is_super: 1,
         data_scope: "1".into(),
         status: "1".into(),
         sort: 0,
@@ -274,16 +275,19 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
             user_repo: LoggedRepo::new(UserRepository),
             role_repo: LoggedRepo::new(RoleRepository),
             dept_repo: LoggedRepo::new(DeptRepository),
+            redis: None,
         }),
         role_service: Arc::new(RoleServiceImpl {
             role_repo: LoggedRepo::new(RoleRepository),
             perm_repo: LoggedRepo::new(PermissionRepository),
+            redis: None,
         }),
         tenant_service: Arc::new(TenantServiceImpl {
             tenant_repo: TenantRepository,
         }),
         permission_service: Arc::new(PermissionServiceImpl {
             perm_repo: LoggedRepo::new(PermissionRepository),
+            redis: None,
         }),
         menu_service: Arc::new(MenuServiceImpl {
             menu_repo: LoggedRepo::new(MenuRepository),
@@ -948,17 +952,34 @@ async fn test_update_and_delete_operations() {
         &db,
         &format!("/system/roles/{}", role_id),
         &token,
-        serde_json::json!({"name": "改名角色", "sort": 3, "status": "1", "data_scope": "1"}),
+        serde_json::json!({"name": "改名角色", "sort": 3, "status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
 
-    // 分配权限
-    let (s, _) = auth_put(
+    let (s, _) = auth_post(
         &db,
-        &format!("/system/roles/{}/permissions", role_id),
+        "/system/role/update-data-scope",
         &token,
-        serde_json::json!({"perm_ids": []}),
+        serde_json::json!({"role_id": role_id.to_string(), "data_scope": "2"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = auth_post(
+        &db,
+        "/system/role/update-data-scope",
+        &token,
+        serde_json::json!({"role_id": role_id.to_string(), "data_scope": "9"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // 分配权限
+    let (s, _) = auth_post(
+        &db,
+        "/system/role/assign-perm",
+        &token,
+        serde_json::json!({"role_id": role_id.to_string(), "perm_ids": []}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -973,12 +994,12 @@ async fn test_update_and_delete_operations() {
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 
-    // 设置数据权限
-    let (s, _) = auth_put(
+    // 分配自定义部门
+    let (s, _) = auth_post(
         &db,
-        &format!("/system/roles/{}/data-scope", role_id),
+        "/system/role/assign-dept",
         &token,
-        serde_json::json!({"data_scope": "3", "dept_ids": []}),
+        serde_json::json!({"role_id": role_id.to_string(), "dept_ids": []}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -989,7 +1010,7 @@ async fn test_update_and_delete_operations() {
     // ===== 用户：创建 → 更新 → 修改状态 → 重置密码 → 删除 =====
     let (s, b) = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "testupdate", "nickname": "测试更新", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "testupdate", "nickname": "测试更新", "email": null, "phone": null, "dept_id": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1001,7 +1022,7 @@ async fn test_update_and_delete_operations() {
         &db,
         "/system/users",
         &token,
-        serde_json::json!({"username": "legacy_password_user", "nickname": "旧密码字段", "password": "newpass123", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "legacy_password_user", "nickname": "旧密码字段", "password": "newpass123", "email": null, "phone": null, "dept_id": "1"}),
     )
     .await;
     assert!(!s.is_success(), "创建用户请求不应再接受 password 字段");
@@ -1011,7 +1032,7 @@ async fn test_update_and_delete_operations() {
         &db,
         "/system/users",
         &token,
-        serde_json::json!({"username": "legacy_sex_user", "nickname": "旧性别字段", "sex": "0", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "legacy_sex_user", "nickname": "旧性别字段", "sex": "0", "email": null, "phone": null, "dept_id": "1"}),
     )
     .await;
     assert!(!s.is_success(), "创建用户请求不应再接受 sex 字段");
@@ -1019,7 +1040,7 @@ async fn test_update_and_delete_operations() {
     // 更新用户
     let (s, _) = auth_put(
         &db, &format!("/system/users/{}", user_id), &token,
-        serde_json::json!({"nickname": "已更新", "email": null, "phone": null, "dept_id": "1", "status": "1", "role_ids": null}),
+        serde_json::json!({"nickname": "已更新", "email": null, "phone": null, "dept_id": "1", "status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1224,14 +1245,14 @@ async fn test_duplicate_key_conflicts() {
     // 创建已有的 username
     let _ = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "duplicate_user", "nickname": "重复用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "duplicate_user", "nickname": "重复用户", "email": null, "phone": null, "dept_id": "1"}),
     )
     .await;
 
     // 尝试用相同 username 创建另一个 user
     let (s, _) = auth_post(
         &db, "/system/users", &token,
-        serde_json::json!({"username": "duplicate_user", "nickname": "重名用户", "email": null, "phone": null, "dept_id": "1", "role_ids": null}),
+        serde_json::json!({"username": "duplicate_user", "nickname": "重名用户", "email": null, "phone": null, "dept_id": "1"}),
     )
     .await;
     assert!(!s.is_success(), "重复用户名应返回错误");

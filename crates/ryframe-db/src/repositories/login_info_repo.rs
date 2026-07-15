@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_common::{AppError, AppResult};
+use ryframe_common::{AppError, AppResult, DataScopeContext};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
@@ -61,6 +61,7 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
 }
 
 impl LoginInfoRepository {
+    #[allow(clippy::too_many_arguments)]
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
@@ -69,6 +70,7 @@ impl LoginInfoRepository {
         status: Option<String>,
         begin_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<login_info::Model>> {
         let mut select = login_info::Entity::find()
             .filter(login_info::Column::TenantId.eq(ryframe_core::current_tenant_id()));
@@ -83,6 +85,11 @@ impl LoginInfoRepository {
         }
         if let Some(end) = end_time {
             select = select.filter(login_info::Column::LoginTime.lte(end));
+        }
+        if let Some(condition) =
+            crate::data_scope::owner_username_condition(login_info::Column::UserName, scope_ctx)
+        {
+            select = select.filter(condition);
         }
         select = select.order_by_desc(login_info::Column::LoginTime);
         crate::pagination::paginate(db, select, &query).await

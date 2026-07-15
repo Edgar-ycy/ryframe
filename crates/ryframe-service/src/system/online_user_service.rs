@@ -53,7 +53,7 @@ pub enum OnlineUserServiceImpl {
 
 impl Default for OnlineUserServiceImpl {
     fn default() -> Self {
-        Self::new()
+        Self::new_in_memory()
     }
 }
 
@@ -70,11 +70,6 @@ impl OnlineUserServiceImpl {
         Self::InMemory {
             sessions: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-
-    /// 兼容旧 API
-    pub fn new() -> Self {
-        Self::new_in_memory()
     }
 
     /// 添加在线用户

@@ -13,6 +13,7 @@ pub struct Model {
     pub name: String,
     #[sea_orm(unique)]
     pub code: String,
+    pub is_super: i8,
     pub data_scope: String,
     pub status: String,
     pub sort: i32,
@@ -62,6 +63,36 @@ impl Related<super::role_permission::Entity> for Entity {
 impl Related<super::role_dept::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::RoleDept.def()
+    }
+}
+
+impl Related<super::user::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::user_role::Relation::User.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::user_role::Relation::Role.def().rev())
+    }
+}
+
+impl Related<super::permission::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::role_permission::Relation::Permission.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::role_permission::Relation::Role.def().rev())
+    }
+}
+
+impl Related<super::dept::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::role_dept::Relation::Dept.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::role_dept::Relation::Role.def().rev())
     }
 }
 

@@ -424,6 +424,7 @@ PUT /api/v1/auth/profile/avatar
 | `GET` | `/export` | 导出用户数据为 Excel | `system:user:export` |
 | `POST` | `/import` | 从 Excel 导入用户（multipart/form-data） | `system:user:import` |
 | `GET` | `/import-template` | 下载导入模板 Excel | `system:user:import` |
+| `POST` | `/api/v1/system/user/assign-role` | 给用户分配角色（全量覆盖） | `system:user:edit` |
 
 #### 5.4.1 分页查询用户
 
@@ -487,8 +488,7 @@ GET /api/v1/system/users/{id}
         "dept_id": 1,
         "dept_name": "RyFrame 科技",
         "status": "1",
-        "role_ids": [1],
-        "role_names": ["admin"],
+        "roles": [{ "id": "1", "name": "超级管理员", "code": "admin" }],
         "created_at": "2026-05-22T00:00:00",
         "updated_at": "2026-06-01T00:00:00"
     }
@@ -510,7 +510,6 @@ POST /api/v1/system/users
 | `email` | string | 否 | - | 邮箱 |
 | `phone` | string | 否 | - | 手机号 |
 | `dept_id` | i64 | 否 | - | 所属部门 ID |
-| `role_ids` | i64[] | 否 | - | 角色 ID 列表 |
 
 **请求示例**：
 
@@ -520,8 +519,7 @@ POST /api/v1/system/users
     "nickname": "新用户",
     "email": "user@example.com",
     "phone": "13900000000",
-    "dept_id": 5,
-    "role_ids": [2]
+    "dept_id": 5
 }
 ```
 
@@ -540,7 +538,6 @@ PUT /api/v1/system/users/{id}
 | `phone` | string | 否 | 手机号 |
 | `dept_id` | i64 | 否 | 部门 ID |
 | `status` | string | 是 | 状态：0/1/2 |
-| `role_ids` | i64[] | 否 | 角色 ID 列表 |
 
 **请求示例**：
 
@@ -550,14 +547,28 @@ PUT /api/v1/system/users/{id}
     "email": "new@example.com",
     "phone": "13800000001",
     "dept_id": 3,
-    "status": "1",
-    "role_ids": [1, 2]
+    "status": "1"
 }
 ```
 
 **HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
-#### 5.4.5 删除用户（软删除）
+#### 5.4.5 分配角色
+
+```
+POST /api/v1/system/user/assign-role
+```
+
+```json
+{
+    "user_id": "10001",
+    "role_ids": ["20001", "20002"]
+}
+```
+
+`role_ids` 为全量覆盖；用户 CRUD 不再接收内嵌的 `role_ids` 字段。
+
+#### 5.4.6 删除用户（软删除）
 
 ```
 DELETE /api/v1/system/users/{id}
@@ -565,7 +576,7 @@ DELETE /api/v1/system/users/{id}
 
 **HTTP 状态码**: 200 | 401 | 403 | 404
 
-#### 5.4.6 批量删除用户
+#### 5.4.7 批量删除用户
 
 ```
 DELETE /api/v1/system/users/batch/1,2,3
@@ -581,7 +592,7 @@ DELETE /api/v1/system/users/batch/1,2,3
 
 **HTTP 状态码**: 200 | 400（ID列表为空）| 401 | 403
 
-#### 5.4.7 发起密码重置请求
+#### 5.4.8 发起密码重置请求
 
 ```
 POST /api/v1/system/users/{id}/password-reset-requests
@@ -616,7 +627,7 @@ POST /api/v1/system/users/{id}/password-reset-requests
 
 **HTTP 状态码**: 200 | 400（原因为空）| 401 | 403 | 404
 
-#### 5.4.8 修改用户状态
+#### 5.4.9 修改用户状态
 
 ```
 PUT /api/v1/system/users/changeStatus
@@ -638,7 +649,7 @@ PUT /api/v1/system/users/changeStatus
 
 **HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
-#### 5.4.9 导出用户（Excel）
+#### 5.4.10 导出用户（Excel）
 
 ```
 GET /api/v1/system/users/export
@@ -650,7 +661,7 @@ GET /api/v1/system/users/export
 
 **HTTP 状态码**: 200 | 401 | 403
 
-#### 5.4.10 导入用户（Excel）
+#### 5.4.11 导入用户（Excel）
 
 ```
 POST /api/v1/system/users/import
@@ -675,7 +686,7 @@ Content-Type: multipart/form-data
 
 **HTTP 状态码**: 200 | 400（未找到上传文件）| 401 | 403
 
-#### 5.4.11 下载导入模板
+#### 5.4.12 下载导入模板
 
 ```
 GET /api/v1/system/users/import-template
@@ -707,8 +718,10 @@ GET /api/v1/system/users/import-template
 | `PUT` | `/{id}` | 更新角色 | `system:role:edit` |
 | `DELETE` | `/{id}` | 删除角色 | `system:role:remove` |
 | `DELETE` | `/batch/{ids}` | 批量删除（逗号分隔ID） | `system:role:remove` |
-| `PUT` | `/{id}/permissions` | 分配权限（role_permission） | `system:role:edit` |
-| `PUT` | `/{id}/data-scope` | 设置数据权限 | `system:role:edit` |
+| `GET` | `/{id}/permissions` | 查询角色已分配权限 ID | `system:role:list` |
+| `POST` | `/api/v1/system/role/assign-perm` | 分配权限（role_permission） | `system:role:edit` |
+| `POST` | `/api/v1/system/role/assign-dept` | 分配自定义部门（role_dept） | `system:role:edit` |
+| `POST` | `/api/v1/system/role/update-data-scope` | 更新数据范围（1/2/3/4/5） | `system:role:edit` |
 
 #### 5.5.1 分页查询角色
 
@@ -785,7 +798,6 @@ PUT /api/v1/system/roles/{id}
 | `name` | string | 是 | 角色名称 |
 | `sort` | i32 | 否 | 排序值 |
 | `status` | string | 是 | 状态：0/1 |
-| `data_scope` | string | 否 | 数据范围 |
 
 **HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
@@ -807,46 +819,59 @@ DELETE /api/v1/system/roles/batch/1,2,3
 #### 5.5.6 分配权限
 
 ```
-PUT /api/v1/system/roles/{id}/permissions
+POST /api/v1/system/role/assign-perm
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `perm_ids` | i64[] | 是 | 权限 ID 列表（全量覆盖） |
+| `role_id` | string | 是 | 角色 ID |
+| `perm_ids` | string[] | 是 | 权限 ID 列表（全量覆盖） |
 
 **请求示例**：
 
 ```json
 {
-    "perm_ids": [7, 8, 9, 10]
+    "role_id": "20001",
+    "perm_ids": ["7", "8", "9", "10"]
 }
 ```
 
 **HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
-#### 5.5.7 设置数据权限
+#### 5.5.7 分配自定义部门
 
 ```
-PUT /api/v1/system/roles/{id}/data-scope
+POST /api/v1/system/role/assign-dept
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `data_scope` | string | 是 | 数据范围：1/2/3/4/5 |
-| `dept_ids` | i64[] | 否 | 自定义部门 ID 列表（仅 data_scope=2 时有效） |
+| `role_id` | string | 是 | 角色 ID |
+| `dept_ids` | string[] | 是 | 自定义部门 ID 列表（全量覆盖） |
 
 **请求示例（自定义部门）**：
 
 ```json
 {
-    "data_scope": "2",
-    "dept_ids": [1, 5, 10]
+    "role_id": "20001",
+    "dept_ids": ["1", "5", "10"]
 }
 ```
 
+数据范围模式必须通过 `/api/v1/system/role/update-data-scope` 设置；当值为 `2` 时，再调用本接口保存自定义部门。
+
+#### 5.5.8 设置数据范围
+
+```json
+POST /api/v1/system/role/update-data-scope
+{ "role_id": "20001", "data_scope": "2" }
+```
+
+`data_scope` 只允许 `1`（全部）、`2`（自定义）、`3`（本部门）、`4`（本部门及以下）、`5`（仅本人）。
+
 **HTTP 状态码**: 200 | 400 | 401 | 403 | 404
 
-#### 5.5.8 导出角色
+#### 5.5.9 导出角色
 
 ```
 GET /api/v1/system/roles/export
@@ -1580,7 +1605,7 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
 
 ### 8.2 菜单树接口
 
-`GET /api/v1/system/menus/tree` 返回完整的菜单结构树。后端不再返回 `path`、`component`、`perms`、`is_frame`、`is_cache` 等运行时路由字段；前端通过 `ryframe-vue3/src/router/pageRegistry.ts` 按菜单 ID 解析页面路径和组件。
+`GET /api/v1/system/menus/tree` 返回完整的菜单结构树。后端不返回 `path`、`component`、`perms`、`is_frame`、`is_cache` 等运行时路由字段；前端通过 `ryframe-vue3/src/router/pageRegistry.ts` 按 `route_key` 解析页面路径和组件。
 
 前端动态侧边栏当前调用 `GET /api/v1/system/user/get-menus`，返回值与菜单树接口一致，用于登录后的用户菜单渲染。
 
@@ -1629,7 +1654,7 @@ RyFrame 的菜单系统将**目录**、**菜单页面**、**操作按钮**统一
 ```
 for each node in menu_tree:
     if node.menu_type == "M":
-        resolve page registry by node.id
+        resolve page registry by node.route_key
         render <el-sub-menu> (可折叠分组)
         recursively render children
     else if node.menu_type == "C":
@@ -1662,11 +1687,12 @@ RyFrame 支持基于角色的数据权限控制（`data_scope` 字段）：
 ### 9.2 权限校验流程
 
 ```
-请求 → AuthMiddleware（解码 JWT，提取 Claims.perms）
-     → PermissionMiddleware（验证 Claims.perms 包含所需权限码）
+请求 → AuthMiddleware（解码 JWT，提取 user_id 与 tenant_id）
+     → Redis/数据库解析用户当前角色与权限（租户隔离缓存）
+     → PermissionMiddleware（验证实时权限集合包含 #[perm] 权限码，admin 直接放行）
      → Handler
        → Service
-         → DataScope 过滤（根据 Claims.roles 查询 data_scope 并构建 SQL 条件）
+         → DataScope 过滤（根据数据库中的当前角色合并 data_scope 并构建租户内查询条件）
 ```
 
 ---

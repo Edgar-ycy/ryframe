@@ -13,6 +13,7 @@ ryframe-core = { path = "../ryframe-core" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-auth = { path = "../ryframe-auth" }
+ryframe-macro = { path = "../ryframe-macro" }
 serde = { workspace = true, features = ["derive"] }
 sysinfo = { workspace = true }
 axum = { workspace = true }

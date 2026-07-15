@@ -6,8 +6,9 @@ use std::{
 
 use ryframe_common::{AppError, AppResult, utils::snowflake};
 use ryframe_core::{
-    LoggedRepo, Repository,
+    LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
+    cache::clear_tenant_permission_cache,
 };
 use ryframe_db::{PermissionRepository, entities::permission};
 use sea_orm::DatabaseConnection;
@@ -29,6 +30,7 @@ pub struct PermissionTreeNode {
 
 pub struct PermissionServiceImpl {
     pub perm_repo: LoggedRepo<PermissionRepository>,
+    pub redis: Option<RedisClient>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +42,15 @@ pub struct PermissionSyncReport {
 }
 
 impl PermissionServiceImpl {
+    async fn invalidate_permission_cache(&self) {
+        if let Some(redis) = &self.redis
+            && let Err(error) =
+                clear_tenant_permission_cache(redis, &ryframe_core::current_tenant_id()).await
+        {
+            tracing::warn!(%error, "failed to clear tenant permission cache");
+        }
+    }
+
     fn default_code_source_roots() -> Vec<PathBuf> {
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -56,44 +67,18 @@ impl PermissionServiceImpl {
 
     fn extract_permission_codes_from_text(text: &str) -> Vec<String> {
         let mut codes = Vec::new();
-        let needle = "perm_route(";
+        let needle = "#[perm(\"";
         let mut idx = 0;
         while let Some(start) = text[idx..].find(needle) {
             let start = idx + start + needle.len();
-            let mut depth = 1usize;
-            let mut end = None;
-            for (offset, ch) in text[start..].char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = Some(start + offset);
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(end) = end {
-                let snippet = &text[start..end];
-                let mut quote_idx = 0;
-                while let Some(qstart_rel) = snippet[quote_idx..].find('"') {
-                    let qstart = quote_idx + qstart_rel + 1;
-                    if let Some(qend) = snippet[qstart..].find('"') {
-                        let literal = &snippet[qstart..qstart + qend];
-                        if literal.contains(':') || literal.contains('*') {
-                            codes.push(literal.to_string());
-                        }
-                        quote_idx = qstart + qend + 1;
-                    } else {
-                        break;
-                    }
-                }
-                idx = end + 1;
-            } else {
+            let Some(end_offset) = text[start..].find('"') else {
                 break;
+            };
+            let code = &text[start..start + end_offset];
+            if code.contains(':') || code.contains('*') {
+                codes.push(code.to_string());
             }
+            idx = start + end_offset + 1;
         }
         codes
     }
@@ -145,7 +130,7 @@ impl PermissionServiceImpl {
         Ok(())
     }
 
-    pub async fn find_tree(
+    pub async fn list_all_perms(
         &self,
         db: &DatabaseConnection,
         perm_type: Option<&str>,
@@ -198,7 +183,9 @@ impl PermissionServiceImpl {
             updated_at: Default::default(),
         };
         model.fill_on_insert(&FillContext::new());
-        self.perm_repo.insert(db, model).await
+        let saved = self.perm_repo.insert(db, model).await?;
+        self.invalidate_permission_cache().await;
+        Ok(saved)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -244,10 +231,12 @@ impl PermissionServiceImpl {
             created_at: ActiveValue::Set(model.created_at),
             updated_at: ActiveValue::Set(model.updated_at),
         };
-        active
+        let saved = active
             .update(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        self.invalidate_permission_cache().await;
+        Ok(saved)
     }
 
     pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
@@ -256,10 +245,12 @@ impl PermissionServiceImpl {
                 "权限仍被角色或菜单引用，不能删除".into(),
             ));
         }
-        self.perm_repo.delete(db, id).await
+        self.perm_repo.delete(db, id).await?;
+        self.invalidate_permission_cache().await;
+        Ok(())
     }
 
-    pub async fn sync_api_permissions(
+    pub async fn sync_perm_from_route(
         &self,
         db: &DatabaseConnection,
     ) -> AppResult<PermissionSyncReport> {
@@ -294,6 +285,10 @@ impl PermissionServiceImpl {
             created += 1;
         }
 
+        if created > 0 {
+            self.invalidate_permission_cache().await;
+        }
+
         Ok(PermissionSyncReport {
             scanned: scanned_total,
             existing: existing_codes.len(),
@@ -322,4 +317,23 @@ pub fn build_perm_tree(
             children: build_perm_tree(perms, Some(p.id)),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PermissionServiceImpl;
+
+    #[test]
+    fn extracts_attribute_permission_codes() {
+        let source = r#"
+            #[get("/list")]
+            #[perm("system:user:list")]
+            async fn list() {}
+        "#;
+
+        assert_eq!(
+            PermissionServiceImpl::extract_permission_codes_from_text(source),
+            vec![String::from("system:user:list")]
+        );
+    }
 }

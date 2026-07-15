@@ -11,6 +11,7 @@ use axum::{
 use ryframe_auth::{jwt::Claims, middleware::AuthState};
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::MessageQueue;
+use ryframe_macro::{get, route};
 use ryframe_middleware::rate_limit::{RateLimitState, user_rate_limit_middleware};
 use ryframe_service::system::OnlineUserServiceImpl;
 use serde_json::json;
@@ -93,6 +94,7 @@ pub fn auth_router(state: AppState) -> Router {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
         db: state.db.clone(),
+        redis: state.redis.clone(),
     };
 
     // 公开路由（无认证，操作日志记录为 "anonymous"）
@@ -171,6 +173,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
         db: state.db.clone(),
+        redis: state.redis.clone(),
     };
     let platform = crate::handlers::tenant_handler::tenant_router(state.clone()).layer(
         middleware::from_fn_with_state(
@@ -208,11 +211,7 @@ fn monitor_router(
     monitor_state: ryframe_monitor::MonitorState,
     auth_state: AuthState,
 ) -> Router {
-    let runtime = Router::new()
-        .route(
-            "/runtime",
-            ryframe_auth::middleware::perm_route(get(runtime_status), "monitor:runtime:list"),
-        )
+    let runtime = route!(runtime_status)
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             ryframe_auth::middleware::auth_middleware,
@@ -222,6 +221,8 @@ fn monitor_router(
     ryframe_monitor::monitor_router(monitor_state, Some(auth_state)).merge(runtime)
 }
 
+#[get("/runtime")]
+#[perm("monitor:runtime:list")]
 async fn runtime_status(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -257,17 +258,18 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
         db: state.db.clone(),
+        redis: state.redis.clone(),
     };
 
     Router::new()
         .nest("/users", user_handler::user_router(state.clone()))
         .nest(
             "/user",
-            Router::new()
-                .route("/get-menus", get(menu_handler::user_tree))
-                .with_state(state.clone()),
+            user_handler::user_assignment_router(state.clone())
+                .merge(route!(menu_handler::user_tree).with_state(state.clone())),
         )
         .nest("/roles", role_handler::role_router(state.clone()))
+        .nest("/role", role_handler::role_assignment_router(state.clone()))
         .nest(
             "/perms",
             permission_handler::permission_router(state.clone()),
@@ -318,6 +320,7 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
         db: state.db.clone(),
+        redis: state.redis.clone(),
     };
 
     Router::new()
@@ -347,6 +350,7 @@ fn common_router(state: AppState) -> Router {
         config: state.config.clone(),
         blacklist: state.token_blacklist.clone(),
         db: state.db.clone(),
+        redis: state.redis.clone(),
     };
 
     let oper_log_state = OperLogMiddlewareState::new_arc(state.db.clone());

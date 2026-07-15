@@ -1,11 +1,10 @@
 use axum::{
     Extension, Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_db::{entities::menu, repositories::menu_repo::MenuTreeNode};
+use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
 use super::auth_handler::AppState;
@@ -21,20 +20,19 @@ list_query!(pub MenuListQuery {
 
 pub fn menu_router(state: AppState) -> Router {
     Router::new()
-        .route("/tree", perm_route(get(tree), "system:menu:list"))
-        .route("/list", perm_route(get(list_page), "system:menu:list"))
-        .route(
-            "/listNoPage",
-            perm_route(get(list_no_page), "system:menu:list"),
-        )
-        .route("/", perm_route(post(create), "system:menu:add"))
-        .route("/{id}", perm_route(get(detail), "system:menu:list"))
-        .route("/{id}", perm_route(put(update), "system:menu:edit"))
-        .route("/{id}", perm_route(delete(remove), "system:menu:remove"))
+        .merge(route!(tree))
+        .merge(route!(list_page))
+        .merge(route!(list_no_page))
+        .merge(route!(create))
+        .merge(route!(detail))
+        .merge(route!(update))
+        .merge(route!(remove))
         .with_state(state)
 }
 
 /// 菜单树查询
+#[get("/tree")]
+#[perm("system:menu:list")]
 #[utoipa::path(get, path = "/api/v1/system/menus/tree", tag = "菜单管理",
     responses((status = 200, description = "菜单树")), security(("bearer" = [])))]
 async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
@@ -46,6 +44,7 @@ async fn tree(State(state): State<AppState>) -> AppResult<Json<ApiResponse<Vec<M
 }
 
 /// 当前用户可见的菜单树（按角色过滤，前端用）
+#[get("/get-menus")]
 #[utoipa::path(get, path = "/api/v1/system/user/get-menus", tag = "菜单管理",
     responses((status = 200, description = "用户菜单树")), security(("bearer" = [])))]
 pub async fn user_tree(
@@ -76,6 +75,8 @@ pub async fn user_tree(
 }
 
 /// 菜单列表分页查询
+#[get("/list")]
+#[perm("system:menu:list")]
 #[utoipa::path(get, path = "/api/v1/system/menus/list", tag = "菜单管理",
     responses((status = 200, description = "菜单列表")),
     security(("bearer" = [])))]
@@ -98,6 +99,8 @@ async fn list_page(
 }
 
 /// 菜单列表不分页查询（返回全部数据）
+#[get("/listNoPage")]
+#[perm("system:menu:list")]
 #[utoipa::path(get, path = "/api/v1/system/menus/listNoPage", tag = "菜单管理",
     responses((status = 200, description = "菜单列表")),
     security(("bearer" = [])))]
@@ -113,6 +116,8 @@ async fn list_no_page(
 }
 
 /// 创建菜单
+#[post("/")]
+#[perm("system:menu:add")]
 #[utoipa::path(post, path = "/api/v1/system/menus", tag = "菜单管理",
     request_body = CreateMenuDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create(
@@ -140,6 +145,8 @@ async fn create(
 }
 
 /// 更新菜单
+#[put("/{id}")]
+#[perm("system:menu:edit")]
 #[utoipa::path(put, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
     params(("id" = i64, Path)), request_body = UpdateMenuDto,
     responses((status = 200, description = "更新成功")), security(("bearer" = [])))]
@@ -171,6 +178,8 @@ async fn update(
 }
 
 /// 菜单详情
+#[get("/{id}")]
+#[perm("system:menu:list")]
 #[utoipa::path(get, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
     params(("id" = i64, Path)),
     responses((status = 200, description = "菜单详情")),
@@ -183,6 +192,8 @@ async fn detail(
 }
 
 /// 删除菜单
+#[delete("/{id}")]
+#[perm("system:menu:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
 async fn remove(

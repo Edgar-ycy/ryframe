@@ -231,6 +231,7 @@ mod extra_paths {
         crate::handlers::user_handler::batch_remove,
         crate::handlers::user_handler::request_password_reset,
         crate::handlers::user_handler::change_status,
+        crate::handlers::user_handler::assign_role,
         // 角色管理
         crate::handlers::role_handler::list,
         crate::handlers::role_handler::list_no_page,
@@ -239,8 +240,9 @@ mod extra_paths {
         crate::handlers::role_handler::update,
         crate::handlers::role_handler::remove,
         crate::handlers::role_handler::batch_remove,
-        crate::handlers::role_handler::assign_permissions,
-        crate::handlers::role_handler::assign_data_scope,
+        crate::handlers::role_handler::assign_perm,
+        crate::handlers::role_handler::assign_dept,
+        crate::handlers::role_handler::update_data_scope,
         // 部门管理
         crate::handlers::dept_handler::tree,
         crate::handlers::dept_handler::list_page,
@@ -333,7 +335,7 @@ mod extra_paths {
         crate::handlers::permission_handler::create,
         crate::handlers::permission_handler::update,
         crate::handlers::permission_handler::remove,
-        crate::handlers::permission_handler::sync_api_permissions,
+        crate::handlers::permission_handler::sync_perm_from_route,
     ),
     components(schemas(
         // 认证 DTO
@@ -348,11 +350,13 @@ mod extra_paths {
         crate::dto::user_dto::PasswordResetRequestDto,
         crate::dto::user_dto::PasswordResetRequestResponse,
         crate::dto::user_dto::ChangeStatusDto,
+        crate::dto::user_dto::UserRoleAssignDto,
         // 角色 DTO
         crate::dto::role_dto::CreateRoleDto,
         crate::dto::role_dto::UpdateRoleDto,
-        crate::dto::role_dto::AssignPermsDto,
-        crate::dto::role_dto::AssignDataScopeDto,
+        crate::dto::role_dto::RolePermAssignDto,
+        crate::dto::role_dto::RoleDeptAssignDto,
+        crate::dto::role_dto::RoleDataScopeUpdateDto,
         // 部门 DTO
         crate::dto::dept_dto::CreateDeptDto,
         crate::dto::dept_dto::UpdateDeptDto,

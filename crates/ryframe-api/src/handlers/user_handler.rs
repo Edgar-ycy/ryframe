@@ -1,11 +1,11 @@
 use axum::{
     Extension, Json, Router,
     extract::{ConnectInfo, Multipart, Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
+use ryframe_auth::rbac;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{CreateUserParams, UpdateUserParams, UserDetailVo, UserVo};
 use serde::Deserialize;
 use validator::Validate;
@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use crate::dto::{
     user_dto::{
         ChangeStatusDto, CreateUserDto, PasswordResetRequestDto, PasswordResetRequestResponse,
-        UpdateUserDto,
+        UpdateUserDto, UserRoleAssignDto,
     },
     user_import_dto::{UserExportData, UserImportData},
 };
@@ -49,6 +49,17 @@ fn ensure_not_self_operation(
     Ok(())
 }
 
+fn ensure_current_user_permission(
+    current_user: &CurrentUser,
+    permission: &str,
+    message: &str,
+) -> AppResult<()> {
+    if current_user.is_super_admin || rbac::has_permission(&current_user.permissions, permission) {
+        return Ok(());
+    }
+    Err(AppError::Authorization(message.into()))
+}
+
 async fn ensure_not_super_admin_target(state: &AppState, target_user_id: i64) -> AppResult<()> {
     if state
         .user_service
@@ -78,41 +89,28 @@ pub struct UserListQuery {
 
 pub fn user_router(state: AppState) -> Router {
     Router::new()
-        .route("/", perm_route(get(list), "system:user:list"))
-        .route("/", perm_route(post(create), "system:user:add"))
-        .route("/list", perm_route(get(list), "system:user:list"))
-        .route(
-            "/listNoPage",
-            perm_route(get(list_no_page), "system:user:list"),
-        )
-        .route("/{id}", perm_route(get(detail), "system:user:list"))
-        .route("/{id}", perm_route(put(update), "system:user:edit"))
-        .route("/{id}", perm_route(delete(remove), "system:user:remove"))
-        .route(
-            "/batch/{ids}",
-            perm_route(delete(batch_remove), "system:user:remove"),
-        )
-        .route(
-            "/{id}/password-reset-requests",
-            perm_route(post(request_password_reset), "system:user:edit"),
-        )
-        .route(
-            "/changeStatus",
-            perm_route(put(change_status), "system:user:edit"),
-        )
-        .route(
-            "/export",
-            perm_route(get(export_users), "system:user:export"),
-        )
-        .route("/import", perm_route(post(import_users), "system:user:add"))
-        .route(
-            "/import-template",
-            perm_route(get(download_import_template), "system:user:add"),
-        )
+        .merge(route!(list))
+        .merge(route!(list_no_page))
+        .merge(route!(detail))
+        .merge(route!(create))
+        .merge(route!(update))
+        .merge(route!(remove))
+        .merge(route!(batch_remove))
+        .merge(route!(request_password_reset))
+        .merge(route!(change_status))
+        .merge(route!(export_users))
+        .merge(route!(import_users))
+        .merge(route!(download_import_template))
         .with_state(state)
 }
 
+pub fn user_assignment_router(state: AppState) -> Router {
+    Router::new().merge(route!(assign_role)).with_state(state)
+}
+
 /// 用户列表分页查询
+#[get("/", "/list")]
+#[perm("system:user:list")]
 #[utoipa::path(get, path = "/api/v1/system/users", tag = "用户管理",
     responses((status = 200, description = "用户列表")),
     security(("bearer" = [])))]
@@ -156,6 +154,8 @@ async fn list(
 }
 
 /// 用户列表不分页查询（返回全部数据）
+#[get("/listNoPage")]
+#[perm("system:user:list")]
 #[utoipa::path(get, path = "/api/v1/system/users/listNoPage", tag = "用户管理",
     responses((status = 200, description = "用户列表")),
     security(("bearer" = [])))]
@@ -173,6 +173,8 @@ async fn list_no_page(
 }
 
 /// 用户详情
+#[get("/{id}")]
+#[perm("system:user:list")]
 #[utoipa::path(get, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
     responses((status = 200, description = "用户详情")),
@@ -194,6 +196,8 @@ async fn detail(
 }
 
 /// 创建用户
+#[post("/")]
+#[perm("system:user:add")]
 #[utoipa::path(post, path = "/api/v1/system/users", tag = "用户管理",
     request_body = CreateUserDto,
     responses((status = 200, description = "创建成功")),
@@ -205,7 +209,6 @@ async fn create(
     dto.validate()?;
     // 解析前端传来的 String ID 为 i64
     let dept_id = parse_optional_i64(dto.dept_id);
-    let role_ids = dto.role_ids.map(|ids| parse_i64_strings(&ids));
     state
         .user_service
         .create(
@@ -216,7 +219,7 @@ async fn create(
                 email: dto.email.as_deref().unwrap_or(""),
                 phone: dto.phone.as_deref().unwrap_or(""),
                 dept_id,
-                role_ids,
+                role_ids: None,
             },
         )
         .await
@@ -224,6 +227,8 @@ async fn create(
 }
 
 /// 更新用户
+#[put("/{id}")]
+#[perm("system:user:edit")]
 #[utoipa::path(put, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
     request_body = UpdateUserDto,
@@ -244,7 +249,6 @@ async fn update(
     ensure_not_super_admin_target(&state, id).await?;
     // 解析前端传来的 String ID 为 i64
     let dept_id = parse_optional_i64(dto.dept_id);
-    let role_ids = dto.role_ids.map(|ids| parse_i64_strings(&ids));
     let result = state
         .user_service
         .update(
@@ -256,7 +260,7 @@ async fn update(
                 phone: dto.phone.as_deref().unwrap_or(""),
                 dept_id,
                 status: dto.status,
-                role_ids,
+                role_ids: None,
             },
         )
         .await?;
@@ -264,7 +268,51 @@ async fn update(
     Ok(Json(ApiResponse::success(result)))
 }
 
+/// 给用户分配角色
+#[post("/assign-role")]
+#[perm("system:user:edit")]
+#[utoipa::path(post, path = "/api/v1/system/user/assign-role", tag = "用户管理",
+    request_body = UserRoleAssignDto,
+    responses((status = 200, description = "角色分配成功")),
+    security(("bearer" = [])))]
+async fn assign_role(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(dto): Json<UserRoleAssignDto>,
+) -> AppResult<Json<ApiResponse<()>>> {
+    dto.validate()?;
+    let user_id = dto
+        .user_id
+        .parse::<i64>()
+        .map_err(|_| AppError::Validation("无效的用户ID".into()))?;
+    let role_ids = parse_i64_strings(&dto.role_ids);
+    ensure_target_user_access(&state, &current_user, user_id).await?;
+    if user_id == current_user.user_id {
+        ensure_current_user_permission(
+            &current_user,
+            "sys:user:editSelf",
+            "不允许修改自身角色权限",
+        )?;
+    }
+
+    let super_role = state.role_service.get_super_role(&state.db).await?;
+    if role_ids.contains(&super_role.id) {
+        ensure_current_user_permission(
+            &current_user,
+            "sys:role:editSuper",
+            "无权限分配超级管理员角色",
+        )?;
+    }
+    state
+        .user_service
+        .assign_roles(&state.db, user_id, role_ids)
+        .await?;
+    Ok(Json(ApiResponse::success_no_data_with_msg("角色分配成功")))
+}
+
 /// 删除用户
+#[delete("/{id}")]
+#[perm("system:user:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
     responses((status = 200, description = "删除成功")),
@@ -283,6 +331,8 @@ async fn remove(
 }
 
 /// 批量删除用户
+#[delete("/batch/{ids}")]
+#[perm("system:user:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/users/batch/{ids}", tag = "用户管理",
     params(("ids" = String, Path, description = "用户ID列表，逗号分隔")),
     responses((status = 200, description = "批量删除成功")),
@@ -315,6 +365,8 @@ async fn batch_remove(
 }
 
 /// 修改用户状态
+#[put("/changeStatus")]
+#[perm("system:user:edit")]
 #[utoipa::path(put, path = "/api/v1/system/users/changeStatus", tag = "用户管理",
     request_body = ChangeStatusDto,
     responses((status = 200, description = "状态修改成功")),
@@ -344,6 +396,8 @@ async fn change_status(
 }
 
 /// 发起用户密码重置请求
+#[post("/{id}/password-reset-requests")]
+#[perm("system:user:edit")]
 #[utoipa::path(post, path = "/api/v1/system/users/{id}/password-reset-requests", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
     request_body = PasswordResetRequestDto,
@@ -385,6 +439,8 @@ async fn request_password_reset(
 }
 
 /// 导出用户数据为 Excel
+#[get("/export")]
+#[perm("system:user:export")]
 async fn export_users(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
@@ -434,6 +490,8 @@ async fn export_users(
 }
 
 /// 从 Excel 导入用户数据
+#[post("/import")]
+#[perm("system:user:add")]
 async fn import_users(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
@@ -538,7 +596,11 @@ async fn import_users(
 }
 
 /// 下载导入模板
-async fn download_import_template() -> AppResult<axum::response::Response> {
+#[get("/import-template")]
+#[perm("system:user:add")]
+async fn download_import_template(
+    State(_state): State<AppState>,
+) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
     let bytes = ExcelExporter::export_template("用户数据", UserImportData::excel_headers())?;

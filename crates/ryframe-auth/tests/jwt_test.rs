@@ -16,9 +16,6 @@ fn test_encode_decode_roundtrip() {
         ..Default::default()
     };
     let user_id = 1234567890123456789i64;
-    let roles = vec!["admin".to_string()];
-    let perms = vec!["system:user:list".to_string()];
-
     let identity = TokenIdentity {
         user_id,
         tenant_id: "tenant-a",
@@ -26,7 +23,7 @@ fn test_encode_decode_roundtrip() {
         user_auth_version: 1,
         username: "admin",
     };
-    let (token, jti) = encode_access(&identity, &roles, &perms, &config).unwrap();
+    let (token, jti) = encode_access(&identity, &config).unwrap();
     let claims = decode_token(&token, &config.jwt_secret).unwrap();
 
     assert_eq!(claims.sub, user_id.to_string());
@@ -34,8 +31,6 @@ fn test_encode_decode_roundtrip() {
     assert_eq!(claims.tenant_session_version, 1);
     assert_eq!(claims.user_auth_version, 1);
     assert_eq!(claims.username, "admin");
-    assert_eq!(claims.roles, roles);
-    assert_eq!(claims.perms, perms);
     assert_eq!(claims.token_type, "access");
     assert!(!claims.jti.is_empty());
     assert_eq!(claims.jti, jti);

@@ -181,6 +181,10 @@ cargo run --bin ryframe-db-reset
 - **本部门数据权限**：仅查询当前用户所在部门
 - **本人数据权限**：仅查询本人创建的数据
 
+多角色数据范围按可见数据并集合并；任一角色为“全部”时不附加行级条件。用户、部门、公告、操作日志和登录日志的分页查询均通过数据库层统一过滤工具执行。
+
+三张多对多关联表 `sys_user_role`、`sys_role_permission`、`sys_role_dept` 的两个业务 ID 均建立物理外键，并使用 `ON DELETE CASCADE`。`sys_user.dept_id` 因用户和部门均采用软删除而不建立物理外键；`sys_menu.parent_id` 也不建立自关联外键，父子合法性由服务层校验。
+
 实现方式：Repository 层通过 `DataScope` 注解注入过滤条件。
 
 ## 多数据源

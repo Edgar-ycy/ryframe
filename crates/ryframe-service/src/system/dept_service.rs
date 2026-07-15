@@ -77,7 +77,7 @@ impl DeptServiceImpl {
         Ok(Some(ids))
     }
 
-    pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<DeptTreeNode>> {
+    pub async fn tree_list(&self, db: &DatabaseConnection) -> AppResult<Vec<DeptTreeNode>> {
         let cache_key = dept_tree_cache_key();
         // 尝试从 Redis 缓存读取
         if let Some(ref redis) = self.redis
@@ -99,13 +99,13 @@ impl DeptServiceImpl {
         Ok(tree)
     }
 
-    pub async fn find_tree_with_data_scope(
+    pub async fn filter_dept_by_user(
         &self,
         db: &DatabaseConnection,
         scope: &DataScopeContext,
     ) -> AppResult<Vec<DeptTreeNode>> {
         match self.visible_dept_ids(db, scope).await? {
-            None => self.find_tree(db).await,
+            None => self.tree_list(db).await,
             Some(ids) => self.dept_repo.find_tree_by_visible_ids(db, &ids).await,
         }
     }

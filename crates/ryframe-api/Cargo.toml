@@ -17,6 +17,7 @@ ryframe-core = { path = "../ryframe-core" }
 ryframe-monitor = { path = "../ryframe-monitor" }
 ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-generator = { path = "../ryframe-generator" }
+ryframe-macro = { path = "../ryframe-macro" }
 axum = { workspace = true, features = ["multipart"] }
 serde = { workspace = true, features = ["derive"] }
 validator = { workspace = true, features = ["derive"] }

@@ -1,10 +1,9 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get},
 };
-use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_macro::{delete, get, route};
 use ryframe_service::system::online_user_service::OnlineUserVo;
 
 use crate::handlers::auth_handler::AppState;
@@ -18,26 +17,15 @@ list_query!(pub OnlineUserQuery {
 /// 在线用户路由
 pub fn online_user_router(state: AppState) -> Router {
     Router::new()
-        .route(
-            "/",
-            perm_route(get(list_online_users), "monitor:online:list"),
-        )
-        .route(
-            "/list",
-            perm_route(get(list_online_users_page), "monitor:online:list"),
-        )
-        .route(
-            "/listNoPage",
-            perm_route(get(list_online_users), "monitor:online:list"),
-        )
-        .route(
-            "/{token_id}",
-            perm_route(delete(force_logout), "monitor:online:force-logout"),
-        )
+        .merge(route!(list_online_users))
+        .merge(route!(list_online_users_page))
+        .merge(route!(force_logout))
         .with_state(state)
 }
 
 /// 获取在线用户列表
+#[get("/", "/listNoPage")]
+#[perm("monitor:online:list")]
 /// 获取在线用户列表
 #[utoipa::path(get, path = "/api/v1/system/online", tag = "在线用户",
     responses((status = 200, description = "在线用户列表")), security(("bearer" = [])))]
@@ -54,6 +42,8 @@ pub async fn list_online_users(
 }
 
 /// 获取在线用户列表（分页）
+#[get("/list")]
+#[perm("monitor:online:list")]
 #[utoipa::path(get, path = "/api/v1/system/online/list", tag = "在线用户",
     responses((status = 200, description = "在线用户列表")),
     security(("bearer" = [])))]
@@ -74,6 +64,8 @@ pub async fn list_online_users_page(
 }
 
 /// 强制下线用户
+#[delete("/{token_id}")]
+#[perm("monitor:online:force-logout")]
 /// 强制下线用户
 #[utoipa::path(delete, path = "/api/v1/system/online/{token_id}", tag = "在线用户",
     params(("token_id" = String, Path)), responses((status = 200, description = "强退成功")), security(("bearer" = [])))]

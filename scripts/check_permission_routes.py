@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Fail CI when a protected API route is missing permission binding.
-
-The check is intentionally simple and conservative:
-- It scans handler source files for axum `.route(...)` declarations.
-- Routes in explicitly public handler files are ignored.
-- For other routes, the route snippet must contain `perm_route(...)`.
-"""
+"""Fail CI when an attribute route is missing a permission annotation."""
 
 from __future__ import annotations
 
@@ -16,6 +10,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HANDLERS = ROOT / "crates" / "ryframe-api" / "src" / "handlers"
+EXTRA_PROTECTED_FILES = [
+    ROOT / "crates" / "ryframe-api" / "src" / "router.rs",
+    ROOT / "crates" / "ryframe-monitor" / "src" / "lib.rs",
+]
 
 PUBLIC_FILES = {
     "auth_handler.rs",
@@ -24,62 +22,37 @@ PUBLIC_FILES = {
     "profile_handler.rs",
 }
 
-PUBLIC_PATHS = {
-    "/user-tree",
-}
+PUBLIC_PATHS = {"/get-menus"}
 
-
-def extract_route_calls(text: str) -> list[str]:
-    calls: list[str] = []
-    idx = 0
-    while True:
-        start = text.find(".route(", idx)
-        if start == -1:
-            break
-        depth = 0
-        i = start
-        while i < len(text):
-            ch = text[i]
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-                if depth == 0:
-                    calls.append(text[start : i + 1])
-                    idx = i + 1
-                    break
-            i += 1
-        else:
-            break
-    return calls
-
-
-def first_string_literal(snippet: str) -> str | None:
-    match = re.search(r'"([^"]+)"', snippet)
-    return match.group(1) if match else None
+ROUTE_ATTR = re.compile(
+    r'^\s*#\[(get|post|put|delete)\(([^\]]+)\)\]'
+    r'(?:\s*\n\s*#\[perm\("([^"]+)"\)\])?',
+    re.MULTILINE,
+)
 
 
 def main() -> int:
     violations: list[str] = []
 
-    for path in sorted(HANDLERS.glob("*.rs")):
-        if path.name in PUBLIC_FILES:
-            continue
-
+    protected_files = [
+        path for path in sorted(HANDLERS.glob("*.rs")) if path.name not in PUBLIC_FILES
+    ] + EXTRA_PROTECTED_FILES
+    for path in protected_files:
         text = path.read_text(encoding="utf-8")
-        for call in extract_route_calls(text):
-            route_path = first_string_literal(call)
-            if route_path in PUBLIC_PATHS:
+        for match in ROUTE_ATTR.finditer(text):
+            route_paths = re.findall(r'"([^"]+)"', match.group(2))
+            if any(route_path in PUBLIC_PATHS for route_path in route_paths):
                 continue
-            if "perm_route(" not in call:
-                violations.append(f"{path.relative_to(ROOT)} :: {route_path or '<unknown>'}")
+            if match.group(3) is None:
+                route_label = ", ".join(route_paths) or "<unknown>"
+                violations.append(f"{path.relative_to(ROOT)} :: {route_label}")
 
     if violations:
         print("Missing permission binding in protected routes:")
         for item in violations:
             print(f"  - {item}")
         print()
-        print("Wrap the route with `perm_route(...)` or add it to the explicit public allowlist if it is intended to be public.")
+        print("Add `#[perm(\"permission:code\")]` below the route attribute, or explicitly allowlist a public path.")
         return 1
 
     print("Permission route check passed.")

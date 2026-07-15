@@ -83,8 +83,7 @@ impl FileRepository {
 
     /// 将数据库中存储的相对路径解析为可公开访问的完整 URL
     ///
-    /// - 若 `file_url` 已是完整 URL（以 "http" 开头），直接返回（旧数据兼容）
-    /// - 否则根据存储后端动态拼接完整 URL
+    /// 根据存储后端和数据库中的相对对象路径拼接完整 URL。
     pub async fn find_by_md5(
         &self,
         db: &DatabaseConnection,
@@ -102,11 +101,6 @@ impl FileRepository {
     }
 
     pub fn resolve_public_url(storage: &Arc<dyn ObjectStorage>, model: &sys_file::Model) -> String {
-        // 兼容旧数据：如果已经存储了完整 URL，直接返回
-        if model.file_url.starts_with("http://") || model.file_url.starts_with("https://") {
-            return model.file_url.clone();
-        }
-
         // file_url 存储格式: "{bucket}/{object_key}"
         // 需要提取 object_key（跳过 bucket/ 前缀）
         let object_key = if let Some(idx) = model.file_url.find('/') {

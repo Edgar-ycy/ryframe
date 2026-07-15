@@ -8,13 +8,13 @@ use axum::{
 };
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::{TenantContext, TokenBlacklist, with_tenant_context};
+use ryframe_core::{RedisClient, TenantContext, TokenBlacklist, with_tenant_context};
 use ryframe_db::{TenantRepository, entities::user};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 
 use crate::{
-    jwt::{Claims, decode_token},
-    permission::check_permission,
+    jwt::decode_token,
+    permission::{PermissionContext, check_permission_context, resolve_user_permission_context},
 };
 
 /// 认证中间件状态（合并 Config + TokenBlacklist）
@@ -23,6 +23,7 @@ pub struct AuthState {
     pub config: Arc<AppConfig>,
     pub blacklist: TokenBlacklist,
     pub db: DatabaseConnection,
+    pub redis: Option<RedisClient>,
 }
 
 /// 认证中间件
@@ -80,24 +81,38 @@ pub async fn auth_middleware(
         .sub
         .parse::<i64>()
         .map_err(|_| AppError::Authentication("令牌中的用户ID无效".into()).into_response())?;
-    let current_user = user::Entity::find_by_id(user_id)
-        .filter(user::Column::TenantId.eq(&claims.tenant_id))
-        .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
-        .one(&auth_state.db)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()).into_response())?
-        .ok_or_else(|| AppError::Authentication("用户不存在".into()).into_response())?;
-    if current_user.auth_version != claims.user_auth_version {
-        return Err(AppError::Authentication("用户权限已变更，请重新登录".into()).into_response());
-    }
-
     // Replace the unauthenticated, header-derived context with the tenant
     // identity bound in the verified token.
     let tenant_context = TenantContext {
         tenant_id: claims.tenant_id.clone(),
         is_admin: false,
     };
+    let permission_context = with_tenant_context(tenant_context.clone(), async {
+        let current_user = user::Entity::find_by_id(user_id)
+            .filter(user::Column::TenantId.eq(&claims.tenant_id))
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .one(&auth_state.db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
+        if current_user.auth_version != claims.user_auth_version {
+            return Err(AppError::Authentication(
+                "用户权限已变更，请重新登录".into(),
+            ));
+        }
+        resolve_user_permission_context(
+            &auth_state.db,
+            auth_state.redis.as_ref(),
+            &claims.tenant_id,
+            user_id,
+        )
+        .await
+    })
+    .await
+    .map_err(|error| error.into_response())?;
+
     request.extensions_mut().insert(tenant_context.clone());
+    request.extensions_mut().insert(permission_context);
     request.extensions_mut().insert(claims);
     Ok(with_tenant_context(tenant_context, next.run(request)).await)
 }
@@ -125,11 +140,14 @@ pub fn require_permission(
     move |request: Request, next: Next| {
         let perm = perm;
         Box::pin(async move {
-            let claims = request.extensions().get::<Claims>().ok_or_else(|| {
-                AppError::Authentication("未认证，请先登录".into()).into_response()
-            })?;
+            let context = request
+                .extensions()
+                .get::<PermissionContext>()
+                .ok_or_else(|| {
+                    AppError::Authentication("未认证，请先登录".into()).into_response()
+                })?;
 
-            check_permission(claims, perm).map_err(|e| e.into_response())?;
+            check_permission_context(context, perm).map_err(|e| e.into_response())?;
 
             Ok(next.run(request).await)
         })

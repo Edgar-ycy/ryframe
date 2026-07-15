@@ -3,7 +3,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use ryframe_auth::jwt::Claims;
+use ryframe_auth::{jwt::Claims, permission::PermissionContext};
 use ryframe_common::{AppError, annotations::data_scope::DataScopeContext};
 
 use crate::{extractors::CurrentUser, handlers::auth_handler::AppState};
@@ -24,14 +24,18 @@ pub async fn user_context_middleware(
         .get::<Claims>()
         .cloned()
         .ok_or_else(|| AppError::Authentication("未认证，请先登录".into()).into_response())?;
+    let permission_context = request
+        .extensions()
+        .get::<PermissionContext>()
+        .cloned()
+        .ok_or_else(|| AppError::Authentication("权限上下文未初始化".into()).into_response())?;
 
     let user_id: i64 = claims
         .sub
         .parse()
         .map_err(|_| AppError::Authentication("令牌中的用户ID无效".into()).into_response())?;
 
-    let is_super_admin =
-        claims.roles.contains(&"admin".to_string()) || claims.perms.contains(&"*:*:*".to_string());
+    let is_super_admin = permission_context.is_super_admin;
     // The tenant in an authenticated request comes from the signed token, not
     // from a client-controlled request header.
     let tenant_id = claims.tenant_id.clone();
@@ -50,13 +54,14 @@ pub async fn user_context_middleware(
         user_id,
         tenant_id,
         username: claims.username.clone(),
-        roles: claims.roles.clone(),
+        roles: permission_context.roles,
         role_ids,
-        permissions: claims.perms.clone(),
+        permissions: permission_context.permissions,
         dept_id: scope_ctx.dept_id,
         dept_path: scope_ctx.ancestors.clone(),
         data_scope: scope_ctx.scope.clone(),
         custom_dept_ids: scope_ctx.custom_dept_ids.clone(),
+        include_self: scope_ctx.include_self,
         is_super_admin,
     };
 

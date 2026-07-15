@@ -1,11 +1,10 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::PostVo;
 use serde::Serialize;
 use validator::Validate;
@@ -23,24 +22,19 @@ list_query!(pub PostListQuery {
 
 pub fn post_router(state: AppState) -> Router {
     Router::new()
-        .route("/", perm_route(get(list), "system:post:list"))
-        .route("/", perm_route(post(create), "system:post:add"))
-        .route("/list", perm_route(get(list), "system:post:list"))
-        .route(
-            "/listNoPage",
-            perm_route(get(list_no_page), "system:post:list"),
-        )
-        .route(
-            "/export",
-            perm_route(get(export_posts), "system:post:export"),
-        )
-        .route("/{id}", perm_route(get(detail), "system:post:list"))
-        .route("/{id}", perm_route(put(update), "system:post:edit"))
-        .route("/{id}", perm_route(delete(remove), "system:post:remove"))
+        .merge(route!(list))
+        .merge(route!(list_no_page))
+        .merge(route!(export_posts))
+        .merge(route!(detail))
+        .merge(route!(create))
+        .merge(route!(update))
+        .merge(route!(remove))
         .with_state(state)
 }
 
 /// 岗位列表分页查询
+#[get("/", "/list")]
+#[perm("system:post:list")]
 #[utoipa::path(get, path = "/api/v1/system/posts", tag = "岗位管理",
     responses((status = 200, description = "岗位列表")), security(("bearer" = [])))]
 async fn list(
@@ -74,6 +68,8 @@ async fn list(
 }
 
 /// 岗位列表不分页查询（返回全部数据）
+#[get("/listNoPage")]
+#[perm("system:post:list")]
 #[utoipa::path(get, path = "/api/v1/system/posts/listNoPage", tag = "岗位管理",
     responses((status = 200, description = "岗位列表")),
     security(("bearer" = [])))]
@@ -86,6 +82,8 @@ async fn list_no_page(State(state): State<AppState>) -> AppResult<Json<ApiRespon
 }
 
 /// 岗位详情
+#[get("/{id}")]
+#[perm("system:post:list")]
 #[utoipa::path(get, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
     params(("id" = i64, Path)),
     responses((status = 200, description = "岗位详情")),
@@ -98,6 +96,8 @@ async fn detail(
 }
 
 /// 创建岗位
+#[post("/")]
+#[perm("system:post:add")]
 #[utoipa::path(post, path = "/api/v1/system/posts", tag = "岗位管理",
     request_body = CreatePostDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create(
@@ -113,6 +113,8 @@ async fn create(
 }
 
 /// 更新岗位
+#[put("/{id}")]
+#[perm("system:post:edit")]
 #[utoipa::path(put, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
     params(("id" = i64, Path)), request_body = UpdatePostDto,
     responses((status = 200, description = "更新成功")), security(("bearer" = [])))]
@@ -130,6 +132,8 @@ async fn update(
 }
 
 /// 删除岗位
+#[delete("/{id}")]
+#[perm("system:post:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
 async fn remove(
@@ -166,6 +170,8 @@ impl PostExportData {
 }
 
 /// 导出岗位数据为 Excel
+#[get("/export")]
+#[perm("system:post:export")]
 async fn export_posts(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 

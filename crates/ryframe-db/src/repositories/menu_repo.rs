@@ -126,14 +126,23 @@ impl MenuRepository {
 
         let permission_set: HashSet<&str> = permission_codes.iter().map(String::as_str).collect();
         if permission_set.contains("*:*:*") {
-            return Ok(all);
+            return Ok(all
+                .into_iter()
+                .filter(|item| item.menu_type != menu::Model::MENU_TYPE_BUTTON)
+                .collect());
         }
 
         let by_id: HashMap<i64, &menu::Model> = all.iter().map(|menu| (menu.id, menu)).collect();
         let menu_permission_codes = self.permission_code_map(db, &all).await?;
         let mut visible_ids = HashSet::new();
 
-        for item in &all {
+        // Only a page menu's own permission may grant access to that page.
+        // Button permissions control actions inside an already accessible page;
+        // they must never promote the parent page into the navigation tree.
+        for item in all
+            .iter()
+            .filter(|item| item.menu_type == menu::Model::MENU_TYPE_MENU)
+        {
             let Some(permission_code) = item
                 .perm_id
                 .and_then(|perm_id| menu_permission_codes.get(&perm_id))
@@ -155,7 +164,9 @@ impl MenuRepository {
 
         Ok(all
             .into_iter()
-            .filter(|item| visible_ids.contains(&item.id))
+            .filter(|item| {
+                item.menu_type != menu::Model::MENU_TYPE_BUTTON && visible_ids.contains(&item.id)
+            })
             .collect())
     }
 

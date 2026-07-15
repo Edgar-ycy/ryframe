@@ -32,7 +32,7 @@ const ALL_TABLES: &[&str] = &[
 ];
 
 /// 默认用户密码配置
-const ADMIN_PASSWORD: &str = "admin123";
+const ADMIN_PASSWORD: &str = "123456";
 const USER_PASSWORD: &str = "123456";
 
 #[tokio::main]

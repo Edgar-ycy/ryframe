@@ -889,7 +889,9 @@ UserService trait (定义于 ryframe-core):
   - update(id: Uuid, dto: UpdateUserDto) → AppResult<UserVo>
   - delete(id: Uuid) → AppResult<()>
   - request_password_reset(id: Uuid, reason: String) → AppResult<PasswordResetRequestOutcome>
-  - assign_roles(user_id: Uuid, role_ids: Vec<Uuid>) → AppResult<()>
+  - assign_roles(user_id: i64, role_ids: Vec<i64>) → AppResult<()>
+  - get_user_all_perms(user_id: i64) → AppResult<Vec<String>>
+  - get_user_access_dept_ids(user_id: i64) → AppResult<Vec<i64>>
 ```
 
 ---
@@ -918,10 +920,14 @@ UserService trait (定义于 ryframe-core):
 | `PUT` | `/api/v1/system/users/:id` | 更新用户 |
 | `DELETE` | `/api/v1/system/users/:id` | 删除用户 |
 | `POST` | `/api/v1/system/users/:id/password-reset-requests` | 发起密码重置请求 |
+| `POST` | `/api/v1/system/user/assign-role` | 给用户分配角色 |
 | `GET` | `/api/v1/system/roles` | 角色列表 |
 | `POST` | `/api/v1/system/roles` | 创建角色 |
 | `PUT` | `/api/v1/system/roles/:id` | 更新角色 |
 | `DELETE` | `/api/v1/system/roles/:id` | 删除角色 |
+| `POST` | `/api/v1/system/role/assign-perm` | 给角色分配 API 权限 |
+| `POST` | `/api/v1/system/role/assign-dept` | 给角色分配自定义部门 |
+| `POST` | `/api/v1/system/role/update-data-scope` | 更新角色数据范围 |
 | `GET` | `/api/v1/system/perms` | 权限树 |
 | `GET` | `/api/v1/system/menus` | 菜单树 |
 | `POST` | `/api/v1/system/menus` | 创建菜单 |
@@ -1084,8 +1090,9 @@ Access Token (短期):
 {
   "sub": "user_uuid",
   "username": "admin",
-  "roles": ["admin", "user"],
-  "perms": ["system:user:*", "system:role:list"],
+  "tenant_id": "system",
+  "tenant_session_version": 1,
+  "user_auth_version": 1,
   "iat": 1700000000,
   "exp": 1700003600    // 1 小时后过期
 }
@@ -1119,16 +1126,18 @@ Refresh Token (长期):
 通过 Axum 中间件 + 自定义属性宏实现声明式权限校验：
 
 ```
-// Handler 上声明所需权限
-#[permission("system:user:delete")]
+// Handler 同时声明请求方法、路径和所需权限
+#[delete("/{id}")]
+#[perm("system:user:remove")]
 async fn delete_user(...) -> AppResult<Json<...>> { ... }
 
 // 中间件流程:
 // 1. 从请求头提取 JWT
 // 2. 验证令牌有效性
-// 3. 从令牌载荷中提取用户权限列表
-// 4. 与 Handler 声明的权限码匹配
-// 5. 不匹配则返回 403 Forbidden
+// 3. 根据 user_id、tenant_id 优先读取 Redis 权限缓存
+// 4. 缓存未命中时联表查询当前角色和权限
+// 5. admin 角色直接放行，否则与 Handler 声明的权限码匹配
+// 6. 不匹配则返回 403 Forbidden
 ```
 
 ---
@@ -1294,6 +1303,9 @@ pub trait Cache: Send + Sync {
 | **NoopCache** | 空操作 | 禁用缓存 |
 | **LocalMemoryCache** | 本地 HashMap | 单机部署、开发测试 |
 | **RedisCache** | Redis 封装 | 分布式生产环境 |
+
+用户权限集合使用租户隔离键 `user:perms:{tenant_id}:{user_id}`，默认缓存 30 分钟。
+用户角色、角色权限、角色状态或权限资源变化时主动删除相关缓存，下一次请求立即从数据库重建。
 
 #### 6.7.4 缓存防护体系
 

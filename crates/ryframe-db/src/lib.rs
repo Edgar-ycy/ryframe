@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod data_scope;
 pub mod entities;
 pub mod pagination;
 pub mod repositories;

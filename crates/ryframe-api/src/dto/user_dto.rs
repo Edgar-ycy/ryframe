@@ -12,8 +12,6 @@ pub struct CreateUserDto {
     pub phone: Option<String>,
     /// 接口接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失。
     pub dept_id: Option<String>,
-    /// 接口接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失。
-    pub role_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
@@ -26,8 +24,14 @@ pub struct UpdateUserDto {
     /// 接口接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失。
     pub dept_id: Option<String>,
     pub status: String,
-    /// 接口接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失。
-    pub role_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UserRoleAssignDto {
+    pub user_id: String,
+    #[serde(default)]
+    pub role_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]

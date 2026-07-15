@@ -4,7 +4,6 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
-#[auto_fill(login_date, skip)]
 #[sea_orm(table_name = "sys_user")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
@@ -24,6 +23,7 @@ pub struct Model {
     pub dept_id: Option<i64>,
     pub remark: Option<String>,
     pub login_ip: Option<String>,
+    #[auto_fill(skip)]
     pub login_date: Option<DateTime<Utc>>,
     pub del_flag: String,
     pub created_at: DateTime<Utc>,
@@ -66,6 +66,16 @@ impl Related<super::user_role::Entity> for Entity {
 impl Related<super::dept::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Dept.def()
+    }
+}
+
+impl Related<super::role::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::user_role::Relation::Role.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::user_role::Relation::User.def().rev())
     }
 }
 

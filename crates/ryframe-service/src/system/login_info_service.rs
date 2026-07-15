@@ -1,5 +1,5 @@
 use chrono::Utc;
-use ryframe_common::{AppResult, utils::snowflake};
+use ryframe_common::{AppResult, DataScopeContext, utils::snowflake};
 use ryframe_core::{LoggedRepo, PageQuery, PageResult, Repository};
 use ryframe_db::{LoginInfoRepository, entities::login_info};
 use sea_orm::DatabaseConnection;
@@ -71,6 +71,7 @@ impl LoginInfoServiceImpl {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn find_by_page(
         &self,
         db: &DatabaseConnection,
@@ -79,12 +80,13 @@ impl LoginInfoServiceImpl {
         status: Option<String>,
         begin_time: Option<&str>,
         end_time: Option<&str>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<LoginInfoVo>> {
         let (begin, end) = parse_log_time_range(begin_time, end_time);
 
         let result = self
             .login_info_repo
-            .find_by_page_filtered(db, query, user_name, status, begin, end)
+            .find_by_page_filtered(db, query, user_name, status, begin, end, scope_ctx)
             .await?;
         Ok(PageResult {
             records: result.records.into_iter().map(LoginInfoVo::from).collect(),
@@ -106,10 +108,13 @@ impl LoginInfoServiceImpl {
         status: Option<String>,
         begin_time: Option<&str>,
         end_time: Option<&str>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<Vec<LoginInfoVo>> {
         let query = PageQuery::all_records();
         let result = self
-            .find_by_page(db, query, user_name, status, begin_time, end_time)
+            .find_by_page(
+                db, query, user_name, status, begin_time, end_time, scope_ctx,
+            )
             .await?;
         Ok(result.records)
     }

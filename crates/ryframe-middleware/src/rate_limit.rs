@@ -69,11 +69,6 @@ impl RateLimiter {
         }
     }
 
-    /// 兼容旧 API
-    pub fn new(capacity: u32, refill_per_sec: u32) -> Self {
-        Self::new_in_memory(capacity, refill_per_sec)
-    }
-
     /// 尝试获取 1 个令牌，返回是否通过
     pub async fn try_acquire(&self, key: &str) -> bool {
         match self {

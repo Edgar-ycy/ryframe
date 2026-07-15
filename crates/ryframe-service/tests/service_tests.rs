@@ -9,6 +9,7 @@ async fn role_service_constructs_without_menu_repository() {
     let _svc = RoleServiceImpl {
         role_repo: LoggedRepo::new(RoleRepository),
         perm_repo: LoggedRepo::new(PermissionRepository),
+        redis: None,
     };
 }
 

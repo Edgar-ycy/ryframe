@@ -44,6 +44,7 @@ fn make_role(name: &str, code: &str) -> role::Model {
         tenant_id: "system".into(),
         name: name.into(),
         code: code.into(),
+        is_super: 0,
         data_scope: role::Model::DATA_SCOPE_ALL.to_string(),
         status: "1".into(),
         sort: 0,
@@ -426,15 +427,16 @@ async fn test_notice_repo_filtered_pagination() {
     repo.insert(&db, make_notice("公告C", Some("2")))
         .await
         .unwrap();
+    let scope = ryframe_common::DataScopeContext::super_admin(1);
 
     let page = repo
-        .find_by_page_filtered(&db, PageQuery::default(), None, Some("2"), None)
+        .find_by_page_filtered(&db, PageQuery::default(), None, Some("2"), None, &scope)
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
 
     let page = repo
-        .find_by_page_filtered(&db, PageQuery::default(), Some("通知"), None, None)
+        .find_by_page_filtered(&db, PageQuery::default(), Some("通知"), None, None, &scope)
         .await
         .unwrap();
     assert_eq!(page.records.len(), 2);
@@ -444,6 +446,7 @@ async fn test_notice_repo_filtered_pagination() {
 async fn test_login_info_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = LoginInfoRepository;
+    let scope = ryframe_common::DataScopeContext::super_admin(1);
 
     repo.insert(
         &db,
@@ -468,7 +471,15 @@ async fn test_login_info_repo_insert_and_query() {
     assert_eq!(page.total, 3);
 
     let page = repo
-        .find_by_page_filtered(&db, PageQuery::default(), Some("user1"), None, None, None)
+        .find_by_page_filtered(
+            &db,
+            PageQuery::default(),
+            Some("user1"),
+            None,
+            None,
+            None,
+            &scope,
+        )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
@@ -481,6 +492,7 @@ async fn test_login_info_repo_insert_and_query() {
             Some(login_info::Model::STATUS_FAIL.to_string()),
             None,
             None,
+            &scope,
         )
         .await
         .unwrap();
@@ -520,6 +532,7 @@ async fn test_login_info_repo_clean_all() {
 async fn test_oper_log_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = OperLogRepository;
+    let scope = ryframe_common::DataScopeContext::super_admin(1);
 
     repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS))
         .await
@@ -535,7 +548,15 @@ async fn test_oper_log_repo_insert_and_query() {
     assert_eq!(page.total, 3);
 
     let page = repo
-        .find_by_page_filtered(&db, PageQuery::default(), Some("user1"), None, None, None)
+        .find_by_page_filtered(
+            &db,
+            PageQuery::default(),
+            Some("user1"),
+            None,
+            None,
+            None,
+            &scope,
+        )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
@@ -548,6 +569,7 @@ async fn test_oper_log_repo_insert_and_query() {
             Some(oper_log::Model::STATUS_FAIL.to_string()),
             None,
             None,
+            &scope,
         )
         .await
         .unwrap();

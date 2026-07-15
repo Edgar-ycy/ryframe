@@ -3,9 +3,7 @@
 //! 按 `DEFAULTS` 规则表自动填充实体字段（如 created_at → Utc::now()）。
 //! 实体有对应字段则填充，没有则跳过。
 //!
-//! 支持两种标注方式：
-//! - 字段级 `#[auto_fill(snowflake)]` / `#[auto_fill(skip)]`（推荐）
-//! - struct 级 `#[auto_fill(field_name, skip)]` / `#[auto_fill(field_name, snowflake)]`（兼容）
+//! 仅支持字段级 `#[auto_fill(snowflake)]` / `#[auto_fill(skip)]`。
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -40,41 +38,6 @@ impl syn::parse::Parse for FieldAction {
                 action: AutoFillAction::Snowflake,
             }),
             _ => Err(syn::Error::new(kw.span(), "expected `skip` or `snowflake`")),
-        }
-    }
-}
-
-// ============================================================
-// StructAttr — 解析 struct 级 #[auto_fill(field_name, skip|snowflake)]
-// ============================================================
-
-struct StructAttr {
-    field: Ident,
-    action: AutoFillAction,
-}
-
-impl syn::parse::Parse for StructAttr {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let field: Ident = input.parse()?;
-        if input.peek(syn::Token![,]) {
-            input.parse::<syn::Token![,]>()?;
-            let kw: Ident = input.parse()?;
-            match kw.to_string().as_str() {
-                "skip" => Ok(StructAttr {
-                    field,
-                    action: AutoFillAction::Skip,
-                }),
-                "snowflake" => Ok(StructAttr {
-                    field,
-                    action: AutoFillAction::Snowflake,
-                }),
-                _ => Err(syn::Error::new(kw.span(), "expected `skip` or `snowflake`")),
-            }
-        } else {
-            Err(syn::Error::new(
-                field.span(),
-                "expected `, skip` or `, snowflake`",
-            ))
         }
     }
 }
@@ -117,19 +80,8 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
         }
     }
 
-    // 2. 收集 struct 级 #[auto_fill(field, skip)] / #[auto_fill(field, snowflake)]
-    let mut skips = field_skips;
-    let mut snowflakes = field_snowflakes;
-    for attr in &input.attrs {
-        if attr.path().is_ident("auto_fill")
-            && let Ok(a) = attr.parse_args::<StructAttr>()
-        {
-            match a.action {
-                AutoFillAction::Skip => skips.push(a.field.to_string()),
-                AutoFillAction::Snowflake => snowflakes.push(a.field.to_string()),
-            }
-        }
-    }
+    let skips = field_skips;
+    let snowflakes = field_snowflakes;
 
     // 3. 遍历默认规则，匹配字段生成赋值语句
     let mut insert_stmts: Vec<proc_macro2::TokenStream> = Vec::new();

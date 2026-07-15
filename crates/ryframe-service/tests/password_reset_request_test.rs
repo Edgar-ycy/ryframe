@@ -15,6 +15,7 @@ fn user_service() -> UserServiceImpl {
         user_repo: LoggedRepo::new(UserRepository),
         role_repo: LoggedRepo::new(RoleRepository),
         dept_repo: LoggedRepo::new(DeptRepository),
+        redis: None,
     }
 }
 

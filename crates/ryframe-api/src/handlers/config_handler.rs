@@ -1,11 +1,10 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post, put},
 };
-use ryframe_auth::middleware::perm_route;
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::ConfigVo;
 use serde::Serialize;
 use validator::Validate;
@@ -16,32 +15,21 @@ use crate::handler_utils::excel_response;
 
 pub fn config_router(state: AppState) -> Router {
     Router::new()
-        .route("/", perm_route(get(list), "system:config:list"))
-        .route("/", perm_route(post(create), "system:config:add"))
-        .route("/list", perm_route(get(list), "system:config:list"))
-        .route(
-            "/listNoPage",
-            perm_route(get(list_no_page), "system:config:list"),
-        )
-        .route(
-            "/export",
-            perm_route(get(export_configs), "system:config:export"),
-        )
-        .route(
-            "/refreshCache",
-            perm_route(delete(refresh_cache), "system:config:edit"),
-        )
-        .route(
-            "/configKey/{key}",
-            perm_route(get(get_by_key), "system:config:list"),
-        )
-        .route("/{id}", perm_route(get(detail), "system:config:list"))
-        .route("/{id}", perm_route(put(update), "system:config:edit"))
-        .route("/{id}", perm_route(delete(remove), "system:config:remove"))
+        .merge(route!(list))
+        .merge(route!(list_no_page))
+        .merge(route!(export_configs))
+        .merge(route!(refresh_cache))
+        .merge(route!(get_by_key))
+        .merge(route!(detail))
+        .merge(route!(create))
+        .merge(route!(update))
+        .merge(route!(remove))
         .with_state(state)
 }
 
 /// 参数配置列表
+#[get("/", "/list")]
+#[perm("system:config:list")]
 #[utoipa::path(get, path = "/api/v1/system/configs", tag = "参数配置",
     responses((status = 200, description = "配置列表")), security(("bearer" = [])))]
 async fn list(
@@ -56,6 +44,8 @@ async fn list(
 }
 
 /// 参数配置列表不分页查询（返回全部数据）
+#[get("/listNoPage")]
+#[perm("system:config:list")]
 #[utoipa::path(get, path = "/api/v1/system/configs/listNoPage", tag = "参数配置",
     responses((status = 200, description = "配置列表")),
     security(("bearer" = [])))]
@@ -70,6 +60,8 @@ async fn list_no_page(
 }
 
 /// 参数配置详情
+#[get("/{id}")]
+#[perm("system:config:list")]
 #[utoipa::path(get, path = "/api/v1/system/configs/{id}", tag = "参数配置",
     params(("id" = i64, Path)),
     responses((status = 200, description = "配置详情")),
@@ -85,6 +77,8 @@ async fn detail(
 }
 
 /// 创建参数配置
+#[post("/")]
+#[perm("system:config:add")]
 #[utoipa::path(post, path = "/api/v1/system/configs", tag = "参数配置",
     request_body = CreateConfigDto, responses((status = 200, description = "创建成功")), security(("bearer" = [])))]
 async fn create(
@@ -106,6 +100,8 @@ async fn create(
 }
 
 /// 更新参数配置
+#[put("/{id}")]
+#[perm("system:config:edit")]
 #[utoipa::path(put, path = "/api/v1/system/configs/{id}", tag = "参数配置",
     params(("id" = i64, Path)), request_body = UpdateConfigDto,
     responses((status = 200, description = "更新成功")), security(("bearer" = [])))]
@@ -123,6 +119,8 @@ async fn update(
 }
 
 /// 删除参数配置
+#[delete("/{id}")]
+#[perm("system:config:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/{id}", tag = "参数配置",
     params(("id" = i64, Path)), responses((status = 200, description = "删除成功")), security(("bearer" = [])))]
 async fn remove(
@@ -134,6 +132,8 @@ async fn remove(
 }
 
 /// 根据参数键名查询参数值
+#[get("/configKey/{key}")]
+#[perm("system:config:list")]
 #[utoipa::path(get, path = "/api/v1/system/configs/configKey/{key}", tag = "参数配置",
     params(("key" = String, Path)), responses((status = 200, description = "参数值")), security(("bearer" = [])))]
 async fn get_by_key(
@@ -152,6 +152,8 @@ async fn get_by_key(
 /// 刷新参数缓存
 ///
 /// 清空所有参数配置的 Redis 缓存
+#[delete("/refreshCache")]
+#[perm("system:config:edit")]
 async fn refresh_cache(State(state): State<AppState>) -> AppResult<Json<ApiResponse<()>>> {
     if let Some(ref redis) = state.redis
         && let Ok(keys) = redis.keys("sys_config:key:*").await
@@ -190,6 +192,8 @@ impl ConfigExportData {
 }
 
 /// 导出参数配置
+#[get("/export")]
+#[perm("system:config:export")]
 async fn export_configs(State(state): State<AppState>) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 

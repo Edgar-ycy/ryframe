@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS `sys_role` (
     `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
     `name`        VARCHAR(64)  NOT NULL                    COMMENT '角色名称',
     `code`        VARCHAR(64)  NOT NULL                    COMMENT '角色编码',
+    `is_super`    TINYINT(1)   NOT NULL DEFAULT 0          COMMENT '是否超级管理员角色: 0否 1是',
     `data_scope`  CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '数据范围: 1全部 2自定义 3本部门 4本部门及以下 5仅本人',
     `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
     `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
@@ -409,16 +410,7 @@ CREATE TABLE IF NOT EXISTS `sys_user_role` (
     `role_id`  BIGINT NOT NULL  COMMENT '角色ID',
     PRIMARY KEY (`tenant_id`, `user_id`, `role_id`),
     KEY `idx_user_id` (`user_id`),
-    KEY `idx_role_id` (`role_id`),
-    CONSTRAINT `fk_sys_user_role_tenant`
-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
-        ON UPDATE CASCADE ON DELETE RESTRICT,
-    CONSTRAINT `fk_sys_user_role_user`
-        FOREIGN KEY (`user_id`) REFERENCES `sys_user` (`id`)
-        ON UPDATE CASCADE ON DELETE CASCADE,
-    CONSTRAINT `fk_sys_user_role_role`
-        FOREIGN KEY (`role_id`) REFERENCES `sys_role` (`id`)
-        ON UPDATE CASCADE ON DELETE CASCADE
+    KEY `idx_role_id` (`role_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户-角色关联表';
 
 -- ============================================================
@@ -519,9 +511,9 @@ INSERT INTO `sys_dept` (`id`, `name`, `parent_id`, `ancestors`, `sort`, `status`
 -- -----------------------------------------------------------
 -- 默认角色 (sys_role)
 -- -----------------------------------------------------------
-INSERT INTO `sys_role` (`id`, `name`, `code`, `data_scope`, `status`, `sort`, `remark`) VALUES
-    (1, '超级管理员', 'admin',  '1', '1', 1, '超级管理员，拥有所有权限'),
-    (2, '普通用户',   'common', '5', '1', 2, '普通用户，拥有基础权限');
+INSERT INTO `sys_role` (`id`, `name`, `code`, `is_super`, `data_scope`, `status`, `sort`, `remark`) VALUES
+    (1, '超级管理员', 'admin',  1, '1', '1', 1, '超级管理员，拥有所有权限'),
+    (2, '普通用户',   'common', 0, '5', '1', 2, '普通用户，拥有基础权限');
 
 -- -----------------------------------------------------------
 -- 默认用户 (sys_user)
@@ -557,6 +549,8 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     (9, '用户修改', 'system:user:edit', 2, 'api', NULL, 3, '1'),
     (10, '用户删除', 'system:user:remove', 2, 'api', NULL, 4, '1'),
     (11, '用户导出', 'system:user:export', 2, 'api', NULL, 5, '1'),
+    (81, '用户导入', 'system:user:import', 2, 'api', NULL, 6, '1'),
+    (82, '编辑自身角色', 'sys:user:editSelf', 2, 'api', NULL, 7, '1'),
     (12, '全部权限', '*:*:*', NULL, 'api', NULL, 0, '1'),
     -- 系统监控
     (13, '系统监控', 'monitor', NULL, 'menu', 'Monitor', 2, '1'),
@@ -581,6 +575,7 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     (26, '角色修改', 'system:role:edit', 3, 'api', NULL, 3, '1'),
     (27, '角色删除', 'system:role:remove', 3, 'api', NULL, 4, '1'),
     (28, '角色导出', 'system:role:export', 3, 'api', NULL, 5, '1'),
+    (83, '编辑超级管理员角色', 'sys:role:editSuper', 3, 'api', NULL, 6, '1'),
     -- 菜单管理接口权限
     (29, '菜单查询', 'system:menu:list', 4, 'api', NULL, 1, '1'),
     (30, '菜单新增', 'system:menu:add', 4, 'api', NULL, 2, '1'),
@@ -660,7 +655,6 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `rout
     (25, '权限管理', 1, 'C', 33, 'system.perm', 'Lock', 9, 1, '1'),
     (12, '操作日志', 1, 'C', 57, 'system.operlog', 'Document', 10, 1, '1'),
     (13, '登录日志', 1, 'C', 60, 'system.logininfor', 'Notebook', 11, 1, '1'),
-    (26, '租户管理', NULL, 'C', 76, 'platform.tenant', 'OfficeBuilding', 12, 1, '1'),
     -- 系统监控子菜单
     (15, '在线用户', 2, 'C', 63, 'monitor.online', 'Connection', 1, 1, '1'),
     (16, '服务监控', 2, 'C', 65, 'monitor.server', 'DataAnalysis', 2, 1, '1'),
@@ -675,12 +669,15 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `rout
     (20, '用户修改', 4, 'F', 9,  NULL, NULL, 3, 1, '1'),
     (21, '用户删除', 4, 'F', 10, NULL, NULL, 4, 1, '1'),
     (22, '用户导出', 4, 'F', 11, NULL, NULL, 5, 1, '1'),
+    (1081, '用户导入', 4, 'F', 81, NULL, NULL, 6, 1, '1'),
+    (1082, '编辑自身角色', 4, 'F', 82, NULL, NULL, 7, 1, '1'),
     -- 角色管理按钮
     (1024, '角色查询', 5, 'F', 24, NULL, NULL, 1, 1, '1'),
     (1025, '角色新增', 5, 'F', 25, NULL, NULL, 2, 1, '1'),
     (1026, '角色修改', 5, 'F', 26, NULL, NULL, 3, 1, '1'),
     (1027, '角色删除', 5, 'F', 27, NULL, NULL, 4, 1, '1'),
     (1028, '角色导出', 5, 'F', 28, NULL, NULL, 5, 1, '1'),
+    (1083, '编辑超级管理员角色', 5, 'F', 83, NULL, NULL, 6, 1, '1'),
     -- 菜单管理按钮
     (1029, '菜单查询', 6, 'F', 29, NULL, NULL, 1, 1, '1'),
     (1030, '菜单新增', 6, 'F', 30, NULL, NULL, 2, 1, '1'),
@@ -734,12 +731,7 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `rout
     (1067, '连接池监控查询', 24, 'F', 67, NULL, NULL, 1, 1, '1'),
     -- 系统工具按钮
     (1068, '代码生成查询', 17, 'F', 68, NULL, NULL, 1, 1, '1'),
-    (1069, '代码生成操作', 17, 'F', 69, NULL, NULL, 2, 1, '1'),
-    -- 租户管理按钮
-    (1077, '租户查询', 26, 'F', 77, NULL, NULL, 1, 1, '1'),
-    (1078, '租户新增', 26, 'F', 78, NULL, NULL, 2, 1, '1'),
-    (1079, '租户修改', 26, 'F', 79, NULL, NULL, 3, 1, '1'),
-    (1080, '租户状态', 26, 'F', 80, NULL, NULL, 4, 1, '1');
+    (1069, '代码生成操作', 17, 'F', 69, NULL, NULL, 2, 1, '1');
 
 -- -----------------------------------------------------------
 -- 默认岗位 (sys_post)

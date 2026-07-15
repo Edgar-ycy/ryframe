@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ryframe_common::{AppError, AppResult};
+use ryframe_common::{AppError, AppResult, DataScopeContext};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
@@ -32,7 +32,8 @@ impl Repository<notice::Model, i64> for NoticeRepository {
         crate::pagination::paginate(
             db,
             notice::Entity::find()
-                .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL)),
+                .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL))
+                .filter(notice::Column::TenantId.eq(ryframe_core::current_tenant_id())),
             &query,
         )
         .await
@@ -68,6 +69,7 @@ impl NoticeRepository {
         title: Option<&str>,
         notice_type: Option<&str>,
         status: Option<&str>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<notice::Model>> {
         let mut select = notice::Entity::find()
             .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL))
@@ -80,6 +82,11 @@ impl NoticeRepository {
         }
         if let Some(s) = status.filter(|s| !s.is_empty()) {
             select = select.filter(notice::Column::Status.eq(s));
+        }
+        if let Some(condition) =
+            crate::data_scope::owner_id_condition(notice::Column::CreatedBy, scope_ctx)
+        {
+            select = select.filter(condition);
         }
         select = select.order_by_desc(notice::Column::CreatedAt);
         crate::pagination::paginate(db, select, &query).await

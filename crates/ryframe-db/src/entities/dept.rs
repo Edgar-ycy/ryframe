@@ -53,4 +53,14 @@ impl Related<super::role_dept::Entity> for Entity {
     }
 }
 
+impl Related<super::role::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::role_dept::Relation::Role.def()
+    }
+
+    fn via() -> Option<RelationDef> {
+        Some(super::role_dept::Relation::Dept.def().rev())
+    }
+}
+
 impl ActiveModelBehavior for ActiveModel {}

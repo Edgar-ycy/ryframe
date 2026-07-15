@@ -22,26 +22,23 @@
 //!     pub login_date: Option<DateTime<Utc>>,
 //! }
 //!
-//! // struct 级标注也支持（兼容旧写法）
-//! #[derive(AutoFill)]
-//! #[auto_fill(login_date, skip)]
-//! struct User { pub created_at: DateTime<Utc>, pub login_date: Option<DateTime<Utc>> }
 //! ```
 
 mod auto_fill;
+mod route;
 
 use proc_macro::TokenStream;
+use quote::format_ident;
+use syn::parse_macro_input;
 
 /// 自动填充 derive 宏
 ///
 /// 按 `DEFAULTS` 规则表自动填充实体字段（如 `created_at` → `Utc::now()`）。
 /// 实体有对应字段则填充，没有则跳过。
 ///
-/// 支持字段级和 struct 级两种标注方式：
+/// 仅支持字段级标注：
 /// - `#[auto_fill(snowflake)]`：插入时自动生成雪花 ID（用于主键 `id` 字段）
 /// - `#[auto_fill(skip)]`：跳过默认规则，不自动填充
-/// - `#[auto_fill(field_name, skip)]`：struct 级跳过（兼容旧写法）
-/// - `#[auto_fill(field_name, snowflake)]`：struct 级雪花 ID（兼容旧写法）
 ///
 /// # 示例
 ///
@@ -61,4 +58,60 @@ use proc_macro::TokenStream;
 #[proc_macro_derive(AutoFill, attributes(auto_fill))]
 pub fn derive_auto_fill(input: TokenStream) -> TokenStream {
     auto_fill::expand_auto_fill(input)
+}
+
+/// Declare a GET route. Place `#[perm("code")]` immediately below this
+/// attribute to bind the generated route to a permission.
+#[proc_macro_attribute]
+pub fn get(args: TokenStream, input: TokenStream) -> TokenStream {
+    route::expand_route(route::HttpMethod::Get, args, input)
+}
+
+/// Declare a POST route.
+#[proc_macro_attribute]
+pub fn post(args: TokenStream, input: TokenStream) -> TokenStream {
+    route::expand_route(route::HttpMethod::Post, args, input)
+}
+
+/// Declare a PUT route.
+#[proc_macro_attribute]
+pub fn put(args: TokenStream, input: TokenStream) -> TokenStream {
+    route::expand_route(route::HttpMethod::Put, args, input)
+}
+
+/// Declare a DELETE route.
+#[proc_macro_attribute]
+pub fn delete(args: TokenStream, input: TokenStream) -> TokenStream {
+    route::expand_route(route::HttpMethod::Delete, args, input)
+}
+
+/// Permission marker consumed by the route attribute above it.
+///
+/// `#[perm]` reaching expansion means the attributes were placed in the
+/// wrong order, which would otherwise create an unprotected route.
+#[proc_macro_attribute]
+pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
+    "compile_error!(\"#[perm] must be placed immediately below #[get], #[post], #[put], or #[delete]\");"
+        .parse()
+        .expect("valid compile_error output")
+}
+
+/// Build the router generated for a route handler while keeping the generated
+/// helper name out of application code.
+///
+/// ```ignore
+/// Router::new().merge(route!(list_types));
+/// Router::new().merge(route!(menu_handler::user_tree));
+/// ```
+#[proc_macro]
+pub fn route(input: TokenStream) -> TokenStream {
+    let mut handler = parse_macro_input!(input as syn::Path);
+    let Some(segment) = handler.segments.last_mut() else {
+        return "compile_error!(\"route! expects a handler function path\");"
+            .parse()
+            .expect("valid compile_error output");
+    };
+
+    segment.ident = format_ident!("__route_{}", segment.ident);
+    quote::quote!(#handler()).into()
 }

@@ -1,12 +1,14 @@
 use ryframe_auth::password;
+use ryframe_auth::permission::resolve_user_permission_context;
 use ryframe_common::{
     AppError, AppResult,
     annotations::data_scope::{DataScope, DataScopeContext},
     utils::snowflake,
 };
 use ryframe_core::{
-    LoggedRepo, Repository,
+    LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
+    cache::clear_user_permission_cache,
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::{
@@ -72,6 +74,7 @@ pub struct RoleBriefVo {
     pub id: String,
     pub name: String,
     pub code: String,
+    pub is_super: i8,
 }
 
 impl From<role::Model> for RoleBriefVo {
@@ -80,6 +83,7 @@ impl From<role::Model> for RoleBriefVo {
             id: r.id.to_string(),
             name: r.name,
             code: r.code,
+            is_super: r.is_super,
         }
     }
 }
@@ -88,6 +92,7 @@ pub struct UserServiceImpl {
     pub user_repo: LoggedRepo<UserRepository>,
     pub role_repo: LoggedRepo<RoleRepository>,
     pub dept_repo: LoggedRepo<DeptRepository>,
+    pub redis: Option<RedisClient>,
 }
 
 /// 创建用户参数
@@ -112,6 +117,98 @@ pub struct UpdateUserParams<'a> {
 }
 
 impl UserServiceImpl {
+    async fn invalidate_permission_cache(&self, user_id: i64) {
+        if let Some(redis) = &self.redis
+            && let Err(error) =
+                clear_user_permission_cache(redis, &ryframe_core::current_tenant_id(), user_id)
+                    .await
+        {
+            tracing::warn!(user_id, %error, "failed to clear user permission cache");
+        }
+    }
+
+    /// Replace all roles assigned to one user.
+    pub async fn assign_roles(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i64,
+        role_ids: Vec<i64>,
+    ) -> AppResult<()> {
+        self.user_repo
+            .find_by_id(db, user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+        self.validate_assignments(db, None, Some(&role_ids)).await?;
+
+        let mut unique_role_ids = role_ids;
+        unique_role_ids.sort_unstable();
+        unique_role_ids.dedup();
+        let txn = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        self.role_repo
+            .assign_roles_in_txn(&txn, user_id, &unique_role_ids)
+            .await?;
+        txn.commit()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        self.invalidate_permission_cache(user_id).await;
+        Ok(())
+    }
+
+    /// Resolve all current API permission codes for one user, using Redis first.
+    pub async fn get_user_all_perms(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i64,
+    ) -> AppResult<Vec<String>> {
+        Ok(resolve_user_permission_context(
+            db,
+            self.redis.as_ref(),
+            &ryframe_core::current_tenant_id(),
+            user_id,
+        )
+        .await?
+        .permissions)
+    }
+
+    /// Return department IDs visible to a user under the merged role data scope.
+    pub async fn get_user_access_dept_ids(
+        &self,
+        db: &DatabaseConnection,
+        user_id: i64,
+    ) -> AppResult<Vec<i64>> {
+        let user = self
+            .user_repo
+            .find_by_id(db, user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+        let roles = self.role_repo.find_user_roles(db, user_id).await?;
+        let scope = self
+            .build_data_scope_context(db, user_id, user.dept_id, &roles)
+            .await?;
+
+        let mut ids = match scope.scope {
+            DataScope::All => self
+                .dept_repo
+                .find_filtered(db, None, None)
+                .await?
+                .into_iter()
+                .map(|dept| dept.id)
+                .collect(),
+            DataScope::Custom => scope.custom_dept_ids,
+            DataScope::Dept | DataScope::SelfOnly => scope.dept_id.into_iter().collect(),
+            DataScope::DeptAndChildren => match scope.dept_id {
+                Some(dept_id) => self.dept_repo.find_child_dept_ids(db, dept_id).await?,
+                None => Vec::new(),
+            },
+        };
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
     async fn validate_assignments(
         &self,
         db: &DatabaseConnection,
@@ -200,7 +297,11 @@ impl UserServiceImpl {
         if ids.is_empty() {
             return Err(AppError::Validation("请选择要删除的用户".into()));
         }
-        self.user_repo.delete_many(db, ids).await
+        let affected = self.user_repo.delete_many(db, ids).await?;
+        for user_id in ids {
+            self.invalidate_permission_cache(*user_id).await;
+        }
+        Ok(affected)
     }
 
     /// 修改用户状态
@@ -215,7 +316,9 @@ impl UserServiceImpl {
             .find_by_id(db, id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
-        self.user_repo.update_status(db, id, status).await
+        self.user_repo.update_status(db, id, status).await?;
+        self.invalidate_permission_cache(id).await;
+        Ok(())
     }
 
     pub async fn find_by_page(
@@ -293,7 +396,7 @@ impl UserServiceImpl {
         roles: &[role::Model],
     ) -> AppResult<DataScopeContext> {
         // 超级管理员直接返回 All
-        let is_admin = roles.iter().any(|r| r.code == "admin");
+        let is_admin = roles.iter().any(|r| r.is_super == 1);
         if is_admin {
             return Ok(DataScopeContext::super_admin(user_id));
         }
@@ -311,17 +414,34 @@ impl UserServiceImpl {
 
         // 合并所有角色的数据权限，取最宽松的
         let mut scopes = Vec::new();
-        let role_ids: Vec<i64> = roles.iter().map(|r| r.id).collect();
-        let custom_dept_ids = self.role_repo.find_roles_dept_ids(db, &role_ids).await?;
+        let custom_role_ids: Vec<i64> = roles
+            .iter()
+            .filter(|role| role.data_scope == role::Model::DATA_SCOPE_CUSTOM)
+            .map(|role| role.id)
+            .collect();
+        let custom_dept_ids = self
+            .role_repo
+            .find_roles_dept_ids(db, &custom_role_ids)
+            .await?;
 
         for role in roles {
             let scope = DataScope::from_db_value(&role.data_scope);
+            let scope_dept_ids = match scope {
+                DataScope::Custom => custom_dept_ids.clone(),
+                DataScope::Dept => dept_id.into_iter().collect(),
+                DataScope::DeptAndChildren => match dept_id {
+                    Some(dept_id) => self.dept_repo.find_child_dept_ids(db, dept_id).await?,
+                    None => Vec::new(),
+                },
+                DataScope::All | DataScope::SelfOnly => Vec::new(),
+            };
             scopes.push(DataScopeContext {
                 scope,
                 user_id,
                 dept_id,
                 ancestors: ancestors.clone(),
-                custom_dept_ids: custom_dept_ids.clone(),
+                custom_dept_ids: scope_dept_ids,
+                include_self: false,
             });
         }
 
@@ -333,6 +453,7 @@ impl UserServiceImpl {
                 dept_id,
                 ancestors,
                 custom_dept_ids: vec![],
+                include_self: true,
             });
         }
 
@@ -413,7 +534,7 @@ impl UserServiceImpl {
 
     pub async fn is_super_admin_user(&self, db: &DatabaseConnection, id: i64) -> AppResult<bool> {
         let roles = self.role_repo.find_user_roles_all_status(db, id).await?;
-        Ok(roles.iter().any(|r| r.code == "admin"))
+        Ok(roles.iter().any(|r| r.is_super == 1))
     }
 
     pub async fn create(
@@ -504,6 +625,7 @@ impl UserServiceImpl {
         txn.commit()
             .await
             .map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
+        self.invalidate_permission_cache(saved.id).await;
         Ok(UserVo::from(saved))
     }
 
@@ -719,6 +841,7 @@ impl UserServiceImpl {
         txn.commit()
             .await
             .map_err(|e| AppError::Database(format!("提交事务失败: {}", e)))?;
+        self.invalidate_permission_cache(saved.id).await;
         Ok(UserVo::from(saved))
     }
 
@@ -728,6 +851,8 @@ impl UserServiceImpl {
             .find_by_id(db, id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
-        self.user_repo.delete(db, id).await
+        self.user_repo.delete(db, id).await?;
+        self.invalidate_permission_cache(id).await;
+        Ok(())
     }
 }

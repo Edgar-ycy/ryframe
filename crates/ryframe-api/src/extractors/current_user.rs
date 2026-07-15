@@ -21,6 +21,7 @@ pub struct CurrentUser {
     pub data_scope: DataScope,
     /// 自定义数据权限的部门ID列表
     pub custom_dept_ids: Vec<i64>,
+    pub include_self: bool,
     pub is_super_admin: bool,
 }
 
@@ -33,6 +34,7 @@ impl CurrentUser {
             dept_id: self.dept_id,
             ancestors: self.dept_path.clone(),
             custom_dept_ids: self.custom_dept_ids.clone(),
+            include_self: self.include_self,
         }
     }
 }

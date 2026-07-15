@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_common::{AppError, AppResult};
+use ryframe_common::{AppError, AppResult, DataScopeContext};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
@@ -67,6 +67,7 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
 }
 
 impl OperLogRepository {
+    #[allow(clippy::too_many_arguments)]
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
@@ -75,6 +76,7 @@ impl OperLogRepository {
         status: Option<String>,
         begin_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
+        scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<oper_log::Model>> {
         let mut select = oper_log::Entity::find()
             .filter(oper_log::Column::TenantId.eq(ryframe_core::current_tenant_id()));
@@ -89,6 +91,11 @@ impl OperLogRepository {
         }
         if let Some(end) = end_time {
             select = select.filter(oper_log::Column::OperTime.lte(end));
+        }
+        if let Some(condition) =
+            crate::data_scope::owner_username_condition(oper_log::Column::OperName, scope_ctx)
+        {
+            select = select.filter(condition);
         }
         select = select.order_by_desc(oper_log::Column::OperTime);
         crate::pagination::paginate(db, select, &query).await

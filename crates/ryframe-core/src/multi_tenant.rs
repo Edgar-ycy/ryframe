@@ -74,7 +74,7 @@ pub struct TenantContext {
 
 impl TenantContext {
     /// 从 request extensions 提取租户上下文
-    pub fn from_request(req: &axum::http::Request<axum::body::Body>) -> Option<&Self> {
+    pub fn from_request(req: &http::Request<axum::body::Body>) -> Option<&Self> {
         req.extensions().get::<Self>()
     }
 
@@ -114,7 +114,7 @@ pub fn set_debug_tenant_fallback(tenant_id: impl Into<String>) {
 /// the authenticated tenant available throughout asynchronous repository calls.
 pub async fn with_tenant_context<F>(context: TenantContext, future: F) -> F::Output
 where
-    F: std::future::Future,
+    F: Future,
 {
     REQUEST_TENANT_CONTEXT.scope(context, future).await
 }
@@ -265,7 +265,7 @@ fn extract_tenant_id(request: &axum::extract::Request, config: &TenantConfig) ->
         ExtractionMethod::Subdomain => {
             let host = request
                 .headers()
-                .get(axum::http::header::HOST)
+                .get(http::header::HOST)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
             // 提取第一个 "." 之前的部分作为租户 ID

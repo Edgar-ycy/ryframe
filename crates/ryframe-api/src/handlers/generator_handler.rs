@@ -1,27 +1,22 @@
-use axum::{
-    Json, Router,
-    body::Body,
-    extract::State,
-    http::header,
-    response::IntoResponse,
-    routing::{get, post},
-};
-use ryframe_auth::middleware::perm_route;
+use axum::{Json, Router, body::Body, extract::State, http::header, response::IntoResponse};
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_generator::{GenerateOptions, GeneratedFile};
+use ryframe_macro::{get, post, route};
 
 use crate::handlers::auth_handler::AppState;
 
 pub fn generator_router(state: AppState) -> Router {
     Router::new()
-        .route("/tables", perm_route(get(list_tables), "tools:gen:list"))
-        .route("/preview", perm_route(post(preview), "tools:gen:list"))
-        .route("/generate", perm_route(post(generate), "tools:gen:add"))
-        .route("/download", perm_route(post(download), "tools:gen:add"))
+        .merge(route!(list_tables))
+        .merge(route!(preview))
+        .merge(route!(generate))
+        .merge(route!(download))
         .with_state(state)
 }
 
 /// 列出数据库表
+#[get("/tables")]
+#[perm("tools:gen:list")]
 async fn list_tables(
     State(state): State<AppState>,
 ) -> AppResult<Json<ApiResponse<Vec<ryframe_generator::TableInfo>>>> {
@@ -30,6 +25,8 @@ async fn list_tables(
 }
 
 /// 预览生成内容
+#[post("/preview")]
+#[perm("tools:gen:list")]
 async fn preview(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptions>,
@@ -39,6 +36,8 @@ async fn preview(
 }
 
 /// 写入磁盘
+#[post("/generate")]
+#[perm("tools:gen:add")]
 async fn generate(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptions>,
@@ -48,6 +47,8 @@ async fn generate(
 }
 
 /// 打包 zip 下载
+#[post("/download")]
+#[perm("tools:gen:add")]
 async fn download(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptions>,

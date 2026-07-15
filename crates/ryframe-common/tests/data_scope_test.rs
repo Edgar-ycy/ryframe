@@ -23,6 +23,7 @@ fn test_sql_conditions() {
         dept_id: Some(10),
         ancestors: None,
         custom_dept_ids: vec![],
+        include_self: true,
     };
     assert!(
         ctx.build_sql_condition("dept_id", "id")
@@ -37,6 +38,7 @@ fn test_sql_conditions() {
         dept_id: Some(5),
         ancestors: None,
         custom_dept_ids: vec![],
+        include_self: false,
     };
     assert!(
         ctx.build_sql_condition("dept_id", "id")
@@ -51,6 +53,7 @@ fn test_sql_conditions() {
         dept_id: None,
         ancestors: None,
         custom_dept_ids: vec![],
+        include_self: false,
     };
     assert_eq!(ctx.build_sql_condition("dept_id", "id").unwrap(), "1 = 0");
 
@@ -61,6 +64,7 @@ fn test_sql_conditions() {
         dept_id: None,
         ancestors: None,
         custom_dept_ids: vec![10, 20, 30],
+        include_self: false,
     };
     assert!(
         ctx.build_sql_condition("dept_id", "id")
@@ -75,6 +79,7 @@ fn test_sql_conditions() {
         dept_id: None,
         ancestors: None,
         custom_dept_ids: vec![],
+        include_self: false,
     };
     assert_eq!(ctx.build_sql_condition("dept_id", "id").unwrap(), "1 = 0");
 }
@@ -92,6 +97,7 @@ fn test_merge_priority() {
             dept_id: Some(1),
             ancestors: None,
             custom_dept_ids: vec![],
+            include_self: true,
         },
         DataScopeContext {
             scope: DataScope::Dept,
@@ -99,9 +105,13 @@ fn test_merge_priority() {
             dept_id: Some(1),
             ancestors: None,
             custom_dept_ids: vec![],
+            include_self: false,
         },
     ];
-    assert_eq!(DataScopeContext::merge(scopes).scope, DataScope::Dept);
+    let merged = DataScopeContext::merge(scopes);
+    assert_eq!(merged.scope, DataScope::Custom);
+    assert_eq!(merged.custom_dept_ids, vec![1]);
+    assert!(merged.include_self);
 
     // All 最优先
     let scopes = vec![
@@ -111,6 +121,7 @@ fn test_merge_priority() {
             dept_id: Some(1),
             ancestors: None,
             custom_dept_ids: vec![10],
+            include_self: false,
         },
         DataScopeContext {
             scope: DataScope::All,
@@ -118,6 +129,7 @@ fn test_merge_priority() {
             dept_id: Some(1),
             ancestors: None,
             custom_dept_ids: vec![],
+            include_self: false,
         },
     ];
     assert_eq!(DataScopeContext::merge(scopes).scope, DataScope::All);

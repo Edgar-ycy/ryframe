@@ -55,7 +55,7 @@ export interface PageQuery {
 }
 ```
 
-前端统一使用 `page` 和 `pageSize`。如果后端内部支持 `page_size`，也应该在接口层兼容 `pageSize`，避免前端模块各自转换。
+前端和接口统一使用 `page` 和 `pageSize`，不接受其他分页字段名。
 
 ## 认证接口
 
@@ -145,14 +145,14 @@ GET /system/user/get-menus
 export interface MenuTreeNode {
   id: string | number
   parent_id?: string | number | null
-  name?: string
-  menu_name?: string
+  name: string
   menu_type?: 'M' | 'C' | 'F'
   icon?: string
   visible?: boolean | string | number
   status?: string | number
   sort?: number
-  order_num?: number
+  route_key?: string | null
+  perm_id?: string | number | null
   children?: MenuTreeNode[]
 }
 ```
@@ -161,41 +161,40 @@ export interface MenuTreeNode {
 
 | 字段 | 用途 |
 | --- | --- |
-| `name` / `menu_name` | 菜单显示名，前端优先读取 `name`，兼容 `menu_name`。 |
+| `name` | 菜单显示名。 |
 | `menu_type` | `M` 目录、`C` 菜单、`F` 按钮。按钮不生成路由。 |
 | `icon` | 菜单图标名，由前端图标组件解析。 |
 | `visible` | `false`、`0`、`"0"` 表示隐藏菜单；缺省表示显示。 |
 | `status` | `"1"` 表示启用，其他值前端默认不生成路由。 |
-| `sort` / `order_num` | 菜单排序字段，优先使用 `sort`，兼容 `order_num`。 |
+| `sort` | 菜单排序字段。 |
+| `route_key` | 页面稳定标识，由前端页面注册表解析，不能使用数据库 ID。 |
+| `perm_id` | 关联的 `sys_permission.id`。 |
 | `children` | 子菜单树。 |
 
-后端不再返回菜单路由字段。前端在 `ryframe-vue3/src/router/pageRegistry.ts` 中按菜单 ID 维护页面路径和组件映射，当前已注册页面包括：
+后端返回 `route_key`，前端在 `ryframe-vue3/src/router/pageRegistry.ts` 中按该稳定标识维护页面路径和组件映射。租户管理是明确的例外：路由和侧边栏入口在前端写死，并由 `tenant:list` 及对应操作权限控制。
 
 ```txt
-0  -> /index
-1  -> /system
-2  -> /monitor
-3  -> /tools
-4  -> /system/user
-5  -> /system/role
-6  -> /system/menu
-7  -> /system/dept
-8  -> /system/post
-9  -> /system/dict
-10 -> /system/config
-11 -> /system/notice
-12 -> /system/operlog
-13 -> /system/logininfor
-14 -> /monitor/runtime
-15 -> /monitor/online
-16 -> /monitor/server
-17 -> /tools/gen
-23 -> /monitor/cache
-24 -> /monitor/db-pool
-25 -> /system/permission
+home               -> /index
+system.user        -> /system/user
+system.role        -> /system/role
+system.menu        -> /system/menu
+system.dept        -> /system/dept
+system.post        -> /system/post
+system.dict        -> /system/dict
+system.config      -> /system/config
+system.notice      -> /system/notice
+system.operlog     -> /system/operlog
+system.logininfor  -> /system/logininfor
+system.perm        -> /system/permission
+monitor.runtime    -> /monitor/runtime
+monitor.online     -> /monitor/online
+monitor.server     -> /monitor/server
+monitor.cache      -> /monitor/cache
+monitor.db-pool    -> /monitor/db-pool
+tools.gen          -> /tools/gen
 ```
 
-新增页面菜单时，需要先在前端 page registry 注册菜单 ID；后端 `sys_menu` 只维护结构字段。
+新增页面菜单时，需要先在前端 page registry 注册 `route_key`；后端 `sys_menu` 维护菜单结构、`route_key` 和 `perm_id`。
 
 ## 常用模块路径
 
@@ -204,8 +203,8 @@ export interface MenuTreeNode {
 | 前端模块 | 后端路径前缀 | 说明 |
 | --- | --- | --- |
 | `auth.ts` | `/auth` | 登录、刷新 token、当前用户、验证码。 |
-| `user.ts` | `/system/users` | 用户管理。 |
-| `role.ts` | `/system/roles` | 角色管理、角色授权。 |
+| `user.ts` | `/system/users`、`/system/user/assign-role` | 用户管理与独立角色分配。 |
+| `role.ts` | `/system/roles`、`/system/role/assign-perm`、`/system/role/assign-dept`、`/system/role/update-data-scope` | 角色管理、权限和数据范围分配。 |
 | `menu.ts` | `/system/menus` | 菜单管理。用户菜单树通过 `/system/user/get-menus` 获取。 |
 | `dept.ts` | `/system/depts` | 部门管理。 |
 | `post.ts` | `/system/posts` | 岗位管理。 |
