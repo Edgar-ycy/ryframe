@@ -169,43 +169,70 @@ jobs:
       DATASOURCE_SMOKE_TABLE: t_device_smoke
       APP_OBJECT_STORAGE_BACKEND: rustfs
       APP_OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
-      APP_OBJECT_STORAGE_ACCESS_KEY: rustfsadmin
-      APP_OBJECT_STORAGE_SECRET_KEY: rustfsadmin
+      APP_OBJECT_STORAGE_ACCESS_KEY: ryframe-ci-access
+      APP_OBJECT_STORAGE_SECRET_KEY: ryframe-ci-secret-2026
       APP_OBJECT_STORAGE_REGION: us-east-1
       ADMIN_USER: admin
       ADMIN_PASS: "123456"
       TENANT_ID: system
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: "123456"
-          MYSQL_DATABASE: ryframe_config
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -p123456"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-      rustfs:
-        image: rustfs/rustfs:1.0.0-beta.8
-        env:
-          RUSTFS_ACCESS_KEY: rustfsadmin
-          RUSTFS_SECRET_KEY: rustfsadmin
-        ports:
-          - 9000:9000
     steps:
       - uses: actions/checkout@v6
+
+      - name: Start runtime services
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sysctl -w vm.overcommit_memory=1 >/dev/null
+
+          docker run --detach --rm \
+            --name ryframe-ci-mysql \
+            --publish 3306:3306 \
+            --env MYSQL_ROOT_PASSWORD="$APP_DATABASE_PASSWORD" \
+            --env MYSQL_DATABASE="$APP_DATABASE_NAME" \
+            --env MYSQL_INITDB_SKIP_TZINFO=1 \
+            mysql:8.4 \
+            --log-error-verbosity=1 \
+            --pid-file=/tmp/mysqld.pid \
+            --skip-auto-generate-certs >/dev/null
+
+          docker run --detach --rm \
+            --name ryframe-ci-redis \
+            --publish 6379:6379 \
+            redis:7-alpine \
+            redis-server /dev/null --save "" --appendonly no >/dev/null
+
+          docker run --detach --rm \
+            --name ryframe-ci-rustfs \
+            --publish 9000:9000 \
+            --env RUSTFS_ACCESS_KEY="$APP_OBJECT_STORAGE_ACCESS_KEY" \
+            --env RUSTFS_SECRET_KEY="$APP_OBJECT_STORAGE_SECRET_KEY" \
+            rustfs/rustfs:1.0.0-beta.8 >/dev/null
+
+          for attempt in $(seq 1 60); do
+            if docker exec ryframe-ci-mysql \
+              mysqladmin ping -h 127.0.0.1 -uroot \
+              -p"$APP_DATABASE_PASSWORD" --silent >/dev/null 2>&1; then
+              break
+            fi
+            if ! docker inspect --format '{{.State.Running}}' ryframe-ci-mysql \
+              | grep --quiet '^true$'; then
+              docker logs ryframe-ci-mysql
+              exit 1
+            fi
+            sleep 2
+          done
+          docker exec ryframe-ci-mysql \
+            mysqladmin ping -h 127.0.0.1 -uroot \
+            -p"$APP_DATABASE_PASSWORD" --silent >/dev/null 2>&1
+
+          for attempt in $(seq 1 30); do
+            if docker exec ryframe-ci-redis redis-cli ping \
+              | grep --quiet '^PONG$'; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec ryframe-ci-redis redis-cli ping | grep --quiet '^PONG$'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -283,12 +310,46 @@ jobs:
           fi
 
       - name: Upload runtime log on failure
-        if: failure()
+        if: failure() && hashFiles('target/runtime-smoke.log') != ''
         uses: actions/upload-artifact@v6
         with:
           name: runtime-smoke-log
           path: target/runtime-smoke.log
           if-no-files-found: error
+
+      - name: Check runtime service logs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for container in ryframe-ci-mysql ryframe-ci-redis ryframe-ci-rustfs; do
+            if ! docker inspect "$container" >/dev/null 2>&1; then
+              echo "$container is unavailable"
+              status=1
+              continue
+            fi
+
+            logs="$(docker logs "$container" 2>&1)"
+            if grep --extended-regexp --ignore-case \
+              '(^|[[:space:][:punct:]])(warn(ing)?|error)([[:space:][:punct:]]|$)' \
+              <<<"$logs"; then
+              printf '%s\n' "$logs"
+              echo "$container emitted a diagnostic"
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Stop runtime services
+        if: always()
+        shell: bash
+        run: >-
+          docker stop
+          ryframe-ci-mysql
+          ryframe-ci-redis
+          ryframe-ci-rustfs
+          >/dev/null 2>&1 || true
 
   # ============================================================
   # 覆盖率检查

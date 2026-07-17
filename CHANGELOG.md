@@ -29,6 +29,7 @@
 - CI 安全审计改为安装并严格执行 `cargo audit --deny warnings`，移除 Node 20 action 和额外 Checks 写权限依赖
 - CI Rust 构建缓存改用官方 `actions/cache@v5` 和按操作系统、架构、job、Cargo 清单隔离的显式缓存键，消除第三方缓存 Action 的 Node 弃用警告
 - CI 显式设置 Git 初始化默认分支，消除 `actions/checkout` 创建临时仓库时输出的默认分支 warning 提示
+- Runtime Smoke 显式编排 MySQL、Redis、RustFS 的启动、健康检查、日志审计和清理，使用非默认测试凭据并消除容器环境警告
 - Release 工作流按触发标签精确提取对应版本说明，保留空的 `Unreleased` 区段且不再发布错误章节
 - 统一要求所有 `pnpm` 命令在独立前端目录 `ryframe-vue3` 中执行，并由后端源码门禁拒绝根目录 `.pnpm-store`
 - Repository 全面改为显式接收 `tenant_id`；task-local 只保留为 HTTP 请求内的一致性校验
