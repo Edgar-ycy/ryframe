@@ -52,7 +52,7 @@ http = "1"
 sysinfo = "0.39"
 
 image = { version = "0.25" }
-calamine = { version = "0.34" }
+calamine = { version = "0.36" }
 rust_xlsxwriter = { version = "0.94" }
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }

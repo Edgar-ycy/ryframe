@@ -26,6 +26,7 @@
 
 ### Changed
 
+- CI 安全审计改为安装并严格执行 `cargo audit --deny warnings`，移除 Node 20 action 和额外 Checks 写权限依赖
 - Release 工作流按触发标签精确提取对应版本说明，保留空的 `Unreleased` 区段且不再发布错误章节
 - 统一要求所有 `pnpm` 命令在独立前端目录 `ryframe-vue3` 中执行，并由后端源码门禁拒绝根目录 `.pnpm-store`
 - Repository 全面改为显式接收 `tenant_id`；task-local 只保留为 HTTP 请求内的一致性校验
@@ -52,6 +53,7 @@
 
 ### Fixed
 
+- 升级 `crossbeam-epoch`、`calamine`/`quick-xml` 和 `spin`，修复新披露的内存安全与 XML 拒绝服务漏洞并移除撤回版本警告
 - 修复非字符串值经过缓存策略后无法回读、本地缓存容量不生效以及过期键仍被 `exists`/`keys` 返回的问题
 - 修复 SeaORM 非自增租户主键更新未持久化、角色分配 N+1 查询和密码重置前后端租户契约不一致的问题
 - 修复本地对象键目录穿越风险、S3 region 未生效和签名时间可能不一致的问题；文件元数据写入失败时补偿删除已上传对象
@@ -77,7 +79,7 @@
 - 源码卫生、权限路由、架构边界、`cargo fmt`、全 workspace `check`/`clippy -D warnings` 全部通过
 - 全 workspace 测试与 `RUSTDOCFLAGS=-Dwarnings` 文档测试通过；仅保留明确白名单的外部 MySQL 与 RustFS/S3 集成测试
 - `cargo llvm-cov --workspace --fail-under-lines 55` 通过，行覆盖率为 69.06%
-- `cargo audit --no-fetch` 使用 1146 条本地 advisory 检查通过，`cargo deny` 的 licenses/bans/sources 全部通过
+- `cargo audit --no-fetch --deny warnings` 与 `cargo deny check licenses bans sources` 本地检查通过；CI 联网获取最新 advisory 且将警告视为错误
 
 ---
 
