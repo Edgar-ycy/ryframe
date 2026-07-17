@@ -56,6 +56,7 @@
 
 ### Fixed
 
+- 修复 Runtime Smoke 禁用 MySQL TLS 后 `caching_sha2_password` 无法通过 TCP 认证的问题，探活继续覆盖应用实际连接协议并保留零诊断日志门禁
 - 修复完整 SQL 已创建菜单索引但迁移历史为空时 MySQL 启动迁移重复创建索引的问题，并增加预置索引回归测试
 - 修复 Rust 1.97.1 检出的限流键格式化冗余借用，并为 `proc-macro-error2 2.0.1` 应用可审计补丁以消除 future incompatibility 警告
 - 升级 `crossbeam-epoch`、`calamine`/`quick-xml` 和 `spin`，修复新披露的内存安全与 XML 拒绝服务漏洞并移除撤回版本警告

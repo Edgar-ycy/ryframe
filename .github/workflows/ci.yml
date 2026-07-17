@@ -192,8 +192,7 @@ jobs:
             --env MYSQL_INITDB_SKIP_TZINFO=1 \
             mysql:8.4 \
             --log-error-verbosity=1 \
-            --pid-file=/tmp/mysqld.pid \
-            --skip-auto-generate-certs >/dev/null
+            --pid-file=/tmp/mysqld.pid >/dev/null
 
           docker run --detach --rm \
             --name ryframe-ci-redis \
@@ -208,10 +207,14 @@ jobs:
             --env RUSTFS_SECRET_KEY="$APP_OBJECT_STORAGE_SECRET_KEY" \
             rustfs/rustfs:1.0.0-beta.8 >/dev/null
 
+          mysql_ready=false
           for attempt in $(seq 1 60); do
-            if docker exec ryframe-ci-mysql \
-              mysqladmin ping -h 127.0.0.1 -uroot \
-              -p"$APP_DATABASE_PASSWORD" --silent >/dev/null 2>&1; then
+            if docker exec --env MYSQL_PWD="$APP_DATABASE_PASSWORD" \
+              ryframe-ci-mysql mysqladmin ping \
+              --protocol=TCP --host=127.0.0.1 \
+              --port="$APP_DATABASE_PORT" --user=root --silent \
+              >/dev/null 2>&1; then
+              mysql_ready=true
               break
             fi
             if ! docker inspect --format '{{.State.Running}}' ryframe-ci-mysql \
@@ -221,18 +224,26 @@ jobs:
             fi
             sleep 2
           done
-          docker exec ryframe-ci-mysql \
-            mysqladmin ping -h 127.0.0.1 -uroot \
-            -p"$APP_DATABASE_PASSWORD" --silent >/dev/null 2>&1
+          if [[ "$mysql_ready" != true ]]; then
+            docker logs ryframe-ci-mysql
+            echo "MySQL did not become ready"
+            exit 1
+          fi
 
+          redis_ready=false
           for attempt in $(seq 1 30); do
             if docker exec ryframe-ci-redis redis-cli ping \
               | grep --quiet '^PONG$'; then
+              redis_ready=true
               break
             fi
             sleep 1
           done
-          docker exec ryframe-ci-redis redis-cli ping | grep --quiet '^PONG$'
+          if [[ "$redis_ready" != true ]]; then
+            docker logs ryframe-ci-redis
+            echo "Redis did not become ready"
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
