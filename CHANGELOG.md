@@ -53,6 +53,7 @@
 
 ### Fixed
 
+- 修复 Rust 1.97.1 检出的限流键格式化冗余借用，并为 `proc-macro-error2 2.0.1` 应用可审计补丁以消除 future incompatibility 警告
 - 升级 `crossbeam-epoch`、`calamine`/`quick-xml` 和 `spin`，修复新披露的内存安全与 XML 拒绝服务漏洞并移除撤回版本警告
 - 修复非字符串值经过缓存策略后无法回读、本地缓存容量不生效以及过期键仍被 `exists`/`keys` 返回的问题
 - 修复 SeaORM 非自增租户主键更新未持久化、角色分配 N+1 查询和密码重置前后端租户契约不一致的问题

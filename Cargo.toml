@@ -92,6 +92,9 @@ tempfile = "3"
 
 # Dev profile: 轻微优化以降低 rustc 单态化栈压力，
 # 解决 Windows MSVC 下 ryframe-core 测试编译时栈溢出问题
+[patch.crates-io]
+proc-macro-error2 = { path = "vendor/proc-macro-error2" }
+
 [profile.dev]
 opt-level = 1
 

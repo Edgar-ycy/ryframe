@@ -51,6 +51,7 @@ LEGACY_API_TERM_ALLOWLIST = {
     "crates/ryframe-core/src/repository.rs",
     "scripts/check_source_hygiene.py",
 }
+VENDORED_SOURCE_PREFIX = "vendor/"
 
 
 def source_files() -> list[Path]:
@@ -77,6 +78,7 @@ def main() -> int:
 
     for path in source_files():
         relative = path.relative_to(ROOT).as_posix()
+        is_first_party = not relative.startswith(VENDORED_SOURCE_PREFIX)
         data = path.read_bytes()
         checked += 1
 
@@ -94,21 +96,37 @@ def main() -> int:
             errors.append(f"{relative}: contains a Unicode private-use character")
         if len(data) > 1_000 and text.count("\n") < 2:
             errors.append(f"{relative}: suspiciously collapsed into fewer than three lines")
-        if path.suffix == ".rs" and LEGACY_API_ALIAS_PATTERN.search(text):
+        if (
+            is_first_party
+            and path.suffix == ".rs"
+            and LEGACY_API_ALIAS_PATTERN.search(text)
+        ):
             errors.append(f"{relative}: contains a legacy pagination alias")
-        if path.suffix == ".rs" and LINT_ALLOW_PATTERN.search(text):
+        if (
+            is_first_party
+            and path.suffix == ".rs"
+            and LINT_ALLOW_PATTERN.search(text)
+        ):
             errors.append(f"{relative}: suppresses a compiler or Clippy lint with allow")
-        if path.suffix == ".rs" and IGNORED_DOCTEST_PATTERN.search(text):
+        if (
+            is_first_party
+            and path.suffix == ".rs"
+            and IGNORED_DOCTEST_PATTERN.search(text)
+        ):
             errors.append(f"{relative}: contains an ignored Rust documentation test")
-        if relative not in LEGACY_API_TERM_ALLOWLIST:
+        if is_first_party and relative not in LEGACY_API_TERM_ALLOWLIST:
             for term in LEGACY_API_TERMS:
                 if term in text:
                     errors.append(f"{relative}: contains legacy API term {term}")
-        if path.suffix == ".rs" and relative.startswith("crates/") and "/src/" in relative:
+        if (
+            path.suffix == ".rs"
+            and relative.startswith("crates/")
+            and "/src/" in relative
+        ):
             for route in LEGACY_ACTION_PATHS:
                 if route in text:
                     errors.append(f"{relative}: contains legacy action path {route}")
-        if "tests" in path.parts:
+        if is_first_party and "tests" in path.parts:
             for test_name in IGNORED_TEST_PATTERN.findall(text):
                 if (relative, test_name) not in ALLOWED_IGNORED_TESTS:
                     errors.append(f"{relative}: ignored test is not allowlisted ({test_name})")

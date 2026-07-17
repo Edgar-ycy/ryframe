@@ -352,7 +352,7 @@ pub async fn api_rate_limit_middleware(
     let window = state.config.api_window_secs;
 
     // 精确匹配 `METHOD /path`
-    let exact_key = format!("{} {}", method, &path);
+    let exact_key = format!("{} {}", method, path);
     // 通配匹配 `METHOD` 或 `/path`
     let method_key = method.to_string();
 
