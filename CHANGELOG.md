@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [v0.4.1] - 2026-07-17
+
+### Changed
+
+- Workspace crate 与 OpenAPI `info.version` 统一升级到 `0.4.1`，保持发布标签、运行时版本和检入契约一致
+
+### Fixed
+
+- Release 工作流显式设置 Git 初始化默认分支，消除标签发布时 `actions/checkout` 输出的默认分支 warning 提示
+
 ## [v0.4.0] - 2026-07-17
 
 ### Added
