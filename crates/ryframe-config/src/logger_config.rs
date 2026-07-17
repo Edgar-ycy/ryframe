@@ -11,7 +11,6 @@ pub struct LoggerConfig {
     pub output: String,
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for LoggerConfig {
     fn default() -> Self {
         Self {

@@ -1,21 +1,28 @@
-use serde::Deserialize;
-use utoipa::ToSchema;
+use ryframe_core::PageQuery;
+use ryframe_service::system::LoginInfoQuery;
 
-fn default_page() -> u64 {
-    1
+crate::list_query!(pub LoginLogPageQuery, LoginLogFilterQuery {
+    user_name: String,
+    status: String,
+    begin_time: String,
+    end_time: String,
+});
+
+impl LoginLogPageQuery {
+    pub fn into_service_query(self) -> LoginInfoQuery {
+        let (page, filter) = self.into_parts();
+        filter.into_service_query(page)
+    }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct LoginLogPageQuery {
-    #[serde(default = "default_page")]
-    pub page: u64,
-    #[serde(
-        default = "ryframe_core::repository::default_page_size",
-        alias = "pageSize"
-    )]
-    pub page_size: u64,
-    pub user_name: Option<String>,
-    pub status: Option<String>,
-    pub begin_time: Option<String>,
-    pub end_time: Option<String>,
+impl LoginLogFilterQuery {
+    pub fn into_service_query(self, page: PageQuery) -> LoginInfoQuery {
+        LoginInfoQuery {
+            page,
+            user_name: self.user_name,
+            status: self.status,
+            begin_time: self.begin_time,
+            end_time: self.end_time,
+        }
+    }
 }

@@ -7,10 +7,10 @@ use ryframe_macro::{get, route};
 use ryframe_service::system::LoginInfoVo;
 use serde::Serialize;
 
-use super::auth_handler::AppState;
-use crate::dto::login_log_dto::LoginLogPageQuery;
-use crate::extractors::CurrentUser;
+use crate::dto::login_log_dto::{LoginLogFilterQuery, LoginLogPageQuery};
 use crate::handler_utils::excel_response;
+use crate::state::AppState;
+use ryframe_auth::RequestPrincipal;
 
 pub fn login_log_router(state: AppState) -> Router {
     Router::new()
@@ -21,50 +21,41 @@ pub fn login_log_router(state: AppState) -> Router {
 }
 
 /// 登录日志列表
-#[get("/", "/list")]
+#[get("/")]
 #[perm("system:logininfor:list")]
 #[utoipa::path(get, path = "/api/v1/system/loginlogs", tag = "登录日志",
-    responses((status = 200, description = "日志列表")), security(("bearer" = [])))]
+    params(LoginLogPageQuery),
+    responses((status = 200, description = "日志列表", body = ApiPageResponse<LoginInfoVo>)), security(("bearer" = [])))]
 async fn list(
     State(state): State<AppState>,
-    current_user: CurrentUser,
+    current_user: RequestPrincipal,
     Query(query): Query<LoginLogPageQuery>,
 ) -> AppResult<Json<ApiPageResponse<LoginInfoVo>>> {
     state
-        .login_info_service
-        .find_by_page(
-            &state.db,
-            ryframe_core::PageQuery {
-                page: query.page,
-                page_size: query.page_size,
-            },
-            query.user_name.as_deref(),
-            query.status,
-            query.begin_time.as_deref(),
-            query.end_time.as_deref(),
-            &current_user.to_data_scope_context(),
-        )
+        .services
+        .login_info
+        .find_by_page(&current_user, query.into_service_query())
         .await
         .map(|p| Json(p.to_page_response("查询成功")))
 }
 
 /// 登录日志不分页查询（返回全部数据）
-#[get("/listNoPage")]
+#[get("/all")]
 #[perm("system:logininfor:list")]
+#[utoipa::path(get, path = "/api/v1/system/loginlogs/all", tag = "登录日志",
+    params(LoginLogFilterQuery),
+    responses((status = 200, description = "全部登录日志", body = ApiResponse<Vec<LoginInfoVo>>)), security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
-    current_user: CurrentUser,
-    Query(query): Query<LoginLogPageQuery>,
+    current_user: RequestPrincipal,
+    Query(query): Query<LoginLogFilterQuery>,
 ) -> AppResult<Json<ApiResponse<Vec<LoginInfoVo>>>> {
     let logs = state
-        .login_info_service
-        .find_all_filtered(
-            &state.db,
-            query.user_name.as_deref(),
-            query.status,
-            query.begin_time.as_deref(),
-            query.end_time.as_deref(),
-            &current_user.to_data_scope_context(),
+        .services
+        .login_info
+        .find_all(
+            &current_user,
+            query.into_service_query(ryframe_core::PageQuery::all_records()),
         )
         .await?;
     Ok(Json(ApiResponse::success(logs)))
@@ -101,22 +92,22 @@ impl LoginLogExportData {
 /// 导出登录日志
 #[get("/export")]
 #[perm("system:logininfor:export")]
+#[utoipa::path(get, path = "/api/v1/system/loginlogs/export", tag = "登录日志",
+    params(LoginLogFilterQuery),
+    responses((status = 200, description = "导出登录日志 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
 async fn export_login_logs(
     State(state): State<AppState>,
-    current_user: CurrentUser,
-    Query(query): Query<LoginLogPageQuery>,
+    current_user: RequestPrincipal,
+    Query(query): Query<LoginLogFilterQuery>,
 ) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
     let logs = state
-        .login_info_service
-        .find_all_filtered(
-            &state.db,
-            query.user_name.as_deref(),
-            query.status,
-            query.begin_time.as_deref(),
-            query.end_time.as_deref(),
-            &current_user.to_data_scope_context(),
+        .services
+        .login_info
+        .find_all(
+            &current_user,
+            query.into_service_query(ryframe_core::PageQuery::all_records()),
         )
         .await?;
 

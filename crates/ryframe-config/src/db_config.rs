@@ -13,37 +13,40 @@ pub enum SqlLogLevel {
     Full,
 }
 
-/// 数据库配置
+/// 数据库拓扑配置。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DatabaseConfig {
-    /// SQL 日志级别（默认 off）
+    /// SQL 日志级别（默认 off）。
     #[serde(default)]
     pub sql_log_level: SqlLogLevel,
-    /// 数据库连接列表（第一个为主库，后续为额外数据源）
-    ///
-    /// 示例：
-    /// ```toml
-    /// [[database.connections]]
-    /// driver = "mysql"
-    /// host = "localhost"
-    /// port = 3306
-    /// database = "ryframe_config"
-    /// username = "root"
-    /// password = "123456"
-    /// max_connections = 10
-    /// min_connections = 1
-    ///
-    /// [[database.connections]]
-    /// driver = "mysql"
-    /// host = "localhost"
-    /// port = 3306
-    /// database = "ryframe_device"
-    /// username = "root"
-    /// password = "123456"
-    /// max_connections = 5
-    /// min_connections = 1
-    /// ```
-    pub connections: Vec<DbConnection>,
+    /// 唯一写库，也是无从库时的读库。
+    pub primary: DbConnection,
+    /// 可选只读副本；读取按配置顺序轮询。
+    #[serde(default)]
+    pub replicas: Vec<DatabaseReplicaConfig>,
+    /// 可选命名业务数据源；必须由具体用例显式选择。
+    #[serde(default)]
+    pub sources: Vec<DatabaseSourceConfig>,
+}
+
+/// 一个命名只读副本。
+#[derive(Debug, Clone, Deserialize)]
+pub struct DatabaseReplicaConfig {
+    /// 用于日志、健康检查和故障定位的唯一名称。
+    pub name: String,
+    #[serde(flatten)]
+    pub connection: DbConnection,
+}
+
+/// 一个命名业务数据源。
+///
+/// 业务数据源可以使用与主库不同的结构和驱动，不参与主库查询的读写路由。
+#[derive(Debug, Clone, Deserialize)]
+pub struct DatabaseSourceConfig {
+    /// 用于依赖注入、日志和健康检查的唯一名称。
+    pub name: String,
+    #[serde(flatten)]
+    pub connection: DbConnection,
 }
 
 /// 数据库连接参数

@@ -1,54 +1,39 @@
 use std::sync::Arc;
 
-use ryframe_api::runtime::RuntimeComponents;
+use ryframe_api::{AppServices, runtime::RuntimeComponents};
 use ryframe_config::AppConfig;
-use ryframe_core::{AppContext, RedisClient, TenantRateLimitCache, TokenBlacklist};
+use ryframe_core::{RedisClient, TokenBlacklist};
+use ryframe_db::DatabaseCluster;
 use ryframe_middleware::RateLimiter;
-use sea_orm::DatabaseConnection;
-
-use super::services::Services;
 
 /// 将所有已初始化的组件聚合为 AppState
-#[allow(clippy::too_many_arguments)]
 pub fn assemble(
-    primary_db: DatabaseConnection,
-    extra_dbs: Vec<DatabaseConnection>,
+    database: DatabaseCluster,
     config: Arc<AppConfig>,
-    context: AppContext,
     redis_client: Option<RedisClient>,
     token_blacklist: TokenBlacklist,
-    services: Services,
+    services: AppServices,
     limiter: Arc<RateLimiter>,
-    object_storage: Arc<dyn ryframe_common::utils::ObjectStorage>,
 ) -> ryframe_api::AppState {
+    let principal_resolver = services.auth.clone();
+    let auth = ryframe_auth::middleware::AuthState {
+        config: config.clone(),
+        blacklist: token_blacklist.clone(),
+        principal_resolver,
+    };
+    let monitor = ryframe_monitor::MonitorState {
+        database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
+        redis: redis_client.clone(),
+    };
+
     ryframe_api::AppState {
-        db: primary_db.clone(),
+        auth,
+        monitor,
         config,
-        context,
-        auth_service: services.auth_service,
-        user_service: services.user_service,
-        role_service: services.role_service,
-        tenant_service: services.tenant_service,
-        permission_service: services.permission_service,
-        menu_service: services.menu_service,
-        dept_service: services.dept_service,
-        post_service: services.post_service,
-        config_service: services.config_service,
-        dict_service: services.dict_service,
-        notice_service: services.notice_service,
-        oper_log_service: services.oper_log_service,
-        login_info_service: services.login_info_service,
-        generator_service: services.generator_service,
-        profile_service: services.profile_service,
-        online_user_service: services.online_user_service,
-        captcha_store: services.captcha_store,
-        monitor_db: primary_db.clone(),
+        services: Arc::new(services),
         redis: redis_client.clone(),
         token_blacklist,
-        replica_dbs: extra_dbs,
-        rate_limiter: limiter.clone(),
-        tenant_rate_limit_cache: TenantRateLimitCache::default(),
-        object_storage,
+        rate_limiter: limiter,
         runtime: RuntimeComponents::new(redis_client),
     }
 }

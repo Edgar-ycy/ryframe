@@ -13,7 +13,7 @@ port = 8080
 # SQL 日志级别: off(关闭) / summary(SQL+耗时+行数) / full(含完整SQL)
 sql_log_level = "off"
 
-[[database.connections]]
+[database.primary]
 driver = "postgres"
 host = "localhost"
 port = 5432
@@ -22,6 +22,10 @@ username = "postgres"
 password = ""
 max_connections = 10
 min_connections = 1
+
+[generator]
+# 读取表结构的数据源名称；默认使用 primary。
+data_source = "primary"
 
 [auth]
 jwt_secret = "change-me-in-production"
@@ -69,18 +73,18 @@ user_capacity = 500
 api_window_secs = 60
 
 [object_storage]
-# 存储后端: local（本地）| minio（MinIO）| s3（S3-compatible）
-backend = "s3"
+# 存储后端: local（本地）| rustfs（RustFS）| minio（MinIO）| s3（S3-compatible）
+backend = "local"
 # 本地存储根目录
 local_base_dir = "uploads"
 # 公共访问 URL 前缀（生产环境应改为 CDN 域名）
 public_base_url = ""
-# MinIO / S3 端点
-endpoint = "http://localhost:9000"
+# RustFS / MinIO / S3 端点
+endpoint = ""
 # Access Key（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY 注入）
-access_key = "rustfsadmin"
+access_key = ""
 # Secret Key（生产环境通过 APP_OBJECT_STORAGE_SECRET_KEY 注入）
-secret_key = "rustfsadmin"
+secret_key = ""
 # 是否启用 SSL
 use_ssl = false
 # AWS Region

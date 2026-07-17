@@ -3,7 +3,7 @@ use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder,
+    QueryFilter, QueryOrder, TransactionTrait,
 };
 
 use crate::entities::{role, user_role};
@@ -12,10 +12,15 @@ pub struct RoleRepository;
 
 #[async_trait]
 impl Repository<role::Model, i64> for RoleRepository {
-    async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<role::Model>> {
+    async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<role::Model>> {
         role::Entity::find_by_id(id)
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -24,26 +29,39 @@ impl Repository<role::Model, i64> for RoleRepository {
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<role::Model>> {
         crate::pagination::paginate(
             db,
-            role::Entity::find().filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL)),
+            role::Entity::find()
+                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+                .filter(role::Column::TenantId.eq(tenant_id)),
             &query,
         )
         .await
     }
 
-    async fn insert(&self, db: &DatabaseConnection, entity: role::Model) -> AppResult<role::Model> {
-        insert_entity!(role, db, entity)
+    async fn insert(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: role::Model,
+    ) -> AppResult<role::Model> {
+        insert_entity!(role, db, tenant_id, entity)
     }
 
-    async fn update(&self, db: &DatabaseConnection, entity: role::Model) -> AppResult<role::Model> {
-        update_entity!(role, db, entity)
+    async fn update(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: role::Model,
+    ) -> AppResult<role::Model> {
+        update_entity!(role, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        soft_delete_entity!(role, db, id)
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
+        soft_delete_entity!(role, db, tenant_id, id)
     }
 }
 
@@ -52,6 +70,7 @@ impl RoleRepository {
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
         name: Option<&str>,
         code: Option<&str>,
@@ -59,7 +78,7 @@ impl RoleRepository {
     ) -> AppResult<PageResult<role::Model>> {
         let mut select = role::Entity::find()
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()));
+            .filter(role::Column::TenantId.eq(tenant_id));
 
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(role::Column::Name.like(format!("%{}%", n)));
@@ -76,7 +95,12 @@ impl RoleRepository {
     }
 
     /// 批量删除角色
-    pub async fn delete_many(&self, db: &DatabaseConnection, ids: &[i64]) -> AppResult<u64> {
+    pub async fn delete_many(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        ids: &[i64],
+    ) -> AppResult<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -90,7 +114,7 @@ impl RoleRepository {
                 sea_orm::sea_query::Expr::value(chrono::Utc::now()),
             )
             .filter(role::Column::Id.is_in(ids.to_vec()))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -101,11 +125,12 @@ impl RoleRepository {
     pub async fn find_user_roles(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         user_id: i64,
     ) -> AppResult<Vec<role::Model>> {
         let role_ids: Vec<i64> = user_role::Entity::find()
             .filter(user_role::Column::UserId.eq(user_id))
-            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -120,7 +145,7 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Id.is_in(role_ids))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role::Column::TenantId.eq(tenant_id))
             .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
             .all(db)
             .await
@@ -131,11 +156,12 @@ impl RoleRepository {
     pub async fn find_user_roles_all_status(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         user_id: i64,
     ) -> AppResult<Vec<role::Model>> {
         let role_ids: Vec<i64> = user_role::Entity::find()
             .filter(user_role::Column::UserId.eq(user_id))
-            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -150,7 +176,7 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Id.is_in(role_ids))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -160,6 +186,7 @@ impl RoleRepository {
     pub async fn find_user_ids_by_role_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_ids: &[i64],
     ) -> AppResult<Vec<i64>> {
         if role_ids.is_empty() {
@@ -168,7 +195,7 @@ impl RoleRepository {
 
         let mut user_ids: Vec<i64> = user_role::Entity::find()
             .filter(user_role::Column::RoleId.is_in(role_ids.to_vec()))
-            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -181,37 +208,26 @@ impl RoleRepository {
     }
 
     /// 清除用户全部角色关联
-    pub async fn clear_user_roles(&self, db: &DatabaseConnection, user_id: i64) -> AppResult<()> {
-        user_role::Entity::delete_many()
-            .filter(user_role::Column::UserId.eq(user_id))
-            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
-            .exec(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-        Ok(())
-    }
-
-    /// 在事务中为用户分配角色（先删后插）
-    pub async fn assign_roles_in_txn(
+    /// 在事务中完整替换用户角色。
+    pub async fn replace_roles_in_txn(
         &self,
         txn: &DatabaseTransaction,
+        tenant_id: &str,
         user_id: i64,
         role_ids: &[i64],
     ) -> AppResult<()> {
-        // 清除旧关联
         user_role::Entity::delete_many()
             .filter(user_role::Column::UserId.eq(user_id))
-            .filter(user_role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(user_role::Column::TenantId.eq(tenant_id))
             .exec(txn)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
 
-        // 插入新关联
         if !role_ids.is_empty() {
             let models: Vec<user_role::ActiveModel> = role_ids
                 .iter()
                 .map(|rid| user_role::ActiveModel {
-                    tenant_id: sea_orm::ActiveValue::Set(ryframe_core::current_tenant_id()),
+                    tenant_id: sea_orm::ActiveValue::Set(tenant_id.to_owned()),
                     user_id: sea_orm::ActiveValue::Set(user_id),
                     role_id: sea_orm::ActiveValue::Set(*rid),
                 })
@@ -225,51 +241,51 @@ impl RoleRepository {
         Ok(())
     }
 
-    /// 为用户分配角色（先删后插）
-    pub async fn assign_roles(
+    /// 原子替换用户角色。
+    pub async fn replace_roles(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         user_id: i64,
         role_ids: &[i64],
     ) -> AppResult<()> {
-        self.clear_user_roles(db, user_id).await?;
-
-        let models: Vec<user_role::ActiveModel> = role_ids
-            .iter()
-            .map(|rid| user_role::ActiveModel {
-                tenant_id: sea_orm::ActiveValue::Set(ryframe_core::current_tenant_id()),
-                user_id: sea_orm::ActiveValue::Set(user_id),
-                role_id: sea_orm::ActiveValue::Set(*rid),
-            })
-            .collect();
-
-        user_role::Entity::insert_many(models)
-            .exec(db)
+        let transaction = db
+            .begin()
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-        Ok(())
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.replace_roles_in_txn(&transaction, tenant_id, user_id, role_ids)
+            .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))
     }
 
     /// 按角色编码查找
     pub async fn find_by_code(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         code: &str,
     ) -> AppResult<Option<role::Model>> {
         role::Entity::find()
             .filter(role::Column::Code.eq(code))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
     }
 
-    pub async fn find_super_role(&self, db: &DatabaseConnection) -> AppResult<Option<role::Model>> {
+    pub async fn find_super_role(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+    ) -> AppResult<Option<role::Model>> {
         role::Entity::find()
             .filter(role::Column::IsSuper.eq(1))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -278,6 +294,7 @@ impl RoleRepository {
     pub async fn find_by_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_ids: &[i64],
     ) -> AppResult<Vec<role::Model>> {
         if role_ids.is_empty() {
@@ -287,7 +304,7 @@ impl RoleRepository {
         role::Entity::find()
             .filter(role::Column::Id.is_in(role_ids.to_vec()))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -297,13 +314,14 @@ impl RoleRepository {
     pub async fn find_role_dept_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_id: i64,
     ) -> AppResult<Vec<i64>> {
         use crate::entities::role_dept;
 
         let ids = role_dept::Entity::find()
             .filter(role_dept::Column::RoleId.eq(role_id))
-            .filter(role_dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role_dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -317,6 +335,7 @@ impl RoleRepository {
     pub async fn find_roles_dept_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_ids: &[i64],
     ) -> AppResult<Vec<i64>> {
         use crate::entities::role_dept;
@@ -327,7 +346,7 @@ impl RoleRepository {
 
         let ids = role_dept::Entity::find()
             .filter(role_dept::Column::RoleId.is_in(role_ids.to_vec()))
-            .filter(role_dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role_dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -340,14 +359,16 @@ impl RoleRepository {
         Ok(unique)
     }
 
-    /// 设置角色的数据权限（先删后插 sys_role_dept）
-    pub async fn assign_data_scope_depts(
+    /// Atomically replace the data-scope mode and custom department relations.
+    pub async fn replace_data_scope(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_id: i64,
+        data_scope: &str,
         dept_ids: &[i64],
     ) -> AppResult<()> {
-        use sea_orm::{ActiveModelTrait, ActiveValue, TransactionTrait};
+        use sea_orm::{ActiveValue, TransactionTrait};
 
         use crate::entities::role_dept;
 
@@ -356,53 +377,59 @@ impl RoleRepository {
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
 
-        // 删除旧关联
-        role_dept::Entity::delete_many()
-            .filter(role_dept::Column::RoleId.eq(role_id))
-            .filter(role_dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
-            .exec(&txn)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-
-        // 插入新关联
-        for dept_id in dept_ids {
-            let rd = role_dept::ActiveModel {
-                tenant_id: ActiveValue::Set(ryframe_core::current_tenant_id()),
-                role_id: ActiveValue::Set(role_id),
-                dept_id: ActiveValue::Set(*dept_id),
-            };
-            rd.insert(&txn)
+        let operation: AppResult<()> = async {
+            let updated = role::Entity::update_many()
+                .col_expr(
+                    role::Column::DataScope,
+                    sea_orm::sea_query::Expr::value(data_scope),
+                )
+                .col_expr(
+                    role::Column::UpdatedAt,
+                    sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+                )
+                .filter(role::Column::Id.eq(role_id))
+                .filter(role::Column::TenantId.eq(tenant_id))
+                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+                .exec(&txn)
                 .await
                 .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+            if updated.rows_affected != 1 {
+                return Err(AppError::NotFound("角色不存在".into()));
+            }
+
+            role_dept::Entity::delete_many()
+                .filter(role_dept::Column::RoleId.eq(role_id))
+                .filter(role_dept::Column::TenantId.eq(tenant_id))
+                .exec(&txn)
+                .await
+                .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+
+            if !dept_ids.is_empty() {
+                let relations = dept_ids.iter().map(|dept_id| role_dept::ActiveModel {
+                    tenant_id: ActiveValue::Set(tenant_id.to_owned()),
+                    role_id: ActiveValue::Set(role_id),
+                    dept_id: ActiveValue::Set(*dept_id),
+                });
+                role_dept::Entity::insert_many(relations)
+                    .exec(&txn)
+                    .await
+                    .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+            }
+            Ok(())
         }
+        .await;
 
-        txn.commit()
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-        Ok(())
-    }
-
-    /// 更新角色的数据范围字段
-    pub async fn update_data_scope(
-        &self,
-        db: &DatabaseConnection,
-        role_id: i64,
-        data_scope: &str,
-    ) -> AppResult<()> {
-        use sea_orm::ActiveValue;
-
-        let role = self
-            .find_by_id(db, role_id)
-            .await?
-            .ok_or_else(|| ryframe_common::AppError::NotFound("角色不存在".into()))?;
-
-        let mut active: role::ActiveModel = role.into();
-        active.data_scope = ActiveValue::Set(data_scope.to_string());
-        active.updated_at = ActiveValue::Set(chrono::Utc::now());
-        active
-            .update(db)
-            .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-        Ok(())
+        match operation {
+            Ok(()) => txn
+                .commit()
+                .await
+                .map_err(|e| ryframe_common::AppError::Database(e.to_string())),
+            Err(error) => {
+                txn.rollback()
+                    .await
+                    .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+                Err(error)
+            }
+        }
     }
 }

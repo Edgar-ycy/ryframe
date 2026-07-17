@@ -1,57 +1,13 @@
 use std::sync::Arc;
 
-use axum::{
-    Router,
-    extract::{Request, State},
-    http::StatusCode,
-    middleware::{Next, from_fn},
-    response::{IntoResponse, Response},
-    routing::get,
-};
+use axum::{Router, middleware::from_fn, routing::get};
+use ryframe_common::AppResult;
 use ryframe_config::CorsConfig;
-use ryframe_core::multi_tenant::{TenantConfig, TenantRateLimitCache, tenant_middleware};
+use ryframe_core::multi_tenant::{TenantConfig, tenant_middleware};
 use ryframe_middleware::{
     CacheControlConfig, IdempotencyState, ReplayProtectionState, SecurityHeadersConfig,
     rate_limit::RateLimitState,
 };
-
-#[derive(Clone)]
-struct TenantRateLimitState {
-    db: sea_orm::DatabaseConnection,
-    limiter: Arc<ryframe_middleware::RateLimiter>,
-    cache: TenantRateLimitCache,
-}
-
-async fn tenant_rate_limit_middleware(
-    State(state): State<TenantRateLimitState>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let tenant_id = ryframe_core::current_tenant_id();
-    let limit = if let Some(limit) = state.cache.get(&tenant_id) {
-        limit
-    } else {
-        match ryframe_db::TenantRepository
-            .find_by_tenant_id(&state.db, &tenant_id)
-            .await
-        {
-            Ok(Some(tenant)) => {
-                let limit = tenant.max_requests_per_min.max(1) as u32;
-                state.cache.insert(tenant_id.clone(), limit);
-                limit
-            }
-            // Authentication provides the definitive tenant-existence error.
-            // Do not mask it as a rate-limit failure here.
-            _ => return next.run(request).await,
-        }
-    };
-    let key = format!("tenant:{}", tenant_id);
-    if state.limiter.sliding_window_acquire(&key, 60, limit).await {
-        next.run(request).await
-    } else {
-        (StatusCode::TOO_MANY_REQUESTS, "租户请求频率超过配额").into_response()
-    }
-}
 
 /// 健康检查 Handler
 async fn health_check() -> &'static str {
@@ -67,18 +23,20 @@ pub fn build_app(
     limiter: Arc<ryframe_middleware::RateLimiter>,
     rate_limit_state: RateLimitState,
     cors_config: &CorsConfig,
-) -> Router {
+) -> AppResult<Router> {
     // 克隆一份传给 api_router（用于子路由的用户级限流）
     let rate_limit_state_for_api = rate_limit_state.clone();
-    let tenant_rate_limit_state = TenantRateLimitState {
-        db: state.db.clone(),
-        limiter: limiter.clone(),
-        cache: state.tenant_rate_limit_cache.clone(),
-    };
-    let tenant_config = Arc::new(TenantConfig {
-        default_tenant: None,
-        ..TenantConfig::default()
-    });
+    let tenant_config = Arc::new(
+        TenantConfig::default()
+            .with_excluded_paths([
+                "/",
+                "/health",
+                "/api/v1/version",
+                "/api/v1/monitor/health",
+                "/api/v1/monitor/metrics",
+            ])
+            .with_excluded_path_prefixes(["/api/v1/api-docs/", "/api/v1/swagger-ui"]),
+    );
     let security_headers_config = SecurityHeadersConfig::default();
     let idempotency_state = IdempotencyState::new(state.redis.clone(), 300);
     idempotency_state.spawn_gc();
@@ -92,7 +50,7 @@ pub fn build_app(
             .with_rule("/api/v1/swagger-ui", "public, max-age=300"),
     );
 
-    Router::new()
+    Ok(Router::new()
         .route("/", get(health_check))
         .route("/health", get(health_check))
         // Register application routes before applying the global middleware
@@ -114,10 +72,6 @@ pub fn build_app(
         .layer(axum::middleware::from_fn_with_state(
             rate_limit_state,
             ryframe_middleware::api_rate_limit_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            tenant_rate_limit_state,
-            tenant_rate_limit_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
             tenant_config,
@@ -152,7 +106,7 @@ pub fn build_app(
         // 6. 请求日志
         .layer(ryframe_middleware::request_log_layer())
         // 7. CORS
-        .layer(ryframe_middleware::cors_layer(cors_config))
+        .layer(ryframe_middleware::cors_layer(cors_config)?)
         // 8. 响应压缩
         .layer(ryframe_middleware::compression_layer())
         // 9. Request ID
@@ -162,5 +116,5 @@ pub fn build_app(
         // 10. 链路追踪 Span（在 request_id 之后，读取 x-request-id）
         .layer(from_fn(ryframe_middleware::telemetry::telemetry_middleware))
         // 11. HTTP Metrics（最内层，最先开始计时，最后结束计时，捕获完整请求耗时）
-        .layer(from_fn(ryframe_middleware::metrics::metrics_middleware))
+        .layer(from_fn(ryframe_middleware::metrics::metrics_middleware)))
 }

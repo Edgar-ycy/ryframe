@@ -7,12 +7,13 @@ use serde::{Deserialize, Serialize};
 
 /// 分页查询参数
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PageQuery {
     /// 页码，从 1 开始
     #[serde(default = "default_page")]
     pub page: u64,
     /// 每页记录数
-    #[serde(default = "default_page_size", alias = "pageSize")]
+    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
@@ -59,6 +60,27 @@ impl Default for PageQuery {
             page: 1,
             page_size: 10,
         }
+    }
+}
+
+#[cfg(test)]
+mod page_query_tests {
+    use super::PageQuery;
+
+    #[test]
+    fn missing_pagination_uses_canonical_defaults() {
+        let query: PageQuery = serde_json::from_str("{}").expect("page query should deserialize");
+
+        assert_eq!(query.page, 1);
+        assert_eq!(query.page_size, 10);
+    }
+
+    #[test]
+    fn legacy_camel_case_pagination_is_rejected() {
+        let error = serde_json::from_str::<PageQuery>(r#"{"pageSize": 20}"#)
+            .expect_err("legacy pagination must not be accepted");
+
+        assert!(error.to_string().contains("unknown field `pageSize`"));
     }
 }
 
@@ -109,23 +131,29 @@ impl<T> PageResult<T> {
 #[async_trait]
 pub trait Repository<T, ID>: Send + Sync {
     /// 根据主键查询单条记录
-    async fn find_by_id(&self, db: &DatabaseConnection, id: ID) -> AppResult<Option<T>>;
+    async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: ID,
+    ) -> AppResult<Option<T>>;
 
     /// 分页查询
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<T>>;
 
     /// 插入新记录，返回插入后的实体
-    async fn insert(&self, db: &DatabaseConnection, entity: T) -> AppResult<T>;
+    async fn insert(&self, db: &DatabaseConnection, tenant_id: &str, entity: T) -> AppResult<T>;
 
     /// 更新记录，返回更新后的实体
-    async fn update(&self, db: &DatabaseConnection, entity: T) -> AppResult<T>;
+    async fn update(&self, db: &DatabaseConnection, tenant_id: &str, entity: T) -> AppResult<T>;
 
     /// 根据主键删除记录
-    async fn delete(&self, db: &DatabaseConnection, id: ID) -> AppResult<()>;
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: ID) -> AppResult<()>;
 }
 
 /// 带结果日志的 Repository 包装器
@@ -172,8 +200,13 @@ where
     T: std::fmt::Debug + Send + Sync + 'static,
     ID: std::fmt::Debug + Send + Sync + 'static,
 {
-    async fn find_by_id(&self, db: &DatabaseConnection, id: ID) -> AppResult<Option<T>> {
-        let result = self.0.find_by_id(db, id).await;
+    async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: ID,
+    ) -> AppResult<Option<T>> {
+        let result = self.0.find_by_id(db, tenant_id, id).await;
         if let Ok(Some(ref data)) = result {
             log_full_result("find_by_id", data);
         }
@@ -183,33 +216,34 @@ where
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<T>> {
-        let result = self.0.find_by_page(db, query).await;
+        let result = self.0.find_by_page(db, tenant_id, query).await;
         if let Ok(ref page) = result {
             log_full_result(&format!("find_by_page (共{}条)", page.total), &page.records);
         }
         result
     }
 
-    async fn insert(&self, db: &DatabaseConnection, entity: T) -> AppResult<T> {
-        let result = self.0.insert(db, entity).await;
+    async fn insert(&self, db: &DatabaseConnection, tenant_id: &str, entity: T) -> AppResult<T> {
+        let result = self.0.insert(db, tenant_id, entity).await;
         if let Ok(ref data) = result {
             log_full_result("insert", data);
         }
         result
     }
 
-    async fn update(&self, db: &DatabaseConnection, entity: T) -> AppResult<T> {
-        let result = self.0.update(db, entity).await;
+    async fn update(&self, db: &DatabaseConnection, tenant_id: &str, entity: T) -> AppResult<T> {
+        let result = self.0.update(db, tenant_id, entity).await;
         if let Ok(ref data) = result {
             log_full_result("update", data);
         }
         result
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: ID) -> AppResult<()> {
-        let result = self.0.delete(db, id).await;
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: ID) -> AppResult<()> {
+        let result = self.0.delete(db, tenant_id, id).await;
         if result.is_ok() {
             log_full_result("delete", &"success");
         }

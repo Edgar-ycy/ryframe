@@ -196,7 +196,10 @@ pub fn metrics_text() -> String {
     let encoder = TextEncoder::new();
     let metric_families = METRICS_REGISTRY.gather();
     let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer).unwrap();
+    if let Err(error) = encoder.encode(&metric_families, &mut buffer) {
+        tracing::error!(%error, "failed to encode Prometheus metrics");
+        return String::new();
+    }
     String::from_utf8(buffer).unwrap_or_default()
 }
 

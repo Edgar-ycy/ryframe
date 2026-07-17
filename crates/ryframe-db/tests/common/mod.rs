@@ -6,7 +6,6 @@ use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Sc
 
 /// 创建 SQLite 内存数据库并建表
 pub async fn setup_test_db() -> DatabaseConnection {
-    ryframe_core::multi_tenant::set_debug_tenant_fallback("system");
     let db = Database::connect("sqlite::memory:")
         .await
         .expect("连接 SQLite 内存数据库失败");

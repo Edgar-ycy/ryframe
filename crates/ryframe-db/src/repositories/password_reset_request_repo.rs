@@ -14,10 +14,11 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
     async fn find_by_id(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<password_reset_request::Model>> {
         password_reset_request::Entity::find_by_id(id)
-            .filter(password_reset_request::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(password_reset_request::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -26,14 +27,13 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<password_reset_request::Model>> {
         crate::pagination::paginate(
             db,
             password_reset_request::Entity::find()
-                .filter(
-                    password_reset_request::Column::TenantId.eq(ryframe_core::current_tenant_id()),
-                )
+                .filter(password_reset_request::Column::TenantId.eq(tenant_id))
                 .order_by_desc(password_reset_request::Column::CreatedAt),
             &query,
         )
@@ -43,23 +43,25 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
     async fn insert(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         entity: password_reset_request::Model,
     ) -> AppResult<password_reset_request::Model> {
-        insert_entity!(password_reset_request, db, entity)
+        insert_entity!(password_reset_request, db, tenant_id, entity)
     }
 
     async fn update(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         entity: password_reset_request::Model,
     ) -> AppResult<password_reset_request::Model> {
-        update_entity!(password_reset_request, db, entity)
+        update_entity!(password_reset_request, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
         password_reset_request::Entity::delete_many()
             .filter(password_reset_request::Column::Id.eq(id))
-            .filter(password_reset_request::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(password_reset_request::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -71,10 +73,11 @@ impl PasswordResetRequestRepository {
     pub async fn find_pending_by_target(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         target_user_id: i64,
     ) -> AppResult<Vec<password_reset_request::Model>> {
         password_reset_request::Entity::find()
-            .filter(password_reset_request::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(password_reset_request::Column::TenantId.eq(tenant_id))
             .filter(password_reset_request::Column::TargetUserId.eq(target_user_id))
             .filter(
                 password_reset_request::Column::Status

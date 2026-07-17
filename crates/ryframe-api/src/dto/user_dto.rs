@@ -10,8 +10,10 @@ pub struct CreateUserDto {
     pub nickname: String,
     pub email: Option<String>,
     pub phone: Option<String>,
-    /// 接口接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失。
+    /// Snowflake ID 统一使用字符串传输，避免 JavaScript 精度丢失。
     pub dept_id: Option<String>,
+    #[serde(default)]
+    pub role_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
@@ -21,15 +23,13 @@ pub struct UpdateUserDto {
     pub nickname: String,
     pub email: Option<String>,
     pub phone: Option<String>,
-    /// 接口接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失。
+    /// Snowflake ID 统一使用字符串传输，避免 JavaScript 精度丢失。
     pub dept_id: Option<String>,
-    pub status: String,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct UserRoleAssignDto {
-    pub user_id: String,
+pub struct ReplaceUserRolesDto {
     #[serde(default)]
     pub role_ids: Vec<String>,
 }
@@ -53,9 +53,17 @@ pub struct PasswordResetRequestResponse {
     pub expires_at: String,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct ChangeStatusDto {
-    /// 接口接受 number|string，前端 Snowflake ID 以字符串传输避免 JS 精度丢失。
-    pub user_id: String,
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateUserStatusDto {
+    #[validate(custom(function = "validate_user_status"))]
     pub status: String,
+}
+
+fn validate_user_status(value: &str) -> Result<(), validator::ValidationError> {
+    if matches!(value, "0" | "1") {
+        Ok(())
+    } else {
+        Err(validator::ValidationError::new("invalid_user_status"))
+    }
 }

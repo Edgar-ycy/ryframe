@@ -1,146 +1,84 @@
 use std::sync::Arc;
 
+use ryframe_api::AppServices;
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::{LoggedRepo, RedisClient};
-use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
-    MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
-    RoleRepository, TenantRepository, UserRepository,
-};
+use ryframe_core::RedisClient;
+use ryframe_db::DatabaseCluster;
 use ryframe_service::{
-    AuthServiceImpl,
+    AuthService,
     system::{
-        CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, TenantServiceImpl, UserServiceImpl,
+        CaptchaStore, ConfigService, DeptService, DictService, FileService, GeneratorService,
+        LoginInfoService, MenuService, NoticeService, OnlineUserService, OperLogService,
+        PermissionService, PostService, ProfileService, RoleService, TenantService, UserService,
     },
 };
-use sea_orm::DatabaseConnection;
-
-/// 所有业务 Service 实例的容器
-pub struct Services {
-    pub auth_service: Arc<AuthServiceImpl>,
-    pub user_service: Arc<UserServiceImpl>,
-    pub role_service: Arc<RoleServiceImpl>,
-    pub tenant_service: Arc<TenantServiceImpl>,
-    pub permission_service: Arc<PermissionServiceImpl>,
-    pub menu_service: Arc<MenuServiceImpl>,
-    pub dept_service: Arc<DeptServiceImpl>,
-    pub post_service: Arc<PostServiceImpl>,
-    pub config_service: Arc<ConfigServiceImpl>,
-    pub dict_service: Arc<DictServiceImpl>,
-    pub notice_service: Arc<NoticeServiceImpl>,
-    pub oper_log_service: Arc<OperLogServiceImpl>,
-    pub login_info_service: Arc<LoginInfoServiceImpl>,
-    pub generator_service: Arc<GeneratorServiceImpl>,
-    pub profile_service: Arc<ProfileServiceImpl>,
-    pub online_user_service: Arc<OnlineUserServiceImpl>,
-    pub captcha_store: CaptchaStore,
-}
+use ryframe_storage::ObjectStorage;
 
 /// 构造所有 Service 实例
 ///
 /// 依赖注入顺序：Repository → Redis → Service。
 pub async fn build_all(
+    database: &DatabaseCluster,
     config: &AppConfig,
     redis_client: &Option<RedisClient>,
-    _primary_db: &DatabaseConnection,
-) -> Result<Services, AppError> {
-    let oper_log_repo = LoggedRepo::new(OperLogRepository);
-    let login_info_repo = LoggedRepo::new(LoginInfoRepository);
-
-    let user_service = Arc::new(UserServiceImpl {
-        user_repo: LoggedRepo::new(UserRepository),
-        role_repo: LoggedRepo::new(RoleRepository),
-        dept_repo: LoggedRepo::new(DeptRepository),
-        redis: redis_client.clone(),
-    });
-
-    let role_service = Arc::new(RoleServiceImpl {
-        role_repo: LoggedRepo::new(RoleRepository),
-        perm_repo: LoggedRepo::new(PermissionRepository),
-        redis: redis_client.clone(),
-    });
-
-    let tenant_service = Arc::new(TenantServiceImpl {
-        tenant_repo: TenantRepository,
-    });
-
-    let permission_service = Arc::new(PermissionServiceImpl {
-        perm_repo: LoggedRepo::new(PermissionRepository),
-        redis: redis_client.clone(),
-    });
-
-    let auth_service = Arc::new(AuthServiceImpl {
-        user_repo: LoggedRepo::new(UserRepository),
-        role_repo: LoggedRepo::new(RoleRepository),
-        perm_repo: LoggedRepo::new(PermissionRepository),
-        config: Arc::new(config.clone()),
-        redis: redis_client.clone(),
-    });
-
-    let menu_service = Arc::new(MenuServiceImpl {
-        menu_repo: LoggedRepo::new(MenuRepository),
-        redis: redis_client.clone(),
-    });
+    object_storage: Arc<dyn ObjectStorage>,
+) -> Result<AppServices, AppError> {
+    let user = Arc::new(UserService::new(database.clone(), redis_client.clone()));
+    let role = Arc::new(RoleService::new(database.clone(), redis_client.clone()));
+    let tenant = Arc::new(TenantService::new(database.clone()));
+    let permission = Arc::new(PermissionService::new(
+        database.clone(),
+        redis_client.clone(),
+    ));
+    let auth = Arc::new(AuthService::new(
+        database.clone(),
+        Arc::new(config.clone()),
+        redis_client.clone(),
+    ));
+    let menu = Arc::new(MenuService::new(database.clone(), redis_client.clone()));
     // 启动时清除菜单树缓存，确保迁移新增的菜单项能立即显示
-    menu_service.invalidate_all_menu_caches().await;
+    menu.invalidate_all_menu_caches().await;
 
-    let dept_service = Arc::new(DeptServiceImpl {
-        dept_repo: LoggedRepo::new(DeptRepository),
-        redis: redis_client.clone(),
-    });
+    let dept = Arc::new(DeptService::new(database.clone(), redis_client.clone()));
+    let post = Arc::new(PostService::new(database.clone()));
+    let config_service = Arc::new(ConfigService::new(database.clone(), redis_client.clone()));
 
-    let post_service = Arc::new(PostServiceImpl {
-        post_repo: LoggedRepo::new(PostRepository),
-    });
+    let dict = Arc::new(DictService::new(database.clone(), redis_client.clone()));
+    let notice = Arc::new(NoticeService::new(database.clone()));
+    let oper_log = Arc::new(OperLogService::new(database.clone()));
+    let login_info = Arc::new(LoginInfoService::new(database.clone()));
 
-    let config_service = Arc::new(ConfigServiceImpl {
-        config_repo: LoggedRepo::new(ConfigRepository),
-        redis: redis_client.clone(),
-    });
-    // 启动时清除皮肤/主题配置缓存，确保与数据库一致
-    config_service.invalidate_skin_cache_on_startup().await;
-
-    let dict_service = Arc::new(DictServiceImpl {
-        dict_type_repo: LoggedRepo::new(DictTypeRepository),
-        dict_data_repo: LoggedRepo::new(DictDataRepository),
-        redis: redis_client.clone(),
-    });
-
-    let notice_service = Arc::new(NoticeServiceImpl {
-        notice_repo: LoggedRepo::new(NoticeRepository),
-    });
-
-    let oper_log_service = Arc::new(OperLogServiceImpl { oper_log_repo });
-
-    let login_info_service = Arc::new(LoginInfoServiceImpl { login_info_repo });
-
-    // -- GeneratorService --
     let workspace_root = std::env::current_dir()
         .map_err(|e| AppError::Internal(format!("无法获取 workspace root: {}", e)))?;
-    let generator_service = Arc::new(GeneratorServiceImpl { workspace_root });
+    if config.generator.data_source != "primary" {
+        database
+            .source(&config.generator.data_source)
+            .ok_or_else(|| {
+                AppError::Config(format!(
+                    "代码生成器数据源未连接: {}",
+                    config.generator.data_source
+                ))
+            })?;
+    }
+    let generator = Arc::new(GeneratorService::new(
+        database.clone(),
+        config.generator.data_source.clone(),
+        workspace_root,
+    ));
 
-    // -- ProfileService --
-    let profile_service = Arc::new(ProfileServiceImpl {
-        user_repo: LoggedRepo::new(UserRepository),
-        role_repo: LoggedRepo::new(RoleRepository),
-        perm_repo: LoggedRepo::new(PermissionRepository),
-    });
+    let profile = Arc::new(ProfileService::new(database.clone()));
+    let file = Arc::new(FileService::new(database.clone(), object_storage));
 
-    // -- OnlineUserService（Redis 或内存模式） --
-    let online_user_service: Arc<OnlineUserServiceImpl> = if let Some(redis) = redis_client {
-        Arc::new(OnlineUserServiceImpl::new_redis(redis.clone()))
+    let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
+        Arc::new(OnlineUserService::new_redis(redis.clone()))
     } else {
-        Arc::new(OnlineUserServiceImpl::new_in_memory())
+        Arc::new(OnlineUserService::new_in_memory())
     };
     // 启动时清理残留的旧在线用户会话
-    online_user_service.clear_all_on_startup().await;
+    online_user.clear_all_on_startup().await;
 
-    // -- CaptchaStore（Redis 或内存模式） --
-    let captcha_store = if let Some(redis) = redis_client {
+    let captcha = if let Some(redis) = redis_client {
         CaptchaStore::new_redis(redis.clone(), 300)
     } else {
         let store = CaptchaStore::new_in_memory(300);
@@ -148,23 +86,24 @@ pub async fn build_all(
         store
     };
 
-    Ok(Services {
-        auth_service,
-        user_service,
-        role_service,
-        tenant_service,
-        permission_service,
-        menu_service,
-        dept_service,
-        post_service,
-        config_service,
-        dict_service,
-        notice_service,
-        oper_log_service,
-        login_info_service,
-        generator_service,
-        profile_service,
-        online_user_service,
-        captcha_store,
+    Ok(AppServices {
+        auth,
+        user,
+        role,
+        tenant,
+        permission,
+        menu,
+        dept,
+        post,
+        config: config_service,
+        dict,
+        notice,
+        oper_log,
+        login_info,
+        generator,
+        profile,
+        file,
+        online_user,
+        captcha,
     })
 }

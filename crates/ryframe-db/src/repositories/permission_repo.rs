@@ -17,10 +17,11 @@ impl Repository<permission::Model, i64> for PermissionRepository {
     async fn find_by_id(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<permission::Model>> {
         permission::Entity::find_by_id(id)
-            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(permission::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -29,12 +30,12 @@ impl Repository<permission::Model, i64> for PermissionRepository {
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<permission::Model>> {
         crate::pagination::paginate(
             db,
-            permission::Entity::find()
-                .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id())),
+            permission::Entity::find().filter(permission::Column::TenantId.eq(tenant_id)),
             &query,
         )
         .await
@@ -43,23 +44,25 @@ impl Repository<permission::Model, i64> for PermissionRepository {
     async fn insert(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         entity: permission::Model,
     ) -> AppResult<permission::Model> {
-        insert_entity!(permission, db, entity)
+        insert_entity!(permission, db, tenant_id, entity)
     }
 
     async fn update(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         entity: permission::Model,
     ) -> AppResult<permission::Model> {
-        update_entity!(permission, db, entity)
+        update_entity!(permission, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
         permission::Entity::delete_many()
             .filter(permission::Column::Id.eq(id))
-            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(permission::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
@@ -71,14 +74,14 @@ impl PermissionRepository {
     pub async fn find_affected_user_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         perm_ids: &[i64],
     ) -> AppResult<Vec<i64>> {
         if perm_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let tenant_id = ryframe_core::current_tenant_id();
         let role_ids: HashSet<i64> = role_permission::Entity::find()
-            .filter(role_permission::Column::TenantId.eq(&tenant_id))
+            .filter(role_permission::Column::TenantId.eq(tenant_id))
             .filter(role_permission::Column::PermId.is_in(perm_ids.iter().copied()))
             .all(db)
             .await
@@ -103,10 +106,14 @@ impl PermissionRepository {
         Ok(user_ids)
     }
 
-    pub async fn is_referenced(&self, db: &DatabaseConnection, perm_id: i64) -> AppResult<bool> {
-        let tenant_id = ryframe_core::current_tenant_id();
+    pub async fn is_referenced(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        perm_id: i64,
+    ) -> AppResult<bool> {
         let role_reference = role_permission::Entity::find()
-            .filter(role_permission::Column::TenantId.eq(&tenant_id))
+            .filter(role_permission::Column::TenantId.eq(tenant_id))
             .filter(role_permission::Column::PermId.eq(perm_id))
             .one(db)
             .await
@@ -128,11 +135,12 @@ impl PermissionRepository {
     pub async fn find_by_code(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         code: &str,
     ) -> AppResult<Option<permission::Model>> {
         permission::Entity::find()
             .filter(permission::Column::Code.eq(code))
-            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(permission::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
@@ -144,6 +152,7 @@ impl PermissionRepository {
     pub async fn find_role_perms(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_ids: &[i64],
     ) -> AppResult<Vec<permission::Model>> {
         if role_ids.is_empty() {
@@ -152,7 +161,7 @@ impl PermissionRepository {
 
         let perm_ids: Vec<i64> = role_permission::Entity::find()
             .filter(role_permission::Column::RoleId.is_in(role_ids.iter().copied()))
-            .filter(role_permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role_permission::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -165,7 +174,7 @@ impl PermissionRepository {
         }
 
         permission::Entity::find()
-            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(permission::Column::TenantId.eq(tenant_id))
             .filter(permission::Column::Id.is_in(perm_ids))
             .filter(permission::Column::Status.eq("1"))
             .all(db)
@@ -177,11 +186,12 @@ impl PermissionRepository {
     pub async fn find_role_perm_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_id: i64,
     ) -> AppResult<Vec<i64>> {
         let ids = role_permission::Entity::find()
             .filter(role_permission::Column::RoleId.eq(role_id))
-            .filter(role_permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role_permission::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
@@ -195,6 +205,7 @@ impl PermissionRepository {
     pub async fn assign_perms(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         role_id: i64,
         perm_ids: &[i64],
     ) -> AppResult<()> {
@@ -205,7 +216,7 @@ impl PermissionRepository {
         // 清除现有权限
         role_permission::Entity::delete_many()
             .filter(role_permission::Column::RoleId.eq(role_id))
-            .filter(role_permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(role_permission::Column::TenantId.eq(tenant_id))
             .exec(&txn)
             .await
             .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
@@ -220,7 +231,7 @@ impl PermissionRepository {
         let models: Vec<role_permission::ActiveModel> = perm_ids
             .iter()
             .map(|pid| role_permission::ActiveModel {
-                tenant_id: sea_orm::ActiveValue::Set(ryframe_core::current_tenant_id()),
+                tenant_id: sea_orm::ActiveValue::Set(tenant_id.to_owned()),
                 role_id: sea_orm::ActiveValue::Set(role_id),
                 perm_id: sea_orm::ActiveValue::Set(*pid),
             })
@@ -237,9 +248,13 @@ impl PermissionRepository {
     }
 
     /// 查询所有权限
-    pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<permission::Model>> {
+    pub async fn find_all(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+    ) -> AppResult<Vec<permission::Model>> {
         permission::Entity::find()
-            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(permission::Column::TenantId.eq(tenant_id))
             .order_by_asc(permission::Column::Sort)
             .all(db)
             .await

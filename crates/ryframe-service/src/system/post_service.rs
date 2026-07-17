@@ -1,14 +1,15 @@
-use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
     auto_fill::{AutoFill, FillContext},
     repository::{PageQuery, PageResult},
 };
+use ryframe_db::DatabaseCluster;
 use ryframe_db::{PostRepository, entities::post};
-use sea_orm::DatabaseConnection;
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PostVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -34,39 +35,58 @@ impl From<post::Model> for PostVo {
     }
 }
 
-pub struct PostServiceImpl {
-    pub post_repo: LoggedRepo<PostRepository>,
+#[derive(Debug)]
+pub struct PostListParams {
+    pub page: PageQuery,
+    pub name: Option<String>,
+    pub code: Option<String>,
+    pub status: Option<String>,
 }
 
-impl PostServiceImpl {
-    pub async fn find_by_page(
-        &self,
-        db: &DatabaseConnection,
-        query: PageQuery,
-    ) -> AppResult<PageResult<PostVo>> {
-        let page = self.post_repo.find_by_page(db, query.clone()).await?;
-        let records = page.records.into_iter().map(PostVo::from).collect();
-        Ok(PageResult::new(records, page.total, &query))
+pub struct PostService {
+    db: DatabaseCluster,
+    post_repo: LoggedRepo<PostRepository>,
+}
+
+impl PostService {
+    pub fn new(db: DatabaseCluster) -> Self {
+        Self {
+            db,
+            post_repo: LoggedRepo::new(PostRepository),
+        }
     }
 
-    pub async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<PostVo>> {
-        Ok(self.post_repo.find_by_id(db, id).await?.map(PostVo::from))
+    pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<PostVo>> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.read();
+        Ok(self
+            .post_repo
+            .find_by_id(db, tenant_id, id)
+            .await?
+            .map(PostVo::from))
     }
 
     pub async fn create(
         &self,
-        db: &DatabaseConnection,
+        actor: &ActorContext,
         name: &str,
         code: &str,
         sort: i32,
     ) -> AppResult<PostVo> {
-        if self.post_repo.find_by_code(db, code).await?.is_some() {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.write();
+        if self
+            .post_repo
+            .find_by_code(db, tenant_id, code)
+            .await?
+            .is_some()
+        {
             return Err(AppError::Conflict("岗位编码已存在".into()));
         }
 
         let mut new_post = post::Model {
             id: snowflake::next_snowflake_id(),
-            tenant_id: ryframe_core::current_tenant_id(),
+            tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             code: code.to_string(),
             sort,
@@ -77,21 +97,23 @@ impl PostServiceImpl {
             updated_at: Default::default(),
         };
         new_post.fill_on_insert(&FillContext::new());
-        let saved = self.post_repo.insert(db, new_post).await?;
+        let saved = self.post_repo.insert(db, tenant_id, new_post).await?;
         Ok(PostVo::from(saved))
     }
 
     pub async fn update(
         &self,
-        db: &DatabaseConnection,
+        actor: &ActorContext,
         id: i64,
         name: &str,
         sort: i32,
         status: String,
     ) -> AppResult<PostVo> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.write();
         let mut post = self
             .post_repo
-            .find_by_id(db, id)
+            .find_by_id(db, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
 
@@ -100,38 +122,40 @@ impl PostServiceImpl {
         post.status = status;
         post.fill_on_update(&FillContext::new());
 
-        let saved = self.post_repo.update(db, post).await?;
+        let saved = self.post_repo.update(db, tenant_id, post).await?;
         Ok(PostVo::from(saved))
     }
 
-    pub async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
+    pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.write();
         self.post_repo
-            .find_by_id(db, id)
+            .find_by_id(db, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
-        self.post_repo.delete(db, id).await
+        self.post_repo.delete(db, tenant_id, id).await
     }
 
     /// 带搜索条件的分页查询
-    pub async fn find_by_page_filtered(
+    pub async fn find_by_page(
         &self,
-        db: &DatabaseConnection,
-        query: PageQuery,
-        name: Option<&str>,
-        code: Option<&str>,
-        status: Option<&str>,
+        actor: &ActorContext,
+        params: PostListParams,
     ) -> AppResult<PageResult<PostVo>> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.read();
         let page = self
             .post_repo
-            .find_by_page_filtered(db, query.clone(), name, code, status)
+            .find_by_page_filtered(
+                db,
+                tenant_id,
+                params.page.clone(),
+                params.name.as_deref(),
+                params.code.as_deref(),
+                params.status.as_deref(),
+            )
             .await?;
         let records = page.records.into_iter().map(PostVo::from).collect();
-        Ok(PageResult::new(records, page.total, &query))
-    }
-
-    /// 查询所有岗位（用于导出）
-    pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<PostVo>> {
-        let models = self.post_repo.find_all(db).await?;
-        Ok(models.into_iter().map(PostVo::from).collect())
+        Ok(PageResult::new(records, page.total, &params.page))
     }
 }

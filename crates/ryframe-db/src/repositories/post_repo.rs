@@ -11,10 +11,15 @@ pub struct PostRepository;
 
 #[async_trait]
 impl Repository<post::Model, i64> for PostRepository {
-    async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<post::Model>> {
+    async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<post::Model>> {
         post::Entity::find_by_id(id)
             .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
-            .filter(post::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(post::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -23,28 +28,39 @@ impl Repository<post::Model, i64> for PostRepository {
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<post::Model>> {
         crate::pagination::paginate(
             db,
             post::Entity::find()
                 .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
-                .filter(post::Column::TenantId.eq(ryframe_core::current_tenant_id())),
+                .filter(post::Column::TenantId.eq(tenant_id)),
             &query,
         )
         .await
     }
 
-    async fn insert(&self, db: &DatabaseConnection, entity: post::Model) -> AppResult<post::Model> {
-        insert_entity!(post, db, entity)
+    async fn insert(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: post::Model,
+    ) -> AppResult<post::Model> {
+        insert_entity!(post, db, tenant_id, entity)
     }
 
-    async fn update(&self, db: &DatabaseConnection, entity: post::Model) -> AppResult<post::Model> {
-        update_entity!(post, db, entity)
+    async fn update(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: post::Model,
+    ) -> AppResult<post::Model> {
+        update_entity!(post, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        soft_delete_entity!(post, db, id)
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
+        soft_delete_entity!(post, db, tenant_id, id)
     }
 }
 
@@ -53,10 +69,11 @@ impl PostRepository {
     pub async fn find_by_code(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         code: &str,
     ) -> AppResult<Option<post::Model>> {
         post::Entity::find()
-            .filter(post::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(post::Column::TenantId.eq(tenant_id))
             .filter(post::Column::Code.eq(code))
             .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
             .one(db)
@@ -68,6 +85,7 @@ impl PostRepository {
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
         name: Option<&str>,
         code: Option<&str>,
@@ -75,7 +93,7 @@ impl PostRepository {
     ) -> AppResult<PageResult<post::Model>> {
         let mut select = post::Entity::find()
             .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
-            .filter(post::Column::TenantId.eq(ryframe_core::current_tenant_id()));
+            .filter(post::Column::TenantId.eq(tenant_id));
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(post::Column::Name.like(format!("%{}%", n)));
         }
@@ -87,16 +105,5 @@ impl PostRepository {
         }
         select = select.order_by_asc(post::Column::Sort);
         crate::pagination::paginate(db, select, &query).await
-    }
-
-    /// 查询所有岗位（用于导出）
-    pub async fn find_all(&self, db: &DatabaseConnection) -> AppResult<Vec<post::Model>> {
-        post::Entity::find()
-            .filter(post::Column::TenantId.eq(ryframe_core::current_tenant_id()))
-            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
-            .order_by_asc(post::Column::Sort)
-            .all(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
     }
 }

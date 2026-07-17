@@ -18,6 +18,8 @@ ryframe-service = { path = "../ryframe-service" }
 ryframe-api = { path = "../ryframe-api" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-middleware = { path = "../ryframe-middleware" }
+ryframe-monitor = { path = "../ryframe-monitor" }
+ryframe-storage = { path = "../ryframe-storage" }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tracing = { workspace = true }

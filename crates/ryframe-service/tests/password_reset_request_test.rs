@@ -2,34 +2,43 @@ mod common;
 
 use common::setup_test_db;
 use ryframe_auth::password;
-use ryframe_common::AppError;
-use ryframe_core::{LoggedRepo, Repository};
+use ryframe_common::{ActorContext, AppError, DataScope};
+use ryframe_core::Repository;
 use ryframe_db::{
-    DeptRepository, PasswordResetRequestRepository, RoleRepository, UserRepository,
+    DatabaseCluster, PasswordResetRequestRepository, UserRepository,
     entities::{password_reset_request, user},
 };
-use ryframe_service::system::{CreateUserParams, UserServiceImpl};
+use ryframe_service::system::{CreateUserParams, UserService};
 
-fn user_service() -> UserServiceImpl {
-    UserServiceImpl {
-        user_repo: LoggedRepo::new(UserRepository),
-        role_repo: LoggedRepo::new(RoleRepository),
-        dept_repo: LoggedRepo::new(DeptRepository),
-        redis: None,
+fn user_service(db: &sea_orm::DatabaseConnection) -> UserService {
+    UserService::new(DatabaseCluster::single(db.clone()), None)
+}
+
+fn actor() -> ActorContext {
+    ActorContext {
+        user_id: 99,
+        tenant_id: "system".into(),
+        username: "admin".into(),
+        dept_id: None,
+        dept_path: None,
+        data_scope: DataScope::All,
+        custom_dept_ids: Vec::new(),
+        include_self: true,
+        is_super_admin: true,
     }
 }
 
-async fn create_target_user(svc: &UserServiceImpl, db: &sea_orm::DatabaseConnection) -> i64 {
+async fn create_target_user(svc: &UserService, actor: &ActorContext) -> i64 {
     let user = svc
         .create(
-            db,
+            actor,
             CreateUserParams {
                 username: "reset_target",
                 nickname: "Reset Target",
                 email: "reset_target@test.com",
                 phone: "13800000000",
                 dept_id: None,
-                role_ids: None,
+                role_ids: Vec::new(),
             },
         )
         .await
@@ -41,14 +50,14 @@ async fn create_target_user(svc: &UserServiceImpl, db: &sea_orm::DatabaseConnect
 #[tokio::test]
 async fn test_request_password_reset_persists_pending_request() {
     let db = setup_test_db().await;
-    let svc = user_service();
-    let target_user_id = create_target_user(&svc, &db).await;
+    let svc = user_service(&db);
+    let actor = actor();
+    let target_user_id = create_target_user(&svc, &actor).await;
 
     let outcome = svc
         .request_password_reset(
-            &db,
+            &actor,
             target_user_id,
-            99,
             "  forgot password  ",
             Some("127.0.0.1".to_string()),
         )
@@ -57,7 +66,7 @@ async fn test_request_password_reset_persists_pending_request() {
     let request = outcome.request;
 
     assert_eq!(request.target_user_id, target_user_id);
-    assert_eq!(request.requested_by, 99);
+    assert_eq!(request.requested_by, actor.user_id);
     assert_eq!(request.reason, "forgot password");
     assert_eq!(
         request.status,
@@ -71,7 +80,7 @@ async fn test_request_password_reset_persists_pending_request() {
     assert!(password::verify(&outcome.token, &request.token_hash).unwrap());
 
     let pending = PasswordResetRequestRepository
-        .find_pending_by_target(&db, target_user_id)
+        .find_pending_by_target(&db, &actor.tenant_id, target_user_id)
         .await
         .expect("find pending reset requests");
     assert_eq!(pending.len(), 1);
@@ -81,11 +90,12 @@ async fn test_request_password_reset_persists_pending_request() {
 #[tokio::test]
 async fn test_request_password_reset_requires_reason() {
     let db = setup_test_db().await;
-    let svc = user_service();
-    let target_user_id = create_target_user(&svc, &db).await;
+    let svc = user_service(&db);
+    let actor = actor();
+    let target_user_id = create_target_user(&svc, &actor).await;
 
     let err = svc
-        .request_password_reset(&db, target_user_id, 99, "   ", None)
+        .request_password_reset(&actor, target_user_id, "   ", None)
         .await
         .expect_err("blank reason should be rejected");
 
@@ -95,31 +105,48 @@ async fn test_request_password_reset_requires_reason() {
 #[tokio::test]
 async fn test_complete_password_reset_sets_new_password_and_activates_pending_user() {
     let db = setup_test_db().await;
-    let svc = user_service();
-    let target_user_id = create_target_user(&svc, &db).await;
+    let svc = user_service(&db);
+    let actor = actor();
+    let target_user_id = create_target_user(&svc, &actor).await;
 
     let outcome = svc
-        .request_password_reset(&db, target_user_id, 99, "activate account", None)
+        .request_password_reset(&actor, target_user_id, "activate account", None)
         .await
         .expect("request password reset");
 
+    let err = svc
+        .complete_password_reset_request(
+            &actor.tenant_id,
+            outcome.request.id,
+            &outcome.token,
+            "newpass123",
+        )
+        .await
+        .expect_err("weak passwords must always be rejected");
+    assert!(matches!(err, AppError::Validation(_)));
+
     let completed_user_id = svc
-        .complete_password_reset(&db, outcome.request.id, &outcome.token, "newpass123", false)
+        .complete_password_reset_request(
+            &actor.tenant_id,
+            outcome.request.id,
+            &outcome.token,
+            "NewPass123!",
+        )
         .await
         .expect("complete password reset");
 
     assert_eq!(completed_user_id, target_user_id);
 
     let saved_user = UserRepository
-        .find_by_id(&db, target_user_id)
+        .find_by_id(&db, &actor.tenant_id, target_user_id)
         .await
         .expect("find user")
         .expect("user exists");
     assert_eq!(saved_user.status, user::Model::STATUS_NORMAL);
-    assert!(password::verify("newpass123", &saved_user.password_hash).unwrap());
+    assert!(password::verify("NewPass123!", &saved_user.password_hash).unwrap());
 
     let saved_request = PasswordResetRequestRepository
-        .find_by_id(&db, outcome.request.id)
+        .find_by_id(&db, &actor.tenant_id, outcome.request.id)
         .await
         .expect("find reset request")
         .expect("reset request exists");
@@ -133,16 +160,22 @@ async fn test_complete_password_reset_sets_new_password_and_activates_pending_us
 #[tokio::test]
 async fn test_complete_password_reset_rejects_invalid_token() {
     let db = setup_test_db().await;
-    let svc = user_service();
-    let target_user_id = create_target_user(&svc, &db).await;
+    let svc = user_service(&db);
+    let actor = actor();
+    let target_user_id = create_target_user(&svc, &actor).await;
 
     let outcome = svc
-        .request_password_reset(&db, target_user_id, 99, "forgot password", None)
+        .request_password_reset(&actor, target_user_id, "forgot password", None)
         .await
         .expect("request password reset");
 
     let err = svc
-        .complete_password_reset(&db, outcome.request.id, "wrong-token", "newpass123", false)
+        .complete_password_reset_request(
+            &actor.tenant_id,
+            outcome.request.id,
+            "wrong-token",
+            "NewPass123!",
+        )
         .await
         .expect_err("invalid token should be rejected");
 

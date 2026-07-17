@@ -80,9 +80,13 @@ fn context(
     }
 }
 
-async fn visible_ids(db: &sea_orm::DatabaseConnection, ctx: &DataScopeContext) -> Vec<i64> {
+async fn visible_ids(
+    db: &sea_orm::DatabaseConnection,
+    tenant_id: &str,
+    ctx: &DataScopeContext,
+) -> Vec<i64> {
     let mut ids = UserRepository
-        .find_by_page_with_data_scope(db, PageQuery::all_records(), ctx)
+        .find_by_page_with_data_scope(db, tenant_id, PageQuery::all_records(), ctx)
         .await
         .unwrap()
         .records
@@ -106,12 +110,18 @@ async fn user_repository_enforces_every_data_scope_and_mixed_role_union() {
     insert_user(&db, 14, None, "tenant-b").await;
 
     assert_eq!(
-        visible_ids(&db, &context(DataScope::Dept, 10, Some(1), vec![], false)).await,
+        visible_ids(
+            &db,
+            "system",
+            &context(DataScope::Dept, 10, Some(1), vec![], false)
+        )
+        .await,
         vec![10]
     );
     assert_eq!(
         visible_ids(
             &db,
+            "system",
             &context(DataScope::DeptAndChildren, 10, Some(1), vec![], false)
         )
         .await,
@@ -120,6 +130,7 @@ async fn user_repository_enforces_every_data_scope_and_mixed_role_union() {
     assert_eq!(
         visible_ids(
             &db,
+            "system",
             &context(DataScope::Custom, 10, Some(1), vec![3], false)
         )
         .await,
@@ -128,22 +139,21 @@ async fn user_repository_enforces_every_data_scope_and_mixed_role_union() {
     assert_eq!(
         visible_ids(
             &db,
+            "system",
             &context(DataScope::SelfOnly, 11, Some(2), vec![], true)
         )
         .await,
         vec![11]
     );
     assert_eq!(
-        visible_ids(&db, &context(DataScope::Custom, 10, Some(1), vec![3], true)).await,
+        visible_ids(
+            &db,
+            "system",
+            &context(DataScope::Custom, 10, Some(1), vec![3], true)
+        )
+        .await,
         vec![10, 12]
     );
-    let tenant_b_ids = ryframe_core::multi_tenant::with_tenant_context(
-        ryframe_core::multi_tenant::TenantContext {
-            tenant_id: "tenant-b".into(),
-            is_admin: false,
-        },
-        visible_ids(&db, &DataScopeContext::super_admin(14)),
-    )
-    .await;
+    let tenant_b_ids = visible_ids(&db, "tenant-b", &DataScopeContext::super_admin(14)).await;
     assert_eq!(tenant_b_ids, vec![14]);
 }

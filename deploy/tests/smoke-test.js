@@ -4,6 +4,8 @@
 const BASE_URL = process.argv[2] || "http://localhost:8080";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS || "123456";
+const TENANT_ID = process.env.TENANT_ID || "system";
+const DATASOURCE_SMOKE_TABLE = process.env.DATASOURCE_SMOKE_TABLE || "t_gongxv";
 
 let passed = 0;
 let failed = 0;
@@ -34,7 +36,11 @@ async function assertOk(res, label) {
 }
 
 function authHeaders(token) {
-  return { Authorization: `Bearer ${token}` };
+  return { Authorization: `Bearer ${token}`, "X-Tenant-Id": TENANT_ID };
+}
+
+function loginHeaders() {
+  return { "Content-Type": "application/json", "X-Tenant-Id": TENANT_ID };
 }
 
 function assertPage(json, label) {
@@ -79,7 +85,7 @@ async function runSmokeTests() {
   await test("login", async () => {
     const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: loginHeaders(),
       body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
     });
     await assertOk(res, "Login");
@@ -93,7 +99,7 @@ async function runSmokeTests() {
   await test("wrong password rejected", async () => {
     const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: loginHeaders(),
       body: JSON.stringify({ username: ADMIN_USER, password: "wrong_password_xyz" }),
     });
     if (res.status === 200) throw new Error("wrong password returned HTTP 200");
@@ -116,7 +122,7 @@ async function runSmokeTests() {
     if (!refreshToken) return;
     const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: loginHeaders(),
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
     await assertOk(res, "Refresh");
@@ -128,6 +134,12 @@ async function runSmokeTests() {
     const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/api-docs/openapi.json`);
     await assertOk(res, "OpenAPI");
     if (!json?.openapi) throw new Error("invalid OpenAPI document");
+    if (!json?.["x-ryframe-menu-routes"]?.routes?.length) {
+      throw new Error("OpenAPI menu route contract is missing");
+    }
+    if (!json?.["x-ryframe-password-policy"]?.pattern) {
+      throw new Error("OpenAPI password policy contract is missing");
+    }
   });
 
   await test("swagger ui", async () => {
@@ -148,8 +160,72 @@ async function runSmokeTests() {
     if (json?.code !== 200) throw new Error("monitor health business code is not 200");
   });
 
+  await test("runtime topology", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/monitor/runtime`, {
+      headers: authHeaders(accessToken),
+    });
+    await assertOk(res, "Runtime");
+    const runtime = json?.data;
+    if (!runtime?.database?.connected || runtime.database.replica_count !== 0) {
+      throw new Error(`database topology is not healthy: ${JSON.stringify(runtime?.database)}`);
+    }
+    if (
+      runtime.database.read_policy !== "primary" ||
+      runtime.database.replicas.length !== 0
+    ) {
+      throw new Error(`database read routing is not healthy: ${JSON.stringify(runtime.database)}`);
+    }
+    if (
+      runtime.database.source_count !== 1 ||
+      runtime.database.sources[0]?.name !== "ryframe_device" ||
+      !runtime.database.sources[0]?.connected
+    ) {
+      throw new Error(`named data source is not healthy: ${JSON.stringify(runtime.database)}`);
+    }
+    if (runtime?.object_storage?.backend !== "rustfs" || !runtime.object_storage.connected) {
+      throw new Error(`RustFS is not healthy: ${JSON.stringify(runtime?.object_storage)}`);
+    }
+  });
+
+  await test("ryframe_device generator source", async () => {
+    const query = new URLSearchParams({ table_name: DATASOURCE_SMOKE_TABLE });
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/tools/gen/tables?${query}`, {
+      headers: authHeaders(accessToken),
+    });
+    await assertOk(res, "Generator Data Source");
+    assertPage(json, "Generator Data Source");
+    if (!json.rows.some((table) => table.table_name === DATASOURCE_SMOKE_TABLE)) {
+      throw new Error(
+        `generator did not read ${DATASOURCE_SMOKE_TABLE} from ryframe_device: ${JSON.stringify(json.rows)}`,
+      );
+    }
+  });
+
+  await test("RustFS upload and download", async () => {
+    const payload = "ryframe-rustfs-smoke";
+    const form = new FormData();
+    form.append("file", new Blob([payload], { type: "text/plain" }), "rustfs-smoke.txt");
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/common/upload`, {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: form,
+    });
+    await assertOk(res, "RustFS Upload");
+    const filePath = json?.data?.[0]?.file_info?.file_path;
+    if (!filePath) throw new Error(`upload response missing file path: ${JSON.stringify(json)}`);
+
+    const query = new URLSearchParams({ bucket: "uploads", path: filePath });
+    const download = await fetch(`${BASE_URL}/api/v1/common/file/download?${query}`, {
+      headers: authHeaders(accessToken),
+    });
+    await assertOk(download, "RustFS Download");
+    if ((await download.text()) !== payload) {
+      throw new Error("downloaded RustFS object differs from uploaded payload");
+    }
+  });
+
   await test("user list page", async () => {
-    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/users/list?page=1&pageSize=5`, {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/users?page=1&page_size=5`, {
       headers: authHeaders(accessToken),
     });
     await assertOk(res, "User List");
@@ -157,10 +233,11 @@ async function runSmokeTests() {
   });
 
   await test("role list", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/system/roles/list`, {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/roles?page=1&page_size=5`, {
       headers: authHeaders(accessToken),
     });
     await assertOk(res, "Role List");
+    assertPage(json, "Role List");
   });
 
   await test("menu tree", async () => {
@@ -168,6 +245,16 @@ async function runSmokeTests() {
       headers: authHeaders(accessToken),
     });
     await assertOk(res, "Menu Tree");
+  });
+
+  await test("current user menus", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/menus/current`, {
+      headers: authHeaders(accessToken),
+    });
+    await assertOk(res, "Current Menus");
+    if (json?.code !== 200 || !Array.isArray(json?.data)) {
+      throw new Error("current menu response missing data array");
+    }
   });
 
   await test("dept tree", async () => {
@@ -178,14 +265,14 @@ async function runSmokeTests() {
   });
 
   await test("permission tree", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/system/permissions/tree`, {
+    const res = await fetch(`${BASE_URL}/api/v1/system/perms/tree`, {
       headers: authHeaders(accessToken),
     });
     await assertOk(res, "Permission Tree");
   });
 
   await test("operation log page", async () => {
-    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/operlogs/list?page=1&pageSize=5`, {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/operlogs?page=1&page_size=5`, {
       headers: authHeaders(accessToken),
     });
     await assertOk(res, "OperLog List");
@@ -202,7 +289,7 @@ async function runSmokeTests() {
   await test("logout invalidates token", async () => {
     const { json } = await jsonRequest(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: loginHeaders(),
       body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
     });
     const token = json?.data?.access_token;

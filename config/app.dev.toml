@@ -13,8 +13,7 @@ port = 8080
 sql_log_level = "full"
 
 # 开发环境数据库连接
-# 第一个为主数据库，后续为额外数据源
-[[database.connections]]
+[database.primary]
 driver = "mysql"
 host = "localhost"
 port = 3306
@@ -24,8 +23,11 @@ password = "123456"
 max_connections = 10
 min_connections = 1
 
-# 额外数据库
-[[database.connections]]
+# 同结构只读副本通过 `[[database.replicas]]` 单独配置；本机开发环境暂不配置。
+
+# 独立业务数据源必须按名称显式使用，不参与主库读写路由。
+[[database.sources]]
+name = "ryframe_device"
 driver = "mysql"
 host = "localhost"
 port = 3306
@@ -34,6 +36,17 @@ username = "root"
 password = "123456"
 max_connections = 5
 min_connections = 1
+
+[generator]
+data_source = "ryframe_device"
+
+[object_storage]
+backend = "rustfs"
+endpoint = "http://localhost:9000"
+access_key = "rustfsadmin"
+secret_key = "rustfsadmin"
+use_ssl = false
+region = "us-east-1"
 
 [redis]
 host = "127.0.0.1"

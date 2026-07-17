@@ -10,7 +10,7 @@ pub mod type_mapping;
 /// - ryframe_core::repository::Repository
 /// - ryframe_core::auto_fill::AutoFill
 /// - ryframe_common::ApiResponse / ApiPageResponse
-pub const GENERATOR_VERSION: &str = "0.5.0";
+pub const GENERATOR_VERSION: &str = "0.7.0";
 
-pub use engine::{GenerateOptions, GeneratedFile, generate, write_to_disk};
+pub use engine::{GenerateOptions, GeneratedFile, WriteReport, generate, write_to_disk};
 pub use schema::{ColumnInfo, TableInfo, fetch_table, list_tables};

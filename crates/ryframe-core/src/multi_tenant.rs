@@ -23,6 +23,7 @@
 //!     extraction_method: ExtractionMethod::Header("X-Tenant-Id".into()),
 //!     isolation_strategy: IsolationStrategy::SharedTable,
 //!     default_tenant: None,
+//!     ..TenantConfig::default()
 //! };
 //! assert!(matches!(config.extraction_method, ExtractionMethod::Header(_)));
 //!
@@ -46,20 +47,16 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
+use ryframe_common::{AppError, AppResult};
 use std::{
     sync::Arc,
-    sync::OnceLock,
     time::{Duration, Instant},
 };
 
 tokio::task_local! {
-    /// Request-scoped tenant identity. Repository code reads this instead of a
-    /// process-wide default so concurrent requests cannot leak tenant scope.
+    /// Request-scoped tenant identity used only to verify explicit use-case input.
     static REQUEST_TENANT_CONTEXT: TenantContext;
 }
-
-#[cfg(debug_assertions)]
-static DEBUG_TENANT_FALLBACK: OnceLock<String> = OnceLock::new();
 
 // ============ 核心类型 ============
 
@@ -87,31 +84,27 @@ impl TenantContext {
     }
 }
 
-/// Returns the request tenant for repository and service code.
-///
-/// Code that runs outside an HTTP request must wrap its work in
-/// `with_tenant_context`; otherwise it receives a sentinel tenant that cannot
-/// accidentally match or write system-owned data.
-pub fn current_tenant_id() -> String {
-    REQUEST_TENANT_CONTEXT
-        .try_with(|context| context.tenant_id.clone())
-        .unwrap_or_else(|_| {
-            #[cfg(debug_assertions)]
-            if let Some(tenant_id) = DEBUG_TENANT_FALLBACK.get() {
-                return tenant_id.clone();
-            }
-            tracing::error!("missing tenant context; refusing to fall back to system tenant");
-            "__missing_tenant_context__".to_string()
-        })
-}
+/// Verifies an explicit use-case tenant against request-local state when one
+/// exists. Background jobs may run without task-local state because their
+/// explicit tenant remains the authoritative input.
+pub fn validate_explicit_tenant(tenant_id: &str) -> AppResult<()> {
+    if tenant_id.trim().is_empty() {
+        return Err(AppError::Validation("租户ID不能为空".into()));
+    }
 
-#[cfg(debug_assertions)]
-pub fn set_debug_tenant_fallback(tenant_id: impl Into<String>) {
-    let _ = DEBUG_TENANT_FALLBACK.set(tenant_id.into());
+    REQUEST_TENANT_CONTEXT
+        .try_with(|context| {
+            if context.tenant_id == tenant_id {
+                Ok(())
+            } else {
+                Err(AppError::Authorization("请求租户与业务租户不一致".into()))
+            }
+        })
+        .unwrap_or(Ok(()))
 }
 
 /// Runs a future with an explicit tenant scope. Middleware uses this to make
-/// the authenticated tenant available throughout asynchronous repository calls.
+/// the authenticated tenant available for consistency checks.
 pub async fn with_tenant_context<F>(context: TenantContext, future: F) -> F::Output
 where
     F: Future,
@@ -199,6 +192,10 @@ pub struct TenantConfig {
     pub isolation_strategy: IsolationStrategy,
     /// 默认租户 ID（无租户信息时使用，None 表示拒绝请求）
     pub default_tenant: Option<String>,
+    /// 不需要租户上下文的精确请求路径。
+    pub excluded_paths: Vec<String>,
+    /// 不需要租户上下文的请求路径前缀。
+    pub excluded_path_prefixes: Vec<String>,
 }
 
 impl Default for TenantConfig {
@@ -207,7 +204,37 @@ impl Default for TenantConfig {
             extraction_method: ExtractionMethod::Header("X-Tenant-Id".into()),
             isolation_strategy: IsolationStrategy::SharedTable,
             default_tenant: None,
+            excluded_paths: Vec::new(),
+            excluded_path_prefixes: Vec::new(),
         }
+    }
+}
+
+impl TenantConfig {
+    pub fn with_excluded_paths<I, S>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.excluded_paths = paths.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_excluded_path_prefixes<I, S>(mut self, prefixes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.excluded_path_prefixes = prefixes.into_iter().map(Into::into).collect();
+        self
+    }
+
+    fn excludes(&self, path: &str) -> bool {
+        self.excluded_paths.iter().any(|item| item == path)
+            || self
+                .excluded_path_prefixes
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
     }
 }
 
@@ -223,11 +250,7 @@ pub async fn tenant_middleware(
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    if matches!(path, "/" | "/health")
-        || path.starts_with("/api/v1/api-docs/")
-        || path.starts_with("/api/v1/swagger-ui")
-        || path == "/api/v1/version"
-    {
+    if config.excludes(path) {
         return next.run(request).await;
     }
 
@@ -485,5 +508,19 @@ mod tests {
             ExtractionMethod::Header(_)
         ));
         assert_eq!(config.isolation_strategy, IsolationStrategy::SharedTable);
+        assert!(config.excluded_paths.is_empty());
+        assert!(config.excluded_path_prefixes.is_empty());
+    }
+
+    #[test]
+    fn tenant_exclusions_distinguish_exact_paths_and_prefixes() {
+        let config = TenantConfig::default()
+            .with_excluded_paths(["/health"])
+            .with_excluded_path_prefixes(["/docs/"]);
+
+        assert!(config.excludes("/health"));
+        assert!(!config.excludes("/health/details"));
+        assert!(config.excludes("/docs/index.html"));
+        assert!(!config.excludes("/doc/index.html"));
     }
 }

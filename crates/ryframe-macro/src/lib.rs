@@ -8,13 +8,14 @@
 //!
 //! # 用法
 //!
-//! ```ignore
+//! ```
+//! use chrono::{DateTime, Utc};
+//! use ryframe_core::auto_fill::{AutoFill as AutoFillModel, FillContext};
 //! use ryframe_macro::AutoFill;
 //!
 //! // 自动填充（字段级标注，推荐）
 //! #[derive(AutoFill)]
 //! pub struct User {
-//!     #[sea_orm(primary_key, auto_increment = false)]
 //!     #[auto_fill(snowflake)]
 //!     pub id: i64,
 //!     pub created_at: DateTime<Utc>,
@@ -22,6 +23,13 @@
 //!     pub login_date: Option<DateTime<Utc>>,
 //! }
 //!
+//! let mut user = User {
+//!     id: 0,
+//!     created_at: Utc::now(),
+//!     login_date: None,
+//! };
+//! AutoFillModel::fill_on_insert(&mut user, &FillContext::new());
+//! assert_ne!(user.id, 0);
 //! ```
 
 mod auto_fill;
@@ -42,18 +50,27 @@ use syn::parse_macro_input;
 ///
 /// # 示例
 ///
-/// ```ignore
+/// ```
+/// use chrono::{DateTime, Utc};
+/// use ryframe_core::auto_fill::{AutoFill as AutoFillModel, FillContext};
 /// use ryframe_macro::AutoFill;
 ///
 /// #[derive(AutoFill)]
 /// pub struct User {
-///     #[sea_orm(primary_key, auto_increment = false)]
 ///     #[auto_fill(snowflake)]
 ///     pub id: i64,
 ///     pub created_at: DateTime<Utc>,
 ///     #[auto_fill(skip)]
 ///     pub login_date: Option<DateTime<Utc>>,
 /// }
+///
+/// let mut user = User {
+///     id: 0,
+///     created_at: Utc::now(),
+///     login_date: None,
+/// };
+/// AutoFillModel::fill_on_insert(&mut user, &FillContext::new());
+/// assert_ne!(user.id, 0);
 /// ```
 #[proc_macro_derive(AutoFill, attributes(auto_fill))]
 pub fn derive_auto_fill(input: TokenStream) -> TokenStream {
@@ -99,9 +116,17 @@ pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
 /// Build the router generated for a route handler while keeping the generated
 /// helper name out of application code.
 ///
-/// ```ignore
-/// Router::new().merge(route!(list_types));
-/// Router::new().merge(route!(menu_handler::user_tree));
+/// ```
+/// use axum::{Router, extract::State};
+/// use ryframe_macro::{get, route};
+///
+/// #[derive(Clone)]
+/// struct AppState;
+///
+/// #[get("/items")]
+/// async fn list(State(_state): State<AppState>) {}
+///
+/// let _router: Router<AppState> = Router::new().merge(route!(list));
 /// ```
 #[proc_macro]
 pub fn route(input: TokenStream) -> TokenStream {

@@ -1941,25 +1941,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "h2"
-version = "0.4.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "171fefbc92fe4a4de27e0698d6a5b392d6a0e333506bc49133760b3bcf948733"
-dependencies = [
- "atomic-waker",
- "bytes",
- "fnv",
- "futures-core",
- "futures-sink",
- "http",
- "indexmap",
- "slab",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2149,7 +2130,6 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "h2",
  "http",
  "http-body",
  "httparse",
@@ -2173,19 +2153,6 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
- "tower-service",
-]
-
-[[package]]
-name = "hyper-timeout"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
-dependencies = [
- "hyper",
- "hyper-util",
- "pin-project-lite",
- "tokio",
  "tower-service",
 ]
 
@@ -2711,18 +2678,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libz-sys"
-version = "1.1.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85bc9657773828b90eeb625adff10eeac83cc21bbfd8e23a03eaa8a33c9e28d9"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3063,28 +3018,6 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
-]
-
-[[package]]
-name = "num_enum"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
-dependencies = [
- "num_enum_derive",
- "rustversion",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -3446,26 +3379,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
-]
-
-[[package]]
-name = "pin-project"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
-dependencies = [
- "pin-project-internal",
-]
-
-[[package]]
-name = "pin-project-internal"
-version = "1.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -4014,36 +3927,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rdkafka"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7956f9ac12b5712e50372d9749a3102f4810a8d42481c5eae3748d36d585bcf"
-dependencies = [
- "futures-channel",
- "futures-util",
- "libc",
- "log",
- "rdkafka-sys",
- "serde",
- "serde_derive",
- "serde_json",
- "slab",
- "tokio",
-]
-
-[[package]]
-name = "rdkafka-sys"
-version = "4.10.0+2.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e234cf318915c1059d4921ef7f75616b5219b10b46e9f3a511a15eb4b56a3f77"
-dependencies = [
- "libc",
- "libz-sys",
- "num_enum",
- "pkg-config",
-]
-
-[[package]]
 name = "redis"
 version = "0.27.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4371,7 +4254,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "ryframe"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "ryframe-api",
@@ -4382,7 +4265,9 @@ dependencies = [
  "ryframe-db",
  "ryframe-db-migration",
  "ryframe-middleware",
+ "ryframe-monitor",
  "ryframe-service",
+ "ryframe-storage",
  "sea-orm",
  "tokio",
  "tracing",
@@ -4392,7 +4277,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-api"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "base64",
@@ -4404,14 +4289,15 @@ dependencies = [
  "ryframe-config",
  "ryframe-core",
  "ryframe-db",
- "ryframe-generator",
  "ryframe-macro",
  "ryframe-middleware",
  "ryframe-monitor",
  "ryframe-service",
+ "ryframe-storage",
  "sea-orm",
  "serde",
  "serde_json",
+ "syn 2.0.117",
  "tokio",
  "tower",
  "tracing",
@@ -4422,69 +4308,63 @@ dependencies = [
 
 [[package]]
 name = "ryframe-auth"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "argon2",
+ "async-trait",
  "axum",
  "chrono",
  "criterion",
  "jsonwebtoken",
- "rand_core 0.10.1",
  "ryframe-common",
  "ryframe-config",
  "ryframe-core",
- "ryframe-db",
- "sea-orm",
  "serde",
- "tracing",
 ]
 
 [[package]]
 name = "ryframe-common"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
- "async-trait",
  "axum",
  "base64",
  "calamine",
  "chrono",
  "dashmap",
- "hex",
- "hmac 0.13.0",
  "http",
  "image",
  "lettre",
  "md5",
  "rand 0.10.1",
- "reqwest",
  "rust_xlsxwriter",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml",
  "tracing",
+ "utoipa",
  "uuid",
  "validator",
 ]
 
 [[package]]
 name = "ryframe-config"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "base64",
  "rand 0.10.1",
  "ryframe-common",
  "serde",
+ "serde_json",
  "toml",
 ]
 
 [[package]]
 name = "ryframe-core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -4493,7 +4373,6 @@ dependencies = [
  "dashmap",
  "http",
  "rand 0.10.1",
- "rdkafka",
  "redis",
  "ryframe-common",
  "ryframe-config",
@@ -4502,13 +4381,12 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "tonic",
  "tracing",
 ]
 
 [[package]]
 name = "ryframe-db"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4528,7 +4406,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-db-migration"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "ryframe-common",
@@ -4539,28 +4417,33 @@ dependencies = [
 
 [[package]]
 name = "ryframe-generator"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
- "log",
  "ryframe-common",
  "sea-orm",
  "serde",
+ "syn 2.0.117",
+ "tempfile",
  "tokio",
+ "utoipa",
 ]
 
 [[package]]
 name = "ryframe-macro"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
+ "axum",
+ "chrono",
  "proc-macro2",
  "quote",
+ "ryframe-common",
  "ryframe-core",
  "syn 2.0.117",
 ]
 
 [[package]]
 name = "ryframe-middleware"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "ammonia",
  "axum",
@@ -4595,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-monitor"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "chrono",
@@ -4603,20 +4486,20 @@ dependencies = [
  "ryframe-auth",
  "ryframe-common",
  "ryframe-core",
- "ryframe-db",
  "ryframe-macro",
  "ryframe-middleware",
- "sea-orm",
  "serde",
  "serde_json",
  "sysinfo",
  "tracing",
+ "utoipa",
 ]
 
 [[package]]
 name = "ryframe-service"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "md5",
  "ryframe-auth",
@@ -4625,14 +4508,32 @@ dependencies = [
  "ryframe-core",
  "ryframe-db",
  "ryframe-generator",
+ "ryframe-storage",
  "sea-orm",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "utoipa",
  "uuid",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "ryframe-storage"
+version = "0.4.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hex",
+ "hmac 0.13.0",
+ "percent-encoding",
+ "reqwest",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -5756,35 +5657,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
-name = "tonic"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac2a5518c70fa84342385732db33fb3f44bc4cc748936eb5833d2df34d6445ef"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "bytes",
- "h2",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-timeout",
- "hyper-util",
- "percent-encoding",
- "pin-project",
- "socket2 0.6.4",
- "sync_wrapper",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5792,12 +5664,9 @@ checksum = "ebe5ef63511595f1344e2d5cfa636d973292adc0eec1f0ad45fae9f0851ab1d4"
 dependencies = [
  "futures-core",
  "futures-util",
- "indexmap",
  "pin-project-lite",
- "slab",
  "sync_wrapper",
  "tokio",
- "tokio-util",
  "tower-layer",
  "tower-service",
  "tracing",

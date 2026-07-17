@@ -1,21 +1,28 @@
-use serde::Deserialize;
-use utoipa::ToSchema;
+use ryframe_core::PageQuery;
+use ryframe_service::system::OperLogQuery;
 
-fn default_page() -> u64 {
-    1
+crate::list_query!(pub OperLogPageQuery, OperLogFilterQuery {
+    oper_name: String,
+    status: String,
+    begin_time: String,
+    end_time: String,
+});
+
+impl OperLogPageQuery {
+    pub fn into_service_query(self) -> OperLogQuery {
+        let (page, filter) = self.into_parts();
+        filter.into_service_query(page)
+    }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct OperLogPageQuery {
-    #[serde(default = "default_page")]
-    pub page: u64,
-    #[serde(
-        default = "ryframe_core::repository::default_page_size",
-        alias = "pageSize"
-    )]
-    pub page_size: u64,
-    pub oper_name: Option<String>,
-    pub status: Option<String>,
-    pub begin_time: Option<String>,
-    pub end_time: Option<String>,
+impl OperLogFilterQuery {
+    pub fn into_service_query(self, page: PageQuery) -> OperLogQuery {
+        OperLogQuery {
+            page,
+            oper_name: self.oper_name,
+            status: self.status,
+            begin_time: self.begin_time,
+            end_time: self.end_time,
+        }
+    }
 }

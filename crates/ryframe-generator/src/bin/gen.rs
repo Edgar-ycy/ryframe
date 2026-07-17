@@ -100,10 +100,16 @@ async fn main() {
 
     let root = PathBuf::from(WORKSPACE_ROOT);
     match write_to_disk(&files, &root, opts.overwrite).await {
-        Ok(written) => {
-            println!("生成完成，写入 {} 个文件:", written.len());
-            for p in &written {
+        Ok(report) => {
+            println!("生成完成，写入 {} 个文件:", report.written.len());
+            for p in &report.written {
                 println!("  -> {}", p);
+            }
+            if !report.skipped.is_empty() {
+                println!("跳过 {} 个已存在文件:", report.skipped.len());
+                for p in &report.skipped {
+                    println!("  == {}", p);
+                }
             }
         }
         Err(e) => {

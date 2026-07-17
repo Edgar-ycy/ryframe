@@ -1,6 +1,6 @@
 /// telemetry 模块测试
 /// 从 crates/ryframe-middleware/src/telemetry.rs 内联测试迁移
-use ryframe_middleware::telemetry::{TelemetryConfig, child_span, init_tracer_provider};
+use ryframe_middleware::telemetry::{TelemetryConfig, init_tracer_provider};
 
 #[test]
 fn test_config_default() {
@@ -19,10 +19,4 @@ fn test_disabled_telemetry_returns_empty_guard() {
     let guard = init_tracer_provider(&config);
     assert!(guard.tracer_provider.is_none());
     assert!(guard.tracer.is_none());
-}
-
-#[test]
-fn test_child_span_created() {
-    let span = child_span("test.op", &[("key", String::from("val"))]);
-    drop(span);
 }

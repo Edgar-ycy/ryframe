@@ -1,183 +1,212 @@
-use crate::{naming, schema::TableInfo};
+use crate::{naming, schema::TableInfo, template};
 
 pub fn render_service(table: &TableInfo, base_name: &str) -> String {
     let struct_name = naming::to_pascal_case(base_name);
     let snake = naming::to_snake_case(base_name);
-    let pk_type = crate::schema::get_pk_type(table);
+    let repository_field = format!("{}_repo", snake);
+    let primary_key = template::primary_key(table);
+    let primary_key_type = primary_key.rust_type.as_str();
+    let public_columns = template::public_columns(table).collect::<Vec<_>>();
+    let command_columns = template::command_columns(table).collect::<Vec<_>>();
 
-    // 生成 Model → Vo 字段映射
-    let model_to_vo_fields: String = table
-        .columns
+    let vo_fields = public_columns
         .iter()
-        .map(|c| {
-            let fn_name = naming::safe_field_name(&c.name);
-            if fn_name == "id" {
-                format!("            {}: m.{}.to_string(),", fn_name, fn_name)
+        .map(|column| {
+            let field_name = naming::safe_field_name(&column.name);
+            let rust_type = if column.is_primary_key {
+                "String"
             } else {
-                format!("            {}: m.{},", fn_name, fn_name)
+                column.rust_type.as_str()
+            };
+            format!("    pub {}: {},", field_name, rust_type)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let model_to_vo_fields = public_columns
+        .iter()
+        .map(|column| {
+            let field_name = naming::safe_field_name(&column.name);
+            if column.is_primary_key {
+                format!("            {field_name}: model.{field_name}.to_string(),")
+            } else {
+                format!("            {field_name}: model.{field_name},")
             }
         })
         .collect::<Vec<_>>()
         .join("\n");
-
-    // 生成 DTO → Model 字段映射（时间字段用 Default::default() 占位，由 AutoFill 填充）
-    let dto_to_model_fields: String = table
+    let command_fields = command_columns
+        .iter()
+        .map(|column| {
+            format!(
+                "    pub {}: {},",
+                naming::safe_field_name(&column.name),
+                column.rust_type
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let create_model_fields = table
         .columns
         .iter()
-        .map(|c| {
-            let fn_name = naming::safe_field_name(&c.name);
-            if fn_name == "id"
-                || fn_name == "created_at"
-                || fn_name == "updated_at"
-                || fn_name == "create_time"
-                || fn_name == "update_time"
-            {
-                format!("            {}: Default::default(),", fn_name)
+        .map(|column| {
+            let field_name = naming::safe_field_name(&column.name);
+            let value = if column.is_primary_key {
+                if column.is_auto_increment {
+                    "Default::default()".into()
+                } else if column.rust_type == "i64" {
+                    "snowflake::next_snowflake_id()".into()
+                } else {
+                    "Default::default()".into()
+                }
             } else {
-                format!("            {}: dto.{},", fn_name, fn_name)
-            }
+                match column.name.as_str() {
+                    "tenant_id" => "tenant_id.to_owned()".into(),
+                    "del_flag" => template::normal_value(column),
+                    "created_at" | "updated_at" | "create_time" | "update_time" => {
+                        "Default::default()".into()
+                    }
+                    _ => format!("command.{field_name}"),
+                }
+            };
+            format!("            {field_name}: {value},")
         })
         .collect::<Vec<_>>()
         .join("\n");
-
-    // 生成 apply_dto_updates 字段更新
-    let update_fields: String = table
-        .columns
+    let update_fields = command_columns
         .iter()
-        .filter(|c| {
-            let fn_name = naming::safe_field_name(&c.name);
-            fn_name != "id"
-                && fn_name != "created_at"
-                && fn_name != "updated_at"
-                && fn_name != "create_time"
-                && fn_name != "update_time"
-        })
-        .map(|c| {
-            let fn_name = naming::safe_field_name(&c.name);
-            format!("    active.{} = sea_orm::Set(dto.{});", fn_name, fn_name)
+        .map(|column| {
+            let field_name = naming::safe_field_name(&column.name);
+            format!("        model.{field_name} = command.{field_name};")
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let common_import = if !primary_key.is_auto_increment && primary_key.rust_type == "i64" {
+        "use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};"
+    } else {
+        "use ryframe_common::{ActorContext, AppError, AppResult};"
+    };
+    let chrono_import = template::chrono_import(table.columns.iter());
 
     format!(
-        r#"// Generated by ryframe-generator v{generator_version} — depends on: ryframe_core::auto_fill::AutoFill
-use ryframe_common::{{AppResult}};
-use ryframe_core::auto_fill::{{AutoFill, FillContext}};
-use ryframe_core::repository::Repository;
-use sea_orm::{{ActiveModelTrait, DatabaseConnection}};
-use std::sync::Arc;
+        r#"// @generated by ryframe-generator v{generator_version}
+{chrono_import}{common_import}
+use ryframe_core::{{
+    LoggedRepo, Repository,
+    auto_fill::{{AutoFill, FillContext}},
+    repository::{{PageQuery, PageResult}},
+}};
+use ryframe_db::{{{struct_name}Repository, entities::{snake}}};
+use sea_orm::DatabaseConnection;
+use serde::Serialize;
 
-use crate::dto::{snake}_dto::*;
-use super::super::repository::{snake}_repo::{snake_name}Repository;
-
-pub struct {snake_name}ServiceImpl {{
-    db: Arc<DatabaseConnection>,
-    repo: {snake_name}Repository,
+#[derive(Debug, Serialize)]
+pub struct {struct_name}Vo {{
+{vo_fields}
 }}
 
-impl {snake_name}ServiceImpl {{
+pub struct Create{struct_name}Command {{
+{command_fields}
+}}
+
+pub struct Update{struct_name}Command {{
+{command_fields}
+}}
+
+pub struct {struct_name}Service {{
+    db: DatabaseConnection,
+    {repository_field}: LoggedRepo<{struct_name}Repository>,
+}}
+
+impl {struct_name}Service {{
     pub fn new(db: DatabaseConnection) -> Self {{
         Self {{
-            db: Arc::new(db),
-            repo: {snake_name}Repository,
+            db,
+            {repository_field}: LoggedRepo::new({struct_name}Repository),
         }}
     }}
 
-    /// 分页列表查询
-    pub async fn list(
+    pub async fn find_by_page(
         &self,
-        page_query: &ryframe_core::PageQuery,
-    ) -> AppResult<ryframe_core::PageResult<{snake_name}Vo>> {{
-        let result = self.repo.find_by_page(&self.db, page_query.clone()).await?;
-        let vos: Vec<{snake_name}Vo> = result
-            .records
-            .into_iter()
-            .map(|m| m.into())
-            .collect();
-        Ok(ryframe_core::PageResult {{
-            records: vos,
-            total: result.total,
-            page: result.page,
-            page_size: result.page_size,
-        }})
+        actor: &ActorContext,
+        query: PageQuery,
+    ) -> AppResult<PageResult<{struct_name}Vo>> {{
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = &self.db;
+        let page = self
+            .{repository_field}
+            .find_by_page(db, tenant_id, query.clone())
+            .await?;
+        let records = page.records.into_iter().map({struct_name}Vo::from).collect();
+        Ok(PageResult::new(records, page.total, &query))
     }}
 
-    /// 根据 ID 查询
     pub async fn find_by_id(
         &self,
-        id: {pk_type},
-    ) -> AppResult<Option<{snake_name}Vo>> {{
-        let entity = self.repo.find_by_id(&self.db, id).await?;
-        Ok(entity.map(|m| m.into()))
+        actor: &ActorContext,
+        id: {primary_key_type},
+    ) -> AppResult<Option<{struct_name}Vo>> {{
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = &self.db;
+        Ok(self
+            .{repository_field}
+            .find_by_id(db, tenant_id, id)
+            .await?
+            .map({struct_name}Vo::from))
     }}
 
-    /// 创建记录
     pub async fn create(
         &self,
-        dto: Create{snake_name}Dto,
-    ) -> AppResult<{snake_name}Vo> {{
-        let mut model: {snake}::Model = dto.into();
+        actor: &ActorContext,
+        command: Create{struct_name}Command,
+    ) -> AppResult<{struct_name}Vo> {{
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = &self.db;
+        let mut model = {snake}::Model {{
+{create_model_fields}
+        }};
         model.fill_on_insert(&FillContext::new());
-        let saved = self.repo.insert(&self.db, model).await?;
-        Ok(saved.into())
+        let saved = self.{repository_field}.insert(db, tenant_id, model).await?;
+        Ok({struct_name}Vo::from(saved))
     }}
 
-    /// 更新记录
     pub async fn update(
         &self,
-        id: {pk_type},
-        dto: Update{snake_name}Dto,
-    ) -> AppResult<{snake_name}Vo> {{
-        let existing = self
-            .repo
-            .find_by_id(&self.db, id)
+        actor: &ActorContext,
+        id: {primary_key_type},
+        command: Update{struct_name}Command,
+    ) -> AppResult<{struct_name}Vo> {{
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = &self.db;
+        let mut model = self
+            .{repository_field}
+            .find_by_id(db, tenant_id, id)
             .await?
-            .ok_or_else(|| ryframe_common::AppError::NotFound("记录不存在".into()))?;
-        let mut active: {snake}::ActiveModel = existing.into();
-        apply_dto_updates(&mut active, dto);
-        let updated = active.update(&*self.db).await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
-        Ok(updated.into())
-    }}
-
-    /// 删除记录
-    pub async fn delete(&self, id: {pk_type}) -> AppResult<()> {{
-        self.repo.delete(&self.db, id).await
-    }}
-}}
-
-/// 将 DTO 更新字段应用到 ActiveModel
-fn apply_dto_updates(
-    active: &mut {snake}::ActiveModel,
-    dto: Update{snake_name}Dto,
-) {{
+            .ok_or_else(|| AppError::NotFound("记录不存在".into()))?;
 {update_fields}
+        model.fill_on_update(&FillContext::new());
+        let saved = self.{repository_field}.update(db, tenant_id, model).await?;
+        Ok({struct_name}Vo::from(saved))
+    }}
+
+    pub async fn delete(
+        &self,
+        actor: &ActorContext,
+        id: {primary_key_type},
+    ) -> AppResult<()> {{
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = &self.db;
+        self.{repository_field}.delete(db, tenant_id, id).await
+    }}
 }}
 
-// 实现 Model → Vo 转换
-impl From<{snake}::Model> for {snake_name}Vo {{
-    fn from(m: {snake}::Model) -> Self {{
+impl From<{snake}::Model> for {struct_name}Vo {{
+    fn from(model: {snake}::Model) -> Self {{
         Self {{
 {model_to_vo_fields}
         }}
     }}
 }}
-
-// 实现 DTO → Model 转换
-impl From<Create{snake_name}Dto> for {snake}::Model {{
-    fn from(dto: Create{snake_name}Dto) -> Self {{
-        Self {{
-{dto_to_model_fields}
-        }}
-    }}
-}}
 "#,
         generator_version = crate::GENERATOR_VERSION,
-        snake_name = struct_name,
-        snake = snake,
-        pk_type = pk_type,
-        model_to_vo_fields = model_to_vo_fields,
-        dto_to_model_fields = dto_to_model_fields,
-        update_fields = update_fields,
     )
 }

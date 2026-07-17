@@ -15,6 +15,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_HTTP_TIMEOUT: "600"
   CARGO_NET_RETRY: "5"
+  RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
   # ============================================================
@@ -42,8 +43,26 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Check source encoding and structure
+        run: python scripts/check_source_hygiene.py
+
       - name: Check permission bindings
         run: python scripts/check_permission_routes.py
+
+      - name: Check architecture boundaries
+        run: python scripts/check_architecture.py
+
+      - name: Check OpenAPI contract snapshot
+        run: |
+          cargo run -p ryframe-api --bin export_openapi -- openapi/openapi.json
+          git diff --exit-code -- openapi/openapi.json
+
+      - name: Upload OpenAPI contract
+        uses: actions/upload-artifact@v6
+        with:
+          name: ryframe-openapi
+          path: openapi/openapi.json
+          if-no-files-found: error
 
       # Keep every event at the same all-targets quality bar.
       - name: Clippy (all targets)
@@ -79,7 +98,7 @@ jobs:
         run: cargo deny check bans sources
 
   # ============================================================
-  # 快速测试 (Linux, nextest 并行)
+  # 快速测试（Linux，nextest 并行）
   # ============================================================
   test:
     name: Test (Linux)
@@ -106,13 +125,153 @@ jobs:
         run: cargo test --workspace --doc
 
   # ============================================================
-  # 覆盖率检查 (仅 PR)
+  # 真实服务运行时冒烟测试
   # ============================================================
-  coverage:
-    name: Coverage (PR only)
+  runtime-smoke:
+    name: Runtime Smoke
     runs-on: ubuntu-latest
     needs: check
-    if: github.event_name == 'pull_request'
+    env:
+      RUSTFLAGS: "-Dwarnings"
+      APP_ENV: dev
+      APP_APP_PORT: "18080"
+      APP_DATABASE_DRIVER: mysql
+      APP_DATABASE_HOST: 127.0.0.1
+      APP_DATABASE_PORT: "3306"
+      APP_DATABASE_NAME: ryframe_config
+      APP_DATABASE_USERNAME: root
+      APP_DATABASE_PASSWORD: "123456"
+      APP_DATABASE_REPLICAS: "[]"
+      APP_DATABASE_SOURCES: >-
+        [{"name":"ryframe_device","driver":"mysql","host":"127.0.0.1","port":3306,"database":"ryframe_device","username":"root","password":"123456","max_connections":5,"min_connections":1}]
+      APP_GENERATOR_DATA_SOURCE: ryframe_device
+      RYFRAME_PRIMARY_DATABASE_URL: mysql://root:123456@127.0.0.1:3306/ryframe_config
+      RYFRAME_DEVICE_DATABASE_URL: mysql://root:123456@127.0.0.1:3306/ryframe_device
+      DATASOURCE_SMOKE_TABLE: t_device_smoke
+      APP_OBJECT_STORAGE_BACKEND: rustfs
+      APP_OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
+      APP_OBJECT_STORAGE_ACCESS_KEY: rustfsadmin
+      APP_OBJECT_STORAGE_SECRET_KEY: rustfsadmin
+      APP_OBJECT_STORAGE_REGION: us-east-1
+      ADMIN_USER: admin
+      ADMIN_PASS: "123456"
+      TENANT_ID: system
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: "123456"
+          MYSQL_DATABASE: ryframe_config
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -p123456"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      rustfs:
+        image: rustfs/rustfs:1.0.0-beta.8
+        env:
+          RUSTFS_ACCESS_KEY: rustfsadmin
+          RUSTFS_SECRET_KEY: rustfsadmin
+        ports:
+          - 9000:9000
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: Prepare and test named data source
+        run: >-
+          cargo test -p ryframe-db --test named_datasource_mysql_test
+          mysql_named_source_is_distinct_and_explicit -- --ignored --exact
+
+      - name: Initialize smoke database
+        run: cargo run -p ryframe --bin ryframe-db-reset
+
+      - name: Wait for RustFS
+        shell: bash
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --silent --output /dev/null http://127.0.0.1:9000/; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "RustFS did not become reachable"
+          exit 1
+
+      - name: Test RustFS adapter
+        run: >-
+          cargo test -p ryframe-storage --test object_storage_test
+          test_s3_integration_put_get_delete -- --ignored --exact
+
+      - name: Start service and run smoke tests
+        shell: bash
+        run: |
+          mkdir -p target
+          cargo run -p ryframe --bin ryframe > target/runtime-smoke.log 2>&1 &
+          server_pid=$!
+          cleanup() { kill "$server_pid" 2>/dev/null || true; }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18080/health >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat target/runtime-smoke.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+          curl --fail --silent http://127.0.0.1:18080/health >/dev/null
+          node deploy/tests/smoke-test.js http://127.0.0.1:18080
+
+          if grep -E '(^|[[:space:]])(WARN|ERROR)([[:space:]]|$)' target/runtime-smoke.log; then
+            cat target/runtime-smoke.log
+            echo "Runtime log contains warnings or errors"
+            exit 1
+          fi
+
+      - name: Upload runtime log on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-smoke-log
+          path: target/runtime-smoke.log
+          if-no-files-found: error
+
+  # ============================================================
+  # 覆盖率检查
+  # ============================================================
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v6
 
@@ -130,16 +289,17 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Run tests with coverage
-        # Current full-workspace baseline is 53.14%; keep a strict but achievable
+        # Current full-workspace baseline is 69.06%; keep a strict but achievable
         # floor and raise it as repository/service integration coverage grows.
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 50
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 55
 
       - name: Upload coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          token: ${{ env.CODECOV_TOKEN }}
 
   # ============================================================
   # Windows tests

@@ -1,11 +1,21 @@
 use ryframe_common::{AppError, AppResult};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+};
 
 use crate::entities::{role, sys_file, tenant, user};
 
 pub struct TenantRepository;
 
 impl TenantRepository {
+    pub async fn list_all(&self, db: &DatabaseConnection) -> AppResult<Vec<tenant::Model>> {
+        tenant::Entity::find()
+            .order_by_asc(tenant::Column::TenantId)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     async fn current(&self, db: &DatabaseConnection, tenant_id: &str) -> AppResult<tenant::Model> {
         self.find_by_tenant_id(db, tenant_id)
             .await?
@@ -101,5 +111,75 @@ impl TenantRepository {
             return Err(AppError::Authentication("租户已到期".into()));
         }
         Ok(tenant)
+    }
+
+    pub async fn update(
+        &self,
+        db: &DatabaseConnection,
+        tenant: tenant::Model,
+    ) -> AppResult<tenant::Model> {
+        use sea_orm::sea_query::Expr;
+
+        let tenant_id = tenant.tenant_id.clone();
+        let result = tenant::Entity::update_many()
+            .col_expr(tenant::Column::Name, Expr::value(tenant.name))
+            .col_expr(tenant::Column::Domain, Expr::value(tenant.domain))
+            .col_expr(tenant::Column::Status, Expr::value(tenant.status))
+            .col_expr(tenant::Column::ExpireAt, Expr::value(tenant.expire_at))
+            .col_expr(tenant::Column::MaxUsers, Expr::value(tenant.max_users))
+            .col_expr(tenant::Column::MaxRoles, Expr::value(tenant.max_roles))
+            .col_expr(
+                tenant::Column::MaxStorageMb,
+                Expr::value(tenant.max_storage_mb),
+            )
+            .col_expr(
+                tenant::Column::MaxRequestsPerMin,
+                Expr::value(tenant.max_requests_per_min),
+            )
+            .col_expr(
+                tenant::Column::SessionVersion,
+                Expr::value(tenant.session_version),
+            )
+            .col_expr(tenant::Column::UpdatedAt, Expr::value(tenant.updated_at))
+            .filter(tenant::Column::Id.eq(tenant.id))
+            .filter(tenant::Column::TenantId.eq(&tenant_id))
+            .exec(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected == 0 {
+            return Err(AppError::NotFound("租户不存在".into()));
+        }
+        self.find_by_tenant_id(db, &tenant_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))
+    }
+
+    pub async fn update_status(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        status: &str,
+    ) -> AppResult<()> {
+        let result = tenant::Entity::update_many()
+            .col_expr(
+                tenant::Column::Status,
+                sea_orm::sea_query::Expr::value(status),
+            )
+            .col_expr(
+                tenant::Column::SessionVersion,
+                sea_orm::sea_query::Expr::cust("session_version + 1"),
+            )
+            .col_expr(
+                tenant::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+            )
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .exec(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected == 0 {
+            return Err(AppError::NotFound("租户不存在".into()));
+        }
+        Ok(())
     }
 }

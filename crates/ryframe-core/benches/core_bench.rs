@@ -1,101 +1,15 @@
 //! ryframe-core 性能基准测试
 //!
 //! 测量核心模块的吞吐量和延迟基线：
-//! - 事件总线发布/订阅
 //! - Snowflake ID 生成
 //! - 分页查询构造
 //! - 缓存读写与防护
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicI64, Ordering},
-};
-
 use criterion::{Criterion, criterion_group, criterion_main};
 use ryframe_core::{
     cache::{BreakdownGuard, Cache, CacheStrategy, LocalMemoryCache, NoopCache},
-    event_bus::{Event, EventBus},
     repository::PageQuery,
 };
-
-// ============ 事件总线 ============
-
-#[derive(Debug)]
-struct BenchEvent {
-    value: i64,
-}
-impl Event for BenchEvent {}
-
-fn bench_event_bus_publish_no_subscribers(c: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let bus = EventBus::new();
-
-    c.bench_function("event_bus_publish_no_sub", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                bus.publish(BenchEvent { value: 42 }).await;
-            });
-        });
-    });
-}
-
-fn bench_event_bus_publish_1_subscriber(criterion: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let bus = EventBus::new();
-    let counter = Arc::new(AtomicI64::new(0));
-    let cnt = counter.clone();
-
-    bus.subscribe_fn(move |e: Arc<BenchEvent>| {
-        let cnt = cnt.clone();
-        async move {
-            cnt.fetch_add(e.value, Ordering::SeqCst);
-            Ok(())
-        }
-    });
-
-    criterion.bench_function("event_bus_publish_1_sub", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                bus.publish(BenchEvent { value: 1 }).await;
-            });
-        });
-    });
-}
-
-fn bench_event_bus_publish_10_subscribers(criterion: &mut Criterion) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let bus = EventBus::new();
-    let counter = Arc::new(AtomicI64::new(0));
-
-    for _ in 0..10 {
-        let cnt = counter.clone();
-        bus.subscribe_fn(move |e: Arc<BenchEvent>| {
-            let cnt = cnt.clone();
-            async move {
-                cnt.fetch_add(e.value, Ordering::SeqCst);
-                Ok(())
-            }
-        });
-    }
-
-    criterion.bench_function("event_bus_publish_10_sub", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                bus.publish(BenchEvent { value: 1 }).await;
-            });
-        });
-    });
-}
-
-fn bench_event_bus_subscribe_fn(c: &mut Criterion) {
-    c.bench_function("event_bus_subscribe_fn", |b| {
-        b.iter(|| {
-            let bus = EventBus::new();
-            bus.subscribe_fn(|_: Arc<BenchEvent>| async { Ok(()) });
-            std::hint::black_box(bus);
-        });
-    });
-}
 
 // ============ Snowflake ID ============
 
@@ -191,9 +105,14 @@ fn bench_cache_breakdown_guard(c: &mut Criterion) {
     let guard = BreakdownGuard::new(cache);
 
     c.bench_function("breakdown_guard_hit", |b| {
-        // 预填充
+        // 通过保护层预填充，保证缓存条目使用同一封装格式。
         rt.block_on(async {
-            guard.inner().set("hot_key", &"loaded", 3600).await.unwrap();
+            guard
+                .get_or_load_guarded::<String, _, _>("hot_key", 3600, || async {
+                    Ok(Some("loaded".to_string()))
+                })
+                .await
+                .unwrap();
         });
 
         b.iter(|| {
@@ -253,10 +172,6 @@ fn bench_noop_cache_overhead(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_event_bus_publish_no_subscribers,
-    bench_event_bus_publish_1_subscriber,
-    bench_event_bus_publish_10_subscribers,
-    bench_event_bus_subscribe_fn,
     bench_snowflake_next_id,
     bench_snowflake_batch_1000,
     bench_page_query_construct,

@@ -79,9 +79,14 @@ jobs:
       - name: Extract changelog
         id: changelog
         run: |
-          # 从 CHANGELOG.md 提取当前版本的 release notes
+          # 按触发标签提取对应版本，避免误用 Unreleased 内容。
+          RELEASE_TAG="${{ github.ref_name }}"
           if [ -f CHANGELOG.md ]; then
-            awk '/^## \[/{if(found) exit; found=1} found' CHANGELOG.md | tail -n +2 > release_body.md
+            awk -v version="$RELEASE_TAG" '
+              index($0, "## [" version "]") == 1 { found=1; next }
+              found && /^## \[/ { exit }
+              found { print }
+            ' CHANGELOG.md > release_body.md
           fi
           if [ ! -s release_body.md ]; then
             echo "## Release ${{ github.ref_name }}" > release_body.md

@@ -2,6 +2,7 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateNoticeDto {
     #[validate(length(min = 1, message = "标题不能为空"))]
     pub title: String,
@@ -11,6 +12,7 @@ pub struct CreateNoticeDto {
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateNoticeDto {
     #[validate(length(min = 1, message = "标题不能为空"))]
     pub title: String,

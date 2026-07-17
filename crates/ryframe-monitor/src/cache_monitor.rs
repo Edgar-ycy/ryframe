@@ -5,13 +5,17 @@
 //! - 键统计（DBSIZE）
 //! - 内存分析
 
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{BTreeMap, HashMap},
+    str::FromStr,
+};
 
 use ryframe_core::RedisClient;
 use serde::Serialize;
+use utoipa::ToSchema;
 
 /// 缓存信息响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CacheInfo {
     /// Redis 是否可用
     pub available: bool,
@@ -26,7 +30,7 @@ pub struct CacheInfo {
 }
 
 /// Redis 服务器基本信息
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RedisServerInfo {
     /// Redis 版本
     pub version: String,
@@ -41,7 +45,7 @@ pub struct RedisServerInfo {
 }
 
 /// 缓存键统计
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CacheKeysInfo {
     /// 当前数据库键总数
     pub total_keys: u64,
@@ -71,7 +75,7 @@ impl CacheKeysInfo {
 }
 
 /// Redis 内存信息
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RedisMemoryInfo {
     /// 已用内存（人类可读）
     pub used_memory_human: String,
@@ -206,31 +210,31 @@ async fn get_memory_cache_info() -> CacheInfo {
 
 /// 统计匹配模式的键数量
 async fn count_keys(client: &RedisClient, pattern: &str) -> u64 {
-    match client.keys(pattern).await {
+    match client.scan_keys(pattern).await {
         Ok(keys) => keys.len() as u64,
-        Err(_) => 0,
+        Err(error) => {
+            tracing::warn!(%error, pattern, "failed to scan Redis keys");
+            0
+        }
     }
 }
 
 /// 获取 Redis 命令统计信息
-pub async fn get_cache_command_stats(client: &RedisClient) -> Option<serde_json::Value> {
+pub async fn get_cache_command_stats(client: &RedisClient) -> Option<BTreeMap<String, String>> {
     let info_result = redis_info(client, Some("commandstats")).await;
 
     match info_result {
         Ok(info) => {
-            let mut stats = serde_json::Map::new();
+            let mut stats = BTreeMap::new();
             for line in info.lines() {
                 if line.starts_with("cmdstat_")
                     && let Some((cmd, data)) = line.split_once(':')
                 {
                     let cmd_name = cmd.strip_prefix("cmdstat_").unwrap_or(cmd);
-                    stats.insert(
-                        cmd_name.to_string(),
-                        serde_json::Value::String(data.to_string()),
-                    );
+                    stats.insert(cmd_name.to_string(), data.to_string());
                 }
             }
-            Some(serde_json::Value::Object(stats))
+            Some(stats)
         }
         Err(_) => None,
     }

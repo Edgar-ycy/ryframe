@@ -10,12 +10,9 @@ pub struct RedisState {
 /// 清除所有参数配置缓存
 async fn flush_config_cache(redis: &RedisClient) {
     const PREFIX: &str = "sys_config:key:";
-    match redis.keys(&format!("{}*", PREFIX)).await {
-        Ok(keys) if !keys.is_empty() => {
-            for key in &keys {
-                let _ = redis.del(key).await;
-            }
-            tracing::info!("已清除 {} 条参数配置缓存 (sys_config:key:*)", keys.len());
+    match redis.delete_by_pattern(&format!("{}*", PREFIX)).await {
+        Ok(deleted) if deleted > 0 => {
+            tracing::info!("已清除 {} 条参数配置缓存 (sys_config:key:*)", deleted);
         }
         Ok(_) => {}
         Err(e) => tracing::warn!("清除参数配置缓存失败: {}", e),

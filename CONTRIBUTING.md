@@ -47,17 +47,18 @@ ryframe/
 │   ├── ryframe-auth/        # 认证授权 (JWT/RBAC/权限)
 │   ├── ryframe-common/      # 公共工具 & 错误定义
 │   ├── ryframe-config/      # 配置管理 (多环境 TOML)
-│   ├── ryframe-core/        # 基础设施 (缓存/事件/队列/锁)
+│   ├── ryframe-core/        # 基础设施 (缓存/Redis/锁/熔断)
 │   ├── ryframe-db/          # 数据访问层 (entities/repositories)
+│   ├── ryframe-db-migration/# 数据库迁移
 │   ├── ryframe-generator/   # 代码生成器
 │   ├── ryframe-macro/       # 过程宏
 │   ├── ryframe-middleware/  # 中间件 (限流/XSS/CORS/日志)
 │   ├── ryframe-monitor/     # 监控 (健康检查/服务器信息)
 │   ├── ryframe-service/     # 业务服务层
+│   └── ryframe-storage/     # 对象存储端口与本地/S3 实现
 ├── config/                  # 配置文件 (dev/prod/test)
 ├── sql/                     # 数据库初始化脚本
 ├── locales/                 # 国际化资源 (zh-CN / en-US)
-├── examples/                # 示例项目
 └── docs/                    # 项目文档
 ```
 

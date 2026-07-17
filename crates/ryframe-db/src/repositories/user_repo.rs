@@ -5,19 +5,32 @@ use ryframe_common::{
 };
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, Select,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, ExprTrait,
+    QueryFilter, QueryOrder, Select, sea_query::Expr,
 };
 
 use crate::entities::user;
 
 pub struct UserRepository;
 
+#[derive(Debug, Default)]
+pub struct UserFilter<'a> {
+    pub username: Option<&'a str>,
+    pub phone: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub dept_id: Option<i64>,
+}
+
 #[async_trait]
 impl Repository<user::Model, i64> for UserRepository {
-    async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<user::Model>> {
-        user::Entity::find_by_id(id)
-            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+    async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<user::Model>> {
+        Self::base_select(tenant_id)
+            .filter(user::Column::Id.eq(id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -26,53 +39,61 @@ impl Repository<user::Model, i64> for UserRepository {
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<user::Model>> {
         crate::pagination::paginate(
             db,
-            Self::base_select().order_by_desc(user::Column::CreatedAt),
+            Self::base_select(tenant_id).order_by_desc(user::Column::CreatedAt),
             &query,
         )
         .await
     }
 
-    async fn insert(&self, db: &DatabaseConnection, entity: user::Model) -> AppResult<user::Model> {
-        insert_entity!(user, db, entity)
+    async fn insert(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: user::Model,
+    ) -> AppResult<user::Model> {
+        insert_entity!(user, db, tenant_id, entity)
     }
 
-    async fn update(&self, db: &DatabaseConnection, entity: user::Model) -> AppResult<user::Model> {
-        update_entity!(user, db, entity)
+    async fn update(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: user::Model,
+    ) -> AppResult<user::Model> {
+        update_entity!(user, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        soft_delete_entity!(user, db, id)
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
+        soft_delete_entity!(user, db, tenant_id, id)
     }
 }
 
 impl UserRepository {
-    fn base_select() -> Select<user::Entity> {
+    fn base_select(tenant_id: &str) -> Select<user::Entity> {
         user::Entity::find()
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
-            .filter(user::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(user::Column::TenantId.eq(tenant_id))
     }
 
     fn apply_filters(
         mut select: Select<user::Entity>,
-        username: Option<&str>,
-        phone: Option<&str>,
-        status: Option<&str>,
-        dept_id: Option<i64>,
+        filter: &UserFilter<'_>,
     ) -> Select<user::Entity> {
-        if let Some(username) = username.filter(|v| !v.is_empty()) {
+        if let Some(username) = filter.username.filter(|v| !v.is_empty()) {
             select = select.filter(user::Column::Username.like(format!("%{}%", username)));
         }
-        if let Some(phone) = phone.filter(|v| !v.is_empty()) {
+        if let Some(phone) = filter.phone.filter(|v| !v.is_empty()) {
             select = select.filter(user::Column::Phone.like(format!("%{}%", phone)));
         }
-        if let Some(status) = status.filter(|v| !v.is_empty()) {
+        if let Some(status) = filter.status.filter(|v| !v.is_empty()) {
             select = select.filter(user::Column::Status.eq(status));
         }
-        if let Some(dept_id) = dept_id {
+        if let Some(dept_id) = filter.dept_id {
             select = select.filter(user::Column::DeptId.eq(dept_id));
         }
         select
@@ -80,6 +101,7 @@ impl UserRepository {
 
     fn apply_data_scope(
         mut select: Select<user::Entity>,
+        tenant_id: &str,
         scope_ctx: &DataScopeContext,
     ) -> Option<Select<user::Entity>> {
         match &scope_ctx.scope {
@@ -94,7 +116,6 @@ impl UserRepository {
             DataScope::DeptAndChildren => {
                 let dept_id = scope_ctx.dept_id?;
                 let dept_id_text = dept_id.to_string();
-                let tenant_id = ryframe_core::current_tenant_id();
                 let descendant_condition = Condition::any()
                     .add(crate::entities::dept::Column::Ancestors.eq(&dept_id_text))
                     .add(
@@ -148,98 +169,58 @@ impl UserRepository {
     pub async fn find_by_username(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         username: &str,
     ) -> AppResult<Option<user::Model>> {
-        Self::base_select()
+        Self::base_select(tenant_id)
             .filter(user::Column::Username.eq(username))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    /// Finds a user in exactly one tenant. Authentication must use this method
-    /// so that credentials cannot be resolved across tenant boundaries.
-    pub async fn find_by_username_in_tenant(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        username: &str,
-    ) -> AppResult<Option<user::Model>> {
-        user::Entity::find()
-            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
-            .filter(user::Column::TenantId.eq(tenant_id))
-            .filter(user::Column::Username.eq(username))
-            .one(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
-    }
-
-    /// Resolves a user only when it belongs to the specified tenant.
-    pub async fn find_by_id_in_tenant(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        id: i64,
-    ) -> AppResult<Option<user::Model>> {
-        user::Entity::find_by_id(id)
-            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
-            .filter(user::Column::TenantId.eq(tenant_id))
-            .one(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
-    }
-
-    pub async fn find_by_page_filtered(
-        &self,
-        db: &DatabaseConnection,
-        query: PageQuery,
-        username: Option<&str>,
-        phone: Option<&str>,
-        status: Option<&str>,
-        dept_id: Option<i64>,
-    ) -> AppResult<PageResult<user::Model>> {
-        let select = Self::apply_filters(Self::base_select(), username, phone, status, dept_id)
-            .order_by_desc(user::Column::CreatedAt);
-        crate::pagination::paginate(db, select, &query).await
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub async fn find_by_page_filtered_with_data_scope(
         &self,
         db: &DatabaseConnection,
-        query: PageQuery,
-        username: Option<&str>,
-        phone: Option<&str>,
-        status: Option<&str>,
-        dept_id: Option<i64>,
+        tenant_id: &str,
+        query: &PageQuery,
+        filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<user::Model>> {
-        let select = Self::apply_filters(Self::base_select(), username, phone, status, dept_id);
-        let Some(select) = Self::apply_data_scope(select, scope_ctx) else {
-            return Ok(PageResult::new(vec![], 0, &query));
+        let select = Self::apply_filters(Self::base_select(tenant_id), filter);
+        let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
+            return Ok(PageResult::new(vec![], 0, query));
         };
 
-        crate::pagination::paginate(db, select.order_by_desc(user::Column::CreatedAt), &query).await
+        crate::pagination::paginate(db, select.order_by_desc(user::Column::CreatedAt), query).await
     }
 
     pub async fn find_by_page_with_data_scope(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<user::Model>> {
-        self.find_by_page_filtered_with_data_scope(db, query, None, None, None, None, scope_ctx)
-            .await
+        self.find_by_page_filtered_with_data_scope(
+            db,
+            tenant_id,
+            &query,
+            &UserFilter::default(),
+            scope_ctx,
+        )
+        .await
     }
 
     pub async fn find_by_id_with_data_scope(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         id: i64,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<Option<user::Model>> {
-        let select = Self::base_select().filter(user::Column::Id.eq(id));
-        let Some(select) = Self::apply_data_scope(select, scope_ctx) else {
+        let select = Self::base_select(tenant_id).filter(user::Column::Id.eq(id));
+        let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
             return Ok(None);
         };
 
@@ -249,7 +230,12 @@ impl UserRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    pub async fn delete_many(&self, db: &DatabaseConnection, ids: &[i64]) -> AppResult<u64> {
+    pub async fn delete_many(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        ids: &[i64],
+    ) -> AppResult<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -263,7 +249,7 @@ impl UserRepository {
                 sea_orm::sea_query::Expr::value(chrono::Utc::now()),
             )
             .filter(user::Column::Id.is_in(ids.to_vec()))
-            .filter(user::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(user::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -273,6 +259,7 @@ impl UserRepository {
     pub async fn update_status(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         id: i64,
         status: String,
     ) -> AppResult<()> {
@@ -286,7 +273,7 @@ impl UserRepository {
                 sea_orm::sea_query::Expr::value(chrono::Utc::now()),
             )
             .filter(user::Column::Id.eq(id))
-            .filter(user::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(user::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -294,5 +281,27 @@ impl UserRepository {
             return Err(AppError::NotFound("用户不存在".into()));
         }
         Ok(())
+    }
+
+    pub async fn increment_auth_versions(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        user_ids: &[i64],
+    ) -> AppResult<u64> {
+        if user_ids.is_empty() {
+            return Ok(0);
+        }
+        user::Entity::update_many()
+            .col_expr(
+                user::Column::AuthVersion,
+                Expr::col(user::Column::AuthVersion).add(1),
+            )
+            .filter(user::Column::Id.is_in(user_ids.iter().copied()))
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .exec(db)
+            .await
+            .map(|result| result.rows_affected)
+            .map_err(|error| AppError::Database(error.to_string()))
     }
 }

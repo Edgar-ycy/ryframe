@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
-use ryframe_common::{AppError, AppResult, utils::ObjectStorage};
+use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
@@ -20,11 +18,12 @@ impl Repository<sys_file::Model, i64> for FileRepository {
     async fn find_by_id(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<sys_file::Model>> {
         sys_file::Entity::find_by_id(id)
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -33,11 +32,12 @@ impl Repository<sys_file::Model, i64> for FileRepository {
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<sys_file::Model>> {
         let paginator = sys_file::Entity::find()
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
             .order_by_desc(sys_file::Column::CreatedAt);
 
         crate::pagination::paginate(db, paginator, &query).await
@@ -46,21 +46,23 @@ impl Repository<sys_file::Model, i64> for FileRepository {
     async fn insert(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         entity: sys_file::Model,
     ) -> AppResult<sys_file::Model> {
-        insert_entity!(sys_file, db, entity)
+        insert_entity!(sys_file, db, tenant_id, entity)
     }
 
     async fn update(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         entity: sys_file::Model,
     ) -> AppResult<sys_file::Model> {
-        update_entity!(sys_file, db, entity)
+        update_entity!(sys_file, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        soft_delete_entity!(sys_file, db, id)
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
+        soft_delete_entity!(sys_file, db, tenant_id, id)
     }
 }
 
@@ -69,12 +71,13 @@ impl FileRepository {
     pub async fn find_by_bucket(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         bucket: &str,
     ) -> AppResult<Vec<sys_file::Model>> {
         sys_file::Entity::find()
             .filter(sys_file::Column::Bucket.eq(bucket))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
             .order_by_desc(sys_file::Column::CreatedAt)
             .all(db)
             .await
@@ -87,6 +90,7 @@ impl FileRepository {
     pub async fn find_by_md5(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         bucket: &str,
         file_md5: &str,
     ) -> AppResult<Option<sys_file::Model>> {
@@ -94,29 +98,26 @@ impl FileRepository {
             .filter(sys_file::Column::Bucket.eq(bucket))
             .filter(sys_file::Column::FileMd5.eq(file_md5))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .filter(sys_file::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    pub fn resolve_public_url(storage: &Arc<dyn ObjectStorage>, model: &sys_file::Model) -> String {
-        // file_url 存储格式: "{bucket}/{object_key}"
-        // 需要提取 object_key（跳过 bucket/ 前缀）
-        let object_key = if let Some(idx) = model.file_url.find('/') {
-            &model.file_url[idx + 1..]
-        } else {
-            &model.file_url
-        };
-
-        let public_url = storage.public_url(&model.bucket, object_key);
-        if public_url.is_empty() || public_url == "/" {
-            format!(
-                "/api/v1/common/file/download?bucket={}&path={}",
-                model.bucket, object_key
-            )
-        } else {
-            public_url
-        }
+    pub async fn find_by_storage_path(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        bucket: &str,
+        storage_path: &str,
+    ) -> AppResult<Option<sys_file::Model>> {
+        sys_file::Entity::find()
+            .filter(sys_file::Column::Bucket.eq(bucket))
+            .filter(sys_file::Column::StoragePath.eq(storage_path))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
+            .one(db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 }

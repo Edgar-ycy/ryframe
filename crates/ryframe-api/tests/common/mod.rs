@@ -11,27 +11,21 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use ryframe_api::{
-    handlers::auth_handler::AppState, router::api_router, runtime::RuntimeComponents,
-};
+use ryframe_api::{AppServices, AppState, router::api_router, runtime::RuntimeComponents};
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
-use ryframe_core::{AppContext, LoggedRepo, TenantRateLimitCache};
 use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
-    MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
-    RoleRepository, TenantRepository, UserRepository,
+    DatabaseCluster,
     entities::{config, dept, permission, role, role_permission, tenant, user},
 };
 use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
-    AuthServiceImpl,
+    AuthService,
     system::{
-        CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, TenantServiceImpl, UserServiceImpl,
+        CaptchaStore, ConfigService, DeptService, DictService, FileService, GeneratorService,
+        LoginInfoService, MenuService, NoticeService, OnlineUserService, OperLogService,
+        PermissionService, PostService, ProfileService, RoleService, TenantService, UserService,
     },
 };
 use sea_orm::{
@@ -258,17 +252,17 @@ pub fn test_config() -> AppConfig {
             ..Default::default()
         },
         database: DatabaseConfig {
-            connections: vec![DbConnection {
+            primary: DbConnection {
                 driver: "sqlite".into(),
                 database: ":memory:".into(),
                 max_connections: 5,
                 ..Default::default()
-            }],
+            },
             ..Default::default()
         },
+        generator: Default::default(),
         auth: AuthConfig {
             jwt_secret: "test-jwt-secret-for-integration-tests".into(),
-            enable_password_complexity: false,
             ..Default::default()
         },
         redis: None,
@@ -296,85 +290,50 @@ pub fn test_rate_limit_state() -> RateLimitState {
 pub async fn build_test_app(db: DatabaseConnection) -> AppState {
     let config = test_config();
     let config_arc = Arc::new(config.clone());
-    let context = AppContext::new(config.clone());
-
+    let token_blacklist = ryframe_core::TokenBlacklist::new(None);
+    let database = DatabaseCluster::single(db.clone());
+    let auth_service = Arc::new(AuthService::new(database.clone(), config_arc.clone(), None));
     AppState {
-        db: db.clone(),
+        auth: ryframe_auth::middleware::AuthState {
+            config: config_arc.clone(),
+            blacklist: token_blacklist.clone(),
+            principal_resolver: auth_service.clone(),
+        },
+        monitor: ryframe_monitor::MonitorState {
+            database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database.clone())),
+            redis: None,
+        },
         config: config_arc,
-        context,
-        auth_service: Arc::new(AuthServiceImpl {
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            config: Arc::new(config.clone()),
-            redis: None,
+        services: Arc::new(AppServices {
+            auth: auth_service,
+            user: Arc::new(UserService::new(database.clone(), None)),
+            role: Arc::new(RoleService::new(database.clone(), None)),
+            tenant: Arc::new(TenantService::new(database.clone())),
+            permission: Arc::new(PermissionService::new(database.clone(), None)),
+            menu: Arc::new(MenuService::new(database.clone(), None)),
+            dept: Arc::new(DeptService::new(database.clone(), None)),
+            post: Arc::new(PostService::new(database.clone())),
+            config: Arc::new(ConfigService::new(database.clone(), None)),
+            dict: Arc::new(DictService::new(database.clone(), None)),
+            notice: Arc::new(NoticeService::new(database.clone())),
+            oper_log: Arc::new(OperLogService::new(database.clone())),
+            login_info: Arc::new(LoginInfoService::new(database.clone())),
+            generator: Arc::new(GeneratorService::new(
+                database.clone(),
+                "primary".into(),
+                std::env::current_dir().unwrap(),
+            )),
+            profile: Arc::new(ProfileService::new(database.clone())),
+            file: Arc::new(FileService::new(
+                database,
+                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads", "")),
+            )),
+            online_user: Arc::new(OnlineUserService::new_in_memory()),
+            captcha: CaptchaStore::new_in_memory(300),
         }),
-        user_service: Arc::new(UserServiceImpl {
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            dept_repo: LoggedRepo::new(DeptRepository),
-            redis: None,
-        }),
-        role_service: Arc::new(RoleServiceImpl {
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            redis: None,
-        }),
-        tenant_service: Arc::new(TenantServiceImpl {
-            tenant_repo: TenantRepository,
-        }),
-        permission_service: Arc::new(PermissionServiceImpl {
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            redis: None,
-        }),
-        menu_service: Arc::new(MenuServiceImpl {
-            menu_repo: LoggedRepo::new(MenuRepository),
-            redis: None,
-        }),
-        dept_service: Arc::new(DeptServiceImpl {
-            dept_repo: LoggedRepo::new(DeptRepository),
-            redis: None,
-        }),
-        post_service: Arc::new(PostServiceImpl {
-            post_repo: LoggedRepo::new(PostRepository),
-        }),
-        config_service: Arc::new(ConfigServiceImpl {
-            config_repo: LoggedRepo::new(ConfigRepository),
-            redis: None,
-        }),
-        dict_service: Arc::new(DictServiceImpl {
-            dict_type_repo: LoggedRepo::new(DictTypeRepository),
-            dict_data_repo: LoggedRepo::new(DictDataRepository),
-            redis: None,
-        }),
-        notice_service: Arc::new(NoticeServiceImpl {
-            notice_repo: LoggedRepo::new(NoticeRepository),
-        }),
-        oper_log_service: Arc::new(OperLogServiceImpl {
-            oper_log_repo: LoggedRepo::new(OperLogRepository),
-        }),
-        login_info_service: Arc::new(LoginInfoServiceImpl {
-            login_info_repo: LoggedRepo::new(LoginInfoRepository),
-        }),
-        generator_service: Arc::new(GeneratorServiceImpl {
-            workspace_root: std::env::current_dir().unwrap(),
-        }),
-        profile_service: Arc::new(ProfileServiceImpl {
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-        }),
-        online_user_service: Arc::new(OnlineUserServiceImpl::new_in_memory()),
-        captcha_store: CaptchaStore::new_in_memory(300),
-        monitor_db: db,
         redis: None,
-        token_blacklist: ryframe_core::TokenBlacklist::new(None),
-        replica_dbs: vec![],
+        token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
-        tenant_rate_limit_cache: TenantRateLimitCache::default(),
-        object_storage: Arc::new(ryframe_common::utils::LocalObjectStorage::new(
-            "uploads", "",
-        )),
         runtime: RuntimeComponents::new(None),
     }
 }

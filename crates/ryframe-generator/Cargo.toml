@@ -12,7 +12,12 @@ ryframe-common = { path = "../ryframe-common" }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
-log = { workspace = true }
+utoipa = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+syn = { workspace = true }
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 
 [[bin]]
 name = "ryframe-gen"

@@ -10,27 +10,21 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use ryframe_api::{
-    handlers::auth_handler::AppState, router::api_router, runtime::RuntimeComponents,
-};
+use ryframe_api::{AppServices, AppState, router::api_router, runtime::RuntimeComponents};
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
-use ryframe_core::{AppContext, LoggedRepo, TenantRateLimitCache};
 use ryframe_db::{
-    ConfigRepository, DeptRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
-    MenuRepository, NoticeRepository, OperLogRepository, PermissionRepository, PostRepository,
-    RoleRepository, TenantRepository, UserRepository,
+    DatabaseCluster,
     entities::{config, dept, permission, role, role_permission, tenant, user},
 };
 use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
-    AuthServiceImpl,
+    AuthService,
     system::{
-        CaptchaStore, ConfigServiceImpl, DeptServiceImpl, DictServiceImpl, GeneratorServiceImpl,
-        LoginInfoServiceImpl, MenuServiceImpl, NoticeServiceImpl, OnlineUserServiceImpl,
-        OperLogServiceImpl, PermissionServiceImpl, PostServiceImpl, ProfileServiceImpl,
-        RoleServiceImpl, TenantServiceImpl, UserServiceImpl,
+        CaptchaStore, ConfigService, DeptService, DictService, FileService, GeneratorService,
+        LoginInfoService, MenuService, NoticeService, OnlineUserService, OperLogService,
+        PermissionService, PostService, ProfileService, RoleService, TenantService, UserService,
     },
 };
 use sea_orm::{
@@ -224,17 +218,17 @@ fn test_config() -> AppConfig {
             ..Default::default()
         },
         database: DatabaseConfig {
-            connections: vec![DbConnection {
+            primary: DbConnection {
                 driver: "sqlite".into(),
                 database: ":memory:".into(),
                 max_connections: 5,
                 ..Default::default()
-            }],
+            },
             ..Default::default()
         },
+        generator: Default::default(),
         auth: AuthConfig {
             jwt_secret: "test-jwt-secret-for-integration-tests".into(),
-            enable_password_complexity: false,
             ..Default::default()
         },
         redis: None,
@@ -258,85 +252,50 @@ fn test_rate_limit_state() -> RateLimitState {
 async fn build_test_app(db: DatabaseConnection) -> AppState {
     let config = test_config();
     let config_arc = Arc::new(config.clone());
-    let context = AppContext::new(config.clone());
-
+    let token_blacklist = ryframe_core::TokenBlacklist::new(None);
+    let database = DatabaseCluster::single(db.clone());
+    let auth_service = Arc::new(AuthService::new(database.clone(), config_arc.clone(), None));
     AppState {
-        db: db.clone(),
+        auth: ryframe_auth::middleware::AuthState {
+            config: config_arc.clone(),
+            blacklist: token_blacklist.clone(),
+            principal_resolver: auth_service.clone(),
+        },
+        monitor: ryframe_monitor::MonitorState {
+            database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database.clone())),
+            redis: None,
+        },
         config: config_arc,
-        context,
-        auth_service: Arc::new(AuthServiceImpl {
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            config: Arc::new(config.clone()),
-            redis: None,
+        services: Arc::new(AppServices {
+            auth: auth_service,
+            user: Arc::new(UserService::new(database.clone(), None)),
+            role: Arc::new(RoleService::new(database.clone(), None)),
+            tenant: Arc::new(TenantService::new(database.clone())),
+            permission: Arc::new(PermissionService::new(database.clone(), None)),
+            menu: Arc::new(MenuService::new(database.clone(), None)),
+            dept: Arc::new(DeptService::new(database.clone(), None)),
+            post: Arc::new(PostService::new(database.clone())),
+            config: Arc::new(ConfigService::new(database.clone(), None)),
+            dict: Arc::new(DictService::new(database.clone(), None)),
+            notice: Arc::new(NoticeService::new(database.clone())),
+            oper_log: Arc::new(OperLogService::new(database.clone())),
+            login_info: Arc::new(LoginInfoService::new(database.clone())),
+            generator: Arc::new(GeneratorService::new(
+                database.clone(),
+                "primary".into(),
+                std::env::current_dir().unwrap(),
+            )),
+            profile: Arc::new(ProfileService::new(database.clone())),
+            file: Arc::new(FileService::new(
+                database,
+                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads", "")),
+            )),
+            online_user: Arc::new(OnlineUserService::new_in_memory()),
+            captcha: CaptchaStore::new_in_memory(300),
         }),
-        user_service: Arc::new(UserServiceImpl {
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            dept_repo: LoggedRepo::new(DeptRepository),
-            redis: None,
-        }),
-        role_service: Arc::new(RoleServiceImpl {
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            redis: None,
-        }),
-        tenant_service: Arc::new(TenantServiceImpl {
-            tenant_repo: TenantRepository,
-        }),
-        permission_service: Arc::new(PermissionServiceImpl {
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            redis: None,
-        }),
-        menu_service: Arc::new(MenuServiceImpl {
-            menu_repo: LoggedRepo::new(MenuRepository),
-            redis: None,
-        }),
-        dept_service: Arc::new(DeptServiceImpl {
-            dept_repo: LoggedRepo::new(DeptRepository),
-            redis: None,
-        }),
-        post_service: Arc::new(PostServiceImpl {
-            post_repo: LoggedRepo::new(PostRepository),
-        }),
-        config_service: Arc::new(ConfigServiceImpl {
-            config_repo: LoggedRepo::new(ConfigRepository),
-            redis: None,
-        }),
-        dict_service: Arc::new(DictServiceImpl {
-            dict_type_repo: LoggedRepo::new(DictTypeRepository),
-            dict_data_repo: LoggedRepo::new(DictDataRepository),
-            redis: None,
-        }),
-        notice_service: Arc::new(NoticeServiceImpl {
-            notice_repo: LoggedRepo::new(NoticeRepository),
-        }),
-        oper_log_service: Arc::new(OperLogServiceImpl {
-            oper_log_repo: LoggedRepo::new(OperLogRepository),
-        }),
-        login_info_service: Arc::new(LoginInfoServiceImpl {
-            login_info_repo: LoggedRepo::new(LoginInfoRepository),
-        }),
-        generator_service: Arc::new(GeneratorServiceImpl {
-            workspace_root: std::env::current_dir().unwrap(),
-        }),
-        profile_service: Arc::new(ProfileServiceImpl {
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-        }),
-        online_user_service: Arc::new(OnlineUserServiceImpl::new_in_memory()),
-        captcha_store: CaptchaStore::new_in_memory(300),
-        monitor_db: db,
         redis: None,
-        token_blacklist: ryframe_core::TokenBlacklist::new(None),
-        replica_dbs: vec![],
+        token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
-        tenant_rate_limit_cache: TenantRateLimitCache::default(),
-        object_storage: Arc::new(ryframe_common::utils::LocalObjectStorage::new(
-            "uploads", "",
-        )),
         runtime: RuntimeComponents::new(None),
     }
 }
@@ -400,6 +359,14 @@ async fn test_auth_full_flow() {
     let refresh_token = body["data"]["refresh_token"].as_str().unwrap().to_string();
     assert!(!access_token.is_empty());
     assert_eq!(body["data"]["user_info"]["username"], "admin");
+    assert_eq!(
+        body["data"]["user_info"]["roles"],
+        serde_json::json!(["admin"])
+    );
+    assert_eq!(
+        body["data"]["user_info"]["perms"],
+        serde_json::json!(["*:*:*"])
+    );
 
     // 2. 用 token 访问 /auth/me
     let state2 = build_test_app(db.clone()).await;
@@ -413,6 +380,8 @@ async fn test_auth_full_flow() {
     let (s2, b2) = send_request(router2, me_req).await;
     assert_eq!(s2, StatusCode::OK);
     assert_eq!(b2["data"]["username"], "admin");
+    assert_eq!(b2["data"]["roles"], body["data"]["user_info"]["roles"]);
+    assert_eq!(b2["data"]["perms"], body["data"]["user_info"]["perms"]);
 
     // 3. 刷新令牌
     let state3 = build_test_app(db.clone()).await;
@@ -431,6 +400,14 @@ async fn test_auth_full_flow() {
     let (s3, b3) = send_request(router3, refresh_req).await;
     assert_eq!(s3, StatusCode::OK);
     assert!(b3["data"].get("access_token").is_some());
+    assert_eq!(
+        b3["data"]["user_info"]["roles"],
+        body["data"]["user_info"]["roles"]
+    );
+    assert_eq!(
+        b3["data"]["user_info"]["perms"],
+        body["data"]["user_info"]["perms"]
+    );
 
     // 4. 错误密码
     let state4 = build_test_app(db.clone()).await;
@@ -601,11 +578,21 @@ async fn test_system_crud_operations() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["name"], "测试岗位");
-    let (s, _) = auth_get(&db, "/system/posts/list?page=1&pageSize=10", &token).await;
+    let (s, _) = auth_get(&db, "/system/posts?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
 
-    let (s, _) = auth_get(&db, "/system/posts/listNoPage", &token).await;
+    let (s, b) = auth_get(
+        &db,
+        "/system/posts?page=1&page_size=10&code=test_post",
+        &token,
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["total"], 1);
+
+    let (s, b) = auth_get(&db, "/system/posts/all?code=test_post", &token).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["data"].as_array().unwrap().len(), 1);
 
     // 配置 CRUD
     let (s, b) = auth_post(
@@ -619,10 +606,17 @@ async fn test_system_crud_operations() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["key"], "test.config.key");
-    let (s, _) = auth_get(&db, "/system/configs/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(
+        &db,
+        "/system/configs?page=1&page_size=10&key=test.config.key",
+        &token,
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["total"], 1);
+    assert_eq!(b["rows"][0]["key"], "test.config.key");
 
-    let (s, _) = auth_get(&db, "/system/configs/listNoPage", &token).await;
+    let (s, _) = auth_get(&db, "/system/configs/all", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 字典 CRUD
@@ -637,11 +631,18 @@ async fn test_system_crud_operations() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["code"], "test_dict");
-    let (s, _) = auth_get(&db, "/system/dict/types/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(
+        &db,
+        "/system/dict/types?page=1&page_size=10&code=test_dict",
+        &token,
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["total"], 1);
 
-    let (s, _) = auth_get(&db, "/system/dict/types/listNoPage", &token).await;
+    let (s, b) = auth_get(&db, "/system/dict/types/all?code=test_dict", &token).await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["data"].as_array().unwrap().len(), 1);
 
     // 通知 CRUD
     let (s, b) = auth_post(
@@ -655,11 +656,13 @@ async fn test_system_crud_operations() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["title"], "测试公告");
-    let (s, _) = auth_get(&db, "/system/notices/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/notices?page=1&page_size=10&status=1", &token).await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["total"], 1);
 
-    let (s, _) = auth_get(&db, "/system/notices/listNoPage", &token).await;
+    let (s, b) = auth_get(&db, "/system/notices/all?status=1", &token).await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["data"].as_array().unwrap().len(), 1);
 }
 
 /// 系统查询接口：用户/角色/部门/菜单/权限/在线用户
@@ -669,40 +672,41 @@ async fn test_system_query_endpoints() {
     seed_test_data(&db).await;
     let token = login_get_token(&db).await;
 
-    let (s, b) = auth_get(&db, "/system/users/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/users?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.get("rows").is_some());
 
-    let (s, _) = auth_get(&db, "/system/users/listNoPage", &token).await;
+    let (s, _) = auth_get(&db, "/system/users/all", &token).await;
     assert_eq!(s, StatusCode::OK);
 
-    let (s, b) = auth_get(&db, "/system/roles/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/roles?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.get("rows").is_some());
 
-    let (s, _) = auth_get(&db, "/system/roles/listNoPage", &token).await;
+    let (s, b) = auth_get(&db, "/system/roles/all?code=admin", &token).await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["data"].as_array().unwrap().len(), 1);
 
     let (s, b) = auth_get(&db, "/system/depts/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].as_array().is_some());
 
-    let (s, b) = auth_get(&db, "/system/depts/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/depts?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.get("rows").is_some());
 
-    let (s, _) = auth_get(&db, "/system/depts/listNoPage", &token).await;
+    let (s, _) = auth_get(&db, "/system/depts/all", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     let (s, b) = auth_get(&db, "/system/menus/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].as_array().is_some());
 
-    let (s, b) = auth_get(&db, "/system/menus/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/menus?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.get("rows").is_some());
 
-    let (s, _) = auth_get(&db, "/system/menus/listNoPage", &token).await;
+    let (s, _) = auth_get(&db, "/system/menus/all", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     let (s, b) = auth_get(&db, "/system/perms/tree", &token).await;
@@ -711,7 +715,7 @@ async fn test_system_query_endpoints() {
 
     let (s, b) = auth_get(&db, "/system/online", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b["data"].as_array().is_some());
+    assert!(b["rows"].as_array().is_some());
 }
 
 /// 未认证访问系统接口应返回 401
@@ -723,12 +727,12 @@ async fn test_unauthenticated_access_denied() {
     let state = build_test_app(db.clone()).await;
     let router = api_router(state, test_rate_limit_state());
     let endpoints = vec![
-        "/system/users/list?page=1&pageSize=10",
-        "/system/roles/list?page=1&pageSize=10",
+        "/system/users?page=1&page_size=10",
+        "/system/roles?page=1&page_size=10",
         "/system/depts/tree",
-        "/system/depts/list?page=1&pageSize=10",
-        "/system/posts/list?page=1&pageSize=10",
-        "/system/configs/list?page=1&pageSize=10",
+        "/system/depts?page=1&page_size=10",
+        "/system/posts?page=1&page_size=10",
+        "/system/configs?page=1&page_size=10",
     ];
     for uri in endpoints {
         let req = Request::builder()
@@ -794,9 +798,12 @@ async fn test_update_and_delete_operations() {
     assert_eq!(s, StatusCode::OK);
 
     // 验证 config 可通过 key 查询到（更新后 key 仍存在）
-    let (s, b) = auth_get(&db, "/system/configs/configKey/temp.config", &token).await;
+    let (s, b) = auth_get(&db, "/system/configs/key/temp.config", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].as_str().is_some(), "配置值应存在");
+
+    let (s, _) = auth_delete(&db, "/system/configs/cache", &token).await;
+    assert_eq!(s, StatusCode::OK);
 
     let (s, _) = auth_delete(&db, &format!("/system/configs/{}", cfg_id), &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -887,7 +894,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let dept_id = b["data"]["id"].as_i64().unwrap();
+    let dept_id = b["data"]["id"].as_str().unwrap();
 
     let (s, _) = auth_put(
         &db,
@@ -910,7 +917,7 @@ async fn test_update_and_delete_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let menu_id = b["data"]["id"].as_i64().unwrap();
+    let menu_id = b["data"]["id"].as_str().unwrap();
 
     let (s, _) = auth_put(
         &db,
@@ -933,6 +940,15 @@ async fn test_update_and_delete_operations() {
         !s.is_success(),
         "菜单创建请求不应再接受 path/component/perms 等旧字段"
     );
+
+    let (s, _) = auth_post(
+        &db,
+        "/system/menus",
+        &token,
+        serde_json::json!({"name": "非法菜单", "parent_id": null, "menu_type": "X", "perm_id": null, "route_key": null, "icon": null, "sort": 0, "visible": true}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
 
     let (s, _) = auth_delete(&db, &format!("/system/menus/{}", menu_id), &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -957,29 +973,38 @@ async fn test_update_and_delete_operations() {
     .await;
     assert_eq!(s, StatusCode::OK);
 
-    let (s, _) = auth_post(
+    let (s, _) = auth_put(
         &db,
-        "/system/role/update-data-scope",
+        "/auth/profile/password",
         &token,
-        serde_json::json!({"role_id": role_id.to_string(), "data_scope": "2"}),
+        serde_json::json!({"old_password": "test123", "new_password": "newpass456"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    let (s, _) = auth_put(
+        &db,
+        &format!("/system/roles/{}/data-scope", role_id),
+        &token,
+        serde_json::json!({"data_scope": "2", "dept_ids": ["1"]}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = auth_post(
+    let (s, _) = auth_put(
         &db,
-        "/system/role/update-data-scope",
+        &format!("/system/roles/{}/data-scope", role_id),
         &token,
-        serde_json::json!({"role_id": role_id.to_string(), "data_scope": "9"}),
+        serde_json::json!({"data_scope": "9", "dept_ids": []}),
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
     // 分配权限
-    let (s, _) = auth_post(
+    let (s, _) = auth_put(
         &db,
-        "/system/role/assign-perm",
+        &format!("/system/roles/{}/permissions", role_id),
         &token,
-        serde_json::json!({"role_id": role_id.to_string(), "perm_ids": []}),
+        serde_json::json!({"perm_ids": []}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -994,12 +1019,12 @@ async fn test_update_and_delete_operations() {
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 
-    // 分配自定义部门
-    let (s, _) = auth_post(
+    // 切换为非自定义范围时原子清空部门关联
+    let (s, _) = auth_put(
         &db,
-        "/system/role/assign-dept",
+        &format!("/system/roles/{}/data-scope", role_id),
         &token,
-        serde_json::json!({"role_id": role_id.to_string(), "dept_ids": []}),
+        serde_json::json!({"data_scope": "5", "dept_ids": []}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1039,8 +1064,10 @@ async fn test_update_and_delete_operations() {
 
     // 更新用户
     let (s, _) = auth_put(
-        &db, &format!("/system/users/{}", user_id), &token,
-        serde_json::json!({"nickname": "已更新", "email": null, "phone": null, "dept_id": "1", "status": "1"}),
+        &db,
+        &format!("/system/users/{}", user_id),
+        &token,
+        serde_json::json!({"nickname": "已更新", "email": null, "phone": null, "dept_id": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1048,9 +1075,9 @@ async fn test_update_and_delete_operations() {
     // 修改用户状态
     let (s, _) = auth_put(
         &db,
-        "/system/users/changeStatus",
+        &format!("/system/users/{}/status", user_id),
         &token,
-        serde_json::json!({"user_id": user_id.to_string(), "status": "0"}),
+        serde_json::json!({"status": "0"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1117,11 +1144,13 @@ async fn test_update_and_delete_operations() {
         .uri("/auth/password-reset/complete")
         .method("POST")
         .header("content-type", "application/json")
+        .header("X-Tenant-Id", "system")
         .body(Body::from(
             serde_json::to_string(&serde_json::json!({
+                "tenant_id": "system",
                 "request_id": reset_data["request_id"].as_str().unwrap(),
                 "token": reset_data["reset_token"].as_str().unwrap(),
-                "new_password": "newpass123"
+                "new_password": "NewPass123!"
             }))
             .unwrap(),
         ))
@@ -1166,7 +1195,7 @@ async fn test_not_found_error_scenarios() {
     assert_eq!(s, StatusCode::METHOD_NOT_ALLOWED);
 
     // 不存在的配置 key
-    let (s, _) = auth_get(&db, "/system/configs/configKey/nonexistent_key", &token).await;
+    let (s, _) = auth_get(&db, "/system/configs/key/nonexistent_key", &token).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 
     // 不存在的字典类型数据查询 — 返回 200 但 data 为空数组
@@ -1410,12 +1439,12 @@ async fn test_log_endpoints() {
     let token = login_get_token(&db).await;
 
     // 登录日志列表
-    let (s, b) = auth_get(&db, "/system/loginlogs/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/loginlogs?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.get("rows").is_some(), "登录日志应返回 rows");
 
     // 登录日志不分页
-    let (s, _) = auth_get(&db, "/system/loginlogs/listNoPage", &token).await;
+    let (s, _) = auth_get(&db, "/system/loginlogs/all", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 清空登录日志路由不再对业务管理端开放
@@ -1423,12 +1452,12 @@ async fn test_log_endpoints() {
     assert!(!s.is_success());
 
     // 操作日志列表
-    let (s, b) = auth_get(&db, "/system/operlogs/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/operlogs?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.get("rows").is_some(), "操作日志应返回 rows");
 
     // 操作日志不分页
-    let (s, _) = auth_get(&db, "/system/operlogs/listNoPage", &token).await;
+    let (s, _) = auth_get(&db, "/system/operlogs/all", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     // 清空操作日志路由不再对业务管理端开放
@@ -1439,9 +1468,6 @@ async fn test_log_endpoints() {
 // ==================== 个人中心端点测试 ====================
 
 /// 个人中心：获取/更新信息、修改密码
-/// 注意：profile 端点需要 Claims extension，当前 test 构建链中 profile auth middleware
-/// 嵌套存在限制，此测试暂时跳过。实际运行时 profile handler 通过 profile_service 验证。
-#[ignore]
 #[tokio::test]
 async fn test_profile_endpoints() {
     let db = setup_test_db().await;
@@ -1465,10 +1491,22 @@ async fn test_profile_endpoints() {
         &db,
         "/auth/profile/password",
         &token,
-        serde_json::json!({"old_password": "test123", "new_password": "newpass456"}),
+        serde_json::json!({"old_password": "test123", "new_password": "NewPass456!"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
+
+    let (s, _) = auth_get(&db, "/auth/profile", &token).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+    let saved_user = user::Entity::find()
+        .filter(user::Column::Username.eq("admin"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_user.auth_version, 2);
+    assert!(ryframe_auth::password::verify("NewPass456!", &saved_user.password_hash).unwrap());
 }
 
 // ==================== 登出测试 ====================
@@ -1496,9 +1534,6 @@ async fn test_logout_flow() {
 // ==================== 代码生成器测试 ====================
 
 /// 代码生成器：表列表与预览
-/// 注意：生成器使用 information_schema（MySQL 专用），SQLite 内存数据库不支持。
-/// 需要 MySQL 数据库时启用此测试。
-#[ignore]
 #[tokio::test]
 async fn test_generator_endpoints() {
     let db = setup_test_db().await;
@@ -1506,26 +1541,29 @@ async fn test_generator_endpoints() {
     let token = login_get_token(&db).await;
 
     // 列出数据库表
-    let (s, b) = auth_get(&db, "/tools/gen/tables", &token).await;
+    let (s, b) = auth_get(&db, "/tools/gen/tables?table_name=sys_user", &token).await;
     assert_eq!(s, StatusCode::OK);
-    let tables = b["data"].as_array().unwrap();
+    let tables = b["rows"].as_array().unwrap();
     assert!(!tables.is_empty(), "应至少包含一张表");
 
-    // 预览代码生成（使用第一张表名）
-    let table_name = tables[0]["table_name"].as_str().unwrap();
-    let (s, _) = auth_post(
+    // 预览代码生成（使用确定存在且包含单主键的业务表）
+    let table_name = tables
+        .iter()
+        .find_map(|table| {
+            (table["table_name"] == "sys_user").then(|| table["table_name"].as_str().unwrap())
+        })
+        .unwrap_or_else(|| panic!("表列表应包含 sys_user，实际为: {tables:?}"));
+    let (s, body) = auth_post(
         &db,
         "/tools/gen/preview",
         &token,
         serde_json::json!({
-            "table_name": table_name,
-            "module_name": "system",
-            "package_name": "com.example",
-            "author": "test"
+            "tables": [table_name]
         }),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["data"].as_array().map(Vec::len), Some(5));
 }
 
 // ================================================================
@@ -1599,12 +1637,28 @@ async fn test_openapi_json_endpoint() {
         "OpenAPI 应包含新的密码重置请求接口"
     );
     assert!(
+        paths.contains_key("/api/v1/system/users/{id}/roles"),
+        "OpenAPI 应包含用户角色子资源接口"
+    );
+    assert!(
+        paths.contains_key("/api/v1/system/users/{id}/status"),
+        "OpenAPI 应包含用户状态子资源接口"
+    );
+    assert!(
         paths.contains_key("/api/v1/auth/password-reset/complete"),
         "OpenAPI 应包含公开密码重置完成接口"
     );
     assert!(
         !paths.contains_key("/api/v1/system/users/{id}/password"),
         "OpenAPI 不应再暴露旧管理员重置密码接口"
+    );
+    assert!(
+        !paths.contains_key("/api/v1/system/users/assign-role"),
+        "OpenAPI 不应再暴露旧用户角色动作接口"
+    );
+    assert!(
+        !paths.contains_key("/api/v1/system/users/status"),
+        "OpenAPI 不应再暴露旧用户状态动作接口"
     );
     assert!(
         !paths.contains_key("/api/v1/system/operlogs/clean"),
@@ -1673,13 +1727,13 @@ async fn test_authenticated_system_access() {
 
     // 使用有效 token 访问各系统端点
     let endpoints = vec![
-        "/system/users/list?page=1&pageSize=5",
-        "/system/roles/list?page=1&pageSize=5",
+        "/system/users?page=1&page_size=5",
+        "/system/roles?page=1&page_size=5",
         "/system/depts/tree",
         "/system/menus/tree",
         "/system/perms/tree",
         "/system/online",
-        "/system/posts/listNoPage",
+        "/system/posts/all",
     ];
     for uri in endpoints {
         let (s, _) = auth_get(&db, uri, &token).await;

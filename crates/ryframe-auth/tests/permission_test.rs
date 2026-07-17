@@ -1,26 +1,39 @@
-use ryframe_auth::permission::{PermissionContext, check_permission_context};
+use ryframe_auth::{RequestPrincipal, permission::check_permission};
+use ryframe_common::{ActorContext, annotations::data_scope::DataScope};
+
+fn principal(permissions: Vec<String>, is_super_admin: bool) -> RequestPrincipal {
+    RequestPrincipal {
+        actor: ActorContext {
+            user_id: 1,
+            tenant_id: "system".into(),
+            username: "tester".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: DataScope::SelfOnly,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin,
+        },
+        roles: vec!["operator".into()],
+        role_ids: vec![1],
+        permissions,
+        tenant_request_limit_per_minute: 100,
+    }
+}
 
 #[test]
 fn test_check_permission() {
-    let context = PermissionContext {
-        roles: vec!["operator".into()],
-        permissions: vec!["system:user:list".into(), "system:user:*".into()],
-        is_super_admin: false,
-    };
-    // 精确匹配
-    assert!(check_permission_context(&context, "system:user:list").is_ok());
-    // 不同模块无权限
-    assert!(check_permission_context(&context, "system:role:list").is_err());
-    // 通配符
-    assert!(check_permission_context(&context, "system:user:create").is_ok());
+    let principal = principal(
+        vec!["system:user:list".into(), "system:user:*".into()],
+        false,
+    );
+    assert!(check_permission(&principal, "system:user:list").is_ok());
+    assert!(check_permission(&principal, "system:role:list").is_err());
+    assert!(check_permission(&principal, "system:user:create").is_ok());
 }
 
 #[test]
 fn test_super_admin_bypasses_permission_check() {
-    let context = PermissionContext {
-        roles: vec!["admin".into()],
-        permissions: vec![],
-        is_super_admin: true,
-    };
-    assert!(check_permission_context(&context, "system:any:action").is_ok());
+    let principal = principal(Vec::new(), true);
+    assert!(check_permission(&principal, "system:any:action").is_ok());
 }

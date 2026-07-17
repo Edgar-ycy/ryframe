@@ -1,76 +1,104 @@
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
+use ryframe_db::DatabaseCluster;
 use sea_orm::DatabaseConnection;
 
-/// 数据源连接结果
-pub struct DataSources {
-    pub primary: DatabaseConnection,
-    /// 额外数据源连接（db_1, db_2...）
-    pub extras: Vec<DatabaseConnection>,
-}
-
-/// 连接所有数据源并执行健康检查 + 表校验
-pub async fn connect(config: &AppConfig) -> Result<DataSources, AppError> {
-    // 连接主库（connections[0]）
-    let primary_config = &config.database.connections[0];
-    let primary_db =
+/// 连接主库、只读副本和所有命名业务数据源。
+pub async fn connect(config: &AppConfig) -> Result<DatabaseCluster, AppError> {
+    let primary_config = &config.database.primary;
+    let primary =
         ryframe_db::connection::connect_with_level(primary_config, config.database.sql_log_level)
-            .await?;
-    tracing::info!("数据源 'primary' 连接成功: {}", primary_config.database);
-
-    // 连接额外数据源（connections[1..]），命名为 db_1, db_2...
-    let mut extra_dbs = Vec::with_capacity(config.database.connections.len().saturating_sub(1));
-    for (i, conn_config) in config.database.connections.iter().enumerate().skip(1) {
-        let name = format!("db_{}", i);
-        match ryframe_db::connection::connect_with_level(conn_config, config.database.sql_log_level)
             .await
-        {
-            Ok(db) => {
-                tracing::info!("数据源 '{}' 连接成功: {}", name, conn_config.database);
-                extra_dbs.push(db);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "数据源 '{}' ({}) 连接失败: {}，跳过",
-                    name,
-                    conn_config.database,
-                    e
-                );
-            }
-        }
+            .map_err(|error| AppError::Database(format!("主数据库连接失败: {error}")))?;
+    ryframe_db::connection::ping(&primary)
+        .await
+        .map_err(|error| AppError::Database(format!("主数据库健康检查失败: {error}")))?;
+    tracing::info!(
+        database = %primary_config.database,
+        driver = %primary_config.driver,
+        "主数据库连接成功"
+    );
+
+    let mut replicas = Vec::with_capacity(config.database.replicas.len());
+    for replica_config in &config.database.replicas {
+        let replica = ryframe_db::connection::connect_with_level(
+            &replica_config.connection,
+            config.database.sql_log_level,
+        )
+        .await
+        .map_err(|error| {
+            AppError::Database(format!(
+                "只读副本 {} 连接失败: {error}",
+                replica_config.name
+            ))
+        })?;
+        ryframe_db::connection::ping(&replica)
+            .await
+            .map_err(|error| {
+                AppError::Database(format!(
+                    "只读副本 {} 健康检查失败: {error}",
+                    replica_config.name
+                ))
+            })?;
+        tracing::info!(
+            replica = %replica_config.name,
+            host = %replica_config.connection.host,
+            "只读副本连接成功"
+        );
+        replicas.push((replica_config.name.clone(), replica));
     }
 
-    tracing::info!("数据库连接初始化完成, 额外数据源: {} 个", extra_dbs.len());
+    let mut sources = Vec::with_capacity(config.database.sources.len());
+    for source_config in &config.database.sources {
+        let source = ryframe_db::connection::connect_with_level(
+            &source_config.connection,
+            config.database.sql_log_level,
+        )
+        .await
+        .map_err(|error| {
+            AppError::Database(format!(
+                "业务数据源 {} 连接失败: {error}",
+                source_config.name
+            ))
+        })?;
+        ryframe_db::connection::ping(&source)
+            .await
+            .map_err(|error| {
+                AppError::Database(format!(
+                    "业务数据源 {} 健康检查失败: {error}",
+                    source_config.name
+                ))
+            })?;
+        tracing::info!(
+            source = %source_config.name,
+            database = %source_config.connection.database,
+            driver = %source_config.connection.driver,
+            "业务数据源连接成功"
+        );
+        sources.push((source_config.name.clone(), source));
+    }
 
-    // 健康检查 primary
-    ryframe_db::connection::ping(&primary_db).await?;
+    Ok(DatabaseCluster::with_sources(primary, replicas, sources))
+}
 
-    // 检查所有必需表是否存在
-    verify_tables(&primary_db).await?;
-
-    Ok(DataSources {
-        primary: primary_db,
-        extras: extra_dbs,
-    })
+/// 在主库迁移完成后校验整个数据库拓扑的业务表结构。
+pub async fn verify_schema(cluster: &DatabaseCluster) -> Result<(), AppError> {
+    verify_tables("primary", cluster.write()).await?;
+    for (name, replica) in cluster.replicas() {
+        verify_tables(name, replica).await?;
+    }
+    Ok(())
 }
 
 /// 检查必需表是否存在
-async fn verify_tables(db: &DatabaseConnection) -> Result<(), AppError> {
+async fn verify_tables(node: &str, db: &DatabaseConnection) -> Result<(), AppError> {
     if let Err(missing) = ryframe_db::connection::check_tables(db).await {
-        eprintln!("\n========================================");
-        eprintln!("  数据库表缺失！请先执行建表 SQL：");
-        eprintln!("    mysql -u root -p ryframe_config < sql/ryframe_config.sql");
-        eprintln!("========================================");
-        eprintln!("  缺失的表 ({} 张):", missing.len());
-        for table in &missing {
-            eprintln!("    - {}", table);
-        }
-        eprintln!("========================================\n");
         return Err(AppError::Internal(format!(
-            "缺少 {} 张必需的数据表，请先执行 sql/ryframe_config.sql 初始化数据库",
-            missing.len()
+            "数据库节点 {node} 缺少 {} 张必需表: {}",
+            missing.len(),
+            missing.join(", ")
         )));
     }
-    tracing::info!("数据库表检查通过 ({} 张表全部存在)", 19);
+    tracing::info!(node, "数据库表结构检查通过");
     Ok(())
 }

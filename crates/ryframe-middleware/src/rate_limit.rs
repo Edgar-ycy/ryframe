@@ -17,7 +17,7 @@ use ryframe_core::RedisClient;
 const RATE_LIMIT_KEY_PREFIX: &str = "rate_limit:";
 
 /// 令牌桶（仅内存模式使用）
-pub(crate) struct Bucket {
+struct Bucket {
     tokens: f64,
     last_refill: Instant,
 }
@@ -27,8 +27,12 @@ pub(crate) struct Bucket {
 /// - Redis 模式：使用 Redis 计数器 + 固定窗口，支持分布式部署
 /// - 内存模式：DashMap 令牌桶，单机限流
 #[derive(Clone)]
-#[allow(private_interfaces)]
-pub enum RateLimiter {
+pub struct RateLimiter {
+    mode: RateLimiterMode,
+}
+
+#[derive(Clone)]
+enum RateLimiterMode {
     /// Redis 限流（生产推荐）
     Redis {
         client: Box<RedisClient>,
@@ -40,7 +44,7 @@ pub enum RateLimiter {
     InMemory { inner: Arc<RateLimiterInner> },
 }
 
-pub(crate) struct RateLimiterInner {
+struct RateLimiterInner {
     buckets: DashMap<String, Bucket>,
     capacity: f64,
     refill_per_sec: f64,
@@ -51,28 +55,32 @@ impl RateLimiter {
     ///
     /// `window_secs`：固定窗口时长（秒），每个窗口内最多 `capacity` 次请求
     pub fn new_redis(client: RedisClient, capacity: u32, window_secs: u64) -> Self {
-        Self::Redis {
-            client: Box::new(client),
-            capacity,
-            window_secs,
+        Self {
+            mode: RateLimiterMode::Redis {
+                client: Box::new(client),
+                capacity,
+                window_secs,
+            },
         }
     }
 
     /// 创建内存模式的限流器
     pub fn new_in_memory(capacity: u32, refill_per_sec: u32) -> Self {
-        Self::InMemory {
-            inner: Arc::new(RateLimiterInner {
-                buckets: DashMap::new(),
-                capacity: capacity as f64,
-                refill_per_sec: refill_per_sec as f64,
-            }),
+        Self {
+            mode: RateLimiterMode::InMemory {
+                inner: Arc::new(RateLimiterInner {
+                    buckets: DashMap::new(),
+                    capacity: capacity as f64,
+                    refill_per_sec: refill_per_sec as f64,
+                }),
+            },
         }
     }
 
     /// 尝试获取 1 个令牌，返回是否通过
     pub async fn try_acquire(&self, key: &str) -> bool {
-        match self {
-            Self::Redis {
+        match &self.mode {
+            RateLimiterMode::Redis {
                 client,
                 capacity,
                 window_secs,
@@ -93,7 +101,7 @@ impl RateLimiter {
                     }
                 }
             }
-            Self::InMemory { inner } => {
+            RateLimiterMode::InMemory { inner } => {
                 let now = Instant::now();
                 let mut bucket = inner.buckets.entry(key.to_string()).or_insert(Bucket {
                     tokens: inner.capacity,
@@ -117,19 +125,19 @@ impl RateLimiter {
 
     /// 获取当前可用令牌数（仅内存模式）
     pub fn available_tokens(&self, key: &str) -> f64 {
-        match self {
-            Self::InMemory { inner } => inner
+        match &self.mode {
+            RateLimiterMode::InMemory { inner } => inner
                 .buckets
                 .get(key)
                 .map(|b| b.tokens)
                 .unwrap_or(inner.capacity),
-            Self::Redis { capacity, .. } => *capacity as f64,
+            RateLimiterMode::Redis { capacity, .. } => *capacity as f64,
         }
     }
 
     /// 后台清理（仅内存模式有效）
     pub fn spawn_gc(self: &Arc<Self>) {
-        if let Self::InMemory { inner } = self.as_ref() {
+        if let RateLimiterMode::InMemory { inner } = &self.mode {
             let inner = inner.clone();
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -155,8 +163,8 @@ impl RateLimiter {
     /// # Returns
     /// `true` 表示通过，`false` 表示限流触发
     pub async fn sliding_window_acquire(&self, key: &str, window_secs: u64, limit: u32) -> bool {
-        match self {
-            Self::Redis { client, .. } => {
+        match &self.mode {
+            RateLimiterMode::Redis { client, .. } => {
                 let redis_key = format!("{}sw:", RATE_LIMIT_KEY_PREFIX) + key;
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -202,7 +210,7 @@ impl RateLimiter {
                     }
                 }
             }
-            Self::InMemory { .. } => self.try_acquire(key).await,
+            RateLimiterMode::InMemory { .. } => self.try_acquire(key).await,
         }
     }
 

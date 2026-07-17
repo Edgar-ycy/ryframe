@@ -4,10 +4,10 @@ default-members = ["crates/ryframe"]
 members = [
     "crates/ryframe",
     "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-middleware", "crates/ryframe-service",
-    "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro"]
+    "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro", "crates/ryframe-storage"]
 resolver = "3"
 [workspace.package]
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 authors = ["edgar_ye <edgar@example.com>"]
 license = "MIT"
@@ -54,7 +54,7 @@ sysinfo = "0.39"
 image = { version = "0.25" }
 calamine = { version = "0.34" }
 rust_xlsxwriter = { version = "0.94" }
-utoipa = { version = "5", features = ["axum_extras"] }
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
 regex = "1"
@@ -77,15 +77,14 @@ tracing-opentelemetry = "0.33"
 # SMTP 邮件发送
 lettre = { version = "0.11", default-features = false, features = ["builder", "rustls-tls", "smtp-transport", "tokio1", "tokio1-rustls"] }
 # gRPC
-tonic = { version = "0.14", default-features = false, features = ["transport", "server", "codegen", "router"] }
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 aes-gcm = "0.10"
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
+percent-encoding = "2"
 # 消息队列 (Kafka, 可选 feature)
-rdkafka = { version = "0.39", features = ["tokio"] }
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"

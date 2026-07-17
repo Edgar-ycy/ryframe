@@ -1,8 +1,10 @@
 use std::sync::LazyLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::Validate;
+
+use super::password_validation::validate_password_complexity;
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -19,25 +21,22 @@ pub struct UpdateProfileRequest {
 static PHONE_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^1[3-9]\d{9}$").unwrap());
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ChangePasswordRequest {
+    #[validate(length(min = 1, max = 72, message = "旧密码长度必须在 1-72 个字符之间"))]
+    #[schema(min_length = 1, max_length = 72)]
     pub old_password: String,
+    #[validate(custom(function = "validate_password_complexity"))]
+    #[schema(
+        min_length = 8,
+        max_length = 72,
+        pattern = r"^(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])(?=.*[^A-Za-z0-9])[!-~]{8,72}$"
+    )]
     pub new_password: String,
 }
 
-impl ChangePasswordRequest {
-    pub fn validate_passwords(&self) -> Result<(), String> {
-        if self.old_password.len() < 6 || self.old_password.len() > 100 {
-            return Err("旧密码长度为6-100个字符".into());
-        }
-        if self.new_password.len() < 6 || self.new_password.len() > 100 {
-            return Err("新密码长度为6-100个字符".into());
-        }
-        let has_letter = self.new_password.chars().any(|c| c.is_alphabetic());
-        let has_digit = self.new_password.chars().any(|c| c.is_ascii_digit());
-        if !has_letter || !has_digit {
-            return Err("密码必须包含字母和数字".into());
-        }
-        Ok(())
-    }
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AvatarResponse {
+    pub avatar_url: String,
 }

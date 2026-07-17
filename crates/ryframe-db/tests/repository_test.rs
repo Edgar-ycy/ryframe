@@ -9,8 +9,9 @@ use common::setup_test_db;
 use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::{
-    ConfigRepository, DictDataRepository, DictTypeRepository, LoginInfoRepository,
-    NoticeRepository, OperLogRepository, PermissionRepository, PostRepository, RoleRepository,
+    ConfigFilter, ConfigRepository, DictDataRepository, DictTypeFilter, DictTypeRepository,
+    LoginInfoFilter, LoginInfoRepository, NoticeFilter, NoticeRepository, OperLogFilter,
+    OperLogRepository, PermissionRepository, PostRepository, RoleRepository,
     entities::{
         config, dict_data, dict_type, login_info, notice, oper_log, permission, post, role,
     },
@@ -165,7 +166,7 @@ fn make_oper_log(oper_name: &str, status: &str) -> oper_log::Model {
         tenant_id: "system".into(),
         title: format!("{}操作", oper_name),
         business_type: "INSERT".into(),
-        method: "UserServiceImpl.create".into(),
+        method: "UserService.create".into(),
         request_method: "POST".into(),
         oper_name: oper_name.into(),
         oper_url: "/api/v1/system/users".into(),
@@ -188,14 +189,23 @@ async fn test_permission_repo_crud() {
     let repo = PermissionRepository;
 
     let perm = make_permission("用户列表", "system:user:list", 1);
-    let inserted = repo.insert(&db, perm).await.unwrap();
+    let inserted = repo.insert(&db, "system", perm).await.unwrap();
     assert_eq!(inserted.code, "system:user:list");
 
-    let found = repo.find_by_id(&db, inserted.id).await.unwrap().unwrap();
+    let found = repo
+        .find_by_id(&db, "system", inserted.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(found.name, "用户列表");
 
-    repo.delete(&db, inserted.id).await.unwrap();
-    assert!(repo.find_by_id(&db, inserted.id).await.unwrap().is_none());
+    repo.delete(&db, "system", inserted.id).await.unwrap();
+    assert!(
+        repo.find_by_id(&db, "system", inserted.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -205,27 +215,44 @@ async fn test_permission_repo_assign_and_find_role_perms() {
     let role_repo = RoleRepository;
 
     let r = role_repo
-        .insert(&db, make_role("测试角色", "test_role"))
+        .insert(&db, "system", make_role("测试角色", "test_role"))
         .await
         .unwrap();
     let p1 = perm_repo
-        .insert(&db, make_permission("查询", "system:user:query", 1))
+        .insert(
+            &db,
+            "system",
+            make_permission("查询", "system:user:query", 1),
+        )
         .await
         .unwrap();
     let p2 = perm_repo
-        .insert(&db, make_permission("删除", "system:user:delete", 2))
+        .insert(
+            &db,
+            "system",
+            make_permission("删除", "system:user:delete", 2),
+        )
         .await
         .unwrap();
 
     perm_repo
-        .assign_perms(&db, r.id, &[p1.id, p2.id])
+        .assign_perms(&db, "system", r.id, &[p1.id, p2.id])
         .await
         .unwrap();
-    let perms = perm_repo.find_role_perms(&db, &[r.id]).await.unwrap();
+    let perms = perm_repo
+        .find_role_perms(&db, "system", &[r.id])
+        .await
+        .unwrap();
     assert_eq!(perms.len(), 2);
 
-    perm_repo.assign_perms(&db, r.id, &[p1.id]).await.unwrap();
-    let perms = perm_repo.find_role_perms(&db, &[r.id]).await.unwrap();
+    perm_repo
+        .assign_perms(&db, "system", r.id, &[p1.id])
+        .await
+        .unwrap();
+    let perms = perm_repo
+        .find_role_perms(&db, "system", &[r.id])
+        .await
+        .unwrap();
     assert_eq!(perms.len(), 1);
 }
 
@@ -237,13 +264,14 @@ async fn test_permission_repo_find_all() {
     for i in 0..3 {
         repo.insert(
             &db,
+            "system",
             make_permission(&format!("perm_{}", i), &format!("code:{}", i), i),
         )
         .await
         .unwrap();
     }
 
-    let all = repo.find_all(&db).await.unwrap();
+    let all = repo.find_all(&db, "system").await.unwrap();
     assert_eq!(all.len(), 3);
 }
 
@@ -253,14 +281,23 @@ async fn test_post_repo_crud() {
     let repo = PostRepository;
 
     let p = make_post("研发经理", "dev_mgr", post::Model::STATUS_NORMAL);
-    let inserted = repo.insert(&db, p).await.unwrap();
+    let inserted = repo.insert(&db, "system", p).await.unwrap();
     assert_eq!(inserted.code, "dev_mgr");
 
-    let found = repo.find_by_id(&db, inserted.id).await.unwrap().unwrap();
+    let found = repo
+        .find_by_id(&db, "system", inserted.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(found.name, "研发经理");
 
-    repo.delete(&db, inserted.id).await.unwrap();
-    assert!(repo.find_by_id(&db, inserted.id).await.unwrap().is_none());
+    repo.delete(&db, "system", inserted.id).await.unwrap();
+    assert!(
+        repo.find_by_id(&db, "system", inserted.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -269,13 +306,27 @@ async fn test_post_repo_find_by_code() {
     let repo = PostRepository;
 
     for code in ["pm", "qa"] {
-        repo.insert(&db, make_post(code, code, post::Model::STATUS_NORMAL))
-            .await
-            .unwrap();
+        repo.insert(
+            &db,
+            "system",
+            make_post(code, code, post::Model::STATUS_NORMAL),
+        )
+        .await
+        .unwrap();
     }
 
-    assert!(repo.find_by_code(&db, "pm").await.unwrap().is_some());
-    assert!(repo.find_by_code(&db, "unknown").await.unwrap().is_none());
+    assert!(
+        repo.find_by_code(&db, "system", "pm")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        repo.find_by_code(&db, "system", "unknown")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -283,18 +334,30 @@ async fn test_post_repo_filtered_pagination() {
     let db = setup_test_db().await;
     let repo = PostRepository;
 
-    repo.insert(&db, make_post("经理", "mgr", post::Model::STATUS_NORMAL))
-        .await
-        .unwrap();
     repo.insert(
         &db,
+        "system",
+        make_post("经理", "mgr", post::Model::STATUS_NORMAL),
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        &db,
+        "system",
         make_post("实习生", "intern", post::Model::STATUS_DISABLED),
     )
     .await
     .unwrap();
 
     let page = repo
-        .find_by_page_filtered(&db, PageQuery::default(), Some("经理"), None, None)
+        .find_by_page_filtered(
+            &db,
+            "system",
+            PageQuery::default(),
+            Some("经理"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
@@ -305,17 +368,26 @@ async fn test_config_repo_find_by_key() {
     let db = setup_test_db().await;
     let repo = ConfigRepository;
 
-    repo.insert(&db, make_config("sys.index.skinName", "skin-blue"))
-        .await
-        .unwrap();
+    repo.insert(
+        &db,
+        "system",
+        make_config("sys.index.skinName", "skin-blue"),
+    )
+    .await
+    .unwrap();
 
     let found = repo
-        .find_by_key(&db, "sys.index.skinName")
+        .find_by_key(&db, "system", "sys.index.skinName")
         .await
         .unwrap()
         .unwrap();
     assert_eq!(found.value, "skin-blue");
-    assert!(repo.find_by_key(&db, "nope").await.unwrap().is_none());
+    assert!(
+        repo.find_by_key(&db, "system", "nope")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -326,6 +398,7 @@ async fn test_config_repo_pagination_boundary() {
     for i in 0..25 {
         repo.insert(
             &db,
+            "system",
             make_config(&format!("config_{:02}", i), &format!("v{}", i)),
         )
         .await
@@ -335,6 +408,7 @@ async fn test_config_repo_pagination_boundary() {
     let p1 = repo
         .find_by_page(
             &db,
+            "system",
             PageQuery {
                 page: 1,
                 page_size: 10,
@@ -348,6 +422,7 @@ async fn test_config_repo_pagination_boundary() {
     let p3 = repo
         .find_by_page(
             &db,
+            "system",
             PageQuery {
                 page: 3,
                 page_size: 10,
@@ -356,6 +431,22 @@ async fn test_config_repo_pagination_boundary() {
         .await
         .unwrap();
     assert_eq!(p3.records.len(), 5);
+
+    let query = PageQuery::default();
+    let filtered = repo
+        .find_by_page_filtered(
+            &db,
+            "system",
+            &query,
+            &ConfigFilter {
+                name: None,
+                key: Some("config_12"),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered.total, 1);
+    assert_eq!(filtered.records[0].key, "config_12");
 }
 
 #[tokio::test]
@@ -364,11 +455,35 @@ async fn test_dict_type_repo_crud() {
     let repo = DictTypeRepository;
 
     let dt = make_dict_type("系统开关", "sys_normal_disable");
-    let inserted = repo.insert(&db, dt).await.unwrap();
+    let inserted = repo.insert(&db, "system", dt).await.unwrap();
     assert_eq!(inserted.code, "sys_normal_disable");
 
-    repo.delete(&db, inserted.id).await.unwrap();
-    assert!(repo.find_by_id(&db, inserted.id).await.unwrap().is_none());
+    repo.insert(&db, "system", make_dict_type("业务状态", "business_status"))
+        .await
+        .unwrap();
+    let filtered = repo
+        .find_by_page_filtered(
+            &db,
+            "system",
+            &PageQuery::default(),
+            &DictTypeFilter {
+                name: Some("系统"),
+                code: Some("normal"),
+                status: Some(dict_type::Model::STATUS_NORMAL),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered.total, 1);
+    assert_eq!(filtered.records[0].id, inserted.id);
+
+    repo.delete(&db, "system", inserted.id).await.unwrap();
+    assert!(
+        repo.find_by_id(&db, "system", inserted.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -378,19 +493,23 @@ async fn test_dict_data_repo_find_by_type_code() {
     let data_repo = DictDataRepository;
 
     let dt = type_repo
-        .insert(&db, make_dict_type("通用状态", "sys_normal_disable"))
+        .insert(
+            &db,
+            "system",
+            make_dict_type("通用状态", "sys_normal_disable"),
+        )
         .await
         .unwrap();
 
     for (label, value, sort) in [("正常", "0", 1), ("停用", "1", 2)] {
         data_repo
-            .insert(&db, make_dict_data(&dt.code, label, value, sort))
+            .insert(&db, "system", make_dict_data(&dt.code, label, value, sort))
             .await
             .unwrap();
     }
 
     let data = data_repo
-        .find_by_type_code(&db, "sys_normal_disable")
+        .find_by_type_code(&db, "system", "sys_normal_disable")
         .await
         .unwrap();
     assert_eq!(data.len(), 2);
@@ -403,14 +522,23 @@ async fn test_notice_repo_crud() {
     let repo = NoticeRepository;
 
     let n = make_notice("系统维护通知", Some("1"));
-    let inserted = repo.insert(&db, n).await.unwrap();
+    let inserted = repo.insert(&db, "system", n).await.unwrap();
     assert_eq!(inserted.title, "系统维护通知");
 
-    let found = repo.find_by_id(&db, inserted.id).await.unwrap().unwrap();
+    let found = repo
+        .find_by_id(&db, "system", inserted.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(found.r#type.as_deref(), Some("1"));
 
-    repo.delete(&db, inserted.id).await.unwrap();
-    assert!(repo.find_by_id(&db, inserted.id).await.unwrap().is_none());
+    repo.delete(&db, "system", inserted.id).await.unwrap();
+    assert!(
+        repo.find_by_id(&db, "system", inserted.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -418,25 +546,45 @@ async fn test_notice_repo_filtered_pagination() {
     let db = setup_test_db().await;
     let repo = NoticeRepository;
 
-    repo.insert(&db, make_notice("通知A", Some("1")))
+    repo.insert(&db, "system", make_notice("通知A", Some("1")))
         .await
         .unwrap();
-    repo.insert(&db, make_notice("通知B", Some("1")))
+    repo.insert(&db, "system", make_notice("通知B", Some("1")))
         .await
         .unwrap();
-    repo.insert(&db, make_notice("公告C", Some("2")))
+    repo.insert(&db, "system", make_notice("公告C", Some("2")))
         .await
         .unwrap();
     let scope = ryframe_common::DataScopeContext::super_admin(1);
 
     let page = repo
-        .find_by_page_filtered(&db, PageQuery::default(), None, Some("2"), None, &scope)
+        .find_by_page_filtered(
+            &db,
+            "system",
+            &PageQuery::default(),
+            &NoticeFilter {
+                title: None,
+                notice_type: Some("2"),
+                status: None,
+                data_scope: &scope,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
 
     let page = repo
-        .find_by_page_filtered(&db, PageQuery::default(), Some("通知"), None, None, &scope)
+        .find_by_page_filtered(
+            &db,
+            "system",
+            &PageQuery::default(),
+            &NoticeFilter {
+                title: Some("通知"),
+                notice_type: None,
+                status: None,
+                data_scope: &scope,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 2);
@@ -450,48 +598,62 @@ async fn test_login_info_repo_insert_and_query() {
 
     repo.insert(
         &db,
+        "system",
         make_login_info("admin", login_info::Model::STATUS_SUCCESS),
     )
     .await
     .unwrap();
     repo.insert(
         &db,
+        "system",
         make_login_info("user1", login_info::Model::STATUS_SUCCESS),
     )
     .await
     .unwrap();
     repo.insert(
         &db,
+        "system",
         make_login_info("user2", login_info::Model::STATUS_FAIL),
     )
     .await
     .unwrap();
 
-    let page = repo.find_by_page(&db, PageQuery::default()).await.unwrap();
+    let page = repo
+        .find_by_page(&db, "system", PageQuery::default())
+        .await
+        .unwrap();
     assert_eq!(page.total, 3);
 
+    let query = PageQuery::default();
     let page = repo
         .find_by_page_filtered(
             &db,
-            PageQuery::default(),
-            Some("user1"),
-            None,
-            None,
-            None,
+            "system",
+            &query,
+            LoginInfoFilter {
+                user_name: Some("user1"),
+                status: None,
+                begin_time: None,
+                end_time: None,
+            },
             &scope,
         )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
 
+    let query = PageQuery::default();
     let page = repo
         .find_by_page_filtered(
             &db,
-            PageQuery::default(),
-            None,
-            Some(login_info::Model::STATUS_FAIL.to_string()),
-            None,
-            None,
+            "system",
+            &query,
+            LoginInfoFilter {
+                user_name: None,
+                status: Some(login_info::Model::STATUS_FAIL),
+                begin_time: None,
+                end_time: None,
+            },
             &scope,
         )
         .await
@@ -518,13 +680,16 @@ async fn test_login_info_repo_clean_all() {
             login_time: Utc::now(),
         };
         m.fill_on_insert(&FillContext::new());
-        repo.insert(&db, m).await.unwrap();
+        repo.insert(&db, "system", m).await.unwrap();
     }
 
-    let deleted = repo.clean_all(&db).await.unwrap();
+    let deleted = repo.clean_all(&db, "system").await.unwrap();
     assert_eq!(deleted, 3);
 
-    let page = repo.find_by_page(&db, PageQuery::default()).await.unwrap();
+    let page = repo
+        .find_by_page(&db, "system", PageQuery::default())
+        .await
+        .unwrap();
     assert_eq!(page.total, 0);
 }
 
@@ -534,41 +699,64 @@ async fn test_oper_log_repo_insert_and_query() {
     let repo = OperLogRepository;
     let scope = ryframe_common::DataScopeContext::super_admin(1);
 
-    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS))
-        .await
-        .unwrap();
-    repo.insert(&db, make_oper_log("admin", oper_log::Model::STATUS_SUCCESS))
-        .await
-        .unwrap();
-    repo.insert(&db, make_oper_log("user1", oper_log::Model::STATUS_FAIL))
-        .await
-        .unwrap();
+    repo.insert(
+        &db,
+        "system",
+        make_oper_log("admin", oper_log::Model::STATUS_SUCCESS),
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        &db,
+        "system",
+        make_oper_log("admin", oper_log::Model::STATUS_SUCCESS),
+    )
+    .await
+    .unwrap();
+    repo.insert(
+        &db,
+        "system",
+        make_oper_log("user1", oper_log::Model::STATUS_FAIL),
+    )
+    .await
+    .unwrap();
 
-    let page = repo.find_by_page(&db, PageQuery::default()).await.unwrap();
+    let page = repo
+        .find_by_page(&db, "system", PageQuery::default())
+        .await
+        .unwrap();
     assert_eq!(page.total, 3);
 
+    let query = PageQuery::default();
     let page = repo
         .find_by_page_filtered(
             &db,
-            PageQuery::default(),
-            Some("user1"),
-            None,
-            None,
-            None,
+            "system",
+            &query,
+            OperLogFilter {
+                oper_name: Some("user1"),
+                status: None,
+                begin_time: None,
+                end_time: None,
+            },
             &scope,
         )
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
 
+    let query = PageQuery::default();
     let page = repo
         .find_by_page_filtered(
             &db,
-            PageQuery::default(),
-            None,
-            Some(oper_log::Model::STATUS_FAIL.to_string()),
-            None,
-            None,
+            "system",
+            &query,
+            OperLogFilter {
+                oper_name: None,
+                status: Some(oper_log::Model::STATUS_FAIL),
+                begin_time: None,
+                end_time: None,
+            },
             &scope,
         )
         .await
@@ -587,7 +775,7 @@ async fn test_oper_log_repo_clean_all() {
             tenant_id: "system".into(),
             title: format!("操作{}", i),
             business_type: "QUERY".into(),
-            method: "UserServiceImpl.find".into(),
+            method: "UserService.find".into(),
             request_method: "GET".into(),
             oper_name: "admin".into(),
             oper_url: "/api/v1/system".into(),
@@ -601,9 +789,9 @@ async fn test_oper_log_repo_clean_all() {
             cost_time: 10,
         };
         m.fill_on_insert(&FillContext::new());
-        repo.insert(&db, m).await.unwrap();
+        repo.insert(&db, "system", m).await.unwrap();
     }
 
-    let deleted = repo.clean_all(&db).await.unwrap();
+    let deleted = repo.clean_all(&db, "system").await.unwrap();
     assert_eq!(deleted, 3);
 }

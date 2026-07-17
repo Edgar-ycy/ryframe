@@ -14,6 +14,8 @@ ryframe-db = { path = "../ryframe-db" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-generator = { path = "../ryframe-generator" }
+ryframe-storage = { path = "../ryframe-storage" }
+async-trait = { workspace = true }
 zip = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 sea-orm = { workspace = true }
@@ -28,3 +30,4 @@ uuid = { workspace = true, features = ["v4"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+tempfile = { workspace = true }

@@ -27,13 +27,13 @@ async fn test_permission_no_token_returns_401() {
     let router = ryframe_api::router::api_router(state, test_rate_limit_state());
 
     let protected_routes = vec![
-        "/system/users/list?page=1&pageSize=10",
-        "/system/roles/list?page=1&pageSize=10",
+        "/system/users?page=1&page_size=10",
+        "/system/roles?page=1&page_size=10",
         "/system/depts/tree",
         "/system/menus/tree",
-        "/system/posts/list?page=1&pageSize=10",
-        "/system/configs/list?page=1&pageSize=10",
-        "/system/notices/list?page=1&pageSize=10",
+        "/system/posts?page=1&page_size=10",
+        "/system/configs?page=1&page_size=10",
+        "/system/notices?page=1&page_size=10",
         "/system/perms/tree",
         "/system/online",
     ];
@@ -65,7 +65,7 @@ async fn test_permission_invalid_token_returns_401() {
     let router = ryframe_api::router::api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
-        .uri("/system/users/list?page=1&pageSize=10")
+        .uri("/system/users?page=1&page_size=10")
         .method("GET")
         .header("authorization", "Bearer invalid_token_here")
         .body(Body::empty())
@@ -105,11 +105,11 @@ async fn test_permission_non_admin_access() {
 
     // 尝试访问系统管理接口：无角色/无权限用户应被路由权限层拦截
     let system_endpoints = vec![
-        "/system/users/list?page=1&pageSize=10",
-        "/system/roles/list?page=1&pageSize=10",
-        "/system/posts/list?page=1&pageSize=10",
-        "/system/configs/list?page=1&pageSize=10",
-        "/system/notices/list?page=1&pageSize=10",
+        "/system/users?page=1&page_size=10",
+        "/system/roles?page=1&page_size=10",
+        "/system/posts?page=1&page_size=10",
+        "/system/configs?page=1&page_size=10",
+        "/system/notices?page=1&page_size=10",
     ];
 
     for uri in system_endpoints {
@@ -147,7 +147,7 @@ async fn test_operator_permission_and_menu_revocation_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "创建查询权限失败: {body:?}");
-    let perm_id = body["data"]["id"].as_i64().unwrap().to_string();
+    let perm_id = body["data"]["id"].as_str().unwrap().to_owned();
 
     let (status, body) = auth_post(
         &db,
@@ -182,22 +182,22 @@ async fn test_operator_permission_and_menu_revocation_flow() {
     .await;
     assert_eq!(status, StatusCode::OK, "创建用户菜单失败: {body:?}");
 
-    let (status, body) = auth_post(
+    let (status, body) = auth_put(
         &db,
-        "/system/role/assign-perm",
+        &format!("/system/roles/{role_id}/permissions"),
         &admin_token,
-        json!({ "role_id": role_id, "perm_ids": [perm_id] }),
+        json!({ "perm_ids": [perm_id] }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "角色分配权限失败: {body:?}");
 
     common::seed_user(&db, 100, "operator01", "普通运营", Some(1)).await;
     common::seed_user(&db, 101, "outside_dept", "无部门用户", None).await;
-    let (status, body) = auth_post(
+    let (status, body) = auth_put(
         &db,
-        "/system/user/assign-role",
+        "/system/users/100/roles",
         &admin_token,
-        json!({ "user_id": "100", "role_ids": [role_id] }),
+        json!({ "role_ids": [role_id] }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "用户分配角色失败: {body:?}");
@@ -221,12 +221,11 @@ async fn test_operator_permission_and_menu_revocation_flow() {
     assert_eq!(status, StatusCode::OK, "普通运营登录失败: {body:?}");
     let operator_token = body["data"]["access_token"].as_str().unwrap();
 
-    let (status, body) = auth_get(&db, "/system/user/get-menus", operator_token).await;
+    let (status, body) = auth_get(&db, "/system/menus/current", operator_token).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"][0]["name"], "用户管理");
 
-    let (status, body) =
-        auth_get(&db, "/system/users/list?page=1&pageSize=10", operator_token).await;
+    let (status, body) = auth_get(&db, "/system/users?page=1&page_size=10", operator_token).await;
     assert_eq!(status, StatusCode::OK);
     let records = body["rows"].as_array().unwrap();
     assert!(records.iter().any(|item| item["username"] == "operator01"));
@@ -245,18 +244,18 @@ async fn test_operator_permission_and_menu_revocation_flow() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let (status, body) = auth_post(
+    let (status, body) = auth_put(
         &db,
-        "/system/role/assign-perm",
+        &format!("/system/roles/{role_id}/permissions"),
         &admin_token,
-        json!({ "role_id": role_id, "perm_ids": [] }),
+        json!({ "perm_ids": [] }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "撤销角色权限失败: {body:?}");
 
-    let (status, _) = auth_get(&db, "/system/users/list?page=1&pageSize=10", operator_token).await;
+    let (status, _) = auth_get(&db, "/system/users?page=1&page_size=10", operator_token).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, body) = auth_get(&db, "/system/user/get-menus", operator_token).await;
+    let (status, body) = auth_get(&db, "/system/menus/current", operator_token).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"], json!([]));
 }
@@ -268,6 +267,25 @@ async fn test_permission_crud_and_sync_flow() {
     let db = setup_test_db().await;
     seed_test_data(&db).await;
     let token = login_get_token(&db).await;
+
+    let (status, _) = auth_post(
+        &db,
+        "/system/perms",
+        &token,
+        json!({
+            "name": "非法权限类型",
+            "code": "system:test:invalid-type",
+            "parent_id": null,
+            "perm_type": "unknown",
+            "sort": 0,
+            "status": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let (status, _) = auth_get(&db, "/system/perms/tree?perm_type=unknown", &token).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let (status, body) = auth_post(
         &db,
@@ -286,10 +304,9 @@ async fn test_permission_crud_and_sync_flow() {
     .await;
     assert_eq!(status, StatusCode::OK, "创建权限失败: {:?}", body);
     let perm_id = body["data"]["id"]
-        .as_i64()
-        .map(|v| v.to_string())
-        .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
-        .expect("权限ID应存在");
+        .as_str()
+        .expect("权限ID应为字符串")
+        .to_owned();
 
     let (status, body) = auth_get(&db, &format!("/system/perms/{}", perm_id), &token).await;
     assert_eq!(status, StatusCode::OK);
@@ -320,21 +337,20 @@ async fn test_permission_crud_and_sync_flow() {
     assert_eq!(status, StatusCode::OK, "权限同步失败");
 }
 
-#[tokio::test]
-async fn test_permission_scanner_detects_known_codes() {
-    let codes = ryframe_service::system::PermissionServiceImpl::scan_permission_codes()
-        .expect("scan permission codes failed");
+#[test]
+fn test_compiled_permission_catalog_contains_known_codes() {
+    let codes = ryframe_api::permission_catalog::route_permission_codes();
     assert!(
-        codes.contains(&"system:user:list".to_string()),
-        "scanner should include user list permission"
+        codes.contains(&"system:user:list"),
+        "catalog should include user list permission"
     );
     assert!(
-        codes.contains(&"system:perm:sync".to_string()),
-        "scanner should include permission sync code"
+        codes.contains(&"system:perm:sync"),
+        "catalog should include permission sync code"
     );
     assert!(
-        codes.contains(&"tenant:list".to_string()),
-        "scanner should include tenant list permission"
+        codes.contains(&"tenant:list"),
+        "catalog should include tenant list permission"
     );
 }
 
@@ -361,10 +377,9 @@ async fn test_role_permission_assignment_and_validation() {
     .await;
     assert_eq!(status, StatusCode::OK, "创建权限失败: {:?}", body);
     let perm_id = body["data"]["id"]
-        .as_i64()
-        .map(|v| v.to_string())
-        .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
-        .expect("权限ID应存在");
+        .as_str()
+        .expect("权限ID应为字符串")
+        .to_owned();
 
     let (status, body) = auth_post(
         &db,
@@ -380,16 +395,15 @@ async fn test_role_permission_assignment_and_validation() {
     .await;
     assert_eq!(status, StatusCode::OK, "创建角色失败: {:?}", body);
     let role_id = body["data"]["id"]
-        .as_i64()
-        .map(|v| v.to_string())
-        .or_else(|| body["data"]["id"].as_str().map(|v| v.to_string()))
-        .expect("角色ID应存在");
+        .as_str()
+        .expect("角色ID应为字符串")
+        .to_owned();
 
-    let (status, body) = auth_post(
+    let (status, body) = auth_put(
         &db,
-        "/system/role/assign-perm",
+        &format!("/system/roles/{role_id}/permissions"),
         &token,
-        json!({ "role_id": role_id.clone(), "perm_ids": [perm_id.clone()] }),
+        json!({ "perm_ids": [perm_id.clone()] }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "分配权限失败: {:?}", body);
@@ -407,11 +421,11 @@ async fn test_role_permission_assignment_and_validation() {
         "角色权限列表应包含已分配权限"
     );
 
-    let (status, body) = auth_post(
+    let (status, body) = auth_put(
         &db,
-        "/system/role/assign-perm",
+        &format!("/system/roles/{role_id}/permissions"),
         &token,
-        json!({ "role_id": role_id, "perm_ids": [999999999999i64] }),
+        json!({ "perm_ids": [999999999999i64] }),
     )
     .await;
     assert_eq!(
@@ -478,15 +492,10 @@ async fn test_auth_version_invalidates_existing_access_and_refresh_tokens() {
     let access_token = body["data"]["access_token"].as_str().unwrap().to_string();
     let refresh_token = body["data"]["refresh_token"].as_str().unwrap().to_string();
 
-    ryframe_core::with_tenant_context(
-        ryframe_core::TenantContext {
-            tenant_id: "system".into(),
-            is_admin: false,
-        },
-        ryframe_api::handlers::auth_handler::invalidate_user_tokens(&state, 100),
-    )
-    .await
-    .unwrap();
+    ryframe_db::UserRepository
+        .increment_auth_versions(&db, "system", &[100])
+        .await
+        .unwrap();
 
     let old_access_request = Request::builder()
         .uri("/auth/me")
@@ -545,6 +554,7 @@ async fn test_user_crud_flow() {
             "email": "newuser@test.com",
             "phone": "13900000001",
             "dept_id": "1",
+            "role_ids": ["2"],
         }),
     )
     .await;
@@ -558,11 +568,12 @@ async fn test_user_crud_flow() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["username"], "newuser");
     assert_eq!(b["data"]["email"], "newuser@test.com");
+    assert_eq!(b["data"]["roles"][0]["id"], "2");
 
     // 3. 列表查询（验证新用户出现在列表中）
     let (s, b) = auth_get(
         &db,
-        "/system/users/list?page=1&pageSize=10&searchValue=newuser",
+        "/system/users?page=1&page_size=10&username=newuser",
         &token,
     )
     .await;
@@ -580,11 +591,43 @@ async fn test_user_crud_flow() {
             "nickname": "更新昵称",
             "email": "updated@test.com",
             "phone": "13900000002",
-            "status": "1",
         }),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "更新用户失败: {:?}", b);
+    assert_eq!(b["data"]["status"], "pending_activation");
+
+    let (s, _) = auth_put(
+        &db,
+        &format!("/system/users/{}", user_id),
+        &token,
+        json!({
+            "nickname": "旧混合写法",
+            "email": "updated@test.com",
+            "phone": "13900000002",
+            "status": "1",
+        }),
+    )
+    .await;
+    assert!(!s.is_success(), "资料更新接口不应再接受状态字段");
+
+    let (s, _) = auth_post(
+        &db,
+        "/system/users/assign-role",
+        &token,
+        json!({"user_id": user_id, "role_ids": []}),
+    )
+    .await;
+    assert!(!s.is_success(), "旧用户角色动作接口不应可用");
+
+    let (s, _) = auth_put(
+        &db,
+        "/system/users/status",
+        &token,
+        json!({"user_id": user_id, "status": "1"}),
+    )
+    .await;
+    assert!(!s.is_success(), "旧用户状态动作接口不应可用");
 
     // 5. 旧管理员重置密码接口不可用
     let (s, _) = auth_put(
@@ -630,9 +673,18 @@ async fn test_user_crud_flow() {
     // 6. 修改用户状态
     let (s, _) = auth_put(
         &db,
-        "/system/users/changeStatus",
+        &format!("/system/users/{}/status", user_id),
         &token,
-        json!({"user_id": user_id, "status": "0"}),
+        json!({"status": "invalid"}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "非法用户状态应被拒绝");
+
+    let (s, _) = auth_put(
+        &db,
+        &format!("/system/users/{}/status", user_id),
+        &token,
+        json!({"status": "0"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "修改状态失败");
@@ -645,9 +697,9 @@ async fn test_user_crud_flow() {
     // 恢复状态
     let (s, _) = auth_put(
         &db,
-        "/system/users/changeStatus",
+        &format!("/system/users/{}/status", user_id),
         &token,
-        json!({"user_id": user_id, "status": "1"}),
+        json!({"status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -724,11 +776,11 @@ async fn test_user_list_pagination() {
     seed_user(&db, 11, "user_b", "用户B", Some(1)).await;
     seed_user(&db, 12, "user_c", "用户C", Some(1)).await;
 
-    // 分页查询：pageSize=2
-    let (s, b) = auth_get(&db, "/system/users/list?page=1&pageSize=2", &token).await;
+    // 分页查询：page_size=2
+    let (s, b) = auth_get(&db, "/system/users?page=1&page_size=2", &token).await;
     assert_eq!(s, StatusCode::OK);
     let rows = b["rows"].as_array().unwrap();
-    assert!(rows.len() <= 2, "pageSize=2 应返回最多 2 条");
+    assert!(rows.len() <= 2, "page_size=2 应返回最多 2 条");
     assert!(b["total"].as_i64().unwrap() >= 4, "总数至少 4");
 }
 
@@ -789,7 +841,7 @@ async fn test_role_list_with_pagination() {
     seed_test_data(&db).await;
     let token = login_get_token(&db).await;
 
-    let (s, b) = auth_get(&db, "/system/roles/list?page=1&pageSize=10", &token).await;
+    let (s, b) = auth_get(&db, "/system/roles?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b.get("rows").is_some());
     assert!(b.get("total").is_some());

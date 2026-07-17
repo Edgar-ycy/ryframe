@@ -14,7 +14,7 @@
 //! jwt_secret = "ENC[AQIDBAUG...]"
 //! ```
 
-use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce, aead::Aead};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rand::Rng;
 use ryframe_common::{AppError, AppResult};
@@ -33,19 +33,18 @@ impl ConfigCrypto {
     /// # 参数
     /// - `master_key`: 32 字节的密钥
     /// - `plaintext`: 要加密的明文
-    #[allow(deprecated)]
     pub fn encrypt(master_key: &[u8], plaintext: &str) -> AppResult<String> {
-        let key = Key::<Aes256Gcm>::from_slice(master_key);
-        let cipher = Aes256Gcm::new(key);
+        let cipher = Aes256Gcm::new_from_slice(master_key)
+            .map_err(|e| AppError::Config(format!("配置主密钥长度无效: {}", e)))?;
 
         // 生成 12 字节随机 nonce
         let mut nonce_bytes = [0u8; 12];
         rand::rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         // 加密：nonce + ciphertext
         let ciphertext = cipher
-            .encrypt(nonce, plaintext.as_bytes())
+            .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| AppError::Config(format!("配置加密失败: {}", e)))?;
 
         // nonce(12) + ciphertext
@@ -64,7 +63,6 @@ impl ConfigCrypto {
     /// 解密 `ENC[base64(...)]` 格式的值
     ///
     /// 如果值不以 `ENC[` 开头，则原样返回（明文模式）。
-    #[allow(deprecated)]
     pub fn decrypt(master_key: &[u8], value: &str) -> AppResult<String> {
         // 非加密值原样返回
         if !value.starts_with(ENCRYPTED_PREFIX) || !value.ends_with(ENCRYPTED_SUFFIX) {
@@ -81,14 +79,17 @@ impl ConfigCrypto {
             return Err(AppError::Config("配置解密数据长度不足".into()));
         }
 
-        let (nonce_bytes, ciphertext) = combined.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce_bytes: [u8; 12] = combined[..12]
+            .try_into()
+            .map_err(|_| AppError::Config("配置解密 nonce 长度无效".into()))?;
+        let nonce = Nonce::from(nonce_bytes);
+        let ciphertext = &combined[12..];
 
-        let key = Key::<Aes256Gcm>::from_slice(master_key);
-        let cipher = Aes256Gcm::new(key);
+        let cipher = Aes256Gcm::new_from_slice(master_key)
+            .map_err(|e| AppError::Config(format!("配置主密钥长度无效: {}", e)))?;
 
         let plaintext = cipher
-            .decrypt(nonce, ciphertext)
+            .decrypt(&nonce, ciphertext)
             .map_err(|e| AppError::Config(format!("配置解密失败: 密钥不匹配或数据损坏 ({})", e)))?;
 
         String::from_utf8(plaintext)
@@ -124,10 +125,21 @@ pub fn decrypt_config(config: &mut crate::AppConfig) -> AppResult<()> {
     // 解密 auth.jwt_secret
     config.auth.jwt_secret = ConfigCrypto::decrypt(&master_key, &config.auth.jwt_secret)?;
 
-    // 解密 database 连接密码
-    for conn in &mut config.database.connections {
-        if !conn.password.is_empty() {
-            conn.password = ConfigCrypto::decrypt(&master_key, &conn.password)?;
+    // 解密数据库拓扑中的所有连接密码
+    if !config.database.primary.password.is_empty() {
+        config.database.primary.password =
+            ConfigCrypto::decrypt(&master_key, &config.database.primary.password)?;
+    }
+    for replica in &mut config.database.replicas {
+        if !replica.connection.password.is_empty() {
+            replica.connection.password =
+                ConfigCrypto::decrypt(&master_key, &replica.connection.password)?;
+        }
+    }
+    for source in &mut config.database.sources {
+        if !source.connection.password.is_empty() {
+            source.connection.password =
+                ConfigCrypto::decrypt(&master_key, &source.connection.password)?;
         }
     }
 

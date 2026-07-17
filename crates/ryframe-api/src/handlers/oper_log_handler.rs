@@ -7,10 +7,10 @@ use ryframe_macro::{get, route};
 use ryframe_service::system::OperLogVo;
 use serde::Serialize;
 
-use super::auth_handler::AppState;
-use crate::dto::oper_log_dto::OperLogPageQuery;
-use crate::extractors::CurrentUser;
+use crate::dto::oper_log_dto::{OperLogFilterQuery, OperLogPageQuery};
 use crate::handler_utils::excel_response;
+use crate::state::AppState;
+use ryframe_auth::RequestPrincipal;
 
 pub fn oper_log_router(state: AppState) -> Router {
     Router::new()
@@ -21,50 +21,41 @@ pub fn oper_log_router(state: AppState) -> Router {
 }
 
 /// 操作日志列表
-#[get("/", "/list")]
+#[get("/")]
 #[perm("system:operlog:list")]
 #[utoipa::path(get, path = "/api/v1/system/operlogs", tag = "操作日志",
-    responses((status = 200, description = "日志列表")), security(("bearer" = [])))]
+    params(OperLogPageQuery),
+    responses((status = 200, description = "日志列表", body = ApiPageResponse<OperLogVo>)), security(("bearer" = [])))]
 async fn list(
     State(state): State<AppState>,
-    current_user: CurrentUser,
+    current_user: RequestPrincipal,
     Query(query): Query<OperLogPageQuery>,
 ) -> AppResult<Json<ApiPageResponse<OperLogVo>>> {
     state
-        .oper_log_service
-        .find_by_page(
-            &state.db,
-            ryframe_core::PageQuery {
-                page: query.page,
-                page_size: query.page_size,
-            },
-            query.oper_name.as_deref(),
-            query.status,
-            query.begin_time.as_deref(),
-            query.end_time.as_deref(),
-            &current_user.to_data_scope_context(),
-        )
+        .services
+        .oper_log
+        .find_by_page(&current_user, query.into_service_query())
         .await
         .map(|p| Json(p.to_page_response("查询成功")))
 }
 
 /// 操作日志不分页查询（返回全部数据）
-#[get("/listNoPage")]
+#[get("/all")]
 #[perm("system:operlog:list")]
+#[utoipa::path(get, path = "/api/v1/system/operlogs/all", tag = "操作日志",
+    params(OperLogFilterQuery),
+    responses((status = 200, description = "全部操作日志", body = ApiResponse<Vec<OperLogVo>>)), security(("bearer" = [])))]
 async fn list_no_page(
     State(state): State<AppState>,
-    current_user: CurrentUser,
-    Query(query): Query<OperLogPageQuery>,
+    current_user: RequestPrincipal,
+    Query(query): Query<OperLogFilterQuery>,
 ) -> AppResult<Json<ApiResponse<Vec<OperLogVo>>>> {
     let logs = state
-        .oper_log_service
-        .find_all_filtered(
-            &state.db,
-            query.oper_name.as_deref(),
-            query.status,
-            query.begin_time.as_deref(),
-            query.end_time.as_deref(),
-            &current_user.to_data_scope_context(),
+        .services
+        .oper_log
+        .find_all(
+            &current_user,
+            query.into_service_query(ryframe_core::PageQuery::all_records()),
         )
         .await?;
     Ok(Json(ApiResponse::success(logs)))
@@ -101,22 +92,22 @@ impl OperLogExportData {
 /// 导出操作日志
 #[get("/export")]
 #[perm("system:operlog:export")]
+#[utoipa::path(get, path = "/api/v1/system/operlogs/export", tag = "操作日志",
+    params(OperLogFilterQuery),
+    responses((status = 200, description = "导出操作日志 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
 async fn export_oper_logs(
     State(state): State<AppState>,
-    current_user: CurrentUser,
-    Query(query): Query<OperLogPageQuery>,
+    current_user: RequestPrincipal,
+    Query(query): Query<OperLogFilterQuery>,
 ) -> AppResult<axum::response::Response> {
     use ryframe_common::utils::ExcelExporter;
 
     let logs = state
-        .oper_log_service
-        .find_all_filtered(
-            &state.db,
-            query.oper_name.as_deref(),
-            query.status,
-            query.begin_time.as_deref(),
-            query.end_time.as_deref(),
-            &current_user.to_data_scope_context(),
+        .services
+        .oper_log
+        .find_all(
+            &current_user,
+            query.into_service_query(ryframe_core::PageQuery::all_records()),
         )
         .await?;
 

@@ -1,7 +1,8 @@
 use serde::Serialize;
 use sysinfo::System;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServerInfo {
     /// 操作系统
     pub os: String,

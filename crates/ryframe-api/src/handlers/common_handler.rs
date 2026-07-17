@@ -1,28 +1,30 @@
 use axum::{
-    Extension, Json, Router,
+    Json, Router,
     extract::{Multipart, Query, State},
     http::{HeaderMap, header},
     response::IntoResponse,
-    routing::{get, post},
 };
 use ryframe_common::{
     ApiResponse, AppError, AppResult,
     utils::file_upload::{UploadConfig, get_content_type},
 };
+use ryframe_macro::{get, post, route};
 use ryframe_service::system::file_service::{
     AVATAR_BUCKET, FileService, UPLOAD_BUCKET, UploadResponse,
 };
 use serde::Deserialize;
 
-use crate::extractors::CurrentUser;
-use crate::handlers::auth_handler::AppState;
-use crate::runtime::FileUploadedEvent;
+use crate::dto::multipart_dto::FileUploadForm;
+use crate::state::AppState;
+use ryframe_auth::RequestPrincipal;
 
 /// 多文件上传响应
 pub type MultiUploadResponse = Vec<UploadResponse>;
 
 /// 文件下载查询参数
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
 pub struct DownloadQuery {
     /// 对象存储中的 key 路径
     pub path: String,
@@ -38,44 +40,41 @@ fn default_bucket() -> String {
 /// 上传文件路由（公开）
 pub fn upload_router(state: AppState) -> Router {
     Router::new()
-        .route("/", post(upload_file))
-        .route("/image", post(upload_image))
-        .route("/avatar", post(upload_avatar))
+        .merge(route!(upload_file))
+        .merge(route!(upload_image))
+        .merge(route!(upload_avatar))
         .with_state(state)
 }
 
 /// 下载文件路由（需认证）
 pub fn download_router(state: AppState) -> Router {
-    Router::new()
-        .route("/download", get(download_file))
-        .with_state(state)
+    Router::new().merge(route!(download_file)).with_state(state)
 }
 
 // ==================== 上传接口（薄层：仅解析 HTTP 参数，委托 Service） ====================
 
 /// 通用文件上传（支持多文件、动态桶名）
+#[post("/")]
+#[utoipa::path(post, path = "/api/v1/common/upload", tag = "通用",
+    request_body(content = FileUploadForm, content_type = "multipart/form-data"),
+    responses((status = 200, description = "上传成功", body = ApiResponse<Vec<UploadResponse>>)), security(("bearer" = [])))]
 pub async fn upload_file(
     State(state): State<AppState>,
-    Extension(current_user): Extension<CurrentUser>,
+    current_user: RequestPrincipal,
     multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig::default();
-    process_multipart_upload(
-        state,
-        multipart,
-        &config,
-        None,
-        false,
-        current_user.username,
-        current_user.tenant_id,
-    )
-    .await
+    process_multipart_upload(state, multipart, &config, None, false, current_user).await
 }
 
 /// 图片上传（仅允许图片类型，自动压缩）
+#[post("/image")]
+#[utoipa::path(post, path = "/api/v1/common/upload/image", tag = "通用",
+    request_body(content = FileUploadForm, content_type = "multipart/form-data"),
+    responses((status = 200, description = "图片上传成功", body = ApiResponse<Vec<UploadResponse>>)), security(("bearer" = [])))]
 pub async fn upload_image(
     State(state): State<AppState>,
-    Extension(current_user): Extension<CurrentUser>,
+    current_user: RequestPrincipal,
     multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig {
@@ -90,22 +89,17 @@ pub async fn upload_image(
         max_file_size: 5 * 1024 * 1024, // 5MB
         ..Default::default()
     };
-    process_multipart_upload(
-        state,
-        multipart,
-        &config,
-        None,
-        true,
-        current_user.username,
-        current_user.tenant_id,
-    )
-    .await
+    process_multipart_upload(state, multipart, &config, None, true, current_user).await
 }
 
 /// 头像上传（固定使用 `avatar` 桶）
+#[post("/avatar")]
+#[utoipa::path(post, path = "/api/v1/common/upload/avatar", tag = "通用",
+    request_body(content = FileUploadForm, content_type = "multipart/form-data"),
+    responses((status = 200, description = "头像上传成功", body = ApiResponse<Vec<UploadResponse>>)), security(("bearer" = [])))]
 pub async fn upload_avatar(
     State(state): State<AppState>,
-    Extension(current_user): Extension<CurrentUser>,
+    current_user: RequestPrincipal,
     multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig {
@@ -126,8 +120,7 @@ pub async fn upload_avatar(
         &config,
         Some(AVATAR_BUCKET.to_string()),
         true,
-        current_user.username,
-        current_user.tenant_id,
+        current_user,
     )
     .await
 }
@@ -139,16 +132,8 @@ async fn process_multipart_upload(
     config: &UploadConfig,
     force_bucket: Option<String>,
     compress: bool,
-    upload_by: String,
-    tenant_id: String,
+    current_user: RequestPrincipal,
 ) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
-    if !state
-        .runtime
-        .feature_flags
-        .is_enabled_or("file_upload", true)
-    {
-        return Err(AppError::Authorization("文件上传功能已关闭".into()));
-    }
     if !state.runtime.upload_circuit_breaker.allow_request() {
         return Err(AppError::Conflict(
             "文件上传服务暂时不可用，请稍后再试".into(),
@@ -189,22 +174,25 @@ async fn process_multipart_upload(
 
         // 确保 bucket 存在（每请求一次）
         if !bucket_ensured {
-            FileService::ensure_bucket(&state.object_storage, &effective_bucket).await?;
+            state.services.file.ensure_bucket(&effective_bucket).await?;
             bucket_ensured = true;
         }
 
         // 委托 FileService 处理业务逻辑
-        let result = match FileService::upload_single(
-            &state.db,
-            &state.object_storage,
-            filename,
-            data.to_vec(),
-            config,
-            &effective_bucket,
-            compress,
-            Some(upload_by.clone()),
-        )
-        .await
+        let result = match state
+            .services
+            .file
+            .upload_single(
+                &current_user,
+                ryframe_service::system::UploadCommand {
+                    original_name: filename,
+                    data: data.to_vec(),
+                    config,
+                    bucket: &effective_bucket,
+                    compress,
+                },
+            )
+            .await
         {
             Ok(result) => {
                 state.runtime.upload_circuit_breaker.record_success();
@@ -215,18 +203,6 @@ async fn process_multipart_upload(
                 return Err(err);
             }
         };
-
-        state
-            .runtime
-            .emit_file_uploaded(FileUploadedEvent {
-                tenant_id: tenant_id.clone(),
-                operator: upload_by.clone(),
-                file_id: result.file_id,
-                file_url: result.file_url.clone(),
-                bucket: effective_bucket.clone(),
-                occurred_at: chrono::Utc::now().to_rfc3339(),
-            })
-            .await;
 
         results.push(result);
     }
@@ -239,8 +215,13 @@ async fn process_multipart_upload(
 }
 
 /// 下载文件（薄层：HTTP 参数提取 + 构建响应头，业务委托 FileService）
+#[get("/download")]
+#[utoipa::path(get, path = "/api/v1/common/file/download", tag = "通用",
+    params(DownloadQuery),
+    responses((status = 200, description = "文件下载", body = Vec<u8>, content_type = "application/octet-stream")), security(("bearer" = [])))]
 pub async fn download_file(
     State(state): State<AppState>,
+    current_user: RequestPrincipal,
     Query(query): Query<DownloadQuery>,
 ) -> AppResult<impl IntoResponse> {
     let bucket = if query.bucket.is_empty() {
@@ -249,8 +230,11 @@ pub async fn download_file(
         query.bucket
     };
 
-    let (data, filename) =
-        FileService::download(&state.object_storage, &bucket, &query.path).await?;
+    let (data, filename) = state
+        .services
+        .file
+        .download(&current_user, &bucket, &query.path)
+        .await?;
 
     let content_type = get_content_type(&filename);
 

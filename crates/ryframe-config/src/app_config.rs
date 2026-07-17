@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use ryframe_common::{AppError, AppResult};
 use serde::Deserialize;
 
 use crate::{
-    AuthConfig, CorsConfig, DatabaseConfig, LoggerConfig, ObjectStorageConfig, RateLimitConfig,
-    RedisConfig,
+    AuthConfig, CorsConfig, DatabaseConfig, GeneratorConfig, LoggerConfig, ObjectStorageConfig,
+    RateLimitConfig, RedisConfig,
 };
 
 /// 应用基础配置
@@ -21,7 +23,6 @@ pub struct AppSettings {
 
 // #[derive(Default)] 不能用于 AppSettings，需要提供有意义的应用默认值
 // （名称、版本号等），而非空字符串。
-#[allow(clippy::derivable_impls)]
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -38,6 +39,8 @@ impl Default for AppSettings {
 pub struct AppConfig {
     pub app: AppSettings,
     pub database: DatabaseConfig,
+    #[serde(default)]
+    pub generator: GeneratorConfig,
     pub auth: AuthConfig,
     #[serde(default)]
     pub redis: Option<RedisConfig>,
@@ -92,21 +95,67 @@ impl AppConfig {
         if self.app.port == 0 {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
-        if self.database.connections.is_empty() {
-            return Err(AppError::Config(
-                "database.connections 至少需要一个连接".into(),
-            ));
+        validate_database_connection("database.primary", &self.database.primary)?;
+
+        let mut replica_names = HashSet::with_capacity(self.database.replicas.len());
+        for (index, replica) in self.database.replicas.iter().enumerate() {
+            let name = replica.name.trim();
+            if name.is_empty() {
+                return Err(AppError::Config(format!(
+                    "database.replicas[{index}].name 不能为空"
+                )));
+            }
+            if !replica_names.insert(name) {
+                return Err(AppError::Config(format!(
+                    "database.replicas 名称重复: {name}"
+                )));
+            }
+            if replica.connection.driver != self.database.primary.driver {
+                return Err(AppError::Config(format!(
+                    "database.replicas[{index}].driver 必须与 database.primary.driver 一致"
+                )));
+            }
+            validate_database_connection(
+                &format!("database.replicas[{index}]"),
+                &replica.connection,
+            )?;
         }
-        let primary = &self.database.connections[0];
-        if primary.host.is_empty() {
-            return Err(AppError::Config(
-                "database.connections[0].host 不能为空".into(),
-            ));
+        let mut source_names = HashSet::with_capacity(self.database.sources.len());
+        for (index, source) in self.database.sources.iter().enumerate() {
+            let name = source.name.trim();
+            if name.is_empty() {
+                return Err(AppError::Config(format!(
+                    "database.sources[{index}].name 不能为空"
+                )));
+            }
+            if name == "primary" {
+                return Err(AppError::Config(
+                    "database.sources 名称不能使用保留名称 primary".into(),
+                ));
+            }
+            if !source_names.insert(name) {
+                return Err(AppError::Config(format!(
+                    "database.sources 名称重复: {name}"
+                )));
+            }
+            if replica_names.contains(name) {
+                return Err(AppError::Config(format!(
+                    "database.sources 与 database.replicas 名称冲突: {name}"
+                )));
+            }
+            validate_database_connection(
+                &format!("database.sources[{index}]"),
+                &source.connection,
+            )?;
         }
-        if primary.database.is_empty() {
-            return Err(AppError::Config(
-                "database.connections[0].database 不能为空".into(),
-            ));
+        let generator_source = self.generator.data_source.trim();
+        if generator_source.is_empty() {
+            return Err(AppError::Config("generator.data_source 不能为空".into()));
+        }
+        if generator_source != "primary" && !source_names.contains(generator_source) {
+            return Err(AppError::Config(format!(
+                "generator.data_source 未注册: {generator_source}"
+            )));
         }
         if self.auth.jwt_secret.is_empty() {
             return Err(AppError::Config("auth.jwt_secret 不能为空".into()));
@@ -116,8 +165,68 @@ impl AppConfig {
                 "生产环境必须修改 auth.jwt_secret，不允许使用默认值".into(),
             ));
         }
+        match self.object_storage.backend {
+            crate::StorageBackend::Local => {
+                if self.object_storage.local_base_dir.trim().is_empty() {
+                    return Err(AppError::Config(
+                        "object_storage.local_base_dir 不能为空".into(),
+                    ));
+                }
+            }
+            crate::StorageBackend::Rustfs
+            | crate::StorageBackend::Minio
+            | crate::StorageBackend::S3 => {
+                if self.object_storage.endpoint.trim().is_empty()
+                    || self.object_storage.access_key.trim().is_empty()
+                    || self.object_storage.secret_key.is_empty()
+                    || self.object_storage.region.trim().is_empty()
+                {
+                    return Err(AppError::Config(
+                        "RustFS/MinIO/S3 需要 endpoint、access_key、secret_key 和 region".into(),
+                    ));
+                }
+            }
+        }
         Ok(())
     }
+}
+
+fn validate_database_connection(path: &str, connection: &crate::DbConnection) -> AppResult<()> {
+    if !matches!(connection.driver.as_str(), "mysql" | "postgres" | "sqlite") {
+        return Err(AppError::Config(format!(
+            "{path}.driver 必须是 mysql、postgres 或 sqlite"
+        )));
+    }
+    if connection.database.trim().is_empty() {
+        return Err(AppError::Config(format!("{path}.database 不能为空")));
+    }
+    if connection.driver != "sqlite" {
+        if connection.host.trim().is_empty() {
+            return Err(AppError::Config(format!("{path}.host 不能为空")));
+        }
+        if connection.port == 0 {
+            return Err(AppError::Config(format!("{path}.port 必须大于 0")));
+        }
+        if connection.username.trim().is_empty() {
+            return Err(AppError::Config(format!("{path}.username 不能为空")));
+        }
+    }
+    if connection.max_connections == 0 {
+        return Err(AppError::Config(format!(
+            "{path}.max_connections 必须大于 0"
+        )));
+    }
+    if connection.min_connections > connection.max_connections {
+        return Err(AppError::Config(format!(
+            "{path}.min_connections 不能大于 max_connections"
+        )));
+    }
+    if connection.acquire_timeout_secs == 0 || connection.connect_timeout_secs == 0 {
+        return Err(AppError::Config(format!(
+            "{path} 的 acquire_timeout_secs 和 connect_timeout_secs 必须大于 0"
+        )));
+    }
+    Ok(())
 }
 
 fn load_merged_table(config_dir: &str, env: &str) -> AppResult<toml::Table> {
@@ -164,6 +273,7 @@ enum EnvValueType {
     Integer,
     Bool,
     StringArray,
+    Json,
 }
 
 const ENV_OVERRIDES: &[EnvOverride] = &[
@@ -194,63 +304,78 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
     },
     EnvOverride {
         name: "APP_DATABASE_DRIVER",
-        path: &["database", "connections", "0", "driver"],
+        path: &["database", "primary", "driver"],
         value_type: EnvValueType::String,
     },
     EnvOverride {
         name: "APP_DATABASE_HOST",
-        path: &["database", "connections", "0", "host"],
+        path: &["database", "primary", "host"],
         value_type: EnvValueType::String,
     },
     EnvOverride {
         name: "APP_DATABASE_PORT",
-        path: &["database", "connections", "0", "port"],
+        path: &["database", "primary", "port"],
         value_type: EnvValueType::Integer,
     },
     EnvOverride {
         name: "APP_DATABASE_NAME",
-        path: &["database", "connections", "0", "database"],
+        path: &["database", "primary", "database"],
         value_type: EnvValueType::String,
     },
     EnvOverride {
         name: "APP_DATABASE_USERNAME",
-        path: &["database", "connections", "0", "username"],
+        path: &["database", "primary", "username"],
         value_type: EnvValueType::String,
     },
     EnvOverride {
         name: "APP_DATABASE_PASSWORD",
-        path: &["database", "connections", "0", "password"],
+        path: &["database", "primary", "password"],
         value_type: EnvValueType::String,
     },
     EnvOverride {
         name: "APP_DATABASE_MAX_CONNECTIONS",
-        path: &["database", "connections", "0", "max_connections"],
+        path: &["database", "primary", "max_connections"],
         value_type: EnvValueType::Integer,
     },
     EnvOverride {
         name: "APP_DATABASE_MIN_CONNECTIONS",
-        path: &["database", "connections", "0", "min_connections"],
+        path: &["database", "primary", "min_connections"],
         value_type: EnvValueType::Integer,
     },
     EnvOverride {
         name: "APP_DATABASE_ACQUIRE_TIMEOUT_SECS",
-        path: &["database", "connections", "0", "acquire_timeout_secs"],
+        path: &["database", "primary", "acquire_timeout_secs"],
         value_type: EnvValueType::Integer,
     },
     EnvOverride {
         name: "APP_DATABASE_IDLE_TIMEOUT_SECS",
-        path: &["database", "connections", "0", "idle_timeout_secs"],
+        path: &["database", "primary", "idle_timeout_secs"],
         value_type: EnvValueType::Integer,
     },
     EnvOverride {
         name: "APP_DATABASE_MAX_LIFETIME_SECS",
-        path: &["database", "connections", "0", "max_lifetime_secs"],
+        path: &["database", "primary", "max_lifetime_secs"],
         value_type: EnvValueType::Integer,
     },
     EnvOverride {
         name: "APP_DATABASE_CONNECT_TIMEOUT_SECS",
-        path: &["database", "connections", "0", "connect_timeout_secs"],
+        path: &["database", "primary", "connect_timeout_secs"],
         value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_REPLICAS",
+        path: &["database", "replicas"],
+        value_type: EnvValueType::Json,
+    },
+    EnvOverride {
+        name: "APP_DATABASE_SOURCES",
+        path: &["database", "sources"],
+        value_type: EnvValueType::Json,
+    },
+    EnvOverride {
+        name: "APP_GENERATOR_DATA_SOURCE",
+        path: &["generator", "data_source"],
+        value_type: EnvValueType::String,
     },
     EnvOverride {
         name: "APP_AUTH_JWT_SECRET",
@@ -276,11 +401,6 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
         name: "APP_AUTH_LOCKOUT_DURATION_MINUTES",
         path: &["auth", "lockout_duration_minutes"],
         value_type: EnvValueType::Integer,
-    },
-    EnvOverride {
-        name: "APP_AUTH_ENABLE_PASSWORD_COMPLEXITY",
-        path: &["auth", "enable_password_complexity"],
-        value_type: EnvValueType::Bool,
     },
     EnvOverride {
         name: "APP_REDIS_HOST",
@@ -434,6 +554,14 @@ fn parse_env_value(name: &str, value: &str, value_type: EnvValueType) -> AppResu
                 .collect();
             Ok(toml::Value::Array(values))
         }
+        EnvValueType::Json => {
+            let json = serde_json::from_str::<serde_json::Value>(value).map_err(|error| {
+                AppError::Config(format!("环境变量 {name} 不是有效 JSON: {error}"))
+            })?;
+            toml::Value::try_from(json).map_err(|error| {
+                AppError::Config(format!("环境变量 {name} 无法转换为配置值: {error}"))
+            })
+        }
     }
 }
 
@@ -448,14 +576,6 @@ fn insert_toml_path(table: &mut toml::Table, path: &[&str], value: toml::Value) 
 fn insert_toml_path_inner(table: &mut toml::Table, path: &[&str], value: toml::Value) {
     if path.len() == 1 {
         table.insert(path[0].to_string(), value);
-        return;
-    }
-
-    if path.len() >= 3
-        && let Ok(index) = path[1].parse::<usize>()
-    {
-        let child = ensure_array_table(table, path[0], index);
-        insert_toml_path_inner(child, &path[2..], value);
         return;
     }
 
@@ -476,36 +596,9 @@ fn ensure_table<'a>(table: &'a mut toml::Table, key: &str) -> &'a mut toml::Tabl
     table
 }
 
-fn ensure_array_table<'a>(
-    table: &'a mut toml::Table,
-    key: &str,
-    index: usize,
-) -> &'a mut toml::Table {
-    let array = table
-        .entry(key.to_string())
-        .or_insert_with(|| toml::Value::Array(Vec::new()));
-    if !array.is_array() {
-        *array = toml::Value::Array(Vec::new());
-    }
-    let toml::Value::Array(array) = array else {
-        unreachable!("array was initialized above");
-    };
-    while array.len() <= index {
-        array.push(toml::Value::Table(toml::Table::new()));
-    }
-    if !array[index].is_table() {
-        array[index] = toml::Value::Table(toml::Table::new());
-    }
-    let toml::Value::Table(table) = &mut array[index] else {
-        unreachable!("array item was initialized above");
-    };
-    table
-}
-
 /// 递归合并两个 TOML Table，env 的值覆盖 base 对应位置的值
 ///
 /// - Table → 递归合并子键
-/// - Array of Tables → 按索引合并（env[i] 覆盖 base[i] 对应字段，env 多出的追加）
 /// - 其他 → env 直接覆盖 base
 fn merge_tables(base: &mut toml::Table, env: &toml::Table) {
     for (key, value) in env {
@@ -514,36 +607,9 @@ fn merge_tables(base: &mut toml::Table, env: &toml::Table) {
             (Some(toml::Value::Table(base_table)), toml::Value::Table(env_table)) => {
                 merge_tables(base_table, env_table);
             }
-            // 两地都是 Array of Tables → 按索引递归合并
-            (Some(toml::Value::Array(base_arr)), toml::Value::Array(env_arr))
-                if is_array_of_tables(base_arr) && is_array_of_tables(env_arr) =>
-            {
-                merge_array_of_tables(base_arr, env_arr);
-            }
             // env 覆盖 base
             _ => {
                 base.insert(key.clone(), value.clone());
-            }
-        }
-    }
-}
-
-/// 检查数组中所有元素是否都是 Table
-fn is_array_of_tables(arr: &[toml::Value]) -> bool {
-    arr.iter().all(|v| matches!(v, toml::Value::Table(_)))
-}
-
-/// 合并两个 Array of Tables：按索引递归合并 Table，env 多出的追加
-fn merge_array_of_tables(base_arr: &mut Vec<toml::Value>, env_arr: &[toml::Value]) {
-    let base_len = base_arr.len();
-    for (i, env_val) in env_arr.iter().enumerate() {
-        if let toml::Value::Table(env_table) = env_val {
-            if i < base_len {
-                if let toml::Value::Table(base_table) = &mut base_arr[i] {
-                    merge_tables(base_table, env_table);
-                }
-            } else {
-                base_arr.push(toml::Value::Table(env_table.clone()));
             }
         }
     }

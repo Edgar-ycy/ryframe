@@ -50,9 +50,9 @@ impl DataScope {
 
 /// 数据权限上下文
 ///
-/// 在 Handler 层从 CurrentUser 中提取后传入 Service 层。
+/// 从已认证的 RequestPrincipal 中提取后传入 Service 层。
 /// Service 层调用 `build_condition` 构建 SeaORM 过滤条件。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataScopeContext {
     pub scope: DataScope,
     pub user_id: i64,

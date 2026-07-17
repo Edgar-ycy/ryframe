@@ -1,1 +1,292 @@
-//! DeptRepository 独立测试 //! //! 使用 SQLite 内存数据库测试部门仓库的 CRUD、树形结构、祖先路径等功能。  mod common; use common::setup_test_db;  use chrono::Utc; use ryframe_core::auto_fill::{AutoFill, FillContext}; use ryframe_core::repository::{PageQuery, Repository}; use ryframe_db::DeptRepository; use ryframe_db::entities::dept;  fn now() -> chrono::DateTime<Utc> {     Utc::now() }  fn make_dept(     name: &str,     parent_id: Option<i64>,     ancestors: &str,     sort: i32,     status: &str, ) -> dept::Model {     let mut model = dept::Model {         id: 0,         name: name.into(),         parent_id,         ancestors: ancestors.into(),         sort,         status: status.into(),         remark: None,         del_flag: dept::Model::DEL_FLAG_NORMAL.to_string(),         created_at: now(),         updated_at: now(),     };     model.fill_on_insert(&FillContext::new());     model }  // ==================== CRUD 基础操作 ====================  #[tokio::test] async fn test_dept_repo_crud() {     let db = setup_test_db().await;     let repo = DeptRepository;      let d = make_dept("技术部", None, "0", 1, dept::Model::STATUS_NORMAL);     let inserted = repo.insert(&db, d).await.unwrap();     assert_eq!(inserted.name, "技术部");      let found = repo.find_by_id(&db, inserted.id).await.unwrap().unwrap();     assert_eq!(found.name, "技术部");     assert_eq!(found.ancestors, "0");      repo.delete(&db, inserted.id).await.unwrap();     assert!(repo.find_by_id(&db, inserted.id).await.unwrap().is_none()); }  #[tokio::test] async fn test_dept_repo_update() {     let db = setup_test_db().await;     let repo = DeptRepository;      let d = make_dept("原始名称", None, "0", 1, dept::Model::STATUS_NORMAL);     let inserted = repo.insert(&db, d).await.unwrap();      // SeaORM 2.0-rc + SQLite update 可能不返回新值，跳过严格断言     let mut updated = inserted.clone();     updated.name = "更新后名称".into();     updated.remark = Some("备注".into());     updated.updated_at = now();     // update 方法至少不掉错即有基本功能     let result = repo.update(&db, updated).await;     assert!(result.is_ok()); }  // ==================== 分页 ====================  #[tokio::test] async fn test_dept_repo_pagination() {     let db = setup_test_db().await;     let repo = DeptRepository;      for i in 0..8 {         let d = make_dept(             &format!("部门{}", i),             None,             "0",             i,             dept::Model::STATUS_NORMAL,         );         repo.insert(&db, d).await.unwrap();     }      let page = repo         .find_by_page(             &db,             PageQuery {                 page: 1,                 page_size: 5,             },         )         .await         .unwrap();     assert_eq!(page.records.len(), 5);     assert_eq!(page.total, 8); }  // ==================== 树形结构 ====================  #[tokio::test] async fn test_dept_repo_find_tree() {     let db = setup_test_db().await;     let repo = DeptRepository;      let root = make_dept("总公司", None, "0", 1, dept::Model::STATUS_NORMAL);     let root = repo.insert(&db, root).await.unwrap();      // 二级部门     let ancestors_a = format!("0,{}", root.id);     let dept_a = make_dept(         "研发部",         Some(root.id),         &ancestors_a,         1,         dept::Model::STATUS_NORMAL,     );     let dept_a = repo.insert(&db, dept_a).await.unwrap();      // 三级部门     let ancestors_b = format!("{},{}", ancestors_a, dept_a.id);     let dept_b = make_dept(         "前端组",         Some(dept_a.id),         &ancestors_b,         1,         dept::Model::STATUS_NORMAL,     );     repo.insert(&db, dept_b).await.unwrap();      let tree = repo.find_tree(&db).await.unwrap();     assert_eq!(tree.len(), 1);     assert_eq!(tree[0].name, "总公司");     assert_eq!(tree[0].children.len(), 1);     assert_eq!(tree[0].children[0].name, "研发部");     assert_eq!(tree[0].children[0].children.len(), 1);     assert_eq!(tree[0].children[0].children[0].name, "前端组"); }  // ==================== 子部门检查 ====================  #[tokio::test] async fn test_dept_repo_has_children() {     let db = setup_test_db().await;     let repo = DeptRepository;      let parent = make_dept("父部门", None, "0", 1, dept::Model::STATUS_NORMAL);     let parent = repo.insert(&db, parent).await.unwrap();      // 无子部门     assert!(!repo.has_children(&db, parent.id).await.unwrap());      // 添加子部门     let children_ancestors = format!("0,{}", parent.id);     let child = make_dept(         "子部门",         Some(parent.id),         &children_ancestors,         1,         dept::Model::STATUS_NORMAL,     );     repo.insert(&db, child).await.unwrap();      assert!(repo.has_children(&db, parent.id).await.unwrap()); }  // ==================== 祖先路径 ====================  #[tokio::test] async fn test_dept_repo_build_ancestors() {     let db = setup_test_db().await;     let repo = DeptRepository;      // 根部门的祖先     let ancestors = repo.build_ancestors(&db, None).await.unwrap();     assert_eq!(ancestors, "0");      // 创建父部门后，子部门的祖先     let parent = make_dept("父部门", None, "0", 1, dept::Model::STATUS_NORMAL);     let parent = repo.insert(&db, parent).await.unwrap();      let ancestors = repo.build_ancestors(&db, Some(parent.id)).await.unwrap();     assert_eq!(ancestors, format!("0,{}", parent.id)); }  #[tokio::test] async fn test_dept_repo_build_ancestors_parent_not_found() {     let db = setup_test_db().await;     let repo = DeptRepository;      let result = repo.build_ancestors(&db, Some(99999)).await;     assert!(result.is_err()); }  // ==================== 查询子部门 ====================  #[tokio::test] async fn test_dept_repo_find_child_dept_ids() {     let db = setup_test_db().await;     let repo = DeptRepository;      let root = make_dept("总公司", None, "0", 1, dept::Model::STATUS_NORMAL);     let root = repo.insert(&db, root).await.unwrap();      let ancestors_a = format!("0,{}", root.id);     let dept_a = make_dept(         "研发部",         Some(root.id),         &ancestors_a,         1,         dept::Model::STATUS_NORMAL,     );     let dept_a = repo.insert(&db, dept_a).await.unwrap();      let ancestors_b = format!("{},{}", ancestors_a, dept_a.id);     let dept_b = make_dept(         "前端组",         Some(dept_a.id),         &ancestors_b,         1,         dept::Model::STATUS_NORMAL,     );     repo.insert(&db, dept_b).await.unwrap();      // 查询总公司下的所有子部门（含自身）     let ids = repo.find_child_dept_ids(&db, root.id).await.unwrap();     assert_eq!(ids.len(), 3);     assert!(ids.contains(&root.id));     assert!(ids.contains(&dept_a.id)); }  // ==================== 过滤查询 ====================  #[tokio::test] async fn test_dept_repo_find_filtered() {     let db = setup_test_db().await;     let repo = DeptRepository;      let d1 = make_dept("研发部", None, "0", 1, dept::Model::STATUS_NORMAL);     let d2 = make_dept("市场部", None, "0", 2, dept::Model::STATUS_DISABLED);     repo.insert(&db, d1).await.unwrap();     repo.insert(&db, d2).await.unwrap();      // 按名称过滤     let result = repo.find_filtered(&db, Some("研发"), None).await.unwrap();     assert_eq!(result.len(), 1);     assert_eq!(result[0].name, "研发部");      // 按状态过滤     let result = repo         .find_filtered(&db, None, Some(dept::Model::STATUS_DISABLED))         .await         .unwrap();     assert_eq!(result.len(), 1);     assert_eq!(result[0].name, "市场部");      // 全部查询     let result = repo.find_filtered(&db, None, None).await.unwrap();     assert_eq!(result.len(), 2); }
+//! DeptRepository integration tests.
+
+mod common;
+
+use chrono::Utc;
+use common::setup_test_db;
+use ryframe_common::utils::snowflake;
+use ryframe_core::repository::{PageQuery, Repository};
+use ryframe_db::{
+    DeptRepository,
+    entities::{dept, role, role_dept},
+};
+use sea_orm::{DatabaseConnection, EntityTrait};
+
+const TENANT: &str = "system";
+
+fn make_dept(
+    name: &str,
+    parent_id: Option<i64>,
+    ancestors: &str,
+    sort: i32,
+    status: &str,
+) -> dept::Model {
+    dept::Model {
+        id: snowflake::next_snowflake_id(),
+        tenant_id: TENANT.into(),
+        name: name.into(),
+        parent_id,
+        ancestors: ancestors.into(),
+        sort,
+        status: status.into(),
+        remark: None,
+        del_flag: dept::Model::DEL_FLAG_NORMAL.into(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    }
+}
+
+async fn insert_dept(
+    db: &DatabaseConnection,
+    name: &str,
+    parent_id: Option<i64>,
+    ancestors: &str,
+    sort: i32,
+) -> dept::Model {
+    DeptRepository
+        .insert(
+            db,
+            TENANT,
+            make_dept(name, parent_id, ancestors, sort, dept::Model::STATUS_NORMAL),
+        )
+        .await
+        .expect("insert department")
+}
+
+#[tokio::test]
+async fn crud_pagination_and_filters_are_consistent() {
+    let db = setup_test_db().await;
+    let repo = DeptRepository;
+    let engineering = insert_dept(&db, "研发部", None, "0", 1).await;
+    let mut sales_model = make_dept("市场部", None, "0", 2, dept::Model::STATUS_DISABLED);
+    sales_model.remark = Some("disabled".into());
+    let sales = repo
+        .insert(&db, TENANT, sales_model)
+        .await
+        .expect("insert sales");
+
+    let page = repo
+        .find_by_page(
+            &db,
+            TENANT,
+            PageQuery {
+                page: 1,
+                page_size: 1,
+            },
+        )
+        .await
+        .expect("page departments");
+    assert_eq!(page.total, 2);
+    assert_eq!(page.records.len(), 1);
+
+    let by_name = repo
+        .find_filtered(&db, TENANT, Some("研发"), None)
+        .await
+        .expect("filter name");
+    assert_eq!(
+        by_name.iter().map(|item| item.id).collect::<Vec<_>>(),
+        vec![engineering.id]
+    );
+    let by_status = repo
+        .find_filtered(&db, TENANT, None, Some(dept::Model::STATUS_DISABLED))
+        .await
+        .expect("filter status");
+    assert_eq!(by_status[0].id, sales.id);
+    assert_eq!(
+        repo.find_filtered_by_ids(&db, TENANT, None, None, &[engineering.id])
+            .await
+            .expect("filter visible ids")
+            .len(),
+        1
+    );
+    assert!(
+        repo.find_filtered_by_ids(&db, TENANT, None, None, &[])
+            .await
+            .expect("empty ids")
+            .is_empty()
+    );
+
+    let visible_page = repo
+        .find_by_page_filtered_by_ids(&db, TENANT, PageQuery::default(), None, None, &[sales.id])
+        .await
+        .expect("visible page");
+    assert_eq!(visible_page.total, 1);
+    let empty_page = repo
+        .find_by_page_filtered_by_ids(&db, TENANT, PageQuery::default(), None, None, &[])
+        .await
+        .expect("empty page");
+    assert_eq!(empty_page.total, 0);
+
+    let mut updated = engineering.clone();
+    updated.name = "平台研发部".into();
+    repo.update(&db, TENANT, updated)
+        .await
+        .expect("update department");
+    assert_eq!(
+        repo.find_by_id(&db, TENANT, engineering.id)
+            .await
+            .expect("find department")
+            .expect("department exists")
+            .name,
+        "平台研发部"
+    );
+    repo.delete(&db, TENANT, engineering.id)
+        .await
+        .expect("delete department");
+    assert!(
+        repo.find_by_id(&db, TENANT, engineering.id)
+            .await
+            .expect("find deleted")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn hierarchy_queries_keep_ancestor_paths_intact() {
+    let db = setup_test_db().await;
+    let repo = DeptRepository;
+    let root = insert_dept(&db, "总公司", None, "0", 1).await;
+    let child_ancestors = repo
+        .build_ancestors(&db, TENANT, Some(root.id))
+        .await
+        .expect("child ancestors");
+    let child = insert_dept(&db, "研发部", Some(root.id), &child_ancestors, 1).await;
+    let grandchild_ancestors = repo
+        .build_ancestors(&db, TENANT, Some(child.id))
+        .await
+        .expect("grandchild ancestors");
+    let grandchild = insert_dept(&db, "前端组", Some(child.id), &grandchild_ancestors, 1).await;
+
+    assert_eq!(
+        repo.build_ancestors(&db, TENANT, None)
+            .await
+            .expect("root ancestors"),
+        "0"
+    );
+    assert!(repo.build_ancestors(&db, TENANT, Some(-1)).await.is_err());
+    assert!(
+        repo.has_children(&db, TENANT, root.id)
+            .await
+            .expect("root children")
+    );
+    assert!(
+        !repo
+            .has_children(&db, TENANT, grandchild.id)
+            .await
+            .expect("leaf children")
+    );
+
+    let tree = repo.find_tree(&db, TENANT).await.expect("department tree");
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].id, root.id.to_string());
+    assert_eq!(tree[0].children[0].id, child.id.to_string());
+    assert_eq!(
+        tree[0].children[0].children[0].id,
+        grandchild.id.to_string()
+    );
+
+    let visible_tree = repo
+        .find_tree_by_visible_ids(&db, TENANT, &[grandchild.id])
+        .await
+        .expect("visible tree");
+    assert_eq!(
+        visible_tree[0].children[0].children[0].id,
+        grandchild.id.to_string()
+    );
+    assert!(
+        repo.find_tree_by_visible_ids(&db, TENANT, &[])
+            .await
+            .expect("empty tree")
+            .is_empty()
+    );
+
+    let child_ids = repo
+        .find_child_dept_ids(&db, TENANT, root.id)
+        .await
+        .expect("child ids");
+    assert_eq!(child_ids.len(), 3);
+    let descendants = repo
+        .find_descendants(&db, TENANT, root.id)
+        .await
+        .expect("descendants");
+    assert_eq!(descendants.len(), 2);
+    assert!(repo.find_child_dept_ids(&db, TENANT, -1).await.is_err());
+}
+
+#[tokio::test]
+async fn department_queries_are_tenant_scoped() {
+    let db = setup_test_db().await;
+    insert_dept(&db, "系统部门", None, "0", 1).await;
+
+    let mut other = make_dept("其他租户部门", None, "0", 1, dept::Model::STATUS_NORMAL);
+    other.tenant_id = "other".into();
+    DeptRepository
+        .insert(&db, "other", other)
+        .await
+        .expect("insert other tenant department");
+
+    assert_eq!(
+        DeptRepository
+            .find_by_page(&db, TENANT, PageQuery::default())
+            .await
+            .expect("system page")
+            .total,
+        1
+    );
+    let other_page = DeptRepository
+        .find_by_page(&db, "other", PageQuery::default())
+        .await
+        .expect("other page");
+    assert_eq!(other_page.total, 1);
+}
+
+#[tokio::test]
+async fn department_role_scope_references_are_detected() {
+    let db = setup_test_db().await;
+    let dept = insert_dept(&db, "受限部门", None, "0", 1).await;
+    assert!(
+        !DeptRepository
+            .is_referenced(&db, TENANT, dept.id)
+            .await
+            .expect("check unreferenced department")
+    );
+
+    role::Entity::insert(role::ActiveModel::from(role::Model {
+        id: 1,
+        tenant_id: TENANT.into(),
+        name: "数据范围角色".into(),
+        code: "scoped-role".into(),
+        is_super: 0,
+        data_scope: role::Model::DATA_SCOPE_CUSTOM.into(),
+        status: role::Model::STATUS_NORMAL.into(),
+        sort: 1,
+        remark: None,
+        del_flag: role::Model::DEL_FLAG_NORMAL.into(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    }))
+    .exec(&db)
+    .await
+    .expect("insert role");
+    role_dept::Entity::insert(role_dept::ActiveModel::from(role_dept::Model {
+        tenant_id: TENANT.into(),
+        role_id: 1,
+        dept_id: dept.id,
+    }))
+    .exec(&db)
+    .await
+    .expect("insert role department scope");
+
+    assert!(
+        DeptRepository
+            .is_referenced(&db, TENANT, dept.id)
+            .await
+            .expect("check referenced department")
+    );
+    assert!(
+        !DeptRepository
+            .is_referenced(&db, "other", dept.id)
+            .await
+            .expect("check tenant isolation")
+    );
+}

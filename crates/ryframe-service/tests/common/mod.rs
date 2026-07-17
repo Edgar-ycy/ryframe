@@ -8,7 +8,6 @@ use sea_orm::{
 
 /// 创建 SQLite 内存数据库并建表
 pub async fn setup_test_db() -> DatabaseConnection {
-    ryframe_core::multi_tenant::set_debug_tenant_fallback("system");
     let db = Database::connect("sqlite::memory:")
         .await
         .expect("连接 SQLite 内存数据库失败");
@@ -65,4 +64,5 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::tenant::Entity);
+    create!(ryframe_db::entities::sys_file::Entity);
 }

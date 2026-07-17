@@ -11,14 +11,15 @@ fn test_config() -> AppConfig {
             ..Default::default()
         },
         database: DatabaseConfig {
-            connections: vec![DbConnection {
+            primary: DbConnection {
                 driver: "sqlite".into(),
                 database: ":memory:".into(),
                 max_connections: 5,
                 ..Default::default()
-            }],
+            },
             ..Default::default()
         },
+        generator: Default::default(),
         auth: AuthConfig {
             jwt_secret: "test-secret".into(),
             ..Default::default()

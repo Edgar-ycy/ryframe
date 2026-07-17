@@ -20,14 +20,9 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "fs"] }
 tracing = { workspace = true }
 dashmap = { workspace = true }
 axum = { workspace = true }
-tonic = { workspace = true }
 http = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
-rdkafka = { workspace = true, optional = true }
-
-[features]
-kafka = ["dep:rdkafka"]
 
 [dev-dependencies]
 criterion = { workspace = true }

@@ -1,9 +1,29 @@
-use ryframe_service::system::online_user_service::{OnlineUserServiceImpl, UserSession};
+use ryframe_common::{ActorContext, DataScope};
+use ryframe_service::system::online_user_service::{OnlineUserService, UserSession};
+
+fn actor(tenant_id: &str) -> ActorContext {
+    ActorContext {
+        user_id: 1,
+        tenant_id: tenant_id.into(),
+        username: "admin".into(),
+        dept_id: None,
+        dept_path: None,
+        data_scope: DataScope::All,
+        custom_dept_ids: Vec::new(),
+        include_self: true,
+        is_super_admin: true,
+    }
+}
 
 fn make_session(token_id: &str, username: &str) -> UserSession {
+    make_tenant_session("system", token_id, username)
+}
+
+fn make_tenant_session(tenant_id: &str, token_id: &str, username: &str) -> UserSession {
     let now = chrono::Utc::now();
     UserSession {
         token_id: token_id.into(),
+        tenant_id: tenant_id.into(),
         user_id: 1,
         username: username.into(),
         dept_name: Some("研发部".into()),
@@ -17,27 +37,56 @@ fn make_session(token_id: &str, username: &str) -> UserSession {
 }
 
 #[tokio::test]
+async fn online_users_are_isolated_by_tenant() {
+    let svc = OnlineUserService::new_in_memory();
+    svc.add_user(make_tenant_session("tenant-b", "shared-token", "bob"))
+        .await;
+
+    assert!(
+        svc.list_online_users(&actor("system"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        svc.force_logout(&actor("system"), "shared-token")
+            .await
+            .is_err()
+    );
+    assert_eq!(svc.count(&actor("tenant-b")).await.unwrap(), 1);
+    assert!(
+        svc.force_logout(&actor("tenant-b"), "shared-token")
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
 async fn test_online_user_lifecycle() {
-    let svc = OnlineUserServiceImpl::new_in_memory();
+    let svc = OnlineUserService::new_in_memory();
 
     // 添加用户
     svc.add_user(make_session("tok-1", "alice")).await;
     svc.add_user(make_session("tok-2", "bob")).await;
-    assert_eq!(svc.count().await, 2);
+    assert_eq!(svc.count(&actor("system")).await.unwrap(), 2);
 
     // 移除单个
-    svc.remove_user("tok-1").await;
-    assert_eq!(svc.count().await, 1);
+    svc.remove_user("system", "tok-1").await;
+    assert_eq!(svc.count(&actor("system")).await.unwrap(), 1);
 
     // 强制下线
-    assert!(svc.force_logout("tok-2").await.is_ok());
-    assert!(svc.force_logout("nonexistent").await.is_err());
-    assert_eq!(svc.count().await, 0);
+    assert!(svc.force_logout(&actor("system"), "tok-2").await.is_ok());
+    assert!(
+        svc.force_logout(&actor("system"), "nonexistent")
+            .await
+            .is_err()
+    );
+    assert_eq!(svc.count(&actor("system")).await.unwrap(), 0);
 }
 
 #[tokio::test]
 async fn test_online_user_touch_and_cleanup() {
-    let svc = OnlineUserServiceImpl::new_in_memory();
+    let svc = OnlineUserService::new_in_memory();
 
     // 添加过期用户 (60 分钟前)
     let mut old = make_session("tok-old", "olduser");
@@ -46,11 +95,11 @@ async fn test_online_user_touch_and_cleanup() {
     svc.add_user(make_session("tok-new", "newuser")).await;
 
     // touch 更新
-    svc.touch_user("tok-new").await;
+    svc.touch_user("system", "tok-new").await;
 
     // 清理 30 分钟前的
     svc.cleanup_expired(30).await;
-    let users = svc.list_online_users().await;
+    let users = svc.list_online_users(&actor("system")).await.unwrap();
     assert_eq!(users.len(), 1);
     assert_eq!(users[0].username, "newuser");
 }

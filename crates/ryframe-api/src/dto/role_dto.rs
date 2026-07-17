@@ -23,25 +23,19 @@ pub struct UpdateRoleDto {
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
-pub struct RolePermAssignDto {
-    pub role_id: String,
+#[serde(deny_unknown_fields)]
+pub struct ReplaceRolePermissionsDto {
     #[serde(default)]
     pub perm_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
-pub struct RoleDeptAssignDto {
-    pub role_id: String,
-    #[serde(default)]
-    pub dept_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct RoleDataScopeUpdateDto {
-    pub role_id: String,
+pub struct ReplaceRoleDataScopeDto {
     #[validate(custom(function = "validate_data_scope"))]
     pub data_scope: String,
+    #[serde(default)]
+    pub dept_ids: Vec<String>,
 }
 
 fn validate_data_scope(value: &str) -> Result<(), validator::ValidationError> {

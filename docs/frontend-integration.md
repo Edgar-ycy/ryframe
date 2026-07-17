@@ -1,6 +1,19 @@
 # 前端集成指南
 
-本文档面向 `ryframe-vue3` 前端开发，约定后端接口响应、认证、动态菜单、分页、上传下载和监控接口的使用方式。后续前端补模块、补类型或调整路由时，以本文档作为优先参考。
+本文档面向独立 Git 仓库 `ryframe-vue3`，约定后端接口响应、认证、动态菜单、分页、上传下载和监控接口的使用方式。两个仓库分别构建和发布，不共享源码目录；接口字段只从 OpenAPI 生成，本文档不维护第二份完整 DTO。
+
+## 契约同步
+
+后端仓库将规范快照提交到 `openapi/openapi.json`，CI 会重新运行导出器并检查差异。接口变更后，在前端仓库同步本地后端快照：
+
+```powershell
+Set-Location ryframe-vue3
+$env:RYFRAME_OPENAPI_SOURCE='..\openapi\openapi.json'
+pnpm api:sync
+pnpm api:check
+```
+
+`src/api/generated/schema.ts` 由 `openapi-typescript` 生成，`src/shared/security/passwordPolicy.generated.json` 由同步脚本从 `x-ryframe-password-policy` 生成，两者都禁止手工修改。业务 API 模块通过 `src/api/contract.ts` 使用 `ApiSchema`、`OperationQuery`、`OperationJsonBody` 和 `OperationData`，只保留请求函数与必要的语义窄类型。
 
 ## 基础约定
 
@@ -20,14 +33,14 @@ Authorization: Bearer <access_token>
 
 ## 统一响应
 
-前端请求封装位于 `ryframe-vue3/src/api/request.ts`，默认期望后端返回统一 JSON：
+前端纯 HTTP 客户端位于 `ryframe-vue3/src/shared/http/client.ts`，会话副作用由 `src/app/session/sessionCoordinator.ts` 统一协调。JSON 接口默认返回：
 
 ```ts
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   code: number
-  data: T
   msg: string
-  rows?: any[]
+  data?: T
+  rows?: T[]
   total?: number
 }
 ```
@@ -38,7 +51,7 @@ export interface ApiResponse<T = any> {
 - 错误提示统一读取 `msg`。
 - 普通接口返回 `{ code, msg, data }`；分页接口返回 `{ code, msg, rows, total }`。
 
-- 下载接口使用 `responseType: 'blob'` 时直接返回原始 `AxiosResponse`，不走 JSON 业务码判断。
+- 下载接口统一调用 `requestBlob` 并返回 `Promise<Blob>`；文本监控接口调用 `requestText`。二者不伪装成 JSON 包络。
 
 分页类型建议：
 
@@ -50,12 +63,12 @@ export interface PageResponse<T> {
 
 export interface PageQuery {
   page?: number
-  pageSize?: number
+  page_size?: number
   keyword?: string
 }
 ```
 
-前端和接口统一使用 `page` 和 `pageSize`，不接受其他分页字段名。
+前端和接口统一使用 `page` 和 `page_size`，不接受其他分页字段名。
 
 ## 认证接口
 
@@ -91,6 +104,8 @@ export interface LoginResult {
 
 前端登录成功后保存 `access_token`，如果后端返回 `refresh_token` 也一并保存。后续请求自动携带 `Authorization`。
 
+登录只校验现有账号凭据。个人修改密码、密码重置完成和租户管理员初始密码必须使用 OpenAPI `x-ryframe-password-policy` 生成的前端验证器：8-72 位可见 ASCII 字符，且至少包含大小写字母、数字和特殊字符。密码更新成功后旧会话会因 `auth_version` 变化而失效，前端应清理本地状态并重新登录。
+
 ### 刷新 Token
 
 ```http
@@ -118,7 +133,7 @@ GET /auth/me
 
 ```ts
 export interface UserInfo {
-  id: string | number
+  id: string
   username: string
   nickname?: string
   email?: string
@@ -133,26 +148,26 @@ export interface UserInfo {
 
 ## 动态菜单与权限
 
-前端通过用户菜单树生成动态路由：
+前端通过当前用户菜单树生成动态路由：
 
 ```http
-GET /system/user/get-menus
+GET /system/menus/current
 ```
 
 菜单节点类型建议：
 
 ```ts
 export interface MenuTreeNode {
-  id: string | number
-  parent_id?: string | number | null
+  id: string
+  parent_id?: string | null
   name: string
   menu_type?: 'M' | 'C' | 'F'
   icon?: string
-  visible?: boolean | string | number
-  status?: string | number
+  visible?: boolean
+  status?: string
   sort?: number
   route_key?: string | null
-  perm_id?: string | number | null
+  perm_id?: string | null
   children?: MenuTreeNode[]
 }
 ```
@@ -194,7 +209,7 @@ monitor.db-pool    -> /monitor/db-pool
 tools.gen          -> /tools/gen
 ```
 
-新增页面菜单时，需要先在前端 page registry 注册 `route_key`；后端 `sys_menu` 维护菜单结构、`route_key` 和 `perm_id`。
+新增页面菜单时，需要先在前端 page registry 注册 `route_key`；后端 `sys_menu` 维护菜单结构、`route_key` 和 `perm_id`。默认菜单 route-key 集合通过 OpenAPI 的 `x-ryframe-menu-routes` 扩展发布，前后端 CI 会拒绝缺失、额外或菜单类型不一致的注册项。
 
 ## 常用模块路径
 
@@ -202,24 +217,24 @@ tools.gen          -> /tools/gen
 
 | 前端模块 | 后端路径前缀 | 说明 |
 | --- | --- | --- |
-| `auth.ts` | `/auth` | 登录、刷新 token、当前用户、验证码。 |
-| `user.ts` | `/system/users`、`/system/user/assign-role` | 用户管理与独立角色分配。 |
-| `role.ts` | `/system/roles`、`/system/role/assign-perm`、`/system/role/assign-dept`、`/system/role/update-data-scope` | 角色管理、权限和数据范围分配。 |
-| `menu.ts` | `/system/menus` | 菜单管理。用户菜单树通过 `/system/user/get-menus` 获取。 |
+| `auth.ts` | `/auth` | 登录、刷新 token、当前用户和验证码。 |
+| `user.ts` | `/system/users` | 用户管理、角色分配、状态和密码重置。 |
+| `role.ts` | `/system/roles` | 角色管理、权限和数据范围分配。 |
+| `menu.ts` | `/system/menus` | 菜单管理和当前用户菜单树。 |
 | `dept.ts` | `/system/depts` | 部门管理。 |
 | `post.ts` | `/system/posts` | 岗位管理。 |
 | `config.ts` | `/system/configs` | 参数配置。 |
-| `dict.ts` | `/system/dicts` | 字典类型和字典数据。 |
+| `dict.ts` | `/system/dict` | 字典类型和字典数据。 |
 | `notice.ts` | `/system/notices` | 通知公告。 |
 | `permission.ts` | `/system/perms` | 权限管理。 |
 | `monitor.ts` | `/monitor` | 服务、缓存、数据库连接池和指标。 |
-| `tools.ts` | `/tools` | 代码生成等工具接口。 |
+| `generator.ts` | `/tools/gen` | 代码生成接口。 |
 | `common.ts` | `/common` | 上传、下载、通用枚举等接口。 |
 
 列表接口统一使用：
 
 ```http
-GET /<module>?page=1&pageSize=10&keyword=xxx
+GET /<module>?page=1&page_size=10&keyword=xxx
 ```
 
 新增、编辑、删除建议使用：
@@ -230,20 +245,20 @@ PUT /<module>/{id}
 DELETE /<module>/{id}
 ```
 
-批量删除建议使用：
+用户和角色当前使用逗号分隔的批量删除路径：
 
 ```http
-DELETE /<module>/batch
-Content-Type: application/json
-
-{ "ids": ["1", "2"] }
+DELETE /system/users/batch/1,2
+DELETE /system/roles/batch/1,2
 ```
 
-如果后端 ID 是 64 位整数，前端类型请使用 `string | number`，展示和提交时优先按字符串处理，避免 JavaScript 精度问题。
+新增模块应优先使用 JSON 请求体表达批量命令；是否采用路径参数必须以 OpenAPI 为准，不自行猜测。
+
+后端 64 位 ID 在 JSON 契约中统一使用 `string`，前端展示、路由参数和提交数据不得转为 JavaScript `number`。
 
 ## 上传、下载与导出
 
-上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。上传接口均需登录，并会触发魔数校验、MD5 去重、审计事件和后台任务：
+上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。上传接口均需登录，并会执行大小、扩展名、魔数、MD5 去重、对象存储写入和操作日志记录：
 
 ```http
 POST /common/upload
@@ -278,8 +293,8 @@ Content-Disposition: attachment; filename="users.xlsx"
 | `GET /monitor/server` | JSON | 服务器 CPU、内存、磁盘等信息。 |
 | `GET /monitor/cache` | JSON | Redis 或缓存概览。 |
 | `GET /monitor/cache/commands` | JSON | 缓存命令统计。 |
-| `GET /monitor/db-pool` | JSON | 数据库连接池状态。 |
-| `GET /monitor/runtime` | JSON | 功能开关、消息队列、任务队列和上传熔断器状态。 |
+| `GET /monitor/db-pool` | JSON | 主数据库连接池状态。 |
+| `GET /monitor/runtime` | JSON | 主库、命名只读副本、命名业务数据源、读取策略、Redis、RustFS/对象存储和上传熔断器动态状态。 |
 
 除健康检查和指标采集外，管理端页面应按后端权限要求携带 token 并校验 `perms`。
 
@@ -292,3 +307,5 @@ Content-Disposition: attachment; filename="users.xlsx"
 - 下载接口设置 `responseType: 'blob'`，不要按统一 JSON 解析。
 - 后端 64 位 ID 在前端按字符串处理。
 - 菜单 `status` 只有启用值 `"1"` 才生成路由。
+- 新密码表单只使用生成的 `passwordPolicy`，不要在页面复制长度、字符类别或正则。
+- 提交前在 `ryframe-vue3` 目录运行 `pnpm check`，确保源码、架构、契约、Lint、类型、覆盖率和生产构建全部通过；禁止从后端根目录执行 `pnpm`。

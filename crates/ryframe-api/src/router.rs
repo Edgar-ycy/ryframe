@@ -3,42 +3,87 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Request, State},
+    http::StatusCode,
     middleware,
     middleware::{Next, from_fn_with_state},
-    response::{Html, Response},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use ryframe_auth::{jwt::Claims, middleware::AuthState};
-use ryframe_common::{ApiResponse, AppResult};
-use ryframe_core::MessageQueue;
+use ryframe_auth::{RequestPrincipal, jwt::Claims};
+use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_macro::{get, route};
 use ryframe_middleware::rate_limit::{RateLimitState, user_rate_limit_middleware};
-use ryframe_service::system::OnlineUserServiceImpl;
+use ryframe_service::system::OnlineUserService;
+use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
 use crate::{
     handlers::{
-        auth_handler::{self, AppState},
-        captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
+        auth_handler, captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
         generator_handler, login_log_handler, menu_handler, notice_handler, online_user_handler,
         oper_log_handler, permission_handler, post_handler, profile_handler, role_handler,
         user_handler,
     },
     oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware},
-    user_context_middleware::user_context_middleware,
+    state::AppState,
 };
+
+#[derive(Clone)]
+struct AuthenticatedTenantRateLimitState {
+    limiter: Arc<ryframe_middleware::RateLimiter>,
+}
+
+async fn authenticated_tenant_rate_limit(
+    State(state): State<AuthenticatedTenantRateLimitState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, Response> {
+    let principal = request
+        .extensions()
+        .get::<RequestPrincipal>()
+        .ok_or_else(|| AppError::Authentication("未认证，请先登录".into()).into_response())?;
+    let key = format!("tenant:{}", principal.tenant_id);
+    let limit = principal.tenant_request_limit_per_minute.max(1);
+
+    if state.limiter.sliding_window_acquire(&key, 60, limit).await {
+        Ok(next.run(request).await)
+    } else {
+        Err((StatusCode::TOO_MANY_REQUESTS, "租户请求频率超过配额").into_response())
+    }
+}
+
+fn protect<S>(router: Router<S>, state: &AppState) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router
+        .layer(from_fn_with_state(
+            AuthenticatedTenantRateLimitState {
+                limiter: state.rate_limiter.clone(),
+            },
+            authenticated_tenant_rate_limit,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.auth.clone(),
+            ryframe_auth::middleware::auth_middleware,
+        ))
+}
 
 /// 在线用户跟踪中间件
 ///
-/// 在 auth_middleware 之后运行（Claims 已在 extensions 中）。
+/// 在 auth_middleware 之后运行（RequestPrincipal 和 Claims 已在 extensions 中）。
 /// 更新用户最后访问时间；若会话被服务重启清除（clear_all_on_startup），自动重新创建。
 async fn online_user_tracking(
-    State(online_user_service): State<Arc<OnlineUserServiceImpl>>,
+    State(online_user_service): State<Arc<OnlineUserService>>,
     request: Request,
     next: Next,
 ) -> Response {
-    // 尝试从 extensions 获取 Claims，未认证时跳过跟踪
-    if let Some(claims) = request.extensions().get::<Claims>() {
+    // 主体提供已验证身份，Claims 仅提供当前 access token 的唯一标识。
+    if let (Some(principal), Some(claims)) = (
+        request.extensions().get::<RequestPrincipal>(),
+        request.extensions().get::<Claims>(),
+    ) {
         // 提取客户端 IP
         let ip = request
             .headers()
@@ -60,8 +105,9 @@ async fn online_user_tracking(
         online_user_service
             .ensure_user(ryframe_service::system::UserSession {
                 token_id: claims.jti.clone(),
-                user_id: claims.sub.parse().unwrap_or(0),
-                username: claims.username.clone(),
+                tenant_id: principal.tenant_id.clone(),
+                user_id: principal.user_id,
+                username: principal.username.clone(),
                 dept_name: None,
                 ipaddr: ip,
                 login_location: None,
@@ -88,14 +134,7 @@ async fn online_user_tracking(
 ///   protected: auth → oper_log → handler
 ///   profile:  auth → oper_log → handler
 pub fn auth_router(state: AppState) -> Router {
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.db.clone());
-
-    let auth_state = AuthState {
-        config: state.config.clone(),
-        blacklist: state.token_blacklist.clone(),
-        db: state.db.clone(),
-        redis: state.redis.clone(),
-    };
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.oper_log.clone());
 
     // 公开路由（无认证，操作日志记录为 "anonymous"）
     let public = Router::new()
@@ -112,27 +151,25 @@ pub fn auth_router(state: AppState) -> Router {
 
     // 受保护路由
     // .layer() 从后往前执行：auth（外层先执行）→ oper_log（内层后执行）→ handler
-    let protected = Router::new()
-        .route("/logout", post(auth_handler::logout))
-        .route("/me", get(auth_handler::me))
-        .layer(from_fn_with_state(
-            oper_log_state.clone(),
-            oper_log_middleware,
-        ))
-        .layer(middleware::from_fn_with_state(
-            auth_state.clone(),
-            ryframe_auth::middleware::auth_middleware,
-        ));
+    let protected = protect(
+        Router::new()
+            .route("/logout", post(auth_handler::logout))
+            .route("/me", get(auth_handler::me))
+            .layer(from_fn_with_state(
+                oper_log_state.clone(),
+                oper_log_middleware,
+            )),
+        &state,
+    );
 
     // Profile 路由（认证 + 操作日志，中间件在此统一注册）
     // profile_router 不再内嵌 .with_state()
-    let profile = Router::new()
-        .merge(profile_handler::profile_router())
-        .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
-        .layer(middleware::from_fn_with_state(
-            auth_state,
-            ryframe_auth::middleware::auth_middleware,
-        ));
+    let profile = protect(
+        Router::new()
+            .merge(profile_handler::profile_router())
+            .layer(from_fn_with_state(oper_log_state, oper_log_middleware)),
+        &state,
+    );
 
     Router::new()
         .merge(public)
@@ -164,22 +201,9 @@ async fn api_version() -> Json<serde_json::Value> {
 ///
 /// `rate_limit_state` 传递到子路由以启用用户级限流。
 pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
-    let monitor_state = ryframe_monitor::MonitorState {
-        db: state.monitor_db.clone(),
-        redis: state.redis.clone(),
-    };
-
-    let auth_state = ryframe_auth::middleware::AuthState {
-        config: state.config.clone(),
-        blacklist: state.token_blacklist.clone(),
-        db: state.db.clone(),
-        redis: state.redis.clone(),
-    };
-    let platform = crate::handlers::tenant_handler::tenant_router(state.clone()).layer(
-        middleware::from_fn_with_state(
-            auth_state.clone(),
-            ryframe_auth::middleware::auth_middleware,
-        ),
+    let platform = protect(
+        crate::handlers::tenant_handler::tenant_router(state.clone()),
+        &state,
     );
 
     Router::new()
@@ -191,7 +215,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         .nest(
             "/monitor",
-            monitor_router(state.clone(), monitor_state, auth_state),
+            monitor_router(state.clone(), state.monitor.clone()),
         )
         .nest(
             "/tools",
@@ -206,70 +230,142 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .route("/swagger-ui", get(swagger_ui))
 }
 
-fn monitor_router(
-    state: AppState,
-    monitor_state: ryframe_monitor::MonitorState,
-    auth_state: AuthState,
-) -> Router {
-    let runtime = route!(runtime_status)
-        .layer(middleware::from_fn_with_state(
-            auth_state.clone(),
-            ryframe_auth::middleware::auth_middleware,
-        ))
-        .with_state(state);
+fn monitor_router(state: AppState, monitor_state: ryframe_monitor::MonitorState) -> Router {
+    let public = ryframe_monitor::public_monitor_router(monitor_state.clone());
+    let protected = ryframe_monitor::protected_monitor_router(monitor_state)
+        .merge(route!(runtime_status).with_state(state.clone()));
 
-    ryframe_monitor::monitor_router(monitor_state, Some(auth_state)).merge(runtime)
+    public.merge(protect(protected, &state))
 }
 
 #[get("/runtime")]
 #[perm("monitor:runtime:list")]
+#[utoipa::path(get, path = "/api/v1/monitor/runtime", tag = "服务器监控",
+    responses((status = 200, description = "主应用运行时组件状态", body = ApiResponse<RuntimeStatus>)),
+    security(("bearer" = [])))]
 async fn runtime_status(
     State(state): State<AppState>,
-) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    let message_queue_ok = state.runtime.message_queue.health_check().await;
-    let task_queue_len = state.runtime.task_queue.len().await.ok();
-    let features = state.runtime.feature_flags.list_all();
+) -> AppResult<Json<ApiResponse<RuntimeStatus>>> {
+    let database_health = state.monitor.database.topology_health().await;
+    let replicas_connected = database_health
+        .replicas
+        .iter()
+        .all(|replica| replica.healthy);
+    let replicas = database_health
+        .replicas
+        .into_iter()
+        .map(|replica| RuntimeDatabaseReplicaStatus {
+            name: replica.name,
+            connected: replica.healthy,
+        })
+        .collect::<Vec<_>>();
+    let sources_connected = database_health.sources.iter().all(|source| source.healthy);
+    let sources = database_health
+        .sources
+        .into_iter()
+        .map(|source| RuntimeDatabaseSourceStatus {
+            name: source.name,
+            connected: source.healthy,
+        })
+        .collect::<Vec<_>>();
+    let read_policy = if replicas.is_empty() {
+        "primary"
+    } else {
+        "round_robin"
+    };
+    let storage_connected = state.services.file.check_storage().await.is_ok();
+    let storage_config = &state.config.object_storage;
 
-    Ok(Json(ApiResponse::success(json!({
-        "message_queue": {
-            "healthy": message_queue_ok,
+    Ok(Json(ApiResponse::success(RuntimeStatus {
+        database: RuntimeDatabaseStatus {
+            connected: database_health.primary_healthy && replicas_connected && sources_connected,
+            driver: state.config.database.primary.driver.clone(),
+            primary_connected: database_health.primary_healthy,
+            replica_count: replicas.len(),
+            replicas,
+            source_count: sources.len(),
+            sources,
+            read_policy: read_policy.into(),
         },
-        "task_queue": {
-            "len": task_queue_len,
+        redis: RuntimeRedisStatus {
+            configured: state.config.redis.is_some(),
+            connected: state.redis.is_some(),
         },
-        "feature_flags": features,
-        "upload_circuit_breaker": {
-            "state": format!("{:?}", state.runtime.upload_circuit_breaker.current_state()),
+        object_storage: RuntimeStorageStatus {
+            backend: storage_config.backend.as_str().into(),
+            connected: storage_connected,
+            endpoint: (!storage_config.endpoint.trim().is_empty())
+                .then(|| storage_config.endpoint.clone()),
         },
-    }))))
+        upload_circuit_breaker: RuntimeCircuitBreakerStatus {
+            state: format!("{:?}", state.runtime.upload_circuit_breaker.current_state()),
+        },
+    })))
 }
 
-/// 系统管理路由（需认证 + 用户上下文 + 用户限流 + 在线跟踪 + 操作日志）
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeStatus {
+    database: RuntimeDatabaseStatus,
+    redis: RuntimeRedisStatus,
+    object_storage: RuntimeStorageStatus,
+    upload_circuit_breaker: RuntimeCircuitBreakerStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeDatabaseStatus {
+    connected: bool,
+    driver: String,
+    primary_connected: bool,
+    replica_count: usize,
+    replicas: Vec<RuntimeDatabaseReplicaStatus>,
+    source_count: usize,
+    sources: Vec<RuntimeDatabaseSourceStatus>,
+    read_policy: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeDatabaseReplicaStatus {
+    name: String,
+    connected: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeDatabaseSourceStatus {
+    name: String,
+    connected: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeRedisStatus {
+    configured: bool,
+    connected: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeStorageStatus {
+    backend: String,
+    connected: bool,
+    endpoint: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeCircuitBreakerStatus {
+    state: String,
+}
+
+/// 系统管理路由（认证主体 + 租户限流 + 用户限流 + 在线跟踪 + 操作日志）
 ///
 /// .layer() 链的语义：后注册的 layer 包裹先注册的，即后注册的先执行（外层先执行）。
 /// 执行顺序（从外到内）：
-///   1. auth_middleware（最外层，先执行 → 注入 Claims）
-///   2. user_context_middleware（查询数据权限 → 注入 CurrentUser）
-///   3. user_rate_limit_middleware（用户级限流，使用 Claims）
-///   4. online_user_tracking（在线跟踪，使用 Claims）
-///   5. oper_log_middleware（最内层，后执行 → 使用 Claims 记录操作者）
+///   1. auth_middleware（一次注入 RequestPrincipal）
+///   2. authenticated_tenant_rate_limit（使用已认证租户）
+///   3. user_rate_limit_middleware
+///   4. online_user_tracking
+///   5. oper_log_middleware
 fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
-    let auth_state = AuthState {
-        config: state.config.clone(),
-        blacklist: state.token_blacklist.clone(),
-        db: state.db.clone(),
-        redis: state.redis.clone(),
-    };
-
-    Router::new()
+    let router = Router::new()
         .nest("/users", user_handler::user_router(state.clone()))
-        .nest(
-            "/user",
-            user_handler::user_assignment_router(state.clone())
-                .merge(route!(menu_handler::user_tree).with_state(state.clone())),
-        )
         .nest("/roles", role_handler::role_router(state.clone()))
-        .nest("/role", role_handler::role_assignment_router(state.clone()))
         .nest(
             "/perms",
             permission_handler::permission_router(state.clone()),
@@ -294,87 +390,57 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.db.clone()),
+            OperLogMiddlewareState::new_arc(state.services.oper_log.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
-            state.online_user_service.clone(),
+            state.services.online_user.clone(),
             online_user_tracking,
         ))
         .layer(from_fn_with_state(
             rate_limit_state,
             user_rate_limit_middleware,
-        ))
-        .layer(from_fn_with_state(state.clone(), user_context_middleware))
-        .layer(from_fn_with_state(
-            auth_state,
-            ryframe_auth::middleware::auth_middleware,
-        ))
+        ));
+
+    protect(router, &state)
 }
 
-/// 工具路由（需认证 + 用户上下文 + 用户限流 + 操作日志）
+/// 工具路由（认证主体 + 租户限流 + 用户限流 + 操作日志）
 ///
-/// 执行顺序（从外到内）：auth → user_context → user_rate_limit → oper_log
+/// 执行顺序（从外到内）：auth → tenant_rate_limit → user_rate_limit → oper_log
 fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
-    let auth_state = AuthState {
-        config: state.config.clone(),
-        blacklist: state.token_blacklist.clone(),
-        db: state.db.clone(),
-        redis: state.redis.clone(),
-    };
-
-    Router::new()
+    let router = Router::new()
         .nest("/gen", generator_handler::generator_router(state.clone()))
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.db.clone()),
+            OperLogMiddlewareState::new_arc(state.services.oper_log.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
             rate_limit_state,
             user_rate_limit_middleware,
-        ))
-        .layer(from_fn_with_state(state.clone(), user_context_middleware))
-        .layer(from_fn_with_state(
-            auth_state,
-            ryframe_auth::middleware::auth_middleware,
-        ))
+        ));
+
+    protect(router, &state)
 }
 
 /// 通用功能路由（文件上传等）
-/// - 上传路由：公开（无认证，无操作日志以避免大文件请求体缓冲）
-/// - 下载路由：需认证 + 操作日志
+/// 上传和下载都要求认证主体，并记录操作日志。
 fn common_router(state: AppState) -> Router {
-    use axum::middleware;
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.oper_log.clone());
 
-    let auth_state = AuthState {
-        config: state.config.clone(),
-        blacklist: state.token_blacklist.clone(),
-        db: state.db.clone(),
-        redis: state.redis.clone(),
-    };
-
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.db.clone());
-
-    // 上传路由（公开，不记录操作日志以避免大文件 body 缓冲）
-    let upload = common_handler::upload_router(state.clone())
-        .layer(from_fn_with_state(
+    let upload = protect(
+        common_handler::upload_router(state.clone()).layer(from_fn_with_state(
             oper_log_state.clone(),
             oper_log_middleware,
-        ))
-        .layer(from_fn_with_state(state.clone(), user_context_middleware))
-        .layer(middleware::from_fn_with_state(
-            auth_state.clone(),
-            ryframe_auth::middleware::auth_middleware,
-        ));
+        )),
+        &state,
+    );
 
-    // 下载路由（需认证 + 用户上下文，记录操作日志）
-    let download = common_handler::download_router(state.clone())
-        .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
-        .layer(from_fn_with_state(state.clone(), user_context_middleware))
-        .layer(middleware::from_fn_with_state(
-            auth_state,
-            ryframe_auth::middleware::auth_middleware,
-        ));
+    let download = protect(
+        common_handler::download_router(state.clone())
+            .layer(from_fn_with_state(oper_log_state, oper_log_middleware)),
+        &state,
+    );
 
     Router::new()
         .nest("/upload", upload)

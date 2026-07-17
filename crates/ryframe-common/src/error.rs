@@ -3,6 +3,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use utoipa::ToSchema;
 use validator::ValidationErrors;
 // 统一错误类型 (AppError)
 #[derive(Debug, thiserror::Error)]
@@ -31,12 +32,19 @@ pub enum AppError {
 /// 错误响应：{"code": 400, "msg": "参数校验失败: xxx"}
 ///
 /// 分页查询请使用 [`ApiPageResponse`]。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ApiResponse<T: Serialize> {
     pub code: i32,
     pub msg: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
+}
+
+/// 成功且不携带 `data` 字段的响应契约。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApiEmptyResponse {
+    pub code: i32,
+    pub msg: String,
 }
 
 impl<T: Serialize> ApiResponse<T> {
@@ -94,7 +102,7 @@ impl ApiResponse<()> {
 /// ```json
 /// {"code": 200, "msg": "查询成功", "rows": [...], "total": 100}
 /// ```
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ApiPageResponse<T: Serialize> {
     pub code: i32,
     pub msg: String,

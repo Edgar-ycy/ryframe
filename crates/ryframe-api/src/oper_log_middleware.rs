@@ -1,7 +1,7 @@
 //! 操作日志自动记录中间件
 //!
 //! 拦截 POST/PUT/DELETE 请求，自动记录操作日志到数据库。
-//! 在 auth_middleware 之后运行（Claims 已在 extensions 中）。
+//! 在 auth_middleware 之后运行（RequestPrincipal 已在 extensions 中）。
 
 use std::{sync::Arc, time::Instant};
 
@@ -12,28 +12,26 @@ use axum::{
     response::Response,
 };
 use http_body_util::BodyExt;
-use ryframe_common::utils::snowflake;
-use ryframe_core::Repository;
-use ryframe_db::{OperLogRepository, entities::oper_log};
-use sea_orm::DatabaseConnection;
+use ryframe_auth::RequestPrincipal;
+use ryframe_service::system::{OperLogService, OperLogStatus, RecordOperLogCommand};
 
 /// 操作日志中间件状态
 #[derive(Clone)]
 pub struct OperLogMiddlewareState {
-    pub db: DatabaseConnection,
+    service: Arc<OperLogService>,
 }
 
 impl OperLogMiddlewareState {
     /// 创建 Arc 包装的状态（用于 axum layer 注入）
-    pub fn new_arc(db: DatabaseConnection) -> Arc<Self> {
-        Arc::new(Self { db })
+    pub fn new_arc(service: Arc<OperLogService>) -> Arc<Self> {
+        Arc::new(Self { service })
     }
 }
 
 /// 操作日志中间件
 ///
 /// 对 POST/PUT/DELETE 请求自动记录操作日志。
-/// 需要在 auth_middleware 之后运行（Claims 已在 extensions 中）。
+/// 需要在 auth_middleware 之后运行（RequestPrincipal 已在 extensions 中）。
 pub async fn oper_log_middleware(
     State(state): State<Arc<OperLogMiddlewareState>>,
     request: Request,
@@ -54,12 +52,10 @@ pub async fn oper_log_middleware(
     let uri = request.uri().path().to_string();
     let request_method = method.to_string();
 
-    // 提取操作者信息（从 Claims）
-    let oper_name = request
-        .extensions()
-        .get::<ryframe_auth::jwt::Claims>()
-        .map(|c| c.username.clone())
-        .unwrap_or_else(|| "anonymous".to_string());
+    let Some(current_user) = request.extensions().get::<RequestPrincipal>().cloned() else {
+        return next.run(request).await;
+    };
+    let oper_name = current_user.username.clone();
 
     // 提取客户端 IP（支持反向代理逗号分隔场景）
     let oper_ip = request
@@ -96,13 +92,7 @@ pub async fn oper_log_middleware(
         let param = if bytes.is_empty() {
             None
         } else {
-            let s = String::from_utf8_lossy(&bytes);
-            let truncated = if s.len() > 2000 {
-                format!("{}...[truncated]", truncate_str(&s, 2000))
-            } else {
-                s.to_string()
-            };
-            Some(truncated)
+            Some(format_log_payload(&bytes))
         };
         let req = Request::from_parts(parts, Body::from(bytes));
         (req, param)
@@ -126,13 +116,7 @@ pub async fn oper_log_middleware(
     let json_result = if response_bytes.is_empty() {
         None
     } else {
-        let s = String::from_utf8_lossy(&response_bytes);
-        let truncated = if s.len() > 2000 {
-            format!("{}...[truncated]", truncate_str(&s, 2000))
-        } else {
-            s.to_string()
-        };
-        Some(truncated)
+        Some(format_log_payload(&response_bytes))
     };
 
     // 提取错误消息（仅失败时）
@@ -142,16 +126,14 @@ pub async fn oper_log_middleware(
         None
     };
 
-    let log_status = if is_success {
-        oper_log::Model::STATUS_SUCCESS
+    let status = if is_success {
+        OperLogStatus::Success
     } else {
-        oper_log::Model::STATUS_FAIL
+        OperLogStatus::Failure
     };
 
     // 异步记录日志（spawn 独立任务，不阻塞响应）
-    let log_entry = oper_log::Model {
-        id: snowflake::next_snowflake_id(),
-        tenant_id: ryframe_core::current_tenant_id(),
+    let command = RecordOperLogCommand {
         title,
         business_type,
         method: format!("{} {}", request_method, uri),
@@ -159,19 +141,16 @@ pub async fn oper_log_middleware(
         oper_name,
         oper_url: uri,
         oper_ip,
-        oper_location: None,
         oper_param,
         json_result,
-        status: log_status.to_string(),
+        status,
         error_msg,
-        oper_time: chrono::Utc::now(),
         cost_time,
     };
 
-    let db = state.db.clone();
-    let repo = OperLogRepository;
+    let service = state.service.clone();
     tokio::spawn(async move {
-        if let Err(e) = repo.insert(&db, log_entry).await {
+        if let Err(e) = service.record(&current_user, command).await {
             tracing::warn!("操作日志记录失败: {}", e);
         }
     });
@@ -192,6 +171,69 @@ fn extract_error_message(json_result: &Option<String>) -> Option<String> {
 /// 安全截断字符串（按字符边界截断，避免 UTF-8 字节边界 panic）
 fn truncate_str(s: &str, max_chars: usize) -> String {
     s.chars().take(max_chars).collect()
+}
+
+fn format_log_payload(bytes: &[u8]) -> String {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return "[non-JSON body omitted]".into();
+    };
+    if !matches!(
+        value,
+        serde_json::Value::Object(_) | serde_json::Value::Array(_)
+    ) {
+        return "[JSON scalar omitted]".into();
+    }
+    redact_sensitive_fields(&mut value);
+    let payload = value.to_string();
+    if payload.chars().count() > 2000 {
+        format!("{}...[truncated]", truncate_str(&payload, 2000))
+    } else {
+        payload
+    }
+}
+
+fn redact_sensitive_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                if is_sensitive_field(key) {
+                    *value = serde_json::Value::String("[REDACTED]".into());
+                } else {
+                    redact_sensitive_fields(value);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                redact_sensitive_fields(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_sensitive_field(field: &str) -> bool {
+    let normalized = field
+        .chars()
+        .filter(|character| !matches!(character, '_' | '-'))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "password"
+            | "passwordhash"
+            | "oldpassword"
+            | "newpassword"
+            | "confirmpassword"
+            | "token"
+            | "accesstoken"
+            | "refreshtoken"
+            | "resettoken"
+            | "captchacode"
+            | "captchaanswer"
+            | "clientsecret"
+            | "secret"
+    )
 }
 
 /// 根据 URI 路径 + HTTP 方法推导业务类型和模块标题
@@ -267,5 +309,36 @@ fn resource_to_title(module: &str, resource: &str) -> String {
                 None => "未知模块".into(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_log_payload;
+
+    #[test]
+    fn log_payload_redacts_nested_sensitive_fields() {
+        let payload = br#"{
+            "username":"alice",
+            "password":"plain-text",
+            "nested":{"refreshToken":"refresh-value"},
+            "items":[{"client_secret":"secret-value"}]
+        }"#;
+
+        let sanitized = format_log_payload(payload);
+
+        assert!(sanitized.contains("alice"));
+        assert_eq!(sanitized.matches("[REDACTED]").count(), 3);
+        assert!(!sanitized.contains("plain-text"));
+        assert!(!sanitized.contains("refresh-value"));
+        assert!(!sanitized.contains("secret-value"));
+    }
+
+    #[test]
+    fn log_payload_omits_non_json_content() {
+        assert_eq!(
+            format_log_payload(b"password=plain-text"),
+            "[non-JSON body omitted]"
+        );
     }
 }

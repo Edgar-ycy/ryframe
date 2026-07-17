@@ -131,12 +131,6 @@ fn compute_etag(bytes: &[u8]) -> String {
     format!("\"{}\"", hex)
 }
 
-/// 基于 SystemTime 计算弱 ETag
-#[allow(dead_code)]
-fn compute_weak_etag(timestamp: u64) -> String {
-    format!("W/\"{:x}\"", timestamp)
-}
-
 /// 从 HeaderMap 提取 If-None-Match 值
 fn get_if_none_match(headers: &HeaderMap) -> Option<String> {
     headers
@@ -282,11 +276,5 @@ mod tests {
         assert_eq!(config.default_max_age, 0);
         assert!(config.enable_etag);
         assert!(config.custom_rules.is_empty());
-    }
-
-    #[test]
-    fn test_weak_etag() {
-        let etag = compute_weak_etag(1717200000);
-        assert!(etag.starts_with("W/\""));
     }
 }

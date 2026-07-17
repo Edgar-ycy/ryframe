@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use validator::Validate;
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UserImportResult {
+    pub success_count: usize,
+    pub fail_count: usize,
+    pub errors: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct UserImportData {

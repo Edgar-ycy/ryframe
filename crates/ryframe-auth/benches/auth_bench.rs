@@ -43,7 +43,6 @@ fn bench_jwt_encode(c: &mut Criterion) {
         refresh_token_expire: "168h".into(),
         max_login_attempts: 5,
         lockout_duration_minutes: 30,
-        enable_password_complexity: true,
     };
     let identity = ryframe_auth::jwt::TokenIdentity {
         user_id: 1,
@@ -71,7 +70,6 @@ fn bench_jwt_decode(c: &mut Criterion) {
         refresh_token_expire: "168h".into(),
         max_login_attempts: 5,
         lockout_duration_minutes: 30,
-        enable_password_complexity: true,
     };
     let identity = ryframe_auth::jwt::TokenIdentity {
         user_id: 1,

@@ -12,16 +12,13 @@ ryframe-common = { path = "../ryframe-common" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-service = { path = "../ryframe-service" }
 ryframe-config = { path = "../ryframe-config" }
-ryframe-db = { path = "../ryframe-db" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-monitor = { path = "../ryframe-monitor" }
 ryframe-middleware = { path = "../ryframe-middleware" }
-ryframe-generator = { path = "../ryframe-generator" }
 ryframe-macro = { path = "../ryframe-macro" }
 axum = { workspace = true, features = ["multipart"] }
 serde = { workspace = true, features = ["derive"] }
 validator = { workspace = true, features = ["derive"] }
-sea-orm = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 chrono = { workspace = true, features = ["serde"] }
@@ -32,7 +29,12 @@ utoipa = { workspace = true }
 tracing = { workspace = true }
 http-body-util = { workspace = true }
 
+[build-dependencies]
+syn = { workspace = true }
+
 [dev-dependencies]
+ryframe-db = { path = "../ryframe-db" }
+ryframe-storage = { path = "../ryframe-storage" }
 tower = { workspace = true, features = ["util"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }

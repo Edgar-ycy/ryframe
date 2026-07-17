@@ -45,7 +45,7 @@ impl Default for UploadConfig {
 }
 
 /// 上传文件信息
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct UploadFileInfo {
     /// 原始文件名
     pub original_name: String,

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use axum::{
     extract::{Request, State},
@@ -8,13 +8,12 @@ use axum::{
 };
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::{RedisClient, TenantContext, TokenBlacklist, with_tenant_context};
-use ryframe_db::{TenantRepository, entities::user};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use ryframe_core::{TenantContext, TokenBlacklist, with_tenant_context};
 
 use crate::{
     jwt::decode_token,
-    permission::{PermissionContext, check_permission_context, resolve_user_permission_context},
+    permission::check_permission,
+    principal::{PrincipalResolver, RequestPrincipal},
 };
 
 /// 认证中间件状态（合并 Config + TokenBlacklist）
@@ -22,8 +21,7 @@ use crate::{
 pub struct AuthState {
     pub config: Arc<AppConfig>,
     pub blacklist: TokenBlacklist,
-    pub db: DatabaseConnection,
-    pub redis: Option<RedisClient>,
+    pub principal_resolver: Arc<dyn PrincipalResolver>,
 }
 
 /// 认证中间件
@@ -62,57 +60,28 @@ pub async fn auth_middleware(
     }
 
     // 检查用户级强退黑名单（阻止 refresh_token 绕过强退）
-    let force_logout_key = format!("force_logout:user:{}", claims.sub);
+    let force_logout_key = format!("force_logout:{}:user:{}", claims.tenant_id, claims.sub);
     if auth_state.blacklist.is_blacklisted(&force_logout_key).await {
         return Err(
             AppError::Authentication("账号已被强制下线，请重新登录".into()).into_response(),
         );
     }
 
-    let tenant = TenantRepository
-        .ensure_available(&auth_state.db, &claims.tenant_id)
-        .await
-        .map_err(|error| error.into_response())?;
-    if claims.tenant_session_version != tenant.session_version {
-        return Err(AppError::Authentication("租户会话已失效，请重新登录".into()).into_response());
-    }
-
-    let user_id = claims
-        .sub
-        .parse::<i64>()
-        .map_err(|_| AppError::Authentication("令牌中的用户ID无效".into()).into_response())?;
     // Replace the unauthenticated, header-derived context with the tenant
     // identity bound in the verified token.
     let tenant_context = TenantContext {
         tenant_id: claims.tenant_id.clone(),
         is_admin: false,
     };
-    let permission_context = with_tenant_context(tenant_context.clone(), async {
-        let current_user = user::Entity::find_by_id(user_id)
-            .filter(user::Column::TenantId.eq(&claims.tenant_id))
-            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
-            .one(&auth_state.db)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?
-            .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
-        if current_user.auth_version != claims.user_auth_version {
-            return Err(AppError::Authentication(
-                "用户权限已变更，请重新登录".into(),
-            ));
-        }
-        resolve_user_permission_context(
-            &auth_state.db,
-            auth_state.redis.as_ref(),
-            &claims.tenant_id,
-            user_id,
-        )
-        .await
-    })
+    let principal = with_tenant_context(
+        tenant_context.clone(),
+        auth_state.principal_resolver.resolve_principal(&claims),
+    )
     .await
     .map_err(|error| error.into_response())?;
 
     request.extensions_mut().insert(tenant_context.clone());
-    request.extensions_mut().insert(permission_context);
+    request.extensions_mut().insert(principal);
     request.extensions_mut().insert(claims);
     Ok(with_tenant_context(tenant_context, next.run(request)).await)
 }
@@ -123,6 +92,8 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
     header.strip_prefix("Bearer ").map(|s| s.to_string())
 }
 
+type PermissionFuture = Pin<Box<dyn Future<Output = Result<Response, Response>> + Send>>;
+
 /// 权限守卫中间件工厂
 ///
 /// 使用方式（路由级，无需 State）：
@@ -132,22 +103,20 @@ fn extract_bearer_token(request: &Request) -> Option<String> {
 /// //     require_permission("system:user:list"),
 /// // )))
 /// ```
-#[allow(clippy::type_complexity)]
 pub fn require_permission(
     perm: &'static str,
-) -> impl Fn(Request, Next) -> std::pin::Pin<Box<dyn Future<Output = Result<Response, Response>> + Send>>
-+ Clone {
+) -> impl Fn(Request, Next) -> PermissionFuture + Clone {
     move |request: Request, next: Next| {
         let perm = perm;
         Box::pin(async move {
             let context = request
                 .extensions()
-                .get::<PermissionContext>()
+                .get::<RequestPrincipal>()
                 .ok_or_else(|| {
                     AppError::Authentication("未认证，请先登录".into()).into_response()
                 })?;
 
-            check_permission_context(context, perm).map_err(|e| e.into_response())?;
+            check_permission(context, perm).map_err(|e| e.into_response())?;
 
             Ok(next.run(request).await)
         })

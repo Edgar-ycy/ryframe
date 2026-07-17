@@ -4,10 +4,13 @@ use argon2::{
 };
 use ryframe_common::{AppError, AppResult};
 
-/// 密码最小长度
-const MIN_PASSWORD_LENGTH: usize = 8;
-/// 密码最大长度
-const MAX_PASSWORD_LENGTH: usize = 72;
+/// 新密码最小长度。
+pub const MIN_PASSWORD_LENGTH: usize = 8;
+/// Argon2 接受的新密码最大长度。
+pub const MAX_PASSWORD_LENGTH: usize = 72;
+/// OpenAPI/浏览器端使用的等价复杂度表达式。
+pub const COMPLEXITY_PATTERN: &str =
+    r"^(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])(?=.*[^A-Za-z0-9])[!-~]{8,72}$";
 
 /// 对密码进行 argon2 哈希
 ///
@@ -44,6 +47,7 @@ pub fn verify(password: &str, hash: &str) -> AppResult<bool> {
 /// - 至少包含一个小写字母
 /// - 至少包含一个数字
 /// - 至少包含一个特殊字符
+/// - 仅包含可见 ASCII 字符且不包含空格
 ///
 /// # Errors
 /// 不满足任一要求时返回 AppError::Validation
@@ -60,11 +64,16 @@ pub fn validate_complexity(password: &str) -> AppResult<()> {
             MAX_PASSWORD_LENGTH
         )));
     }
+    if !password.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(AppError::Validation(
+            "密码只能包含可见 ASCII 字符且不能包含空格".into(),
+        ));
+    }
 
-    let has_upper = password.chars().any(|c| c.is_uppercase());
-    let has_lower = password.chars().any(|c| c.is_lowercase());
+    let has_upper = password.chars().any(|c| c.is_ascii_uppercase());
+    let has_lower = password.chars().any(|c| c.is_ascii_lowercase());
     let has_digit = password.chars().any(|c| c.is_ascii_digit());
-    let has_special = password.chars().any(|c| !c.is_alphanumeric());
+    let has_special = password.chars().any(|c| !c.is_ascii_alphanumeric());
 
     if !has_upper {
         return Err(AppError::Validation("密码必须包含至少一个大写字母".into()));
@@ -114,6 +123,12 @@ mod tests {
     fn test_validate_complexity_no_special() {
         let err = validate_complexity("Abcdefg1").unwrap_err();
         assert!(err.to_string().contains("特殊字符"));
+    }
+
+    #[test]
+    fn test_validate_complexity_rejects_non_ascii_and_spaces() {
+        assert!(validate_complexity("Abcdef1！").is_err());
+        assert!(validate_complexity("Abc def1!").is_err());
     }
 
     #[test]

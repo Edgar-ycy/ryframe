@@ -1,172 +1,5 @@
 use utoipa::OpenApi;
 
-#[allow(dead_code)]
-mod extra_paths {
-    #[utoipa::path(
-        get,
-        path = "/api/v1/monitor/health",
-        tag = "服务器监控",
-        responses((status = 200, description = "运行健康状态"))
-    )]
-    pub fn monitor_health() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/monitor/metrics",
-        tag = "服务器监控",
-        responses((status = 200, description = "Prometheus 指标文本"))
-    )]
-    pub fn monitor_metrics() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/monitor/server",
-        tag = "服务器监控",
-        responses((status = 200, description = "服务器 CPU、内存、磁盘信息")),
-        security(("bearer" = []))
-    )]
-    pub fn monitor_server() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/monitor/cache",
-        tag = "服务器监控",
-        responses((status = 200, description = "缓存运行状态")),
-        security(("bearer" = []))
-    )]
-    pub fn monitor_cache() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/monitor/cache/commands",
-        tag = "服务器监控",
-        responses((status = 200, description = "Redis 命令统计")),
-        security(("bearer" = []))
-    )]
-    pub fn monitor_cache_commands() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/monitor/db-pool",
-        tag = "服务器监控",
-        responses((status = 200, description = "数据库连接池状态")),
-        security(("bearer" = []))
-    )]
-    pub fn monitor_db_pool() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/monitor/runtime",
-        tag = "服务器监控",
-        responses((status = 200, description = "主应用运行时组件状态")),
-        security(("bearer" = []))
-    )]
-    pub fn monitor_runtime() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/tools/gen/tables",
-        tag = "代码生成",
-        responses((status = 200, description = "数据库表结构列表")),
-        security(("bearer" = []))
-    )]
-    pub fn gen_tables() {}
-
-    #[utoipa::path(
-        post,
-        path = "/api/v1/tools/gen/preview",
-        tag = "代码生成",
-        responses((status = 200, description = "预览生成文件")),
-        security(("bearer" = []))
-    )]
-    pub fn gen_preview() {}
-
-    #[utoipa::path(
-        post,
-        path = "/api/v1/tools/gen/generate",
-        tag = "代码生成",
-        responses((status = 200, description = "生成代码并写入磁盘")),
-        security(("bearer" = []))
-    )]
-    pub fn gen_generate() {}
-
-    #[utoipa::path(
-        post,
-        path = "/api/v1/tools/gen/download",
-        tag = "代码生成",
-        responses((status = 200, description = "下载生成代码 zip")),
-        security(("bearer" = []))
-    )]
-    pub fn gen_download() {}
-
-    #[utoipa::path(
-        post,
-        path = "/api/v1/common/upload",
-        tag = "通用",
-        responses((status = 200, description = "鉴权文件上传")),
-        security(("bearer" = []))
-    )]
-    pub fn common_upload() {}
-
-    #[utoipa::path(
-        post,
-        path = "/api/v1/common/upload/image",
-        tag = "通用",
-        responses((status = 200, description = "鉴权图片上传并压缩")),
-        security(("bearer" = []))
-    )]
-    pub fn common_upload_image() {}
-
-    #[utoipa::path(
-        post,
-        path = "/api/v1/common/upload/avatar",
-        tag = "通用",
-        responses((status = 200, description = "鉴权头像上传")),
-        security(("bearer" = []))
-    )]
-    pub fn common_upload_avatar() {}
-
-    #[utoipa::path(
-        get,
-        path = "/api/v1/common/file/download",
-        tag = "通用",
-        params(
-            ("path" = String, Query, description = "对象存储 key"),
-            ("bucket" = Option<String>, Query, description = "对象存储 bucket")
-        ),
-        responses((status = 200, description = "文件下载")),
-        security(("bearer" = []))
-    )]
-    pub fn common_file_download() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/users/export", tag = "用户管理", responses((status = 200, description = "导出用户 Excel")), security(("bearer" = [])))]
-    pub fn users_export() {}
-
-    #[utoipa::path(post, path = "/api/v1/system/users/import", tag = "用户管理", responses((status = 200, description = "导入用户 Excel")), security(("bearer" = [])))]
-    pub fn users_import() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/users/import-template", tag = "用户管理", responses((status = 200, description = "下载用户导入模板")), security(("bearer" = [])))]
-    pub fn users_import_template() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/roles/export", tag = "角色管理", responses((status = 200, description = "导出角色 Excel")), security(("bearer" = [])))]
-    pub fn roles_export() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/posts/export", tag = "岗位管理", responses((status = 200, description = "导出岗位 Excel")), security(("bearer" = [])))]
-    pub fn posts_export() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/configs/export", tag = "参数配置", responses((status = 200, description = "导出参数配置 Excel")), security(("bearer" = [])))]
-    pub fn configs_export() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/dict/types/export", tag = "字典管理", responses((status = 200, description = "导出字典类型 Excel")), security(("bearer" = [])))]
-    pub fn dict_types_export() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/operlogs/export", tag = "操作日志", responses((status = 200, description = "导出操作日志 Excel")), security(("bearer" = [])))]
-    pub fn operlogs_export() {}
-
-    #[utoipa::path(get, path = "/api/v1/system/loginlogs/export", tag = "登录日志", responses((status = 200, description = "导出登录日志 Excel")), security(("bearer" = [])))]
-    pub fn loginlogs_export() {}
-}
-
 /// RyFrame API 文档
 ///
 /// 访问 `/swagger-ui` 查看交互式 API 文档
@@ -174,7 +7,7 @@ mod extra_paths {
 #[openapi(
     info(
         title = "RyFrame API",
-        version = "0.5.0",
+        version = env!("CARGO_PKG_VERSION"),
         description = r#"RyFrame —— 基于 Rust + Axum 的现代化企业级后端框架。
 
 ## 认证
@@ -212,7 +45,8 @@ mod extra_paths {
         (name = "服务器监控", description = "/health(健康检查) + /metrics(Prometheus) 公开；/server、/cache、/db-pool、/runtime 需认证。"),
         (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
         (name = "个人中心", description = "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。"),
-        (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重、审计事件和任务投递。")
+        (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重和熔断保护。"),
+        (name = "租户管理", description = "系统租户管理租户生命周期、配额和管理员初始化。")
     ),
     paths(
         // 认证接口
@@ -221,6 +55,10 @@ mod extra_paths {
         crate::handlers::auth_handler::refresh,
         crate::handlers::auth_handler::complete_password_reset,
         crate::handlers::auth_handler::me,
+        crate::handlers::captcha_handler::generate_captcha_handler,
+        crate::handlers::captcha_handler::captcha_image_handler,
+        crate::handlers::captcha_handler::verify_captcha_handler,
+        crate::handlers::captcha_handler::get_captcha_config_handler,
         // 用户管理
         crate::handlers::user_handler::list,
         crate::handlers::user_handler::list_no_page,
@@ -230,8 +68,11 @@ mod extra_paths {
         crate::handlers::user_handler::remove,
         crate::handlers::user_handler::batch_remove,
         crate::handlers::user_handler::request_password_reset,
-        crate::handlers::user_handler::change_status,
-        crate::handlers::user_handler::assign_role,
+        crate::handlers::user_handler::update_status,
+        crate::handlers::user_handler::replace_roles,
+        crate::handlers::user_handler::export_users,
+        crate::handlers::user_handler::import_users,
+        crate::handlers::user_handler::download_import_template,
         // 角色管理
         crate::handlers::role_handler::list,
         crate::handlers::role_handler::list_no_page,
@@ -240,9 +81,10 @@ mod extra_paths {
         crate::handlers::role_handler::update,
         crate::handlers::role_handler::remove,
         crate::handlers::role_handler::batch_remove,
-        crate::handlers::role_handler::assign_perm,
-        crate::handlers::role_handler::assign_dept,
-        crate::handlers::role_handler::update_data_scope,
+        crate::handlers::role_handler::replace_permissions,
+        crate::handlers::role_handler::get_role_perms,
+        crate::handlers::role_handler::replace_data_scope,
+        crate::handlers::role_handler::export_roles,
         // 部门管理
         crate::handlers::dept_handler::tree,
         crate::handlers::dept_handler::list_page,
@@ -258,8 +100,10 @@ mod extra_paths {
         crate::handlers::post_handler::create,
         crate::handlers::post_handler::update,
         crate::handlers::post_handler::remove,
+        crate::handlers::post_handler::export_posts,
         // 菜单管理
         crate::handlers::menu_handler::tree,
+        crate::handlers::menu_handler::user_tree,
         crate::handlers::menu_handler::list_page,
         crate::handlers::menu_handler::list_no_page,
         crate::handlers::menu_handler::detail,
@@ -274,16 +118,20 @@ mod extra_paths {
         crate::handlers::config_handler::update,
         crate::handlers::config_handler::remove,
         crate::handlers::config_handler::get_by_key,
+        crate::handlers::config_handler::refresh_cache,
+        crate::handlers::config_handler::export_configs,
         // 字典管理
         crate::handlers::dict_handler::list_types,
         crate::handlers::dict_handler::list_types_no_page,
         crate::handlers::dict_handler::create_type,
         crate::handlers::dict_handler::update_type,
         crate::handlers::dict_handler::delete_type,
+        crate::handlers::dict_handler::list_data,
         crate::handlers::dict_handler::list_data_by_type_path,
         crate::handlers::dict_handler::create_data,
         crate::handlers::dict_handler::update_data,
         crate::handlers::dict_handler::delete_data,
+        crate::handlers::dict_handler::export_dict_types,
         // 通知公告
         crate::handlers::notice_handler::list,
         crate::handlers::notice_handler::list_no_page,
@@ -293,37 +141,32 @@ mod extra_paths {
         crate::handlers::notice_handler::remove,
         // 操作日志
         crate::handlers::oper_log_handler::list,
+        crate::handlers::oper_log_handler::list_no_page,
+        crate::handlers::oper_log_handler::export_oper_logs,
         // 登录日志
         crate::handlers::login_log_handler::list,
+        crate::handlers::login_log_handler::list_no_page,
+        crate::handlers::login_log_handler::export_login_logs,
         // 在线用户
         crate::handlers::online_user_handler::list_online_users,
         crate::handlers::online_user_handler::list_online_users_page,
         crate::handlers::online_user_handler::force_logout,
         // 监控、生成器、通用上传下载和导出导入
-        extra_paths::monitor_health,
-        extra_paths::monitor_metrics,
-        extra_paths::monitor_server,
-        extra_paths::monitor_cache,
-        extra_paths::monitor_cache_commands,
-        extra_paths::monitor_db_pool,
-        extra_paths::monitor_runtime,
-        extra_paths::gen_tables,
-        extra_paths::gen_preview,
-        extra_paths::gen_generate,
-        extra_paths::gen_download,
-        extra_paths::common_upload,
-        extra_paths::common_upload_image,
-        extra_paths::common_upload_avatar,
-        extra_paths::common_file_download,
-        extra_paths::users_export,
-        extra_paths::users_import,
-        extra_paths::users_import_template,
-        extra_paths::roles_export,
-        extra_paths::posts_export,
-        extra_paths::configs_export,
-        extra_paths::dict_types_export,
-        extra_paths::operlogs_export,
-        extra_paths::loginlogs_export,
+        ryframe_monitor::health_check_handler,
+        ryframe_monitor::metrics_handler,
+        ryframe_monitor::server_info_handler,
+        ryframe_monitor::cache_info_handler,
+        ryframe_monitor::cache_commands_handler,
+        ryframe_monitor::db_pool_handler,
+        crate::router::runtime_status,
+        crate::handlers::generator_handler::list_tables,
+        crate::handlers::generator_handler::preview,
+        crate::handlers::generator_handler::generate,
+        crate::handlers::generator_handler::download,
+        crate::handlers::common_handler::upload_file,
+        crate::handlers::common_handler::upload_image,
+        crate::handlers::common_handler::upload_avatar,
+        crate::handlers::common_handler::download_file,
         // 个人中心
         crate::handlers::profile_handler::get_profile,
         crate::handlers::profile_handler::update_profile,
@@ -336,6 +179,11 @@ mod extra_paths {
         crate::handlers::permission_handler::update,
         crate::handlers::permission_handler::remove,
         crate::handlers::permission_handler::sync_perm_from_route,
+        // 租户管理
+        crate::handlers::tenant_handler::list,
+        crate::handlers::tenant_handler::create,
+        crate::handlers::tenant_handler::update,
+        crate::handlers::tenant_handler::update_status,
     ),
     components(schemas(
         // 认证 DTO
@@ -343,57 +191,166 @@ mod extra_paths {
         crate::dto::auth_dto::RefreshRequest,
         crate::dto::auth_dto::CompletePasswordResetRequest,
         crate::dto::auth_dto::LoginResponse,
+        crate::handlers::captcha_handler::CaptchaQuery,
+        crate::handlers::captcha_handler::CaptchaResponse,
+        crate::handlers::captcha_handler::CaptchaVerifyRequest,
+        crate::handlers::captcha_handler::CaptchaVerifyResponse,
+        crate::handlers::captcha_handler::CaptchaConfigResponse,
         ryframe_service::UserInfo,
         // 用户 DTO
         crate::dto::user_dto::CreateUserDto,
         crate::dto::user_dto::UpdateUserDto,
         crate::dto::user_dto::PasswordResetRequestDto,
         crate::dto::user_dto::PasswordResetRequestResponse,
-        crate::dto::user_dto::ChangeStatusDto,
-        crate::dto::user_dto::UserRoleAssignDto,
+        crate::dto::user_dto::UpdateUserStatusDto,
+        crate::dto::user_dto::ReplaceUserRolesDto,
+        crate::dto::user_import_dto::UserImportResult,
+        crate::dto::multipart_dto::FileUploadForm,
+        ryframe_service::system::UserVo,
+        ryframe_service::system::UserDetailVo,
+        ryframe_service::system::RoleBriefVo,
         // 角色 DTO
         crate::dto::role_dto::CreateRoleDto,
         crate::dto::role_dto::UpdateRoleDto,
-        crate::dto::role_dto::RolePermAssignDto,
-        crate::dto::role_dto::RoleDeptAssignDto,
-        crate::dto::role_dto::RoleDataScopeUpdateDto,
+        crate::dto::role_dto::ReplaceRolePermissionsDto,
+        crate::dto::role_dto::ReplaceRoleDataScopeDto,
+        ryframe_service::system::RoleVo,
+        ryframe_service::system::PermissionType,
         // 部门 DTO
         crate::dto::dept_dto::CreateDeptDto,
         crate::dto::dept_dto::UpdateDeptDto,
+        ryframe_service::system::DeptVo,
+        ryframe_service::system::DeptTreeNode,
         // 岗位 DTO
         crate::dto::post_dto::CreatePostDto,
         crate::dto::post_dto::UpdatePostDto,
+        ryframe_service::system::PostVo,
         // 菜单 DTO
         crate::dto::menu_dto::CreateMenuDto,
         crate::dto::menu_dto::UpdateMenuDto,
         crate::dto::permission_dto::CreatePermissionDto,
         crate::dto::permission_dto::UpdatePermissionDto,
+        ryframe_service::system::MenuVo,
+        ryframe_service::system::MenuTreeNode,
+        ryframe_service::system::PermissionVo,
+        ryframe_service::system::PermissionTreeNode,
+        ryframe_service::system::PermissionSyncReport,
         // 参数配置 DTO
         crate::dto::config_dto::CreateConfigDto,
         crate::dto::config_dto::UpdateConfigDto,
+        ryframe_service::system::ConfigVo,
         // 字典 DTO
         crate::dto::dict_dto::CreateDictTypeDto,
         crate::dto::dict_dto::UpdateDictTypeDto,
         crate::dto::dict_dto::CreateDictDataDto,
         crate::dto::dict_dto::UpdateDictDataDto,
+        crate::dto::dict_dto::DictOptionDto,
+        ryframe_service::system::DictTypeVo,
+        ryframe_service::system::DictDataVo,
         // 通知 DTO
         crate::dto::notice_dto::CreateNoticeDto,
         crate::dto::notice_dto::UpdateNoticeDto,
+        ryframe_service::system::NoticeVo,
         // 日志 DTO
         crate::dto::oper_log_dto::OperLogPageQuery,
         crate::dto::login_log_dto::LoginLogPageQuery,
+        ryframe_service::system::OperLogVo,
+        ryframe_service::system::LoginInfoVo,
+        ryframe_service::system::OnlineUserVo,
         // 个人中心 DTO
         crate::dto::profile_dto::UpdateProfileRequest,
         crate::dto::profile_dto::ChangePasswordRequest,
+        crate::dto::profile_dto::AvatarResponse,
+        ryframe_service::system::profile_service::UserProfileResponse,
+        crate::dto::generator_dto::GenerateOptionsDto,
+        ryframe_service::system::generator_service::TableInfo,
+        ryframe_service::system::generator_service::ColumnInfo,
+        ryframe_service::system::generator_service::GeneratedFile,
+        ryframe_service::system::generator_service::WriteReport,
+        crate::dto::tenant_dto::CreateTenantDto,
+        crate::dto::tenant_dto::UpdateTenantDto,
+        crate::dto::tenant_dto::UpdateTenantStatusDto,
+        ryframe_service::system::TenantVo,
+        ryframe_service::system::UploadResponse,
+        ryframe_monitor::ServerInfo,
+        ryframe_monitor::HealthInfo,
+        ryframe_monitor::CacheInfo,
+        ryframe_monitor::CacheKeysInfo,
+        ryframe_monitor::RedisServerInfo,
+        ryframe_monitor::RedisMemoryInfo,
+        ryframe_monitor::DbPoolInfo,
     )),
-    modifiers(&SecurityAddon)
+    modifiers(&ApiDocModifier)
 )]
 pub struct ApiDoc;
 
-/// Bearer Token 安全方案
-struct SecurityAddon;
+/// Render the OpenAPI document with deterministic object-key ordering.
+///
+/// Utoipa stores extensions in a hash map, so serializing `OpenApi` directly
+/// can produce byte-wise differences between otherwise identical processes.
+pub fn render_openapi_json(
+    document: &utoipa::openapi::OpenApi,
+) -> Result<String, serde_json::Error> {
+    let canonical = serde_json::to_value(document)?;
+    Ok(format!("{}\n", serde_json::to_string_pretty(&canonical)?))
+}
 
-impl utoipa::Modify for SecurityAddon {
+/// Bearer Token 安全方案
+struct ApiDocModifier;
+
+const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
+    ("home", "C"),
+    ("system", "M"),
+    ("monitor", "M"),
+    ("tools", "M"),
+    ("system.user", "C"),
+    ("system.role", "C"),
+    ("system.menu", "C"),
+    ("system.dept", "C"),
+    ("system.post", "C"),
+    ("system.dict", "C"),
+    ("system.config", "C"),
+    ("system.notice", "C"),
+    ("system.perm", "C"),
+    ("system.operlog", "C"),
+    ("system.logininfor", "C"),
+    ("monitor.online", "C"),
+    ("monitor.server", "C"),
+    ("monitor.runtime", "C"),
+    ("monitor.cache", "C"),
+    ("monitor.db-pool", "C"),
+    ("tools.gen", "C"),
+];
+
+fn menu_route_contract() -> serde_json::Value {
+    let routes = DEFAULT_MENU_ROUTES
+        .iter()
+        .map(|(route_key, menu_type)| {
+            serde_json::json!({
+                "route_key": route_key,
+                "menu_type": menu_type,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "version": 1,
+        "routes": routes,
+    })
+}
+
+fn password_policy_contract() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "min_length": ryframe_auth::password::MIN_PASSWORD_LENGTH,
+        "max_length": ryframe_auth::password::MAX_PASSWORD_LENGTH,
+        "pattern": ryframe_auth::password::COMPLEXITY_PATTERN,
+        "allowed_characters": "ascii_graphic",
+        "required_classes": ["uppercase", "lowercase", "digit", "special"],
+    })
+}
+
+impl utoipa::Modify for ApiDocModifier {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
             components.add_security_scheme(
@@ -405,11 +362,243 @@ impl utoipa::Modify for SecurityAddon {
                 ),
             );
         }
+
+        openapi
+            .extensions
+            .get_or_insert_default()
+            .insert("x-ryframe-menu-routes".into(), menu_route_contract());
+        openapi.extensions.get_or_insert_default().insert(
+            "x-ryframe-password-policy".into(),
+            password_policy_contract(),
+        );
+
+        for (path, item) in &mut openapi.paths.paths {
+            set_operation_id(&mut item.get, "get", path);
+            set_operation_id(&mut item.post, "post", path);
+            set_operation_id(&mut item.put, "put", path);
+            set_operation_id(&mut item.delete, "delete", path);
+            set_operation_id(&mut item.patch, "patch", path);
+            set_operation_id(&mut item.options, "options", path);
+            set_operation_id(&mut item.head, "head", path);
+            set_operation_id(&mut item.trace, "trace", path);
+        }
     }
+}
+
+fn set_operation_id(
+    operation: &mut Option<utoipa::openapi::path::Operation>,
+    method: &str,
+    path: &str,
+) {
+    let Some(operation) = operation else {
+        return;
+    };
+
+    let normalized_path = path
+        .trim_start_matches('/')
+        .split('/')
+        .skip_while(|segment| matches!(*segment, "api" | "v1"))
+        .map(|segment| {
+            segment
+                .strip_prefix('{')
+                .and_then(|value| value.strip_suffix('}'))
+                .map_or_else(
+                    || segment.replace('-', "_"),
+                    |parameter| format!("by_{parameter}"),
+                )
+        })
+        .collect::<Vec<_>>()
+        .join("_");
+
+    operation.operation_id = Some(format!("{method}_{normalized_path}"));
 }
 
 /// 获取 OpenAPI JSON 文档
 pub async fn openapi_json() -> impl axum::response::IntoResponse {
     use axum::Json;
     Json(ApiDoc::openapi())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+
+    #[test]
+    fn operations_are_unique_and_use_canonical_paths() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let paths = document["paths"].as_object().unwrap();
+        let schemas = document["components"]["schemas"].as_object().unwrap();
+        let mut operation_ids = HashMap::new();
+        let mut query_operation_count = 0;
+
+        assert!(
+            paths.len() >= 89,
+            "OpenAPI path coverage unexpectedly shrank: found {}",
+            paths.len()
+        );
+        assert!(
+            schemas.len() >= 150,
+            "OpenAPI schema coverage unexpectedly shrank: found {}",
+            schemas.len()
+        );
+
+        for required_path in [
+            "/api/v1/system/users/{id}/roles",
+            "/api/v1/system/users/{id}/status",
+            "/api/v1/system/roles/{id}/permissions",
+            "/api/v1/system/roles/{id}/data-scope",
+        ] {
+            assert!(
+                paths.contains_key(required_path),
+                "required OpenAPI path is missing: {required_path}"
+            );
+        }
+        for legacy_path in [
+            concat!("/api/v1/system/users/assign-", "role"),
+            "/api/v1/system/users/status",
+            concat!("/api/v1/system/roles/assign-", "perm"),
+            concat!("/api/v1/system/roles/assign-", "dept"),
+            concat!("/api/v1/system/roles/update-", "data-scope"),
+        ] {
+            assert!(
+                !paths.contains_key(legacy_path),
+                "legacy OpenAPI path is still registered: {legacy_path}"
+            );
+        }
+        for (path, item) in paths {
+            assert!(
+                path.starts_with("/api/v1/"),
+                "unversioned OpenAPI path: {path}"
+            );
+            assert!(!path.contains("listNoPage"), "legacy OpenAPI path: {path}");
+            assert!(
+                !path.contains("changeStatus"),
+                "legacy OpenAPI path: {path}"
+            );
+            assert!(!path.contains("configKey"), "legacy OpenAPI path: {path}");
+
+            for method in ["get", "post", "put", "delete", "patch"] {
+                let Some(operation) = item.get(method) else {
+                    continue;
+                };
+                let operation_id = operation["operationId"]
+                    .as_str()
+                    .expect("every operation must have an operationId");
+                if let Some(previous) = operation_ids.insert(operation_id, path) {
+                    panic!("duplicate operationId '{operation_id}' for {previous} and {path}");
+                }
+                if operation["parameters"]
+                    .as_array()
+                    .is_some_and(|parameters| {
+                        parameters
+                            .iter()
+                            .any(|parameter| parameter["in"] == "query")
+                    })
+                {
+                    query_operation_count += 1;
+                }
+                if path.ends_with("/all") || path.ends_with("/export") {
+                    let documents_pagination = operation["parameters"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|parameter| {
+                            parameter["in"] == "query"
+                                && matches!(parameter["name"].as_str(), Some("page" | "page_size"))
+                        });
+                    assert!(
+                        !documents_pagination,
+                        "full-record operation must not document pagination parameters: \
+                         {method} {path}"
+                    );
+                }
+
+                let success_has_schema = operation["responses"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .filter(|(status, _)| status.starts_with('2'))
+                    .any(|(_, response)| {
+                        response["content"]
+                            .as_object()
+                            .is_some_and(|content| !content.is_empty())
+                    });
+                assert!(
+                    success_has_schema,
+                    "{method} {path} must document its success response schema"
+                );
+
+                let allows_empty_request = matches!(
+                    (method, path.as_str()),
+                    ("post", "/api/v1/auth/logout") | ("post", "/api/v1/system/perms/sync")
+                );
+                if matches!(method, "post" | "put" | "patch") && !allows_empty_request {
+                    assert!(
+                        operation.get("requestBody").is_some(),
+                        "{method} {path} must document its request body"
+                    );
+                }
+            }
+        }
+        assert!(
+            query_operation_count >= 34,
+            "OpenAPI query parameter coverage unexpectedly shrank: found {query_operation_count}"
+        );
+    }
+
+    #[test]
+    fn default_menu_routes_are_exported_as_a_stable_contract() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let contract = &document["x-ryframe-menu-routes"];
+        assert_eq!(contract, &menu_route_contract());
+
+        let routes = contract["routes"].as_array().unwrap();
+        assert_eq!(routes.len(), 21);
+        let mut route_keys = HashSet::new();
+        for route in routes {
+            let route_key = route["route_key"].as_str().unwrap();
+            let menu_type = route["menu_type"].as_str().unwrap();
+            assert!(
+                route_keys.insert(route_key),
+                "duplicate route_key: {route_key}"
+            );
+            assert!(matches!(menu_type, "M" | "C"));
+        }
+    }
+
+    #[test]
+    fn new_password_inputs_use_the_exported_policy() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        assert_eq!(
+            &document["x-ryframe-password-policy"],
+            &password_policy_contract()
+        );
+
+        for (schema, field) in [
+            ("ChangePasswordRequest", "new_password"),
+            ("CompletePasswordResetRequest", "new_password"),
+            ("CreateTenantDto", "admin_password"),
+        ] {
+            let property = &document["components"]["schemas"][schema]["properties"][field];
+            assert_eq!(property["minLength"], 8, "{schema}.{field}");
+            assert_eq!(property["maxLength"], 72, "{schema}.{field}");
+            assert_eq!(
+                property["pattern"],
+                ryframe_auth::password::COMPLEXITY_PATTERN,
+                "{schema}.{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn checked_in_contract_snapshot_is_current() {
+        let actual = render_openapi_json(&ApiDoc::openapi()).unwrap();
+        let expected = include_str!("../../../openapi/openapi.json");
+        assert_eq!(
+            actual, expected,
+            "run `cargo run -p ryframe-api --bin export_openapi -- openapi/openapi.json`"
+        );
+    }
 }

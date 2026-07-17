@@ -8,6 +8,28 @@ use std::time::Duration;
 use redis::{AsyncCommands, aio::ConnectionManager};
 use ryframe_config::RedisConfig;
 
+const SCAN_BATCH_SIZE: usize = 256;
+const GET_AND_DEL_SCRIPT: &str = "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value";
+
+fn prepare_script_invocation<'script, K, V>(
+    script: &'script redis::Script,
+    keys: &[K],
+    args: &[V],
+) -> redis::ScriptInvocation<'script>
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    let mut invocation = script.prepare_invoke();
+    for key in keys {
+        invocation.key(key.as_ref());
+    }
+    for arg in args {
+        invocation.arg(arg.as_ref());
+    }
+    invocation
+}
+
 /// Redis 客户端封装
 ///
 /// 内部使用 `ConnectionManager`，自动处理重连和连接池管理。
@@ -84,18 +106,18 @@ impl RedisClient {
         conn.del(key.as_ref()).await
     }
 
-    /// GET + DEL（原子获取并删除，模拟一次性读取）
-    ///
-    /// 注意：非原子操作，但在验证码场景可接受
+    /// 原子获取并删除，用于验证码等一次性数据。
     pub async fn get_and_del<K: AsRef<str>>(
         &self,
         key: K,
     ) -> Result<Option<String>, redis::RedisError> {
-        let value = self.get(key.as_ref()).await?;
-        if value.is_some() {
-            self.del(key.as_ref()).await?;
-        }
-        Ok(value)
+        let mut conn = self.conn.clone();
+        redis::cmd("EVAL")
+            .arg(GET_AND_DEL_SCRIPT)
+            .arg(1)
+            .arg(key.as_ref())
+            .query_async(&mut conn)
+            .await
     }
 
     /// EXISTS key
@@ -116,10 +138,53 @@ impl RedisClient {
         redis::cmd("PING").query_async(&mut conn).await
     }
 
-    /// KEYS pattern（生产环境建议用 SCAN）
-    pub async fn keys<K: AsRef<str>>(&self, pattern: K) -> Result<Vec<String>, redis::RedisError> {
+    /// 使用增量游标扫描匹配的键，避免 `KEYS` 阻塞 Redis。
+    pub async fn scan_keys<K: AsRef<str>>(
+        &self,
+        pattern: K,
+    ) -> Result<Vec<String>, redis::RedisError> {
         let mut conn = self.conn.clone();
-        conn.keys(pattern.as_ref()).await
+        let mut cursor = 0_u64;
+        let mut keys = Vec::new();
+
+        loop {
+            let (next_cursor, mut batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern.as_ref())
+                .arg("COUNT")
+                .arg(SCAN_BATCH_SIZE)
+                .query_async(&mut conn)
+                .await?;
+            keys.append(&mut batch);
+            if next_cursor == 0 {
+                break;
+            }
+            cursor = next_cursor;
+        }
+
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(keys)
+    }
+
+    /// Incrementally find and delete every key matching `pattern`.
+    pub async fn delete_by_pattern<K: AsRef<str>>(
+        &self,
+        pattern: K,
+    ) -> Result<u64, redis::RedisError> {
+        let keys = self.scan_keys(pattern).await?;
+        let mut conn = self.conn.clone();
+        let mut deleted = 0_u64;
+
+        for batch in keys.chunks(SCAN_BATCH_SIZE) {
+            let mut command = redis::cmd("DEL");
+            for key in batch {
+                command.arg(key);
+            }
+            deleted += command.query_async::<u64>(&mut conn).await?;
+        }
+        Ok(deleted)
     }
 
     /// HSET key field value
@@ -192,13 +257,9 @@ impl RedisClient {
     ) -> Result<redis::Value, redis::RedisError> {
         let mut conn = self.conn.clone();
         let lua = redis::Script::new(script.as_ref());
-        for key in keys {
-            lua.key(key.as_ref());
-        }
-        for arg in args {
-            lua.arg(arg.as_ref());
-        }
-        lua.invoke_async(&mut conn).await
+        prepare_script_invocation(&lua, keys, args)
+            .invoke_async(&mut conn)
+            .await
     }
 }
 
@@ -226,5 +287,69 @@ pub async fn create_redis_client(config: &Option<RedisConfig>) -> Option<RedisCl
             tracing::warn!("Redis 连接失败，降级到内存模式: {}", e);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use redis::{Arg, Cmd, Pipeline, RedisFuture, Value, aio::ConnectionLike};
+
+    use super::prepare_script_invocation;
+
+    #[derive(Default)]
+    struct RecordingConnection {
+        commands: Vec<Vec<Vec<u8>>>,
+    }
+
+    impl ConnectionLike for RecordingConnection {
+        fn req_packed_command<'a>(&'a mut self, command: &'a Cmd) -> RedisFuture<'a, Value> {
+            self.commands.push(
+                command
+                    .args_iter()
+                    .filter_map(|arg| match arg {
+                        Arg::Simple(value) => Some(value.to_vec()),
+                        Arg::Cursor => None,
+                    })
+                    .collect(),
+            );
+            Box::pin(async { Ok(Value::Int(1)) })
+        }
+
+        fn req_packed_commands<'a>(
+            &'a mut self,
+            _pipeline: &'a Pipeline,
+            _offset: usize,
+            _count: usize,
+        ) -> RedisFuture<'a, Vec<Value>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn get_db(&self) -> i64 {
+            0
+        }
+    }
+
+    #[tokio::test]
+    async fn script_invocation_forwards_all_keys_and_arguments() {
+        let script = redis::Script::new("return 1");
+        let invocation = prepare_script_invocation(
+            &script,
+            &["rate-limit:a", "rate-limit:b"],
+            &["100.25", "60", "10"],
+        );
+        let mut connection = RecordingConnection::default();
+
+        let result: Value = invocation.invoke_async(&mut connection).await.unwrap();
+
+        assert_eq!(result, Value::Int(1));
+        assert_eq!(connection.commands.len(), 1);
+        let command = &connection.commands[0];
+        assert_eq!(command[0], b"EVALSHA");
+        assert_eq!(command[2], b"2");
+        assert_eq!(command[3], b"rate-limit:a");
+        assert_eq!(command[4], b"rate-limit:b");
+        assert_eq!(command[5], b"100.25");
+        assert_eq!(command[6], b"60");
+        assert_eq!(command[7], b"10");
     }
 }

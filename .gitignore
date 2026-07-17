@@ -1,5 +1,6 @@
 debug
 target
+/ryframe-vue3/
 **/*.rs.bk
 *.pdb
 **/mutants.out*/

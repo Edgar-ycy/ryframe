@@ -28,12 +28,23 @@ pub struct MenuTreeNode {
 
 pub struct MenuRepository;
 
+#[derive(Debug, Default)]
+pub struct MenuFilter<'a> {
+    pub name: Option<&'a str>,
+    pub status: Option<&'a str>,
+}
+
 #[async_trait]
 impl Repository<menu::Model, i64> for MenuRepository {
-    async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<menu::Model>> {
+    async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<menu::Model>> {
         menu::Entity::find_by_id(id)
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(menu::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -42,28 +53,39 @@ impl Repository<menu::Model, i64> for MenuRepository {
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<menu::Model>> {
         crate::pagination::paginate(
             db,
             menu::Entity::find()
                 .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-                .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id())),
+                .filter(menu::Column::TenantId.eq(tenant_id)),
             &query,
         )
         .await
     }
 
-    async fn insert(&self, db: &DatabaseConnection, entity: menu::Model) -> AppResult<menu::Model> {
-        insert_entity!(menu, db, entity)
+    async fn insert(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: menu::Model,
+    ) -> AppResult<menu::Model> {
+        insert_entity!(menu, db, tenant_id, entity)
     }
 
-    async fn update(&self, db: &DatabaseConnection, entity: menu::Model) -> AppResult<menu::Model> {
-        update_entity!(menu, db, entity)
+    async fn update(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: menu::Model,
+    ) -> AppResult<menu::Model> {
+        update_entity!(menu, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        soft_delete_entity!(menu, db, id)
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
+        soft_delete_entity!(menu, db, tenant_id, id)
     }
 }
 
@@ -71,10 +93,11 @@ impl MenuRepository {
     pub async fn find_by_route_key(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         route_key: &str,
     ) -> AppResult<Option<menu::Model>> {
         menu::Entity::find()
-            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(menu::Column::TenantId.eq(tenant_id))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .filter(menu::Column::RouteKey.eq(route_key))
             .one(db)
@@ -82,9 +105,14 @@ impl MenuRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    pub async fn has_children(&self, db: &DatabaseConnection, id: i64) -> AppResult<bool> {
+    pub async fn has_children(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<bool> {
         menu::Entity::find()
-            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(menu::Column::TenantId.eq(tenant_id))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .filter(menu::Column::ParentId.eq(id))
             .one(db)
@@ -93,22 +121,27 @@ impl MenuRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<MenuTreeNode>> {
+    pub async fn find_tree(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+    ) -> AppResult<Vec<MenuTreeNode>> {
         let all = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(menu::Column::TenantId.eq(tenant_id))
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let permission_codes = self.permission_code_map(db, &all).await?;
+        let permission_codes = self.permission_code_map(db, tenant_id, &all).await?;
         Ok(build_menu_tree(&all, None, &permission_codes))
     }
 
     pub async fn find_by_permission_codes(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         permission_codes: &[String],
     ) -> AppResult<Vec<menu::Model>> {
         if permission_codes.is_empty() {
@@ -116,7 +149,7 @@ impl MenuRepository {
         }
 
         let all = menu::Entity::find()
-            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(menu::Column::TenantId.eq(tenant_id))
             .filter(menu::Column::Status.eq(menu::Model::STATUS_NORMAL))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .order_by_asc(menu::Column::Sort)
@@ -133,7 +166,7 @@ impl MenuRepository {
         }
 
         let by_id: HashMap<i64, &menu::Model> = all.iter().map(|menu| (menu.id, menu)).collect();
-        let menu_permission_codes = self.permission_code_map(db, &all).await?;
+        let menu_permission_codes = self.permission_code_map(db, tenant_id, &all).await?;
         let mut visible_ids = HashSet::new();
 
         // Only a page menu's own permission may grant access to that page.
@@ -173,40 +206,42 @@ impl MenuRepository {
     pub async fn find_tree_by_permission_codes(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         permission_codes: &[String],
     ) -> AppResult<Vec<MenuTreeNode>> {
-        let menus = self.find_by_permission_codes(db, permission_codes).await?;
-        let menu_permission_codes = self.permission_code_map(db, &menus).await?;
+        let menus = self
+            .find_by_permission_codes(db, tenant_id, permission_codes)
+            .await?;
+        let menu_permission_codes = self.permission_code_map(db, tenant_id, &menus).await?;
         Ok(build_menu_tree(&menus, None, &menu_permission_codes))
     }
 
-    pub async fn find_filtered(
+    pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
-        name: Option<&str>,
-        status: Option<&str>,
-    ) -> AppResult<Vec<menu::Model>> {
+        tenant_id: &str,
+        query: &PageQuery,
+        filter: &MenuFilter<'_>,
+    ) -> AppResult<PageResult<menu::Model>> {
         let mut select = menu::Entity::find()
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-            .filter(menu::Column::TenantId.eq(ryframe_core::current_tenant_id()));
+            .filter(menu::Column::TenantId.eq(tenant_id));
 
-        if let Some(n) = name.filter(|n| !n.is_empty()) {
+        if let Some(n) = filter.name.filter(|n| !n.is_empty()) {
             select = select.filter(menu::Column::Name.like(format!("%{}%", n)));
         }
-        if let Some(s) = status.filter(|s| !s.is_empty()) {
+        if let Some(s) = filter.status.filter(|s| !s.is_empty()) {
             select = select.filter(menu::Column::Status.eq(s));
         }
 
-        select
-            .order_by_asc(menu::Column::Sort)
-            .all(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        select = select.order_by_asc(menu::Column::Sort);
+        crate::pagination::paginate(db, select, query).await
     }
 
     async fn permission_code_map(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         menus: &[menu::Model],
     ) -> AppResult<HashMap<i64, String>> {
         let perm_ids: HashSet<i64> = menus.iter().filter_map(|item| item.perm_id).collect();
@@ -215,7 +250,7 @@ impl MenuRepository {
         }
         let rows = permission::Entity::find()
             .filter(permission::Column::Id.is_in(perm_ids))
-            .filter(permission::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(permission::Column::TenantId.eq(tenant_id))
             .filter(permission::Column::Status.eq("1"))
             .all(db)
             .await

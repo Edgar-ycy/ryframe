@@ -1,18 +1,27 @@
 use std::{collections::HashMap, sync::Arc};
 
 use chrono::Utc;
-use ryframe_common::{AppError, AppResult};
+use ryframe_common::{ActorContext, AppError, AppResult};
 use ryframe_core::RedisClient;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use utoipa::ToSchema;
 
 /// Redis key 前缀
 const ONLINE_USER_KEY_PREFIX: &str = "online_user:";
 /// 在线用户默认超时时间（30 分钟）
 const DEFAULT_TIMEOUT_MINUTES: i64 = 30;
 
+fn online_user_key(tenant_id: &str, token_id: &str) -> String {
+    format!("{ONLINE_USER_KEY_PREFIX}{tenant_id}:{token_id}")
+}
+
+fn tenant_online_user_pattern(tenant_id: &str) -> String {
+    format!("{ONLINE_USER_KEY_PREFIX}{tenant_id}:*")
+}
+
 /// 在线用户信息（DTO）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OnlineUserVo {
     pub token_id: String,
     pub username: String,
@@ -29,6 +38,7 @@ pub struct OnlineUserVo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSession {
     pub token_id: String,
+    pub tenant_id: String,
     pub user_id: i64,
     pub username: String,
     pub dept_name: Option<String>,
@@ -42,7 +52,7 @@ pub struct UserSession {
 
 /// 在线用户管理服务（支持 Redis / 内存双模式）
 #[derive(Clone)]
-pub enum OnlineUserServiceImpl {
+pub enum OnlineUserService {
     /// Redis 存储（生产推荐，支持分布式部署）
     Redis { client: Box<RedisClient> },
     /// 内存存储（开发/降级模式）
@@ -51,13 +61,13 @@ pub enum OnlineUserServiceImpl {
     },
 }
 
-impl Default for OnlineUserServiceImpl {
+impl Default for OnlineUserService {
     fn default() -> Self {
         Self::new_in_memory()
     }
 }
 
-impl OnlineUserServiceImpl {
+impl OnlineUserService {
     /// 创建 Redis 模式的在线用户服务
     pub fn new_redis(client: RedisClient) -> Self {
         Self::Redis {
@@ -76,7 +86,7 @@ impl OnlineUserServiceImpl {
     pub async fn add_user(&self, session: UserSession) {
         match self {
             Self::Redis { client } => {
-                let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, session.token_id);
+                let key = online_user_key(&session.tenant_id, &session.token_id);
                 let json = match serde_json::to_string(&session) {
                     Ok(j) => j,
                     Err(e) => {
@@ -92,23 +102,26 @@ impl OnlineUserServiceImpl {
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
-                s.insert(session.token_id.clone(), session);
+                s.insert(
+                    online_user_key(&session.tenant_id, &session.token_id),
+                    session,
+                );
             }
         }
     }
 
     /// 移除在线用户
-    pub async fn remove_user(&self, token_id: &str) {
+    pub async fn remove_user(&self, tenant_id: &str, token_id: &str) {
+        let key = online_user_key(tenant_id, token_id);
         match self {
             Self::Redis { client } => {
-                let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, token_id);
                 if let Err(e) = client.del(&key).await {
                     tracing::error!("Redis DEL 在线用户失败: {}", e);
                 }
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
-                s.remove(token_id);
+                s.remove(&key);
             }
         }
     }
@@ -116,11 +129,12 @@ impl OnlineUserServiceImpl {
     /// 获取过滤后的在线用户列表
     pub async fn list_filtered(
         &self,
+        actor: &ActorContext,
         username: Option<&str>,
         ipaddr: Option<&str>,
-    ) -> Vec<OnlineUserVo> {
-        let users = self.list_online_users().await;
-        users
+    ) -> AppResult<Vec<OnlineUserVo>> {
+        let users = self.list_online_users(actor).await?;
+        Ok(users
             .into_iter()
             .filter(|u| {
                 if let Some(username) = username
@@ -135,18 +149,19 @@ impl OnlineUserServiceImpl {
                 }
                 true
             })
-            .collect()
+            .collect())
     }
 
     /// 获取过滤并分页的在线用户列表
     pub async fn list_filtered_page(
         &self,
+        actor: &ActorContext,
         username: Option<&str>,
         ipaddr: Option<&str>,
         page: u64,
         page_size: u64,
-    ) -> (Vec<OnlineUserVo>, u64) {
-        let filtered = self.list_filtered(username, ipaddr).await;
+    ) -> AppResult<(Vec<OnlineUserVo>, u64)> {
+        let filtered = self.list_filtered(actor, username, ipaddr).await?;
         let total = filtered.len() as u64;
         let offset = ((page.saturating_sub(1)) * page_size) as usize;
         let rows: Vec<OnlineUserVo> = filtered
@@ -154,61 +169,76 @@ impl OnlineUserServiceImpl {
             .skip(offset)
             .take(page_size as usize)
             .collect();
-        (rows, total)
+        Ok((rows, total))
     }
 
     /// 获取所有在线用户列表
-    pub async fn list_online_users(&self) -> Vec<OnlineUserVo> {
+    pub async fn list_online_users(&self, actor: &ActorContext) -> AppResult<Vec<OnlineUserVo>> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
         match self {
             Self::Redis { client } => {
-                let pattern = format!("{}*", ONLINE_USER_KEY_PREFIX);
-                let keys = match client.keys(&pattern).await {
-                    Ok(k) => k,
-                    Err(e) => {
-                        tracing::error!("Redis KEYS 在线用户失败: {}", e);
-                        return vec![];
-                    }
-                };
+                let pattern = tenant_online_user_pattern(tenant_id);
+                let keys = client.scan_keys(&pattern).await.map_err(|error| {
+                    tracing::error!("Redis SCAN 在线用户失败: {}", error);
+                    AppError::Internal("查询在线用户失败".into())
+                })?;
 
                 let mut users = Vec::new();
                 for key in keys {
                     match client.get(&key).await {
                         Ok(Some(json)) => {
-                            if let Ok(session) = serde_json::from_str::<UserSession>(&json) {
-                                users.push(session_to_vo(&session));
-                            }
+                            let session =
+                                serde_json::from_str::<UserSession>(&json).map_err(|error| {
+                                    tracing::error!("反序列化在线用户失败: {}", error);
+                                    AppError::Internal("在线用户数据损坏".into())
+                                })?;
+                            users.push(session_to_vo(&session));
                         }
                         Ok(None) => {} // 已过期
                         Err(e) => {
-                            tracing::warn!("Redis GET 在线用户 {} 失败: {}", key, e);
+                            tracing::error!("Redis GET 在线用户 {} 失败: {}", key, e);
+                            return Err(AppError::Internal("查询在线用户失败".into()));
                         }
                     }
                 }
-                users
+                Ok(users)
             }
             Self::InMemory { sessions } => {
                 let s = sessions.read().await;
-                s.values().map(session_to_vo).collect()
+                Ok(s.values()
+                    .filter(|session| session.tenant_id == tenant_id)
+                    .map(session_to_vo)
+                    .collect())
             }
         }
     }
 
     /// 强制下线用户
-    /// 返回被下线用户的 user_id，用于后续的 Token 黑名单等操作。
-    pub async fn force_logout(&self, token_id: &str) -> AppResult<i64> {
+    /// 返回被下线会话，用于后续的 Token 黑名单等操作。
+    pub async fn force_logout(
+        &self,
+        actor: &ActorContext,
+        token_id: &str,
+    ) -> AppResult<UserSession> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let key = online_user_key(tenant_id, token_id);
         match self {
             Self::Redis { client } => {
-                let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, token_id);
-                // 先读取会话获取 user_id（删除前）
-                let user_id = match client.get(&key).await {
-                    Ok(Some(json)) => serde_json::from_str::<UserSession>(&json)
-                        .map(|s| s.user_id)
-                        .unwrap_or(0),
-                    _ => 0,
+                let session = match client.get(&key).await {
+                    Ok(Some(json)) => {
+                        serde_json::from_str::<UserSession>(&json).map_err(|error| {
+                            tracing::error!("反序列化在线用户失败: {}", error);
+                            AppError::Internal("在线用户数据损坏".into())
+                        })?
+                    }
+                    Ok(None) => return Err(AppError::NotFound("在线用户不存在".into())),
+                    Err(error) => {
+                        tracing::error!("Redis GET 强制下线失败: {}", error);
+                        return Err(AppError::Internal("强制下线失败".into()));
+                    }
                 };
-                // 再删除
                 match client.del(&key).await {
-                    Ok(n) if n > 0 => Ok(user_id),
+                    Ok(n) if n > 0 => Ok(session),
                     Ok(_) => Err(AppError::NotFound("在线用户不存在".into())),
                     Err(e) => {
                         tracing::error!("Redis DEL 强制下线失败: {}", e);
@@ -218,21 +248,17 @@ impl OnlineUserServiceImpl {
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
-                let user_id = s.get(token_id).map(|s| s.user_id).unwrap_or(0);
-                if s.remove(token_id).is_some() {
-                    Ok(user_id)
-                } else {
-                    Err(AppError::NotFound("在线用户不存在".into()))
-                }
+                s.remove(&key)
+                    .ok_or_else(|| AppError::NotFound("在线用户不存在".into()))
             }
         }
     }
 
     /// 更新用户最后访问时间
-    pub async fn touch_user(&self, token_id: &str) {
+    pub async fn touch_user(&self, tenant_id: &str, token_id: &str) {
+        let key = online_user_key(tenant_id, token_id);
         match self {
             Self::Redis { client } => {
-                let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, token_id);
                 match client.get(&key).await {
                     Ok(Some(json)) => {
                         if let Ok(mut session) = serde_json::from_str::<UserSession>(&json) {
@@ -253,7 +279,7 @@ impl OnlineUserServiceImpl {
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
-                if let Some(session) = s.get_mut(token_id) {
+                if let Some(session) = s.get_mut(&key) {
                     session.last_access_time = Utc::now();
                 }
             }
@@ -267,14 +293,16 @@ impl OnlineUserServiceImpl {
     pub async fn ensure_user(&self, session: UserSession) {
         match self {
             Self::Redis { client } => {
-                let key = format!("{}{}", ONLINE_USER_KEY_PREFIX, session.token_id);
+                let key = online_user_key(&session.tenant_id, &session.token_id);
                 // 先尝试 touch：如果 key 存在则更新 last_access_time
                 if let Ok(Some(json)) = client.get(&key).await {
                     if let Ok(mut existing) = serde_json::from_str::<UserSession>(&json) {
                         existing.last_access_time = Utc::now();
                         if let Ok(new_json) = serde_json::to_string(&existing) {
                             let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
-                            let _ = client.set_ex(&key, &new_json, ttl as u64).await;
+                            if let Err(error) = client.set_ex(&key, &new_json, ttl as u64).await {
+                                tracing::warn!(%error, "Redis SET ensure_user 续期失败");
+                            }
                         }
                     }
                     return;
@@ -284,10 +312,11 @@ impl OnlineUserServiceImpl {
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
-                if let Some(existing) = s.get_mut(&session.token_id) {
+                let key = online_user_key(&session.tenant_id, &session.token_id);
+                if let Some(existing) = s.get_mut(&key) {
                     existing.last_access_time = Utc::now();
                 } else {
-                    s.insert(session.token_id.clone(), session);
+                    s.insert(key, session);
                 }
             }
         }
@@ -306,18 +335,24 @@ impl OnlineUserServiceImpl {
     }
 
     /// 获取在线用户数量
-    pub async fn count(&self) -> usize {
+    pub async fn count(&self, actor: &ActorContext) -> AppResult<usize> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
         match self {
             Self::Redis { client } => {
-                let pattern = format!("{}*", ONLINE_USER_KEY_PREFIX);
-                match client.keys(&pattern).await {
-                    Ok(keys) => keys.len(),
-                    Err(_) => 0,
+                let pattern = tenant_online_user_pattern(tenant_id);
+                match client.scan_keys(&pattern).await {
+                    Ok(keys) => Ok(keys.len()),
+                    Err(error) => {
+                        tracing::error!("Redis SCAN 在线用户失败: {}", error);
+                        Err(AppError::Internal("查询在线用户数量失败".into()))
+                    }
                 }
             }
             Self::InMemory { sessions } => {
                 let s = sessions.read().await;
-                s.len()
+                Ok(s.values()
+                    .filter(|session| session.tenant_id == tenant_id)
+                    .count())
             }
         }
     }
@@ -327,14 +362,10 @@ impl OnlineUserServiceImpl {
         match self {
             Self::Redis { client } => {
                 let pattern = format!("{}*", ONLINE_USER_KEY_PREFIX);
-                match client.keys(&pattern).await {
-                    Ok(keys) => {
-                        let count = keys.len();
-                        for key in &keys {
-                            let _ = client.del(key).await;
-                        }
-                        if count > 0 {
-                            tracing::info!("启动时清理了 {} 个残留在线用户会话", count);
+                match client.delete_by_pattern(&pattern).await {
+                    Ok(deleted) => {
+                        if deleted > 0 {
+                            tracing::info!("启动时清理了 {} 个残留在线用户会话", deleted);
                         }
                     }
                     Err(e) => {

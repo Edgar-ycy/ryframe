@@ -6,7 +6,7 @@ use sea_orm::{
     QueryOrder,
 };
 
-use crate::entities::dept;
+use crate::entities::{dept, role_dept, user};
 
 /// 部门树节点
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -24,10 +24,15 @@ pub struct DeptRepository;
 
 #[async_trait]
 impl Repository<dept::Model, i64> for DeptRepository {
-    async fn find_by_id(&self, db: &DatabaseConnection, id: i64) -> AppResult<Option<dept::Model>> {
+    async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<dept::Model>> {
         dept::Entity::find_by_id(id)
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(dept::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
@@ -36,37 +41,52 @@ impl Repository<dept::Model, i64> for DeptRepository {
     async fn find_by_page(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<dept::Model>> {
         crate::pagination::paginate(
             db,
             dept::Entity::find()
                 .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-                .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id())),
+                .filter(dept::Column::TenantId.eq(tenant_id)),
             &query,
         )
         .await
     }
 
-    async fn insert(&self, db: &DatabaseConnection, entity: dept::Model) -> AppResult<dept::Model> {
-        insert_entity!(dept, db, entity)
+    async fn insert(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: dept::Model,
+    ) -> AppResult<dept::Model> {
+        insert_entity!(dept, db, tenant_id, entity)
     }
 
-    async fn update(&self, db: &DatabaseConnection, entity: dept::Model) -> AppResult<dept::Model> {
-        update_entity!(dept, db, entity)
+    async fn update(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        entity: dept::Model,
+    ) -> AppResult<dept::Model> {
+        update_entity!(dept, db, tenant_id, entity)
     }
 
-    async fn delete(&self, db: &DatabaseConnection, id: i64) -> AppResult<()> {
-        soft_delete_entity!(dept, db, id)
+    async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
+        soft_delete_entity!(dept, db, tenant_id, id)
     }
 }
 
 impl DeptRepository {
     /// 查询部门树
-    pub async fn find_tree(&self, db: &DatabaseConnection) -> AppResult<Vec<DeptTreeNode>> {
+    pub async fn find_tree(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+    ) -> AppResult<Vec<DeptTreeNode>> {
         let all = dept::Entity::find()
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(dept::Column::TenantId.eq(tenant_id))
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
@@ -78,6 +98,7 @@ impl DeptRepository {
     pub async fn find_tree_by_visible_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         visible_ids: &[i64],
     ) -> AppResult<Vec<DeptTreeNode>> {
         if visible_ids.is_empty() {
@@ -85,7 +106,7 @@ impl DeptRepository {
         }
         let all = dept::Entity::find()
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(dept::Column::TenantId.eq(tenant_id))
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
@@ -109,11 +130,16 @@ impl DeptRepository {
     }
 
     /// 检查是否有子部门
-    pub async fn has_children(&self, db: &DatabaseConnection, parent_id: i64) -> AppResult<bool> {
+    pub async fn has_children(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        parent_id: i64,
+    ) -> AppResult<bool> {
         let exists = dept::Entity::find()
             .filter(dept::Column::ParentId.eq(parent_id))
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(dept::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -127,13 +153,14 @@ impl DeptRepository {
     pub async fn build_ancestors(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         parent_id: Option<i64>,
     ) -> AppResult<String> {
         match parent_id {
             None => Ok("0".to_string()),
             Some(pid) => {
                 let parent = self
-                    .find_by_id(db, pid)
+                    .find_by_id(db, tenant_id, pid)
                     .await?
                     .ok_or_else(|| AppError::NotFound(format!("父部门 {} 不存在", pid)))?;
                 Ok(format!("{},{}", parent.ancestors, pid))
@@ -145,11 +172,12 @@ impl DeptRepository {
     pub async fn find_child_dept_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         dept_id: i64,
     ) -> AppResult<Vec<i64>> {
         // 先查自身
         let dept = self
-            .find_by_id(db, dept_id)
+            .find_by_id(db, tenant_id, dept_id)
             .await?
             .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
 
@@ -162,7 +190,7 @@ impl DeptRepository {
                     .add(dept::Column::Ancestors.like(format!("{},%", prefix))),
             )
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -177,10 +205,11 @@ impl DeptRepository {
     pub async fn find_descendants(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         dept_id: i64,
     ) -> AppResult<Vec<dept::Model>> {
         let node = self
-            .find_by_id(db, dept_id)
+            .find_by_id(db, tenant_id, dept_id)
             .await?
             .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
         let prefix = format!("{},{}", node.ancestors, dept_id);
@@ -191,20 +220,48 @@ impl DeptRepository {
                     .add(dept::Column::Ancestors.like(format!("{},%", prefix))),
             )
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()))
+            .filter(dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub async fn is_referenced(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        dept_id: i64,
+    ) -> AppResult<bool> {
+        let has_users = user::Entity::find()
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .filter(user::Column::DeptId.eq(dept_id))
+            .one(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .is_some();
+        if has_users {
+            return Ok(true);
+        }
+
+        role_dept::Entity::find()
+            .filter(role_dept::Column::TenantId.eq(tenant_id))
+            .filter(role_dept::Column::DeptId.eq(dept_id))
+            .one(db)
+            .await
+            .map(|relation| relation.is_some())
+            .map_err(|error| AppError::Database(error.to_string()))
     }
 
     /// 带搜索条件的查询（按名称、状态过滤）
     pub async fn find_filtered(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         name: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<Vec<dept::Model>> {
-        self.build_filtered_query(name, status)
+        self.build_filtered_query(tenant_id, name, status)
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
@@ -214,6 +271,7 @@ impl DeptRepository {
     pub async fn find_filtered_by_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         name: Option<&str>,
         status: Option<&str>,
         visible_ids: &[i64],
@@ -221,7 +279,7 @@ impl DeptRepository {
         if visible_ids.is_empty() {
             return Ok(Vec::new());
         }
-        self.build_filtered_query(name, status)
+        self.build_filtered_query(tenant_id, name, status)
             .filter(dept::Column::Id.is_in(visible_ids.iter().copied()))
             .order_by_asc(dept::Column::Sort)
             .all(db)
@@ -233,13 +291,14 @@ impl DeptRepository {
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
         name: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<dept::Model>> {
         crate::pagination::paginate(
             db,
-            self.build_filtered_query(name, status)
+            self.build_filtered_query(tenant_id, name, status)
                 .order_by_asc(dept::Column::Sort),
             &query,
         )
@@ -249,6 +308,7 @@ impl DeptRepository {
     pub async fn find_by_page_filtered_by_ids(
         &self,
         db: &DatabaseConnection,
+        tenant_id: &str,
         query: PageQuery,
         name: Option<&str>,
         status: Option<&str>,
@@ -259,7 +319,7 @@ impl DeptRepository {
         }
         crate::pagination::paginate(
             db,
-            self.build_filtered_query(name, status)
+            self.build_filtered_query(tenant_id, name, status)
                 .filter(dept::Column::Id.is_in(visible_ids.iter().copied()))
                 .order_by_asc(dept::Column::Sort),
             &query,
@@ -270,12 +330,13 @@ impl DeptRepository {
     /// 构建带搜索条件的查询（复用逻辑）
     fn build_filtered_query(
         &self,
+        tenant_id: &str,
         name: Option<&str>,
         status: Option<&str>,
     ) -> sea_orm::Select<dept::Entity> {
         let mut select = dept::Entity::find()
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-            .filter(dept::Column::TenantId.eq(ryframe_core::current_tenant_id()));
+            .filter(dept::Column::TenantId.eq(tenant_id));
         if let Some(n) = name.filter(|n| !n.is_empty()) {
             select = select.filter(dept::Column::Name.like(format!("%{}%", n)));
         }

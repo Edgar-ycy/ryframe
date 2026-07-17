@@ -51,7 +51,7 @@ async fn main() {
     // 1. 加载配置
     let config =
         ryframe_config::AppConfig::load("config").expect("加载配置失败，请确认 config/ 目录存在");
-    let db_url = config.database.connections[0].connection_url();
+    let db_url = config.database.primary.connection_url();
     println!("\n数据库: {}", db_url);
 
     // 2. 连接数据库
@@ -64,7 +64,7 @@ async fn main() {
     if !sql_path.exists() {
         eprintln!("错误: 找不到 sql/ryframe_config.sql");
         eprintln!("请在项目根目录执行: cargo run --bin ryframe-db-reset");
-        return;
+        std::process::exit(1);
     }
 
     // ========== Step 1: 清空所有表 ==========
@@ -129,7 +129,8 @@ async fn main() {
 
     println!("  成功: {} 条, 失败: {} 条", executed, errors);
     if errors > 0 {
-        eprintln!("\n警告: 存在 {} 条 SQL 执行失败，请检查数据库状态", errors);
+        eprintln!("\n错误: 存在 {} 条 SQL 执行失败，停止初始化", errors);
+        std::process::exit(1);
     }
 
     // ========== Step 3: 修正密码哈希 ==========
@@ -139,28 +140,32 @@ async fn main() {
     let admin_hash = ryframe_auth::password::hash(ADMIN_PASSWORD).expect("admin 密码哈希生成失败");
     let user_hash = ryframe_auth::password::hash(USER_PASSWORD).expect("user 密码哈希生成失败");
 
-    println!("  admin ({}) → {}", ADMIN_PASSWORD, admin_hash);
-    println!("  user  ({}) → {}", USER_PASSWORD, user_hash);
+    println!("  admin 密码哈希已生成");
+    println!("  user 密码哈希已生成");
 
     // 更新 admin 用户密码
     let update_admin = format!(
         "UPDATE `sys_user` SET `password_hash` = '{}' WHERE `username` = 'admin'",
         escape_sql_string(&admin_hash)
     );
-    match conn.execute_unprepared(&update_admin).await {
-        Ok(_) => println!("  ✓ UPDATE admin 密码哈希"),
-        Err(e) => eprintln!("  ✗ UPDATE admin 失败: {}", e),
-    }
+    let admin_result = conn
+        .execute_unprepared(&update_admin)
+        .await
+        .expect("UPDATE admin 密码哈希失败");
+    assert_eq!(admin_result.rows_affected(), 1, "admin 用户不存在或不唯一");
+    println!("  ✓ UPDATE admin 密码哈希");
 
     // 更新 user 用户密码
     let update_user = format!(
         "UPDATE `sys_user` SET `password_hash` = '{}' WHERE `username` = 'user'",
         escape_sql_string(&user_hash)
     );
-    match conn.execute_unprepared(&update_user).await {
-        Ok(_) => println!("  ✓ UPDATE user 密码哈希"),
-        Err(e) => eprintln!("  ✗ UPDATE user 失败: {}", e),
-    }
+    let user_result = conn
+        .execute_unprepared(&update_user)
+        .await
+        .expect("UPDATE user 密码哈希失败");
+    assert_eq!(user_result.rows_affected(), 1, "user 用户不存在或不唯一");
+    println!("  ✓ UPDATE user 密码哈希");
 
     // ========== 完成 ==========
     println!("\n========================================");

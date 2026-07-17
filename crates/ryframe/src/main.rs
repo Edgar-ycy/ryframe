@@ -5,7 +5,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::{AppContext, HotConfig, spawn_config_watcher};
+use ryframe_core::{HotConfig, spawn_config_watcher};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -29,40 +29,38 @@ async fn main() -> Result<(), AppError> {
     ryframe_middleware::metrics::spawn_process_metrics_updater();
 
     // 4. 连接数据库 + 健康检查 + 表校验
-    let ds = boot::datasource::connect(&config).await?;
-    ryframe_db_migration::run(&ds.primary)
+    let database = boot::datasource::connect(&config).await?;
+    ryframe_db_migration::run(database.write())
         .await
         .map_err(|error| AppError::Database(format!("数据库迁移失败: {error}")))?;
+    boot::datasource::verify_schema(&database).await?;
 
-    // 5. 创建应用上下文
-    let context = AppContext::new(config.clone());
+    // 5. 共享应用配置
     let config_arc = Arc::new(config.clone());
 
     // 6. 初始化 Redis + Token 黑名单
     let redis = boot::redis::init(&config.redis).await;
 
-    // 7. 构造所有 Service（含调度器 + 内置任务注册）
-    let services = boot::services::build_all(&config, &redis.client, &ds.primary).await?;
+    // 7. 初始化对象存储
+    let object_storage = boot::storage::init(&config).await?;
 
-    // 8. 初始化限流器
+    // 8. 构造所有 Service
+    let services =
+        boot::services::build_all(&database, &config, &redis.client, object_storage).await?;
+
+    // 9. 初始化限流器
     let limit = boot::limiter::init(&config, &redis.client);
-
-    // 9. 初始化对象存储
-    let object_storage = boot::storage::init(&config);
 
     // 10. 聚合 AppState + 构建 Router
     let state = boot::app_state::assemble(
-        ds.primary.clone(),
-        ds.extras,
+        database,
         config_arc,
-        context,
         redis.client.clone(),
         redis.token_blacklist,
         services,
         limit.limiter.clone(),
-        object_storage,
     );
-    let router = app::build_app(state, limit.limiter, limit.rate_limit_state, &config.cors);
+    let router = app::build_app(state, limit.limiter, limit.rate_limit_state, &config.cors)?;
 
     // 11. 启动 HTTP 服务
     let addr = format!("{}:{}", config.app.host, config.app.port);
