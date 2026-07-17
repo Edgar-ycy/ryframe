@@ -62,7 +62,7 @@ impl Default for SecurityHeadersConfig {
                  font-src 'self' https: data:; \
                  form-action 'self'; \
                  frame-ancestors 'self'; \
-                 img-src 'self' data: https:; \
+                 img-src 'self' data: blob: https:; \
                  object-src 'none'; \
                  script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
                  style-src 'self' 'unsafe-inline' https:; \
@@ -104,6 +104,7 @@ impl SecurityHeadersConfig {
                 "default-src 'self'; \
                  script-src 'self'; \
                  style-src 'self'; \
+                 img-src 'self' data: blob: https:; \
                  object-src 'none'; \
                  base-uri 'self'; \
                  frame-ancestors 'none'"

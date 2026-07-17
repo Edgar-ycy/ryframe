@@ -37,7 +37,13 @@ async fn test_default_security_headers() {
         "nosniff"
     );
     assert!(response.headers().get("x-frame-options").is_some());
-    assert!(response.headers().get("content-security-policy").is_some());
+    let csp = response
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("img-src 'self' data: blob: https:"));
     assert!(
         response
             .headers()
@@ -78,6 +84,7 @@ async fn test_strict_config() {
         .to_str()
         .unwrap();
     assert!(csp.contains("frame-ancestors 'none'"));
+    assert!(csp.contains("img-src 'self' data: blob: https:"));
 }
 
 #[tokio::test]

@@ -71,7 +71,7 @@ APP_OBJECT_STORAGE_REGION
 APP_OBJECT_STORAGE_PUBLIC_BASE_URL
 ```
 
-`public_base_url` 为空时，上传响应返回受认证的后端下载地址，bucket 保持私有。只有在对象已经通过网关或 CDN 按预期公开时才配置该值；应用不会自动写入公开读取策略。
+`public_base_url` 为空时，上传响应返回受认证的后端下载地址，bucket 保持私有。前端展示这类图片时必须通过统一 HTTP 客户端携带令牌下载 Blob，再创建浏览器对象 URL，不能把受保护地址直接绑定到原生 `img.src`。只有在对象已经通过网关或 CDN 按预期公开时才配置该值；应用不会自动写入公开读取策略。
 
 切换成本地存储时使用：
 

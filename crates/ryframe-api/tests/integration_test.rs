@@ -1533,7 +1533,7 @@ async fn test_logout_flow() {
 
 // ==================== 代码生成器测试 ====================
 
-/// 代码生成器：表列表与预览
+/// 代码生成器：表列表、预览与外部目录写盘
 #[tokio::test]
 async fn test_generator_endpoints() {
     let db = setup_test_db().await;
@@ -1564,6 +1564,28 @@ async fn test_generator_endpoints() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body["data"].as_array().map(Vec::len), Some(5));
+
+    let output = tempfile::tempdir().unwrap();
+    let output_root = output.path().join("generated");
+    let (s, body) = auth_post(
+        &db,
+        "/tools/gen/generate",
+        &token,
+        serde_json::json!({
+            "output_dir": output_root,
+            "options": {
+                "tables": [table_name]
+            }
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "生成响应: {body:?}");
+    let written = body["data"]["written"].as_array().unwrap();
+    assert_eq!(written.len(), 5);
+    assert!(written.iter().all(|path| {
+        path.as_str()
+            .is_some_and(|path| output_root.join(path).is_file())
+    }));
 }
 
 // ================================================================

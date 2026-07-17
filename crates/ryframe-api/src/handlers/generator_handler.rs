@@ -13,7 +13,10 @@ use ryframe_service::system::generator_service::{
 };
 use serde::Deserialize;
 
-use crate::{dto::generator_dto::GenerateOptionsDto, state::AppState};
+use crate::{
+    dto::generator_dto::{GenerateOptionsDto, GenerateRequestDto},
+    state::AppState,
+};
 
 pub fn generator_router(state: AppState) -> Router {
     Router::new()
@@ -87,9 +90,13 @@ async fn preview(
     responses((status = 200, description = "代码生成报告", body = ApiResponse<WriteReport>)), security(("bearer" = [])))]
 async fn generate(
     State(state): State<AppState>,
-    Json(opts): Json<GenerateOptionsDto>,
+    Json(request): Json<GenerateRequestDto>,
 ) -> AppResult<Json<ApiResponse<WriteReport>>> {
-    let written = state.services.generator.generate(opts.into()).await?;
+    let written = state
+        .services
+        .generator
+        .generate(request.options.into(), request.output_dir.into())
+        .await?;
     Ok(Json(ApiResponse::success(written)))
 }
 

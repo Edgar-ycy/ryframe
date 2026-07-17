@@ -49,8 +49,8 @@ pub async fn build_all(
     let oper_log = Arc::new(OperLogService::new(database.clone()));
     let login_info = Arc::new(LoginInfoService::new(database.clone()));
 
-    let workspace_root = std::env::current_dir()
-        .map_err(|e| AppError::Internal(format!("无法获取 workspace root: {}", e)))?;
+    let project_root = std::env::current_dir()
+        .map_err(|e| AppError::Internal(format!("无法获取项目根目录: {}", e)))?;
     if config.generator.data_source != "primary" {
         database
             .source(&config.generator.data_source)
@@ -64,7 +64,7 @@ pub async fn build_all(
     let generator = Arc::new(GeneratorService::new(
         database.clone(),
         config.generator.data_source.clone(),
-        workspace_root,
+        project_root,
     ));
 
     let profile = Arc::new(ProfileService::new(database.clone()));

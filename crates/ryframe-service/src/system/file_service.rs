@@ -142,7 +142,7 @@ impl FileService {
         let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
         let object_key = format!("{tenant_id}/{date_prefix}/{storage_name}");
 
-        let public_file_url = self.build_file_url(bucket, &object_key)?;
+        let file_url = self.build_file_url(bucket, &object_key)?;
 
         // 上传到对象存储
         self.storage
@@ -187,7 +187,7 @@ impl FileService {
 
         Ok(UploadResponse {
             file_id: file_id.to_string(),
-            file_url: public_file_url,
+            file_url,
             file_info: UploadFileInfo {
                 original_name,
                 storage_name,
@@ -212,8 +212,9 @@ impl FileService {
             return Err(AppError::Validation("非法的文件路径".into()));
         }
 
+        // 文件元数据紧跟对象上传写入主库；下载必须从主库读取，避免从库延迟导致刚上传文件返回 404。
         FileRepository
-            .find_by_storage_path(self.db.read(), tenant_id, bucket, path)
+            .find_by_storage_path(self.db.write(), tenant_id, bucket, path)
             .await?
             .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
 
@@ -228,10 +229,10 @@ impl FileService {
         Ok((data, filename))
     }
 
-    /// 构建文件访问 URL
+    /// 构建文件访问地址
     ///
-    /// - RustFS/MinIO/S3：返回对象的 public_url（直接访问对象存储）
-    /// - 本地：如果 public_url 为空，返回代理下载 URL
+    /// - 配置 public_url：返回对象存储或 CDN 的公开地址
+    /// - 未配置 public_url：返回需要登录态的后端代理下载地址
     pub fn build_file_url(&self, bucket: &str, key: &str) -> AppResult<String> {
         match self
             .storage
@@ -260,7 +261,7 @@ impl FileService {
     /// 上传头像（Avatar 专用便捷方法）
     ///
     /// 固定使用 `avatar` bucket、图片类型、5MB 限制、自动压缩。
-    /// 返回公开访问 URL（用于更新 sys_user.avatar）。
+    /// 返回稳定访问地址（用于更新 sys_user.avatar）。
     pub async fn upload_avatar(
         &self,
         actor: &ActorContext,

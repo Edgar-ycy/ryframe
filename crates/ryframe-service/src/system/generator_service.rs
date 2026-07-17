@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    ffi::OsString,
+    path::{Component, Path, PathBuf},
+};
 
 use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult};
@@ -16,15 +19,15 @@ pub struct TableListParams {
 pub struct GeneratorService {
     db: DatabaseCluster,
     data_source: String,
-    workspace_root: PathBuf,
+    project_root: PathBuf,
 }
 
 impl GeneratorService {
-    pub fn new(db: DatabaseCluster, data_source: String, workspace_root: PathBuf) -> Self {
+    pub fn new(db: DatabaseCluster, data_source: String, project_root: PathBuf) -> Self {
         Self {
             db,
             data_source,
-            workspace_root,
+            project_root,
         }
     }
 
@@ -69,11 +72,16 @@ impl GeneratorService {
         ryframe_generator::generate(db, &opts).await
     }
 
-    /// 写入磁盘
-    pub async fn generate(&self, opts: GenerateOptions) -> AppResult<WriteReport> {
+    /// 将生成代码写入项目目录之外的指定根目录。
+    pub async fn generate(
+        &self,
+        opts: GenerateOptions,
+        output_root: PathBuf,
+    ) -> AppResult<WriteReport> {
+        let output_root = prepare_output_root(&self.project_root, &output_root).await?;
         let db = self.database()?;
         let files = ryframe_generator::generate(db, &opts).await?;
-        ryframe_generator::write_to_disk(&files, &self.workspace_root, opts.overwrite).await
+        ryframe_generator::write_to_disk(&files, &output_root, opts.overwrite).await
     }
 
     /// 打包 zip 下载（不写盘）
@@ -108,5 +116,118 @@ impl GeneratorService {
         self.db.source(&self.data_source).ok_or_else(|| {
             AppError::Config(format!("代码生成器数据源未连接: {}", self.data_source))
         })
+    }
+}
+
+async fn prepare_output_root(project_root: &Path, requested_root: &Path) -> AppResult<PathBuf> {
+    if !requested_root.is_absolute() {
+        return Err(AppError::Validation("代码输出根目录必须是绝对路径".into()));
+    }
+    if requested_root
+        .components()
+        .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    {
+        return Err(AppError::Validation(
+            "代码输出根目录不能包含 . 或 .. 路径段".into(),
+        ));
+    }
+
+    let project_root = tokio::fs::canonicalize(project_root)
+        .await
+        .map_err(|error| AppError::Internal(format!("解析当前项目目录失败: {error}")))?;
+    let output_root = resolve_pending_path(requested_root).await?;
+    ensure_external_output_root(&project_root, &output_root)?;
+
+    tokio::fs::create_dir_all(&output_root)
+        .await
+        .map_err(|error| AppError::Internal(format!("创建代码输出根目录失败: {error}")))?;
+    let output_root = tokio::fs::canonicalize(&output_root)
+        .await
+        .map_err(|error| AppError::Internal(format!("解析代码输出根目录失败: {error}")))?;
+    ensure_external_output_root(&project_root, &output_root)?;
+    Ok(output_root)
+}
+
+async fn resolve_pending_path(path: &Path) -> AppResult<PathBuf> {
+    let mut candidate = path.to_path_buf();
+    let mut pending_segments = Vec::<OsString>::new();
+
+    loop {
+        match tokio::fs::canonicalize(&candidate).await {
+            Ok(mut resolved) => {
+                for segment in pending_segments.iter().rev() {
+                    resolved.push(segment);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let segment = candidate.file_name().ok_or_else(|| {
+                    AppError::Validation("代码输出根目录没有有效的已存在父目录".into())
+                })?;
+                pending_segments.push(segment.to_owned());
+                candidate = candidate
+                    .parent()
+                    .ok_or_else(|| {
+                        AppError::Validation("代码输出根目录没有有效的已存在父目录".into())
+                    })?
+                    .to_path_buf();
+            }
+            Err(error) => {
+                return Err(AppError::Internal(format!(
+                    "解析代码输出根目录失败: {error}"
+                )));
+            }
+        }
+    }
+}
+
+fn ensure_external_output_root(project_root: &Path, output_root: &Path) -> AppResult<()> {
+    if output_root.starts_with(project_root) || project_root.starts_with(output_root) {
+        return Err(AppError::Validation(
+            "代码输出根目录不能是当前项目目录及其父目录或子目录".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn output_root_must_be_absolute() {
+        let project = tempfile::tempdir().unwrap();
+
+        let result = prepare_output_root(project.path(), Path::new("generated")).await;
+
+        assert!(matches!(result, Err(AppError::Validation(_))));
+    }
+
+    #[tokio::test]
+    async fn output_root_cannot_overlap_the_current_project() {
+        let workspace = tempfile::tempdir().unwrap();
+        let project = workspace.path().join("project");
+        tokio::fs::create_dir_all(&project).await.unwrap();
+        let child = project.join("generated");
+
+        let child_result = prepare_output_root(&project, &child).await;
+        let parent_result = prepare_output_root(&project, workspace.path()).await;
+
+        assert!(matches!(child_result, Err(AppError::Validation(_))));
+        assert!(matches!(parent_result, Err(AppError::Validation(_))));
+        assert!(!child.exists(), "校验失败时不应创建项目内目录");
+    }
+
+    #[tokio::test]
+    async fn external_output_root_is_created_and_canonicalized() {
+        let workspace = tempfile::tempdir().unwrap();
+        let project = workspace.path().join("project");
+        let output = workspace.path().join("generated").join("module");
+        tokio::fs::create_dir_all(&project).await.unwrap();
+
+        let resolved = prepare_output_root(&project, &output).await.unwrap();
+
+        assert_eq!(resolved, tokio::fs::canonicalize(&output).await.unwrap());
+        assert!(output.is_dir());
     }
 }

@@ -24,6 +24,14 @@ pub struct GenerateOptionsDto {
     pub overwrite: bool,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GenerateRequestDto {
+    /// 后端服务所在机器上的代码输出根目录。
+    pub output_dir: String,
+    pub options: GenerateOptionsDto,
+}
+
 impl From<GenerateOptionsDto> for GenerateOptions {
     fn from(dto: GenerateOptionsDto) -> Self {
         let defaults = Self::default();
@@ -69,5 +77,20 @@ mod tests {
             r#"{"tables":["sys_user"],"legacy_mode":true}"#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_request_requires_an_explicit_output_directory() {
+        let request = serde_json::from_str::<GenerateRequestDto>(
+            r#"{"output_dir":"D:/generated/ryframe","options":{"tables":["sys_user"]}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(request.output_dir, "D:/generated/ryframe");
+        assert_eq!(request.options.tables, vec!["sys_user".to_string()]);
+        assert!(
+            serde_json::from_str::<GenerateRequestDto>(r#"{"options":{"tables":["sys_user"]}}"#)
+                .is_err()
+        );
     }
 }

@@ -4778,6 +4778,23 @@
         ],
         "type": "object"
       },
+      "GenerateRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "options": {
+            "$ref": "#/components/schemas/GenerateOptionsDto"
+          },
+          "output_dir": {
+            "description": "后端服务所在机器上的代码输出根目录。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "output_dir",
+          "options"
+        ],
+        "type": "object"
+      },
       "GeneratedFile": {
         "description": "生成的文件",
         "properties": {
@@ -6752,7 +6769,7 @@
       "name": "MIT"
     },
     "title": "RyFrame API",
-    "version": "0.4.1"
+    "version": "0.4.2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -11575,7 +11592,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GenerateOptionsDto"
+                "$ref": "#/components/schemas/GenerateRequestDto"
               }
             }
           },

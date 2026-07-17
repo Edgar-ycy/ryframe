@@ -33,6 +33,7 @@ http-body-util = { workspace = true }
 syn = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-storage = { path = "../ryframe-storage" }
 tower = { workspace = true, features = ["util"] }

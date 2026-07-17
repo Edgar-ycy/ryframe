@@ -263,6 +263,7 @@ use utoipa::OpenApi;
         crate::dto::profile_dto::AvatarResponse,
         ryframe_service::system::profile_service::UserProfileResponse,
         crate::dto::generator_dto::GenerateOptionsDto,
+        crate::dto::generator_dto::GenerateRequestDto,
         ryframe_service::system::generator_service::TableInfo,
         ryframe_service::system::generator_service::ColumnInfo,
         ryframe_service::system::generator_service::GeneratedFile,
