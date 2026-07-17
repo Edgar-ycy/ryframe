@@ -33,7 +33,7 @@ pub async fn run(db: &DatabaseConnection) -> Result<(), DbErr> {
 #[cfg(test)]
 mod tests {
     use sea_orm::{ConnectionTrait, Database, Statement, TryGetable};
-    use sea_orm_migration::prelude::{Alias, ColumnDef, SchemaManager, Table};
+    use sea_orm_migration::prelude::{Alias, ColumnDef, Index, SchemaManager, Table};
 
     use super::run;
 
@@ -88,6 +88,69 @@ mod tests {
         assert!(
             manager
                 .has_column("sys_user", "auth_version")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn sqlite_migration_accepts_preexisting_menu_binding_indexes() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        let manager = SchemaManager::new(&db);
+        manager
+            .create_table(
+                Table::create()
+                    .table(Alias::new("sys_menu"))
+                    .col(ColumnDef::new(Alias::new("id")).big_integer().primary_key())
+                    .col(
+                        ColumnDef::new(Alias::new("tenant_id"))
+                            .string_len(64)
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(Alias::new("name")).string_len(64).not_null())
+                    .col(
+                        ColumnDef::new(Alias::new("menu_type"))
+                            .char_len(1)
+                            .not_null(),
+                    )
+                    .col(ColumnDef::new(Alias::new("perm_id")).big_integer().null())
+                    .col(
+                        ColumnDef::new(Alias::new("route_key"))
+                            .string_len(100)
+                            .null(),
+                    )
+                    .to_owned(),
+            )
+            .await
+            .unwrap();
+        for (name, column) in [
+            ("idx_menu_tenant_perm", "perm_id"),
+            ("idx_menu_tenant_route", "route_key"),
+        ] {
+            manager
+                .create_index(
+                    Index::create()
+                        .name(name)
+                        .table(Alias::new("sys_menu"))
+                        .col(Alias::new("tenant_id"))
+                        .col(Alias::new(column))
+                        .to_owned(),
+                )
+                .await
+                .unwrap();
+        }
+
+        run(&db).await.unwrap();
+
+        assert!(
+            manager
+                .has_index("sys_menu", "idx_menu_tenant_perm")
+                .await
+                .unwrap()
+        );
+        assert!(
+            manager
+                .has_index("sys_menu", "idx_menu_tenant_route")
                 .await
                 .unwrap()
         );

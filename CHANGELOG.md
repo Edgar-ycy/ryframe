@@ -27,6 +27,7 @@
 ### Changed
 
 - CI 安全审计改为安装并严格执行 `cargo audit --deny warnings`，移除 Node 20 action 和额外 Checks 写权限依赖
+- CI Rust 构建缓存改用官方 `actions/cache@v5` 和按操作系统、架构、job、Cargo 清单隔离的显式缓存键，消除第三方缓存 Action 的 Node 弃用警告
 - Release 工作流按触发标签精确提取对应版本说明，保留空的 `Unreleased` 区段且不再发布错误章节
 - 统一要求所有 `pnpm` 命令在独立前端目录 `ryframe-vue3` 中执行，并由后端源码门禁拒绝根目录 `.pnpm-store`
 - Repository 全面改为显式接收 `tenant_id`；task-local 只保留为 HTTP 请求内的一致性校验
@@ -53,6 +54,7 @@
 
 ### Fixed
 
+- 修复完整 SQL 已创建菜单索引但迁移历史为空时 MySQL 启动迁移重复创建索引的问题，并增加预置索引回归测试
 - 修复 Rust 1.97.1 检出的限流键格式化冗余借用，并为 `proc-macro-error2 2.0.1` 应用可审计补丁以消除 future incompatibility 警告
 - 升级 `crossbeam-epoch`、`calamine`/`quick-xml` 和 `spin`，修复新披露的内存安全与 XML 拒绝服务漏洞并移除撤回版本警告
 - 修复非字符串值经过缓存策略后无法回读、本地缓存容量不生效以及过期键仍被 `exists`/`keys` 返回的问题
@@ -79,7 +81,7 @@
 
 - 源码卫生、权限路由、架构边界、`cargo fmt`、全 workspace `check`/`clippy -D warnings` 全部通过
 - 全 workspace 测试与 `RUSTDOCFLAGS=-Dwarnings` 文档测试通过；仅保留明确白名单的外部 MySQL 与 RustFS/S3 集成测试
-- `cargo llvm-cov --workspace --fail-under-lines 55` 通过，行覆盖率为 69.06%
+- `cargo llvm-cov --workspace --fail-under-lines 55` 通过，行覆盖率为 69.17%
 - `cargo audit --no-fetch --deny warnings` 与 `cargo deny check licenses bans sources` 本地检查通过；CI 联网获取最新 advisory 且将警告视为错误
 
 ---

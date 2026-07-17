@@ -35,10 +35,17 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v5
         with:
-          workspaces: "."
-          prefix-key: "v1-rust"
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -112,9 +119,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v5
         with:
-          workspaces: "."
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -198,9 +213,17 @@ jobs:
           node-version: "22"
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v5
         with:
-          workspaces: "."
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Prepare and test named data source
         run: >-
@@ -282,9 +305,17 @@ jobs:
           components: llvm-tools-preview
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v5
         with:
-          workspaces: "."
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -316,9 +347,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v5
         with:
-          workspaces: "."
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest

@@ -36,28 +36,36 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_menu_tenant_perm")
-                    .table(Alias::new("sys_menu"))
-                    .col(Alias::new("tenant_id"))
-                    .col(Alias::new("perm_id"))
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
-        manager
-            .create_index(
-                Index::create()
-                    .name("idx_menu_tenant_route")
-                    .table(Alias::new("sys_menu"))
-                    .col(Alias::new("tenant_id"))
-                    .col(Alias::new("route_key"))
-                    .if_not_exists()
-                    .to_owned(),
-            )
-            .await?;
+        if !manager
+            .has_index("sys_menu", "idx_menu_tenant_perm")
+            .await?
+        {
+            manager
+                .create_index(
+                    Index::create()
+                        .name("idx_menu_tenant_perm")
+                        .table(Alias::new("sys_menu"))
+                        .col(Alias::new("tenant_id"))
+                        .col(Alias::new("perm_id"))
+                        .to_owned(),
+                )
+                .await?;
+        }
+        if !manager
+            .has_index("sys_menu", "idx_menu_tenant_route")
+            .await?
+        {
+            manager
+                .create_index(
+                    Index::create()
+                        .name("idx_menu_tenant_route")
+                        .table(Alias::new("sys_menu"))
+                        .col(Alias::new("tenant_id"))
+                        .col(Alias::new("route_key"))
+                        .to_owned(),
+                )
+                .await?;
+        }
 
         backfill_route_keys(manager).await?;
         backfill_permission_ids(manager).await?;
