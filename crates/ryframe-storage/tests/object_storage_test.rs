@@ -1,6 +1,10 @@
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
 use tempfile::TempDir;
 
+fn env_or(name: &str, default: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| default.to_owned())
+}
+
 #[tokio::test]
 async fn test_local_storage_put_get_delete() {
     let tmp = TempDir::new().unwrap();
@@ -58,13 +62,17 @@ fn test_minio_config() {
 #[tokio::test]
 #[ignore = "需要 RustFS/S3 服务运行在 localhost:9000"]
 async fn test_s3_integration_put_get_delete() {
+    let endpoint = env_or("APP_OBJECT_STORAGE_ENDPOINT", "http://localhost:9000");
+    let use_ssl = std::env::var("APP_OBJECT_STORAGE_USE_SSL")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or_else(|_| endpoint.starts_with("https://"));
     let config = S3Config {
-        endpoint: "http://localhost:9000".into(),
-        access_key: "rustfsadmin".into(),
-        secret_key: "rustfsadmin".into(),
-        use_ssl: false,
-        region: "us-east-1".into(),
-        public_base_url: Some("http://localhost:9000".into()),
+        endpoint: endpoint.clone(),
+        access_key: env_or("APP_OBJECT_STORAGE_ACCESS_KEY", "rustfsadmin"),
+        secret_key: env_or("APP_OBJECT_STORAGE_SECRET_KEY", "rustfsadmin"),
+        use_ssl,
+        region: env_or("APP_OBJECT_STORAGE_REGION", "us-east-1"),
+        public_base_url: Some(env_or("APP_OBJECT_STORAGE_PUBLIC_BASE_URL", &endpoint)),
     };
 
     let bucket = "ryframe";
