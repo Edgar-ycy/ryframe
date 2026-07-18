@@ -5,8 +5,6 @@ const BASE_URL = process.argv[2] || "http://localhost:8080";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.ADMIN_PASS || "123456";
 const TENANT_ID = process.env.TENANT_ID || "system";
-const DATASOURCE_SMOKE_TABLE = process.env.DATASOURCE_SMOKE_TABLE || "t_gongxv";
-
 let passed = 0;
 let failed = 0;
 const failures = [];
@@ -212,29 +210,11 @@ async function runSmokeTests() {
     ) {
       throw new Error(`database read routing is not healthy: ${JSON.stringify(runtime.database)}`);
     }
-    if (
-      runtime.database.source_count !== 1 ||
-      runtime.database.sources[0]?.name !== "ryframe_device" ||
-      !runtime.database.sources[0]?.connected
-    ) {
-      throw new Error(`named data source is not healthy: ${JSON.stringify(runtime.database)}`);
+    if (runtime.database.source_count !== 0 || runtime.database.sources.length !== 0) {
+      throw new Error(`unexpected named data source: ${JSON.stringify(runtime.database)}`);
     }
     if (runtime?.object_storage?.backend !== "rustfs" || !runtime.object_storage.connected) {
       throw new Error(`RustFS is not healthy: ${JSON.stringify(runtime?.object_storage)}`);
-    }
-  });
-
-  await test("ryframe_device generator source", async () => {
-    const query = new URLSearchParams({ table_name: DATASOURCE_SMOKE_TABLE });
-    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/tools/gen/tables?${query}`, {
-      headers: authHeaders(accessToken),
-    });
-    await assertOk(res, "Generator Data Source");
-    assertPage(json, "Generator Data Source");
-    if (!json.rows.some((table) => table.table_name === DATASOURCE_SMOKE_TABLE)) {
-      throw new Error(
-        `generator did not read ${DATASOURCE_SMOKE_TABLE} from ryframe_device: ${JSON.stringify(json.rows)}`,
-      );
     }
   });
 

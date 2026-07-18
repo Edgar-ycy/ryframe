@@ -198,14 +198,14 @@ mod tests {
     #[test]
     fn named_sources_require_explicit_selection() {
         let primary = DatabaseConnection::default();
-        let device = DatabaseConnection::default();
+        let business = DatabaseConnection::default();
         let cluster = DatabaseCluster::with_sources(
             primary,
             std::iter::empty(),
-            [("ryframe_device".to_owned(), device)],
+            [("business".to_owned(), business)],
         );
 
-        assert!(cluster.source("ryframe_device").is_some());
+        assert!(cluster.source("business").is_some());
         assert!(cluster.source("missing").is_none());
     }
 }

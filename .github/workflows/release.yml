@@ -228,9 +228,8 @@ jobs:
       APP_DATABASE_USERNAME: root
       APP_DATABASE_PASSWORD: ryframe_test_password
       APP_DATABASE_REPLICAS: "[]"
-      APP_DATABASE_SOURCES: >-
-        [{"name":"ryframe_device","host":"127.0.0.1","port":13306,"database":"ryframe_device","username":"root","password":"ryframe_test_password","max_connections":5,"min_connections":1}]
-      APP_GENERATOR_DATA_SOURCE: ryframe_device
+      APP_DATABASE_SOURCES: "[]"
+      APP_GENERATOR_DATA_SOURCE: primary
       APP_REDIS_MODE: required
       APP_REDIS_HOST: 127.0.0.1
       APP_REDIS_PORT: "16379"
@@ -242,8 +241,6 @@ jobs:
       APP_OBJECT_STORAGE_REGION: us-east-1
       RYFRAME_TEST_MYSQL_ADMIN_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/mysql
       RYFRAME_PRIMARY_DATABASE_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/ryframe_test
-      RYFRAME_DEVICE_DATABASE_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/ryframe_device
-      DATASOURCE_SMOKE_TABLE: t_device_smoke
       ADMIN_USER: admin
       ADMIN_PASS: "123456"
       TENANT_ID: system
@@ -294,13 +291,6 @@ jobs:
 
       - name: Start pinned test services
         run: docker compose -f docker-compose.test.yml up --detach --wait
-
-      - name: Prepare named MySQL data source
-        run: >-
-          docker compose -f docker-compose.test.yml exec -T
-          -e MYSQL_PWD=ryframe_test_password mysql
-          mysql --protocol=TCP --host=127.0.0.1 --user=root
-          --execute="CREATE DATABASE IF NOT EXISTS ryframe_device CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
 
       - name: Verify production Redis persistence and no-eviction policy
         shell: bash

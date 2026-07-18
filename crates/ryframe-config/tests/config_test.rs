@@ -20,12 +20,8 @@ fn test_load_and_validate_config() {
     assert_eq!(cfg.object_storage.backend, StorageBackend::Rustfs);
     assert!(cfg.database.replicas.is_empty());
     assert_eq!(cfg.database.sources.len(), 1);
-    assert_eq!(cfg.database.sources[0].name, "ryframe_device");
-    assert_eq!(
-        cfg.database.sources[0].connection.database,
-        "ryframe_device"
-    );
-    assert_eq!(cfg.generator.data_source, "ryframe_device");
+    assert_ne!(cfg.database.sources[0].name, "primary");
+    assert_eq!(cfg.generator.data_source, cfg.database.sources[0].name);
 
     // 空应用名应校验失败
     let mut bad = cfg.clone();
@@ -74,9 +70,9 @@ fn test_env_overrides_are_applied_before_validation() {
         );
         std::env::set_var(
             "APP_DATABASE_SOURCES",
-            r#"[{"name":"ryframe_device","host":"device-db","port":3306,"database":"ryframe_device","username":"device","password":"device-secret","max_connections":5,"min_connections":1}]"#,
+            r#"[{"name":"reporting","host":"reporting-db","port":3306,"database":"reporting_data","username":"reporting","password":"reporting-secret","max_connections":5,"min_connections":1}]"#,
         );
-        std::env::set_var("APP_GENERATOR_DATA_SOURCE", "ryframe_device");
+        std::env::set_var("APP_GENERATOR_DATA_SOURCE", "reporting");
         std::env::set_var("APP_OBJECT_STORAGE_ACCESS_KEY", "object-access");
         std::env::set_var("APP_OBJECT_STORAGE_SECRET_KEY", "object-secret");
         std::env::set_var("APP_RATE_LIMIT_ENABLED", "false");
@@ -95,8 +91,8 @@ fn test_env_overrides_are_applied_before_validation() {
     assert_eq!(cfg.database.replicas[0].name, "replica-a");
     assert_eq!(cfg.database.replicas[0].connection.host, "replica-a");
     assert_eq!(cfg.database.sources.len(), 1);
-    assert_eq!(cfg.database.sources[0].connection.host, "device-db");
-    assert_eq!(cfg.generator.data_source, "ryframe_device");
+    assert_eq!(cfg.database.sources[0].connection.host, "reporting-db");
+    assert_eq!(cfg.generator.data_source, "reporting");
     assert_eq!(cfg.object_storage.access_key, "object-access");
     assert_eq!(cfg.object_storage.secret_key, "object-secret");
     assert!(!cfg.rate_limit.enabled);
@@ -151,7 +147,7 @@ fn test_named_sources_and_generator_selection_are_validated() {
     assert!(cfg.validate("dev").is_err());
 
     cfg.database.sources[0] = DatabaseSourceConfig {
-        name: "ryframe_device".into(),
+        name: "business".into(),
         connection: source.connection,
     };
     cfg.generator.data_source = "missing".into();

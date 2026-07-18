@@ -328,10 +328,4 @@ cargo test -p ryframe-service
 docker compose -f docker-compose.test.yml down
 ```
 
-本机 MySQL 已提供 `ryframe_device` 时，可显式运行外部数据源验证：
-
-```bash
-cargo test -p ryframe-db --test named_datasource_mysql_test mysql_named_source_is_distinct_and_explicit -- --ignored --exact
-```
-
 涉及 API 输出时还必须运行 `cargo test -p ryframe-api`，并确认 OpenAPI 与前端字符串 ID 契约同步。

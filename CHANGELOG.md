@@ -23,6 +23,7 @@
 - 请求授权每次从 MySQL 解析角色和权限，不再使用可能因 Redis 删除失败而保留旧授权的权限缓存。
 - MySQL、Redis、验证码存储和对象存储运行时不可用统一返回 `503`；对象下载仅在元数据或对象真实不存在时返回 `404`。
 - 开发/测试数据库重置在确认目标库后直接删除并重新创建数据库，再运行 Migrator 与 Seeder，避免已移除的旧表阻塞空库基线。
+- CI 与 Release 的运行时 smoke 明确使用主库作为生成器数据源，并验证命名业务数据源集合为空，不再依赖额外测试数据库。
 
 ### Removed
 
@@ -31,6 +32,7 @@
 - 删除 `HotConfig`、配置 watcher、`reload_hot`、公开导出和相关测试；配置变化必须重启进程。
 - 删除响应与请求中的明文 `refresh_token`、`RefreshRequest`、前端 token localStorage API 和旧版会话兼容逻辑。
 - 删除旧 `/health` 路由、Nginx `/uploads/` alias、全局幂等层和公开文件/头像直链。
+- 删除针对本机 `ryframe_device` 的专用 Rust 集成测试、Runtime Smoke 生成器检查及发布门禁配置。
 
 ### Fixed
 
@@ -40,6 +42,7 @@
 - 修复 MySQL 隔离测试库析构时跨 Tokio runtime 等待连接池关闭、导致集成测试在完成断言后无限挂起的问题。
 - 修复 MySQL 8.4 集成测试中的触发器与外键变更语法，并串行化 Redis 全局故障注入，避免并行测试互相污染。
 - 修复 Linux 专属进程线程指标采集分支触发严格 Clippy `collapsible_if`、导致远端 CI 提前失败的问题。
+- 将 Nginx TLS 模板迁移到独立 `http2 on` 语法，并由部署门禁拒绝已弃用的 `listen ... http2` 配置。
 
 ### Security
 
@@ -98,8 +101,7 @@
 - 新增独立 `ryframe-storage` crate，集中对象存储端口、本地/RustFS/MinIO/S3 后端、路径验证和 SigV4 签名
 - 新增对象存储安全路径、URL 编码、签名确定性，以及文件元数据失败补偿测试
 - 新增 `DatabaseCluster` 主库/命名只读副本拓扑、无副本回退、原子轮询，以及三个独立数据库的真实读写路由测试
-- 新增命名业务数据源配置与显式解析，恢复本机 `ryframe_device`，并让代码生成器从该库读取表结构
-- 新增外部 MySQL 数据源测试及 CI `ryframe_device` 端到端生成器验证
+- 新增命名业务数据源配置与显式解析，并允许代码生成器按名称选择业务库读取表结构
 - 新增一等 RustFS 配置后端、启动 bucket 校验、动态运行时健康状态和本机运维指南
 - 新增验证码挑战、字形和渲染模块测试，覆盖算术符号、UTF-8 布局与非法输入
 - 新增 `PrincipalResolver` 和 `DatabaseMonitor` 窄端口，以及 SeaORM 数据库监控适配器测试

@@ -27,7 +27,6 @@ TEXT_NAMES = {".editorconfig", ".gitattributes", ".gitignore"}
 MOJIBAKE_MARKERS = ("\ufffd", "\u951b", "\u9286", "\u922b")
 ALLOWED_IGNORED_TESTS = {
     ("crates/ryframe-storage/tests/object_storage_test.rs", "test_s3_integration_put_get_delete"),
-    ("crates/ryframe-db/tests/named_datasource_mysql_test.rs", "mysql_named_source_is_distinct_and_explicit"),
     (
         "crates/ryframe-core/tests/refresh_session_redis_test.rs",
         "redis_refresh_rotation_cas_semantics",

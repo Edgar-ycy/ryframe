@@ -18,10 +18,26 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -keyout "$cert_dir/privkey.pem" \
   -out "$cert_dir/fullchain.pem" >/dev/null 2>&1
 
-docker run --rm \
-  --volume "$config:/etc/nginx/conf.d/ryframe.conf:ro" \
-  --volume "$cert_dir:/etc/letsencrypt/live/example.com:ro" \
-  nginx:1.27-alpine nginx -t
+nginx_test_output="$(
+  docker run --rm \
+    --volume "$config:/etc/nginx/conf.d/ryframe.conf:ro" \
+    --volume "$cert_dir:/etc/letsencrypt/live/example.com:ro" \
+    nginx:1.27-alpine nginx -t 2>&1
+)"
+printf '%s\n' "$nginx_test_output"
+if grep -Eqi '(\[warn\]|deprecated)' <<<"$nginx_test_output"; then
+  printf 'Nginx configuration validation emitted a warning.\n' >&2
+  exit 1
+fi
+
+if grep -Eq '^[[:space:]]*listen[[:space:]]+[^;]*[[:space:]]http2([[:space:]]|;)' "$config"; then
+  printf 'Nginx TLS listeners must use the standalone http2 directive.\n' >&2
+  exit 1
+fi
+if [[ "$(grep -Ec '^[[:space:]]*http2[[:space:]]+on;' "$config")" -ne 2 ]]; then
+  printf 'Each TLS server must enable HTTP/2 exactly once.\n' >&2
+  exit 1
+fi
 
 grep -Eq '^[[:space:]]*limit_req_status[[:space:]]+429;' "$config"
 grep -Eq '^[[:space:]]*add_header[[:space:]]+Retry-After' "$config"

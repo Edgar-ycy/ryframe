@@ -190,13 +190,10 @@ jobs:
       APP_DATABASE_USERNAME: root
       APP_DATABASE_PASSWORD: ryframe_test_password
       APP_DATABASE_REPLICAS: "[]"
-      APP_DATABASE_SOURCES: >-
-        [{"name":"ryframe_device","host":"127.0.0.1","port":13306,"database":"ryframe_device","username":"root","password":"ryframe_test_password","max_connections":5,"min_connections":1}]
-      APP_GENERATOR_DATA_SOURCE: ryframe_device
+      APP_DATABASE_SOURCES: "[]"
+      APP_GENERATOR_DATA_SOURCE: primary
       RYFRAME_PRIMARY_DATABASE_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/ryframe_test
-      RYFRAME_DEVICE_DATABASE_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/ryframe_device
       RYFRAME_TEST_MYSQL_ADMIN_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/mysql
-      DATASOURCE_SMOKE_TABLE: t_device_smoke
       APP_REDIS_MODE: required
       APP_REDIS_HOST: 127.0.0.1
       APP_REDIS_PORT: "16379"
@@ -261,11 +258,6 @@ jobs:
         run: >-
           cargo test --locked -p ryframe-core --test refresh_session_redis_test
           -- --ignored
-
-      - name: Prepare and test named data source
-        run: >-
-          cargo test --locked -p ryframe-db --test named_datasource_mysql_test
-          mysql_named_source_is_distinct_and_explicit -- --exact
 
       - name: Seed legacy tables for whole-database reset acceptance
         shell: bash

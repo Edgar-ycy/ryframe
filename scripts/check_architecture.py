@@ -656,9 +656,13 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
         ),
         ".github/workflows/ci.yml": (
             "APP_DATABASE_REPLICAS",
-            "APP_DATABASE_SOURCES",
-            "Prepare and test named data source",
+            'APP_DATABASE_SOURCES: "[]"',
+            "APP_GENERATOR_DATA_SOURCE: primary",
             "Test RustFS adapter",
+        ),
+        ".github/workflows/release.yml": (
+            'APP_DATABASE_SOURCES: "[]"',
+            "APP_GENERATOR_DATA_SOURCE: primary",
         ),
         "docker-compose.test.yml": (
             "mysql:8.4",
@@ -667,7 +671,8 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
         ),
         "deploy/tests/smoke-test.js": (
             'test("runtime topology"',
-            'test("ryframe_device generator source"',
+            "runtime.database.source_count !== 0",
+            "runtime.database.sources.length !== 0",
             'test("RustFS upload and download"',
         ),
     }
