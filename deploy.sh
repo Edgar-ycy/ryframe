@@ -1,450 +1,273 @@
 #!/usr/bin/env bash
-# ============================================================
-# RyFrame 数据库备份脚本
-#
-# 支持 MySQL 和 PostgreSQL 自动检测与备份。
-# 自动压缩、保留最近 N 天的备份、可选上传到 S3。
-#
-# 使用方式：
-#   chmod +x deploy.sh
-#   ./deploy.sh backup              # 手动备份
-#   ./deploy.sh restore <file>      # 从备份文件恢复
-#   ./deploy.sh list                # 列出所有备份
-#   ./deploy.sh clean [days]        # 清理旧备份（默认保留 30 天）
-#
-# 定时任务（crontab）示例：
-#   0 2 * * * /path/to/ryframe/deploy.sh backup >> /var/log/ryframe-backup.log 2>&1
-#
-# 环境变量（可覆盖默认值）：
-#   DB_DRIVER          - 数据库类型（mysql | postgres），默认自动检测
-#   DB_HOST            - 数据库主机，默认 localhost
-#   DB_PORT            - 数据库端口
-#   DB_NAME            - 数据库名称，默认 ryframe
-#   DB_USER            - 数据库用户，默认 root
-#   DB_PASSWORD        - 数据库密码
-#   BACKUP_DIR         - 备份目录，默认 ./backup
-#   BACKUP_RETENTION   - 备份保留天数，默认 30
-#   S3_BACKUP_ENABLED  - 是否上传到 S3（true/false），默认 false
-#   S3_ENDPOINT        - S3 端点
-#   S3_BUCKET          - S3 Bucket 名称
-# ============================================================
+# RyFrame MySQL backup and recovery utility.
 
-set -euo pipefail
+set -Eeuo pipefail
+umask 077
 
-# ============================================================
-# 配置（环境变量可覆盖）
-# ============================================================
-DB_DRIVER="${DB_DRIVER:-}"
-DB_HOST="${DB_HOST:-localhost}"
-DB_PORT="${DB_PORT:-}"
-DB_NAME="${DB_NAME:-ryframe}"
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_PORT="${DB_PORT:-3306}"
+DB_NAME="${DB_NAME:-ryframe_config}"
 DB_USER="${DB_USER:-root}"
 DB_PASSWORD="${DB_PASSWORD:-}"
-BACKUP_DIR="${BACKUP_DIR:-$(dirname "$0")/backup}"
+BACKUP_DIR="${BACKUP_DIR:-$(cd "$(dirname "$0")" && pwd)/backup}"
 BACKUP_RETENTION="${BACKUP_RETENTION:-30}"
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-
-# S3 备份（可选）
 S3_BACKUP_ENABLED="${S3_BACKUP_ENABLED:-false}"
 S3_ENDPOINT="${S3_ENDPOINT:-}"
 S3_BUCKET="${S3_BUCKET:-ryframe-backups}"
+TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
-# ============================================================
-# 颜色输出
-# ============================================================
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+MYSQL_DEFAULTS_FILE=""
+BACKUP_RESULT=""
 
-log_info()  { echo -e "${BLUE}[INFO]${NC}  $(date '+%Y-%m-%d %H:%M:%S') $*"; }
-log_ok()    { echo -e "${GREEN}[OK]${NC}    $(date '+%Y-%m-%d %H:%M:%S') $*"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $(date '+%Y-%m-%d %H:%M:%S') $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') $*"; }
-
-# ============================================================
-# 自动检测数据库类型
-# ============================================================
-detect_driver() {
-    if [ -n "$DB_DRIVER" ]; then
-        return
-    fi
-
-    if command -v mysql &>/dev/null; then
-        DB_DRIVER="mysql"
-        DB_PORT="${DB_PORT:-3306}"
-    elif command -v psql &>/dev/null; then
-        DB_DRIVER="postgres"
-        DB_PORT="${DB_PORT:-5432}"
-    else
-        log_error "无法检测数据库类型。请设置 DB_DRIVER 环境变量（mysql 或 postgres）"
-        exit 1
-    fi
-    log_info "自动检测数据库类型: ${DB_DRIVER}"
+log() {
+    printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
 
-# ============================================================
-# 检查依赖
-# ============================================================
-check_deps() {
-    local missing=()
-
-    if [ "$DB_DRIVER" = "mysql" ] && ! command -v mysqldump &>/dev/null; then
-        missing+=("mysqldump (mysql-client)")
-    fi
-    if [ "$DB_DRIVER" = "postgres" ] && ! command -v pg_dump &>/dev/null; then
-        missing+=("pg_dump (postgresql-client)")
-    fi
-    if ! command -v gzip &>/dev/null; then
-        missing+=("gzip")
-    fi
-    if [ "$S3_BACKUP_ENABLED" = "true" ] && ! command -v aws &>/dev/null; then
-        missing+=("aws-cli (s3 备份需要)")
-    fi
-
-    if [ ${#missing[@]} -gt 0 ]; then
-        log_error "缺少依赖: ${missing[*]}"
-        exit 1
-    fi
+fail() {
+    log "ERROR: $*" >&2
+    exit 1
 }
 
-# ============================================================
-# 创建备份目录
-# ============================================================
-ensure_backup_dir() {
-    if [ ! -d "$BACKUP_DIR" ]; then
-        mkdir -p "$BACKUP_DIR"
-        log_info "创建备份目录: $BACKUP_DIR"
+cleanup() {
+    if [[ -n "$MYSQL_DEFAULTS_FILE" && -f "$MYSQL_DEFAULTS_FILE" ]]; then
+        rm -f -- "$MYSQL_DEFAULTS_FILE"
+    fi
+}
+trap cleanup EXIT INT TERM
+
+validate_database_name() {
+    local name="$1"
+    [[ "$name" =~ ^[A-Za-z0-9_]+$ ]] || fail "invalid database name"
+}
+
+validate_positive_integer() {
+    local value="$1"
+    local label="$2"
+    [[ "$value" =~ ^[0-9]+$ ]] || fail "$label must be a non-negative integer"
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+prepare_mysql_credentials() {
+    [[ -n "$MYSQL_DEFAULTS_FILE" ]] && return
+    MYSQL_DEFAULTS_FILE="$(mktemp "${TMPDIR:-/tmp}/ryframe-mysql.XXXXXX.cnf")"
+    chmod 600 "$MYSQL_DEFAULTS_FILE"
+    {
+        printf '[client]\n'
+        printf 'host=%s\n' "$DB_HOST"
+        printf 'port=%s\n' "$DB_PORT"
+        printf 'user=%s\n' "$DB_USER"
+        printf 'password=%s\n' "$DB_PASSWORD"
+        printf 'default-character-set=utf8mb4\n'
+    } >"$MYSQL_DEFAULTS_FILE"
+}
+
+mysql_client() {
+    mysql --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --protocol=TCP "$@"
+}
+
+check_dependencies() {
+    require_command mysql
+    require_command mysqldump
+    require_command gzip
+    require_command gunzip
+    require_command awk
+    require_command find
+    if [[ "$S3_BACKUP_ENABLED" == "true" ]]; then
+        require_command aws
+    elif [[ "$S3_BACKUP_ENABLED" != "false" ]]; then
+        fail "S3_BACKUP_ENABLED must be true or false"
     fi
 }
 
-# ============================================================
-# MySQL 备份
-# ============================================================
+ensure_backup_directory() {
+    mkdir -p -- "$BACKUP_DIR"
+    chmod 700 "$BACKUP_DIR"
+}
+
+validate_backup() {
+    local file="$1"
+    [[ -f "$file" ]] || fail "backup does not exist: $file"
+    [[ "$file" == *.sql.gz ]] || fail "only .sql.gz backups are accepted"
+    gzip -t -- "$file" || fail "gzip integrity check failed: $file"
+    # Read the complete gzip stream. Exiting a grep pipeline on the first match
+    # can SIGPIPE gunzip under `set -o pipefail` and reject a healthy backup.
+    gunzip -c -- "$file" | awk '
+        /^(-- MySQL dump|CREATE TABLE|INSERT INTO|DROP TABLE)/ { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' >/dev/null || fail "backup does not contain recognizable MySQL SQL"
+}
+
 backup_mysql() {
-    local dump_file="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.sql"
-    local compressed_file="${dump_file}.gz"
+    ensure_backup_directory
+    prepare_mysql_credentials
+    local final_file="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.sql.gz"
+    local partial_file="${final_file}.partial"
+    local error_file
+    error_file="$(mktemp "${TMPDIR:-/tmp}/ryframe-mysqldump.XXXXXX.log")"
 
-    log_info "开始 MySQL 备份: ${DB_NAME} → ${compressed_file}"
-
-    local auth_args=()
-    if [ -n "$DB_PASSWORD" ]; then
-        auth_args+=("-p${DB_PASSWORD}")
-    fi
-
-    if mysqldump \
-        -h "$DB_HOST" \
-        -P "$DB_PORT" \
-        -u "$DB_USER" \
-        "${auth_args[@]}" \
+    log "backing up MySQL database ${DB_NAME} from ${DB_HOST}:${DB_PORT}"
+    if ! mysqldump \
+        --defaults-extra-file="$MYSQL_DEFAULTS_FILE" \
+        --protocol=TCP \
         --single-transaction \
+        --quick \
         --routines \
         --triggers \
         --events \
         --hex-blob \
+        --set-gtid-purged=OFF \
         --default-character-set=utf8mb4 \
-        "$DB_NAME" 2>/tmp/ryframe_backup_err.log | gzip > "$compressed_file"; then
-        local size=$(du -h "$compressed_file" | cut -f1)
-        log_ok "MySQL 备份完成: ${compressed_file} (${size})"
-    else
-        log_error "MySQL 备份失败:"
-        cat /tmp/ryframe_backup_err.log
-        rm -f "$compressed_file"
+        "$DB_NAME" 2>"$error_file" | gzip -9 >"$partial_file"; then
+        log "mysqldump failed; diagnostic follows" >&2
+        sed -E 's/(password=)[^[:space:]]+/\1[REDACTED]/Ig' "$error_file" >&2
+        rm -f -- "$partial_file" "$error_file"
         return 1
     fi
-
-    # 创建软链接指向最新备份
-    ln -sf "$(basename "$compressed_file")" "${BACKUP_DIR}/${DB_NAME}_latest.sql.gz"
-
-    echo "$compressed_file"
+    rm -f -- "$error_file"
+    chmod 600 "$partial_file"
+    mv -- "$partial_file" "$final_file"
+    validate_backup "$final_file"
+    ln -sfn -- "$(basename "$final_file")" "${BACKUP_DIR}/${DB_NAME}_latest.sql.gz"
+    BACKUP_RESULT="$final_file"
+    log "backup complete: ${final_file}"
 }
 
-# ============================================================
-# PostgreSQL 备份
-# ============================================================
-backup_postgres() {
-    local dump_file="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.dump"
-    local compressed_file="${dump_file}.gz"
-
-    log_info "开始 PostgreSQL 备份: ${DB_NAME} → ${compressed_file}"
-
-    export PGPASSWORD="$DB_PASSWORD"
-
-    if pg_dump \
-        -h "$DB_HOST" \
-        -p "$DB_PORT" \
-        -U "$DB_USER" \
-        -F c \
-        -b \
-        -v \
-        -f "$dump_file" \
-        "$DB_NAME" 2>/tmp/ryframe_backup_err.log; then
-        gzip -f "$dump_file"
-        local size=$(du -h "$compressed_file" | cut -f1)
-        log_ok "PostgreSQL 备份完成: ${compressed_file} (${size})"
-    else
-        log_error "PostgreSQL 备份失败:"
-        cat /tmp/ryframe_backup_err.log
-        rm -f "$dump_file"
-        return 1
-    fi
-
-    unset PGPASSWORD
-
-    # 创建软链接指向最新备份
-    ln -sf "$(basename "$compressed_file")" "${BACKUP_DIR}/${DB_NAME}_latest.dump.gz"
-
-    echo "$compressed_file"
-}
-
-# ============================================================
-# 上传到 S3
-# ============================================================
-upload_to_s3() {
+upload_backup() {
     local file="$1"
-
-    if [ "$S3_BACKUP_ENABLED" != "true" ]; then
-        return 0
-    fi
-
-    log_info "上传备份到 S3: s3://${S3_BUCKET}/$(basename "$file")"
-
+    [[ "$S3_BACKUP_ENABLED" == "true" ]] || return 0
     local endpoint_args=()
-    if [ -n "$S3_ENDPOINT" ]; then
-        endpoint_args+=(--endpoint-url "$S3_ENDPOINT")
+    if [[ -n "$S3_ENDPOINT" ]]; then
+        endpoint_args=(--endpoint-url "$S3_ENDPOINT")
     fi
-
-    if aws s3 cp "$file" "s3://${S3_BUCKET}/$(basename "$file")" "${endpoint_args[@]}" --no-progress; then
-        log_ok "S3 上传完成"
-    else
-        log_warn "S3 上传失败，本地备份已保留"
-    fi
+    aws "${endpoint_args[@]}" s3 cp --no-progress --only-show-errors \
+        "$file" "s3://${S3_BUCKET}/$(basename "$file")"
+    log "uploaded backup to s3://${S3_BUCKET}/$(basename "$file")"
 }
 
-# ============================================================
-# 清理旧备份
-# ============================================================
 clean_old_backups() {
     local retention="${1:-$BACKUP_RETENTION}"
-
-    log_info "清理 ${retention} 天前的备份..."
-
-    local count=0
-    while IFS= read -r old_file; do
-        if [ -n "$old_file" ]; then
-            rm -f "$old_file"
-            count=$((count + 1))
-            log_info "  已删除: $(basename "$old_file")"
-        fi
-    done < <(find "$BACKUP_DIR" -type f \( -name "*.sql.gz" -o -name "*.dump.gz" \) -mtime "+${retention}" 2>/dev/null)
-
-    # 清理临时错误日志
-    rm -f /tmp/ryframe_backup_err.log
-
-    log_ok "清理完成，删除了 ${count} 个旧备份"
+    validate_positive_integer "$retention" "retention"
+    ensure_backup_directory
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.sql.gz' -mtime "+${retention}" \
+        -print -delete
 }
 
-# ============================================================
-# 列出备份
-# ============================================================
 list_backups() {
-    ensure_backup_dir
-
-    echo ""
-    echo "============================================================"
-    echo "  RyFrame 备份列表"
-    echo "  目录: $BACKUP_DIR"
-    echo "============================================================"
-
-    local count=0
-    for f in "$BACKUP_DIR"/*.{sql.gz,dump.gz} 2>/dev/null; do
-        if [ -f "$f" ]; then
-            local size=$(du -h "$f" | cut -f1)
-            local date=$(stat -c "%y" "$f" 2>/dev/null || stat -f "%Sm" "$f" 2>/dev/null)
-            echo "  $(basename "$f")  (${size})  ${date}"
-            count=$((count + 1))
-        fi
-    done
-
-    if [ $count -eq 0 ]; then
-        echo "  (无备份文件)"
-    fi
-    echo "------------------------------------------------------------"
-    echo "  共 ${count} 个备份"
-    echo "============================================================"
-    echo ""
+    ensure_backup_directory
+    find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.sql.gz' \
+        -printf '%TY-%Tm-%TdT%TH:%TM:%TSZ %10s %f\n' | sort -r
 }
 
-# ============================================================
-# 恢复备份
-# ============================================================
-restore_backup() {
+restore_into() {
     local file="$1"
-
-    if [ ! -f "$file" ]; then
-        log_error "备份文件不存在: $file"
-        exit 1
-    fi
-
-    detect_driver
-
-    echo ""
-    echo "============================================================"
-    echo "  ⚠️  警告: 即将恢复数据库 ${DB_NAME}，所有现有数据将被覆盖！"
-    echo "  备份文件: $file"
-    echo "============================================================"
-    echo ""
-    read -r -p "  确认恢复? (输入 yes 继续): " confirm
-
-    if [ "$confirm" != "yes" ]; then
-        log_info "已取消恢复操作"
-        exit 0
-    fi
-
-    if [ "$DB_DRIVER" = "mysql" ]; then
-        log_info "开始 MySQL 恢复: ${DB_NAME} ← ${file}"
-        local auth_args=()
-        if [ -n "$DB_PASSWORD" ]; then
-            auth_args+=("-p${DB_PASSWORD}")
-        fi
-
-        if gunzip -c "$file" | mysql \
-            -h "$DB_HOST" \
-            -P "$DB_PORT" \
-            -u "$DB_USER" \
-            "${auth_args[@]}" \
-            "$DB_NAME"; then
-            log_ok "MySQL 恢复完成"
-        else
-            log_error "MySQL 恢复失败"
-            exit 1
-        fi
-    elif [ "$DB_DRIVER" = "postgres" ]; then
-        log_info "开始 PostgreSQL 恢复: ${DB_NAME} ← ${file}"
-        export PGPASSWORD="$DB_PASSWORD"
-
-        if gunzip -c "$file" | pg_restore \
-            -h "$DB_HOST" \
-            -p "$DB_PORT" \
-            -U "$DB_USER" \
-            -d "$DB_NAME" \
-            -v \
-            --clean \
-            --if-exists; then
-            log_ok "PostgreSQL 恢复完成"
-        else
-            log_error "PostgreSQL 恢复失败"
-            exit 1
-        fi
-
-        unset PGPASSWORD
-    fi
+    local target_database="$2"
+    validate_database_name "$target_database"
+    validate_backup "$file"
+    prepare_mysql_credentials
+    gunzip -c -- "$file" | mysql_client "$target_database"
 }
 
-# ============================================================
-# 备份主流程
-# ============================================================
-do_backup() {
-    detect_driver
-    check_deps
-    ensure_backup_dir
-
-    local backup_file=""
-
-    if [ "$DB_DRIVER" = "mysql" ]; then
-        backup_file=$(backup_mysql)
-    elif [ "$DB_DRIVER" = "postgres" ]; then
-        backup_file=$(backup_postgres)
-    else
-        log_error "不支持的数据库类型: ${DB_DRIVER}"
-        exit 1
-    fi
-
-    # 上传到 S3
-    if [ -n "$backup_file" ]; then
-        upload_to_s3 "$backup_file"
-    fi
-
-    # 自动清理旧备份
-    clean_old_backups "$BACKUP_RETENTION"
-
-    log_ok "备份流程完成"
+restore_backup() {
+    local file="${1:-}"
+    local confirm_flag="${2:-}"
+    local expected_name="${3:-}"
+    [[ -n "$file" ]] || fail "restore requires a backup file"
+    [[ "$confirm_flag" == "--confirm" ]] \
+        || fail "restore requires: --confirm <expected-database-name>"
+    [[ "$expected_name" == "$DB_NAME" ]] \
+        || fail "confirmation database name does not match DB_NAME"
+    restore_into "$file" "$DB_NAME"
+    log "restore complete for database ${DB_NAME}"
 }
 
-# ============================================================
-# 帮助信息
-# ============================================================
+rehearse_restore() {
+    local file="${1:-}"
+    [[ -n "$file" ]] || fail "rehearse requires a backup file"
+    prepare_mysql_credentials
+    local rehearsal_database="ryframe_restore_${TIMESTAMP//[^A-Za-z0-9]/_}_$$"
+    validate_database_name "$rehearsal_database"
+
+    mysql_client -e "CREATE DATABASE \`${rehearsal_database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+    local rehearsal_created=true
+    drop_rehearsal_database() {
+        if [[ "$rehearsal_created" == "true" ]]; then
+            mysql_client -e "DROP DATABASE IF EXISTS \`${rehearsal_database}\`" || true
+        fi
+    }
+    trap 'drop_rehearsal_database; cleanup' EXIT INT TERM
+
+    restore_into "$file" "$rehearsal_database"
+    local table_count
+    table_count="$(mysql_client --batch --skip-column-names -e \
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${rehearsal_database}'")"
+    [[ "$table_count" =~ ^[0-9]+$ && "$table_count" -gt 0 ]] \
+        || fail "restore rehearsal produced no tables"
+    drop_rehearsal_database
+    rehearsal_created=false
+    trap cleanup EXIT INT TERM
+    log "restore rehearsal passed (${table_count} tables)"
+}
+
 show_help() {
-    echo "RyFrame 数据库备份工具"
-    echo ""
-    echo "用法: $0 <命令> [参数]"
-    echo ""
-    echo "命令:"
-    echo "  backup              执行数据库备份"
-    echo "  restore <file>      从指定备份文件恢复数据库"
-    echo "  list                列出所有备份文件"
-    echo "  clean [days]        清理旧备份（默认保留 ${BACKUP_RETENTION} 天）"
-    echo "  help                显示此帮助"
-    echo ""
-    echo "环境变量:"
-    echo "  DB_DRIVER           数据库类型（mysql | postgres）"
-    echo "  DB_HOST             数据库主机（默认 localhost）"
-    echo "  DB_PORT             数据库端口"
-    echo "  DB_NAME             数据库名称（默认 ryframe）"
-    echo "  DB_USER             数据库用户（默认 root）"
-    echo "  DB_PASSWORD         数据库密码"
-    echo "  BACKUP_DIR          备份目录（默认 ./backup）"
-    echo "  BACKUP_RETENTION    备份保留天数（默认 30）"
-    echo "  S3_BACKUP_ENABLED   是否上传到 S3（true/false）"
-    echo "  S3_ENDPOINT         S3 端点 URL"
-    echo "  S3_BUCKET           S3 Bucket 名称（默认 ryframe-backups）"
-    echo ""
-    echo "示例:"
-    echo "  $0 backup"
-    echo "  $0 backup                            # 使用默认配置备份"
-    echo "  DB_NAME=ryframe_config $0 backup     # 指定数据库名称"
-    echo "  $0 restore ./backup/ryframe_latest.sql.gz"
-    echo "  $0 list"
-    echo "  $0 clean 60                          # 保留 60 天"
+    cat <<'HELP'
+Usage:
+  ./deploy.sh backup
+  ./deploy.sh validate FILE.sql.gz
+  ./deploy.sh rehearse FILE.sql.gz
+  ./deploy.sh restore FILE.sql.gz --confirm DATABASE_NAME
+  ./deploy.sh list
+  ./deploy.sh clean [DAYS]
+
+MySQL connection: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD.
+Backups are permission-restricted .sql.gz files; credentials are never passed
+on the process command line.
+HELP
 }
 
-# ============================================================
-# 入口
-# ============================================================
 main() {
-    local cmd="${1:-help}"
+    validate_database_name "$DB_NAME"
+    validate_positive_integer "$DB_PORT" "DB_PORT"
+    validate_positive_integer "$BACKUP_RETENTION" "BACKUP_RETENTION"
 
-    case "$cmd" in
+    case "${1:-help}" in
+        help|-h|--help)
+            show_help
+            return
+            ;;
+    esac
+
+    check_dependencies
+
+    case "${1:-help}" in
         backup)
-            do_backup
+            backup_mysql
+            upload_backup "$BACKUP_RESULT"
+            clean_old_backups "$BACKUP_RETENTION"
+            ;;
+        validate)
+            validate_backup "${2:-}"
+            log "backup validation passed"
+            ;;
+        rehearse)
+            rehearse_restore "${2:-}"
             ;;
         restore)
-            if [ -z "${2:-}" ]; then
-                log_error "restore 命令需要指定备份文件路径"
-                echo "用法: $0 restore <file>"
-                exit 1
-            fi
-            restore_backup "$2"
+            restore_backup "${2:-}" "${3:-}" "${4:-}"
             ;;
         list)
             list_backups
             ;;
         clean)
-            local days="${2:-$BACKUP_RETENTION}"
-            ensure_backup_dir
-            clean_old_backups "$days"
-            ;;
-        help|--help|-h)
-            show_help
+            clean_old_backups "${2:-$BACKUP_RETENTION}"
             ;;
         *)
-            log_error "未知命令: $cmd"
-            show_help
-            exit 1
+            show_help >&2
+            fail "unknown command: $1"
             ;;
     esac
 }
 
 main "$@"
-

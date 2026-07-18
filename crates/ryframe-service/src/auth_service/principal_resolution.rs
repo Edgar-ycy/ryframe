@@ -14,7 +14,7 @@ impl PrincipalResolver for AuthService {
     async fn resolve_principal(&self, claims: &Claims) -> AppResult<RequestPrincipal> {
         let identity = self.validate_token_identity(claims).await?;
         let authorization = self
-            .load_authorization_profile(&identity.user.tenant_id, identity.user.id, true)
+            .load_authorization_profile(&identity.user.tenant_id, identity.user.id)
             .await?;
         let data_scope = self
             .resolve_data_scope(

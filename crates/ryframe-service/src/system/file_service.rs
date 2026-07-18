@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use ryframe_common::{
     ActorContext, AppError, AppResult,
     utils::file_upload::{
@@ -11,7 +12,7 @@ use ryframe_common::{
 use ryframe_core::repository::Repository;
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{FileRepository, entities::sys_file};
-use ryframe_storage::ObjectStorage;
+use ryframe_storage::{ObjectStorage, StorageError};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -47,18 +48,17 @@ impl FileService {
         Self { db, storage }
     }
 
-    /// 确保 bucket 存在
-    pub async fn ensure_bucket(&self, bucket: &str) -> AppResult<()> {
-        self.storage
-            .ensure_bucket(bucket)
-            .await
-            .map_err(|e| AppError::Internal(format!("创建存储桶失败: {}", e)))
-    }
-
     /// Validate that the storage backend is reachable with the configured credentials.
     pub async fn check_storage(&self) -> AppResult<()> {
         for bucket in [UPLOAD_BUCKET, AVATAR_BUCKET] {
-            self.ensure_bucket(bucket).await?;
+            self.storage
+                .readiness_check(bucket)
+                .await
+                .map_err(|error| {
+                    AppError::ServiceUnavailable(format!(
+                        "object storage readiness check failed: {error}"
+                    ))
+                })?;
         }
         Ok(())
     }
@@ -81,7 +81,7 @@ impl FileService {
         } = command;
         // 验证文件大小
         if data.len() as u64 > config.max_file_size {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::PayloadTooLarge(format!(
                 "文件大小超过限制（最大 {} MB）",
                 config.max_file_size / 1024 / 1024
             )));
@@ -148,7 +148,10 @@ impl FileService {
         self.storage
             .put(bucket, &object_key, &final_data, &content_type)
             .await
-            .map_err(|e| AppError::Internal(format!("保存文件失败: {}", e)))?;
+            .map_err(|error| {
+                tracing::error!(bucket, object_key, %error, "对象存储写入失败");
+                map_storage_write_error(error)
+            })?;
 
         // 写入文件元数据到 sys_file 表
         let relative_file_url = format!("{}/{}", bucket, object_key);
@@ -182,7 +185,7 @@ impl FileService {
                     "文件元数据写入失败后清理对象也失败"
                 );
             }
-            return Err(AppError::Internal(format!("写入文件元数据失败: {error}")));
+            return Err(error);
         }
 
         Ok(UploadResponse {
@@ -218,44 +221,23 @@ impl FileService {
             .await?
             .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
 
-        let data = self
-            .storage
-            .get(bucket, path)
-            .await
-            .map_err(|e| AppError::NotFound(format!("文件不存在: {}", e)))?;
+        let data = self.storage.get(bucket, path).await.map_err(|error| {
+            tracing::error!(bucket, path, %error, "对象存储读取失败");
+            map_storage_read_error(error)
+        })?;
 
         let filename = path.rsplit('/').next().unwrap_or("download").to_string();
 
         Ok((data, filename))
     }
 
-    /// 构建文件访问地址
-    ///
-    /// - 配置 public_url：返回对象存储或 CDN 的公开地址
-    /// - 未配置 public_url：返回需要登录态的后端代理下载地址
+    /// 构建只能通过认证后端访问的私有文件地址。
     pub fn build_file_url(&self, bucket: &str, key: &str) -> AppResult<String> {
-        match self
-            .storage
-            .public_url(bucket, key)
-            .map_err(|error| AppError::Validation(error.to_string()))?
-        {
-            Some(public_url) => Ok(public_url),
-            None => Ok(format!(
-                "/api/v1/common/file/download?bucket={}&path={}",
-                bucket, key
-            )),
-        }
-    }
-
-    /// 解析最终使用的 bucket 名称
-    pub fn resolve_bucket(force_bucket: &Option<String>, form_bucket: &str) -> String {
-        if let Some(fb) = force_bucket {
-            fb.clone()
-        } else if form_bucket.is_empty() {
-            UPLOAD_BUCKET.to_string()
-        } else {
-            form_bucket.to_string()
-        }
+        Ok(format!(
+            "/api/v1/common/file/download?bucket={}&path={}",
+            utf8_percent_encode(bucket, NON_ALPHANUMERIC),
+            utf8_percent_encode(key, NON_ALPHANUMERIC),
+        ))
     }
 
     /// 上传头像（Avatar 专用便捷方法）
@@ -267,6 +249,7 @@ impl FileService {
         actor: &ActorContext,
         original_name: String,
         data: Vec<u8>,
+        max_file_size: u64,
     ) -> AppResult<String> {
         let config = UploadConfig {
             allowed_extensions: vec![
@@ -277,11 +260,9 @@ impl FileService {
                 "bmp".to_string(),
                 "webp".to_string(),
             ],
-            max_file_size: 5 * 1024 * 1024, // 5MB
+            max_file_size,
             ..Default::default()
         };
-
-        self.ensure_bucket(AVATAR_BUCKET).await?;
 
         let result = self
             .upload_single(
@@ -297,5 +278,106 @@ impl FileService {
             .await?;
 
         Ok(result.file_url)
+    }
+}
+
+fn map_storage_write_error(error: StorageError) -> AppError {
+    match error {
+        StorageError::InvalidLocation(_) => AppError::Validation("非法的对象存储路径".into()),
+        StorageError::Configuration(_) | StorageError::Signing(_) => {
+            AppError::Internal("对象存储配置错误".into())
+        }
+        StorageError::Service { status, .. } if status == 429 || status >= 500 => {
+            AppError::ServiceUnavailable("对象存储暂不可用".into())
+        }
+        StorageError::Service { .. } => AppError::Internal("对象存储拒绝写入请求".into()),
+        StorageError::Transport(_) | StorageError::Io { .. } | StorageError::Readiness(_) => {
+            AppError::ServiceUnavailable("对象存储暂不可用".into())
+        }
+    }
+}
+
+fn map_storage_read_error(error: StorageError) -> AppError {
+    match error {
+        StorageError::Service { status: 404, .. } => AppError::NotFound("文件不存在".into()),
+        StorageError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+            AppError::NotFound("文件不存在".into())
+        }
+        StorageError::InvalidLocation(_) => AppError::Validation("非法的对象存储路径".into()),
+        StorageError::Configuration(_) | StorageError::Signing(_) => {
+            AppError::Internal("对象存储配置错误".into())
+        }
+        StorageError::Service { status, .. } if status == 429 || status >= 500 => {
+            AppError::ServiceUnavailable("对象存储暂不可用".into())
+        }
+        StorageError::Service { .. } => AppError::Internal("对象存储拒绝读取请求".into()),
+        StorageError::Transport(_) | StorageError::Io { .. } | StorageError::Readiness(_) => {
+            AppError::ServiceUnavailable("对象存储暂不可用".into())
+        }
+    }
+}
+
+#[cfg(test)]
+mod storage_error_tests {
+    use super::{map_storage_read_error, map_storage_write_error};
+    use ryframe_common::AppError;
+    use ryframe_storage::StorageError;
+
+    #[test]
+    fn maps_only_real_missing_objects_to_not_found() {
+        let remote_missing = StorageError::Service {
+            operation: "get",
+            status: 404,
+            message: "missing".into(),
+        };
+        let local_missing = StorageError::Io {
+            operation: "read",
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        };
+        assert!(matches!(
+            map_storage_read_error(remote_missing),
+            AppError::NotFound(_)
+        ));
+        assert!(matches!(
+            map_storage_read_error(local_missing),
+            AppError::NotFound(_)
+        ));
+    }
+
+    #[test]
+    fn maps_runtime_storage_failures_to_service_unavailable() {
+        for error in [
+            StorageError::Service {
+                operation: "put",
+                status: 500,
+                message: "upstream".into(),
+            },
+            StorageError::Service {
+                operation: "put",
+                status: 429,
+                message: "busy".into(),
+            },
+            StorageError::Io {
+                operation: "write",
+                source: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+            },
+        ] {
+            assert!(matches!(
+                map_storage_write_error(error),
+                AppError::ServiceUnavailable(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn keeps_configuration_and_location_errors_distinct() {
+        assert!(matches!(
+            map_storage_write_error(StorageError::InvalidLocation("unsafe".into())),
+            AppError::Validation(_)
+        ));
+        assert!(matches!(
+            map_storage_write_error(StorageError::Configuration("missing key".into())),
+            AppError::Internal(_)
+        ));
     }
 }

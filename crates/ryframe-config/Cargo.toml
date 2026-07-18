@@ -12,6 +12,7 @@ ryframe-common = { path = "../ryframe-common" }
 aes-gcm = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
+percent-encoding = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 toml = { workspace = true }

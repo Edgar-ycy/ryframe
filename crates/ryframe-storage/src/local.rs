@@ -2,23 +2,18 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use super::{
-    ObjectStorage, StorageError, StorageResult, key_segments, public_object_url, validate_bucket,
-};
+use super::{ObjectStorage, StorageError, StorageResult, key_segments, validate_bucket};
 
 /// Process-local filesystem backend.
 #[derive(Clone, Debug)]
 pub struct LocalObjectStorage {
     base_dir: PathBuf,
-    public_base_url: Option<String>,
 }
 
 impl LocalObjectStorage {
-    pub fn new(base_dir: impl Into<PathBuf>, public_base_url: &str) -> Self {
+    pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
-            public_base_url: (!public_base_url.trim().is_empty())
-                .then(|| public_base_url.trim_end_matches('/').to_owned()),
         }
     }
 
@@ -180,15 +175,6 @@ impl ObjectStorage for LocalObjectStorage {
         }
     }
 
-    fn public_url(&self, bucket: &str, key: &str) -> StorageResult<Option<String>> {
-        validate_bucket(bucket)?;
-        key_segments(key)?;
-        self.public_base_url
-            .as_deref()
-            .map(|base_url| public_object_url(base_url, bucket, key))
-            .transpose()
-    }
-
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         validate_bucket(bucket)?;
         let path = self.base_dir.join(bucket);
@@ -211,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn local_backend_round_trips_and_deletes_objects() {
         let directory = TempDir::new().unwrap();
-        let storage = LocalObjectStorage::new(directory.path(), "https://cdn.example.com/files");
+        let storage = LocalObjectStorage::new(directory.path());
 
         storage
             .put("uploads", "2026/example.txt", b"value", "text/plain")
@@ -229,7 +215,7 @@ mod tests {
     #[tokio::test]
     async fn local_backend_rejects_traversal_before_io() {
         let directory = TempDir::new().unwrap();
-        let storage = LocalObjectStorage::new(directory.path(), "");
+        let storage = LocalObjectStorage::new(directory.path());
 
         assert!(
             storage
@@ -238,6 +224,5 @@ mod tests {
                 .is_err()
         );
         assert!(storage.get("uploads", "C:\\outside").await.is_err());
-        assert_eq!(storage.public_url("uploads", "safe/file").unwrap(), None);
     }
 }

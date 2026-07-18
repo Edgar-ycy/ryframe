@@ -20,7 +20,8 @@ fn actor(tenant_id: &str, is_super_admin: bool) -> ActorContext {
 
 #[tokio::test]
 async fn only_system_super_admin_can_manage_tenants() {
-    let service = TenantService::new(DatabaseCluster::single(common::setup_test_db().await));
+    let db = common::setup_test_db().await;
+    let service = TenantService::new(DatabaseCluster::single(db.connection().clone()));
 
     assert!(service.list(&actor("tenant-b", true)).await.is_err());
     assert!(service.list(&actor("system", false)).await.is_err());

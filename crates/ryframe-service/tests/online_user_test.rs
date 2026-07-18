@@ -15,14 +15,14 @@ fn actor(tenant_id: &str) -> ActorContext {
     }
 }
 
-fn make_session(token_id: &str, username: &str) -> UserSession {
-    make_tenant_session("system", token_id, username)
+fn make_session(sid: &str, username: &str) -> UserSession {
+    make_tenant_session("system", sid, username)
 }
 
-fn make_tenant_session(tenant_id: &str, token_id: &str, username: &str) -> UserSession {
+fn make_tenant_session(tenant_id: &str, sid: &str, username: &str) -> UserSession {
     let now = chrono::Utc::now();
     UserSession {
-        token_id: token_id.into(),
+        sid: sid.into(),
         tenant_id: tenant_id.into(),
         user_id: 1,
         username: username.into(),
@@ -33,6 +33,7 @@ fn make_tenant_session(tenant_id: &str, token_id: &str, username: &str) -> UserS
         os: Some("Windows 10".into()),
         login_time: now,
         last_access_time: now,
+        absolute_exp: (now + chrono::Duration::days(7)).timestamp(),
     }
 }
 
@@ -48,17 +49,10 @@ async fn online_users_are_isolated_by_tenant() {
             .unwrap()
             .is_empty()
     );
-    assert!(
-        svc.force_logout(&actor("system"), "shared-token")
-            .await
-            .is_err()
-    );
+    svc.remove_user("system", "shared-token").await;
     assert_eq!(svc.count(&actor("tenant-b")).await.unwrap(), 1);
-    assert!(
-        svc.force_logout(&actor("tenant-b"), "shared-token")
-            .await
-            .is_ok()
-    );
+    svc.remove_user("tenant-b", "shared-token").await;
+    assert_eq!(svc.count(&actor("tenant-b")).await.unwrap(), 0);
 }
 
 #[tokio::test]
@@ -74,13 +68,9 @@ async fn test_online_user_lifecycle() {
     svc.remove_user("system", "tok-1").await;
     assert_eq!(svc.count(&actor("system")).await.unwrap(), 1);
 
-    // 强制下线
-    assert!(svc.force_logout(&actor("system"), "tok-2").await.is_ok());
-    assert!(
-        svc.force_logout(&actor("system"), "nonexistent")
-            .await
-            .is_err()
-    );
+    svc.remove_user("system", "tok-2").await;
+    // Secondary-index deletion is deliberately idempotent.
+    svc.remove_user("system", "nonexistent").await;
     assert_eq!(svc.count(&actor("system")).await.unwrap(), 0);
 }
 
@@ -88,17 +78,16 @@ async fn test_online_user_lifecycle() {
 async fn test_online_user_touch_and_cleanup() {
     let svc = OnlineUserService::new_in_memory();
 
-    // 添加过期用户 (60 分钟前)
+    // 添加一个 refresh family 已过绝对期限的索引条目。
     let mut old = make_session("tok-old", "olduser");
-    old.last_access_time = chrono::Utc::now() - chrono::Duration::minutes(60);
+    old.absolute_exp = chrono::Utc::now().timestamp() - 1;
     svc.add_user(old).await;
     svc.add_user(make_session("tok-new", "newuser")).await;
 
     // touch 更新
     svc.touch_user("system", "tok-new").await;
 
-    // 清理 30 分钟前的
-    svc.cleanup_expired(30).await;
+    svc.cleanup_expired().await;
     let users = svc.list_online_users(&actor("system")).await.unwrap();
     assert_eq!(users.len(), 1);
     assert_eq!(users[0].username, "newuser");

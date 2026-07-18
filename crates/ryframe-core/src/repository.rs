@@ -156,12 +156,9 @@ pub trait Repository<T, ID>: Send + Sync {
     async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: ID) -> AppResult<()>;
 }
 
-/// 带结果日志的 Repository 包装器
-///
-/// 当 `sql_log_level = "full"` 时，自动在每次数据库操作后
-/// 使用 `tracing::debug!` / `[结果]` 输出返回数据。
-///
-/// 通过 `Deref<Target = R>` 透明访问内部 Repository 的自定义方法。
+/// Repository wrapper retained for API compatibility. It deliberately never
+/// logs entity values: models can contain password hashes, configuration
+/// secrets and other credentials.
 #[derive(Debug, Clone, Copy)]
 pub struct LoggedRepo<R>(pub R);
 
@@ -185,20 +182,12 @@ impl<R> DerefMut for LoggedRepo<R> {
     }
 }
 
-/// 内部：输出结果日志
-fn log_full_result(label: &str, data: &dyn std::fmt::Debug) {
-    if ryframe_common::is_sql_full_log() {
-        use std::io::Write as _;
-        let _ = writeln!(std::io::stdout(), "[结果] {}: {:#?}", label, data);
-    }
-}
-
 #[async_trait]
 impl<R, T, ID> Repository<T, ID> for LoggedRepo<R>
 where
     R: Repository<T, ID> + Send + Sync,
-    T: std::fmt::Debug + Send + Sync + 'static,
-    ID: std::fmt::Debug + Send + Sync + 'static,
+    T: Send + Sync + 'static,
+    ID: Send + Sync + 'static,
 {
     async fn find_by_id(
         &self,
@@ -206,11 +195,7 @@ where
         tenant_id: &str,
         id: ID,
     ) -> AppResult<Option<T>> {
-        let result = self.0.find_by_id(db, tenant_id, id).await;
-        if let Ok(Some(ref data)) = result {
-            log_full_result("find_by_id", data);
-        }
-        result
+        self.0.find_by_id(db, tenant_id, id).await
     }
 
     async fn find_by_page(
@@ -219,34 +204,18 @@ where
         tenant_id: &str,
         query: PageQuery,
     ) -> AppResult<PageResult<T>> {
-        let result = self.0.find_by_page(db, tenant_id, query).await;
-        if let Ok(ref page) = result {
-            log_full_result(&format!("find_by_page (共{}条)", page.total), &page.records);
-        }
-        result
+        self.0.find_by_page(db, tenant_id, query).await
     }
 
     async fn insert(&self, db: &DatabaseConnection, tenant_id: &str, entity: T) -> AppResult<T> {
-        let result = self.0.insert(db, tenant_id, entity).await;
-        if let Ok(ref data) = result {
-            log_full_result("insert", data);
-        }
-        result
+        self.0.insert(db, tenant_id, entity).await
     }
 
     async fn update(&self, db: &DatabaseConnection, tenant_id: &str, entity: T) -> AppResult<T> {
-        let result = self.0.update(db, tenant_id, entity).await;
-        if let Ok(ref data) = result {
-            log_full_result("update", data);
-        }
-        result
+        self.0.update(db, tenant_id, entity).await
     }
 
     async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: ID) -> AppResult<()> {
-        let result = self.0.delete(db, tenant_id, id).await;
-        if result.is_ok() {
-            log_full_result("delete", &"success");
-        }
-        result
+        self.0.delete(db, tenant_id, id).await
     }
 }

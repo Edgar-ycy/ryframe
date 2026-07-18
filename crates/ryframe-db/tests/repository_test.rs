@@ -1,6 +1,6 @@
 //! ryframe-db Repository 层集成测试
 //!
-//! 使用 SQLite 内存数据库测试 Permission/Post/Config/Dict/Notice/Log Repo 的 CRUD 行为。
+//! 使用隔离 MySQL 8.4 数据库测试 Permission/Post/Config/Dict/Notice/Log Repo 的 CRUD 行为。
 
 mod common;
 

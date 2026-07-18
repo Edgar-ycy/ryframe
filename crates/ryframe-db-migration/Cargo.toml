@@ -12,4 +12,4 @@ ryframe-common = { path = "../ryframe-common" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
-sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+sea-orm = { workspace = true }

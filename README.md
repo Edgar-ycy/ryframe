@@ -4,11 +4,11 @@ RyFrame 是一个基于 Rust 2024 的后台管理系统框架，采用 Cargo Wor
 
 ## 特性
 
-- 认证授权：JWT 登录、刷新、登出、RBAC 权限、数据权限。
+- 认证授权：内存 access token、HttpOnly refresh Cookie、CSRF 防护、会话轮换、RBAC 权限和数据权限。
 - 系统管理：用户、角色、权限、菜单、部门、岗位、参数、字典、通知、日志。
 - 安全中间件：限流、XSS 过滤、请求日志、CORS、超时、请求体限制、安全响应头、幂等与重放防护。
-- 数据与缓存：SeaORM 主库/多只读副本、命名业务数据源、数据库迁移、Redis 缓存、本地内存降级。
-- 监控运维：健康检查、服务状态、缓存统计、数据库连接池、Prometheus 指标。
+- 数据与缓存：MySQL 8.4、SeaORM 主库/多只读副本、命名业务数据源、Rust Migrator、Redis 分布式状态。
+- 监控运维：存活与就绪探针、服务状态、缓存统计、数据库连接池、Prometheus 指标。
 - 扩展能力：代码生成、RustFS/MinIO/S3 对象存储、文件上传下载、Excel 导入导出、国际化和 WebSocket。
 - 前端管理端：独立仓库 [ryframe-vue3](https://github.com/Edgar-ycy/ryframe-vue3) 提供 Vue 3 + TypeScript + Element Plus 后台界面。
 
@@ -17,8 +17,8 @@ RyFrame 是一个基于 Rust 2024 的后台管理系统框架，采用 Cargo Wor
 ### 环境要求
 
 - Rust 1.85+
-- MySQL 8.0、PostgreSQL 15+ 或 SQLite 3
-- Redis 7+，未配置时部分缓存能力会降级到内存模式
+- MySQL 8.4
+- Redis 7+；生产环境强制使用并要求持久化与 `noeviction`，开发环境才允许显式的内存降级
 - RustFS；开发配置默认连接本机 `9000` 端口，也可显式切换为本地存储
 
 ### 后端
@@ -27,13 +27,15 @@ RyFrame 是一个基于 Rust 2024 的后台管理系统框架，采用 Cargo Wor
 git clone https://github.com/Edgar-ycy/ryframe.git
 cd ryframe
 
-# MySQL 示例：创建并初始化数据库
+# MySQL 示例：创建空数据库，启动时由 Rust Migrator 初始化
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS ryframe_config DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_general_ci;"
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS ryframe_device DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_general_ci;"
-mysql -u root -p ryframe_config < sql/ryframe_config.sql
+
+# 仅本机开发使用以下 Redis 端口绑定；生产必须另外配置 TLS、网络隔离和 ACL
+docker run -d --name ryframe-redis -p 127.0.0.1:6379:6379 -v ryframe-redis-data:/data -v "$PWD/deploy/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro" redis:7-alpine redis-server /usr/local/etc/redis/redis.conf --bind 0.0.0.0 --protected-mode no
 
 # 启动与 CI 相同版本的 RustFS；已有本机实例时无需重复执行
-docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_KEY=rustfsadmin -e RUSTFS_SECRET_KEY=rustfsadmin -v ryframe-rustfs-data:/data rustfs/rustfs:1.0.0-beta.8
+docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_KEY=rustfsadmin1 -e RUSTFS_SECRET_KEY=rustfsadmin1 -v ryframe-rustfs-data:/data rustfs/rustfs:1.0.0-beta.8
 
 # 按本地环境修改数据库、Redis、对象存储等配置
 # config/app.dev.toml
@@ -44,7 +46,8 @@ cargo run
 默认服务地址：
 
 - API：`http://localhost:8080`
-- 健康检查：`http://localhost:8080/api/v1/monitor/health`
+- 存活探针：`http://localhost:8080/livez`
+- 就绪探针：`http://localhost:8080/readyz`
 - Swagger UI：`http://localhost:8080/api/v1/swagger-ui`
 - Prometheus：`http://localhost:8080/api/v1/monitor/metrics`
 
@@ -87,6 +90,15 @@ cargo run -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cross build --release --target x86_64-unknown-linux-gnu
 ```
 
+## 重置数据库
+
+```powershell
+$env:APP_ENV = "dev"
+cargo run -p ryframe --bin ryframe-db-reset -- `
+  --database ryframe_config `
+  --confirm-reset RESET-RYFRAME-DATABASE
+```
+
 如果安装了 `cargo-nextest`，推荐使用：
 
 ```bash
@@ -117,7 +129,7 @@ cargo nextest run --workspace
 ├── openapi/openapi.json      # CI 校验并发布的规范 API 快照
 ├── scripts/                  # 源码、权限和架构门禁
 ├── locales/                  # 国际化资源
-├── sql/                      # 数据库初始化脚本
+├── sql/                      # Migrator 生成并由 CI 校验的只读 MySQL 快照
 └── deploy/                   # 部署相关资源
 ```
 
@@ -141,6 +153,8 @@ config/app.prod.toml
 | `APP_DATABASE_REPLICAS` | 命名只读副本 JSON 数组 | `[]` |
 | `APP_DATABASE_SOURCES` | 命名业务数据源 JSON 数组 | 按环境配置 |
 | `APP_GENERATOR_DATA_SOURCE` | 代码生成器读取的数据源名 | `primary` |
+| `APP_REDIS_MODE` | `required`、`optional` 或 `disabled`；生产固定 required | `optional` |
+| `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
 | `APP_OBJECT_STORAGE_BACKEND` | `local`、`rustfs`、`minio` 或 `s3` | 按环境配置 |
 | `APP_OBJECT_STORAGE_ENDPOINT` | RustFS/MinIO/S3 API 地址 | 按环境配置 |
 | `OTEL_ENABLED` | 是否启用链路追踪 | `false` |
@@ -149,6 +163,7 @@ config/app.prod.toml
 | `OTEL_SAMPLE_RATE` | 采样率 | `1.0` |
 
 生产环境不要把密钥、数据库密码、对象存储凭据写入仓库，建议通过环境变量或部署平台注入。
+配置在启动时完成解密和严格校验；配置文件或环境变量变化后必须重启进程才会生效。
 
 ## 文档
 

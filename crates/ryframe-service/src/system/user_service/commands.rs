@@ -83,7 +83,6 @@ impl UserService {
             .commit()
             .await
             .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
-        self.invalidate_permission_cache(tenant_id, saved.id).await;
         Ok(UserVo::from(saved))
     }
 
@@ -120,7 +119,6 @@ impl UserService {
             .update(self.db.write())
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        self.invalidate_permission_cache(tenant_id, saved.id).await;
         self.invalidate_sessions_for_tenant(tenant_id, &[saved.id])
             .await?;
         Ok(UserVo::from(saved))
@@ -142,7 +140,6 @@ impl UserService {
         self.user_repo
             .update_status(self.db.write(), tenant_id, id, status)
             .await?;
-        self.invalidate_permission_cache(tenant_id, id).await;
         self.invalidate_sessions_for_tenant(tenant_id, &[id]).await
     }
 
@@ -163,9 +160,6 @@ impl UserService {
             .user_repo
             .delete_many(self.db.write(), tenant_id, ids)
             .await?;
-        for user_id in ids {
-            self.invalidate_permission_cache(tenant_id, *user_id).await;
-        }
         Ok(affected)
     }
 
@@ -181,7 +175,6 @@ impl UserService {
         self.user_repo
             .delete(self.db.write(), tenant_id, id)
             .await?;
-        self.invalidate_permission_cache(tenant_id, id).await;
         Ok(())
     }
 }

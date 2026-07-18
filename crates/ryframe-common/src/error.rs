@@ -18,12 +18,18 @@ pub enum AppError {
     NotFound(String),
     #[error("数据冲突: {0}")]
     Conflict(String),
+    #[error("请求体过大: {0}")]
+    PayloadTooLarge(String),
+    #[error("请求过于频繁: {0}")]
+    RateLimited(String, u64),
     #[error("数据库错误: {0}")]
     Database(String),
     #[error("配置错误: {0}")]
     Config(String),
     #[error("内部错误: {0}")]
     Internal(String),
+    #[error("服务暂不可用: {0}")]
+    ServiceUnavailable(String),
 }
 /// 统一 API 响应结构体
 ///
@@ -133,18 +139,26 @@ impl IntoResponse for AppError {
             .map(|env| matches!(env.as_str(), "prod" | "production"))
             .unwrap_or(false);
 
-        let (status, code, msg) = match &self {
-            AppError::Validation(s) => (StatusCode::BAD_REQUEST, 400, s.clone()),
-            AppError::Authentication(s) => (StatusCode::UNAUTHORIZED, 401, s.clone()),
-            AppError::Authorization(s) => (StatusCode::FORBIDDEN, 403, s.clone()),
-            AppError::NotFound(s) => (StatusCode::NOT_FOUND, 404, s.clone()),
-            AppError::Conflict(s) => (StatusCode::CONFLICT, 409, s.clone()),
+        let (status, code, msg, retry_after) = match &self {
+            AppError::Validation(s) => (StatusCode::BAD_REQUEST, 400, s.clone(), None),
+            AppError::Authentication(s) => (StatusCode::UNAUTHORIZED, 401, s.clone(), None),
+            AppError::Authorization(s) => (StatusCode::FORBIDDEN, 403, s.clone(), None),
+            AppError::NotFound(s) => (StatusCode::NOT_FOUND, 404, s.clone(), None),
+            AppError::Conflict(s) => (StatusCode::CONFLICT, 409, s.clone(), None),
+            AppError::PayloadTooLarge(s) => (StatusCode::PAYLOAD_TOO_LARGE, 413, s.clone(), None),
+            AppError::RateLimited(s, retry_after) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                429,
+                s.clone(),
+                Some(*retry_after),
+            ),
             AppError::Database(s) => {
                 tracing::error!(error = %s, "database error");
                 (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    500,
-                    internal_error_message(is_prod, s),
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    503,
+                    "数据库服务暂不可用".to_string(),
+                    None,
                 )
             }
             AppError::Config(s) => {
@@ -153,6 +167,7 @@ impl IntoResponse for AppError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     500,
                     internal_error_message(is_prod, s),
+                    None,
                 )
             }
             AppError::Internal(s) => {
@@ -161,7 +176,12 @@ impl IntoResponse for AppError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     500,
                     internal_error_message(is_prod, s),
+                    None,
                 )
+            }
+            AppError::ServiceUnavailable(s) => {
+                tracing::error!(error = %s, "service unavailable");
+                (StatusCode::SERVICE_UNAVAILABLE, 503, s.clone(), None)
             }
         };
         let body = ApiResponse::<()>::fail(code, msg);
@@ -174,6 +194,13 @@ impl IntoResponse for AppError {
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
+        if let Some(retry_after) = retry_after
+            && let Ok(value) = http::HeaderValue::from_str(&retry_after.max(1).to_string())
+        {
+            response
+                .headers_mut()
+                .insert(http::header::RETRY_AFTER, value);
+        }
         response
     }
 }

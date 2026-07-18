@@ -1,21 +1,21 @@
 # 数据库开发指南
 
-> 最后核对：2026-07-17
+> 最后核对：2026-07-18
 
 ## 1. 技术和边界
 
 - ORM：SeaORM 2.0 RC。
-- 驱动：MySQL、PostgreSQL、SQLite。
+- 驱动：MySQL 8.4。
 - 连接池：SeaORM/SQLx 异步连接池。
 - 应用模型：每个进程建立一个主库连接池、零到多个命名只读副本连接池，以及零到多个显式命名业务数据源连接池。
 - 租户模型：共享表通过 `tenant_id` 隔离。
-- 结构演进：`ryframe-db-migration` 是增量迁移的事实来源；`sql/` 用于全新环境初始化和开发库重置。
+- 结构演进：`ryframe-db-migration` 是基线和增量迁移的唯一可执行事实来源；`sql/` 只保留便于审查的 MySQL 快照。
 
 当前拓扑明确区分自动读写路由和显式业务数据源：
 
 - `primary` 是唯一写库，迁移、事务、命令和一致性敏感读取都使用它。
-- `replicas` 是同驱动、同结构的只读副本，普通列表和详情查询按配置顺序轮询。
-- `sources` 是可以异构的业务数据库，只能由具体用例按名称显式选择；本机测试数据源为 `ryframe_device`。
+- `replicas` 是同结构的 MySQL 只读副本，普通列表和详情查询按配置顺序轮询。
+- `sources` 是独立 MySQL 业务数据库，只能由具体用例按名称显式选择；本机测试数据源为 `ryframe_device`。
 - 没有配置副本时，读取自动使用主库；已经配置的副本不会在连接失败时被静默忽略。
 - 一次 Service 用例只选择一次连接，复合查询不会在执行中途切换副本。
 - Handler、认证和监控 crate 不选择数据库连接，路由策略只存在于 `DatabaseCluster` 和 Service。
@@ -32,7 +32,6 @@
 sql_log_level = "off" # off | summary | full
 
 [database.primary]
-driver = "mysql"      # mysql | postgres | sqlite
 host = "127.0.0.1"
 port = 3306
 database = "ryframe_config"
@@ -47,7 +46,6 @@ connect_timeout_secs = 10
 
 [[database.replicas]]
 name = "replica-a"
-driver = "mysql"
 host = "10.0.0.21"
 port = 3306
 database = "ryframe_config"
@@ -58,7 +56,6 @@ min_connections = 1
 
 [[database.replicas]]
 name = "replica-b"
-driver = "mysql"
 host = "10.0.0.22"
 port = 3306
 database = "ryframe_config"
@@ -68,14 +65,13 @@ max_connections = 10
 min_connections = 1
 ```
 
-每个副本名称必须非空且唯一，驱动必须与主库一致。副本省略的超时字段使用与主库相同的默认值，但主机、端口、库名、账号和连接池仍应显式配置。
+每个副本名称必须非空且唯一。副本省略的超时字段使用与主库相同的默认值，但主机、端口、库名、账号和连接池仍应显式配置。
 
 命名业务数据源使用 `[[database.sources]]`。名称不能为保留值 `primary`，也不能与副本重名：
 
 ```toml
 [[database.sources]]
 name = "ryframe_device"
-driver = "mysql"
 host = "127.0.0.1"
 port = 3306
 database = "ryframe_device"
@@ -90,24 +86,11 @@ data_source = "ryframe_device"
 
 `generator.data_source` 必须是 `primary` 或已经注册的业务数据源名称。不存在的名称会在配置校验时失败，不会静默回退主库。
 
-SQLite 示例：
+数据库配置拒绝未知字段，连接 URL 固定按 MySQL 生成。配置只在进程启动时加载，修改文件或环境变量后必须重启；旧配置中的多余字段不会被静默忽略。
 
-```toml
-[database.primary]
-driver = "sqlite"
-host = ""
-port = 0
-database = "ryframe.db"
-username = ""
-password = ""
-max_connections = 5
-min_connections = 1
-```
-
-SQLite 适合单节点开发和测试；生产读写副本应使用数据库原生复制能力。主库环境变量保持短名称：
+主库环境变量保持短名称：
 
 ```text
-APP_DATABASE_DRIVER
 APP_DATABASE_HOST
 APP_DATABASE_PORT
 APP_DATABASE_NAME
@@ -121,7 +104,6 @@ APP_DATABASE_PASSWORD
 [
   {
     "name": "replica-a",
-    "driver": "mysql",
     "host": "10.0.0.21",
     "port": 3306,
     "database": "ryframe_config",
@@ -139,7 +121,6 @@ APP_DATABASE_PASSWORD
 [
   {
     "name": "ryframe_device",
-    "driver": "mysql",
     "host": "127.0.0.1",
     "port": 3306,
     "database": "ryframe_device",
@@ -163,7 +144,7 @@ APP_DATABASE_PASSWORD
 | `crates/ryframe-db/src/migration/` | 与数据库 crate 同属的数据规则辅助模块 |
 | `crates/ryframe-db-migration/src/` | 启动时执行的增量迁移 |
 | `crates/ryframe/src/boot/datasource.rs` | 连接全部节点，并在主库迁移后只校验主库/副本结构 |
-| `sql/` | 新环境基线 SQL 和开发库重置输入 |
+| `sql/` | 由迁移基线对齐的只读审查快照，不作为运行时输入 |
 | `crates/ryframe-service/` | 事务边界、业务校验和 Entity 到 Output 的转换 |
 
 Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得直接作为公共 API 响应。
@@ -296,17 +277,28 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
 
 1. 新增迁移文件并注册到迁移器。
 2. 同步 Entity 和 Repository。
-3. 同步 `sql/` 中的全新安装基线。
-4. 添加从旧结构升级的迁移测试。
+3. 重新生成并校验 `sql/` 审查快照。
+4. 添加空库、已有库和旧结构升级的 MySQL 迁移测试。
 5. 在 CHANGELOG 记录不可逆或需要运维关注的变更。
 
 开发环境需要清空并重建时运行：
 
 ```bash
-cargo run --bin ryframe-db-reset
+APP_ENV=dev cargo run -p ryframe --bin ryframe-db-reset -- \
+  --database ryframe_config \
+  --confirm-reset RESET-RYFRAME-DATABASE
 ```
 
-该命令会删除现有业务数据，只能用于明确允许重置的环境。生产环境只能执行增量迁移。
+PowerShell：
+
+```powershell
+$env:APP_ENV = "dev"
+cargo run -p ryframe --bin ryframe-db-reset -- `
+  --database ryframe_config `
+  --confirm-reset RESET-RYFRAME-DATABASE
+```
+
+该命令要求配置库名与 `--database` 完全一致，且在 `prod`/`production` 环境永久拒绝执行。确认后，工具使用配置中的数据库账号连接同一 MySQL 实例的 `mysql` 管理库，执行 `DROP DATABASE IF EXISTS` 和 `CREATE DATABASE`，再运行 Migrator 与 Seeder；因此旧表和全部现有数据都会被永久删除，执行账号必须能连接管理库，并拥有目标库的 `DROP`、`CREATE` 权限。生产应用账号不应授予这些权限。
 
 ## 10. 连接池
 
@@ -326,12 +318,14 @@ cargo run --bin ryframe-db-reset
 数据库相关改动至少运行：
 
 ```bash
+docker compose -f docker-compose.test.yml up -d --wait
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p ryframe-db
 cargo test -p ryframe-db-migration
 cargo test -p ryframe-service
+docker compose -f docker-compose.test.yml down
 ```
 
 本机 MySQL 已提供 `ryframe_device` 时，可显式运行外部数据源验证：

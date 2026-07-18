@@ -39,8 +39,8 @@ async fn upload_persists_metadata_and_can_be_downloaded() {
     let db = common::setup_test_db().await;
     let directory = TempDir::new().unwrap();
     let service = FileService::new(
-        DatabaseCluster::single(db),
-        Arc::new(LocalObjectStorage::new(directory.path(), "")),
+        DatabaseCluster::single(db.connection().clone()),
+        Arc::new(LocalObjectStorage::new(directory.path())),
     );
     let config = UploadConfig::default();
 
@@ -77,14 +77,14 @@ async fn metadata_failure_deletes_the_uploaded_object() {
     let db = common::setup_test_db().await;
     db.execute_unprepared(
         "CREATE TRIGGER reject_file_metadata BEFORE INSERT ON sys_file \
-         BEGIN SELECT RAISE(FAIL, 'forced metadata failure'); END",
+         FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced metadata failure'",
     )
     .await
     .unwrap();
     let directory = TempDir::new().unwrap();
     let service = FileService::new(
-        DatabaseCluster::single(db),
-        Arc::new(LocalObjectStorage::new(directory.path(), "")),
+        DatabaseCluster::single(db.connection().clone()),
+        Arc::new(LocalObjectStorage::new(directory.path())),
     );
     let config = UploadConfig::default();
 

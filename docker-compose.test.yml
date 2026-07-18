@@ -1,0 +1,59 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ryframe_test_password
+      MYSQL_DATABASE: ryframe_test
+      MYSQL_INITDB_SKIP_TZINFO: "1"
+    ports:
+      - "13306:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --log-error-verbosity=1
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+    tmpfs:
+      - /var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+      - --bind
+      - 0.0.0.0
+      - --protected-mode
+      - "no"
+    volumes:
+      - ./deploy/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis-test-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.8
+    environment:
+      RUSTFS_ACCESS_KEY: ryframe-test-access
+      RUSTFS_SECRET_KEY: ryframe-test-secret-2026
+    ports:
+      - "19000:9000"
+    tmpfs:
+      - /data:uid=10001,gid=10001,mode=0750
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:9000/health >/dev/null"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+      start_period: 3s
+
+volumes:
+  redis-test-data:

@@ -29,13 +29,12 @@ impl DatabaseMonitor for SeaOrmDatabaseMonitor {
     async fn active_connections(&self) -> Option<i64> {
         let db = self.database.write();
         let backend = db.get_database_backend();
-        let sql = match backend {
-            DatabaseBackend::MySql => "SHOW STATUS WHERE Variable_name = 'Threads_connected'",
-            DatabaseBackend::Postgres => {
-                "SELECT count(*)::bigint AS value FROM pg_stat_activity WHERE state = 'active'"
-            }
-            _ => return None,
-        };
+        if backend != DatabaseBackend::MySql {
+            return None;
+        }
+        let sql = "SELECT CAST(VARIABLE_VALUE AS SIGNED) AS value \
+                   FROM performance_schema.global_status \
+                   WHERE VARIABLE_NAME = 'THREADS_CONNECTED'";
 
         ActiveConnectionRow::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
             .one(db)

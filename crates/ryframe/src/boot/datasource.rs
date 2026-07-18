@@ -15,7 +15,7 @@ pub async fn connect(config: &AppConfig) -> Result<DatabaseCluster, AppError> {
         .map_err(|error| AppError::Database(format!("主数据库健康检查失败: {error}")))?;
     tracing::info!(
         database = %primary_config.database,
-        driver = %primary_config.driver,
+        driver = "mysql",
         "主数据库连接成功"
     );
 
@@ -72,7 +72,7 @@ pub async fn connect(config: &AppConfig) -> Result<DatabaseCluster, AppError> {
         tracing::info!(
             source = %source_config.name,
             database = %source_config.connection.database,
-            driver = %source_config.connection.driver,
+            driver = "mysql",
             "业务数据源连接成功"
         );
         sources.push((source_config.name.clone(), source));
@@ -90,15 +90,11 @@ pub async fn verify_schema(cluster: &DatabaseCluster) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 检查必需表是否存在
+/// 校验列、索引和外键均与当前 Migrator 的 MySQL 指纹一致。
 async fn verify_tables(node: &str, db: &DatabaseConnection) -> Result<(), AppError> {
-    if let Err(missing) = ryframe_db::connection::check_tables(db).await {
-        return Err(AppError::Internal(format!(
-            "数据库节点 {node} 缺少 {} 张必需表: {}",
-            missing.len(),
-            missing.join(", ")
-        )));
-    }
-    tracing::info!(node, "数据库表结构检查通过");
+    ryframe_db_migration::verify_current_schema(db)
+        .await
+        .map_err(|error| AppError::Internal(format!("数据库节点 {node} 结构校验失败: {error}")))?;
+    tracing::info!(node, "数据库结构指纹校验通过");
     Ok(())
 }

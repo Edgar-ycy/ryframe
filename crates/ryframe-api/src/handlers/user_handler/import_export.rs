@@ -76,7 +76,13 @@ pub(crate) async fn import_users(
         .runtime
         .distributed_lock
         .try_acquire(&lock_key, Duration::from_secs(300))
-        .await?
+        .await
+        .map_err(|error| {
+            if matches!(error, AppError::ServiceUnavailable(_)) {
+                ryframe_middleware::metrics::record_redis_degraded("distributed_lock");
+            }
+            error
+        })?
         .ok_or_else(|| AppError::Conflict("当前租户正在执行用户导入，请稍后再试".into()))?;
 
     while let Some(field) = multipart

@@ -1,21 +1,26 @@
 //! ryframe-db 测试公共模块
 //!
-//! 提供 SQLite 内存数据库的建表 + 连接辅助函数。
+//! 提供隔离的 MySQL 8.4 测试数据库与建表辅助函数。
 
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Schema};
+mod test_database;
 
-/// 创建 SQLite 内存数据库并建表
-pub async fn setup_test_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败");
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Schema};
+pub use test_database::TestDatabase;
+
+/// 创建独立 MySQL 数据库并建表。
+pub async fn setup_test_db() -> TestDatabase {
+    let db = connect_isolated_mysql().await;
     create_all_tables(&db).await;
     db
 }
 
+pub async fn connect_isolated_mysql() -> TestDatabase {
+    TestDatabase::create("db").await
+}
+
 /// 为所有测试用到的实体创建表
 async fn create_all_tables(db: &DatabaseConnection) {
-    let backend = DatabaseBackend::Sqlite;
+    let backend = DatabaseBackend::MySql;
     let schema = Schema::new(backend);
 
     macro_rules! create {
@@ -25,6 +30,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
         };
     }
 
+    create!(ryframe_db::entities::tenant::Entity);
     create!(ryframe_db::entities::config::Entity);
     create!(ryframe_db::entities::dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);

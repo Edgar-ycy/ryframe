@@ -1,257 +1,230 @@
-//! RyFrame 数据库重置工具
+//! Explicit, non-production MySQL reset utility.
 //!
-//! 清空所有业务表后重新执行 sql/ryframe_config.sql 初始化脚本，
-//! 并生成正确的 argon2 密码哈希（不再依赖 SQL 文件中的预生成哈希）。
-//!
-//! 使用方式：
-//! ```bash
-//! cargo run --bin ryframe-db-reset
-//! ```
+//! Example:
+//! `cargo run -p ryframe --bin ryframe-db-reset -- --database ryframe_config --confirm-reset RESET-RYFRAME-DATABASE`
 
-use std::{fs, path::PathBuf, time::Duration};
+use ryframe_config::DbConnection;
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TryGetable};
 
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
-
-/// 需要删除的全部表（按外键依赖从子到父排列）
-const ALL_TABLES: &[&str] = &[
-    "sys_role_dept",
-    "sys_role_permission",
-    "sys_user_role",
-    "sys_login_info",
-    "sys_oper_log",
-    "sys_notice",
-    "sys_dict_data",
-    "sys_dict_type",
-    "sys_config",
-    "sys_post",
-    "sys_menu",
-    "sys_permission",
-    "sys_role",
-    "sys_user",
-    "sys_dept",
-];
-
-/// 默认用户密码配置
+const CONFIRMATION: &str = "RESET-RYFRAME-DATABASE";
 const ADMIN_PASSWORD: &str = "123456";
 const USER_PASSWORD: &str = "123456";
 
 #[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let environment = std::env::var("APP_ENV")
+        .map_err(|_| "refusing reset: APP_ENV must be explicitly set to dev or test")?;
+    let normalized_environment = match environment.trim().to_ascii_lowercase().as_str() {
+        "dev" | "development" => "dev",
+        "test" | "testing" => "test",
+        "prod" | "production" => {
+            return Err("database reset is permanently disabled in production".into());
+        }
+        _ => return Err("refusing reset: APP_ENV must be explicitly set to dev or test".into()),
+    };
+
+    let args = parse_args()?;
+    let config = ryframe_config::AppConfig::load("config")?;
+    if config.database.primary.database != args.expected_database {
+        return Err(format!(
+            "configured database does not match --database (configured: {}, expected: {})",
+            config.database.primary.database, args.expected_database
         )
-        .init();
-
-    println!("========================================");
-    println!("  RyFrame 数据库重置工具");
-    println!("========================================");
-
-    // 1. 加载配置
-    let config =
-        ryframe_config::AppConfig::load("config").expect("加载配置失败，请确认 config/ 目录存在");
-    let db_url = config.database.primary.connection_url();
-    println!("\n数据库: {}", db_url);
-
-    // 2. 连接数据库
-    let conn = connect_db(&db_url).await;
-    let backend = conn.get_database_backend();
-
-    // 3. 查找 SQL 文件
-    let sql_path = find_sql_file();
-    println!("SQL 脚本: {}", sql_path.display());
-    if !sql_path.exists() {
-        eprintln!("错误: 找不到 sql/ryframe_config.sql");
-        eprintln!("请在项目根目录执行: cargo run --bin ryframe-db-reset");
-        std::process::exit(1);
+        .into());
     }
+    validate_database_name(&args.expected_database)
+        .map_err(|error| format!("refusing reset: {error}"))?;
 
-    // ========== Step 1: 清空所有表 ==========
-    println!("\n>>> Step 1: 清空所有表...");
+    // Do all fallible password work before the first destructive operation.
+    let admin_hash = ryframe_auth::password::hash(ADMIN_PASSWORD)?;
+    let user_hash = ryframe_auth::password::hash(USER_PASSWORD)?;
 
-    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
-        conn.execute_unprepared("SET FOREIGN_KEY_CHECKS = 0")
-            .await
-            .expect("关闭外键检查失败");
-    }
-
-    let mut dropped = 0usize;
-    for table in ALL_TABLES {
-        let sql = format!("DROP TABLE IF EXISTS `{}`", table);
-        match conn.execute_unprepared(&sql).await {
-            Ok(_) => {
-                dropped += 1;
-                println!("  ✓ DROP {}", table);
-            }
-            Err(e) => {
-                println!("  - {} (跳过: {})", table, e);
-            }
-        }
-    }
-
-    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
-        conn.execute_unprepared("SET FOREIGN_KEY_CHECKS = 1")
-            .await
-            .expect("开启外键检查失败");
-    }
-
-    println!("  共处理 {} 张表", dropped);
-
-    // ========== Step 2: 执行 SQL 脚本 ==========
-    println!("\n>>> Step 2: 执行 sql/ryframe_config.sql...");
-
-    let sql_content = fs::read_to_string(&sql_path).expect("读取 SQL 文件失败");
-    let statements = split_sql_statements(&sql_content);
-
-    let mut executed = 0usize;
-    let mut errors = 0usize;
-
-    for stmt in &statements {
-        let trimmed = stmt.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        match conn.execute_unprepared(trimmed).await {
-            Ok(_) => executed += 1,
-            Err(e) => {
-                errors += 1;
-                // 只打印前 5 个错误，避免刷屏
-                if errors <= 5 {
-                    let preview: String = trimmed.chars().take(80).collect();
-                    eprintln!("  ✗ SQL 执行失败: {}", preview);
-                    eprintln!("    错误: {}", e);
-                }
-            }
-        }
-    }
-
-    println!("  成功: {} 条, 失败: {} 条", executed, errors);
-    if errors > 0 {
-        eprintln!("\n错误: 存在 {} 条 SQL 执行失败，停止初始化", errors);
-        std::process::exit(1);
-    }
-
-    // ========== Step 3: 修正密码哈希 ==========
-    println!("\n>>> Step 3: 生成正确的 argon2 密码哈希...");
-
-    // 生成哈希
-    let admin_hash = ryframe_auth::password::hash(ADMIN_PASSWORD).expect("admin 密码哈希生成失败");
-    let user_hash = ryframe_auth::password::hash(USER_PASSWORD).expect("user 密码哈希生成失败");
-
-    println!("  admin 密码哈希已生成");
-    println!("  user 密码哈希已生成");
-
-    // 更新 admin 用户密码
-    let update_admin = format!(
-        "UPDATE `sys_user` SET `password_hash` = '{}' WHERE `username` = 'admin'",
-        escape_sql_string(&admin_hash)
+    println!(
+        "Recreating MySQL database '{}' on {}:{} in '{}' environment",
+        args.expected_database,
+        config.database.primary.host,
+        config.database.primary.port,
+        normalized_environment
     );
-    let admin_result = conn
-        .execute_unprepared(&update_admin)
-        .await
-        .expect("UPDATE admin 密码哈希失败");
-    assert_eq!(admin_result.rows_affected(), 1, "admin 用户不存在或不唯一");
-    println!("  ✓ UPDATE admin 密码哈希");
 
-    // 更新 user 用户密码
-    let update_user = format!(
-        "UPDATE `sys_user` SET `password_hash` = '{}' WHERE `username` = 'user'",
-        escape_sql_string(&user_hash)
-    );
-    let user_result = conn
-        .execute_unprepared(&update_user)
-        .await
-        .expect("UPDATE user 密码哈希失败");
-    assert_eq!(user_result.rows_affected(), 1, "user 用户不存在或不唯一");
-    println!("  ✓ UPDATE user 密码哈希");
+    recreate_database(&config.database.primary, &args.expected_database).await?;
 
-    // ========== 完成 ==========
-    println!("\n========================================");
-    println!("  数据库重置完成！");
-    println!("========================================");
-    println!("  admin 账号: admin / {}", ADMIN_PASSWORD);
-    println!("  user  账号: user  / {}", USER_PASSWORD);
-    println!("========================================");
+    let database = ryframe_db::connection::connect(&config.database.primary).await?;
+    verify_connected_database(&database, &args.expected_database).await?;
+    let initialize_result: Result<(), Box<dyn std::error::Error>> = async {
+        ryframe_db_migration::run(&database).await?;
+        update_password(&database, "admin", admin_hash).await?;
+        update_password(&database, "user", user_hash).await?;
+        Ok(())
+    }
+    .await;
+    let close_result = database.close().await;
+    initialize_result?;
+    close_result?;
+
+    println!("Database reset completed successfully");
+    Ok(())
 }
 
-/// 连接数据库
-async fn connect_db(db_url: &str) -> DatabaseConnection {
-    let mut opt = ConnectOptions::new(db_url.to_string());
-    opt.max_connections(2)
-        .min_connections(1)
-        .connect_timeout(Duration::from_secs(15))
-        .acquire_timeout(Duration::from_secs(15));
+async fn recreate_database(
+    connection: &DbConnection,
+    expected_database: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let [drop_statement, create_statement] = recreate_database_statements(expected_database)
+        .map_err(|error| format!("refusing reset: {error}"))?;
 
-    Database::connect(opt)
-        .await
-        .expect("数据库连接失败，请确认数据库服务已启动且配置正确")
+    // Connect through MySQL's administration schema so the target database
+    // can be dropped even when it is missing or contains an incompatible
+    // legacy schema. This connection never includes the target database.
+    let mut admin_config = connection.clone();
+    admin_config.database = "mysql".to_owned();
+    admin_config.max_connections = 1;
+    admin_config.min_connections = 1;
+    let admin = ryframe_db::connection::connect(&admin_config).await?;
+    verify_connected_database(&admin, "mysql").await?;
+
+    let recreate_result: Result<(), sea_orm::DbErr> = async {
+        admin.execute_unprepared(&drop_statement).await?;
+        admin.execute_unprepared(&create_statement).await?;
+        Ok(())
+    }
+    .await;
+    let close_result = admin.close().await;
+    recreate_result?;
+    close_result?;
+    Ok(())
 }
 
-/// 查找项目根目录下的 sql/ryframe_config.sql
-fn find_sql_file() -> PathBuf {
-    // 尝试多个可能的位置
-    let candidates = [
-        PathBuf::from("sql/ryframe_config.sql"),       // 项目根目录
-        PathBuf::from("../sql/ryframe_config.sql"),    // 从 crates/ryframe/
-        PathBuf::from("../../sql/ryframe_config.sql"), // 从 crates/ryframe/src/bin/
-    ];
+fn recreate_database_statements(database: &str) -> Result<[String; 2], String> {
+    validate_database_name(database)?;
+    Ok([
+        format!("DROP DATABASE IF EXISTS `{database}`"),
+        format!("CREATE DATABASE `{database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"),
+    ])
+}
 
-    for path in &candidates {
-        if path.exists() {
-            return path.clone();
+fn validate_database_name(database: &str) -> Result<(), String> {
+    if database.is_empty() || database.len() > 64 {
+        return Err("database name must contain 1-64 ASCII characters".into());
+    }
+    if !database
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err("database name may contain only ASCII letters, digits, and `_`".into());
+    }
+    if ["mysql", "information_schema", "performance_schema", "sys"]
+        .iter()
+        .any(|reserved| database.eq_ignore_ascii_case(reserved))
+    {
+        return Err(format!("system database `{database}` cannot be reset"));
+    }
+    Ok(())
+}
+
+async fn verify_connected_database(
+    database: &sea_orm::DatabaseConnection,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let row = database
+        .query_one_raw(Statement::from_string(
+            DbBackend::MySql,
+            "SELECT DATABASE()".to_owned(),
+        ))
+        .await?
+        .ok_or("database identity query returned no row")?;
+    let actual = String::try_get_by_index(&row, 0)
+        .map_err(|error| format!("cannot read connected database name: {error:?}"))?;
+    if actual != expected {
+        return Err(format!(
+            "connected database does not match --database (connected: {actual}, expected: {expected})"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+struct ResetArgs {
+    expected_database: String,
+}
+
+fn parse_args() -> Result<ResetArgs, Box<dyn std::error::Error>> {
+    let mut args = std::env::args().skip(1);
+    let mut expected_database = None;
+    let mut confirmation = None;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--database" => expected_database = args.next(),
+            "--confirm-reset" => confirmation = args.next(),
+            _ => return Err(format!("unknown argument: {argument}").into()),
         }
     }
-
-    // 返回默认位置（即使不存在）
-    candidates[0].clone()
+    if confirmation.as_deref() != Some(CONFIRMATION) {
+        return Err(format!("refusing reset: pass --confirm-reset {CONFIRMATION}").into());
+    }
+    let expected_database = expected_database
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("refusing reset: --database <expected-name> is required")?;
+    Ok(ResetArgs { expected_database })
 }
 
-/// 转义 SQL 字符串中的单引号
-fn escape_sql_string(s: &str) -> String {
-    s.replace('\'', "''")
+async fn update_password(
+    database: &sea_orm::DatabaseConnection,
+    username: &str,
+    password_hash: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = database
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "UPDATE `sys_user` SET `password_hash` = ?, `status` = '1', `auth_version` = `auth_version` + 1 WHERE `tenant_id` = 'system' AND `username` = ?",
+            [password_hash.into(), username.into()],
+        ))
+        .await?;
+    if result.rows_affected() != 1 {
+        return Err(format!(
+            "expected exactly one system user named '{username}', updated {}",
+            result.rows_affected()
+        )
+        .into());
+    }
+    Ok(())
 }
 
-/// 简单 SQL 语句分割器
-///
-/// 以 `;` 为分隔符，忽略空白和纯注释行，跳过空的语句。
-fn split_sql_statements(content: &str) -> Vec<String> {
-    let mut statements = Vec::new();
-    let mut current = String::new();
+#[cfg(test)]
+mod tests {
+    use super::{recreate_database_statements, validate_database_name};
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        // 跳过空行
-        if trimmed.is_empty() {
-            continue;
+    #[test]
+    fn reset_database_name_is_strictly_validated() {
+        for valid in ["ryframe_config", "ryframe_dev", "test123"] {
+            assert!(validate_database_name(valid).is_ok(), "rejected {valid}");
         }
-
-        // 跳过行注释
-        if trimmed.starts_with("--") {
-            continue;
+        for invalid in [
+            "",
+            "mysql",
+            "INFORMATION_SCHEMA",
+            "performance_schema",
+            "sys",
+            "ryframe-config",
+            "ryframe config",
+            "ryframe`; DROP DATABASE mysql; --",
+        ] {
+            assert!(
+                validate_database_name(invalid).is_err(),
+                "accepted {invalid}"
+            );
         }
-
-        current.push_str(line);
-        current.push('\n');
-
-        // 遇到分号结束一条语句
-        if trimmed.ends_with(';') {
-            let stmt = current.trim().to_string();
-            // 过滤掉纯 SET / 块注释
-            if !stmt.is_empty() && !stmt.starts_with("/*") {
-                statements.push(stmt);
-            }
-            current.clear();
-        }
+        assert!(validate_database_name(&"a".repeat(65)).is_err());
     }
 
-    // 处理最后一条没有分号的语句
-    let remaining = current.trim().to_string();
-    if !remaining.is_empty() && !remaining.starts_with("/*") {
-        statements.push(remaining);
+    #[test]
+    fn reset_recreates_the_exact_confirmed_database() {
+        assert_eq!(
+            recreate_database_statements("ryframe_config").unwrap(),
+            [
+                "DROP DATABASE IF EXISTS `ryframe_config`",
+                "CREATE DATABASE `ryframe_config` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+            ]
+        );
     }
-
-    statements
 }

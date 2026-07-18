@@ -75,9 +75,6 @@ pub async fn build_all(
     } else {
         Arc::new(OnlineUserService::new_in_memory())
     };
-    // 启动时清理残留的旧在线用户会话
-    online_user.clear_all_on_startup().await;
-
     let captcha = if let Some(redis) = redis_client {
         CaptchaStore::new_redis(redis.clone(), 300)
     } else {

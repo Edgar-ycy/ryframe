@@ -10,6 +10,7 @@ const DATASOURCE_SMOKE_TABLE = process.env.DATASOURCE_SMOKE_TABLE || "t_gongxv";
 let passed = 0;
 let failed = 0;
 const failures = [];
+const sessionCookies = new Map();
 
 async function test(name, fn) {
   process.stdout.write(`  ${name} ... `);
@@ -39,8 +40,12 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${token}`, "X-Tenant-Id": TENANT_ID };
 }
 
-function loginHeaders() {
-  return { "Content-Type": "application/json", "X-Tenant-Id": TENANT_ID };
+function loginHeaders(csrfToken) {
+  return {
+    "Content-Type": "application/json",
+    "X-Tenant-Id": TENANT_ID,
+    "X-CSRF-Token": csrfToken,
+  };
 }
 
 function assertPage(json, label) {
@@ -52,10 +57,44 @@ function assertPage(json, label) {
   }
 }
 
-async function jsonRequest(url, options = {}) {
-  const res = await fetch(url, options);
+function storeResponseCookies(res, jar) {
+  const values = typeof res.headers.getSetCookie === "function"
+    ? res.headers.getSetCookie()
+    : [res.headers.get("set-cookie")].filter(Boolean);
+  for (const value of values) {
+    const [pair, ...attributes] = value.split(";");
+    const separator = pair.indexOf("=");
+    if (separator < 1) continue;
+    const name = pair.slice(0, separator).trim();
+    const cookieValue = pair.slice(separator + 1).trim();
+    const expired = attributes.some((attribute) => /^\s*Max-Age=0\s*$/i.test(attribute));
+    if (expired || cookieValue === "") jar.delete(name);
+    else jar.set(name, cookieValue);
+  }
+}
+
+async function fetchWithCookies(url, options = {}, jar = sessionCookies) {
+  const headers = new Headers(options.headers || {});
+  if (jar.size) {
+    headers.set("Cookie", [...jar].map(([name, value]) => `${name}=${value}`).join("; "));
+  }
+  const res = await fetch(url, { ...options, headers });
+  storeResponseCookies(res, jar);
+  return res;
+}
+
+async function jsonRequest(url, options = {}, jar = sessionCookies) {
+  const res = await fetchWithCookies(url, options, jar);
   const json = await res.json().catch(() => null);
   return { res, json };
+}
+
+async function csrfChallenge(jar = sessionCookies) {
+  const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/csrf`, {}, jar);
+  await assertOk(res, "CSRF challenge");
+  const token = json?.data?.csrf_token;
+  if (!token) throw new Error(`CSRF response missing token: ${JSON.stringify(json)}`);
+  return token;
 }
 
 async function runSmokeTests() {
@@ -66,11 +105,10 @@ async function runSmokeTests() {
   console.log(`Time: ${new Date().toISOString()}`);
   console.log("");
 
-  await test("health endpoint", async () => {
-    const res = await fetch(`${BASE_URL}/health`);
-    await assertOk(res, "Health");
-    const text = await res.text();
-    if (!/ok/i.test(text)) throw new Error("health body does not contain ok");
+  await test("liveness and readiness endpoints", async () => {
+    await assertOk(await fetch(`${BASE_URL}/livez`), "Liveness");
+    await assertOk(await fetch(`${BASE_URL}/readyz`), "Readiness");
+    await assertStatus(await fetch(`${BASE_URL}/health`), 404, "Removed legacy health endpoint");
   });
 
   await test("version endpoint", async () => {
@@ -80,12 +118,12 @@ async function runSmokeTests() {
   });
 
   let accessToken = null;
-  let refreshToken = null;
 
   await test("login", async () => {
+    const csrfToken = await csrfChallenge();
     const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
-      headers: loginHeaders(),
+      headers: loginHeaders(csrfToken),
       body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
     });
     await assertOk(res, "Login");
@@ -93,15 +131,20 @@ async function runSmokeTests() {
       throw new Error(`login response missing access_token: ${JSON.stringify(json)}`);
     }
     accessToken = json.data.access_token;
-    refreshToken = json.data.refresh_token;
+    if (json.data.refresh_token) throw new Error("refresh token leaked into login JSON");
+    if (!sessionCookies.has("ryframe_refresh_token")) {
+      throw new Error("login did not set the refresh cookie");
+    }
   });
 
   await test("wrong password rejected", async () => {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
+    const anonymousCookies = new Map();
+    const csrfToken = await csrfChallenge(anonymousCookies);
+    const res = await fetchWithCookies(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
-      headers: loginHeaders(),
+      headers: loginHeaders(csrfToken),
       body: JSON.stringify({ username: ADMIN_USER, password: "wrong_password_xyz" }),
-    });
+    }, anonymousCookies);
     if (res.status === 200) throw new Error("wrong password returned HTTP 200");
   });
 
@@ -119,14 +162,14 @@ async function runSmokeTests() {
   });
 
   await test("refresh token", async () => {
-    if (!refreshToken) return;
+    const csrfToken = await csrfChallenge();
     const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/auth/refresh`, {
       method: "POST",
-      headers: loginHeaders(),
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      headers: { "X-CSRF-Token": csrfToken },
     });
     await assertOk(res, "Refresh");
     if (!json?.data?.access_token) throw new Error("refresh response missing access_token");
+    if (json.data.refresh_token) throw new Error("refresh token leaked into refresh JSON");
     accessToken = json.data.access_token;
   });
 
@@ -152,12 +195,6 @@ async function runSmokeTests() {
     await assertOk(res, "Metrics");
     const text = await res.text();
     if (!text.includes("ryframe_")) throw new Error("metrics output missing ryframe_ prefix");
-  });
-
-  await test("monitor health", async () => {
-    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/monitor/health`);
-    await assertOk(res, "Monitor Health");
-    if (json?.code !== 200) throw new Error("monitor health business code is not 200");
   });
 
   await test("runtime topology", async () => {
@@ -287,19 +324,25 @@ async function runSmokeTests() {
   });
 
   await test("logout invalidates token", async () => {
+    const logoutCookies = new Map();
+    const loginCsrf = await csrfChallenge(logoutCookies);
     const { json } = await jsonRequest(`${BASE_URL}/api/v1/auth/login`, {
       method: "POST",
-      headers: loginHeaders(),
+      headers: loginHeaders(loginCsrf),
       body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
-    });
+    }, logoutCookies);
     const token = json?.data?.access_token;
     if (!token) throw new Error("login response missing token");
 
-    const logoutRes = await fetch(`${BASE_URL}/api/v1/auth/logout`, {
+    const logoutCsrf = await csrfChallenge(logoutCookies);
+    const logoutRes = await fetchWithCookies(`${BASE_URL}/api/v1/auth/logout`, {
       method: "POST",
-      headers: authHeaders(token),
-    });
+      headers: { ...authHeaders(token), "X-CSRF-Token": logoutCsrf },
+    }, logoutCookies);
     await assertOk(logoutRes, "Logout");
+    if (logoutCookies.has("ryframe_refresh_token")) {
+      throw new Error("logout did not clear the refresh cookie");
+    }
 
     const meRes = await fetch(`${BASE_URL}/api/v1/auth/me`, {
       headers: authHeaders(token),

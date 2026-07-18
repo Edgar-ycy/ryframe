@@ -9,10 +9,7 @@ use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStora
 pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
     let storage_config = &config.object_storage;
     let storage: Arc<dyn ObjectStorage> = match storage_config.backend {
-        StorageBackend::Local => Arc::new(LocalObjectStorage::new(
-            &storage_config.local_base_dir,
-            &storage_config.public_base_url,
-        )),
+        StorageBackend::Local => Arc::new(LocalObjectStorage::new(&storage_config.local_base_dir)),
         StorageBackend::Rustfs | StorageBackend::Minio | StorageBackend::S3 => Arc::new(
             S3ObjectStorage::new(S3Config {
                 endpoint: storage_config.endpoint.clone(),
@@ -20,8 +17,6 @@ pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
                 secret_key: storage_config.secret_key.clone(),
                 use_ssl: storage_config.use_ssl,
                 region: storage_config.region.clone(),
-                public_base_url: (!storage_config.public_base_url.trim().is_empty())
-                    .then(|| storage_config.public_base_url.clone()),
             })
             .map_err(|error| AppError::Config(error.to_string()))?,
         ),

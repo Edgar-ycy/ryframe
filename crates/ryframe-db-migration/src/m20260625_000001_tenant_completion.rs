@@ -1,4 +1,4 @@
-use sea_orm::ConnectionTrait;
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TryGetable};
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -93,8 +93,20 @@ impl MigrationTrait for Migration {
             add_integer_column_if_missing(manager, "sys_tenant", "session_version", 1).await?;
         }
 
-        for table in ["sys_login_info", "sys_oper_log", "password_reset_requests"] {
-            add_tenant_column_if_missing(manager, table).await?;
+        for (table, index, foreign_key) in [
+            (
+                "sys_login_info",
+                "idx_tenant_id",
+                "fk_sys_login_info_tenant",
+            ),
+            ("sys_oper_log", "idx_tenant_id", "fk_sys_oper_log_tenant"),
+            (
+                "password_reset_requests",
+                "idx_password_reset_tenant",
+                "fk_password_reset_tenant",
+            ),
+        ] {
+            complete_tenant_binding(manager, table, index, foreign_key).await?;
         }
         Ok(())
     }
@@ -106,11 +118,16 @@ impl MigrationTrait for Migration {
     }
 }
 
-async fn add_tenant_column_if_missing(
+async fn complete_tenant_binding(
     manager: &SchemaManager<'_>,
     table: &str,
+    index: &str,
+    foreign_key: &str,
 ) -> Result<(), DbErr> {
-    if manager.has_table(table).await? && !manager.has_column(table, "tenant_id").await? {
+    if !manager.has_table(table).await? {
+        return Ok(());
+    }
+    if !manager.has_column(table, "tenant_id").await? {
         manager
             .alter_table(
                 Table::alter()
@@ -124,11 +141,12 @@ async fn add_tenant_column_if_missing(
                     .to_owned(),
             )
             .await?;
-        let index_name = format!("idx_{}_tenant", table);
+    }
+    if !manager.has_index(table, index).await? {
         manager
             .create_index(
                 Index::create()
-                    .name(&index_name)
+                    .name(index)
                     .table(Alias::new(table))
                     .col(Alias::new("tenant_id"))
                     .if_not_exists()
@@ -136,7 +154,42 @@ async fn add_tenant_column_if_missing(
             )
             .await?;
     }
+    if !foreign_key_exists(manager, table, foreign_key).await? {
+        manager
+            .create_foreign_key(
+                ForeignKey::create()
+                    .name(foreign_key)
+                    .from(Alias::new(table), Alias::new("tenant_id"))
+                    .to(Alias::new("sys_tenant"), Alias::new("tenant_id"))
+                    .on_update(ForeignKeyAction::Cascade)
+                    .on_delete(ForeignKeyAction::Restrict)
+                    .to_owned(),
+            )
+            .await?;
+    }
     Ok(())
+}
+
+async fn foreign_key_exists(
+    manager: &SchemaManager<'_>,
+    table: &str,
+    name: &str,
+) -> Result<bool, DbErr> {
+    let row = manager
+        .get_connection()
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS \
+             WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ? \
+             AND CONSTRAINT_NAME = ? AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
+            [table.into(), name.into()],
+        ))
+        .await?;
+    Ok(row
+        .map(|row| i64::try_get_by_index(&row, 0))
+        .transpose()?
+        .unwrap_or(0)
+        > 0)
 }
 
 async fn add_integer_column_if_missing(

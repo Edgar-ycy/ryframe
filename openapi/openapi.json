@@ -516,7 +516,8 @@
                     "null"
                   ]
                 },
-                "token_id": {
+                "sid": {
+                  "description": "Stable refresh-family session identifier, not an access-token JTI.",
                   "type": "string"
                 },
                 "username": {
@@ -524,7 +525,7 @@
                 }
               },
               "required": [
-                "token_id",
+                "sid",
                 "username",
                 "ipaddr",
                 "login_time",
@@ -1215,6 +1216,39 @@
         ],
         "type": "object"
       },
+      "ApiResponse_CsrfResponse": {
+        "description": "统一 API 响应结构体\n\n成功响应（单对象/列表）：{\"code\": 200, \"msg\": \"操作成功\", \"data\": {...}}\n成功响应（无数据）：{\"code\": 200, \"msg\": \"操作成功\"}\n错误响应：{\"code\": 400, \"msg\": \"参数校验失败: xxx\"}\n\n分页查询请使用 [`ApiPageResponse`]。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "csrf_token": {
+                "type": "string"
+              },
+              "expires_in": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "csrf_token",
+              "expires_in"
+            ],
+            "type": "object"
+          },
+          "msg": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "msg"
+        ],
+        "type": "object"
+      },
       "ApiResponse_DbPoolInfo": {
         "description": "统一 API 响应结构体\n\n成功响应（单对象/列表）：{\"code\": 200, \"msg\": \"操作成功\", \"data\": {...}}\n成功响应（无数据）：{\"code\": 200, \"msg\": \"操作成功\"}\n错误响应：{\"code\": 400, \"msg\": \"参数校验失败: xxx\"}\n\n分页查询请使用 [`ApiPageResponse`]。",
         "properties": {
@@ -1425,46 +1459,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_HealthInfo": {
-        "description": "统一 API 响应结构体\n\n成功响应（单对象/列表）：{\"code\": 200, \"msg\": \"操作成功\", \"data\": {...}}\n成功响应（无数据）：{\"code\": 200, \"msg\": \"操作成功\"}\n错误响应：{\"code\": 400, \"msg\": \"参数校验失败: xxx\"}\n\n分页查询请使用 [`ApiPageResponse`]。",
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "properties": {
-              "database": {
-                "type": "string"
-              },
-              "redis": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string"
-              },
-              "timestamp": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "status",
-              "database",
-              "redis",
-              "timestamp"
-            ],
-            "type": "object"
-          },
-          "msg": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "msg"
-        ],
-        "type": "object"
-      },
       "ApiResponse_LoginResponse": {
         "description": "统一 API 响应结构体\n\n成功响应（单对象/列表）：{\"code\": 200, \"msg\": \"操作成功\", \"data\": {...}}\n成功响应（无数据）：{\"code\": 200, \"msg\": \"操作成功\"}\n错误响应：{\"code\": 400, \"msg\": \"参数校验失败: xxx\"}\n\n分页查询请使用 [`ApiPageResponse`]。",
         "properties": {
@@ -1477,8 +1471,9 @@
               "access_token": {
                 "type": "string"
               },
-              "refresh_token": {
-                "type": "string"
+              "expires_in": {
+                "minimum": 0,
+                "type": "integer"
               },
               "user_info": {
                 "$ref": "#/components/schemas/UserInfo"
@@ -1486,7 +1481,7 @@
             },
             "required": [
               "access_token",
-              "refresh_token",
+              "expires_in",
               "user_info"
             ],
             "type": "object"
@@ -3198,7 +3193,8 @@
                     "null"
                   ]
                 },
-                "token_id": {
+                "sid": {
+                  "description": "Stable refresh-family session identifier, not an access-token JTI.",
                   "type": "string"
                 },
                 "username": {
@@ -3206,7 +3202,7 @@
                 }
               },
               "required": [
-                "token_id",
+                "sid",
                 "username",
                 "ipaddr",
                 "login_time",
@@ -4474,6 +4470,22 @@
         ],
         "type": "object"
       },
+      "CsrfResponse": {
+        "properties": {
+          "csrf_token": {
+            "type": "string"
+          },
+          "expires_in": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "csrf_token",
+          "expires_in"
+        ],
+        "type": "object"
+      },
       "DbPoolInfo": {
         "properties": {
           "active_connections": {
@@ -4811,26 +4823,14 @@
         ],
         "type": "object"
       },
-      "HealthInfo": {
+      "LivenessResponse": {
         "properties": {
-          "database": {
-            "type": "string"
-          },
-          "redis": {
-            "type": "string"
-          },
           "status": {
-            "type": "string"
-          },
-          "timestamp": {
             "type": "string"
           }
         },
         "required": [
-          "status",
-          "database",
-          "redis",
-          "timestamp"
+          "status"
         ],
         "type": "object"
       },
@@ -4960,8 +4960,9 @@
           "access_token": {
             "type": "string"
           },
-          "refresh_token": {
-            "type": "string"
+          "expires_in": {
+            "minimum": 0,
+            "type": "integer"
           },
           "user_info": {
             "$ref": "#/components/schemas/UserInfo"
@@ -4969,7 +4970,7 @@
         },
         "required": [
           "access_token",
-          "refresh_token",
+          "expires_in",
           "user_info"
         ],
         "type": "object"
@@ -5195,7 +5196,8 @@
               "null"
             ]
           },
-          "token_id": {
+          "sid": {
+            "description": "Stable refresh-family session identifier, not an access-token JTI.",
             "type": "string"
           },
           "username": {
@@ -5203,7 +5205,7 @@
           }
         },
         "required": [
-          "token_id",
+          "sid",
           "username",
           "ipaddr",
           "login_time",
@@ -5541,6 +5543,29 @@
         ],
         "type": "object"
       },
+      "ReadinessResponse": {
+        "properties": {
+          "mysql": {
+            "type": "string"
+          },
+          "object_storage": {
+            "type": "string"
+          },
+          "redis": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "mysql",
+          "redis",
+          "object_storage"
+        ],
+        "type": "object"
+      },
       "RedisMemoryInfo": {
         "description": "Redis 内存信息",
         "properties": {
@@ -5606,18 +5631,6 @@
           "os",
           "uptime_days",
           "connected_clients"
-        ],
-        "type": "object"
-      },
-      "RefreshRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "refresh_token": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "refresh_token"
         ],
         "type": "object"
       },
@@ -6756,6 +6769,11 @@
       "bearer": {
         "scheme": "bearer",
         "type": "http"
+      },
+      "refreshCookie": {
+        "in": "cookie",
+        "name": "ryframe_refresh_token",
+        "type": "apiKey"
       }
     }
   },
@@ -6764,12 +6782,12 @@
       "email": "edgar@example.com",
       "name": "edgar_ye"
     },
-    "description": "RyFrame —— 基于 Rust + Axum 的现代化企业级后端框架。\n\n## 认证\n所有受保护接口需在请求头携带 `Authorization: Bearer <access_token>`。\n登录接口返回 `access_token`（短期）和 `refresh_token`（长期）。\n\n## 响应格式\n```json\n{ \"code\": 200, \"msg\": \"操作成功\", \"data\": { ... } }\n```\n分页接口返回 `{ \"code\": 200, \"msg\": \"查询成功\", \"rows\": [...], \"total\": 100 }`。\n\n## 菜单类型\n菜单管理使用 `menu_type` 字段区分节点类型：\n- `M`（目录）：侧边栏一级分组，无实际页面\n- `C`（菜单）：可点击的页面路由\n- `F`（按钮）：页面内的操作按钮，显示与授权由独立权限码控制\n",
+    "description": "RyFrame —— 基于 Rust + Axum 的现代化企业级后端框架。\n\n## 认证\n所有受保护接口需在请求头携带 `Authorization: Bearer <access_token>`。\n登录接口在 JSON 中返回短期 `access_token`，长期 refresh token 只通过 HttpOnly Cookie 下发。\n\n## 响应格式\n```json\n{ \"code\": 200, \"msg\": \"操作成功\", \"data\": { ... } }\n```\n分页接口返回 `{ \"code\": 200, \"msg\": \"查询成功\", \"rows\": [...], \"total\": 100 }`。\n\n## 菜单类型\n菜单管理使用 `menu_type` 字段区分节点类型：\n- `M`（目录）：侧边栏一级分组，无实际页面\n- `C`（菜单）：可点击的页面路由\n- `F`（按钮）：页面内的操作按钮，显示与授权由独立权限码控制\n",
     "license": {
       "name": "MIT"
     },
     "title": "RyFrame API",
-    "version": "0.4.2"
+    "version": "0.5.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6819,6 +6837,12 @@
               }
             },
             "description": "生成验证码"
+          },
+          "429": {
+            "description": "验证码请求过于频繁"
+          },
+          "503": {
+            "description": "验证码 Redis 存储不可用"
           }
         },
         "summary": "生成验证码",
@@ -6887,6 +6911,12 @@
               }
             },
             "description": "验证码校验结果"
+          },
+          "429": {
+            "description": "验证码校验过于频繁"
+          },
+          "503": {
+            "description": "验证码 Redis 存储不可用"
           }
         },
         "summary": "校验验证码",
@@ -6895,10 +6925,42 @@
         ]
       }
     },
+    "/api/v1/auth/csrf": {
+      "get": {
+        "description": "GET /api/v1/auth/csrf",
+        "operationId": "get_auth_csrf",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CsrfResponse"
+                }
+              }
+            },
+            "description": "CSRF challenge"
+          }
+        },
+        "summary": "获取短期 CSRF challenge",
+        "tags": [
+          "认证"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
-        "description": "POST /api/v1/auth/login",
         "operationId": "post_auth_login",
+        "parameters": [
+          {
+            "description": "Signed CSRF challenge",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -6927,7 +6989,6 @@
             "description": "用户名或密码错误"
           }
         },
-        "summary": "用户登录",
         "tags": [
           "认证"
         ]
@@ -6937,6 +6998,17 @@
       "post": {
         "description": "POST /api/v1/auth/logout",
         "operationId": "post_auth_logout",
+        "parameters": [
+          {
+            "description": "Signed challenge; bound to sid when a refresh cookie is present",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -6947,11 +7019,18 @@
               }
             },
             "description": "登出成功"
+          },
+          "403": {
+            "description": "CSRF challenge 缺失、无效或与会话不匹配"
+          },
+          "503": {
+            "description": "Redis 会话或撤销服务不可用"
           }
         },
         "security": [
+          {},
           {
-            "bearer": []
+            "refreshCookie": []
           }
         ],
         "summary": "用户登出",
@@ -7110,6 +7189,12 @@
               }
             },
             "description": "头像更新成功"
+          },
+          "413": {
+            "description": "上传内容超过 5 MiB 限制"
+          },
+          "503": {
+            "description": "数据库或对象存储暂不可用"
           }
         },
         "security": [
@@ -7163,16 +7248,17 @@
       "post": {
         "description": "POST /api/v1/auth/refresh",
         "operationId": "post_auth_refresh",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
-              }
+        "parameters": [
+          {
+            "description": "Session-bound CSRF challenge",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -7185,9 +7271,31 @@
             "description": "刷新成功"
           },
           "401": {
-            "description": "令牌无效或已过期"
+            "description": "令牌无效、已过期、被撤销或确认重放"
+          },
+          "403": {
+            "description": "CSRF challenge 缺失、无效或与会话不匹配"
+          },
+          "409": {
+            "description": "另一个 rotation attempt 正在处理",
+            "headers": {
+              "Retry-After": {
+                "description": "再次刷新前等待的秒数",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Redis 会话服务不可用；显式重试必须复用原 X-CSRF-Token"
           }
         },
+        "security": [
+          {
+            "refreshCookie": []
+          }
+        ],
         "summary": "刷新令牌",
         "tags": [
           "认证"
@@ -7232,6 +7340,12 @@
               }
             },
             "description": "文件下载"
+          },
+          "404": {
+            "description": "文件或对象不存在"
+          },
+          "503": {
+            "description": "对象存储暂不可用"
           }
         },
         "security": [
@@ -7268,6 +7382,12 @@
               }
             },
             "description": "上传成功"
+          },
+          "413": {
+            "description": "上传内容超过 10 MiB 限制"
+          },
+          "503": {
+            "description": "对象存储暂不可用"
           }
         },
         "security": [
@@ -7275,7 +7395,7 @@
             "bearer": []
           }
         ],
-        "summary": "通用文件上传（支持多文件、动态桶名）",
+        "summary": "通用文件上传（固定私有 `uploads` 桶）",
         "tags": [
           "通用"
         ]
@@ -7304,6 +7424,12 @@
               }
             },
             "description": "头像上传成功"
+          },
+          "413": {
+            "description": "上传内容超过 5 MiB 限制"
+          },
+          "503": {
+            "description": "对象存储暂不可用"
           }
         },
         "security": [
@@ -7340,6 +7466,12 @@
               }
             },
             "description": "图片上传成功"
+          },
+          "413": {
+            "description": "上传内容超过 10 MiB 限制"
+          },
+          "503": {
+            "description": "对象存储暂不可用"
           }
         },
         "security": [
@@ -7423,26 +7555,6 @@
             "bearer": []
           }
         ],
-        "tags": [
-          "服务器监控"
-        ]
-      }
-    },
-    "/api/v1/monitor/health": {
-      "get": {
-        "operationId": "get_monitor_health",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_HealthInfo"
-                }
-              }
-            },
-            "description": "运行健康状态"
-          }
-        },
         "tags": [
           "服务器监控"
         ]
@@ -9705,13 +9817,14 @@
         ]
       }
     },
-    "/api/v1/system/online/{token_id}": {
+    "/api/v1/system/online/{sid}": {
       "delete": {
-        "operationId": "delete_system_online_by_token_id",
+        "operationId": "delete_system_online_by_sid",
         "parameters": [
           {
+            "description": "Stable device-session identifier",
             "in": "path",
-            "name": "token_id",
+            "name": "sid",
             "required": true,
             "schema": {
               "type": "string"
@@ -9728,6 +9841,12 @@
               }
             },
             "description": "强退成功"
+          },
+          "404": {
+            "description": "会话不存在或不属于当前租户"
+          },
+          "503": {
+            "description": "Redis 会话服务不可用"
           }
         },
         "security": [
@@ -11720,6 +11839,56 @@
           "代码生成"
         ]
       }
+    },
+    "/livez": {
+      "get": {
+        "operationId": "get_livez",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            },
+            "description": "进程存活"
+          }
+        },
+        "tags": [
+          "运行探针"
+        ]
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "get_readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "description": "必要依赖可用"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "description": "必要依赖不可用"
+          }
+        },
+        "tags": [
+          "运行探针"
+        ]
+      }
     }
   },
   "tags": [
@@ -11772,12 +11941,16 @@
       "name": "登录日志"
     },
     {
-      "description": "查看当前在线用户列表，支持强制下线(token 加入黑名单)。",
+      "description": "查看当前在线设备会话，使用稳定 sid 精确强制下线。",
       "name": "在线用户"
     },
     {
-      "description": "/health(健康检查) + /metrics(Prometheus) 公开；/server、/cache、/db-pool、/runtime 需认证。",
+      "description": "/metrics(Prometheus) 公开；进程与依赖探针分别使用根路径 /livez、/readyz；/server、/cache、/db-pool、/runtime 需认证。",
       "name": "服务器监控"
+    },
+    {
+      "description": "/livez 只报告进程存活；/readyz 检查 MySQL、required Redis 与对象存储。",
+      "name": "运行探针"
     },
     {
       "description": "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。",

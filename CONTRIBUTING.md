@@ -7,8 +7,8 @@
 ### 系统要求
 
 - **Rust**：stable toolchain（推荐通过 [rustup](https://rustup.rs/) 安装）
-- **数据库**：MySQL 8.0+ / PostgreSQL 15+ / SQLite 3（任选其一）
-- **Redis**（可选）：缓存、分布式锁、会话管理
+- **数据库**：MySQL 8.4；数据库集成测试要求 Docker
+- **Redis**：生产会话、撤销、幂等和分布式锁的强制依赖
 
 ### 快速开始
 
@@ -20,16 +20,10 @@ git clone <repo-url> && cd ryframe
 rustup component add clippy rustfmt
 cargo install cargo-nextest cargo-llvm-cov cargo-audit
 
-# 3. 配置数据库
-# 复制并编辑对应环境的配置文件
-cp config/app.toml config/app.dev.toml
-# 编辑 config/app.dev.toml 中的数据库连接信息
+# 3. 启动固定版本的 MySQL、Redis 和对象存储测试栈
+docker compose -f docker-compose.test.yml up -d --wait
 
-# 4. 初始化数据库
-# 导入基础表结构
-mysql -u root -p ryframe < sql/ryframe_config.sql
-# 或使用迁移工具
-cargo run --bin ryframe-migrate -- up
+# 4. 编辑 config/app.dev.toml；应用启动时由 Rust Migrator 初始化空库
 
 # 5. 启动开发服务器
 cargo run
@@ -57,7 +51,7 @@ ryframe/
 │   ├── ryframe-service/     # 业务服务层
 │   └── ryframe-storage/     # 对象存储端口与本地/S3 实现
 ├── config/                  # 配置文件 (dev/prod/test)
-├── sql/                     # 数据库初始化脚本
+├── sql/                     # 由 Migrator 生成和 CI 校验的只读 MySQL 快照
 ├── locales/                 # 国际化资源 (zh-CN / en-US)
 └── docs/                    # 项目文档
 ```
@@ -143,12 +137,14 @@ Handler → Service → Repository → Database
 - 分页上限 `MAX_PAGE_SIZE = 1000`
 - 软删除使用 `del_flag` 字段（`"0"` = 正常，`"2"` = 已删除）
 - 主键使用 UUID v7（`snowflake::next_snowflake_id()`）
-- 数据库无关：不写数据库特定 SQL，通过 SeaORM 抽象
+- 数据库固定为 MySQL；数据库特定语义集中在迁移、Repository 和生成器边界
+- 配置只在启动时加载、解密和校验，任何配置变更都要求重启进程
 
 ## 测试
 
 ```bash
 # 运行所有测试
+docker compose -f docker-compose.test.yml up -d --wait
 cargo nextest run --workspace
 
 # 运行特定 crate 测试
@@ -156,6 +152,9 @@ cargo nextest run -p ryframe-service
 
 # 覆盖率报告
 cargo llvm-cov --workspace --html
+
+# 测试完成后清理容器和临时卷
+docker compose -f docker-compose.test.yml down --volumes
 ```
 
 测试文件命名：`tests/{module}_test.rs`，对应 `src/{module}.rs`。

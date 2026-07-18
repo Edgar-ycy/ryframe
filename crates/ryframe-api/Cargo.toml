@@ -17,6 +17,8 @@ ryframe-monitor = { path = "../ryframe-monitor" }
 ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-macro = { path = "../ryframe-macro" }
 axum = { workspace = true, features = ["multipart"] }
+axum-extra = { workspace = true }
+cookie = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 validator = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -38,4 +40,5 @@ ryframe-db = { path = "../ryframe-db" }
 ryframe-storage = { path = "../ryframe-storage" }
 tower = { workspace = true, features = ["util"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
-sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+sea-orm = { workspace = true }
+redis = { workspace = true }

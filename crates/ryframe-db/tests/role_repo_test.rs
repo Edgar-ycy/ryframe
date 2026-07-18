@@ -344,7 +344,8 @@ async fn replacing_data_scope_rolls_back_role_and_departments_together() {
     let dept_id = insert_dept(&db, "事务部门").await;
     db.execute_unprepared(
         "CREATE TRIGGER reject_role_dept BEFORE INSERT ON sys_role_dept \
-         BEGIN SELECT RAISE(FAIL, 'forced role dept failure'); END",
+         FOR EACH ROW SIGNAL SQLSTATE '45000' \
+         SET MESSAGE_TEXT = 'forced role dept failure'",
     )
     .await
     .expect("create rejection trigger");

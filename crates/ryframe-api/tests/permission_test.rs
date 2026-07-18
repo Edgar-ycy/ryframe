@@ -487,10 +487,12 @@ async fn test_auth_version_invalidates_existing_access_and_refresh_tokens() {
             .unwrap(),
         ))
         .unwrap();
-    let (status, body) = common::send_request(router.clone(), login_request).await;
+    let (status, headers, body) =
+        common::send_request_with_headers(router.clone(), login_request).await;
     assert_eq!(status, StatusCode::OK);
     let access_token = body["data"]["access_token"].as_str().unwrap().to_string();
-    let refresh_token = body["data"]["refresh_token"].as_str().unwrap().to_string();
+    assert!(body["data"].get("refresh_token").is_none());
+    let refresh_token = common::response_cookie(&headers, "ryframe_refresh_token").unwrap();
 
     ryframe_db::UserRepository
         .increment_auth_versions(&db, "system", &[100])
@@ -506,13 +508,24 @@ async fn test_auth_version_invalidates_existing_access_and_refresh_tokens() {
     let (status, _) = common::send_request(router.clone(), old_access_request).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    let refresh_claims =
+        ryframe_auth::jwt::decode_token(&refresh_token, "test-jwt-secret-for-integration-tests")
+            .unwrap();
+    let refresh_csrf = ryframe_auth::jwt::encode_csrf(
+        "test-jwt-secret-for-integration-tests",
+        Some(&refresh_claims.sid),
+        300,
+    )
+    .unwrap();
     let old_refresh_request = Request::builder()
         .uri("/auth/refresh")
         .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            serde_json::to_string(&json!({ "refresh_token": refresh_token })).unwrap(),
-        ))
+        .header("x-csrf-token", &refresh_csrf)
+        .header(
+            "cookie",
+            format!("ryframe_refresh_token={refresh_token}; ryframe_csrf={refresh_csrf}"),
+        )
+        .body(Body::empty())
         .unwrap();
     let (status, _) = common::send_request(router.clone(), old_refresh_request).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

@@ -26,7 +26,7 @@ async fn role_service_constructs_without_menu_repository() {
 #[tokio::test]
 async fn menu_service_create_only_persists_structure_fields() {
     let db = common::setup_test_db().await;
-    let svc = MenuService::new(DatabaseCluster::single(db), None);
+    let svc = MenuService::new(DatabaseCluster::single(db.connection().clone()), None);
 
     let menu = svc
         .create(

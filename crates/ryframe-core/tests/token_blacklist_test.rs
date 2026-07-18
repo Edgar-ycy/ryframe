@@ -13,7 +13,7 @@ async fn test_blacklist_and_check_memory() {
     assert!(!bl.is_blacklisted(jti).await);
 
     // 加入黑名单（60秒）
-    bl.blacklist(jti, 60).await;
+    bl.try_blacklist(jti, 60).await.unwrap();
     assert!(bl.is_blacklisted(jti).await);
 }
 
@@ -23,7 +23,7 @@ async fn test_blacklist_expiry_memory() {
     let jti = "test-jti-002";
 
     // 加入黑名单（1秒）
-    bl.blacklist(jti, 1).await;
+    bl.try_blacklist(jti, 1).await.unwrap();
     assert!(bl.is_blacklisted(jti).await);
 
     // 等待过期
@@ -34,8 +34,8 @@ async fn test_blacklist_expiry_memory() {
 #[tokio::test]
 async fn test_multiple_jtis() {
     let bl = TokenBlacklist::new(None);
-    bl.blacklist("jti-a", 60).await;
-    bl.blacklist("jti-b", 60).await;
+    bl.try_blacklist("jti-a", 60).await.unwrap();
+    bl.try_blacklist("jti-b", 60).await.unwrap();
 
     assert!(bl.is_blacklisted("jti-a").await);
     assert!(bl.is_blacklisted("jti-b").await);
@@ -44,5 +44,8 @@ async fn test_multiple_jtis() {
 
 #[tokio::test]
 async fn test_blacklist_key_format() {
-    assert_eq!(blacklist_key("abc123"), "token:blacklist:abc123");
+    assert_eq!(
+        blacklist_key("abc123"),
+        "ryframe:v0.5:access-revocation:abc123"
+    );
 }

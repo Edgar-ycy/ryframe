@@ -1,5 +1,6 @@
 pub mod body_limit;
 pub mod cache_control;
+pub mod client_ip;
 pub mod cors;
 pub mod idempotency;
 pub mod metrics;
@@ -15,6 +16,7 @@ pub mod xss_filter;
 
 pub use body_limit::body_limit_middleware;
 pub use cache_control::{CacheControlConfig, cache_control_middleware};
+pub use client_ip::trusted_client_ip_middleware;
 pub use cors::cors_layer;
 pub use idempotency::{IdempotencyState, idempotency_middleware};
 pub use rate_limit::{

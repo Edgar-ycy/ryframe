@@ -1,0 +1,11 @@
+.git
+.github
+.idea
+.pnpm-store
+.vscode
+backup
+coverage
+ryframe-vue3
+target
+**/*.log
+**/node_modules

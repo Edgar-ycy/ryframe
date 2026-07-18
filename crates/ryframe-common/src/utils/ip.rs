@@ -1,73 +1,183 @@
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
+
 use axum::http::HeaderMap;
 
-/// 从请求头提取客户端真实 IP
-///
-/// 优先级：X-Forwarded-For（第一个） → X-Real-IP → 直连 IP（由 SocketAddr 获取）
-pub fn get_client_ip(headers: &HeaderMap, remote_addr: &str) -> String {
-    // 1. 尝试 X-Forwarded-For
-    if let Some(forwarded) = headers.get("x-forwarded-for")
-        && let Ok(value) = forwarded.to_str()
-    {
-        // 取第一个 IP（最左侧的是原始客户端）
-        if let Some(ip) = value.split(',').next() {
-            let ip = ip.trim();
-            if !ip.is_empty() {
-                return ip.to_string();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientIp(pub IpAddr);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IpNetwork {
+    V4 { network: u32, prefix: u8 },
+    V6 { network: u128, prefix: u8 },
+}
+
+impl IpNetwork {
+    fn parse(value: &str) -> Result<Self, String> {
+        let (address, prefix) = value
+            .trim()
+            .split_once('/')
+            .map_or((value.trim(), None), |(address, prefix)| {
+                (address.trim(), Some(prefix.trim()))
+            });
+        let address = address
+            .parse::<IpAddr>()
+            .map_err(|error| format!("invalid IP address {address:?}: {error}"))?;
+
+        match address {
+            IpAddr::V4(address) => {
+                let prefix = parse_prefix(prefix, 32, value)?;
+                let mask = prefix_mask_v4(prefix);
+                Ok(Self::V4 {
+                    network: u32::from(address) & mask,
+                    prefix,
+                })
+            }
+            IpAddr::V6(address) => {
+                let prefix = parse_prefix(prefix, 128, value)?;
+                let mask = prefix_mask_v6(prefix);
+                Ok(Self::V6 {
+                    network: u128::from(address) & mask,
+                    prefix,
+                })
             }
         }
     }
 
-    // 2. 尝试 X-Real-IP
-    if let Some(real_ip) = headers.get("x-real-ip")
-        && let Ok(value) = real_ip.to_str()
-    {
-        let ip = value.trim();
-        if !ip.is_empty() {
-            return ip.to_string();
+    fn contains(self, address: IpAddr) -> bool {
+        match (self, address) {
+            (Self::V4 { network, prefix }, IpAddr::V4(address)) => {
+                u32::from(address) & prefix_mask_v4(prefix) == network
+            }
+            (Self::V6 { network, prefix }, IpAddr::V6(address)) => {
+                u128::from(address) & prefix_mask_v6(prefix) == network
+            }
+            _ => false,
         }
     }
-
-    // 3. 回退到直连 IP
-    // remote_addr 格式通常是 "127.0.0.1:8080"，去掉端口
-    remote_addr
-        .split(':')
-        .next()
-        .unwrap_or("unknown")
-        .to_string()
 }
 
-/// 判断是否为内网 IP
-pub fn is_internal_ip(ip: &str) -> bool {
-    // 简单判断：以 10. / 172.16-31. / 192.168. / 127. 开头
-    ip.starts_with("10.")
-        || ip.starts_with("127.")
-        || ip.starts_with("192.168.")
-        || ip.starts_with("172.")
-            && ip[4..]
-                .split('.')
-                .next()
-                .and_then(|s| s.parse::<u32>().ok())
-                .is_some_and(|n| (16..=31).contains(&n))
-}
-
-/// 解析 IP 归属地
-///
-/// 简单实现：
-/// - 本地回环 → "本地"
-/// - 内网 IP → "内网IP"
-/// - 其他 → "未知"
-///
-/// 生产环境可对接 GeoIP 数据库（如 MaxMind）获取城市级精度。
-pub fn get_ip_location(ip: &str) -> Option<String> {
-    if ip.is_empty() || ip == "unknown" {
-        return None;
+fn parse_prefix(prefix: Option<&str>, max: u8, original: &str) -> Result<u8, String> {
+    let prefix = prefix.map_or(Ok(max), |prefix| {
+        prefix
+            .parse::<u8>()
+            .map_err(|error| format!("invalid CIDR prefix in {original:?}: {error}"))
+    })?;
+    if prefix > max {
+        return Err(format!("CIDR prefix in {original:?} must be <= {max}"));
     }
-    if ip.starts_with("127.") || ip == "::1" || ip == "0:0:0:0:0:0:0:1" {
+    Ok(prefix)
+}
+
+const fn prefix_mask_v4(prefix: u8) -> u32 {
+    if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    }
+}
+
+const fn prefix_mask_v6(prefix: u8) -> u128 {
+    if prefix == 0 {
+        0
+    } else {
+        u128::MAX << (128 - prefix)
+    }
+}
+
+/// A pre-parsed allow-list of reverse proxies whose forwarding headers may be trusted.
+#[derive(Debug, Clone, Default)]
+pub struct TrustedProxySet {
+    networks: Arc<Vec<IpNetwork>>,
+}
+
+impl TrustedProxySet {
+    pub fn new(cidrs: &[String]) -> Result<Self, String> {
+        let networks = cidrs
+            .iter()
+            .map(|cidr| IpNetwork::parse(cidr))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            networks: Arc::new(networks),
+        })
+    }
+
+    pub fn is_trusted(&self, address: IpAddr) -> bool {
+        self.networks
+            .iter()
+            .any(|network| network.contains(address))
+    }
+
+    /// Resolve the client address by peeling trusted proxies from the right-hand side.
+    /// Forwarding headers from an untrusted direct peer are always ignored.
+    pub fn client_ip(&self, headers: &HeaderMap, peer: IpAddr) -> IpAddr {
+        if !self.is_trusted(peer) {
+            return peer;
+        }
+
+        let forwarded = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+            .into_iter()
+            .flat_map(|value| value.split(','))
+            .filter_map(|value| value.trim().parse::<IpAddr>().ok())
+            .collect::<Vec<_>>();
+
+        if forwarded.is_empty() {
+            return headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<IpAddr>().ok())
+                .unwrap_or(peer);
+        }
+
+        let mut current = peer;
+        for address in forwarded.into_iter().rev() {
+            if !self.is_trusted(current) {
+                break;
+            }
+            current = address;
+        }
+        current
+    }
+}
+
+/// Resolve a direct peer address without trusting request-controlled headers.
+/// New HTTP call sites should use [`TrustedProxySet::client_ip`] instead.
+pub fn get_client_ip(_headers: &HeaderMap, remote_addr: &str) -> String {
+    parse_remote_ip(remote_addr)
+        .map(|address| address.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+pub fn parse_remote_ip(value: &str) -> Option<IpAddr> {
+    value
+        .parse::<SocketAddr>()
+        .map(|address| address.ip())
+        .or_else(|_| value.parse::<IpAddr>())
+        .ok()
+}
+
+/// 判断是否为内网 IP。
+pub fn is_internal_ip(ip: &str) -> bool {
+    ip.parse::<IpAddr>().is_ok_and(|address| match address {
+        IpAddr::V4(address) => address.is_private() || address.is_loopback(),
+        IpAddr::V6(address) => {
+            address.is_loopback() || address.is_unique_local() || address.is_unicast_link_local()
+        }
+    })
+}
+
+/// Resolve the coarse location label used by login and online-user displays.
+pub fn get_ip_location(ip: &str) -> Option<String> {
+    let address = ip.parse::<IpAddr>().ok()?;
+    if address.is_loopback() {
         return Some("本地".to_string());
     }
     if is_internal_ip(ip) {
         return Some("内网IP".to_string());
     }
-    // 外网 IP 暂无法定位（可接入 GeoIP 服务扩展）
     None
 }

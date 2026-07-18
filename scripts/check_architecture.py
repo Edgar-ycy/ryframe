@@ -323,6 +323,10 @@ def check_menu_route_sources(
         return
 
     sql_source = (ROOT / "sql/ryframe_config.sql").read_text(encoding="utf-8")
+    if "INSERT IGNORE INTO" in sql_source:
+        errors.append(
+            "generated MySQL snapshot must not suppress seed errors with INSERT IGNORE"
+        )
     insert = re.search(
         r"INSERT INTO `sys_menu`\s*\([^;]+?\)\s*VALUES(?P<rows>.*?);",
         sql_source,
@@ -451,7 +455,7 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
             "parameter_in = Query",
         ),
         ".github/workflows/ci.yml": (
-            "cargo run -p ryframe-api --bin export_openapi",
+            "cargo run --locked -p ryframe-api --bin export_openapi",
             "git diff --exit-code -- openapi/openapi.json",
             "name: ryframe-openapi",
             "runtime-smoke:",
@@ -464,9 +468,10 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
             'json?.["x-ryframe-password-policy"]',
         ),
         "crates/ryframe/src/app.rs": (
-            '"/api/v1/monitor/health"',
-            '"/api/v1/monitor/metrics"',
-            "with_excluded_path_prefixes",
+            '"/livez"',
+            '"/readyz"',
+            ".merge(probes)",
+            'never pass through authentication',
         ),
     }
     for relative_path, fragments in required_fragments.items():
@@ -653,8 +658,12 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
             "APP_DATABASE_REPLICAS",
             "APP_DATABASE_SOURCES",
             "Prepare and test named data source",
-            "rustfs/rustfs:1.0.0-beta.8",
             "Test RustFS adapter",
+        ),
+        "docker-compose.test.yml": (
+            "mysql:8.4",
+            "redis:7-alpine",
+            "rustfs/rustfs:1.0.0-beta.8",
         ),
         "deploy/tests/smoke-test.js": (
             'test("runtime topology"',

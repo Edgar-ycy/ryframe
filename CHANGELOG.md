@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-07-18
+
+### Added
+
+- 新增 `/livez` 与 `/readyz`，分别提供纯进程存活检查和 MySQL、required Redis、必要对象存储就绪检查。
+- 新增 `GET /api/v1/auth/csrf`、HttpOnly refresh Cookie、稳定 `sid`、Redis refresh family、Lua 原子轮换、5 秒并发宽限与重放撤销。
+- 新增 MySQL 8.4、Redis 7 和 RustFS 的 Docker Compose 测试栈，以及空库基线、旧结构升级、重复迁移、种子幂等和部分结构拒绝测试。
+- 新增可信代理 CIDR、作用域幂等、依赖降级与拒绝指标、上传统一限制和 stable 联合发布门禁。
+- stable 发布物新增后端可执行归档、OCI 归档与镜像、前端 dist、CycloneDX SBOM 和 SHA-256 清单。
+
+### Changed
+
+- 后端和前端统一升级为 `v0.5.0`，使用同一 Git tag 和发布窗口；不兼容旧 JSON refresh 协议。
+- Rust Migrator 与幂等 Seeder 成为唯一可执行 schema 来源，完整 SQL 降为由迁移生成并经 CI 校验的只读快照。
+- access token 和 CSRF challenge 只保存在页面内存；refresh、登出和多标签恢复改为 Cookie、CSRF 与 Redis 会话协调。
+- 生产 Redis 固定为 required 并要求持久化与 `noeviction`；刷新、撤销、幂等和分布式锁故障时 fail closed。
+- 限流键、可信客户端 IP、CORS credentials、Nginx TLS/安全头、私有上传下载、日志脱敏和进程指标按生产边界收紧。
+- 普通文件、头像和请求超时分别统一为 10 MiB、5 MiB、120 秒上传与 30 秒普通 API，并为超限稳定返回 `413`。
+- 请求授权每次从 MySQL 解析角色和权限，不再使用可能因 Redis 删除失败而保留旧授权的权限缓存。
+- MySQL、Redis、验证码存储和对象存储运行时不可用统一返回 `503`；对象下载仅在元数据或对象真实不存在时返回 `404`。
+- 开发/测试数据库重置在确认目标库后直接删除并重新创建数据库，再运行 Migrator 与 Seeder，避免已移除的旧表阻塞空库基线。
+
+### Removed
+
+- 删除 PostgreSQL 与 SQLite 的 Cargo features、SQLx 驱动、运行时分支、配置、代码生成器映射、测试和现行文档支持。
+- 删除数据库 `driver` 配置字段及环境变量；主库、副本和命名业务数据源固定为 MySQL。
+- 删除 `HotConfig`、配置 watcher、`reload_hot`、公开导出和相关测试；配置变化必须重启进程。
+- 删除响应与请求中的明文 `refresh_token`、`RefreshRequest`、前端 token localStorage API 和旧版会话兼容逻辑。
+- 删除旧 `/health` 路由、Nginx `/uploads/` alias、全局幂等层和公开文件/头像直链。
+
+### Fixed
+
+- 开发配置显式允许 `http://localhost` 与 `http://127.0.0.1`，避免认证 Origin 守卫在 Vite 本地代理场景误拒绝登录。
+- 修复整库重置后 MySQL 8.4 信息架构无符号字段解码、注释括号列类型解析和跨空行外键动作解析导致的 schema 校验误报。
+- 修复 Docker Compose 测试栈中 RustFS 非 root 用户无法写入 `/data` 临时卷、导致对象存储 smoke 无法启动的问题。
+- 修复 MySQL 隔离测试库析构时跨 Tokio runtime 等待连接池关闭、导致集成测试在完成断言后无限挂起的问题。
+- 修复 MySQL 8.4 集成测试中的触发器与外键变更语法，并串行化 Redis 全局故障注入，避免并行测试互相污染。
+
+### Security
+
+- refresh Cookie 固定为 host-only、`HttpOnly`、`SameSite=Lax`、`Path=/api/v1/auth`，生产强制 `Secure`，会话绝对期限为登录起 7 天。
+- 登录、刷新和登出统一验证短期签名 CSRF challenge；认证端点禁止进入幂等缓存，日志不记录 Authorization、Cookie、CSRF、token、密码或查询参数。
+- access token 每次验证 Redis 中 `sid` 存活状态；Redis 故障返回 `503`，确认重放时撤销整个 refresh family。
+- 只有可信 Nginx 对等端可以提供转发头；直连伪造 XFF 不再影响客户端 IP、登录限流或审计日志。
+- 所有头像和普通文件保持私有并经后端 Bearer 鉴权下载，固定长度和 chunked 上传都执行服务端上限。
+- 对象存储启动检查拒绝匿名 `Principal`、`NotPrincipal` 等公开 bucket policy 表达式，不能以复杂 IAM 规则绕过私有文件约束。
+
+### Validation
+
+- stable tag 必须位于 `main`，前后端 workspace/package/OpenAPI 版本与标签一致，并存在至少观察 48 小时的同版本 RC。
+- 后端发布门禁覆盖 fmt、Clippy、全量 MySQL 测试、Redis/对象存储 smoke、迁移升级、Seeder、应用 smoke、ShellCheck、依赖审计和备份恢复演练。
+- 前端发布门禁覆盖 contract、源码架构、typecheck、lint、单元/覆盖率、E2E 和 bundle budget，并校验同标签后端 OpenAPI。
+
 ## [v0.4.2]
 
 ### Added

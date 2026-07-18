@@ -6,13 +6,12 @@
 use std::{sync::Arc, time::Instant};
 
 use axum::{
-    body::Body,
-    extract::{Request, State},
+    extract::{MatchedPath, Request, State},
     middleware::Next,
     response::Response,
 };
-use http_body_util::BodyExt;
 use ryframe_auth::RequestPrincipal;
+use ryframe_common::utils::ip::ClientIp;
 use ryframe_service::system::{OperLogService, OperLogStatus, RecordOperLogCommand};
 
 /// 操作日志中间件状态
@@ -42,14 +41,20 @@ pub async fn oper_log_middleware(
     // 仅对写操作记录日志
     let should_log = matches!(
         method,
-        axum::http::Method::POST | axum::http::Method::PUT | axum::http::Method::DELETE
+        axum::http::Method::POST
+            | axum::http::Method::PUT
+            | axum::http::Method::PATCH
+            | axum::http::Method::DELETE
     );
 
     if !should_log {
         return next.run(request).await;
     }
 
-    let uri = request.uri().path().to_string();
+    let uri = request.extensions().get::<MatchedPath>().map_or_else(
+        || request.uri().path().to_string(),
+        |path| path.as_str().to_string(),
+    );
     let request_method = method.to_string();
 
     let Some(current_user) = request.extensions().get::<RequestPrincipal>().cloned() else {
@@ -57,46 +62,14 @@ pub async fn oper_log_middleware(
     };
     let oper_name = current_user.username.clone();
 
-    // 提取客户端 IP（支持反向代理逗号分隔场景）
     let oper_ip = request
-        .headers()
-        .get("x-forwarded-for")
-        .or_else(|| request.headers().get("x-real-ip"))
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .extensions()
+        .get::<ClientIp>()
+        .map(|client| client.0.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
     // 推导业务类型和模块标题（基于 URI + HTTP 方法精确映射）
     let (title, business_type) = infer_business_info(&uri, &request_method);
-
-    // 检查是否为文件上传请求（multipart/form-data 的 body 被消费后无法被 Multipart 解析）
-    let is_multipart = request
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.starts_with("multipart/form-data"))
-        .unwrap_or(false);
-
-    // 缓存请求体（用于记录操作参数）—— multipart 请求跳过 body 消费
-    let (parts, body) = request.into_parts();
-    let (request, oper_param) = if is_multipart {
-        // multipart 请求不消费 body，直接透传原始流
-        let req = Request::from_parts(parts, body);
-        (req, Some("[文件上传]".to_string()))
-    } else {
-        let bytes = body
-            .collect()
-            .await
-            .map(|c| c.to_bytes())
-            .unwrap_or_default();
-        let param = if bytes.is_empty() {
-            None
-        } else {
-            Some(format_log_payload(&bytes))
-        };
-        let req = Request::from_parts(parts, Body::from(bytes));
-        (req, param)
-    };
 
     let start = Instant::now();
     let response = next.run(request).await;
@@ -105,26 +78,12 @@ pub async fn oper_log_middleware(
     let http_status = response.status();
     let is_success = http_status.is_success();
 
-    // 提取响应体（截断过长内容）
-    let (response_parts, response_body) = response.into_parts();
-    let response_bytes = response_body
-        .collect()
-        .await
-        .map(|c| c.to_bytes())
-        .unwrap_or_default();
-
-    let json_result = if response_bytes.is_empty() {
-        None
-    } else {
-        Some(format_log_payload(&response_bytes))
-    };
-
-    // 提取错误消息（仅失败时）
-    let error_msg = if !is_success {
-        extract_error_message(&json_result)
-    } else {
-        None
-    };
+    // Never persist request or response bodies in operation logs. A deny-list
+    // cannot prove that future DTO fields, configuration values or tokens are
+    // safe, and buffering responses also breaks large/streaming downloads.
+    let oper_param = None;
+    let json_result = None;
+    let error_msg = (!is_success).then(|| format!("HTTP {}", http_status.as_u16()));
 
     let status = if is_success {
         OperLogStatus::Success
@@ -155,85 +114,7 @@ pub async fn oper_log_middleware(
         }
     });
 
-    // 重建响应
-    Response::from_parts(response_parts, Body::from(response_bytes))
-}
-
-/// 从 JSON 响应体中提取错误消息
-fn extract_error_message(json_result: &Option<String>) -> Option<String> {
-    json_result.as_ref().and_then(|s| {
-        serde_json::from_str::<serde_json::Value>(s)
-            .ok()
-            .and_then(|v| v.get("message").and_then(|m| m.as_str().map(String::from)))
-    })
-}
-
-/// 安全截断字符串（按字符边界截断，避免 UTF-8 字节边界 panic）
-fn truncate_str(s: &str, max_chars: usize) -> String {
-    s.chars().take(max_chars).collect()
-}
-
-fn format_log_payload(bytes: &[u8]) -> String {
-    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
-        return "[non-JSON body omitted]".into();
-    };
-    if !matches!(
-        value,
-        serde_json::Value::Object(_) | serde_json::Value::Array(_)
-    ) {
-        return "[JSON scalar omitted]".into();
-    }
-    redact_sensitive_fields(&mut value);
-    let payload = value.to_string();
-    if payload.chars().count() > 2000 {
-        format!("{}...[truncated]", truncate_str(&payload, 2000))
-    } else {
-        payload
-    }
-}
-
-fn redact_sensitive_fields(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            for (key, value) in fields {
-                if is_sensitive_field(key) {
-                    *value = serde_json::Value::String("[REDACTED]".into());
-                } else {
-                    redact_sensitive_fields(value);
-                }
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                redact_sensitive_fields(value);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn is_sensitive_field(field: &str) -> bool {
-    let normalized = field
-        .chars()
-        .filter(|character| !matches!(character, '_' | '-'))
-        .collect::<String>()
-        .to_ascii_lowercase();
-    matches!(
-        normalized.as_str(),
-        "password"
-            | "passwordhash"
-            | "oldpassword"
-            | "newpassword"
-            | "confirmpassword"
-            | "token"
-            | "accesstoken"
-            | "refreshtoken"
-            | "resettoken"
-            | "captchacode"
-            | "captchaanswer"
-            | "clientsecret"
-            | "secret"
-    )
+    response
 }
 
 /// 根据 URI 路径 + HTTP 方法推导业务类型和模块标题
@@ -309,36 +190,5 @@ fn resource_to_title(module: &str, resource: &str) -> String {
                 None => "未知模块".into(),
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::format_log_payload;
-
-    #[test]
-    fn log_payload_redacts_nested_sensitive_fields() {
-        let payload = br#"{
-            "username":"alice",
-            "password":"plain-text",
-            "nested":{"refreshToken":"refresh-value"},
-            "items":[{"client_secret":"secret-value"}]
-        }"#;
-
-        let sanitized = format_log_payload(payload);
-
-        assert!(sanitized.contains("alice"));
-        assert_eq!(sanitized.matches("[REDACTED]").count(), 3);
-        assert!(!sanitized.contains("plain-text"));
-        assert!(!sanitized.contains("refresh-value"));
-        assert!(!sanitized.contains("secret-value"));
-    }
-
-    #[test]
-    fn log_payload_omits_non_json_content() {
-        assert_eq!(
-            format_log_payload(b"password=plain-text"),
-            "[non-JSON body omitted]"
-        );
     }
 }

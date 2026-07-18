@@ -106,10 +106,8 @@ impl WsMessage {
 
 /// WebSocket 升级查询参数
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WsQuery {
-    /// 用户标识（如 token_id 或 user_id）
-    #[serde(default)]
-    pub token: Option<String>,
     /// 要加入的房间（逗号分隔）
     #[serde(default)]
     pub rooms: Option<String>,
@@ -300,7 +298,7 @@ impl std::fmt::Debug for WsManager {
 /// WebSocket 升级处理函数
 ///
 /// 可作为 axum handler 直接注册到 Router。
-/// 支持 `?token=xxx&rooms=room1,room2` 查询参数。
+/// 支持 `?rooms=room1,room2` 查询参数；认证信息不得放入 URL。
 ///
 /// # 示例
 /// ```
@@ -338,10 +336,8 @@ async fn handle_socket(socket: WebSocket, manager: Arc<WsManager>, query: WsQuer
         }
     }
 
-    let token_info = query.token.clone().unwrap_or_else(|| "anonymous".into());
     info!(
         conn_id = %conn_id,
-        token = %token_info,
         "WebSocket 客户端已连接 (在线: {})",
         manager.connection_count()
     );
@@ -370,7 +366,11 @@ async fn handle_socket(socket: WebSocket, manager: Arc<WsManager>, query: WsQuer
         while let Some(result) = ws_receiver.next().await {
             match result {
                 Ok(Message::Text(text)) => {
-                    tracing::debug!(conn_id = %conn_id_clone, message = %text, "收到 WebSocket 消息");
+                    tracing::debug!(
+                        conn_id = %conn_id_clone,
+                        message_bytes = text.len(),
+                        "收到 WebSocket 文本消息"
+                    );
                 }
                 Ok(Message::Ping(_data)) => {
                     // Pong 由 axum 自动处理

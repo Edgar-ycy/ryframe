@@ -6,12 +6,12 @@
 //! # 使用示例
 //!
 //! ```
-//! use ryframe_core::distributed_lock::{DistributedLock, NoopLock};
+//! use ryframe_core::distributed_lock::{DistributedLock, LocalDistributedLock};
 //! use std::time::Duration;
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let lock = NoopLock::new();
+//! let lock = LocalDistributedLock::new();
 //! if let Some(guard) = lock.try_acquire("my_resource", Duration::from_secs(30)).await? {
 //!     // 获取到锁，执行临界区代码
 //!     let _ = do_critical_work();
@@ -24,13 +24,19 @@
 //! ```
 
 use std::{
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use dashmap::{DashMap, mapref::entry::Entry};
 use ryframe_common::{AppError, AppResult};
 
 use crate::redis_client::RedisClient;
+
+const LOCK_KEY_PREFIX: &str = "ryframe:v0.5:lock:";
 
 /// 分布式锁 trait
 ///
@@ -81,11 +87,11 @@ pub trait DistributedLock: Send + Sync {
 /// # 使用方式
 ///
 /// ```
-/// # use ryframe_core::distributed_lock::{DistributedLock, NoopLock};
+/// # use ryframe_core::distributed_lock::{DistributedLock, LocalDistributedLock};
 /// # use std::time::Duration;
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let lock = NoopLock::new();
+/// let lock = LocalDistributedLock::new();
 /// let ttl = Duration::from_secs(30);
 /// {
 ///     let guard = lock.try_acquire("task:clean_log", ttl).await?.unwrap();
@@ -104,6 +110,7 @@ struct LockGuardInner {
     release_fn: Box<dyn Fn() -> AppResult<()> + Send + Sync>,
     key: String,
     holder_id: String,
+    released: AtomicBool,
 }
 
 impl std::fmt::Debug for LockGuardInner {
@@ -129,13 +136,22 @@ impl LockGuard {
 
     /// 手动释放锁（通常不需要，drop 时自动调用）
     pub fn release(self) -> AppResult<()> {
-        (self.inner.release_fn)()
+        self.inner.release_once()
+    }
+}
+
+impl LockGuardInner {
+    fn release_once(&self) -> AppResult<()> {
+        if self.released.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        (self.release_fn)()
     }
 }
 
 impl Drop for LockGuardInner {
     fn drop(&mut self) {
-        if let Err(e) = (self.release_fn)() {
+        if let Err(e) = self.release_once() {
             tracing::warn!("分布式锁释放失败 [key={}]: {}", self.key, e);
         }
     }
@@ -167,7 +183,7 @@ impl RedisDistributedLock {
             .unwrap_or_default()
             .as_micros();
         let pid = std::process::id();
-        format!("{}-{}", timestamp, pid)
+        format!("{}-{}-{:032x}", timestamp, pid, rand::random::<u128>())
     }
 }
 
@@ -176,6 +192,7 @@ impl DistributedLock for RedisDistributedLock {
     async fn try_acquire(&self, key: &str, ttl: Duration) -> AppResult<Option<LockGuard>> {
         let holder_id = Self::holder_id();
         let ttl_secs = ttl.as_secs().max(1);
+        let redis_key = format!("{LOCK_KEY_PREFIX}{key}");
 
         // 使用 SET NX 原子获取锁
         let script = redis::Script::new(
@@ -190,15 +207,15 @@ impl DistributedLock for RedisDistributedLock {
 
         let mut conn = self.client.conn().clone();
         let result: i32 = script
-            .key(key)
+            .key(&redis_key)
             .arg(&holder_id)
             .arg(ttl_secs)
             .invoke_async(&mut conn)
             .await
-            .map_err(|e| AppError::Internal(format!("Redis SET NX 失败: {}", e)))?;
+            .map_err(|e| AppError::ServiceUnavailable(format!("Redis SET NX 失败: {}", e)))?;
 
         if result == 1 {
-            let key_owned = key.to_string();
+            let key_owned = redis_key;
             let holder_clone = holder_id.clone();
             let client = self.client.clone();
 
@@ -208,10 +225,10 @@ impl DistributedLock for RedisDistributedLock {
                 let key = key_owned.clone();
                 let holder = holder_clone.clone();
 
-                // 同步释放（在 drop 中无法使用 async）
-                let rt = tokio::runtime::Handle::try_current();
-                if let Ok(handle) = rt {
-                    handle.block_on(async move {
+                // Drop cannot await. Schedule the compare-and-delete operation
+                // on the current runtime without blocking a Tokio worker.
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
                         let release_script = redis::Script::new(
                             r"
                             if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -237,12 +254,12 @@ impl DistributedLock for RedisDistributedLock {
                             }
                             _ => {}
                         }
-                        Ok(())
-                    })
-                } else {
-                    // 没有 tokio runtime（如在 sync context），放弃释放
-                    tracing::warn!("无法获取 Tokio Runtime，分布式锁可能泄漏 [key={}]", key);
+                    });
                     Ok(())
+                } else {
+                    Err(AppError::Internal(format!(
+                        "cannot schedule Redis lock release without a Tokio runtime: {key}"
+                    )))
                 }
             });
 
@@ -251,6 +268,7 @@ impl DistributedLock for RedisDistributedLock {
                     release_fn,
                     key: key.to_string(),
                     holder_id,
+                    released: AtomicBool::new(false),
                 }),
             }))
         } else {
@@ -259,49 +277,86 @@ impl DistributedLock for RedisDistributedLock {
     }
 
     async fn force_release(&self, key: &str) -> AppResult<bool> {
+        let redis_key = format!("{LOCK_KEY_PREFIX}{key}");
         let result = self
             .client
-            .del(key)
+            .del(redis_key)
             .await
-            .map_err(|e| AppError::Internal(format!("Redis DEL 失败: {}", e)))?;
+            .map_err(|e| AppError::ServiceUnavailable(format!("Redis DEL 失败: {}", e)))?;
         Ok(result > 0)
     }
 }
 
-/// 空分布式锁实现（单实例模式）
-///
-/// 始终返回成功，适用于单实例部署或开发环境。
-#[derive(Clone, Default)]
-pub struct NoopLock;
+#[derive(Clone)]
+struct LocalLockEntry {
+    holder_id: String,
+    expires_at: Instant,
+}
 
-impl NoopLock {
+/// Process-local lock used only by the explicit single-instance development
+/// fallback. Unlike `NoopLock`, it preserves mutual exclusion.
+#[derive(Clone, Default)]
+pub struct LocalDistributedLock {
+    entries: Arc<DashMap<String, LocalLockEntry>>,
+}
+
+impl LocalDistributedLock {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
 #[async_trait::async_trait]
-impl DistributedLock for NoopLock {
-    async fn try_acquire(&self, key: &str, _ttl: Duration) -> AppResult<Option<LockGuard>> {
-        tracing::debug!("NoopLock: 跳过分布式锁获取 [key={}]", key);
+impl DistributedLock for LocalDistributedLock {
+    async fn try_acquire(&self, key: &str, ttl: Duration) -> AppResult<Option<LockGuard>> {
+        let holder_id = RedisDistributedLock::holder_id();
+        let expires_at = Instant::now() + ttl.max(Duration::from_secs(1));
+        match self.entries.entry(key.to_owned()) {
+            Entry::Vacant(entry) => {
+                entry.insert(LocalLockEntry {
+                    holder_id: holder_id.clone(),
+                    expires_at,
+                });
+            }
+            Entry::Occupied(mut entry) if entry.get().expires_at <= Instant::now() => {
+                entry.insert(LocalLockEntry {
+                    holder_id: holder_id.clone(),
+                    expires_at,
+                });
+            }
+            Entry::Occupied(_) => return Ok(None),
+        }
+
+        let entries = self.entries.clone();
+        let key_owned = key.to_owned();
+        let holder = holder_id.clone();
         Ok(Some(LockGuard {
             inner: Arc::new(LockGuardInner {
-                release_fn: Box::new(|| Ok(())),
-                key: key.to_string(),
-                holder_id: "noop".to_string(),
+                release_fn: Box::new(move || {
+                    let owned = entries
+                        .get(&key_owned)
+                        .is_some_and(|entry| entry.holder_id == holder);
+                    if owned {
+                        entries.remove(&key_owned);
+                    }
+                    Ok(())
+                }),
+                key: key.to_owned(),
+                holder_id,
+                released: AtomicBool::new(false),
             }),
         }))
     }
 
-    async fn force_release(&self, _key: &str) -> AppResult<bool> {
-        Ok(true)
+    async fn force_release(&self, key: &str) -> AppResult<bool> {
+        Ok(self.entries.remove(key).is_some())
     }
 }
 
 /// 创建分布式锁实例
 ///
 /// - 配置了 Redis → 使用 `RedisDistributedLock`
-/// - 未配置 Redis → 使用 `NoopLock`（单实例模式，永远获取成功）
+/// - 未配置 Redis → 使用真正互斥的进程内锁（显式单实例降级）
 pub fn create_distributed_lock(redis: Option<&RedisClient>) -> Arc<dyn DistributedLock> {
     match redis {
         Some(client) => {
@@ -309,8 +364,8 @@ pub fn create_distributed_lock(redis: Option<&RedisClient>) -> Arc<dyn Distribut
             Arc::new(RedisDistributedLock::new(client.clone()))
         }
         None => {
-            tracing::info!("分布式锁: Noop 模式（单实例部署）");
-            Arc::new(NoopLock::new())
+            tracing::warn!("分布式锁: 进程内降级模式（仅支持单实例部署）");
+            Arc::new(LocalDistributedLock::new())
         }
     }
 }

@@ -8,6 +8,7 @@ mod logger_config;
 mod object_storage_config;
 mod rate_limit_config;
 mod redis_config;
+mod runtime_config;
 
 pub use app_config::AppSettings;
 pub use auth_config::AuthConfig;
@@ -20,6 +21,7 @@ pub use generator_config::GeneratorConfig;
 pub use logger_config::LoggerConfig;
 pub use object_storage_config::{ObjectStorageConfig, StorageBackend};
 pub use rate_limit_config::RateLimitConfig;
-pub use redis_config::RedisConfig;
+pub use redis_config::{RedisConfig, RedisMode};
+pub use runtime_config::{ProxyConfig, UploadLimitsConfig};
 
 pub use crate::app_config::AppConfig;

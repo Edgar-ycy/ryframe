@@ -1,11 +1,12 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use ryframe_core::repository::PageQuery;
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait};
+use sea_orm::{ActiveModelTrait, EntityTrait};
 
-async fn setup_db() -> DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 失败")
+#[path = "../tests/common/mod.rs"]
+mod common;
+
+async fn setup_db() -> common::TestDatabase {
+    common::setup_test_db().await
 }
 
 fn bench_db_insert(c: &mut Criterion) {

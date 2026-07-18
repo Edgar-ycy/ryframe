@@ -1,9 +1,6 @@
 use ryframe_auth::jwt::Claims;
 use ryframe_common::{AppError, AppResult};
-use ryframe_core::{
-    Repository,
-    cache::{get_user_permission_cache, set_user_permission_cache},
-};
+use ryframe_core::Repository;
 use ryframe_db::{
     TenantRepository,
     entities::{role, tenant, user},
@@ -61,7 +58,6 @@ impl AuthService {
         &self,
         tenant_id: &str,
         user_id: i64,
-        use_permission_cache: bool,
     ) -> AppResult<AuthorizationProfile> {
         let roles = self
             .role_repo
@@ -70,9 +66,6 @@ impl AuthService {
         let is_super_admin = roles.iter().any(|role| role.is_super == 1);
         let permissions = if is_super_admin {
             vec!["*:*:*".to_owned()]
-        } else if use_permission_cache {
-            self.load_cached_permission_codes(tenant_id, user_id, &roles)
-                .await?
         } else {
             self.load_permission_codes(tenant_id, &roles).await?
         };
@@ -103,35 +96,6 @@ impl AuthService {
             .collect();
         user_info.perms = authorization.permissions.clone();
         Ok(user_info)
-    }
-
-    async fn load_cached_permission_codes(
-        &self,
-        tenant_id: &str,
-        user_id: i64,
-        roles: &[role::Model],
-    ) -> AppResult<Vec<String>> {
-        let Some(redis) = self.redis.as_ref() else {
-            return self.load_permission_codes(tenant_id, roles).await;
-        };
-
-        match get_user_permission_cache(redis, tenant_id, user_id).await {
-            Ok(Some(cached)) => Ok(cached),
-            Ok(None) | Err(_) => {
-                let loaded = self.load_permission_codes(tenant_id, roles).await?;
-                if let Err(error) =
-                    set_user_permission_cache(redis, tenant_id, user_id, &loaded).await
-                {
-                    tracing::warn!(
-                        tenant_id,
-                        user_id,
-                        %error,
-                        "failed to cache user permissions"
-                    );
-                }
-                Ok(loaded)
-            }
-        }
     }
 
     async fn load_permission_codes(

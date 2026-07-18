@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ryframe_config::{
-    AppConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, RedisConfig,
+    AppConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, RedisConfig, RedisMode,
     StorageBackend,
 };
 
@@ -39,7 +39,7 @@ fn test_load_and_validate_config() {
 }
 
 #[test]
-fn test_reload_hot_uses_full_merged_config() {
+fn test_static_load_uses_full_merged_config() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_config_env();
 
@@ -48,11 +48,11 @@ fn test_reload_hot_uses_full_merged_config() {
     }
 
     let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
-    let cfg = AppConfig::reload_hot(config_dir).unwrap();
+    let cfg = AppConfig::load(config_dir).unwrap();
 
     assert_eq!(cfg.app.name, "ryframe");
     assert_eq!(cfg.database.primary.database, "ryframe_test");
-    assert_eq!(cfg.database.primary.driver, "postgres");
+    assert_eq!(cfg.database.primary.port, 3306);
     assert_eq!(cfg.auth.access_token_expire, "5m");
     assert_eq!(cfg.logger.level, "debug");
 
@@ -70,11 +70,11 @@ fn test_env_overrides_are_applied_before_validation() {
         std::env::set_var("APP_DATABASE_PASSWORD", "db-secret-from-env");
         std::env::set_var(
             "APP_DATABASE_REPLICAS",
-            r#"[{"name":"replica-a","driver":"postgres","host":"replica-a","port":5432,"database":"ryframe","username":"postgres","password":"replica-secret","max_connections":5,"min_connections":1}]"#,
+            r#"[{"name":"replica-a","host":"replica-a","port":3306,"database":"ryframe","username":"root","password":"replica-secret","max_connections":5,"min_connections":1}]"#,
         );
         std::env::set_var(
             "APP_DATABASE_SOURCES",
-            r#"[{"name":"ryframe_device","driver":"mysql","host":"device-db","port":3306,"database":"ryframe_device","username":"device","password":"device-secret","max_connections":5,"min_connections":1}]"#,
+            r#"[{"name":"ryframe_device","host":"device-db","port":3306,"database":"ryframe_device","username":"device","password":"device-secret","max_connections":5,"min_connections":1}]"#,
         );
         std::env::set_var("APP_GENERATOR_DATA_SOURCE", "ryframe_device");
         std::env::set_var("APP_OBJECT_STORAGE_ACCESS_KEY", "object-access");
@@ -112,7 +112,7 @@ fn test_env_overrides_are_applied_before_validation() {
 }
 
 #[test]
-fn test_database_replica_names_and_drivers_are_validated() {
+fn test_database_replica_names_are_validated() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_config_env();
 
@@ -131,8 +131,7 @@ fn test_database_replica_names_and_drivers_are_validated() {
     assert!(cfg.validate("dev").is_err());
 
     cfg.database.replicas[1].name = "replica-b".into();
-    cfg.database.replicas[1].connection.driver = "postgres".into();
-    assert!(cfg.validate("dev").is_err());
+    assert!(cfg.validate("dev").is_ok());
 }
 
 #[test]
@@ -162,9 +161,8 @@ fn test_named_sources_and_generator_selection_are_validated() {
 #[test]
 fn test_connection_urls() {
     let conn = DbConnection {
-        driver: "postgres".into(),
         host: "db.example.com".into(),
-        port: 5432,
+        port: 3306,
         database: "myapp".into(),
         username: "admin".into(),
         password: "secret".into(),
@@ -177,10 +175,11 @@ fn test_connection_urls() {
     };
     assert_eq!(
         conn.connection_url(),
-        "postgres://admin:secret@db.example.com:5432/myapp"
+        "mysql://admin:secret@db.example.com:3306/myapp?collation=utf8mb4_general_ci"
     );
 
     let redis = RedisConfig {
+        mode: RedisMode::Optional,
         host: "cache.example.com".into(),
         port: 6380,
         password: "redispass".into(),
@@ -192,6 +191,45 @@ fn test_connection_urls() {
         redis.connection_url(),
         "redis://:redispass@cache.example.com:6380/1"
     );
+}
+
+#[test]
+fn production_alias_rejects_default_jwt_secret() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("APP_ENV", "production");
+    }
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    assert!(AppConfig::load(config_dir).is_err());
+    clear_config_env();
+}
+
+#[test]
+fn encrypted_value_without_master_key_is_rejected() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("APP_AUTH_JWT_SECRET", "ENC[placeholder]");
+    }
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    assert!(AppConfig::load(config_dir).is_err());
+    clear_config_env();
+}
+
+#[test]
+fn removed_database_driver_field_is_rejected() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var(
+            "APP_DATABASE_REPLICAS",
+            r#"[{"name":"legacy","driver":"mysql","host":"127.0.0.1","port":3306,"database":"ryframe","username":"root","password":"","max_connections":5,"min_connections":1}]"#,
+        );
+    }
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    assert!(AppConfig::load(config_dir).is_err());
+    clear_config_env();
 }
 
 fn clear_config_env() {
@@ -207,6 +245,7 @@ fn clear_config_env() {
             "APP_OBJECT_STORAGE_SECRET_KEY",
             "APP_RATE_LIMIT_ENABLED",
             "APP_CORS_ALLOW_ORIGINS",
+            "CONFIG_MASTER_KEY",
         ] {
             std::env::remove_var(key);
         }

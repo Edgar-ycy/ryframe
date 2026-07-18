@@ -3,11 +3,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::{Method, RequestBuilder, Response, Url};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    ObjectStorage, StorageError, StorageResult, key_segments, public_object_url,
-    signing::SigV4Signer, validate_bucket,
+    ObjectStorage, StorageError, StorageResult, key_segments, signing::SigV4Signer, validate_bucket,
 };
 
 /// Connection and signing settings for a path-style S3-compatible endpoint.
@@ -18,8 +18,6 @@ pub struct S3Config {
     pub secret_key: String,
     pub use_ssl: bool,
     pub region: String,
-    /// Optional CDN or explicitly public object base URL.
-    pub public_base_url: Option<String>,
 }
 
 /// S3-compatible HTTP backend suitable for AWS S3 and MinIO.
@@ -28,7 +26,6 @@ pub struct S3ObjectStorage {
     access_key: String,
     secret_key: String,
     region: String,
-    public_base_url: Option<String>,
     client: reqwest::Client,
 }
 
@@ -59,10 +56,6 @@ impl S3ObjectStorage {
             access_key: config.access_key,
             secret_key: config.secret_key,
             region: config.region,
-            public_base_url: config
-                .public_base_url
-                .filter(|base_url| !base_url.trim().is_empty())
-                .map(|base_url| base_url.trim_end_matches('/').to_owned()),
             client,
         })
     }
@@ -108,6 +101,42 @@ impl S3ObjectStorage {
             return Ok(());
         }
         Err(service_error("create S3 bucket", response).await)
+    }
+
+    async fn enforce_private_bucket(&self, bucket: &str) -> StorageResult<()> {
+        let mut acl_url = self.bucket_url(bucket)?;
+        acl_url.set_query(Some("acl"));
+        let response = self
+            .signed_request(Method::PUT, acl_url, empty_payload_hash().as_str())?
+            .header("x-amz-acl", "private")
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(service_error("set private S3 bucket ACL", response).await);
+        }
+
+        let mut policy_url = self.bucket_url(bucket)?;
+        policy_url.set_query(Some("policy"));
+        let response = self
+            .signed_request(Method::GET, policy_url, "UNSIGNED-PAYLOAD")?
+            .send()
+            .await?;
+        if response.status().as_u16() == 404 {
+            return Ok(());
+        }
+        if !response.status().is_success() {
+            return Err(service_error("verify S3 bucket policy", response).await);
+        }
+        let policy = response.text().await?;
+        let policy: Value = serde_json::from_str(&policy).map_err(|error| {
+            StorageError::Configuration(format!("bucket '{bucket}' policy is invalid: {error}"))
+        })?;
+        if policy_allows_public_access(&policy) {
+            return Err(StorageError::Configuration(format!(
+                "bucket '{bucket}' has a public access policy; RyFrame files must remain private"
+            )));
+        }
+        Ok(())
     }
 
     fn bucket_url(&self, bucket: &str) -> StorageResult<Url> {
@@ -224,20 +253,45 @@ impl ObjectStorage for S3ObjectStorage {
         }
     }
 
-    fn public_url(&self, bucket: &str, key: &str) -> StorageResult<Option<String>> {
-        validate_bucket(bucket)?;
-        key_segments(key)?;
-        self.public_base_url
-            .as_deref()
-            .map(|base_url| public_object_url(base_url, bucket, key))
-            .transpose()
-    }
-
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         if !self.bucket_exists(bucket).await? {
             self.create_bucket(bucket).await?;
         }
-        Ok(())
+        self.enforce_private_bucket(bucket).await
+    }
+}
+
+/// Conservatively rejects anonymous/public grants in a bucket policy.
+///
+/// S3 policies can express public access through more than
+/// `Principal: "*" + Action: "s3:GetObject"`. In particular, an `Allow`
+/// statement with `NotPrincipal` grants everyone except the listed principal,
+/// and `NotAction` can grant reads indirectly. RyFrame's private-file contract
+/// does not need either shape, so fail closed instead of trying to reproduce
+/// the full IAM policy evaluator here.
+fn policy_allows_public_access(policy: &Value) -> bool {
+    let statements = match policy.get("Statement") {
+        Some(Value::Array(statements)) => statements.iter().collect::<Vec<_>>(),
+        Some(statement @ Value::Object(_)) => vec![statement],
+        _ => return false,
+    };
+    statements.into_iter().any(|statement| {
+        statement.get("Effect").and_then(Value::as_str) == Some("Allow")
+            && (statement.get("NotPrincipal").is_some()
+                || value_contains_wildcard(statement.get("Principal")))
+    })
+}
+
+fn value_contains_wildcard(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::String(value)) => value == "*",
+        Some(Value::Array(values)) => values
+            .iter()
+            .any(|value| value_contains_wildcard(Some(value))),
+        Some(Value::Object(values)) => values
+            .values()
+            .any(|value| value_contains_wildcard(Some(value))),
+        _ => false,
     }
 }
 
@@ -300,7 +354,6 @@ mod tests {
             secret_key: "secret".to_owned(),
             use_ssl: false,
             region: "eu-west-1".to_owned(),
-            public_base_url: Some("https://cdn.example.com/files".to_owned()),
         }
     }
 
@@ -316,13 +369,6 @@ mod tests {
                 .as_str(),
             "http://localhost:9000/photos/%E5%A4%8F%E5%AD%A3/photo%20one.jpg"
         );
-        assert_eq!(
-            storage
-                .public_url("photos", "夏季/photo one.jpg")
-                .unwrap()
-                .as_deref(),
-            Some("https://cdn.example.com/files/photos/%E5%A4%8F%E5%AD%A3/photo%20one.jpg")
-        );
     }
 
     #[test]
@@ -336,5 +382,55 @@ mod tests {
         let mut invalid = config();
         invalid.secret_key.clear();
         assert!(S3ObjectStorage::new(invalid).is_err());
+    }
+
+    #[test]
+    fn public_bucket_policies_are_rejected_conservatively() {
+        let public: Value = serde_json::from_str(
+            r#"{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject"}]}"#,
+        )
+        .unwrap();
+        let private: Value = serde_json::from_str(
+            r#"{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3:GetObject"}]}"#,
+        )
+        .unwrap();
+        assert!(policy_allows_public_access(&public));
+        assert!(!policy_allows_public_access(&private));
+
+        for action in ["s3:PutObject", "s3:ListBucket", "s3:GetObject", "s3:*"] {
+            let policy = serde_json::json!({
+                "Statement": [{"Effect": "Allow", "Principal": "*", "Action": action}]
+            });
+            assert!(
+                policy_allows_public_access(&policy),
+                "anonymous public grant was accepted: {action}"
+            );
+        }
+
+        let not_principal = serde_json::json!({
+            "Statement": [{
+                "Effect": "Allow",
+                "NotPrincipal": {"AWS": "arn:aws:iam::123456789012:root"},
+                "Action": "s3:GetObject"
+            }]
+        });
+        let not_action = serde_json::json!({
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": "*",
+                "NotAction": "s3:DeleteObject"
+            }]
+        });
+        assert!(policy_allows_public_access(&not_principal));
+        assert!(policy_allows_public_access(&not_action));
+
+        let named_principal = serde_json::json!({
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": {"AWS": "arn:aws:iam::123456789012:root"},
+                "Action": "s3:GetObject"
+            }]
+        });
+        assert!(!policy_allows_public_access(&named_principal));
     }
 }

@@ -12,7 +12,7 @@ use utoipa::OpenApi;
 
 ## 认证
 所有受保护接口需在请求头携带 `Authorization: Bearer <access_token>`。
-登录接口返回 `access_token`（短期）和 `refresh_token`（长期）。
+登录接口在 JSON 中返回短期 `access_token`，长期 refresh token 只通过 HttpOnly Cookie 下发。
 
 ## 响应格式
 ```json
@@ -41,8 +41,9 @@ use utoipa::OpenApi;
         (name = "通知公告", description = "通知公告 CRUD，支持草稿/发布/关闭状态。"),
         (name = "操作日志", description = "POST/PUT/DELETE 请求自动记录，支持分页查询、详情和导出；业务管理端不提供清空入口。"),
         (name = "登录日志", description = "登录成功/失败记录，含 IP、浏览器、操作系统信息。"),
-        (name = "在线用户", description = "查看当前在线用户列表，支持强制下线(token 加入黑名单)。"),
-        (name = "服务器监控", description = "/health(健康检查) + /metrics(Prometheus) 公开；/server、/cache、/db-pool、/runtime 需认证。"),
+        (name = "在线用户", description = "查看当前在线设备会话，使用稳定 sid 精确强制下线。"),
+        (name = "服务器监控", description = "/metrics(Prometheus) 公开；进程与依赖探针分别使用根路径 /livez、/readyz；/server、/cache、/db-pool、/runtime 需认证。"),
+        (name = "运行探针", description = "/livez 只报告进程存活；/readyz 检查 MySQL、required Redis 与对象存储。"),
         (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
         (name = "个人中心", description = "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。"),
         (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重和熔断保护。"),
@@ -50,6 +51,7 @@ use utoipa::OpenApi;
     ),
     paths(
         // 认证接口
+        crate::handlers::auth_handler::csrf,
         crate::handlers::auth_handler::login,
         crate::handlers::auth_handler::logout,
         crate::handlers::auth_handler::refresh,
@@ -152,7 +154,8 @@ use utoipa::OpenApi;
         crate::handlers::online_user_handler::list_online_users_page,
         crate::handlers::online_user_handler::force_logout,
         // 监控、生成器、通用上传下载和导出导入
-        ryframe_monitor::health_check_handler,
+        crate::probes::livez,
+        crate::probes::readyz,
         ryframe_monitor::metrics_handler,
         ryframe_monitor::server_info_handler,
         ryframe_monitor::cache_info_handler,
@@ -188,9 +191,9 @@ use utoipa::OpenApi;
     components(schemas(
         // 认证 DTO
         crate::dto::auth_dto::LoginRequest,
-        crate::dto::auth_dto::RefreshRequest,
         crate::dto::auth_dto::CompletePasswordResetRequest,
         crate::dto::auth_dto::LoginResponse,
+        crate::dto::auth_dto::CsrfResponse,
         crate::handlers::captcha_handler::CaptchaQuery,
         crate::handlers::captcha_handler::CaptchaResponse,
         crate::handlers::captcha_handler::CaptchaVerifyRequest,
@@ -274,12 +277,13 @@ use utoipa::OpenApi;
         ryframe_service::system::TenantVo,
         ryframe_service::system::UploadResponse,
         ryframe_monitor::ServerInfo,
-        ryframe_monitor::HealthInfo,
         ryframe_monitor::CacheInfo,
         ryframe_monitor::CacheKeysInfo,
         ryframe_monitor::RedisServerInfo,
         ryframe_monitor::RedisMemoryInfo,
         ryframe_monitor::DbPoolInfo,
+        crate::probes::LivenessResponse,
+        crate::probes::ReadinessResponse,
     )),
     modifiers(&ApiDocModifier)
 )]
@@ -359,6 +363,14 @@ impl utoipa::Modify for ApiDocModifier {
                 utoipa::openapi::security::SecurityScheme::Http(
                     utoipa::openapi::security::Http::new(
                         utoipa::openapi::security::HttpAuthScheme::Bearer,
+                    ),
+                ),
+            );
+            components.add_security_scheme(
+                "refreshCookie",
+                utoipa::openapi::security::SecurityScheme::ApiKey(
+                    utoipa::openapi::security::ApiKey::Cookie(
+                        utoipa::openapi::security::ApiKeyValue::new("ryframe_refresh_token"),
                     ),
                 ),
             );
@@ -470,7 +482,7 @@ mod tests {
         }
         for (path, item) in paths {
             assert!(
-                path.starts_with("/api/v1/"),
+                path.starts_with("/api/v1/") || matches!(path.as_str(), "/livez" | "/readyz"),
                 "unversioned OpenAPI path: {path}"
             );
             assert!(!path.contains("listNoPage"), "legacy OpenAPI path: {path}");
@@ -533,7 +545,9 @@ mod tests {
 
                 let allows_empty_request = matches!(
                     (method, path.as_str()),
-                    ("post", "/api/v1/auth/logout") | ("post", "/api/v1/system/perms/sync")
+                    ("post", "/api/v1/auth/logout")
+                        | ("post", "/api/v1/auth/refresh")
+                        | ("post", "/api/v1/system/perms/sync")
                 );
                 if matches!(method, "post" | "put" | "patch") && !allows_empty_request {
                     assert!(

@@ -1,25 +1,5 @@
-use std::sync::Mutex;
-
 /// ryframe-common 公开 API 测试
-use ryframe_common::{
-    ApiPageResponse, ApiResponse, AppError, BusinessType, UserStatus, enable_sql_full_log,
-    is_sql_full_log,
-};
-
-/// 全局串行锁，防止 sql_log_flag 全局状态在并行测试中相互干扰
-static SQL_FLAG_MUTEX: Mutex<()> = Mutex::new(());
-
-#[test]
-fn test_sql_log_flag_lifecycle() {
-    let _lock = SQL_FLAG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-
-    // 默认关闭
-    assert!(!is_sql_full_log());
-
-    // 开启后为 true
-    enable_sql_full_log();
-    assert!(is_sql_full_log());
-}
+use ryframe_common::{ApiPageResponse, ApiResponse, AppError, BusinessType, UserStatus};
 
 #[test]
 fn test_user_status_variants() {

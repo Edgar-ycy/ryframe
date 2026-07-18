@@ -1,3 +1,4 @@
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 
 /// SQL 日志输出级别
@@ -15,6 +16,7 @@ pub enum SqlLogLevel {
 
 /// 数据库拓扑配置。
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     /// SQL 日志级别（默认 off）。
     #[serde(default)]
@@ -59,9 +61,8 @@ pub struct DatabaseSourceConfig {
 /// - **max_lifetime_secs**: 连接最大生命周期（需 < MySQL wait_timeout），建议 1800~3600 秒
 /// - **connect_timeout_secs**: TCP 连接建立超时，建议 3~10 秒
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DbConnection {
-    /// 数据库驱动类型：postgres / mysql / sqlite
-    pub driver: String,
     /// 主机地址
     pub host: String,
     /// 端口
@@ -104,31 +105,20 @@ fn default_connect_timeout() -> u64 {
 }
 
 impl DbConnection {
-    /// 生成 SeaORM 连接字符串
-    ///
-    /// 示例输出：
-    /// - postgres: "postgres://postgres:password@localhost:5432/ryframe"
-    /// - mysql: "mysql://root:password@localhost:3306/ryframe"
-    /// - sqlite: "sqlite://data.db?mode=rwc"
+    /// 生成 MySQL SeaORM 连接字符串。
     pub fn connection_url(&self) -> String {
-        match self.driver.as_str() {
-            "sqlite" => format!("sqlite://{}?mode=rwc", self.database),
-            "mysql" => format!(
-                "{}://{}:{}@{}:{}/{}?collation=utf8mb4_general_ci",
-                self.driver, self.username, self.password, self.host, self.port, self.database
-            ),
-            _ => format!(
-                "{}://{}:{}@{}:{}/{}",
-                self.driver, self.username, self.password, self.host, self.port, self.database
-            ),
-        }
+        let username = utf8_percent_encode(&self.username, NON_ALPHANUMERIC);
+        let password = utf8_percent_encode(&self.password, NON_ALPHANUMERIC);
+        format!(
+            "mysql://{}:{}@{}:{}/{}?collation=utf8mb4_general_ci",
+            username, password, self.host, self.port, self.database
+        )
     }
 }
 
 impl Default for DbConnection {
     fn default() -> Self {
         Self {
-            driver: "mysql".into(),
             host: "localhost".into(),
             port: 3306,
             database: String::new(),
@@ -141,5 +131,27 @@ impl Default for DbConnection {
             max_lifetime_secs: 1800,
             connect_timeout_secs: 10,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_url_percent_encodes_credentials() {
+        let connection = DbConnection {
+            host: "127.0.0.1".into(),
+            port: 3306,
+            database: "ryframe-test".into(),
+            username: "user@name".into(),
+            password: "p:a/s#%".into(),
+            ..DbConnection::default()
+        };
+
+        assert_eq!(
+            connection.connection_url(),
+            "mysql://user%40name:p%3Aa%2Fs%23%25@127.0.0.1:3306/ryframe-test?collation=utf8mb4_general_ci"
+        );
     }
 }

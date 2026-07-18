@@ -5,11 +5,12 @@ use serde::Deserialize;
 
 use crate::{
     AuthConfig, CorsConfig, DatabaseConfig, GeneratorConfig, LoggerConfig, ObjectStorageConfig,
-    RateLimitConfig, RedisConfig,
+    ProxyConfig, RateLimitConfig, RedisConfig, RedisMode, UploadLimitsConfig,
 };
 
 /// 应用基础配置
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppSettings {
     /// 应用名称
     pub name: String,
@@ -36,6 +37,7 @@ impl Default for AppSettings {
 
 /// 顶层应用配置
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub app: AppSettings,
     pub database: DatabaseConfig,
@@ -51,6 +53,10 @@ pub struct AppConfig {
     pub cors: CorsConfig,
     #[serde(default)]
     pub object_storage: ObjectStorageConfig,
+    #[serde(default)]
+    pub proxy: ProxyConfig,
+    #[serde(default)]
+    pub upload: UploadLimitsConfig,
 }
 
 impl AppConfig {
@@ -59,29 +65,21 @@ impl AppConfig {
     /// `config_dir` 为配置文件所在目录的路径（如 `"config"` 或 `"/app/config"`）。
     /// 环境配置文件仅需包含要覆盖的字段，不要求完整。
     pub fn load(config_dir: &str) -> AppResult<Self> {
-        let env = std::env::var("APP_ENV").unwrap_or_else(|_| "dev".to_string());
+        let env =
+            normalize_environment(&std::env::var("APP_ENV").unwrap_or_else(|_| "dev".to_string()))?;
         let mut table = load_merged_table(config_dir, &env)?;
         apply_env_overrides(&mut table)?;
+        reject_removed_database_fields(&table)?;
 
         let mut config: AppConfig = table
             .try_into()
             .map_err(|e| AppError::Config(format!("配置反序列化失败: {}", e)))?;
 
-        // 校验
+        // 敏感字段必须先解密，再对最终运行值做安全校验。
+        crate::config_crypto::decrypt_config(&mut config)?;
         config.validate(&env)?;
 
-        // 解密敏感配置字段（如果 CONFIG_MASTER_KEY 已设置）
-        crate::config_crypto::decrypt_config(&mut config)?;
-
         Ok(config)
-    }
-
-    /// 仅重新加载可热更新的配置字段（不包含 database、app.host/port 等）
-    ///
-    /// 复用完整加载流程，确保环境配置文件可以只写差异字段，并继续支持 APP_* 覆盖。
-    /// 调用方仍只应用可热更新字段。
-    pub fn reload_hot(config_dir: &str) -> AppResult<Self> {
-        Self::load(config_dir)
     }
 
     /// 校验必填配置项
@@ -108,11 +106,6 @@ impl AppConfig {
             if !replica_names.insert(name) {
                 return Err(AppError::Config(format!(
                     "database.replicas 名称重复: {name}"
-                )));
-            }
-            if replica.connection.driver != self.database.primary.driver {
-                return Err(AppError::Config(format!(
-                    "database.replicas[{index}].driver 必须与 database.primary.driver 一致"
                 )));
             }
             validate_database_connection(
@@ -165,6 +158,51 @@ impl AppConfig {
                 "生产环境必须修改 auth.jwt_secret，不允许使用默认值".into(),
             ));
         }
+        let access_ttl =
+            parse_duration_seconds("auth.access_token_expire", &self.auth.access_token_expire)?;
+        let refresh_ttl =
+            parse_duration_seconds("auth.refresh_token_expire", &self.auth.refresh_token_expire)?;
+        if access_ttl == 0 || refresh_ttl == 0 {
+            return Err(AppError::Config(
+                "auth token expiry durations must be greater than zero".into(),
+            ));
+        }
+        if refresh_ttl > 7 * 24 * 60 * 60 {
+            return Err(AppError::Config(
+                "auth.refresh_token_expire cannot exceed the 7-day absolute session limit".into(),
+            ));
+        }
+        if env == "prod"
+            && !self
+                .redis
+                .as_ref()
+                .is_some_and(|redis| redis.mode == RedisMode::Required)
+        {
+            return Err(AppError::Config(
+                "production requires redis.mode = \"required\"".into(),
+            ));
+        }
+        if env == "prod" && self.cors.allow_origins.is_empty() {
+            return Err(AppError::Config(
+                "production requires at least one explicit CORS origin".into(),
+            ));
+        }
+        for origin in &self.cors.allow_origins {
+            validate_origin(origin, env == "prod")?;
+        }
+        ryframe_common::utils::ip::TrustedProxySet::new(&self.proxy.trusted_cidrs)
+            .map_err(AppError::Config)?;
+        if self.upload.avatar_max_bytes == 0
+            || self.upload.file_max_bytes == 0
+            || self.upload.avatar_max_bytes > self.upload.file_max_bytes
+            || self.upload.multipart_envelope_bytes == 0
+            || self.upload.api_timeout_seconds == 0
+            || self.upload.upload_timeout_seconds < self.upload.api_timeout_seconds
+        {
+            return Err(AppError::Config(
+                "invalid upload limits or timeout configuration".into(),
+            ));
+        }
         match self.object_storage.backend {
             crate::StorageBackend::Local => {
                 if self.object_storage.local_base_dir.trim().is_empty() {
@@ -191,25 +229,78 @@ impl AppConfig {
     }
 }
 
-fn validate_database_connection(path: &str, connection: &crate::DbConnection) -> AppResult<()> {
-    if !matches!(connection.driver.as_str(), "mysql" | "postgres" | "sqlite") {
+fn parse_duration_seconds(path: &str, raw: &str) -> AppResult<u64> {
+    let value = raw.trim();
+    let (number, multiplier) = if let Some(hours) = value.strip_suffix('h') {
+        (hours.trim(), 60_u64 * 60)
+    } else if let Some(minutes) = value.strip_suffix('m') {
+        (minutes.trim(), 60)
+    } else if let Some(seconds) = value.strip_suffix('s') {
+        (seconds.trim(), 1)
+    } else {
+        (value, 1)
+    };
+    number
+        .parse::<u64>()
+        .ok()
+        .and_then(|duration| duration.checked_mul(multiplier))
+        .ok_or_else(|| AppError::Config(format!("{path} is not a valid duration: {raw}")))
+}
+
+fn reject_removed_database_fields(table: &toml::Table) -> AppResult<()> {
+    let Some(database) = table.get("database") else {
+        return Ok(());
+    };
+    if contains_key(database, "driver") {
+        return Err(AppError::Config(
+            "database.driver was removed in v0.5; RyFrame supports MySQL only".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn contains_key(value: &toml::Value, rejected: &str) -> bool {
+    match value {
+        toml::Value::Table(table) => {
+            table.contains_key(rejected)
+                || table.values().any(|value| contains_key(value, rejected))
+        }
+        toml::Value::Array(values) => values.iter().any(|value| contains_key(value, rejected)),
+        _ => false,
+    }
+}
+
+fn validate_origin(origin: &str, production: bool) -> AppResult<()> {
+    let (scheme, authority) = origin
+        .split_once("://")
+        .ok_or_else(|| AppError::Config(format!("invalid CORS origin: {origin}")))?;
+    if !matches!(scheme, "http" | "https")
+        || authority.is_empty()
+        || authority.contains('/')
+        || authority.contains('*')
+        || authority.chars().any(char::is_whitespace)
+        || (production && scheme != "https")
+    {
         return Err(AppError::Config(format!(
-            "{path}.driver 必须是 mysql、postgres 或 sqlite"
+            "CORS origin must be a complete{} origin without path or wildcard: {origin}",
+            if production { " HTTPS" } else { "" }
         )));
     }
+    Ok(())
+}
+
+fn validate_database_connection(path: &str, connection: &crate::DbConnection) -> AppResult<()> {
     if connection.database.trim().is_empty() {
         return Err(AppError::Config(format!("{path}.database 不能为空")));
     }
-    if connection.driver != "sqlite" {
-        if connection.host.trim().is_empty() {
-            return Err(AppError::Config(format!("{path}.host 不能为空")));
-        }
-        if connection.port == 0 {
-            return Err(AppError::Config(format!("{path}.port 必须大于 0")));
-        }
-        if connection.username.trim().is_empty() {
-            return Err(AppError::Config(format!("{path}.username 不能为空")));
-        }
+    if connection.host.trim().is_empty() {
+        return Err(AppError::Config(format!("{path}.host 不能为空")));
+    }
+    if connection.port == 0 {
+        return Err(AppError::Config(format!("{path}.port 必须大于 0")));
+    }
+    if connection.username.trim().is_empty() {
+        return Err(AppError::Config(format!("{path}.username 不能为空")));
     }
     if connection.max_connections == 0 {
         return Err(AppError::Config(format!(
@@ -229,6 +320,20 @@ fn validate_database_connection(path: &str, connection: &crate::DbConnection) ->
     Ok(())
 }
 
+fn normalize_environment(value: &str) -> AppResult<String> {
+    let normalized = match value.trim().to_ascii_lowercase().as_str() {
+        "dev" | "development" => "dev",
+        "test" | "testing" => "test",
+        "prod" | "production" => "prod",
+        other => {
+            return Err(AppError::Config(format!(
+                "APP_ENV 必须是 dev、test 或 prod，当前值: {other}"
+            )));
+        }
+    };
+    Ok(normalized.to_string())
+}
+
 fn load_merged_table(config_dir: &str, env: &str) -> AppResult<toml::Table> {
     // 第一层：加载默认配置为 TOML Table
     let base_path = format!("{}/app.toml", config_dir);
@@ -239,10 +344,19 @@ fn load_merged_table(config_dir: &str, env: &str) -> AppResult<toml::Table> {
 
     // 第二层：加载环境配置文件，merge 到 base table
     let env_path = format!("{}/app.{}.toml", config_dir, env);
-    if let Ok(env_toml) = std::fs::read_to_string(&env_path) {
-        let env_table: toml::Table = toml::from_str(&env_toml)
-            .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", env_path, e)))?;
-        merge_tables(&mut table, &env_table);
+    match std::fs::read_to_string(&env_path) {
+        Ok(env_toml) => {
+            let env_table: toml::Table = toml::from_str(&env_toml)
+                .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", env_path, e)))?;
+            merge_tables(&mut table, &env_table);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && env != "prod" => {}
+        Err(error) => {
+            return Err(AppError::Config(format!(
+                "无法读取环境配置 {}: {}",
+                env_path, error
+            )));
+        }
     }
 
     Ok(table)
@@ -300,11 +414,6 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride {
         name: "APP_DATABASE_SQL_LOG_LEVEL",
         path: &["database", "sql_log_level"],
-        value_type: EnvValueType::String,
-    },
-    EnvOverride {
-        name: "APP_DATABASE_DRIVER",
-        path: &["database", "primary", "driver"],
         value_type: EnvValueType::String,
     },
     EnvOverride {
@@ -403,6 +512,11 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
         value_type: EnvValueType::Integer,
     },
     EnvOverride {
+        name: "APP_REDIS_MODE",
+        path: &["redis", "mode"],
+        value_type: EnvValueType::String,
+    },
+    EnvOverride {
         name: "APP_REDIS_HOST",
         path: &["redis", "host"],
         value_type: EnvValueType::String,
@@ -453,6 +567,36 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
         value_type: EnvValueType::StringArray,
     },
     EnvOverride {
+        name: "APP_PROXY_TRUSTED_CIDRS",
+        path: &["proxy", "trusted_cidrs"],
+        value_type: EnvValueType::StringArray,
+    },
+    EnvOverride {
+        name: "APP_UPLOAD_FILE_MAX_BYTES",
+        path: &["upload", "file_max_bytes"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_UPLOAD_AVATAR_MAX_BYTES",
+        path: &["upload", "avatar_max_bytes"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_UPLOAD_MULTIPART_ENVELOPE_BYTES",
+        path: &["upload", "multipart_envelope_bytes"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_UPLOAD_TIMEOUT_SECONDS",
+        path: &["upload", "upload_timeout_seconds"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
+        name: "APP_UPLOAD_API_TIMEOUT_SECONDS",
+        path: &["upload", "api_timeout_seconds"],
+        value_type: EnvValueType::Integer,
+    },
+    EnvOverride {
         name: "APP_RATE_LIMIT_ENABLED",
         path: &["rate_limit", "enabled"],
         value_type: EnvValueType::Bool,
@@ -500,11 +644,6 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride {
         name: "APP_OBJECT_STORAGE_LOCAL_BASE_DIR",
         path: &["object_storage", "local_base_dir"],
-        value_type: EnvValueType::String,
-    },
-    EnvOverride {
-        name: "APP_OBJECT_STORAGE_PUBLIC_BASE_URL",
-        path: &["object_storage", "public_base_url"],
         value_type: EnvValueType::String,
     },
     EnvOverride {

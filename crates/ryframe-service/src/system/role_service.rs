@@ -2,7 +2,6 @@ use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
-    cache::clear_user_permission_cache,
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::DatabaseCluster;
@@ -57,17 +56,15 @@ pub struct RoleService {
     role_repo: LoggedRepo<RoleRepository>,
     perm_repo: LoggedRepo<PermissionRepository>,
     dept_repo: LoggedRepo<DeptRepository>,
-    redis: Option<RedisClient>,
 }
 
 impl RoleService {
-    pub fn new(db: DatabaseCluster, redis: Option<RedisClient>) -> Self {
+    pub fn new(db: DatabaseCluster, _redis: Option<RedisClient>) -> Self {
         Self {
             db,
             role_repo: LoggedRepo::new(RoleRepository),
             perm_repo: LoggedRepo::new(PermissionRepository),
             dept_repo: LoggedRepo::new(DeptRepository),
-            redis,
         }
     }
 
@@ -77,22 +74,6 @@ impl RoleService {
         } else {
             Err(AppError::Validation("无效的数据范围值".into()))
         }
-    }
-
-    async fn invalidate_role_users(&self, tenant_id: &str, role_id: i64) -> AppResult<()> {
-        let db = self.db.write();
-        let user_ids = self
-            .role_repo
-            .find_user_ids_by_role_ids(db, tenant_id, &[role_id])
-            .await?;
-        if let Some(redis) = &self.redis {
-            for user_id in user_ids {
-                if let Err(error) = clear_user_permission_cache(redis, tenant_id, user_id).await {
-                    tracing::warn!(role_id, user_id, %error, "failed to clear role user permission cache");
-                }
-            }
-        }
-        Ok(())
     }
 
     pub async fn get_role_model(&self, actor: &ActorContext, id: i64) -> AppResult<role::Model> {
@@ -138,9 +119,6 @@ impl RoleService {
             self.get_role_model(actor, *id).await?;
         }
         let affected = self.role_repo.delete_many(db, tenant_id, ids).await?;
-        for role_id in ids {
-            self.invalidate_role_users(tenant_id, *role_id).await?;
-        }
         Ok(affected)
     }
 
@@ -237,7 +215,6 @@ impl RoleService {
         role.fill_on_update(&FillContext::new());
 
         let saved = self.role_repo.update(db, tenant_id, role).await?;
-        self.invalidate_role_users(tenant_id, id).await?;
         Ok(RoleVo::from(saved))
     }
 
@@ -246,7 +223,7 @@ impl RoleService {
         let db = self.db.write();
         self.get_role_model(actor, id).await?;
         self.role_repo.delete(db, tenant_id, id).await?;
-        self.invalidate_role_users(tenant_id, id).await
+        Ok(())
     }
 
     pub async fn assign_permissions(
@@ -267,7 +244,7 @@ impl RoleService {
         self.perm_repo
             .assign_perms(db, tenant_id, role_id, &perm_ids)
             .await?;
-        self.invalidate_role_users(tenant_id, role_id).await
+        Ok(())
     }
 
     /// Return all enabled API permission codes assigned to one role.
@@ -336,6 +313,6 @@ impl RoleService {
         self.role_repo
             .replace_data_scope(db, tenant_id, role_id, data_scope, &unique_dept_ids)
             .await?;
-        self.invalidate_role_users(tenant_id, role_id).await
+        Ok(())
     }
 }

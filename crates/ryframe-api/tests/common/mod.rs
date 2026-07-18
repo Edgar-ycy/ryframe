@@ -5,6 +5,11 @@
 
 use std::sync::Arc;
 
+#[path = "../../../ryframe-db/tests/common/test_database.rs"]
+mod test_database;
+
+pub use test_database::TestDatabase;
+
 use axum::{
     body::Body,
     extract::ConnectInfo,
@@ -28,26 +33,22 @@ use ryframe_service::{
         PermissionService, PostService, ProfileService, RoleService, TenantService, UserService,
     },
 };
-use sea_orm::{
-    ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, EntityTrait, Schema,
-};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, EntityTrait, Schema};
 use std::net::SocketAddr;
 use tower::ServiceExt;
 
 // ==================== 数据库 ====================
 
-/// 创建 SQLite 内存数据库并建表
-pub async fn setup_test_db() -> DatabaseConnection {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败");
+/// 创建隔离的 MySQL 8.4 测试数据库并建表。
+pub async fn setup_test_db() -> TestDatabase {
+    let db = TestDatabase::create("api").await;
     create_all_tables(&db).await;
     db
 }
 
 /// 为所有测试用到的实体创建表
 async fn create_all_tables(db: &DatabaseConnection) {
-    let backend = DatabaseBackend::Sqlite;
+    let backend = DatabaseBackend::MySql;
     let schema = Schema::new(backend);
 
     macro_rules! create {
@@ -57,6 +58,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
         };
     }
 
+    create!(ryframe_db::entities::tenant::Entity);
     create!(ryframe_db::entities::dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);
     create!(ryframe_db::entities::dict_data::Entity);
@@ -74,7 +76,6 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::sys_file::Entity);
-    create!(ryframe_db::entities::tenant::Entity);
 }
 
 /// 填充测试数据：管理员 + 部门 + 角色
@@ -253,8 +254,7 @@ pub fn test_config() -> AppConfig {
         },
         database: DatabaseConfig {
             primary: DbConnection {
-                driver: "sqlite".into(),
-                database: ":memory:".into(),
+                database: "ryframe_api_test".into(),
                 max_connections: 5,
                 ..Default::default()
             },
@@ -273,6 +273,8 @@ pub fn test_config() -> AppConfig {
         rate_limit: RateLimitConfig::default(),
         cors: Default::default(),
         object_storage: Default::default(),
+        proxy: Default::default(),
+        upload: Default::default(),
     }
 }
 
@@ -281,6 +283,7 @@ pub fn test_rate_limit_state() -> RateLimitState {
     RateLimitState {
         limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
         config: Arc::new(RateLimitConfig::default()),
+        trusted_proxies: Default::default(),
     }
 }
 
@@ -297,6 +300,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
         auth: ryframe_auth::middleware::AuthState {
             config: config_arc.clone(),
             blacklist: token_blacklist.clone(),
+            refresh_sessions: auth_service.refresh_sessions(),
             principal_resolver: auth_service.clone(),
         },
         monitor: ryframe_monitor::MonitorState {
@@ -326,7 +330,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
             profile: Arc::new(ProfileService::new(database.clone())),
             file: Arc::new(FileService::new(
                 database,
-                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads", "")),
+                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
             )),
             online_user: Arc::new(OnlineUserService::new_in_memory()),
             captcha: CaptchaStore::new_in_memory(300),
@@ -334,6 +338,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
         redis: None,
         token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
+        trusted_proxies: Default::default(),
         runtime: RuntimeComponents::new(None),
     }
 }
@@ -345,6 +350,7 @@ pub async fn send_request(
     app: axum::Router,
     mut req: Request<Body>,
 ) -> (StatusCode, serde_json::Value) {
+    inject_unbound_csrf(&mut req);
     // Axum 0.8: oneshot() 不自动注入 ConnectInfo，需手动 mock
     req.extensions_mut()
         .insert(ConnectInfo("127.0.0.1:8080".parse::<SocketAddr>().unwrap()));
@@ -353,6 +359,45 @@ pub async fn send_request(
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
     (status, json)
+}
+
+pub async fn send_request_with_headers(
+    app: axum::Router,
+    mut req: Request<Body>,
+) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+    inject_unbound_csrf(&mut req);
+    req.extensions_mut()
+        .insert(ConnectInfo("127.0.0.1:8080".parse::<SocketAddr>().unwrap()));
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&body).unwrap_or_default();
+    (status, headers, json)
+}
+
+fn inject_unbound_csrf(req: &mut Request<Body>) {
+    if req.uri().path() != "/auth/login" || req.headers().contains_key("x-csrf-token") {
+        return;
+    }
+    let token =
+        ryframe_auth::jwt::encode_csrf("test-jwt-secret-for-integration-tests", None, 300).unwrap();
+    req.headers_mut()
+        .insert("x-csrf-token", token.parse().unwrap());
+    req.headers_mut().insert(
+        axum::http::header::COOKIE,
+        format!("ryframe_csrf={token}").parse().unwrap(),
+    );
+}
+
+pub fn response_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .filter_map(|value| value.split_once('='))
+        .find_map(|(key, value)| (key == name).then(|| value.to_owned()))
 }
 
 /// 登录并返回 access_token

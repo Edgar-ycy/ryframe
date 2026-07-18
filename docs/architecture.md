@@ -1,18 +1,18 @@
 # RyFrame 后端架构与演进指南
 
-> 最后核对：2026-07-17
+> 最后核对：2026-07-18
 > 适用范围：后端仓库 `ryframe` 与独立前端仓库 `ryframe-vue3`
 
 本文档只描述当前代码事实和已经确认的演进方向。接口细节以运行时 OpenAPI 文档为准，不在 Markdown 中维护第二份完整契约。
 
 ## 1. 仓库与交付边界
 
-RyFrame 采用前后端独立 Git、独立 CI、独立版本和独立发布：
+RyFrame 采用前后端独立 Git 和独立 CI，但稳定版使用同一版本号、同一 Git tag 和同一发布窗口：
 
 | 仓库 | 职责 | 主要产物 |
 | --- | --- | --- |
-| `ryframe` | Rust 服务、数据库迁移、OpenAPI、部署配置 | 服务二进制、容器镜像、OpenAPI 文档 |
-| `ryframe-vue3` | Vue 3 管理端 | 静态前端资源 |
+| `ryframe` | Rust 服务、数据库迁移、OpenAPI、部署配置和联合发布门禁 | 服务二进制、OCI 镜像、OpenAPI、SBOM 与校验和 |
+| `ryframe-vue3` | Vue 3 管理端 | 经同标签验证的静态前端资源 |
 
 本地开发工作区固定将独立前端仓库检出到后端的 `ryframe-vue3/` 目录，后端通过 `/ryframe-vue3/` 忽略该嵌套仓库：
 
@@ -55,10 +55,10 @@ GET /api/v1/api-docs/openapi.json
 
 `crates/ryframe` 是唯一组合根，启动顺序为：
 
-1. 加载并校验 `AppConfig`。
+1. 加载配置，解密敏感字段，再严格校验环境、密钥、数据库和依赖模式；运行中不重新加载配置。
 2. 初始化日志和遥测。
 3. 连接主库、全部只读副本和命名业务数据源，在主库执行迁移，并只校验主库与同结构副本的系统表结构。
-4. 初始化 Redis、Token 黑名单、限流器、对象存储和熔断器；对象存储必须完成连接、凭据以及 `uploads`/`avatar` bucket 检查。
+4. 初始化 Redis、refresh family、撤销状态、限流器、对象存储和熔断器；生产 Redis 为 required，任何不可用都会阻止启动或令 readiness 失败，对象存储必须完成连接、凭据以及 `uploads`/`avatar` bucket 检查。
 5. 在 `boot/services.rs` 构造 Service。
 6. 在 `boot/app_state.rs` 聚合运行时依赖。
 7. 组装 `/api/v1` 路由、中间件和优雅停机。
@@ -69,11 +69,11 @@ GET /api/v1/api-docs/openapi.json
 
 ```mermaid
 flowchart LR
-    A["HTTP 请求"] --> B["请求 ID、CORS、遥测"]
+    A["HTTP 请求"] --> B["可信代理 IP、请求 ID、CORS、遥测"]
     B --> C["请求租户上下文"]
-    C --> D["JWT、租户、用户和会话版本校验"]
+    C --> D["JWT、sid、租户、用户和会话版本校验"]
     D --> E["RequestPrincipal"]
-    E --> F["租户限流、权限、操作日志"]
+    E --> F["主体限流、作用域幂等、权限、操作日志"]
     F --> G["Handler"]
     G --> H["Service"]
     H --> I["Repository / SeaORM"]
@@ -89,7 +89,7 @@ flowchart LR
 
 - 应用配置一个唯一写主库 `[database.primary]`，以及零到多个命名只读副本 `[[database.replicas]]`。
 - `[[database.sources]]` 表达按名称显式访问的业务数据库；本机 `ryframe_device` 由代码生成器消费，不参与系统查询路由。
-- 同一主库/副本拓扑的驱动和结构必须一致；业务数据源可以使用不同结构和驱动。
+- 主库、副本和命名业务数据源全部使用 MySQL；业务数据源可以有独立结构，但不参与系统查询路由。
 - 命令、事务、认证授权、配额/唯一性校验和其他一致性敏感读取固定使用主库；普通查询从副本轮询，未配置副本时回退主库。
 - 已配置副本连接或结构校验失败会阻止启动，不会静默缩减拓扑；运行时状态会报告每个节点，查询失败也不会隐式转发主库。
 - 已配置业务数据源连接失败同样阻止启动，但应用不会对其执行主库迁移或系统表校验。
@@ -121,7 +121,7 @@ flowchart LR
 11. 数据库集群已在组合根注入 Service，公开/内部用例方法不再逐次接收连接，由用例通过 `read()`/`write()`表达一致性意图。
 12. 文件服务同时持有数据库与对象存储，HTTP 状态不再暴露对象存储实现。
 13. 没有 trait 的 16 个 `*ServiceImpl` 已统一改名为 `*Service`，类型名不再暗示不存在的多实现体系。
-14. 代码生成器按数据库后端读取元数据，SQLite、PostgreSQL 不再走 MySQL 的 `information_schema` 字段。
+14. 代码生成器仅从 MySQL `information_schema` 读取元数据，数据库后端不再是运行时分支。
 15. 分页契约只接受 `page` 和 `page_size`，旧 camelCase 参数会明确失败；未使用的分页提取器已删除。
 16. 用户、登录日志、操作日志和文件上传改为命名 Command/Query，生产 Rust 源码不再使用 `allow` 压制 lint。
 17. 监控 OpenAPI 注解已移动到真实 Handler，删除文档专用空函数；限流器实现策略保持私有。
@@ -141,7 +141,7 @@ flowchart LR
 31. 用户资料、角色和状态写入职责已分离为资源根、`/{id}/roles` 和 `/{id}/status`；创建用户可在同一事务内写入角色，Repository 的角色整体替换也统一为原子操作。
 32. 权限类型改为后端枚举和前端联合类型；角色、菜单、权限和用户页面已拆出领域 composable、表单对话框与纯转换函数，确认取消不再吞掉真实请求错误。
 33. `ryframe-auth` 通过 `PrincipalResolver` 委托 `AuthService` 解析租户、用户、角色、权限和数据范围；`ryframe-monitor` 通过 `DatabaseMonitor` 使用 `ryframe-db` 的 SeaORM 适配器。两个横切 crate 已移除 `ryframe-db`、SeaORM 和裸数据库连接依赖，并由架构门禁防止回流。
-34. `AuthService` 已拆为会话签发、身份与授权装载、主体解析和暴力破解防护模块；登录、刷新、当前用户和请求主体共享身份/授权规则，仅通过显式参数选择是否读取权限缓存。
+34. `AuthService` 已拆为会话签发、身份与授权装载、主体解析和暴力破解防护模块；登录、刷新、当前用户和请求主体共享身份/授权规则。请求授权每次从 MySQL 解析，不使用 Redis 权限缓存，避免缓存删除失败形成旧权限窗口。
 35. 路由权限目录由 `ryframe-api/build.rs` 在编译期使用 `syn` 解析并嵌入二进制，覆盖 API 与监控路由；权限 Service 只同步显式传入的目录，不再依赖源码路径或部署环境中的 Rust 文件。
 36. Redis 模式匹配统一使用游标 `SCAN` 和批量删除，不暴露阻塞式 `KEYS`；一次性数据通过 Lua 原子取删，缓存写失败必须记录上下文。
 37. 菜单按模型与层级校验拆分并使用 `MenuType` 强类型，`route_key` 规范化后再校验和持久化；部门按 command/query/model 拆分，部门引用关系由 Repository 查询。
@@ -154,7 +154,12 @@ flowchart LR
 44. 新密码规则集中在 `ryframe-auth::password`，个人修改、重置完成和租户管理员创建共用同一校验；OpenAPI 通过 `x-ryframe-password-policy` 发布规则，前端生成运行时验证配置而不再复制正则。
 45. 个人修改密码与密码重置都会原子递增 `auth_version`，旧 access/refresh token 随即失效；弱密码校验发生在写事务前，不会消耗重置请求或创建半成品租户。
 46. CI 在 MySQL 8.4、Redis 7 与固定版本 RustFS 容器上重置真实数据库、启动服务并执行 API 冒烟脚本；旧路径、缺失租户头、OpenAPI 扩展缺失和运行日志 warning/error 都会使 job 失败。
-47. CI 创建真实 `ryframe_device`，强制执行外部 MySQL 数据源测试，并验证代码生成器只从该命名数据源读取表结构；运行时冒烟同时验证 RustFS 上传/下载。独立 SQLite 测试继续证明副本轮询、主库写入和无副本回退。
+47. CI 在 MySQL 8.4 中为测试上下文创建隔离数据库，强制执行副本轮询、主库写入、命名数据源、迁移和代码生成器测试；运行时冒烟同时验证 Redis 与 RustFS。
+48. 配置收敛为静态启动配置，环境名统一为 `dev/test/prod`；敏感字段先解密再校验，生产默认密钥、缺失配置和未知字段都会拒绝启动。
+49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过 Lua CAS 轮换和检测重放。
+50. 根路径 `/livez` 只检查进程，`/readyz` 检查 MySQL、required Redis 和必要对象存储；探针绕过租户、认证、幂等和业务限流。
+51. 幂等只应用于认证后的 system/platform 写请求，键绑定租户、用户、方法、规范路径和 body；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
+52. 稳定发布验证标签位于 `main`、前后端同标签同版本，并要求同一 RC commit 的 GitHub Deployment 提供连续至少 48 小时的可审计观察记录，再经过启用防止自审的 `stable-release` required-reviewer 审批；管理员绕过必须在仓库设置中关闭并由审计日志复核。发布物包含后端二进制与运维工具、OCI、前端 dist、观察证明快照、CycloneDX SBOM 和 SHA-256 清单。
 
 ## 4. 后续优先级
 
@@ -235,17 +240,12 @@ cargo test --workspace
 
 ```bash
 cd ryframe-vue3
-pnpm check:sources
-pnpm lint
-pnpm lint:styles
-pnpm typecheck
-pnpm test:coverage
-pnpm build
+pnpm check
 ```
 
 前端虽保留独立 Git 历史，但本地工作区固定为 `ryframe-vue3/`。所有 `pnpm` 命令必须以该目录为工作目录；后端根目录出现 `.pnpm-store` 会被源码门禁判定为错误。
 
-门禁当前锁定：UTF-8/乱码、非外部依赖的忽略测试、ignored doctest、legacy API 字段、Rust lint `allow`、workspace 依赖基线、Handler 数据库/Redis 访问和内存分页、认证和监控数据库实现依赖、权限目录运行时源码扫描、阻塞式 Redis `KEYS`、非原子一次性读取、分离式缓存失效、公开 Service 数据库参数、Service 反向依赖和公开 Repository、主库/副本配置与读写路由、RustFS 启动及 CI 冒烟覆盖、路由宏、兼容别名、OpenAPI 注册完整性、Query DTO 与提取器一致性、全量操作禁止分页参数、规范快照导出、请求/响应 schema、默认 `route_key` 集合以及统一密码策略。每完成一个架构阶段，应把新边界加入脚本，避免回退。
+门禁当前锁定：UTF-8/乱码、非外部依赖的忽略测试、ignored doctest、legacy API 字段、Rust lint `allow`、MySQL-only 依赖、静态配置、Handler 数据库/Redis 访问和内存分页、认证和监控数据库实现依赖、权限目录运行时源码扫描、阻塞式 Redis `KEYS`、非原子一次性读取、分离式缓存失效、公开 Service 数据库参数、Service 反向依赖和公开 Repository、主库/副本配置与读写路由、RustFS 启动及 CI 冒烟覆盖、路由宏、兼容别名、OpenAPI 注册完整性、Query DTO 与提取器一致性、全量操作禁止分页参数、规范快照导出、请求/响应 schema、Cookie/CSRF 会话契约、默认 `route_key` 集合、统一密码策略以及前端 bundle/覆盖率预算。每完成一个架构阶段，应把新边界加入脚本，避免回退。
 
 ## 7. 完成标准
 
@@ -257,5 +257,5 @@ pnpm build
 - 数据库写入和一致性读取只走主库，普通查询只通过集群读取策略选择节点。
 - 租户、操作者、权限和数据范围来源唯一且可测试。
 - OpenAPI 是前后端唯一契约来源，并有兼容性门禁。
-- 前后端可以独立构建、测试、发布，CI 全程零警告。
+- 前后端可以独立构建和测试，但稳定版必须通过同标签、同版本和同契约的联合发布门禁，CI 全程零警告。
 - 新增一个标准 CRUD 模块不需要复制基础设施装配、旧路径或重复类型定义。

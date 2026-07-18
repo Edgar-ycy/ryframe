@@ -1,6 +1,26 @@
 use std::{sync::Arc, time::Duration};
 
+use ryframe_config::{RedisConfig, RedisMode};
+use ryframe_core::RedisClient;
 use ryframe_middleware::rate_limit::RateLimiter;
+
+async fn docker_redis() -> RedisClient {
+    let port = std::env::var("RYFRAME_TEST_REDIS_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(16379);
+    RedisClient::connect(&RedisConfig {
+        mode: RedisMode::Required,
+        host: "127.0.0.1".into(),
+        port,
+        timeout_secs: 2,
+        ..RedisConfig::default()
+    })
+    .await
+    .expect(
+        "connect Redis test service; run `docker compose -f docker-compose.test.yml up -d --wait`",
+    )
+}
 
 #[tokio::test]
 async fn test_rate_limiter() {
@@ -17,12 +37,14 @@ async fn test_rate_limiter() {
     assert!(!limiter2.try_acquire("a").await);
     assert!(limiter2.try_acquire("b").await);
 
-    // 令牌补充
+    // 固定窗口在窗口结束前不会补充容量。
     let limiter3 = RateLimiter::new_in_memory(2, 100);
     assert!(limiter3.try_acquire("test").await);
     assert!(limiter3.try_acquire("test").await);
     assert!(!limiter3.try_acquire("test").await);
     tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!limiter3.try_acquire("test").await);
+    tokio::time::sleep(Duration::from_millis(1_050)).await;
     assert!(limiter3.try_acquire("test").await);
 }
 
@@ -81,4 +103,29 @@ async fn test_available_tokens() {
     assert_eq!(limiter.available_tokens("tok"), 5.0);
     limiter.try_acquire("tok").await;
     assert!(limiter.available_tokens("tok") < 5.0);
+}
+
+#[tokio::test]
+async fn redis_and_memory_fixed_windows_apply_the_same_rule() {
+    let redis = RateLimiter::new_redis(docker_redis().await, 100, 60);
+    let memory = RateLimiter::new_in_memory(100, 0);
+    let key = format!(
+        "parity-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
+
+    for attempt in 1..=6 {
+        let memory_decision = memory.acquire(&key, 1, 5).await.unwrap();
+        let redis_decision = redis.acquire(&key, 1, 5).await.unwrap();
+        assert_eq!(memory_decision.allowed, attempt <= 5);
+        assert_eq!(redis_decision.allowed, memory_decision.allowed);
+        if !redis_decision.allowed {
+            assert!(redis_decision.retry_after_secs >= 1);
+        }
+    }
+
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    assert!(memory.acquire(&key, 1, 5).await.unwrap().allowed);
+    assert!(redis.acquire(&key, 1, 5).await.unwrap().allowed);
 }

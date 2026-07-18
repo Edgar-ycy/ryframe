@@ -515,11 +515,11 @@ mod tests {
     #[test]
     fn tenant_exclusions_distinguish_exact_paths_and_prefixes() {
         let config = TenantConfig::default()
-            .with_excluded_paths(["/health"])
+            .with_excluded_paths(["/livez"])
             .with_excluded_path_prefixes(["/docs/"]);
 
-        assert!(config.excludes("/health"));
-        assert!(!config.excludes("/health/details"));
+        assert!(config.excludes("/livez"));
+        assert!(!config.excludes("/livez/details"));
         assert!(config.excludes("/docs/index.html"));
         assert!(!config.excludes("/doc/index.html"));
     }

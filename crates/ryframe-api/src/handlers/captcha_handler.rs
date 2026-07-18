@@ -9,7 +9,10 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ryframe_common::{
     ApiResponse, AppError, AppResult,
-    utils::captcha::{CaptchaType, generate_captcha},
+    utils::{
+        captcha::{CaptchaType, generate_captcha},
+        ip::ClientIp,
+    },
 };
 use ryframe_macro::{get, post, route};
 use serde::{Deserialize, Serialize};
@@ -87,19 +90,19 @@ pub fn captcha_router() -> Router<AppState> {
 #[get("/generate")]
 #[utoipa::path(get, path = "/api/v1/auth/captcha/generate", tag = "认证",
     params(CaptchaQuery),
-    responses((status = 200, description = "生成验证码", body = ApiResponse<CaptchaResponse>)))]
+    responses(
+        (status = 200, description = "生成验证码", body = ApiResponse<CaptchaResponse>),
+        (status = 429, description = "验证码请求过于频繁"),
+        (status = 503, description = "验证码 Redis 存储不可用")
+    ))]
 pub async fn generate_captcha_handler(
     State(state): State<AppState>,
+    client_ip: Option<axum::Extension<ClientIp>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(query): Query<CaptchaQuery>,
 ) -> AppResult<Json<ApiResponse<CaptchaResponse>>> {
-    // 验证码生成频率限制（每个 IP 每分钟最多 10 次）
-    let captcha_key = format!("captcha:gen:{}", addr.ip());
-    if !state.rate_limiter.try_acquire(&captcha_key).await {
-        return Err(AppError::Validation(
-            "验证码请求过于频繁，请稍后再试".into(),
-        ));
-    }
+    let ip = client_ip.map_or_else(|| addr.ip(), |axum::Extension(ip)| ip.0);
+    enforce_captcha_limit(&state, &format!("captcha:gen:{ip}"), 10).await?;
 
     let (captcha_id, image_data) = issue_captcha(&state, query.captcha_type).await?;
 
@@ -115,25 +118,28 @@ pub async fn generate_captcha_handler(
 /// 校验验证码
 #[post("/verify")]
 #[utoipa::path(post, path = "/api/v1/auth/captcha/verify", tag = "认证",
-    responses((status = 200, description = "验证码校验结果", body = ApiResponse<CaptchaVerifyResponse>)))]
+    responses(
+        (status = 200, description = "验证码校验结果", body = ApiResponse<CaptchaVerifyResponse>),
+        (status = 429, description = "验证码校验过于频繁"),
+        (status = 503, description = "验证码 Redis 存储不可用")
+    ))]
 pub async fn verify_captcha_handler(
     State(state): State<AppState>,
+    client_ip: Option<axum::Extension<ClientIp>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<CaptchaVerifyRequest>,
 ) -> AppResult<Json<ApiResponse<CaptchaVerifyResponse>>> {
-    // 验证码校验频率限制（每个 IP 每分钟最多 5 次）
-    let verify_key = format!("captcha:verify:{}", addr.ip());
-    if !state.rate_limiter.try_acquire(&verify_key).await {
-        return Err(AppError::Validation(
-            "验证码校验过于频繁，请稍后再试".into(),
-        ));
-    }
+    let ip = client_ip.map_or_else(|| addr.ip(), |axum::Extension(ip)| ip.0);
+    enforce_captcha_limit(&state, &format!("captcha:verify:{ip}"), 5).await?;
 
     let valid = state
         .services
         .captcha
         .verify(&req.captcha_id, &req.code)
-        .await;
+        .await
+        .inspect_err(|_| {
+            ryframe_middleware::metrics::record_redis_degraded("captcha_store");
+        })?;
 
     if valid {
         Ok(Json(ApiResponse::success(CaptchaVerifyResponse {
@@ -178,16 +184,12 @@ pub async fn get_captcha_config_handler(
     responses((status = 200, description = "验证码 PNG 图片", body = Vec<u8>, content_type = "image/png")))]
 pub async fn captcha_image_handler(
     State(state): State<AppState>,
+    client_ip: Option<axum::Extension<ClientIp>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(query): Query<CaptchaQuery>,
 ) -> AppResult<impl IntoResponse> {
-    // 验证码生成频率限制（每个 IP 每分钟最多 10 次）
-    let captcha_key = format!("captcha:gen:{}", addr.ip());
-    if !state.rate_limiter.try_acquire(&captcha_key).await {
-        return Err(AppError::Validation(
-            "验证码请求过于频繁，请稍后再试".into(),
-        ));
-    }
+    let ip = client_ip.map_or_else(|| addr.ip(), |axum::Extension(ip)| ip.0);
+    enforce_captcha_limit(&state, &format!("captcha:gen:{ip}"), 10).await?;
 
     let (captcha_id, image_data) = issue_captcha(&state, query.captcha_type).await?;
 
@@ -216,8 +218,38 @@ async fn issue_captcha(
 ) -> AppResult<(String, Vec<u8>)> {
     let (answer, image_data) = generate_captcha(captcha_kind.into())?.into_parts();
     let captcha_id = Uuid::now_v7().to_string();
-    state.services.captcha.set(captcha_id.clone(), answer).await;
+    state
+        .services
+        .captcha
+        .set(captcha_id.clone(), answer)
+        .await
+        .inspect_err(|_| {
+            ryframe_middleware::metrics::record_redis_degraded("captcha_store");
+        })?;
     Ok((captcha_id, image_data))
+}
+
+async fn enforce_captcha_limit(state: &AppState, key: &str, limit: u32) -> AppResult<()> {
+    if !state.config.rate_limit.enabled {
+        return Ok(());
+    }
+    let decision = state
+        .rate_limiter
+        .acquire(key, 60, limit)
+        .await
+        .map_err(|error| {
+            ryframe_middleware::metrics::record_redis_degraded("captcha_rate_limit");
+            tracing::error!(%error, "captcha rate-limit backend unavailable");
+            AppError::ServiceUnavailable("验证码限流服务暂不可用".into())
+        })?;
+    if decision.allowed {
+        return Ok(());
+    }
+    ryframe_middleware::metrics::record_rate_limit_rejection("captcha_ip");
+    Err(AppError::RateLimited(
+        "验证码请求过于频繁，请稍后再试".into(),
+        decision.retry_after_secs,
+    ))
 }
 
 #[cfg(test)]

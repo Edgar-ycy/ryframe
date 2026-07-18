@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header, header::RETRY_AFTER},
     middleware,
     middleware::{Next, from_fn_with_state},
     response::{Html, IntoResponse, Response},
@@ -11,8 +11,13 @@ use axum::{
 };
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_common::{ApiResponse, AppError, AppResult};
+use ryframe_config::RedisMode;
 use ryframe_macro::{get, route};
-use ryframe_middleware::rate_limit::{RateLimitState, user_rate_limit_middleware};
+use ryframe_middleware::{
+    idempotency::{IdempotencyState, idempotency_middleware},
+    metrics::{record_rate_limit_rejection, record_redis_degraded},
+    rate_limit::{RateLimitState, user_rate_limit_middleware},
+};
 use ryframe_service::system::OnlineUserService;
 use serde::Serialize;
 use serde_json::json;
@@ -32,6 +37,7 @@ use crate::{
 #[derive(Clone)]
 struct AuthenticatedTenantRateLimitState {
     limiter: Arc<ryframe_middleware::RateLimiter>,
+    config: Arc<ryframe_config::RateLimitConfig>,
 }
 
 async fn authenticated_tenant_rate_limit(
@@ -39,6 +45,10 @@ async fn authenticated_tenant_rate_limit(
     request: Request,
     next: Next,
 ) -> Result<Response, Response> {
+    if !state.config.enabled {
+        return Ok(next.run(request).await);
+    }
+
     let principal = request
         .extensions()
         .get::<RequestPrincipal>()
@@ -46,10 +56,22 @@ async fn authenticated_tenant_rate_limit(
     let key = format!("tenant:{}", principal.tenant_id);
     let limit = principal.tenant_request_limit_per_minute.max(1);
 
-    if state.limiter.sliding_window_acquire(&key, 60, limit).await {
-        Ok(next.run(request).await)
-    } else {
-        Err((StatusCode::TOO_MANY_REQUESTS, "租户请求频率超过配额").into_response())
+    match state.limiter.acquire(&key, 60, limit).await {
+        Ok(decision) if decision.allowed => Ok(next.run(request).await),
+        Ok(decision) => {
+            record_rate_limit_rejection("tenant");
+            let mut response =
+                (StatusCode::TOO_MANY_REQUESTS, "租户请求频率超过配额").into_response();
+            if let Ok(value) = HeaderValue::from_str(&decision.retry_after_secs.to_string()) {
+                response.headers_mut().insert(RETRY_AFTER, value);
+            }
+            Err(response)
+        }
+        Err(error) => {
+            record_redis_degraded("tenant_rate_limit");
+            tracing::error!(error = %error, "tenant rate-limit backend unavailable");
+            Err((StatusCode::SERVICE_UNAVAILABLE, "限流服务暂不可用").into_response())
+        }
     }
 }
 
@@ -61,6 +83,7 @@ where
         .layer(from_fn_with_state(
             AuthenticatedTenantRateLimitState {
                 limiter: state.rate_limiter.clone(),
+                config: Arc::new(state.config.rate_limit.clone()),
             },
             authenticated_tenant_rate_limit,
         ))
@@ -70,10 +93,19 @@ where
         ))
 }
 
+async fn auth_no_store(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 /// 在线用户跟踪中间件
 ///
 /// 在 auth_middleware 之后运行（RequestPrincipal 和 Claims 已在 extensions 中）。
-/// 更新用户最后访问时间；若会话被服务重启清除（clear_all_on_startup），自动重新创建。
+/// 更新在线索引的最后访问时间。在线索引不是会话授权来源；若索引丢失，
+/// 只会影响展示，不会根据 access token 重建一个缺少绝对期限的条目。
 async fn online_user_tracking(
     State(online_user_service): State<Arc<OnlineUserService>>,
     request: Request,
@@ -84,38 +116,8 @@ async fn online_user_tracking(
         request.extensions().get::<RequestPrincipal>(),
         request.extensions().get::<Claims>(),
     ) {
-        // 提取客户端 IP
-        let ip = request
-            .headers()
-            .get("x-forwarded-for")
-            .or_else(|| request.headers().get("x-real-ip"))
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        // 提取 User-Agent
-        let user_agent = request
-            .headers()
-            .get("user-agent")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-
-        // 构造会话并确保在线状态（touch + 自动补建）
-        let now = chrono::Utc::now();
         online_user_service
-            .ensure_user(ryframe_service::system::UserSession {
-                token_id: claims.jti.clone(),
-                tenant_id: principal.tenant_id.clone(),
-                user_id: principal.user_id,
-                username: principal.username.clone(),
-                dept_name: None,
-                ipaddr: ip,
-                login_location: None,
-                browser: ryframe_common::utils::user_agent::parse_browser(user_agent),
-                os: ryframe_common::utils::user_agent::parse_os(user_agent),
-                login_time: now,
-                last_access_time: now,
-            })
+            .touch_user(&principal.tenant_id, &claims.sid)
             .await;
     }
     next.run(request).await
@@ -136,24 +138,22 @@ async fn online_user_tracking(
 pub fn auth_router(state: AppState) -> Router {
     let oper_log_state = OperLogMiddlewareState::new_arc(state.services.oper_log.clone());
 
-    // 公开路由（无认证，操作日志记录为 "anonymous"）
+    // Authentication endpoints can carry cookies, CSRF challenges or token data,
+    // so they never enter the generic operation-log middleware.
     let public = Router::new()
+        .route("/csrf", get(auth_handler::csrf))
         .route("/login", post(auth_handler::login))
         .route("/refresh", post(auth_handler::refresh))
+        .route("/logout", post(auth_handler::logout))
         .route(
             "/password-reset/complete",
             post(auth_handler::complete_password_reset),
-        )
-        .layer(from_fn_with_state(
-            oper_log_state.clone(),
-            oper_log_middleware,
-        ));
+        );
 
     // 受保护路由
     // .layer() 从后往前执行：auth（外层先执行）→ oper_log（内层后执行）→ handler
     let protected = protect(
         Router::new()
-            .route("/logout", post(auth_handler::logout))
             .route("/me", get(auth_handler::me))
             .layer(from_fn_with_state(
                 oper_log_state.clone(),
@@ -176,6 +176,7 @@ pub fn auth_router(state: AppState) -> Router {
         .merge(protected)
         .nest("/captcha", captcha_handler::captcha_router())
         .nest("/profile", profile)
+        .layer(middleware::from_fn(auth_no_store))
         .with_state(state)
 }
 
@@ -201,8 +202,13 @@ async fn api_version() -> Json<serde_json::Value> {
 ///
 /// `rate_limit_state` 传递到子路由以启用用户级限流。
 pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
+    let idempotency_state = IdempotencyState::new(state.redis.clone(), 300);
+    idempotency_state.spawn_gc();
     let platform = protect(
-        crate::handlers::tenant_handler::tenant_router(state.clone()),
+        crate::handlers::tenant_handler::tenant_router(state.clone()).layer(from_fn_with_state(
+            idempotency_state.clone(),
+            idempotency_middleware,
+        )),
         &state,
     );
 
@@ -211,7 +217,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .nest("/platform/tenants", platform)
         .nest(
             "/system",
-            system_router(state.clone(), rate_limit_state.clone()),
+            system_router(state.clone(), rate_limit_state.clone(), idempotency_state),
         )
         .nest(
             "/monitor",
@@ -279,7 +285,7 @@ async fn runtime_status(
     Ok(Json(ApiResponse::success(RuntimeStatus {
         database: RuntimeDatabaseStatus {
             connected: database_health.primary_healthy && replicas_connected && sources_connected,
-            driver: state.config.database.primary.driver.clone(),
+            driver: "mysql".into(),
             primary_connected: database_health.primary_healthy,
             replica_count: replicas.len(),
             replicas,
@@ -288,7 +294,11 @@ async fn runtime_status(
             read_policy: read_policy.into(),
         },
         redis: RuntimeRedisStatus {
-            configured: state.config.redis.is_some(),
+            configured: state
+                .config
+                .redis
+                .as_ref()
+                .is_some_and(|config| config.mode != RedisMode::Disabled),
             connected: state.redis.is_some(),
         },
         object_storage: RuntimeStorageStatus {
@@ -362,7 +372,11 @@ struct RuntimeCircuitBreakerStatus {
 ///   3. user_rate_limit_middleware
 ///   4. online_user_tracking
 ///   5. oper_log_middleware
-fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
+fn system_router(
+    state: AppState,
+    rate_limit_state: RateLimitState,
+    idempotency_state: IdempotencyState,
+) -> Router {
     let router = Router::new()
         .nest("/users", user_handler::user_router(state.clone()))
         .nest("/roles", role_handler::role_router(state.clone()))
@@ -392,6 +406,10 @@ fn system_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .layer(from_fn_with_state(
             OperLogMiddlewareState::new_arc(state.services.oper_log.clone()),
             oper_log_middleware,
+        ))
+        .layer(from_fn_with_state(
+            idempotency_state,
+            idempotency_middleware,
         ))
         .layer(from_fn_with_state(
             state.services.online_user.clone(),

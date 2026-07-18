@@ -63,19 +63,12 @@ async fn backfill_super_only_permissions(manager: &SchemaManager<'_>) -> Result<
         ("sys:user:editSelf", "编辑自身角色", "system:user", 7),
         ("sys:role:editSuper", "编辑超级管理员角色", "system:role", 6),
     ];
-    let backend = manager.get_database_backend();
-
     for (code, name, parent_code, sort) in specs {
         let parents = manager
             .get_connection()
             .query_all_raw(Statement::from_sql_and_values(
-                backend,
-                match backend {
-                    DbBackend::Postgres => {
-                        "SELECT tenant_id, id FROM sys_permission WHERE code = $1"
-                    }
-                    _ => "SELECT tenant_id, id FROM sys_permission WHERE code = ?",
-                },
+                DbBackend::MySql,
+                "SELECT tenant_id, id FROM sys_permission WHERE code = ?",
                 [parent_code.into()],
             ))
             .await?;
@@ -134,21 +127,12 @@ async fn backfill_super_only_button_menus(manager: &SchemaManager<'_>) -> Result
         ("sys:user:editSelf", "system.user", 7),
         ("sys:role:editSuper", "system.role", 6),
     ];
-    let backend = manager.get_database_backend();
-
     for (code, route_key, sort) in specs {
         let rows = manager
             .get_connection()
             .query_all_raw(Statement::from_sql_and_values(
-                backend,
-                match backend {
-                    DbBackend::Postgres => {
-                        "SELECT p.id, p.tenant_id, p.name, m.id FROM sys_permission p JOIN sys_menu m ON m.tenant_id = p.tenant_id AND m.route_key = $1 AND m.menu_type = 'C' WHERE p.code = $2"
-                    }
-                    _ => {
-                        "SELECT p.id, p.tenant_id, p.name, m.id FROM sys_permission p JOIN sys_menu m ON m.tenant_id = p.tenant_id AND m.route_key = ? AND m.menu_type = 'C' WHERE p.code = ?"
-                    }
-                },
+                DbBackend::MySql,
+                "SELECT p.id, p.tenant_id, p.name, m.id FROM sys_permission p JOIN sys_menu m ON m.tenant_id = p.tenant_id AND m.route_key = ? AND m.menu_type = 'C' WHERE p.code = ?",
                 [route_key.into(), code.into()],
             ))
             .await?;
@@ -213,17 +197,11 @@ async fn permission_exists(
     tenant_id: &str,
     code: &str,
 ) -> Result<bool, DbErr> {
-    let backend = manager.get_database_backend();
     let row = manager
         .get_connection()
         .query_one_raw(Statement::from_sql_and_values(
-            backend,
-            match backend {
-                DbBackend::Postgres => {
-                    "SELECT COUNT(*) FROM sys_permission WHERE tenant_id = $1 AND code = $2"
-                }
-                _ => "SELECT COUNT(*) FROM sys_permission WHERE tenant_id = ? AND code = ?",
-            },
+            DbBackend::MySql,
+            "SELECT COUNT(*) FROM sys_permission WHERE tenant_id = ? AND code = ?",
             [tenant_id.into(), code.into()],
         ))
         .await?;
@@ -239,17 +217,11 @@ async fn button_menu_exists(
     tenant_id: &str,
     perm_id: i64,
 ) -> Result<bool, DbErr> {
-    let backend = manager.get_database_backend();
     let row = manager
         .get_connection()
         .query_one_raw(Statement::from_sql_and_values(
-            backend,
-            match backend {
-                DbBackend::Postgres => {
-                    "SELECT COUNT(*) FROM sys_menu WHERE tenant_id = $1 AND perm_id = $2 AND menu_type = 'F'"
-                }
-                _ => "SELECT COUNT(*) FROM sys_menu WHERE tenant_id = ? AND perm_id = ? AND menu_type = 'F'",
-            },
+            DbBackend::MySql,
+            "SELECT COUNT(*) FROM sys_menu WHERE tenant_id = ? AND perm_id = ? AND menu_type = 'F'",
             [tenant_id.into(), perm_id.into()],
         ))
         .await?;
@@ -261,9 +233,7 @@ async fn button_menu_exists(
 }
 
 async fn drop_sys_user_role_foreign_keys(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
-    if manager.get_database_backend() != DbBackend::MySql
-        || !manager.has_table("sys_user_role").await?
-    {
+    if !manager.has_table("sys_user_role").await? {
         return Ok(());
     }
 

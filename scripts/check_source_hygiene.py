@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+import tomllib
 from pathlib import Path
 
 
@@ -27,6 +28,22 @@ MOJIBAKE_MARKERS = ("\ufffd", "\u951b", "\u9286", "\u922b")
 ALLOWED_IGNORED_TESTS = {
     ("crates/ryframe-storage/tests/object_storage_test.rs", "test_s3_integration_put_get_delete"),
     ("crates/ryframe-db/tests/named_datasource_mysql_test.rs", "mysql_named_source_is_distinct_and_explicit"),
+    (
+        "crates/ryframe-core/tests/refresh_session_redis_test.rs",
+        "redis_refresh_rotation_cas_semantics",
+    ),
+    (
+        "crates/ryframe-core/tests/refresh_session_redis_test.rs",
+        "redis_refresh_rotation_recovers_after_transient_response_loss",
+    ),
+    (
+        "crates/ryframe-api/tests/integration_test.rs",
+        "force_logout_uses_authoritative_family_and_recovers_after_redis_failure",
+    ),
+    (
+        "crates/ryframe-api/tests/integration_test.rs",
+        "auth_middleware_fails_closed_when_redis_is_unavailable",
+    ),
 }
 IGNORED_TEST_PATTERN = re.compile(
     r'#\[ignore(?:\s*=\s*"[^"]*")?\]\s*'
@@ -52,6 +69,22 @@ LEGACY_API_TERM_ALLOWLIST = {
     "scripts/check_source_hygiene.py",
 }
 VENDORED_SOURCE_PREFIX = "vendor/"
+CURRENT_DOC_NAMES = {"README.md", "CONTRIBUTING.md"}
+LEGACY_DATABASE_DOC_PATTERN = re.compile(r"\b(?:PostgreSQL|SQLite)\b", re.IGNORECASE)
+LEGACY_DATABASE_DRIVER_PATTERN = re.compile(r"^\s*driver\s*=", re.MULTILINE)
+REMOVED_RELOAD_PATTERN = re.compile(
+    r"\b(?:HotConfig|reload_hot|config_watcher)\b|配置热更新|hot[- ]reload",
+    re.IGNORECASE,
+)
+REMOVED_HEALTH_PATTERN = re.compile(r"(?:/api/v1/monitor)?/health\b")
+DATABASE_DRIVER_ENV_PATTERN = re.compile(r"\bAPP_DATABASE_DRIVER\b")
+REMOVED_SQLX_PACKAGES = {"libsqlite3-sys", "sqlx-postgres", "sqlx-sqlite"}
+HEALTH_CONTRACT_PREFIXES = (
+    "crates/ryframe/src/",
+    "crates/ryframe-api/src/",
+    "crates/ryframe-monitor/src/",
+    "openapi/",
+)
 
 
 def source_files() -> list[Path]:
@@ -130,6 +163,49 @@ def main() -> int:
             for test_name in IGNORED_TEST_PATTERN.findall(text):
                 if (relative, test_name) not in ALLOWED_IGNORED_TESTS:
                     errors.append(f"{relative}: ignored test is not allowlisted ({test_name})")
+
+        is_current_doc = relative in CURRENT_DOC_NAMES or relative.startswith("docs/")
+        if is_current_doc and LEGACY_DATABASE_DOC_PATTERN.search(text):
+            errors.append(f"{relative}: current documentation is not MySQL-only")
+        if (
+            (is_current_doc or relative.startswith("config/"))
+            and LEGACY_DATABASE_DRIVER_PATTERN.search(text)
+        ):
+            errors.append(f"{relative}: contains removed database driver configuration")
+        if (
+            relative != "scripts/check_source_hygiene.py"
+            and (is_current_doc or relative.startswith("config/") or "/src/" in relative)
+            and REMOVED_RELOAD_PATTERN.search(text)
+        ):
+            errors.append(f"{relative}: contains removed runtime configuration reload API")
+        if (
+            relative != "scripts/check_source_hygiene.py"
+            and (is_current_doc or relative.startswith("config/") or "/src/" in relative)
+            and DATABASE_DRIVER_ENV_PATTERN.search(text)
+        ):
+            errors.append(f"{relative}: contains removed database driver environment variable")
+        if (
+            (is_current_doc or relative.startswith(HEALTH_CONTRACT_PREFIXES))
+            and REMOVED_HEALTH_PATTERN.search(text)
+        ):
+            errors.append(f"{relative}: contains removed /health contract")
+        if is_first_party and path.name == "Cargo.toml":
+            for feature in ("sqlx-postgres", "sqlx-sqlite"):
+                if feature in text:
+                    errors.append(f"{relative}: contains removed Cargo feature {feature}")
+
+    lock_path = ROOT / "Cargo.lock"
+    try:
+        lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+        locked_packages = {package["name"] for package in lock.get("package", [])}
+        removed = sorted(locked_packages & REMOVED_SQLX_PACKAGES)
+        if removed:
+            errors.append(
+                "Cargo.lock: contains removed database driver packages "
+                + ", ".join(removed)
+            )
+    except (OSError, tomllib.TOMLDecodeError, KeyError) as error:
+        errors.append(f"Cargo.lock: cannot validate dependency hygiene ({error})")
 
     if errors:
         print("Source hygiene check failed:")

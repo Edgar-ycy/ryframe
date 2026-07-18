@@ -4,7 +4,6 @@ use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
-    cache::clear_tenant_permission_cache,
 };
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{PermissionRepository, entities::permission};
@@ -21,15 +20,13 @@ pub use tree::build_perm_tree;
 pub struct PermissionService {
     db: DatabaseCluster,
     perm_repo: LoggedRepo<PermissionRepository>,
-    redis: Option<RedisClient>,
 }
 
 impl PermissionService {
-    pub fn new(db: DatabaseCluster, redis: Option<RedisClient>) -> Self {
+    pub fn new(db: DatabaseCluster, _redis: Option<RedisClient>) -> Self {
         Self {
             db,
             perm_repo: LoggedRepo::new(PermissionRepository),
-            redis,
         }
     }
 
@@ -61,14 +58,6 @@ impl PermissionService {
         self.perm_repo
             .find_role_perm_ids(db, tenant_id, role_id)
             .await
-    }
-
-    async fn invalidate_permission_cache(&self, tenant_id: &str) {
-        if let Some(redis) = &self.redis
-            && let Err(error) = clear_tenant_permission_cache(redis, tenant_id).await
-        {
-            tracing::warn!(%error, "failed to clear tenant permission cache");
-        }
     }
 
     pub async fn list_all_perms(
@@ -132,7 +121,6 @@ impl PermissionService {
         };
         model.fill_on_insert(&FillContext::new());
         let saved = self.perm_repo.insert(db, tenant_id, model).await?;
-        self.invalidate_permission_cache(tenant_id).await;
         Ok(PermissionVo::from(saved))
     }
 
@@ -166,7 +154,6 @@ impl PermissionService {
         model.status = command.status;
         model.fill_on_update(&FillContext::new());
         let saved = self.perm_repo.update(db, tenant_id, model).await?;
-        self.invalidate_permission_cache(tenant_id).await;
         Ok(PermissionVo::from(saved))
     }
 
@@ -179,7 +166,6 @@ impl PermissionService {
             ));
         }
         self.perm_repo.delete(db, tenant_id, id).await?;
-        self.invalidate_permission_cache(tenant_id).await;
         Ok(())
     }
 
@@ -222,10 +208,6 @@ impl PermissionService {
             model.fill_on_insert(&FillContext::new());
             self.perm_repo.insert(db, tenant_id, model).await?;
             created += 1;
-        }
-
-        if created > 0 {
-            self.invalidate_permission_cache(tenant_id).await;
         }
 
         Ok(PermissionSyncReport {

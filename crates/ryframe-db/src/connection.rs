@@ -1,13 +1,13 @@
 use std::{collections::HashSet, time::Duration};
 
 use log::LevelFilter;
-use ryframe_common::{AppError, AppResult, enable_sql_full_log};
+use ryframe_common::{AppError, AppResult};
 use ryframe_config::{DbConnection, SqlLogLevel};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Statement};
 
 /// 根据数据库配置创建连接池
 ///
-/// 支持三种数据库引擎：postgres / mysql / sqlite
+/// RyFrame v0.5 起仅支持 MySQL 8.4。
 pub async fn connect(config: &DbConnection) -> AppResult<DatabaseConnection> {
     connect_with_level(config, SqlLogLevel::Off).await
 }
@@ -28,12 +28,7 @@ pub async fn connect_with_level(
         .connect_timeout(Duration::from_secs(config.connect_timeout_secs));
 
     // 根据配置控制 SQL 日志输出
-    configure_sql_logging(&mut opt, &config.driver, sql_log_level);
-
-    // full 模式：激活结果日志全局标志
-    if sql_log_level == SqlLogLevel::Full {
-        enable_sql_full_log();
-    }
+    configure_sql_logging(&mut opt, sql_log_level);
 
     Database::connect(opt)
         .await
@@ -41,15 +36,10 @@ pub async fn connect_with_level(
 }
 
 /// 根据 SqlLogLevel 配置 sqlx 日志
-fn configure_sql_logging(opt: &mut ConnectOptions, driver: &str, level: SqlLogLevel) {
+fn configure_sql_logging(opt: &mut ConnectOptions, level: SqlLogLevel) {
     match level {
         SqlLogLevel::Off => {
-            // SQLite 保留 INFO 级别用于开发调试
-            if driver == "sqlite" {
-                opt.sqlx_logging_level(LevelFilter::Info);
-            } else {
-                opt.sqlx_logging(false);
-            }
+            opt.sqlx_logging(false);
         }
         SqlLogLevel::Summary | SqlLogLevel::Full => {
             // 启用 sqlx 日志，由 SqlLogLayer 统一格式化
@@ -98,17 +88,10 @@ struct TableRow {
 /// 返回 `Ok(())` 表示所有表都存在，`Err(missing)` 返回缺失的表名列表。
 pub async fn check_tables(db: &DatabaseConnection) -> Result<(), Vec<String>> {
     let backend = db.get_database_backend();
-
-    // 使用 information_schema 查询当前数据库所有表（兼容 MySQL / PostgreSQL）
-    let sql = match backend {
-        sea_orm::DatabaseBackend::MySql => {
-            "SELECT TABLE_NAME AS table_name FROM information_schema.tables WHERE table_schema = DATABASE()"
-        }
-        sea_orm::DatabaseBackend::Postgres => {
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
-        }
-        _ => "SELECT name AS table_name FROM sqlite_master WHERE type = 'table'",
-    };
+    if backend != sea_orm::DatabaseBackend::MySql {
+        return Err(vec!["RyFrame 仅支持 MySQL 数据库连接".into()]);
+    }
+    let sql = "SELECT TABLE_NAME AS table_name FROM information_schema.tables WHERE table_schema = DATABASE()";
 
     let results = TableRow::find_by_statement(Statement::from_sql_and_values(backend, sql, []))
         .all(db)

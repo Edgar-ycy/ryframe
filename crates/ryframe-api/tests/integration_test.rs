@@ -1,16 +1,24 @@
 //! API 集成测试
 //!
-//! 使用 SQLite 内存数据库 + axum test client 测试端到端流程。
+//! 使用隔离 MySQL 8.4 数据库 + axum test client 测试端到端流程。
 
 use std::sync::Arc;
 
+#[path = "../../ryframe-db/tests/common/test_database.rs"]
+mod test_database;
+
+use test_database::TestDatabase;
+
 use axum::{
     body::Body,
-    extract::ConnectInfo,
+    extract::{ConnectInfo, Path, State},
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use ryframe_api::{AppServices, AppState, router::api_router, runtime::RuntimeComponents};
+use ryframe_api::{
+    AppServices, AppState, handlers::online_user_handler, router::api_router,
+    runtime::RuntimeComponents,
+};
 use ryframe_config::{
     AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
 };
@@ -28,22 +36,20 @@ use ryframe_service::{
     },
 };
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, EntityTrait,
-    QueryFilter, Schema,
+    ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection, EntityTrait, QueryFilter,
+    Schema,
 };
 use std::net::SocketAddr;
 use tower::ServiceExt;
 
-/// 创建 SQLite 内存数据库并运行迁移
-async fn setup_test_db() -> DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("连接 SQLite 内存数据库失败")
+/// 创建隔离的 MySQL 8.4 测试数据库。
+async fn setup_test_db() -> TestDatabase {
+    TestDatabase::create("api_full").await
 }
 
 /// 填充测试数据：管理员 + 部门
 async fn create_all_tables(db: &DatabaseConnection) {
-    let backend = DatabaseBackend::Sqlite;
+    let backend = DatabaseBackend::MySql;
     let schema = Schema::new(backend);
 
     macro_rules! create {
@@ -53,6 +59,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
         };
     }
 
+    create!(ryframe_db::entities::tenant::Entity);
     create!(ryframe_db::entities::config::Entity);
     create!(ryframe_db::entities::dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);
@@ -70,7 +77,6 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::sys_file::Entity);
-    create!(ryframe_db::entities::tenant::Entity);
 }
 
 async fn seed_test_data(db: &DatabaseConnection) {
@@ -219,8 +225,7 @@ fn test_config() -> AppConfig {
         },
         database: DatabaseConfig {
             primary: DbConnection {
-                driver: "sqlite".into(),
-                database: ":memory:".into(),
+                database: "ryframe_api_integration".into(),
                 max_connections: 5,
                 ..Default::default()
             },
@@ -239,6 +244,8 @@ fn test_config() -> AppConfig {
         rate_limit: RateLimitConfig::default(),
         cors: Default::default(),
         object_storage: Default::default(),
+        proxy: Default::default(),
+        upload: Default::default(),
     }
 }
 
@@ -246,24 +253,41 @@ fn test_rate_limit_state() -> RateLimitState {
     RateLimitState {
         limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
         config: Arc::new(RateLimitConfig::default()),
+        trusted_proxies: Default::default(),
     }
 }
 
 async fn build_test_app(db: DatabaseConnection) -> AppState {
+    build_test_app_with_redis(db, None).await
+}
+
+async fn build_test_app_with_redis(
+    db: DatabaseConnection,
+    redis: Option<ryframe_core::RedisClient>,
+) -> AppState {
     let config = test_config();
     let config_arc = Arc::new(config.clone());
-    let token_blacklist = ryframe_core::TokenBlacklist::new(None);
+    let token_blacklist = ryframe_core::TokenBlacklist::new(redis.clone());
     let database = DatabaseCluster::single(db.clone());
-    let auth_service = Arc::new(AuthService::new(database.clone(), config_arc.clone(), None));
+    let auth_service = Arc::new(AuthService::new(
+        database.clone(),
+        config_arc.clone(),
+        redis.clone(),
+    ));
+    let online_user = redis
+        .as_ref()
+        .map(|client| OnlineUserService::new_redis(client.clone()))
+        .unwrap_or_default();
     AppState {
         auth: ryframe_auth::middleware::AuthState {
             config: config_arc.clone(),
             blacklist: token_blacklist.clone(),
+            refresh_sessions: auth_service.refresh_sessions(),
             principal_resolver: auth_service.clone(),
         },
         monitor: ryframe_monitor::MonitorState {
             database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database.clone())),
-            redis: None,
+            redis: redis.clone(),
         },
         config: config_arc,
         services: Arc::new(AppServices {
@@ -288,15 +312,16 @@ async fn build_test_app(db: DatabaseConnection) -> AppState {
             profile: Arc::new(ProfileService::new(database.clone())),
             file: Arc::new(FileService::new(
                 database,
-                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads", "")),
+                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
             )),
-            online_user: Arc::new(OnlineUserService::new_in_memory()),
+            online_user: Arc::new(online_user),
             captcha: CaptchaStore::new_in_memory(300),
         }),
-        redis: None,
+        redis: redis.clone(),
         token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
-        runtime: RuntimeComponents::new(None),
+        trusted_proxies: Default::default(),
+        runtime: RuntimeComponents::new(redis),
     }
 }
 
@@ -305,6 +330,7 @@ async fn send_request(
     app: axum::Router,
     mut req: Request<Body>,
 ) -> (StatusCode, serde_json::Value) {
+    inject_unbound_csrf(&mut req);
     // Axum 0.8: oneshot() 不自动注入 ConnectInfo，需手动 mock
     req.extensions_mut()
         .insert(ConnectInfo("127.0.0.1:8080".parse::<SocketAddr>().unwrap()));
@@ -315,12 +341,67 @@ async fn send_request(
     (status, json)
 }
 
+async fn send_request_with_headers(
+    app: axum::Router,
+    mut req: Request<Body>,
+) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+    inject_unbound_csrf(&mut req);
+    req.extensions_mut()
+        .insert(ConnectInfo("127.0.0.1:8080".parse::<SocketAddr>().unwrap()));
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json = serde_json::from_slice(&body).unwrap_or_default();
+    (status, headers, json)
+}
+
+fn inject_unbound_csrf(req: &mut Request<Body>) {
+    if req.uri().path() != "/auth/login" || req.headers().contains_key("x-csrf-token") {
+        return;
+    }
+    let token =
+        ryframe_auth::jwt::encode_csrf("test-jwt-secret-for-integration-tests", None, 300).unwrap();
+    req.headers_mut()
+        .insert("x-csrf-token", token.parse().unwrap());
+    req.headers_mut().insert(
+        axum::http::header::COOKIE,
+        format!("ryframe_csrf={token}").parse().unwrap(),
+    );
+}
+
+fn response_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .filter_map(|value| value.split_once('='))
+        .find_map(|(key, value)| (key == name).then(|| value.to_owned()))
+}
+
+fn response_cookie_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.starts_with(&format!("{name}=")))
+        .map(str::to_owned)
+}
+
+fn cookie_attribute<'a>(set_cookie: &'a str, name: &str) -> Option<&'a str> {
+    set_cookie.split(';').skip(1).find_map(|attribute| {
+        let (key, value) = attribute.trim().split_once('=')?;
+        key.eq_ignore_ascii_case(name).then_some(value)
+    })
+}
+
 // ==================== 测试用例 ====================
 
 #[tokio::test]
 async fn test_health_check() {
     let db = setup_test_db().await;
-    let state = build_test_app(db).await;
+    let state = build_test_app(db.connection().clone()).await;
     let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
@@ -329,6 +410,99 @@ async fn test_health_check() {
         .body(Body::empty())
         .unwrap();
     let _ = router.oneshot(req).await;
+}
+
+#[tokio::test]
+async fn test_csrf_challenge_is_no_store_and_cookie_backed() {
+    let db = setup_test_db().await;
+    let state = build_test_app(db.connection().clone()).await;
+    let router = api_router(state, test_rate_limit_state());
+    let request = Request::builder()
+        .uri("/auth/csrf")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, body) = send_request_with_headers(router, request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+    let csrf = body["data"]["csrf_token"].as_str().unwrap();
+    assert_eq!(body["data"]["expires_in"], 300);
+    let cookie = headers
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.starts_with("ryframe_csrf="))
+        .unwrap();
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("Expires="));
+    assert!(cookie.contains("Max-Age=300"));
+    assert!(cookie.contains("SameSite=Lax"));
+    assert!(cookie.contains("Path=/api/v1/auth"));
+    assert_eq!(
+        response_cookie(&headers, "ryframe_csrf").as_deref(),
+        Some(csrf)
+    );
+}
+
+#[tokio::test]
+async fn test_login_rejects_missing_csrf_cookie() {
+    let db = setup_test_db().await;
+    let state = build_test_app(db.connection().clone()).await;
+    let router = api_router(state, test_rate_limit_state());
+    let request = Request::builder()
+        .uri("/auth/login")
+        .method("POST")
+        .header("X-Tenant-Id", "system")
+        .header("content-type", "application/json")
+        // Suppress the test helper's automatic challenge while deliberately
+        // omitting the matching challenge cookie.
+        .header("x-csrf-token", "invalid")
+        .body(Body::from(r#"{"username":"admin","password":"test123"}"#))
+        .unwrap();
+    let (status, _) = send_request(router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_csrf_challenge_rejects_unconfigured_origin() {
+    let db = setup_test_db().await;
+    let state = build_test_app(db.connection().clone()).await;
+    let router = api_router(state, test_rate_limit_state());
+    let request = Request::builder()
+        .uri("/auth/csrf")
+        .method("GET")
+        .header("origin", "https://evil.example")
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, _) = send_request_with_headers(router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(headers.get_all("set-cookie").iter().count(), 0);
+}
+
+#[tokio::test]
+async fn test_login_is_limited_to_five_attempts_per_minute() {
+    let db = setup_test_db().await;
+    let state = build_test_app(db.connection().clone()).await;
+    let router = api_router(state, test_rate_limit_state());
+
+    for attempt in 1..=6 {
+        let request = Request::builder()
+            .uri("/auth/login")
+            .method("POST")
+            .header("X-Tenant-Id", "system")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"username":"rate-limited-user","password":"invalid"}"#,
+            ))
+            .unwrap();
+        let (status, headers, _) = send_request_with_headers(router.clone(), request).await;
+        if attempt <= 5 {
+            assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
+        } else {
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+            assert!(headers.get("retry-after").is_some());
+        }
+    }
 }
 
 /// 认证全流程：登录 → me → 刷新 → 错误场景
@@ -353,10 +527,19 @@ async fn test_auth_full_flow() {
             .unwrap(),
         ))
         .unwrap();
-    let (status, body) = send_request(router, req).await;
+    let (status, login_headers, body) = send_request_with_headers(router, req).await;
     assert_eq!(status, StatusCode::OK);
     let access_token = body["data"]["access_token"].as_str().unwrap().to_string();
-    let refresh_token = body["data"]["refresh_token"].as_str().unwrap().to_string();
+    assert!(body["data"].get("refresh_token").is_none());
+    let refresh_token = response_cookie(&login_headers, "ryframe_refresh_token").unwrap();
+    let refresh_cookie_header =
+        response_cookie_header(&login_headers, "ryframe_refresh_token").unwrap();
+    assert!(refresh_cookie_header.contains("HttpOnly"));
+    assert!(refresh_cookie_header.contains("Expires="));
+    assert!(refresh_cookie_header.contains("Max-Age="));
+    assert!(refresh_cookie_header.contains("SameSite=Lax"));
+    assert!(refresh_cookie_header.contains("Path=/api/v1/auth"));
+    assert!(!refresh_cookie_header.contains("Domain="));
     assert!(!access_token.is_empty());
     assert_eq!(body["data"]["user_info"]["username"], "admin");
     assert_eq!(
@@ -386,19 +569,67 @@ async fn test_auth_full_flow() {
     // 3. 刷新令牌
     let state3 = build_test_app(db.clone()).await;
     let router3 = api_router(state3, test_rate_limit_state());
+    let refresh_claims =
+        ryframe_auth::jwt::decode_token(&refresh_token, "test-jwt-secret-for-integration-tests")
+            .unwrap();
+    let csrf = ryframe_auth::jwt::encode_csrf(
+        "test-jwt-secret-for-integration-tests",
+        Some(&refresh_claims.sid),
+        300,
+    )
+    .unwrap();
+    let missing_csrf = Request::builder()
+        .uri("/auth/refresh")
+        .method("POST")
+        .header("cookie", format!("ryframe_refresh_token={refresh_token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, _) = send_request_with_headers(router3.clone(), missing_csrf).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(headers.get_all("set-cookie").iter().count(), 0);
+
+    // Ensure a sliding seven-day cookie would move its Expires timestamp.
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+
     let refresh_req = Request::builder()
         .uri("/auth/refresh")
         .method("POST")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            serde_json::to_string(&serde_json::json!({
-                "refresh_token": refresh_token
-            }))
-            .unwrap(),
-        ))
+        .header("x-csrf-token", &csrf)
+        .header(
+            "cookie",
+            format!("ryframe_refresh_token={refresh_token}; ryframe_csrf={csrf}"),
+        )
+        .body(Body::empty())
         .unwrap();
-    let (s3, b3) = send_request(router3, refresh_req).await;
+    let (s3, refresh_headers, b3) = send_request_with_headers(router3.clone(), refresh_req).await;
     assert_eq!(s3, StatusCode::OK);
+    let committed_refresh = response_cookie(&refresh_headers, "ryframe_refresh_token").unwrap();
+    let rotated_cookie_header =
+        response_cookie_header(&refresh_headers, "ryframe_refresh_token").unwrap();
+    let login_expires = cookie_attribute(&refresh_cookie_header, "Expires").unwrap();
+    let rotated_expires = cookie_attribute(&rotated_cookie_header, "Expires").unwrap();
+    assert_eq!(
+        rotated_expires, login_expires,
+        "refresh rotation must preserve the login-time absolute expiry"
+    );
+    let login_max_age: i64 = cookie_attribute(&refresh_cookie_header, "Max-Age")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let rotated_max_age: i64 = cookie_attribute(&rotated_cookie_header, "Max-Age")
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        rotated_max_age < login_max_age,
+        "refresh Max-Age must count down instead of resetting to seven days"
+    );
+    let committed_claims = ryframe_auth::jwt::decode_token(
+        &committed_refresh,
+        "test-jwt-secret-for-integration-tests",
+    )
+    .unwrap();
+    assert_eq!(committed_claims.exp, refresh_claims.exp);
     assert!(b3["data"].get("access_token").is_some());
     assert_eq!(
         b3["data"]["user_info"]["roles"],
@@ -408,6 +639,47 @@ async fn test_auth_full_flow() {
         b3["data"]["user_info"]["perms"],
         body["data"]["user_info"]["perms"]
     );
+
+    // If the success response is lost, retrying the old cookie with the same
+    // signed CSRF challenge recovers the exact committed refresh token.
+    let recovered_req = Request::builder()
+        .uri("/auth/refresh")
+        .method("POST")
+        .header("x-csrf-token", &csrf)
+        .header(
+            "cookie",
+            format!("ryframe_refresh_token={refresh_token}; ryframe_csrf={csrf}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let (recovered_status, recovered_headers, _) =
+        send_request_with_headers(router3.clone(), recovered_req).await;
+    assert_eq!(recovered_status, StatusCode::OK);
+    assert_eq!(
+        response_cookie(&recovered_headers, "ryframe_refresh_token").as_deref(),
+        Some(committed_refresh.as_str())
+    );
+
+    let competing_csrf = ryframe_auth::jwt::encode_csrf(
+        "test-jwt-secret-for-integration-tests",
+        Some(&refresh_claims.sid),
+        300,
+    )
+    .unwrap();
+    let competing_req = Request::builder()
+        .uri("/auth/refresh")
+        .method("POST")
+        .header("x-csrf-token", &competing_csrf)
+        .header(
+            "cookie",
+            format!("ryframe_refresh_token={refresh_token}; ryframe_csrf={competing_csrf}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let (competing_status, competing_headers, _) =
+        send_request_with_headers(router3, competing_req).await;
+    assert_eq!(competing_status, StatusCode::CONFLICT);
+    assert_eq!(competing_headers.get("retry-after").unwrap(), "5");
 
     // 4. 错误密码
     let state4 = build_test_app(db.clone()).await;
@@ -448,7 +720,7 @@ async fn test_auth_full_flow() {
     assert_eq!(s5, StatusCode::UNAUTHORIZED);
 
     // 6. 无 token 访问 /auth/me
-    let state6 = build_test_app(db).await;
+    let state6 = build_test_app(db.connection().clone()).await;
     let router6 = api_router(state6, test_rate_limit_state());
     let noauth_req = Request::builder()
         .uri("/auth/me")
@@ -1377,7 +1649,7 @@ async fn test_validation_error_scenarios() {
 
 // ==================== 监控端点测试 ====================
 
-/// 监控端点（/health 和 /metrics 公开，/server /cache /db-pool 需认证）
+/// 监控端点（/metrics 公开，/server /cache /db-pool 需认证；旧 health 已删除）
 #[tokio::test]
 async fn test_monitor_endpoints() {
     let db = setup_test_db().await;
@@ -1397,15 +1669,14 @@ async fn test_monitor_endpoints() {
     assert_eq!(status, StatusCode::OK, "监控服务器信息应返回 200");
     assert!(body["data"].get("cpu_cores").is_some(), "应包含 CPU 核心数");
 
-    // 健康检查（公开）
+    // v0.5 删除旧监控 health；根路由改用 /livez 和 /readyz。
     let req = Request::builder()
         .uri("/monitor/health")
         .method("GET")
         .body(Body::empty())
         .unwrap();
-    let (status, body) = send_request(router.clone(), req).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(body["data"].get("database").is_some(), "应包含数据库状态");
+    let (status, _) = send_request(router.clone(), req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     // 缓存信息（需认证）
     let req = Request::builder()
@@ -1511,6 +1782,244 @@ async fn test_profile_endpoints() {
 
 // ==================== 登出测试 ====================
 
+fn force_logout_principal(tenant_id: &str) -> ryframe_auth::RequestPrincipal {
+    ryframe_auth::RequestPrincipal {
+        actor: ryframe_common::ActorContext {
+            user_id: 1,
+            tenant_id: tenant_id.into(),
+            username: "admin".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: ryframe_common::DataScope::All,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin: true,
+        },
+        roles: vec!["admin".into()],
+        role_ids: vec![1],
+        permissions: vec!["monitor:online:force-logout".into()],
+        tenant_request_limit_per_minute: 1_000,
+    }
+}
+
+/// Exercises the handler orchestration against the Compose Redis service:
+/// tenant validation, revoke-before-index-delete, transient 503, retry, and
+/// idempotent repeated force logout.
+#[tokio::test]
+#[ignore = "requires Docker Compose MySQL and Redis services"]
+async fn force_logout_uses_authoritative_family_and_recovers_after_redis_failure() {
+    let db = setup_test_db().await;
+    let port = std::env::var("RYFRAME_TEST_REDIS_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(16379);
+    let redis = ryframe_core::RedisClient::connect(&ryframe_config::RedisConfig {
+        port,
+        database: 14,
+        timeout_secs: 1,
+        ..Default::default()
+    })
+    .await
+    .expect("connect Docker Compose Redis service");
+    let state = build_test_app_with_redis(db.connection().clone(), Some(redis.clone())).await;
+    let sid = format!(
+        "sid-force-handler-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_micros()
+    );
+    let absolute_exp = chrono::Utc::now().timestamp() + 600;
+    let refresh_sessions = state.services.auth.refresh_sessions();
+    refresh_sessions
+        .register(ryframe_core::RefreshFamily {
+            sid: sid.clone(),
+            tenant_id: "system".into(),
+            user_id: 1,
+            current_jti: "force-handler-jti".into(),
+            previous_jti: None,
+            last_attempt_id: None,
+            rotated_at: 0,
+            absolute_exp,
+            revoked: false,
+        })
+        .await
+        .unwrap();
+    let now = chrono::Utc::now();
+    state
+        .services
+        .online_user
+        .add_user(ryframe_service::system::UserSession {
+            sid: sid.clone(),
+            tenant_id: "system".into(),
+            user_id: 1,
+            username: "target".into(),
+            dept_name: None,
+            ipaddr: "127.0.0.1".into(),
+            login_location: None,
+            browser: None,
+            os: None,
+            login_time: now,
+            last_access_time: now,
+            absolute_exp,
+        })
+        .await;
+
+    let system_actor = force_logout_principal("system");
+    let cross_tenant = online_user_handler::force_logout(
+        State(state.clone()),
+        force_logout_principal("tenant-b"),
+        Path(sid.clone()),
+    )
+    .await;
+    assert!(matches!(
+        cross_tenant,
+        Err(ryframe_common::AppError::NotFound(_))
+    ));
+    assert!(refresh_sessions.is_active(&sid).await.unwrap());
+    assert_eq!(
+        state
+            .services
+            .online_user
+            .count(&system_actor.actor)
+            .await
+            .unwrap(),
+        1
+    );
+
+    let mut connection = redis.conn().clone();
+    redis::cmd("CLIENT")
+        .arg("PAUSE")
+        .arg(2_500)
+        .arg("ALL")
+        .query_async::<()>(&mut connection)
+        .await
+        .unwrap();
+    let unavailable = online_user_handler::force_logout(
+        State(state.clone()),
+        system_actor.clone(),
+        Path(sid.clone()),
+    )
+    .await;
+    assert!(matches!(
+        unavailable,
+        Err(ryframe_common::AppError::ServiceUnavailable(_))
+    ));
+
+    tokio::time::sleep(std::time::Duration::from_millis(1_750)).await;
+    assert_eq!(
+        state
+            .services
+            .online_user
+            .count(&system_actor.actor)
+            .await
+            .unwrap(),
+        1,
+        "the secondary index must remain when authoritative revocation reports failure"
+    );
+
+    let _response = online_user_handler::force_logout(
+        State(state.clone()),
+        system_actor.clone(),
+        Path(sid.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(!refresh_sessions.is_active(&sid).await.unwrap());
+    assert_eq!(
+        state
+            .services
+            .online_user
+            .count(&system_actor.actor)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // The revoked family remains until its absolute expiry, making retries
+    // successful even after the index has already been deleted.
+    let _response = online_user_handler::force_logout(State(state), system_actor, Path(sid))
+        .await
+        .unwrap();
+}
+
+/// A signed, unexpired access token must not bypass distributed session
+/// validation when Redis is unavailable. This exercises the complete Axum
+/// middleware stack for an authenticated business route.
+#[tokio::test]
+#[ignore = "requires Docker Compose MySQL and Redis services"]
+async fn auth_middleware_fails_closed_when_redis_is_unavailable() {
+    let db = setup_test_db().await;
+    seed_test_data(&db).await;
+    let port = std::env::var("RYFRAME_TEST_REDIS_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(16379);
+    let redis = ryframe_core::RedisClient::connect(&ryframe_config::RedisConfig {
+        port,
+        database: 12,
+        timeout_secs: 1,
+        ..Default::default()
+    })
+    .await
+    .expect("connect Docker Compose Redis service");
+    let mut state = build_test_app_with_redis(db.connection().clone(), Some(redis.clone())).await;
+    let login = state
+        .services
+        .auth
+        .login("system", "admin", "test123")
+        .await
+        .unwrap();
+    assert!(
+        state
+            .services
+            .auth
+            .refresh_sessions()
+            .is_active(&login.sid)
+            .await
+            .unwrap()
+    );
+    let access_claims = ryframe_auth::jwt::decode_token(
+        &login.access_token,
+        "test-jwt-secret-for-integration-tests",
+    )
+    .unwrap();
+    assert!(access_claims.exp > chrono::Utc::now().timestamp() as usize);
+
+    // Keep the access-JTI blacklist local in this fault injection so the 503
+    // specifically proves that the mandatory sid-family lookup fails closed.
+    state.auth.blacklist = ryframe_core::TokenBlacklist::new(None);
+
+    let router = api_router(state.clone(), test_rate_limit_state());
+    let mut connection = redis.conn().clone();
+    redis::cmd("CLIENT")
+        .arg("PAUSE")
+        .arg(2_500)
+        .arg("ALL")
+        .query_async::<()>(&mut connection)
+        .await
+        .unwrap();
+    let request = Request::builder()
+        .uri("/system/configs/all")
+        .method("GET")
+        .header("authorization", format!("Bearer {}", login.access_token))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send_request(router, request).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+
+    // Do not leak the pause into the next Redis acceptance test. The failed
+    // check must also leave the authoritative family active for a safe retry.
+    tokio::time::sleep(std::time::Duration::from_millis(1_750)).await;
+    assert!(
+        state
+            .services
+            .auth
+            .refresh_sessions()
+            .is_active(&login.sid)
+            .await
+            .unwrap()
+    );
+}
+
 /// 登出流程
 #[tokio::test]
 async fn test_logout_flow() {
@@ -1521,14 +2030,129 @@ async fn test_logout_flow() {
     // 登出
     let state = build_test_app(db.clone()).await;
     let router = api_router(state, test_rate_limit_state());
+    let csrf =
+        ryframe_auth::jwt::encode_csrf("test-jwt-secret-for-integration-tests", None, 300).unwrap();
     let req = Request::builder()
         .uri("/auth/logout")
         .method("POST")
         .header("authorization", format!("Bearer {}", token))
+        .header("x-csrf-token", &csrf)
+        .header("cookie", format!("ryframe_csrf={csrf}"))
         .body(Body::empty())
         .unwrap();
-    let (status, _) = send_request(router, req).await;
+    let (status, headers, _) = send_request_with_headers(router.clone(), req).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .filter(|value| value.contains("Max-Age=0"))
+            .count(),
+        2
+    );
+
+    // A repeated logout obtains a fresh unbound challenge after the browser
+    // has removed both authentication cookies.
+    let repeated_csrf =
+        ryframe_auth::jwt::encode_csrf("test-jwt-secret-for-integration-tests", None, 300).unwrap();
+    let repeated = Request::builder()
+        .uri("/auth/logout")
+        .method("POST")
+        .header("x-csrf-token", &repeated_csrf)
+        .header("cookie", format!("ryframe_csrf={repeated_csrf}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, headers, _) = send_request_with_headers(router, repeated).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .filter(|value| value.contains("Max-Age=0"))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn test_logout_always_requires_csrf_without_refresh_cookie() {
+    let db = setup_test_db().await;
+    let state = build_test_app(db.connection().clone()).await;
+    let router = api_router(state, test_rate_limit_state());
+    let request = Request::builder()
+        .uri("/auth/logout")
+        .method("POST")
+        .body(Body::empty())
+        .unwrap();
+
+    let (status, _) = send_request(router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_cookie_logout_revokes_family_without_bearer() {
+    let db = setup_test_db().await;
+    seed_test_data(&db).await;
+    let state = build_test_app(db.connection().clone()).await;
+    let router = api_router(state, test_rate_limit_state());
+    let login_request = Request::builder()
+        .uri("/auth/login")
+        .method("POST")
+        .header("X-Tenant-Id", "system")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "admin",
+                "password": "test123"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, headers, body) = send_request_with_headers(router.clone(), login_request).await;
+    assert_eq!(status, StatusCode::OK);
+    let access = body["data"]["access_token"].as_str().unwrap();
+    let refresh = response_cookie(&headers, "ryframe_refresh_token").unwrap();
+    let claims =
+        ryframe_auth::jwt::decode_token(&refresh, "test-jwt-secret-for-integration-tests").unwrap();
+    let csrf = ryframe_auth::jwt::encode_csrf(
+        "test-jwt-secret-for-integration-tests",
+        Some(&claims.sid),
+        300,
+    )
+    .unwrap();
+    let logout_request = Request::builder()
+        .uri("/auth/logout")
+        .method("POST")
+        .header("x-csrf-token", &csrf)
+        .header(
+            "cookie",
+            format!("ryframe_refresh_token={refresh}; ryframe_csrf={csrf}"),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let (status, logout_headers, _) =
+        send_request_with_headers(router.clone(), logout_request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        logout_headers
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .filter(|value| value.contains("Max-Age=0"))
+            .count(),
+        2
+    );
+
+    let me_request = Request::builder()
+        .uri("/auth/me")
+        .method("GET")
+        .header("authorization", format!("Bearer {access}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send_request(router, me_request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 // ==================== 代码生成器测试 ====================
@@ -1596,7 +2220,7 @@ async fn test_generator_endpoints() {
 #[tokio::test]
 async fn test_version_endpoint() {
     let db = setup_test_db().await;
-    let state = build_test_app(db).await;
+    let state = build_test_app(db.connection().clone()).await;
     let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
@@ -1616,7 +2240,7 @@ async fn test_version_endpoint() {
 #[tokio::test]
 async fn test_swagger_ui_endpoint() {
     let db = setup_test_db().await;
-    let state = build_test_app(db).await;
+    let state = build_test_app(db.connection().clone()).await;
     let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
@@ -1638,7 +2262,7 @@ async fn test_swagger_ui_endpoint() {
 #[tokio::test]
 async fn test_openapi_json_endpoint() {
     let db = setup_test_db().await;
-    let state = build_test_app(db).await;
+    let state = build_test_app(db.connection().clone()).await;
     let router = api_router(state, test_rate_limit_state());
 
     let req = Request::builder()
@@ -1715,10 +2339,14 @@ async fn test_token_blacklist_on_logout() {
     let state = build_test_app(db.clone()).await;
     let router = api_router(state.clone(), test_rate_limit_state());
 
+    let csrf =
+        ryframe_auth::jwt::encode_csrf("test-jwt-secret-for-integration-tests", None, 300).unwrap();
     let logout_req = Request::builder()
         .uri("/auth/logout")
         .method("POST")
         .header("authorization", format!("Bearer {}", token))
+        .header("x-csrf-token", &csrf)
+        .header("cookie", format!("ryframe_csrf={csrf}"))
         .body(Body::empty())
         .unwrap();
     let (s, _) = send_request(router, logout_req).await;
@@ -1769,7 +2397,7 @@ async fn test_invalid_token_rejected() {
     let db = setup_test_db().await;
     let fake_token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIiwianRpIjoiZmFrZSJ9.fake";
 
-    let state = build_test_app(db).await;
+    let state = build_test_app(db.connection().clone()).await;
     let router = api_router(state, test_rate_limit_state());
     let req = Request::builder()
         .uri("/auth/me")

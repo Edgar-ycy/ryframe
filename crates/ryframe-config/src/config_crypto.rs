@@ -99,10 +99,27 @@ impl ConfigCrypto {
     /// 从环境变量 `CONFIG_MASTER_KEY` 获取主密钥
     ///
     /// 环境变量值应为 32 字节的 Base64 编码字符串。
-    /// 如果未设置则返回 None（不启用加密解密）。
-    pub fn load_master_key() -> Option<Vec<u8>> {
-        let env_key = std::env::var("CONFIG_MASTER_KEY").ok()?;
-        BASE64.decode(&env_key).ok().filter(|k| k.len() == 32)
+    /// 如果未设置则返回 None；已设置但格式错误时显式拒绝启动。
+    pub fn load_master_key() -> AppResult<Option<Vec<u8>>> {
+        let env_key = match std::env::var("CONFIG_MASTER_KEY") {
+            Ok(value) => value,
+            Err(std::env::VarError::NotPresent) => return Ok(None),
+            Err(error) => {
+                return Err(AppError::Config(format!(
+                    "CONFIG_MASTER_KEY 不是有效 UTF-8: {error}"
+                )));
+            }
+        };
+        let key = BASE64.decode(&env_key).map_err(|error| {
+            AppError::Config(format!("CONFIG_MASTER_KEY 必须是 Base64: {error}"))
+        })?;
+        if key.len() != 32 {
+            return Err(AppError::Config(format!(
+                "CONFIG_MASTER_KEY 解码后必须为 32 字节，当前为 {} 字节",
+                key.len()
+            )));
+        }
+        Ok(Some(key))
     }
 
     /// 生成一个新的随机主密钥（Base64 编码的 32 字节密钥）
@@ -115,11 +132,17 @@ impl ConfigCrypto {
 
 /// 解密配置中所有标记为 `ENC[...]` 的敏感字段
 ///
-/// 如果 `CONFIG_MASTER_KEY` 未设置，则跳过解密（明文模式）。
+/// 明文配置不要求主密钥；任何 `ENC[...]` 字段都必须有有效主密钥。
 pub fn decrypt_config(config: &mut crate::AppConfig) -> AppResult<()> {
     let master_key = match ConfigCrypto::load_master_key() {
-        Some(k) => k,
-        None => return Ok(()), // 未设置主密钥，跳过解密
+        Ok(Some(key)) => key,
+        Ok(None) if contains_encrypted_value(config) => {
+            return Err(AppError::Config(
+                "配置包含 ENC[...] 字段，但未设置 CONFIG_MASTER_KEY".into(),
+            ));
+        }
+        Ok(None) => return Ok(()),
+        Err(error) => return Err(error),
     };
 
     // 解密 auth.jwt_secret
@@ -161,6 +184,31 @@ pub fn decrypt_config(config: &mut crate::AppConfig) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+fn is_encrypted(value: &str) -> bool {
+    value.starts_with(ENCRYPTED_PREFIX) && value.ends_with(ENCRYPTED_SUFFIX)
+}
+
+fn contains_encrypted_value(config: &crate::AppConfig) -> bool {
+    is_encrypted(&config.auth.jwt_secret)
+        || is_encrypted(&config.database.primary.password)
+        || config
+            .database
+            .replicas
+            .iter()
+            .any(|item| is_encrypted(&item.connection.password))
+        || config
+            .database
+            .sources
+            .iter()
+            .any(|item| is_encrypted(&item.connection.password))
+        || config
+            .redis
+            .as_ref()
+            .is_some_and(|redis| is_encrypted(&redis.password))
+        || is_encrypted(&config.object_storage.access_key)
+        || is_encrypted(&config.object_storage.secret_key)
 }
 
 #[cfg(test)]
@@ -207,5 +255,17 @@ mod tests {
         let key = ConfigCrypto::generate_master_key();
         let decoded = BASE64.decode(&key).unwrap();
         assert_eq!(decoded.len(), 32);
+    }
+
+    #[test]
+    fn invalid_master_key_is_rejected() {
+        unsafe {
+            std::env::set_var("CONFIG_MASTER_KEY", "not-base64");
+        }
+        let result = ConfigCrypto::load_master_key();
+        unsafe {
+            std::env::remove_var("CONFIG_MASTER_KEY");
+        }
+        assert!(result.is_err());
     }
 }

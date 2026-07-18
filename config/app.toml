@@ -5,7 +5,7 @@
 
 [app]
 name = "ryframe"
-version = "0.4.2"
+version = "0.5.0"
 host = "0.0.0.0"
 port = 8080
 
@@ -14,11 +14,10 @@ port = 8080
 sql_log_level = "off"
 
 [database.primary]
-driver = "postgres"
 host = "localhost"
-port = 5432
-database = "ryframe"
-username = "postgres"
+port = 3306
+database = "ryframe_config"
+username = "root"
 password = ""
 max_connections = 10
 min_connections = 1
@@ -33,6 +32,7 @@ access_token_expire = "1h"
 refresh_token_expire = "168h"
 
 [redis]
+mode = "optional"
 host = "127.0.0.1"
 port = 6379
 password = ""
@@ -46,7 +46,20 @@ format = "text"
 output = "stdout"
 
 [cors]
+#allow_origins = ["https://admin.example.com"]
 allow_origins = []
+
+[proxy]
+# Trust forwarding headers only from explicitly listed reverse proxies.
+trusted_cidrs = []
+
+[upload]
+# File-size limits exclude a small multipart envelope allowance.
+file_max_bytes = 10485760
+avatar_max_bytes = 5242880
+multipart_envelope_bytes = 65536
+upload_timeout_seconds = 120
+api_timeout_seconds = 30
 
 [rate_limit]
 # 是否启用全局限流
@@ -69,6 +82,7 @@ user_capacity = 500
 # 示例：{"POST /api/v1/auth/login" = 5} 表示登录接口每分钟最多 5 次
 [rate_limit.api_limits]
 "POST /api/v1/auth/login" = 5
+"GET /api/v1/auth/csrf" = 30
 # 接口级窗口时长（秒）
 api_window_secs = 60
 
@@ -77,8 +91,6 @@ api_window_secs = 60
 backend = "local"
 # 本地存储根目录
 local_base_dir = "uploads"
-# 公共访问 URL 前缀（生产环境应改为 CDN 域名）
-public_base_url = ""
 # RustFS / MinIO / S3 端点
 endpoint = ""
 # Access Key（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY 注入）

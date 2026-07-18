@@ -4,9 +4,7 @@ mod queries;
 mod roles;
 
 use ryframe_common::{AppError, AppResult};
-use ryframe_core::{
-    LoggedRepo, RedisClient, cache::clear_user_permission_cache, repository::PageQuery,
-};
+use ryframe_core::{LoggedRepo, RedisClient, repository::PageQuery};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
     DeptRepository, RoleRepository, UserRepository,
@@ -87,7 +85,6 @@ pub struct UserService {
     user_repo: LoggedRepo<UserRepository>,
     role_repo: LoggedRepo<RoleRepository>,
     dept_repo: LoggedRepo<DeptRepository>,
-    redis: Option<RedisClient>,
 }
 
 pub struct CreateUserParams<'a> {
@@ -129,21 +126,12 @@ impl UserListParams {
 }
 
 impl UserService {
-    pub fn new(db: DatabaseCluster, redis: Option<RedisClient>) -> Self {
+    pub fn new(db: DatabaseCluster, _redis: Option<RedisClient>) -> Self {
         Self {
             db,
             user_repo: LoggedRepo::new(UserRepository),
             role_repo: LoggedRepo::new(RoleRepository),
             dept_repo: LoggedRepo::new(DeptRepository),
-            redis,
-        }
-    }
-
-    pub(super) async fn invalidate_permission_cache(&self, tenant_id: &str, user_id: i64) {
-        if let Some(redis) = &self.redis
-            && let Err(error) = clear_user_permission_cache(redis, tenant_id, user_id).await
-        {
-            tracing::warn!(user_id, %error, "failed to clear user permission cache");
         }
     }
 

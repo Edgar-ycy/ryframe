@@ -4,7 +4,7 @@ use ryframe_middleware::metrics::{metrics_text, normalize_path};
 fn test_normalize_path_static() {
     assert_eq!(normalize_path("/api/v1/login"), "/api/v1/login");
     assert_eq!(normalize_path("/metrics"), "/metrics");
-    assert_eq!(normalize_path("/health"), "/health");
+    assert_eq!(normalize_path("/livez"), "/livez");
 }
 
 #[test]
@@ -38,6 +38,8 @@ fn test_normalize_path_mixed() {
 #[test]
 fn test_metrics_text_format() {
     let text = metrics_text();
-    // 应该包含 Prometheus 格式的 HELP/TYPE 注释
-    assert!(text.contains("ryframe_http_requests_total") || text.is_empty());
+    // Unlabelled process gauges are exported immediately; labelled HTTP
+    // series appear only after the first request for that label set.
+    assert!(text.contains("# HELP ryframe_process_cpu_seconds_total"));
+    assert!(text.contains("# TYPE ryframe_process_resident_memory_bytes gauge"));
 }

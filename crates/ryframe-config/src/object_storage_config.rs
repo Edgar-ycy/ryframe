@@ -35,6 +35,7 @@ impl StorageBackend {
 
 /// 对象存储配置
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ObjectStorageConfig {
     /// 存储后端类型：local | rustfs | minio | s3
     #[serde(default = "default_backend")]
@@ -44,10 +45,6 @@ pub struct ObjectStorageConfig {
     /// 本地存储根目录（local 模式下使用）
     #[serde(default = "default_local_base_dir")]
     pub local_base_dir: String,
-
-    /// 公共访问基础 URL（用于生成可访问的文件链接）
-    #[serde(default)]
-    pub public_base_url: String,
 
     // ---- RustFS / MinIO / S3 配置 ----
     /// 服务端点 (e.g., "http://localhost:9000")
@@ -76,7 +73,6 @@ impl Default for ObjectStorageConfig {
         Self {
             backend: StorageBackend::Local,
             local_base_dir: "uploads".to_string(),
-            public_base_url: String::new(),
             endpoint: String::new(),
             access_key: String::new(),
             secret_key: String::new(),

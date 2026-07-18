@@ -32,7 +32,6 @@ impl UserService {
             .commit()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        self.invalidate_permission_cache(tenant_id, user_id).await;
         self.invalidate_sessions_for_tenant(tenant_id, &[user_id])
             .await
     }

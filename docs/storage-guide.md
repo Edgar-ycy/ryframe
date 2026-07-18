@@ -1,6 +1,6 @@
 # 对象存储与 RustFS 指南
 
-> 最后核对：2026-07-17
+> 最后核对：2026-07-18
 
 ## 1. 架构边界
 
@@ -16,7 +16,7 @@
 
 支持 `local`、`rustfs`、`minio` 和 `s3` 四个配置后端。RustFS、MinIO 和 S3 共用经过测试的 S3 兼容适配器；`rustfs` 作为独立枚举值进入配置、日志、运行时监控和 CI，不再靠通用 `s3` 名称隐式表达。
 
-应用启动时确保 `uploads` 和 `avatar` 两个私有 bucket 存在。端点不可达、凭据错误或 bucket 检查失败都会阻止服务启动，不允许静默退回本地目录。
+应用启动时确保 `uploads` 和 `avatar` 两个私有 bucket 存在。端点不可达、凭据错误、bucket 检查失败，或发现匿名 `Principal`、`NotPrincipal` 等公开 bucket policy，都会阻止服务启动，不允许静默退回本地目录。
 
 ## 2. 本机启动 RustFS
 
@@ -26,16 +26,16 @@
 docker run -d --name ryframe-rustfs \
   -p 9000:9000 \
   -p 9001:9001 \
-  -e RUSTFS_ACCESS_KEY=rustfsadmin \
-  -e RUSTFS_SECRET_KEY=rustfsadmin \
+  -e RUSTFS_ACCESS_KEY=rustfsadmin1 \
+  -e RUSTFS_SECRET_KEY=rustfsadmin1 \
   -v ryframe-rustfs-data:/data \
   rustfs/rustfs:1.0.0-beta.8
 ```
 
 - S3 API：`http://localhost:9000`
 - 管理控制台：`http://localhost:9001`
-- 开发账号：`rustfsadmin`
-- 开发密码：`rustfsadmin`
+- 开发账号：`rustfsadmin1`
+- 开发密码：`rustfsadmin1`
 
 检查容器和端口：
 
@@ -52,11 +52,10 @@ curl http://localhost:9000/
 [object_storage]
 backend = "rustfs"
 endpoint = "http://localhost:9000"
-access_key = "rustfsadmin"
-secret_key = "rustfsadmin"
+access_key = "rustfsadmin1"
+secret_key = "rustfsadmin1"
 use_ssl = false
 region = "us-east-1"
-public_base_url = ""
 ```
 
 生产部署可使用以下环境变量，不要把凭据写入仓库：
@@ -68,10 +67,9 @@ APP_OBJECT_STORAGE_ACCESS_KEY
 APP_OBJECT_STORAGE_SECRET_KEY
 APP_OBJECT_STORAGE_USE_SSL
 APP_OBJECT_STORAGE_REGION
-APP_OBJECT_STORAGE_PUBLIC_BASE_URL
 ```
 
-`public_base_url` 为空时，上传响应返回受认证的后端下载地址，bucket 保持私有。前端展示这类图片时必须通过统一 HTTP 客户端携带令牌下载 Blob，再创建浏览器对象 URL，不能把受保护地址直接绑定到原生 `img.src`。只有在对象已经通过网关或 CDN 按预期公开时才配置该值；应用不会自动写入公开读取策略。
+v0.5 的上传响应只返回受认证的后端下载地址，bucket、普通文件和头像始终保持私有，不提供公共 URL 配置。前端展示头像时必须通过统一 HTTP 客户端携带 access token 下载 Blob，再创建浏览器对象 URL，不能把受保护地址直接绑定到原生 `img.src`。
 
 切换成本地存储时使用：
 
@@ -79,7 +77,6 @@ APP_OBJECT_STORAGE_PUBLIC_BASE_URL
 [object_storage]
 backend = "local"
 local_base_dir = "uploads"
-public_base_url = ""
 ```
 
 ## 4. 运行时检查
@@ -94,6 +91,8 @@ public_base_url = ""
 - `GET /api/v1/common/file/download`
 
 对象写入成功但数据库元数据写入失败时，Service 会补偿删除对象；下载会同时校验租户文件元数据，不能仅凭对象路径跨租户读取。
+
+普通文件上限为 10 MiB，头像上限为 5 MiB，上传超时为 120 秒。Nginx、Axum 请求体、multipart 和业务校验使用同一配置，固定长度或 chunked 超限都返回 `413`。
 
 ## 5. 测试与 CI
 

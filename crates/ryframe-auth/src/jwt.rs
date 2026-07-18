@@ -21,6 +21,9 @@ pub struct Claims {
     pub username: String,
     /// 令牌类型: "access" | "refresh"
     pub token_type: String,
+    /// Stable login-session identifier shared by access and refresh tokens.
+    #[serde(default)]
+    pub sid: String,
     /// 令牌唯一标识（用于在线用户管理）
     pub jti: String,
     /// 签发时间 (UNIX timestamp)
@@ -45,6 +48,15 @@ pub fn encode_access(
     identity: &TokenIdentity<'_>,
     config: &AuthConfig,
 ) -> AppResult<(String, String)> {
+    let sid = new_sid();
+    encode_access_for_session(identity, &sid, config)
+}
+
+pub fn encode_access_for_session(
+    identity: &TokenIdentity<'_>,
+    sid: &str,
+    config: &AuthConfig,
+) -> AppResult<(String, String)> {
     let ttl = parse_duration(&config.access_token_expire)?;
     let now = current_timestamp();
     let jti = new_jti();
@@ -55,6 +67,7 @@ pub fn encode_access(
         user_auth_version: identity.user_auth_version,
         username: identity.username.to_string(),
         token_type: "access".into(),
+        sid: sid.to_owned(),
         jti: jti.clone(),
         iat: now,
         exp: now + ttl,
@@ -69,6 +82,36 @@ pub fn encode_access(
 pub fn encode_refresh(identity: &TokenIdentity<'_>, config: &AuthConfig) -> AppResult<String> {
     let ttl = parse_duration(&config.refresh_token_expire)?;
     let now = current_timestamp();
+    let sid = new_sid();
+    encode_refresh_for_session(identity, &sid, new_jti(), now + ttl, config)
+}
+
+pub fn encode_refresh_for_session(
+    identity: &TokenIdentity<'_>,
+    sid: &str,
+    jti: String,
+    absolute_exp: usize,
+    config: &AuthConfig,
+) -> AppResult<String> {
+    let now = current_timestamp();
+    encode_refresh_for_session_at(identity, sid, jti, now, absolute_exp, config)
+}
+
+/// Encode a refresh token with an explicit issuance timestamp.
+///
+/// Rotation recovery uses the timestamp committed with the Redis CAS so the
+/// same signed token can be reconstructed after an ambiguous/lost response.
+pub fn encode_refresh_for_session_at(
+    identity: &TokenIdentity<'_>,
+    sid: &str,
+    jti: String,
+    issued_at: usize,
+    absolute_exp: usize,
+    config: &AuthConfig,
+) -> AppResult<String> {
+    if issued_at > absolute_exp {
+        return Err(AppError::Authentication("refresh session expired".into()));
+    }
     let claims = Claims {
         sub: identity.user_id.to_string(),
         tenant_id: identity.tenant_id.to_string(),
@@ -76,9 +119,10 @@ pub fn encode_refresh(identity: &TokenIdentity<'_>, config: &AuthConfig) -> AppR
         user_auth_version: identity.user_auth_version,
         username: identity.username.to_string(),
         token_type: "refresh".into(),
-        jti: new_jti(),
-        iat: now,
-        exp: now + ttl,
+        sid: sid.to_owned(),
+        jti,
+        iat: issued_at,
+        exp: absolute_exp,
     };
     encode_claims(&claims, config)
 }
@@ -88,7 +132,55 @@ fn current_timestamp() -> usize {
 }
 
 fn new_jti() -> String {
-    ryframe_common::utils::snowflake::next_snowflake_id().to_string()
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+pub fn generate_jti() -> String {
+    new_jti()
+}
+
+pub fn new_sid() -> String {
+    format!("s-{}", uuid::Uuid::new_v4())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsrfClaims {
+    pub token_type: String,
+    pub sid: Option<String>,
+    pub jti: String,
+    pub iat: usize,
+    pub exp: usize,
+}
+
+pub fn encode_csrf(secret: &str, sid: Option<&str>, ttl_seconds: usize) -> AppResult<String> {
+    let now = current_timestamp();
+    let claims = CsrfClaims {
+        token_type: "csrf".into(),
+        sid: sid.map(str::to_owned),
+        jti: new_jti(),
+        iat: now,
+        exp: now + ttl_seconds,
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|e| AppError::Internal(format!("CSRF encode failed: {e}")))
+}
+
+pub fn decode_csrf(token: &str, secret: &str) -> AppResult<CsrfClaims> {
+    let claims = decode::<CsrfClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::default(),
+    )
+    .map(|data| data.claims)
+    .map_err(|_| AppError::Authorization("invalid or expired CSRF challenge".into()))?;
+    if claims.token_type != "csrf" {
+        return Err(AppError::Authorization("invalid CSRF challenge".into()));
+    }
+    Ok(claims)
 }
 
 fn encode_claims(claims: &Claims, config: &AuthConfig) -> AppResult<String> {

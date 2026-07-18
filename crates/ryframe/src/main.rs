@@ -5,18 +5,18 @@ use std::{net::SocketAddr, sync::Arc};
 
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::{HotConfig, spawn_config_watcher};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    ryframe_auth::middleware::set_backend_failure_hook(
+        ryframe_middleware::metrics::record_redis_degraded,
+    );
     // 1. 加载配置
     let config = AppConfig::load("config")?;
     tracing::info!(
         "配置加载完成, 环境: {}",
         std::env::var("APP_ENV").unwrap_or_else(|_| "dev".into())
     );
-    let hot_config = HotConfig::new(config.clone());
-
     // 2. 初始化日志 + OpenTelemetry
     let (_logger_guard, _telemetry_guard) = boot::logging::init(&config);
     tracing::info!(
@@ -39,7 +39,7 @@ async fn main() -> Result<(), AppError> {
     let config_arc = Arc::new(config.clone());
 
     // 6. 初始化 Redis + Token 黑名单
-    let redis = boot::redis::init(&config.redis).await;
+    let redis = boot::redis::init(&config.redis).await?;
 
     // 7. 初始化对象存储
     let object_storage = boot::storage::init(&config).await?;
@@ -49,7 +49,7 @@ async fn main() -> Result<(), AppError> {
         boot::services::build_all(&database, &config, &redis.client, object_storage).await?;
 
     // 9. 初始化限流器
-    let limit = boot::limiter::init(&config, &redis.client);
+    let limit = boot::limiter::init(&config, &redis.client)?;
 
     // 10. 聚合 AppState + 构建 Router
     let state = boot::app_state::assemble(
@@ -60,7 +60,7 @@ async fn main() -> Result<(), AppError> {
         services,
         limit.limiter.clone(),
     );
-    let router = app::build_app(state, limit.limiter, limit.rate_limit_state, &config.cors)?;
+    let router = app::build_app(state, limit.rate_limit_state, &config.cors)?;
 
     // 11. 启动 HTTP 服务
     let addr = format!("{}:{}", config.app.host, config.app.port);
@@ -68,20 +68,6 @@ async fn main() -> Result<(), AppError> {
         .await
         .map_err(|e| AppError::Internal(format!("绑定地址 {} 失败: {}", addr, e)))?;
     tracing::info!("服务启动: http://{}", addr);
-
-    // 12. 启动配置文件热加载
-    spawn_config_watcher(
-        hot_config,
-        "config".to_string(),
-        Some(Arc::new(move |new_config: &AppConfig| {
-            tracing::info!(
-                "[ConfigWatcher] 配置已热更新 - 日志级别: {}, 限流: {}/{}",
-                new_config.logger.level,
-                new_config.rate_limit.capacity,
-                new_config.rate_limit.refill_per_sec,
-            );
-        })),
-    );
 
     // 使用 tokio::select 同时等待服务和停机信号
     tokio::select! {

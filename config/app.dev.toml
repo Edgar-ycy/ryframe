@@ -3,7 +3,7 @@
 
 [app]
 name = "ryframe"
-version = "0.4.2"
+version = "0.5.0"
 host = "0.0.0.0"
 port = 8080
 
@@ -14,7 +14,6 @@ sql_log_level = "full"
 
 # 开发环境数据库连接
 [database.primary]
-driver = "mysql"
 host = "localhost"
 port = 3306
 database = "ryframe_config"
@@ -28,7 +27,6 @@ min_connections = 1
 # 独立业务数据源必须按名称显式使用，不参与主库读写路由。
 [[database.sources]]
 name = "ryframe_device"
-driver = "mysql"
 host = "localhost"
 port = 3306
 database = "ryframe_device"
@@ -55,7 +53,9 @@ password = ""
 database = 0
 
 [cors]
-#allow_origins = ["http://localhost:80", "http://localhost:3000"]
-allow_origins = []
+allow_origins = [
+    "http://localhost",
+    "http://127.0.0.1",
+]
 [logger]
 level = "debug"

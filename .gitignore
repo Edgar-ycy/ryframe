@@ -1,8 +1,11 @@
 debug
 target
 /ryframe-vue3/
+.pnpm-store/
 **/*.rs.bk
 *.pdb
+__pycache__/
+*.pyc
 **/mutants.out*/
 .idea/
 .claude

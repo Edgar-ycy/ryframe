@@ -1,8 +1,9 @@
 //! Unified cache abstraction and protection utilities.
 //!
 //! The module exposes a common [`Cache`] contract, Redis/local/no-op backends,
-//! tenant-scoped permission cache helpers, and opt-in protection layers for
-//! avalanche, penetration, breakdown, and warm-up scenarios.
+//! and opt-in protection layers for avalanche, penetration, breakdown, and
+//! warm-up scenarios. Authorization is intentionally resolved from MySQL on
+//! every request so a failed Redis invalidation cannot preserve old access.
 //!
 //! # Example
 //!
@@ -27,7 +28,6 @@
 mod backend;
 mod breakdown;
 mod entry;
-mod permission;
 mod strategy;
 mod warmer;
 
@@ -36,10 +36,6 @@ use serde::{Serialize, de::DeserializeOwned};
 
 pub use backend::{CacheBackend, LocalMemoryCache, NoopCache, RedisCache};
 pub use breakdown::BreakdownGuard;
-pub use permission::{
-    USER_PERMISSION_CACHE_TTL_SECS, clear_tenant_permission_cache, clear_user_permission_cache,
-    get_user_permission_cache, set_user_permission_cache, user_permission_cache_key,
-};
 pub use strategy::{CacheStrategy, CacheStrategyConfig};
 pub use warmer::{CacheWarmer, WarmUpTask};
 

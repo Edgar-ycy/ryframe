@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_auth::middleware::AuthState;
+use ryframe_common::utils::ip::TrustedProxySet;
 use ryframe_config::AppConfig;
 use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_middleware::RateLimiter;
@@ -47,5 +48,6 @@ pub struct AppState {
     pub redis: Option<RedisClient>,
     pub token_blacklist: TokenBlacklist,
     pub rate_limiter: Arc<RateLimiter>,
+    pub trusted_proxies: TrustedProxySet,
     pub runtime: RuntimeComponents,
 }

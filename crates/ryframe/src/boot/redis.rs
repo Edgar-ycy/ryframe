@@ -1,48 +1,114 @@
-use ryframe_config::RedisConfig;
-use ryframe_core::{RedisClient, TokenBlacklist, create_redis_client};
+use ryframe_common::{AppError, AppResult};
+use ryframe_config::{RedisConfig, RedisMode};
+use ryframe_core::{RedisClient, TokenBlacklist};
 
-/// Redis 初始化结果
 pub struct RedisState {
     pub client: Option<RedisClient>,
     pub token_blacklist: TokenBlacklist,
 }
 
-/// 清除所有参数配置缓存
 async fn flush_config_cache(redis: &RedisClient) {
     const PREFIX: &str = "sys_config:key:";
-    match redis.delete_by_pattern(&format!("{}*", PREFIX)).await {
+    match redis.delete_by_pattern(&format!("{PREFIX}*")).await {
         Ok(deleted) if deleted > 0 => {
-            tracing::info!("已清除 {} 条参数配置缓存 (sys_config:key:*)", deleted);
+            tracing::info!(deleted, "cleared stale configuration cache entries");
         }
         Ok(_) => {}
-        Err(e) => tracing::warn!("清除参数配置缓存失败: {}", e),
+        Err(error) => tracing::warn!(%error, "failed to clear configuration cache"),
     }
 }
 
-/// 初始化 Redis 客户端 + Token 黑名单
-///
-/// Redis 不可用时自动降级为内存模式。
-pub async fn init(config: &Option<RedisConfig>) -> RedisState {
-    let redis_client = create_redis_client(config).await;
-    if redis_client.is_some() {
-        tracing::info!(
-            "Redis 已启用，验证码/在线用户/限流器/菜单树/部门树/字典缓存将使用 Redis 存储"
-        );
-        // 启动时清除参数配置缓存，确保读取到最新的数据库值
-        if let Some(ref client) = redis_client {
-            flush_config_cache(client).await;
+pub async fn init(config: &Option<RedisConfig>) -> AppResult<RedisState> {
+    let mode = config
+        .as_ref()
+        .map_or(RedisMode::Disabled, |config| config.mode);
+    let client = match (mode, config.as_ref()) {
+        (RedisMode::Disabled, _) | (_, None) => {
+            tracing::warn!("Redis is explicitly disabled; using single-instance memory state");
+            ryframe_middleware::metrics::record_redis_degraded("startup_disabled");
+            None
         }
-    } else {
-        tracing::info!("Redis 未配置或不可用，使用内存模式");
+        (RedisMode::Required | RedisMode::Optional, Some(redis_config)) => {
+            match connect_and_verify(redis_config).await {
+                Ok(client) => Some(client),
+                Err(error) if mode.is_required() => return Err(error),
+                Err(error) => {
+                    tracing::warn!(%error, "Redis optional mode is degraded to local memory");
+                    ryframe_middleware::metrics::record_redis_degraded("startup_optional");
+                    None
+                }
+            }
+        }
+    };
+
+    if let Some(redis) = &client {
+        if is_production() {
+            verify_production_policy(redis).await?;
+        }
+        flush_config_cache(redis).await;
     }
 
-    let token_blacklist = TokenBlacklist::new(redis_client.clone());
-    if redis_client.is_none() {
-        token_blacklist.spawn_gc(); // 内存模式需要后台 GC
+    let token_blacklist = TokenBlacklist::new(client.clone());
+    if client.is_none() {
+        token_blacklist.spawn_gc();
     }
-
-    RedisState {
-        client: redis_client,
+    Ok(RedisState {
+        client,
         token_blacklist,
+    })
+}
+
+async fn connect_and_verify(config: &RedisConfig) -> AppResult<RedisClient> {
+    let client = RedisClient::connect(config).await.map_err(|error| {
+        AppError::ServiceUnavailable(format!("Redis connection failed: {error}"))
+    })?;
+    client
+        .ping()
+        .await
+        .map_err(|error| AppError::ServiceUnavailable(format!("Redis PING failed: {error}")))?;
+    tracing::info!(mode = ?config.mode, host = %config.host, port = config.port, "Redis is ready");
+    Ok(client)
+}
+
+async fn verify_production_policy(redis: &RedisClient) -> AppResult<()> {
+    let eviction = redis
+        .config_get("maxmemory-policy")
+        .await
+        .map_err(redis_policy_error)?
+        .unwrap_or_default();
+    if eviction != "noeviction" {
+        return Err(AppError::Config(format!(
+            "production Redis requires maxmemory-policy=noeviction (found {eviction:?})"
+        )));
     }
+
+    let append_only = redis
+        .config_get("appendonly")
+        .await
+        .map_err(redis_policy_error)?
+        .unwrap_or_default();
+    let save_schedule = redis
+        .config_get("save")
+        .await
+        .map_err(redis_policy_error)?
+        .unwrap_or_default();
+    if append_only != "yes" && save_schedule.trim().is_empty() {
+        return Err(AppError::Config(
+            "production Redis must enable AOF or snapshot persistence".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn redis_policy_error(error: redis::RedisError) -> AppError {
+    AppError::Config(format!("unable to verify production Redis policy: {error}"))
+}
+
+fn is_production() -> bool {
+    std::env::var("APP_ENV").is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "prod" | "production"
+        )
+    })
 }

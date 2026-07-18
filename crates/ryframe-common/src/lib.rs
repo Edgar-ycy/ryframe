@@ -3,7 +3,6 @@ mod actor_context;
 mod constants;
 mod error;
 mod result;
-mod sql_log_flag;
 
 pub mod annotations;
 pub mod enums;
@@ -20,4 +19,3 @@ pub use enums::business_type::BusinessType;
 pub use enums::user_status::UserStatus;
 pub use error::{ApiEmptyResponse, ApiPageResponse, ApiResponse, AppError};
 pub use result::AppResult;
-pub use sql_log_flag::{enable_sql_full_log, is_sql_full_log};

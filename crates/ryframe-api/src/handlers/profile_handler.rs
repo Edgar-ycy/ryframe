@@ -94,7 +94,11 @@ pub async fn change_password(
 #[put("/avatar")]
 #[utoipa::path(put, path = "/api/v1/auth/profile/avatar", tag = "个人中心",
     request_body(content = FileUploadForm, content_type = "multipart/form-data"),
-    responses((status = 200, description = "头像更新成功", body = ApiResponse<AvatarResponse>)),
+    responses(
+        (status = 200, description = "头像更新成功", body = ApiResponse<AvatarResponse>),
+        (status = 413, description = "上传内容超过 5 MiB 限制"),
+        (status = 503, description = "数据库或对象存储暂不可用")
+    ),
     security(("bearer" = [])))]
 pub async fn update_avatar(
     State(state): State<AppState>,
@@ -122,7 +126,12 @@ pub async fn update_avatar(
         avatar_url = state
             .services
             .file
-            .upload_avatar(&current_user, filename, data.to_vec())
+            .upload_avatar(
+                &current_user,
+                filename,
+                data.to_vec(),
+                state.config.upload.avatar_max_bytes as u64,
+            )
             .await?;
         break;
     }

@@ -14,14 +14,6 @@ use utoipa::ToSchema;
 pub use cache_monitor::{CacheInfo, CacheKeysInfo, RedisMemoryInfo, RedisServerInfo};
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct HealthInfo {
-    pub status: String,
-    pub database: String,
-    pub redis: String,
-    pub timestamp: String,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
 pub struct DbPoolInfo {
     pub status: String,
     pub active_connections: Option<i64>,
@@ -35,12 +27,12 @@ pub struct MonitorState {
     pub redis: Option<RedisClient>,
 }
 
-/// Public health and metrics routes.
+/// Public metrics route. Process and dependency probes live at `/livez` and
+/// `/readyz` on the root application router.
 pub fn public_monitor_router(state: MonitorState) -> axum::Router {
     use axum::routing::get as axum_get;
 
     axum::Router::new()
-        .route("/health", axum_get(health_check_handler))
         .route("/metrics", axum_get(metrics_handler))
         .with_state(state)
 }
@@ -64,36 +56,6 @@ pub async fn server_info_handler(
     State(_state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<ServerInfo>>> {
     Ok(Json(ApiResponse::success(ServerInfo::collect())))
-}
-
-#[utoipa::path(get, path = "/api/v1/monitor/health", tag = "服务器监控",
-    responses((status = 200, description = "运行健康状态", body = ApiResponse<HealthInfo>)))]
-pub async fn health_check_handler(
-    State(state): State<MonitorState>,
-) -> AppResult<Json<ApiResponse<HealthInfo>>> {
-    let db_ok = state.database.ping().await;
-    let redis_ok = match state.redis.as_ref() {
-        Some(r) => r.ping().await.is_ok(),
-        None => false,
-    };
-    let redis_configured = state.redis.is_some();
-    let all_ok = db_ok && (!redis_configured || redis_ok);
-
-    Ok(Json(ApiResponse::success(HealthInfo {
-        status: if all_ok { "UP" } else { "DOWN" }.into(),
-        database: if db_ok { "connected" } else { "disconnected" }.into(),
-        redis: if redis_configured {
-            if redis_ok {
-                "connected"
-            } else {
-                "disconnected"
-            }
-        } else {
-            "not_configured"
-        }
-        .into(),
-        timestamp: current_timestamp(),
-    })))
 }
 
 #[get("/cache")]

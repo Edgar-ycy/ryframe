@@ -10,11 +10,6 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         backfill_button_menus(manager).await?;
         remove_dynamic_tenant_menus(manager).await?;
-        if manager.get_database_backend() != DbBackend::MySql {
-            // SQLite 不能通过 ALTER TABLE 为既有表补外键；生产 MySQL 执行下方迁移。
-            return Ok(());
-        }
-
         add_fk(
             manager,
             "sys_role_permission",
@@ -63,11 +58,10 @@ async fn backfill_button_menus(manager: &SchemaManager<'_>) -> Result<(), DbErr>
     if !manager.has_table("sys_permission").await? || !manager.has_table("sys_menu").await? {
         return Ok(());
     }
-    let backend = manager.get_database_backend();
     let rows = manager
         .get_connection()
         .query_all_raw(Statement::from_string(
-            backend,
+            DbBackend::MySql,
             "SELECT p.id, p.tenant_id, p.name, p.code, p.sort, p.status FROM sys_permission p WHERE p.perm_type = 'api' AND p.code NOT LIKE 'tenant:%' AND NOT EXISTS (SELECT 1 FROM sys_menu m WHERE m.tenant_id = p.tenant_id AND m.perm_id = p.id AND m.menu_type = 'F')".to_owned(),
         ))
         .await?;
@@ -87,11 +81,8 @@ async fn backfill_button_menus(manager: &SchemaManager<'_>) -> Result<(), DbErr>
         let parent = manager
             .get_connection()
             .query_one_raw(Statement::from_sql_and_values(
-                backend,
-                match backend {
-                    DbBackend::Postgres => "SELECT id FROM sys_menu WHERE tenant_id = $1 AND route_key = $2 AND menu_type = 'C' LIMIT 1",
-                    _ => "SELECT id FROM sys_menu WHERE tenant_id = ? AND route_key = ? AND menu_type = 'C' LIMIT 1",
-                },
+                DbBackend::MySql,
+                "SELECT id FROM sys_menu WHERE tenant_id = ? AND route_key = ? AND menu_type = 'C' LIMIT 1",
                 [tenant_id.clone().into(), route_key.into()],
             ))
             .await?;
@@ -199,6 +190,7 @@ async fn add_fk(
                 .name(name)
                 .from(Alias::new(table), Alias::new(column))
                 .to(Alias::new(target_table), Alias::new(target_column))
+                .on_update(ForeignKeyAction::Cascade)
                 .on_delete(ForeignKeyAction::Cascade)
                 .to_owned(),
         )

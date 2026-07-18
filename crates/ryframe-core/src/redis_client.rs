@@ -5,7 +5,10 @@
 
 use std::time::Duration;
 
-use redis::{AsyncCommands, aio::ConnectionManager};
+use redis::{
+    AsyncCommands,
+    aio::{ConnectionManager, ConnectionManagerConfig},
+};
 use ryframe_config::RedisConfig;
 
 const SCAN_BATCH_SIZE: usize = 256;
@@ -47,9 +50,13 @@ impl RedisClient {
         let client = redis::Client::open(config.connection_url())?;
 
         // 带超时的连接
+        let timeout = Duration::from_secs(config.timeout_secs.max(1));
+        let manager_config = ConnectionManagerConfig::new()
+            .set_connection_timeout(timeout)
+            .set_response_timeout(timeout);
         let conn = tokio::time::timeout(
-            Duration::from_secs(config.timeout_secs),
-            ConnectionManager::new(client),
+            timeout,
+            ConnectionManager::new_with_config(client, manager_config),
         )
         .await
         .map_err(|_| {
@@ -136,6 +143,18 @@ impl RedisClient {
     pub async fn ping(&self) -> Result<String, redis::RedisError> {
         let mut conn = self.conn.clone();
         redis::cmd("PING").query_async(&mut conn).await
+    }
+
+    /// Read one Redis server configuration value. Production startup uses
+    /// this to enforce persistence and a no-eviction policy for security state.
+    pub async fn config_get(&self, name: &str) -> Result<Option<String>, redis::RedisError> {
+        let mut conn = self.conn.clone();
+        let values: std::collections::HashMap<String, String> = redis::cmd("CONFIG")
+            .arg("GET")
+            .arg(name)
+            .query_async(&mut conn)
+            .await?;
+        Ok(values.get(name).cloned())
     }
 
     /// 使用增量游标扫描匹配的键，避免 `KEYS` 阻塞 Redis。
@@ -260,33 +279,6 @@ impl RedisClient {
         prepare_script_invocation(&lua, keys, args)
             .invoke_async(&mut conn)
             .await
-    }
-}
-
-/// 根据配置创建 Redis 客户端
-///
-/// - 配置了 Redis → 尝试连接，成功返回 Some，失败返回 None（降级到内存模式）
-/// - 未配置 Redis → 返回 None
-pub async fn create_redis_client(config: &Option<RedisConfig>) -> Option<RedisClient> {
-    let redis_config = config.as_ref()?;
-    match RedisClient::connect(redis_config).await {
-        Ok(client) => {
-            // 验证连接
-            match client.ping().await {
-                Ok(_) => {
-                    tracing::info!("Redis 服务就绪，启用 Redis 模式");
-                    Some(client)
-                }
-                Err(e) => {
-                    tracing::warn!("Redis PING 失败，降级到内存模式: {}", e);
-                    None
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Redis 连接失败，降级到内存模式: {}", e);
-            None
-        }
     }
 }
 

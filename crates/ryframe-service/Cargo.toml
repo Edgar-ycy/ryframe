@@ -26,8 +26,9 @@ utoipa = { workspace = true }
 tracing = { workspace = true }
 md5 = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+percent-encoding = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
-sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+sea-orm = { workspace = true }
 tempfile = { workspace = true }

@@ -83,6 +83,29 @@ async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function loginWithCsrf() {
+  const challengeResponse = await fetch(`${BASE_URL}/api/v1/auth/csrf`);
+  if (!challengeResponse.ok) throw new Error(`CSRF HTTP ${challengeResponse.status}`);
+  const challenge = await challengeResponse.json();
+  const csrfToken = challenge?.data?.csrf_token;
+  const setCookies = typeof challengeResponse.headers.getSetCookie === "function"
+    ? challengeResponse.headers.getSetCookie()
+    : [challengeResponse.headers.get("set-cookie")].filter(Boolean);
+  const cookie = setCookies.map((value) => value.split(";", 1)[0]).join("; ");
+  if (!csrfToken || !cookie) throw new Error("CSRF challenge contract is incomplete");
+
+  return fetch(`${BASE_URL}/api/v1/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Tenant-Id": "system",
+      "X-CSRF-Token": csrfToken,
+      Cookie: cookie,
+    },
+    body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
+  });
+}
+
 // ============================================================
 // 测试场景
 // ============================================================
@@ -99,7 +122,7 @@ async function testHealthCheck({ concurrency, rounds }) {
       (async () => {
         for (let r = 0; r < rounds; r++) {
           await timedRequest("health", () =>
-            fetch(`${BASE_URL}/health`).then((r) => {
+            fetch(`${BASE_URL}/livez`).then((r) => {
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return r.text();
             })
@@ -124,14 +147,7 @@ async function testLogin({ concurrency, rounds }) {
       (async () => {
         for (let r = 0; r < rounds; r++) {
           await timedRequest("login", () =>
-            fetch(`${BASE_URL}/api/v1/auth/login`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                username: ADMIN_USER,
-                password: ADMIN_PASS,
-              }),
-            }).then((r) => {
+            loginWithCsrf().then((r) => {
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return r.json();
             })
@@ -201,7 +217,7 @@ async function testMixedLoad({ concurrency, rounds }) {
   console.log(`\n🎯 [场景 5] 混合负载 —— ${concurrency} 并发 × ${rounds} 轮`);
 
   const endpoints = [
-    { weight: 40, name: "health", fn: () => fetch(`${BASE_URL}/health`) },
+    { weight: 40, name: "liveness", fn: () => fetch(`${BASE_URL}/livez`) },
     {
       weight: 20,
       name: "version",
@@ -224,12 +240,7 @@ async function testMixedLoad({ concurrency, rounds }) {
     {
       weight: 15,
       name: "login",
-      fn: () =>
-        fetch(`${BASE_URL}/api/v1/auth/login`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
-        }),
+      fn: loginWithCsrf,
     },
   ];
 

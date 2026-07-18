@@ -175,7 +175,7 @@ async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
     };
 
     // 统计各前缀的键数
-    let online_users = count_keys(client, "online_user:*").await;
+    let online_users = count_keys(client, "ryframe:v0.5:online-user:*").await;
     let captchas = count_keys(client, "ryframe:captcha:*").await;
     let rate_limits = count_keys(client, "rate_limit:*").await;
     let dict_cache = count_keys(client, "sys_dict:data:*").await;

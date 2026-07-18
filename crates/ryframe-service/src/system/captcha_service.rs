@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ryframe_common::CAPTCHA_KEY_PREFIX;
+use ryframe_common::{AppError, AppResult, CAPTCHA_KEY_PREFIX};
 use ryframe_core::RedisClient;
 use tokio::sync::Mutex;
 
@@ -50,13 +50,17 @@ impl CaptchaStore {
     }
 
     /// 存储验证码
-    pub async fn set(&self, id: String, answer: String) {
+    pub async fn set(&self, id: String, answer: String) -> AppResult<()> {
         match self {
             Self::Redis { client, ttl_secs } => {
                 let key = format!("{}{}", CAPTCHA_KEY_PREFIX, id);
-                if let Err(e) = client.set_ex(&key, &answer, *ttl_secs).await {
-                    tracing::error!("Redis SET 验证码失败: {}", e);
-                }
+                client
+                    .set_ex(&key, &answer, *ttl_secs)
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(%error, "Redis SET 验证码失败");
+                        AppError::ServiceUnavailable("验证码服务暂不可用".into())
+                    })?;
             }
             Self::InMemory { inner, ttl: _ } => {
                 let mut store = inner.lock().await;
@@ -69,19 +73,20 @@ impl CaptchaStore {
                 );
             }
         }
+        Ok(())
     }
 
     /// 校验验证码（一次性使用，校验后自动删除）
-    pub async fn verify(&self, id: &str, code: &str) -> bool {
+    pub async fn verify(&self, id: &str, code: &str) -> AppResult<bool> {
         match self {
             Self::Redis { client, .. } => {
                 let key = format!("{}{}", CAPTCHA_KEY_PREFIX, id);
                 match client.get_and_del(&key).await {
-                    Ok(Some(stored)) => stored.to_lowercase() == code.to_lowercase(),
-                    Ok(None) => false,
-                    Err(e) => {
-                        tracing::error!("Redis GET 验证码失败: {}", e);
-                        false
+                    Ok(Some(stored)) => Ok(stored.eq_ignore_ascii_case(code)),
+                    Ok(None) => Ok(false),
+                    Err(error) => {
+                        tracing::error!(%error, "Redis GETDEL 验证码失败");
+                        Err(AppError::ServiceUnavailable("验证码服务暂不可用".into()))
                     }
                 }
             }
@@ -89,11 +94,11 @@ impl CaptchaStore {
                 let mut store = inner.lock().await;
                 if let Some(entry) = store.remove(id) {
                     if entry.created_at.elapsed() > *ttl {
-                        return false;
+                        return Ok(false);
                     }
-                    entry.answer.to_lowercase() == code.to_lowercase()
+                    Ok(entry.answer.eq_ignore_ascii_case(code))
                 } else {
-                    false
+                    Ok(false)
                 }
             }
         }

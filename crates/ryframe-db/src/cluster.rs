@@ -173,8 +173,6 @@ impl From<DatabaseConnection> for DatabaseCluster {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement, TryGetable};
-
     use super::*;
 
     #[test]
@@ -197,81 +195,17 @@ mod tests {
         assert!(std::ptr::eq(single.read(), single.write()));
     }
 
-    #[tokio::test]
-    async fn reads_and_writes_use_distinct_database_nodes() {
-        let primary = marker_database("primary").await;
-        let replica_a = marker_database("replica-a").await;
-        let replica_b = marker_database("replica-b").await;
-        let cluster = DatabaseCluster::new(
-            primary.clone(),
-            [
-                ("replica-a".to_owned(), replica_a.clone()),
-                ("replica-b".to_owned(), replica_b.clone()),
-            ],
-        );
-
-        assert_eq!(read_marker(cluster.read()).await, "replica-a");
-        assert_eq!(read_marker(cluster.read()).await, "replica-b");
-
-        cluster
-            .write()
-            .execute_raw(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE route_marker SET value = ?",
-                ["primary-written".into()],
-            ))
-            .await
-            .unwrap();
-
-        assert_eq!(read_marker(&primary).await, "primary-written");
-        assert_eq!(read_marker(&replica_a).await, "replica-a");
-        assert_eq!(read_marker(&replica_b).await, "replica-b");
-    }
-
-    #[tokio::test]
-    async fn named_sources_require_explicit_selection() {
-        let primary = marker_database("primary").await;
-        let device = marker_database("ryframe_device").await;
+    #[test]
+    fn named_sources_require_explicit_selection() {
+        let primary = DatabaseConnection::default();
+        let device = DatabaseConnection::default();
         let cluster = DatabaseCluster::with_sources(
             primary,
             std::iter::empty(),
             [("ryframe_device".to_owned(), device)],
         );
 
-        assert_eq!(read_marker(cluster.read()).await, "primary");
-        assert_eq!(
-            read_marker(cluster.source("ryframe_device").unwrap()).await,
-            "ryframe_device"
-        );
+        assert!(cluster.source("ryframe_device").is_some());
         assert!(cluster.source("missing").is_none());
-    }
-
-    async fn marker_database(marker: &str) -> DatabaseConnection {
-        let database = Database::connect("sqlite::memory:").await.unwrap();
-        database
-            .execute_unprepared("CREATE TABLE route_marker (value TEXT NOT NULL)")
-            .await
-            .unwrap();
-        database
-            .execute_raw(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "INSERT INTO route_marker (value) VALUES (?)",
-                [marker.into()],
-            ))
-            .await
-            .unwrap();
-        database
-    }
-
-    async fn read_marker(database: &DatabaseConnection) -> String {
-        let row = database
-            .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT value FROM route_marker".to_owned(),
-            ))
-            .await
-            .unwrap()
-            .unwrap();
-        String::try_get_by_index(&row, 0).unwrap()
     }
 }

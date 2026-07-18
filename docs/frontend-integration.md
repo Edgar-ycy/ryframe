@@ -1,6 +1,6 @@
 # 前端集成指南
 
-本文档面向独立 Git 仓库 `ryframe-vue3`，约定后端接口响应、认证、动态菜单、分页、上传下载和监控接口的使用方式。两个仓库分别构建和发布，不共享源码目录；接口字段只从 OpenAPI 生成，本文档不维护第二份完整 DTO。
+本文档面向独立 Git 仓库 `ryframe-vue3`，约定后端接口响应、认证、动态菜单、分页、上传下载和监控接口的使用方式。两个仓库不共享源码目录，但稳定版必须使用同一个版本号和 Git tag 协同发布；接口字段只从 OpenAPI 生成，本文档不维护第二份完整 DTO。
 
 ## 契约同步
 
@@ -23,6 +23,8 @@ pnpm api:check
 VITE_APP_BASE_API=/api/v1
 ```
 
+生产环境的管理端和 API 使用不同的同站子域，必须改用 API 的绝对 HTTPS 地址，例如 `VITE_APP_BASE_API=https://api.example.com/api/v1`。不能继续使用相对 `/api/v1`，否则浏览器会把请求发送到只提供 SPA 的管理端域名。正式发布工作流从仓库变量 `RYFRAME_PRODUCTION_API_BASE_URL` 注入该值，并拒绝空值或非 HTTPS 地址。
+
 本地后端默认运行在 `http://localhost:8080`。Vite 开发代理建议把 `/api` 转发到后端服务，前端业务代码只关心相对路径，例如 `/auth/login`、`/system/users`。
 
 所有需要登录的接口都使用 Bearer Token：
@@ -30,6 +32,8 @@ VITE_APP_BASE_API=/api/v1
 ```http
 Authorization: Bearer <access_token>
 ```
+
+普通 Axios transport 和不触发会话恢复的 raw transport 都必须启用 `withCredentials`，由浏览器自动发送 API 域 Cookie。access token 和 CSRF challenge 只存在于 Pinia/session coordinator 内存，禁止写入 Web Storage、IndexedDB 或 URL。
 
 ## 统一响应
 
@@ -72,10 +76,21 @@ export interface PageQuery {
 
 ## 认证接口
 
+### 会话初始化与 CSRF
+
+全局会话状态只有 `initializing`、`authenticated`、`anonymous` 和 `unavailable`。应用挂载和路由守卫先等待一次初始化：
+
+1. `GET /auth/csrf` 获取 5 分钟 challenge，浏览器同时接收 challenge Cookie。
+2. 内存保存 JSON 中的 `csrf_token`，调用空请求体的 `POST /auth/refresh` 尝试使用 HttpOnly Cookie 恢复会话。
+3. `200` 更新 access token、用户、权限和动态路由；`401` 进入 `anonymous`；`503` 进入 `unavailable`，不得清除服务器 Cookie。
+
+v0.5 首次运行要主动删除旧版 access/refresh token localStorage 键，租户 ID 可以继续持久化。所有登录、刷新和登出请求都必须先确保 challenge 未过期，并在 `X-CSRF-Token` 中发送它。
+
 ### 登录
 
 ```http
 POST /auth/login
+X-CSRF-Token: <csrf_token>
 Content-Type: application/json
 ```
 
@@ -95,33 +110,32 @@ export interface LoginRequest {
 ```ts
 export interface LoginResult {
   access_token: string
-  refresh_token?: string
-  token_type?: 'Bearer'
-  expires_in?: number
-  user_info?: UserInfo
+  expires_in: number
+  user_info: UserInfo
 }
 ```
 
-前端登录成功后保存 `access_token`，如果后端返回 `refresh_token` 也一并保存。后续请求自动携带 `Authorization`。
+登录成功后只把 `access_token` 写入内存。refresh token 仅由浏览器保存为 API 域 host-only HttpOnly Cookie，JavaScript 既不能读取也不能复制；登录响应和生成类型中不得存在 refresh token 字段。后续业务请求从内存读取 access token 并携带 `Authorization`。
 
 登录只校验现有账号凭据。个人修改密码、密码重置完成和租户管理员初始密码必须使用 OpenAPI `x-ryframe-password-policy` 生成的前端验证器：8-72 位可见 ASCII 字符，且至少包含大小写字母、数字和特殊字符。密码更新成功后旧会话会因 `auth_version` 变化而失效，前端应清理本地状态并重新登录。
 
-### 刷新 Token
+### 刷新与登出
 
 ```http
 POST /auth/refresh
-Content-Type: application/json
+X-CSRF-Token: <csrf_token>
 ```
 
-请求体：
+刷新请求没有 body，也不发送 `X-Tenant-Id`。前端在单标签页内保持 single-flight：并发 `401` 只触发一次刷新，成功后统一重放一次原业务请求。多标签页通过 `BroadcastChannel` 协调刷新结果；通道不可用时，服务端会对 5 秒内并发使用的旧 Cookie 返回 `409` 和 `Retry-After`，客户端等待后只重试一次。
 
-```ts
-export interface RefreshTokenRequest {
-  refresh_token: string
-}
+```http
+POST /auth/logout
+X-CSRF-Token: <csrf_token>
 ```
 
-响应数据建议与登录接口保持一致，至少包含新的 `access_token`。当前前端封装会在收到 `401` 后自动调用该接口，并把并发失败请求排队等待刷新结果。
+登出不依赖有效 access token。无论接口成功、认证失败还是网络错误，前端都清除本地内存状态和动态路由；服务端返回 `503` 时仍不应尝试直接操作 HttpOnly Cookie。
+
+密码重置页面从 URL 读取一次性 token 后，要立即使用 History API 清除查询参数，再继续显示和提交表单，避免 token 进入历史记录、截图或后续 Referer。
 
 ### 当前用户
 
@@ -258,7 +272,7 @@ DELETE /system/roles/batch/1,2
 
 ## 上传、下载与导出
 
-上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。上传接口均需登录，并会执行大小、扩展名、魔数、MD5 去重、对象存储写入和操作日志记录：
+上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。普通文件上限 10 MiB、头像上限 5 MiB，上传超时 120 秒；上传接口均需登录，并会执行大小、扩展名、魔数、MD5 去重、对象存储写入和操作日志记录：
 
 ```http
 POST /common/upload
@@ -288,7 +302,6 @@ Content-Disposition: attachment; filename="users.xlsx"
 
 | 接口 | 响应类型 | 说明 |
 | --- | --- | --- |
-| `GET /monitor/health` | JSON | 健康检查，可用于无需登录的探活。 |
 | `GET /monitor/metrics` | `text/plain` | Prometheus 指标文本，不是统一 JSON。 |
 | `GET /monitor/server` | JSON | 服务器 CPU、内存、磁盘等信息。 |
 | `GET /monitor/cache` | JSON | Redis 或缓存概览。 |
@@ -296,7 +309,7 @@ Content-Disposition: attachment; filename="users.xlsx"
 | `GET /monitor/db-pool` | JSON | 主数据库连接池状态。 |
 | `GET /monitor/runtime` | JSON | 主库、命名只读副本、命名业务数据源、读取策略、Redis、RustFS/对象存储和上传熔断器动态状态。 |
 
-除健康检查和指标采集外，管理端页面应按后端权限要求携带 token 并校验 `perms`。
+根路径 `GET /livez` 固定检查进程存活；`GET /readyz` 检查 MySQL、required Redis 和必要对象存储。两者无需登录且不使用统一业务前缀，依赖不可用时 readiness 返回 `503`。除探针和指标采集外，管理端页面应按后端权限要求携带 token 并校验 `perms`。
 
 ## 前端开发检查清单
 
@@ -306,6 +319,9 @@ Content-Disposition: attachment; filename="users.xlsx"
 - 错误提示统一读取 `msg`。
 - 下载接口设置 `responseType: 'blob'`，不要按统一 JSON 解析。
 - 后端 64 位 ID 在前端按字符串处理。
+- access token、refresh token 和 CSRF challenge 不得写入 localStorage；refresh token 不得出现在 JavaScript 类型中。
+- 所有 Axios transport 启用 `withCredentials`，会话初始化完成前路由守卫保持等待。
+- `503` 进入 unavailable 状态，不能按 `401` 清理服务器会话；refresh `409` 最多等待并重试一次。
 - 菜单 `status` 只有启用值 `"1"` 才生成路由。
 - 新密码表单只使用生成的 `passwordPolicy`，不要在页面复制长度、字符类别或正则。
 - 提交前在 `ryframe-vue3` 目录运行 `pnpm check`，确保源码、架构、契约、Lint、类型、覆盖率和生产构建全部通过；禁止从后端根目录执行 `pnpm`。

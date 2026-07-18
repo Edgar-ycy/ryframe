@@ -1,5 +1,6 @@
 pub mod excel;
 pub mod ip;
+pub mod key;
 pub mod log_mask;
 pub mod snowflake;
 pub mod user_agent;

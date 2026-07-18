@@ -1,0 +1,38 @@
+[package]
+name = "sqlx"
+version = "0.9.0"
+edition = "2021"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/launchbadge/sqlx"
+description = "RyFrame's MySQL-only facade for SQLx 0.9"
+publish = false
+
+[lib]
+name = "sqlx"
+path = "src/lib.rs"
+
+[dependencies.sqlx-core]
+version = "=0.9.0"
+features = ["migrate"]
+default-features = false
+
+[dependencies.sqlx-mysql]
+version = "=0.9.0"
+optional = true
+default-features = false
+
+[features]
+default = []
+mysql = ["dep:sqlx-mysql"]
+migrate = ["sqlx-core/migrate", "sqlx-mysql?/migrate"]
+runtime-tokio = ["sqlx-core/_rt-tokio"]
+tls-none = []
+tls-rustls = ["tls-rustls-ring"]
+tls-rustls-ring = ["tls-rustls-ring-webpki"]
+tls-rustls-ring-webpki = ["sqlx-core/_tls-rustls-ring-webpki"]
+chrono = ["sqlx-core/chrono", "sqlx-mysql?/chrono"]
+json = ["sqlx-core/json", "sqlx-mysql?/json"]
+rust_decimal = ["sqlx-core/rust_decimal", "sqlx-mysql?/rust_decimal"]
+time = ["sqlx-core/time", "sqlx-mysql?/time"]
+uuid = ["sqlx-core/uuid", "sqlx-mysql?/uuid"]

@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, DbBackend};
+use sea_orm::ConnectionTrait;
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -67,8 +67,21 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
+        if !manager.has_index("sys_menu", "idx_perm_id").await? {
+            manager
+                .create_index(
+                    Index::create()
+                        .name("idx_perm_id")
+                        .table(Alias::new("sys_menu"))
+                        .col(Alias::new("perm_id"))
+                        .to_owned(),
+                )
+                .await?;
+        }
+
         backfill_route_keys(manager).await?;
         backfill_permission_ids(manager).await?;
+        add_permission_foreign_key(manager).await?;
         Ok(())
     }
 
@@ -76,6 +89,41 @@ impl MigrationTrait for Migration {
         // Existing menu bindings are operational data. Do not discard them.
         Ok(())
     }
+}
+
+async fn add_permission_foreign_key(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
+    if !manager.has_table("sys_permission").await? {
+        return Ok(());
+    }
+    let exists = manager
+        .get_connection()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::MySql,
+            "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS \
+             WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_menu' \
+             AND CONSTRAINT_NAME = 'fk_sys_menu_permission' \
+             AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
+                .to_owned(),
+        ))
+        .await?
+        .map(|row| sea_orm::TryGetable::try_get_by_index(&row, 0))
+        .transpose()?
+        .unwrap_or(0_i64)
+        > 0;
+    if exists {
+        return Ok(());
+    }
+    manager
+        .create_foreign_key(
+            ForeignKey::create()
+                .name("fk_sys_menu_permission")
+                .from(Alias::new("sys_menu"), Alias::new("perm_id"))
+                .to(Alias::new("sys_permission"), Alias::new("id"))
+                .on_update(ForeignKeyAction::Cascade)
+                .on_delete(ForeignKeyAction::SetNull)
+                .to_owned(),
+        )
+        .await
 }
 
 async fn backfill_route_keys(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
@@ -120,18 +168,11 @@ async fn backfill_permission_ids(manager: &SchemaManager<'_>) -> Result<(), DbEr
         WHEN '用户删除' THEN 'system:user:remove' WHEN '用户导出' THEN 'system:user:export' \
         ELSE NULL END";
 
-    let sql = match connection.get_database_backend() {
-        DbBackend::MySql => format!(
-            "UPDATE sys_menu m LEFT JOIN sys_permission p \
+    let sql = format!(
+        "UPDATE sys_menu m LEFT JOIN sys_permission p \
              ON p.tenant_id = m.tenant_id AND p.code = {expression} \
              SET m.perm_id = p.id WHERE m.perm_id IS NULL"
-        ),
-        _ => format!(
-            "UPDATE sys_menu AS m SET perm_id = (SELECT p.id FROM sys_permission p \
-             WHERE p.tenant_id = m.tenant_id AND p.code = {expression} LIMIT 1) \
-             WHERE m.perm_id IS NULL"
-        ),
-    };
+    );
     connection.execute_unprepared(&sql).await?;
     Ok(())
 }

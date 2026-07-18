@@ -8,7 +8,7 @@ fn env_or(name: &str, default: &str) -> String {
 #[tokio::test]
 async fn test_local_storage_put_get_delete() {
     let tmp = TempDir::new().unwrap();
-    let storage = LocalObjectStorage::new(tmp.path(), "http://localhost:8080/uploads");
+    let storage = LocalObjectStorage::new(tmp.path());
 
     let bucket = "my-app";
 
@@ -30,18 +30,6 @@ async fn test_local_storage_put_get_delete() {
     assert!(!storage.exists(bucket, "test/file.txt").await.unwrap());
 }
 
-#[tokio::test]
-async fn test_local_storage_public_url() {
-    let tmp = TempDir::new().unwrap();
-    let storage = LocalObjectStorage::new(tmp.path(), "http://example.com/uploads");
-
-    let url = storage.public_url("photos", "images/photo.jpg").unwrap();
-    assert_eq!(
-        url.as_deref(),
-        Some("http://example.com/uploads/photos/images/photo.jpg")
-    );
-}
-
 #[test]
 fn test_minio_config() {
     let config = S3Config {
@@ -50,7 +38,6 @@ fn test_minio_config() {
         secret_key: "minioadmin".into(),
         use_ssl: false,
         region: "us-east-1".into(),
-        public_base_url: None,
     };
 
     let storage = S3ObjectStorage::new(config).unwrap();
@@ -72,7 +59,6 @@ async fn test_s3_integration_put_get_delete() {
         secret_key: env_or("APP_OBJECT_STORAGE_SECRET_KEY", "rustfsadmin"),
         use_ssl,
         region: env_or("APP_OBJECT_STORAGE_REGION", "us-east-1"),
-        public_base_url: Some(env_or("APP_OBJECT_STORAGE_PUBLIC_BASE_URL", &endpoint)),
     };
 
     let bucket = "ryframe";
@@ -103,18 +89,13 @@ async fn test_s3_integration_put_get_delete() {
     let data = storage.get(bucket, test_key).await.expect("get object");
     assert_eq!(data, test_data, "下载数据与上传数据不一致");
 
-    // 4. PUBLIC_URL
-    let url = storage.public_url(bucket, test_key).unwrap().unwrap();
-    assert!(url.contains(bucket));
-    assert!(url.contains(test_key.trim_start_matches('/')));
-
-    // 5. DELETE (删除)
+    // 4. DELETE (删除)
     storage
         .delete(bucket, test_key)
         .await
         .expect("delete object");
 
-    // 6. 验证删除后不存在
+    // 5. 验证删除后不存在
     assert!(
         !storage
             .exists(bucket, test_key)

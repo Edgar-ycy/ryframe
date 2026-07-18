@@ -4,10 +4,11 @@ mod local;
 mod s3;
 mod signing;
 
-use async_trait::async_trait;
-use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use async_trait::async_trait;
 pub use local::LocalObjectStorage;
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 pub use s3::{S3Config, S3ObjectStorage};
 
 const OBJECT_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
@@ -40,6 +41,8 @@ const OBJECT_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'|')
     .add(b'}');
+static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+const READINESS_PAYLOAD: &[u8] = b"ryframe-storage-ready";
 
 pub type StorageResult<T> = Result<T, StorageError>;
 
@@ -65,6 +68,8 @@ pub enum StorageError {
     },
     #[error("request signing failed: {0}")]
     Signing(String),
+    #[error("object storage readiness check failed: {0}")]
+    Readiness(String),
 }
 
 /// Upload, download, delete, and locate objects without exposing a backend.
@@ -84,11 +89,34 @@ pub trait ObjectStorage: Send + Sync {
 
     async fn exists(&self, bucket: &str, key: &str) -> StorageResult<bool>;
 
-    /// Return a direct public URL when one is explicitly configured.
-    fn public_url(&self, bucket: &str, key: &str) -> StorageResult<Option<String>>;
-
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         validate_bucket(bucket)
+    }
+
+    /// Exercise the same private object operations used by the application.
+    /// Bucket creation and policy enforcement happen once during startup; the
+    /// readiness probe only writes, reads, and removes a tiny private canary.
+    async fn readiness_check(&self, bucket: &str) -> StorageResult<()> {
+        validate_bucket(bucket)?;
+        let sequence = READINESS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let key = format!(
+            ".ryframe-readiness/{}-{}-{sequence}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        self.put(bucket, &key, READINESS_PAYLOAD, "application/octet-stream")
+            .await?;
+        let read_result = self.get(bucket, &key).await;
+        let delete_result = self.delete(bucket, &key).await;
+
+        let payload = read_result?;
+        delete_result?;
+        if payload != READINESS_PAYLOAD {
+            return Err(StorageError::Readiness(
+                "canary content did not round-trip exactly".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -141,21 +169,6 @@ fn encoded_segment(value: &str) -> String {
     utf8_percent_encode(value, OBJECT_SEGMENT_ENCODE_SET).to_string()
 }
 
-fn public_object_url(base_url: &str, bucket: &str, key: &str) -> StorageResult<String> {
-    validate_bucket(bucket)?;
-    let key = key_segments(key)?
-        .into_iter()
-        .map(encoded_segment)
-        .collect::<Vec<_>>()
-        .join("/");
-    Ok(format!(
-        "{}/{}/{}",
-        base_url.trim_end_matches('/'),
-        bucket,
-        key
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,13 +197,5 @@ mod tests {
                 "unsafe bucket was accepted: {bucket}"
             );
         }
-    }
-
-    #[test]
-    fn public_urls_encode_each_object_segment() {
-        assert_eq!(
-            public_object_url("https://cdn.example.com/", "photos", "夏季/photo one.jpg").unwrap(),
-            "https://cdn.example.com/photos/%E5%A4%8F%E5%AD%A3/photo%20one.jpg"
-        );
     }
 }

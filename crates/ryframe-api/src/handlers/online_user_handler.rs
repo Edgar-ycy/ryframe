@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_common::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, route};
 use ryframe_service::system::online_user_service::OnlineUserVo;
 
@@ -77,33 +77,47 @@ pub async fn list_online_users_page(
 }
 
 /// 强制下线用户
-#[delete("/{token_id}")]
+#[delete("/{sid}")]
 #[perm("monitor:online:force-logout")]
 /// 强制下线用户
-#[utoipa::path(delete, path = "/api/v1/system/online/{token_id}", tag = "在线用户",
-    params(("token_id" = String, Path)), responses((status = 200, description = "强退成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/system/online/{sid}", tag = "在线用户",
+    params(("sid" = String, Path, description = "Stable device-session identifier")),
+    responses(
+        (status = 200, description = "强退成功", body = ryframe_common::ApiEmptyResponse),
+        (status = 404, description = "会话不存在或不属于当前租户"),
+        (status = 503, description = "Redis 会话服务不可用")
+    ),
+    security(("bearer" = [])))]
 pub async fn force_logout(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(token_id): Path<String>,
+    Path(sid): Path<String>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    let session = state
+    // The refresh family is authoritative. Revoke it first, atomically
+    // validating tenant + sid. A Redis failure therefore returns 503 without
+    // deleting the display index, and the same request can safely be retried.
+    let revoked = state
+        .services
+        .auth
+        .refresh_sessions()
+        .revoke_for_tenant(&current_user.tenant_id, &sid)
+        .await
+        .inspect_err(|error| {
+            if matches!(error, AppError::ServiceUnavailable(_)) {
+                ryframe_middleware::metrics::record_redis_degraded("force_logout_session");
+            }
+        })?;
+    if !revoked {
+        return Err(AppError::NotFound("在线会话不存在".into()));
+    }
+
+    // This is a best-effort secondary index cleanup. The already-revoked
+    // family makes every access/refresh token for the sid unusable.
+    state
         .services
         .online_user
-        .force_logout(&current_user, &token_id)
-        .await?;
-
-    // 黑名单 access token 的 jti
-    let ttl = ryframe_auth::jwt::parse_duration(&state.config.auth.access_token_expire)
-        .unwrap_or(3600) as u64;
-    state.token_blacklist.blacklist(&token_id, ttl).await;
-
-    // 也黑名单 user 级别 key（阻止通过 refresh_token 绕过强退）
-    let user_key = format!(
-        "force_logout:{}:user:{}",
-        session.tenant_id, session.user_id
-    );
-    state.token_blacklist.blacklist(&user_key, ttl).await;
+        .remove_user(&current_user.tenant_id, &sid)
+        .await;
 
     Ok(Json(ApiResponse::success_no_data_with_msg(
         "用户已强制下线",

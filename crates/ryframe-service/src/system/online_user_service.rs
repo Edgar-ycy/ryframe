@@ -8,12 +8,15 @@ use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
 /// Redis key 前缀
-const ONLINE_USER_KEY_PREFIX: &str = "online_user:";
-/// 在线用户默认超时时间（30 分钟）
-const DEFAULT_TIMEOUT_MINUTES: i64 = 30;
+const ONLINE_USER_KEY_PREFIX: &str = "ryframe:v0.5:online-user:";
 
-fn online_user_key(tenant_id: &str, token_id: &str) -> String {
-    format!("{ONLINE_USER_KEY_PREFIX}{tenant_id}:{token_id}")
+fn remaining_session_ttl(absolute_exp: i64) -> Option<u64> {
+    let remaining = absolute_exp - Utc::now().timestamp();
+    (remaining > 0).then_some(remaining as u64)
+}
+
+fn online_user_key(tenant_id: &str, sid: &str) -> String {
+    format!("{ONLINE_USER_KEY_PREFIX}{tenant_id}:{sid}")
 }
 
 fn tenant_online_user_pattern(tenant_id: &str) -> String {
@@ -23,7 +26,8 @@ fn tenant_online_user_pattern(tenant_id: &str) -> String {
 /// 在线用户信息（DTO）
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OnlineUserVo {
-    pub token_id: String,
+    /// Stable refresh-family session identifier, not an access-token JTI.
+    pub sid: String,
     pub username: String,
     pub dept_name: Option<String>,
     pub ipaddr: String,
@@ -37,7 +41,7 @@ pub struct OnlineUserVo {
 /// 在线用户会话信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSession {
-    pub token_id: String,
+    pub sid: String,
     pub tenant_id: String,
     pub user_id: i64,
     pub username: String,
@@ -48,6 +52,9 @@ pub struct UserSession {
     pub os: Option<String>,
     pub login_time: chrono::DateTime<Utc>,
     pub last_access_time: chrono::DateTime<Utc>,
+    /// Absolute refresh-family expiry. The online index must never outlive
+    /// the authoritative device session.
+    pub absolute_exp: i64,
 }
 
 /// 在线用户管理服务（支持 Redis / 内存双模式）
@@ -84,9 +91,12 @@ impl OnlineUserService {
 
     /// 添加在线用户
     pub async fn add_user(&self, session: UserSession) {
+        let Some(ttl) = remaining_session_ttl(session.absolute_exp) else {
+            return;
+        };
         match self {
             Self::Redis { client } => {
-                let key = online_user_key(&session.tenant_id, &session.token_id);
+                let key = online_user_key(&session.tenant_id, &session.sid);
                 let json = match serde_json::to_string(&session) {
                     Ok(j) => j,
                     Err(e) => {
@@ -94,25 +104,20 @@ impl OnlineUserService {
                         return;
                     }
                 };
-                // 设置 30 分钟 TTL，每次 touch 时续期
-                let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
-                if let Err(e) = client.set_ex(&key, &json, ttl as u64).await {
+                if let Err(e) = client.set_ex(&key, &json, ttl).await {
                     tracing::error!("Redis SET 在线用户失败: {}", e);
                 }
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
-                s.insert(
-                    online_user_key(&session.tenant_id, &session.token_id),
-                    session,
-                );
+                s.insert(online_user_key(&session.tenant_id, &session.sid), session);
             }
         }
     }
 
     /// 移除在线用户
-    pub async fn remove_user(&self, tenant_id: &str, token_id: &str) {
-        let key = online_user_key(tenant_id, token_id);
+    pub async fn remove_user(&self, tenant_id: &str, sid: &str) {
+        let key = online_user_key(tenant_id, sid);
         match self {
             Self::Redis { client } => {
                 if let Err(e) = client.del(&key).await {
@@ -206,68 +211,34 @@ impl OnlineUserService {
             Self::InMemory { sessions } => {
                 let s = sessions.read().await;
                 Ok(s.values()
-                    .filter(|session| session.tenant_id == tenant_id)
+                    .filter(|session| {
+                        session.tenant_id == tenant_id
+                            && remaining_session_ttl(session.absolute_exp).is_some()
+                    })
                     .map(session_to_vo)
                     .collect())
             }
         }
     }
 
-    /// 强制下线用户
-    /// 返回被下线会话，用于后续的 Token 黑名单等操作。
-    pub async fn force_logout(
-        &self,
-        actor: &ActorContext,
-        token_id: &str,
-    ) -> AppResult<UserSession> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
-        let key = online_user_key(tenant_id, token_id);
-        match self {
-            Self::Redis { client } => {
-                let session = match client.get(&key).await {
-                    Ok(Some(json)) => {
-                        serde_json::from_str::<UserSession>(&json).map_err(|error| {
-                            tracing::error!("反序列化在线用户失败: {}", error);
-                            AppError::Internal("在线用户数据损坏".into())
-                        })?
-                    }
-                    Ok(None) => return Err(AppError::NotFound("在线用户不存在".into())),
-                    Err(error) => {
-                        tracing::error!("Redis GET 强制下线失败: {}", error);
-                        return Err(AppError::Internal("强制下线失败".into()));
-                    }
-                };
-                match client.del(&key).await {
-                    Ok(n) if n > 0 => Ok(session),
-                    Ok(_) => Err(AppError::NotFound("在线用户不存在".into())),
-                    Err(e) => {
-                        tracing::error!("Redis DEL 强制下线失败: {}", e);
-                        Err(AppError::Internal("强制下线失败".into()))
-                    }
-                }
-            }
-            Self::InMemory { sessions } => {
-                let mut s = sessions.write().await;
-                s.remove(&key)
-                    .ok_or_else(|| AppError::NotFound("在线用户不存在".into()))
-            }
-        }
-    }
-
     /// 更新用户最后访问时间
-    pub async fn touch_user(&self, tenant_id: &str, token_id: &str) {
-        let key = online_user_key(tenant_id, token_id);
+    pub async fn touch_user(&self, tenant_id: &str, sid: &str) {
+        let key = online_user_key(tenant_id, sid);
         match self {
             Self::Redis { client } => {
                 match client.get(&key).await {
                     Ok(Some(json)) => {
                         if let Ok(mut session) = serde_json::from_str::<UserSession>(&json) {
                             session.last_access_time = Utc::now();
-                            if let Ok(new_json) = serde_json::to_string(&session) {
-                                let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
-                                if let Err(e) = client.set_ex(&key, &new_json, ttl as u64).await {
+                            if let (Some(ttl), Ok(new_json)) = (
+                                remaining_session_ttl(session.absolute_exp),
+                                serde_json::to_string(&session),
+                            ) {
+                                if let Err(e) = client.set_ex(&key, &new_json, ttl).await {
                                     tracing::warn!("Redis SET 续期失败: {}", e);
                                 }
+                            } else if let Err(error) = client.del(&key).await {
+                                tracing::warn!(%error, "删除过期在线用户索引失败");
                             }
                         }
                     }
@@ -279,58 +250,23 @@ impl OnlineUserService {
             }
             Self::InMemory { sessions } => {
                 let mut s = sessions.write().await;
-                if let Some(session) = s.get_mut(&key) {
+                let expired = s
+                    .get(&key)
+                    .is_some_and(|session| remaining_session_ttl(session.absolute_exp).is_none());
+                if expired {
+                    s.remove(&key);
+                } else if let Some(session) = s.get_mut(&key) {
                     session.last_access_time = Utc::now();
                 }
             }
         }
     }
 
-    /// 确保在线用户会话存在（touch + 自动补建）
-    ///
-    /// 先尝试更新 last_access_time，如果会话不存在（如服务重启后被 clear_all_on_startup 清除），
-    /// 则自动重新创建会话。解决 JWT 仍有效但 Redis 会话丢失导致在线用户列表为空的问题。
-    pub async fn ensure_user(&self, session: UserSession) {
-        match self {
-            Self::Redis { client } => {
-                let key = online_user_key(&session.tenant_id, &session.token_id);
-                // 先尝试 touch：如果 key 存在则更新 last_access_time
-                if let Ok(Some(json)) = client.get(&key).await {
-                    if let Ok(mut existing) = serde_json::from_str::<UserSession>(&json) {
-                        existing.last_access_time = Utc::now();
-                        if let Ok(new_json) = serde_json::to_string(&existing) {
-                            let ttl = DEFAULT_TIMEOUT_MINUTES * 60;
-                            if let Err(error) = client.set_ex(&key, &new_json, ttl as u64).await {
-                                tracing::warn!(%error, "Redis SET ensure_user 续期失败");
-                            }
-                        }
-                    }
-                    return;
-                } // key 不存在或读取失败，走下方补建逻辑
-                // 会话不存在，重新创建
-                self.add_user(session).await;
-            }
-            Self::InMemory { sessions } => {
-                let mut s = sessions.write().await;
-                let key = online_user_key(&session.tenant_id, &session.token_id);
-                if let Some(existing) = s.get_mut(&key) {
-                    existing.last_access_time = Utc::now();
-                } else {
-                    s.insert(key, session);
-                }
-            }
-        }
-    }
-
     /// 清理过期的在线用户（仅内存模式有效，Redis 模式由 TTL 自动管理）
-    pub async fn cleanup_expired(&self, timeout_minutes: i64) {
+    pub async fn cleanup_expired(&self) {
         if let Self::InMemory { sessions } = self {
-            let now = Utc::now();
             let mut s = sessions.write().await;
-            s.retain(|_, session| {
-                let duration = now.signed_duration_since(session.last_access_time);
-                duration.num_minutes() < timeout_minutes
-            });
+            s.retain(|_, session| remaining_session_ttl(session.absolute_exp).is_some());
         }
     }
 
@@ -351,31 +287,11 @@ impl OnlineUserService {
             Self::InMemory { sessions } => {
                 let s = sessions.read().await;
                 Ok(s.values()
-                    .filter(|session| session.tenant_id == tenant_id)
+                    .filter(|session| {
+                        session.tenant_id == tenant_id
+                            && remaining_session_ttl(session.absolute_exp).is_some()
+                    })
                     .count())
-            }
-        }
-    }
-
-    /// 启动时清理所有在线用户（Redis 模式下清除残留的旧会话）
-    pub async fn clear_all_on_startup(&self) {
-        match self {
-            Self::Redis { client } => {
-                let pattern = format!("{}*", ONLINE_USER_KEY_PREFIX);
-                match client.delete_by_pattern(&pattern).await {
-                    Ok(deleted) => {
-                        if deleted > 0 {
-                            tracing::info!("启动时清理了 {} 个残留在线用户会话", deleted);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("清理残留在线用户会话失败: {}", e);
-                    }
-                }
-            }
-            Self::InMemory { sessions } => {
-                let mut s = sessions.write().await;
-                s.clear();
             }
         }
     }
@@ -384,7 +300,7 @@ impl OnlineUserService {
 /// UserSession → OnlineUserVo
 pub fn session_to_vo(s: &UserSession) -> OnlineUserVo {
     OnlineUserVo {
-        token_id: s.token_id.clone(),
+        sid: s.sid.clone(),
         username: s.username.clone(),
         dept_name: s.dept_name.clone(),
         ipaddr: s.ipaddr.clone(),

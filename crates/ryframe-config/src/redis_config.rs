@@ -1,10 +1,29 @@
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RedisMode {
+    Required,
+    #[default]
+    Optional,
+    Disabled,
+}
+
+impl RedisMode {
+    pub const fn is_required(self) -> bool {
+        matches!(self, Self::Required)
+    }
+}
 
 /// Redis 配置（可选）
 ///
 /// 不配置 `[redis]` section 时，框架不启用缓存。
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RedisConfig {
+    #[serde(default)]
+    pub mode: RedisMode,
     /// Redis 主机地址
     #[serde(default = "default_redis_host")]
     pub host: String,
@@ -28,6 +47,7 @@ pub struct RedisConfig {
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
+            mode: RedisMode::Optional,
             host: default_redis_host(),
             port: default_redis_port(),
             password: String::new(),
@@ -62,10 +82,28 @@ impl RedisConfig {
         if self.password.is_empty() {
             format!("redis://{}:{}/{}", self.host, self.port, self.database)
         } else {
+            let password = utf8_percent_encode(&self.password, NON_ALPHANUMERIC);
             format!(
                 "redis://:{}@{}:{}/{}",
-                self.password, self.host, self.port, self.database
+                password, self.host, self.port, self.database
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_url_percent_encodes_password() {
+        let config = RedisConfig {
+            password: "p:a/s#%@".into(),
+            ..RedisConfig::default()
+        };
+        assert_eq!(
+            config.connection_url(),
+            "redis://:p%3Aa%2Fs%23%25%40@127.0.0.1:6379/0"
+        );
     }
 }

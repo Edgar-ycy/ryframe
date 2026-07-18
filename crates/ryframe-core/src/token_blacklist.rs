@@ -2,7 +2,7 @@
 //!
 //! 用于实现 JWT 主动撤销：
 //! - Redis 模式：存储 jti → "1"，设置 TTL = token 剩余有效时间
-//! - 内存模式（Redis 不可用时降级）：DashMap 存储，后台 GC 清理过期
+//! - 内存模式（仅在启动时显式选择 optional/disabled）：DashMap 存储，后台 GC 清理过期
 
 use std::{
     sync::Arc,
@@ -12,11 +12,12 @@ use std::{
 use dashmap::DashMap;
 
 use crate::RedisClient;
+use ryframe_common::{AppError, AppResult};
 
 /// Token 黑名单
 ///
 /// 用于在登出时主动撤销 JWT，防止令牌在有效期内被滥用。
-/// Redis 模式为首选（支持分布式），Redis 不可用时自动降级为内存模式。
+/// 运行中的 Redis 错误会失败关闭；是否使用内存模式只在启动阶段决定。
 #[derive(Clone)]
 pub struct TokenBlacklist {
     redis: Option<RedisClient>,
@@ -33,26 +34,31 @@ impl TokenBlacklist {
         }
     }
 
-    /// 将 token 加入黑名单
-    ///
-    /// `jti` - JWT ID，token 的唯一标识
-    /// `ttl_seconds` - 黑名单有效时长（应设置为 token 的剩余有效时间）
-    pub async fn blacklist(&self, jti: &str, ttl_seconds: u64) {
+    /// 将 token 加入黑名单。Redis 写失败必须由调用者处理。
+    pub async fn try_blacklist(&self, jti: &str, ttl_seconds: u64) -> AppResult<()> {
         if let Some(ref redis) = self.redis {
             let key = blacklist_key(jti);
-            let _ = redis.set_ex(key, "1", ttl_seconds).await;
+            redis
+                .set_ex(key, "1", ttl_seconds)
+                .await
+                .map_err(redis_unavailable)?;
         } else {
             // 内存模式：记录过期时刻
             let expiry = Instant::now() + Duration::from_secs(ttl_seconds);
             self.local.insert(jti.to_string(), expiry);
         }
+        Ok(())
     }
 
     /// 检查 token 是否在黑名单中
     pub async fn is_blacklisted(&self, jti: &str) -> bool {
+        self.try_is_blacklisted(jti).await.unwrap_or(true)
+    }
+
+    pub async fn try_is_blacklisted(&self, jti: &str) -> AppResult<bool> {
         if let Some(ref redis) = self.redis {
             let key = blacklist_key(jti);
-            redis.exists(key).await.unwrap_or(false)
+            redis.exists(key).await.map_err(redis_unavailable)
         } else {
             // 内存模式：检查是否过期
             match self.local.get(jti) {
@@ -61,24 +67,25 @@ impl TokenBlacklist {
                         // 惰性删除过期条目
                         drop(entry);
                         self.local.remove(jti);
-                        false
+                        Ok(false)
                     } else {
-                        true
+                        Ok(true)
                     }
                 }
-                None => false,
+                None => Ok(false),
             }
         }
     }
 
-    /// 从黑名单中移除指定 key（用于登录后清除强退标记等）
-    pub async fn remove(&self, jti: &str) {
+    /// 从黑名单中移除指定 key。Redis 写失败必须由调用者处理。
+    pub async fn try_remove(&self, jti: &str) -> AppResult<()> {
         if let Some(ref redis) = self.redis {
             let key = blacklist_key(jti);
-            let _ = redis.del(key).await;
+            redis.del(key).await.map_err(redis_unavailable)?;
         } else {
             self.local.remove(jti);
         }
+        Ok(())
     }
 
     /// 启动后台 GC（仅内存模式需要）
@@ -96,7 +103,12 @@ impl TokenBlacklist {
     }
 }
 
+fn redis_unavailable(error: redis::RedisError) -> AppError {
+    tracing::error!(%error, "token blacklist Redis operation failed");
+    AppError::ServiceUnavailable("session revocation service unavailable".into())
+}
+
 /// 生成 Redis key
 pub fn blacklist_key(jti: &str) -> String {
-    format!("token:blacklist:{}", jti)
+    format!("ryframe:v0.5:access-revocation:{jti}")
 }

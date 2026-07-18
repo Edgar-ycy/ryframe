@@ -6,6 +6,11 @@ level = "info"
 format = "json"
 
 [redis]
+mode = "required"
 host = "127.0.0.1"
 port = 6379
 max_pool_size = 32
+
+[proxy]
+# 默认假设 Nginx 通过回环地址连接；容器网络部署时必须改为实际代理 CIDR。
+trusted_cidrs = ["127.0.0.1/32", "::1/128"]

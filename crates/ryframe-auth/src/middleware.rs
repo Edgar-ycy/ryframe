@@ -1,4 +1,8 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+};
 
 use axum::{
     extract::{Request, State},
@@ -8,7 +12,7 @@ use axum::{
 };
 use ryframe_common::AppError;
 use ryframe_config::AppConfig;
-use ryframe_core::{TenantContext, TokenBlacklist, with_tenant_context};
+use ryframe_core::{RefreshSessionStore, TenantContext, TokenBlacklist, with_tenant_context};
 
 use crate::{
     jwt::decode_token,
@@ -16,12 +20,27 @@ use crate::{
     principal::{PrincipalResolver, RequestPrincipal},
 };
 
+static BACKEND_FAILURE_HOOK: OnceLock<fn(&str)> = OnceLock::new();
+
+/// Install a process-wide observer without introducing an auth -> middleware
+/// dependency cycle. Repeated installation is harmless.
+pub fn set_backend_failure_hook(hook: fn(&str)) {
+    let _ = BACKEND_FAILURE_HOOK.set(hook);
+}
+
+fn record_backend_failure(subsystem: &str) {
+    if let Some(hook) = BACKEND_FAILURE_HOOK.get() {
+        hook(subsystem);
+    }
+}
+
 /// 认证中间件状态（合并 Config + TokenBlacklist）
 #[derive(Clone)]
 pub struct AuthState {
     pub config: Arc<AppConfig>,
     pub blacklist: TokenBlacklist,
     pub principal_resolver: Arc<dyn PrincipalResolver>,
+    pub refresh_sessions: RefreshSessionStore,
 }
 
 /// 认证中间件
@@ -55,16 +74,33 @@ pub async fn auth_middleware(
     }
 
     // Token 黑名单检查（支持 JWT 主动撤销）
-    if auth_state.blacklist.is_blacklisted(&claims.jti).await {
+    if auth_state
+        .blacklist
+        .try_is_blacklisted(&claims.jti)
+        .await
+        .map_err(|error| {
+            record_backend_failure("access_revocation");
+            error.into_response()
+        })?
+    {
         return Err(AppError::Authentication("令牌已被撤销，请重新登录".into()).into_response());
     }
 
-    // 检查用户级强退黑名单（阻止 refresh_token 绕过强退）
-    let force_logout_key = format!("force_logout:{}:user:{}", claims.tenant_id, claims.sub);
-    if auth_state.blacklist.is_blacklisted(&force_logout_key).await {
+    if claims.sid.is_empty() {
         return Err(
-            AppError::Authentication("账号已被强制下线，请重新登录".into()).into_response(),
+            AppError::Authentication("legacy access token is not accepted".into()).into_response(),
         );
+    }
+    if !auth_state
+        .refresh_sessions
+        .is_active(&claims.sid)
+        .await
+        .map_err(|error| {
+            record_backend_failure("access_session");
+            error.into_response()
+        })?
+    {
+        return Err(AppError::Authentication("session is no longer active".into()).into_response());
     }
 
     // Replace the unauthenticated, header-derived context with the tenant
@@ -79,6 +115,11 @@ pub async fn auth_middleware(
     )
     .await
     .map_err(|error| error.into_response())?;
+
+    let span = tracing::Span::current();
+    span.record("tenant.id", principal.tenant_id.as_str());
+    span.record("user.id", principal.user_id);
+    span.record("user.name", principal.username.as_str());
 
     request.extensions_mut().insert(tenant_context.clone());
     request.extensions_mut().insert(principal);

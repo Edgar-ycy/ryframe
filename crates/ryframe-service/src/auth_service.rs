@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_config::AppConfig;
-use ryframe_core::{LoggedRepo, RedisClient};
+use ryframe_core::{LoggedRepo, RedisClient, RefreshSessionStore};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
     DeptRepository, PermissionRepository, RoleRepository, UserRepository, entities::user,
@@ -15,13 +15,14 @@ mod principal_resolution;
 mod session;
 
 /// 登录响应（内部使用，最终由 API 层序列化为 JSON）
-#[derive(Debug, Serialize)]
 pub struct LoginResult {
     pub access_token: String,
     pub refresh_token: String,
     /// 令牌唯一标识，用于在线用户管理
-    pub token_id: String,
+    pub sid: String,
     pub user_info: UserInfo,
+    pub expires_in: usize,
+    pub refresh_expires_at: usize,
 }
 
 /// 用户信息
@@ -67,12 +68,14 @@ pub struct AuthService {
     perm_repo: LoggedRepo<PermissionRepository>,
     dept_repo: LoggedRepo<DeptRepository>,
     config: Arc<AppConfig>,
-    /// Redis 客户端（用于权限缓存和登录暴力破解防护，可空）
+    /// Redis 客户端（用于 refresh family 与登录暴力破解防护，可空）
     redis: Option<RedisClient>,
+    refresh_sessions: RefreshSessionStore,
 }
 
 impl AuthService {
     pub fn new(db: DatabaseCluster, config: Arc<AppConfig>, redis: Option<RedisClient>) -> Self {
+        let refresh_sessions = RefreshSessionStore::new(redis.clone());
         Self {
             db,
             user_repo: LoggedRepo::new(UserRepository),
@@ -81,6 +84,11 @@ impl AuthService {
             dept_repo: LoggedRepo::new(DeptRepository),
             config,
             redis,
+            refresh_sessions,
         }
+    }
+
+    pub fn refresh_sessions(&self) -> RefreshSessionStore {
+        self.refresh_sessions.clone()
     }
 }

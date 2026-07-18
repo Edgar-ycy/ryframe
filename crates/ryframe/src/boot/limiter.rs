@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ryframe_common::{AppError, AppResult, utils::ip::TrustedProxySet};
 use ryframe_config::AppConfig;
 use ryframe_core::RedisClient;
 use ryframe_middleware::{RateLimitState, RateLimiter};
@@ -11,7 +12,7 @@ pub struct LimiterState {
 }
 
 /// 初始化限流器（Redis 固定窗口 / 内存令牌桶 双模式）
-pub fn init(config: &AppConfig, redis_client: &Option<RedisClient>) -> LimiterState {
+pub fn init(config: &AppConfig, redis_client: &Option<RedisClient>) -> AppResult<LimiterState> {
     let limiter = if let Some(redis) = redis_client {
         let window = if config.rate_limit.window_secs > 0 {
             config.rate_limit.window_secs
@@ -35,10 +36,12 @@ pub fn init(config: &AppConfig, redis_client: &Option<RedisClient>) -> LimiterSt
     let rate_limit_state = RateLimitState {
         limiter: limiter.clone(),
         config: Arc::new(config.rate_limit.clone()),
+        trusted_proxies: TrustedProxySet::new(&config.proxy.trusted_cidrs)
+            .map_err(AppError::Config)?,
     };
 
-    LimiterState {
+    Ok(LimiterState {
         limiter,
         rate_limit_state,
-    }
+    })
 }

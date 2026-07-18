@@ -17,7 +17,7 @@ utoipa = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 syn = { workspace = true }
-sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+sea-orm = { workspace = true }
 
 [[bin]]
 name = "ryframe-gen"
