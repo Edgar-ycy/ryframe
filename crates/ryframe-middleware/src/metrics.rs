@@ -272,15 +272,14 @@ pub fn spawn_process_metrics_updater() {
                 PROCESS_VIRTUAL_MEMORY_BYTES.set(process.virtual_memory() as f64);
 
                 #[cfg(target_os = "linux")]
-                if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-                    if let Some(thread_count) = status
+                if let Ok(status) = std::fs::read_to_string("/proc/self/status")
+                    && let Some(thread_count) = status
                         .lines()
                         .find(|line| line.starts_with("Threads:"))
                         .and_then(|line| line.split_whitespace().nth(1))
                         .and_then(|value| value.parse::<f64>().ok())
-                    {
-                        PROCESS_THREADS.set(thread_count);
-                    }
+                {
+                    PROCESS_THREADS.set(thread_count);
                 }
 
                 #[cfg(target_os = "linux")]

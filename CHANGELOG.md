@@ -39,6 +39,7 @@
 - 修复 Docker Compose 测试栈中 RustFS 非 root 用户无法写入 `/data` 临时卷、导致对象存储 smoke 无法启动的问题。
 - 修复 MySQL 隔离测试库析构时跨 Tokio runtime 等待连接池关闭、导致集成测试在完成断言后无限挂起的问题。
 - 修复 MySQL 8.4 集成测试中的触发器与外键变更语法，并串行化 Redis 全局故障注入，避免并行测试互相污染。
+- 修复 Linux 专属进程线程指标采集分支触发严格 Clippy `collapsible_if`、导致远端 CI 提前失败的问题。
 
 ### Security
 
