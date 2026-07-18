@@ -159,9 +159,6 @@ config/app.prod.toml
 - [对象存储与 RustFS 指南](docs/storage-guide.md)
 - [前端集成指南](docs/frontend-integration.md)
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/chart?repos=Edgar-ycy/ryframe&type=timeline&logscale&legend=top-left)](https://www.star-history.com/?repos=Edgar-ycy%2Fryframe&type=timeline&logscale=&legend=top-left)
 
 ## 许可
 
