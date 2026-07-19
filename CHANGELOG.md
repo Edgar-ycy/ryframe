@@ -44,6 +44,7 @@
 - 修复 MySQL 8.4 集成测试中的触发器与外键变更语法，并串行化 Redis 全局故障注入，避免并行测试互相污染。
 - 修复 Linux 专属进程线程指标采集分支触发严格 Clippy `collapsible_if`、导致远端 CI 提前失败的问题。
 - 将 Nginx TLS 模板迁移到独立 `http2 on` 语法，并由部署门禁拒绝已弃用的 `listen ... http2` 配置。
+- 修复配置测试只清理部分环境变量、导致 Release job 注入的 RustFS 与数据库覆盖项污染静态配置加载的问题；测试现在统一隔离全部 `APP_*` 配置覆盖。
 
 ### Security
 

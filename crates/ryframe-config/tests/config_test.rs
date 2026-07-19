@@ -228,21 +228,35 @@ fn removed_database_driver_field_is_rejected() {
     clear_config_env();
 }
 
-fn clear_config_env() {
+#[test]
+fn clear_config_env_removes_all_app_overrides() {
+    let _guard = ENV_LOCK.lock().unwrap();
     unsafe {
-        for key in [
-            "APP_ENV",
-            "APP_AUTH_JWT_SECRET",
-            "APP_DATABASE_PASSWORD",
-            "APP_DATABASE_REPLICAS",
-            "APP_DATABASE_SOURCES",
-            "APP_GENERATOR_DATA_SOURCE",
-            "APP_OBJECT_STORAGE_ACCESS_KEY",
-            "APP_OBJECT_STORAGE_SECRET_KEY",
-            "APP_RATE_LIMIT_ENABLED",
-            "APP_CORS_ALLOW_ORIGINS",
-            "CONFIG_MASTER_KEY",
-        ] {
+        std::env::set_var("APP_DATABASE_PORT", "13306");
+        std::env::set_var("APP_OBJECT_STORAGE_BACKEND", "rustfs");
+        std::env::set_var("APP_FUTURE_CONFIG_OVERRIDE", "must-be-cleared");
+        std::env::set_var("CONFIG_MASTER_KEY", "test-master-key");
+    }
+
+    clear_config_env();
+
+    assert!(std::env::var_os("APP_DATABASE_PORT").is_none());
+    assert!(std::env::var_os("APP_OBJECT_STORAGE_BACKEND").is_none());
+    assert!(std::env::var_os("APP_FUTURE_CONFIG_OVERRIDE").is_none());
+    assert!(std::env::var_os("CONFIG_MASTER_KEY").is_none());
+}
+
+fn clear_config_env() {
+    let keys = std::env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| {
+            let key = key.to_string_lossy();
+            key.starts_with("APP_") || key == "CONFIG_MASTER_KEY"
+        })
+        .collect::<Vec<_>>();
+
+    unsafe {
+        for key in keys {
             std::env::remove_var(key);
         }
     }
