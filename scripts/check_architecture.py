@@ -775,12 +775,28 @@ def check_source_only_release(errors: list[str]) -> None:
                 )
 
 
+def check_github_action_runtimes(errors: list[str]) -> None:
+    workflow_paths = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
+    pnpm_action_pattern = re.compile(r"pnpm/action-setup@([^\s#]+)")
+
+    for path in workflow_paths:
+        source = path.read_text(encoding="utf-8")
+        relative_path = path.relative_to(ROOT)
+        for match in pnpm_action_pattern.finditer(source):
+            if match.group(1) != "v6":
+                errors.append(
+                    f"{relative_path} must use pnpm/action-setup@v6 for the "
+                    f"Node.js 24 action runtime; found @{match.group(1)}"
+                )
+
+
 def main() -> int:
     errors: list[str] = []
     check_dependency_graph(errors)
     check_source_boundaries(errors)
     check_database_and_storage_topology(errors)
     check_source_only_release(errors)
+    check_github_action_runtimes(errors)
     check_openapi_registration(errors)
     check_openapi_contract_pipeline(errors)
     check_compiled_permission_catalog(errors)

@@ -13,6 +13,7 @@
 
 ### Changed
 
+- 发布工作流的 pnpm 初始化 Action 升级至 `pnpm/action-setup@v6`（Node.js 24 runtime），并新增架构和单元测试门禁以禁止回退到旧版。
 - 后端和前端统一升级为 `v0.5.0`，使用同一 Git tag 和发布窗口；不兼容旧 JSON refresh 协议。
 - Rust Migrator 与幂等 Seeder 成为唯一可执行 schema 来源，完整 SQL 降为由迁移生成并经 CI 校验的只读快照。
 - access token 和 CSRF challenge 只保存在页面内存；refresh、登出和多标签恢复改为 Cookie、CSRF 与 Redis 会话协调。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -62,6 +63,18 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(job=job):
                 self.assertIn(job, source)
         self.assertIn("--minimum-rc-hours 48", source)
+
+    def test_pnpm_action_uses_node24_runtime(self) -> None:
+        references: list[tuple[str, str]] = []
+        pattern = re.compile(r"pnpm/action-setup@([^\s#]+)")
+        for path in sorted(WORKFLOWS.glob("*.y*ml")):
+            source = path.read_text(encoding="utf-8")
+            references.extend((path.name, match) for match in pattern.findall(source))
+
+        self.assertTrue(references, "expected a pnpm/action-setup reference")
+        for path, version in references:
+            with self.subTest(path=path):
+                self.assertEqual(version, "v6")
 
     def test_release_uses_both_non_empty_changelogs(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
