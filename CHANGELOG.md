@@ -24,6 +24,7 @@
 - 开发/测试数据库重置在确认目标库后直接删除并重新创建数据库，再运行 Migrator 与 Seeder，避免已移除的旧表阻塞空库基线。
 - CI 与 Release 的运行时 smoke 明确使用主库作为生成器数据源，并验证命名业务数据源集合为空，不再依赖额外测试数据库。
 - RC、stable 与前后端 Nightly GitHub Release 统一为通用源码发布，只保留 GitHub 自动提供的 Source code（zip）和 Source code（tar.gz）；Nightly 仅在对应仓库的 `main` CI 成功后更新，发布门禁不再依赖生产 API 地址。
+- RC、stable 与 Nightly 的 annotated tag 说明和 GitHub Release 正文统一从对应仓库的当前版本 CHANGELOG 精确生成；项目级 Release 同时列出后端与前端更新，不再允许只有版本标题或空说明。
 
 ### Removed
 
@@ -60,6 +61,7 @@
 - stable tag 必须位于 `main`，前后端 workspace/package/OpenAPI 版本与标签一致，并存在至少观察 48 小时的同版本 RC。
 - 后端发布门禁覆盖 fmt、Clippy、全量 MySQL 测试、Redis/对象存储 smoke、迁移升级、Seeder、应用 smoke、ShellCheck、依赖审计和备份恢复演练。
 - 前端发布门禁覆盖 contract、源码架构、typecheck、lint、单元/覆盖率、E2E 和 bundle budget，并校验同标签后端 OpenAPI。
+- 发布门禁拒绝 lightweight tag、空 CHANGELOG 版本段、没有实际更新条目的版本段及不与对应完整版本说明完全一致的 tag annotation；发布前再次锁定并复核前后端 tag object ID 与提交 SHA，发布后校验 Release 正文与生成文件一致且自定义附件数量为零。
 
 ## [v0.4.2]
 

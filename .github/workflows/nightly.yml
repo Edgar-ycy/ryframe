@@ -28,13 +28,51 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Force update nightly tag
+      - name: Extract non-empty Changelog notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '
+            $0 == "[workspace.package]" { in_package=1; next }
+            in_package && /^\[/ { exit }
+            in_package && /^[[:space:]]*version[[:space:]]*=/ {
+              value=$0
+              sub(/^[^"]*"/, "", value)
+              sub(/".*$/, "", value)
+              print value
+              exit
+            }
+          ' Cargo.toml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Cannot determine the workspace release version." >&2
+            exit 1
+          }
+          stable_tag="v${version}"
+          notes="$RUNNER_TEMP/nightly-release-notes.md"
+          awk -v version="$stable_tag" '
+            BEGIN { heading = "## [" version "]" }
+            !found && ($0 == heading || index($0, heading " ") == 1 || index($0, heading "\t") == 1) {
+              found=1
+            }
+            found && emitted && /^## \[/ { exit }
+            found { print; emitted=1 }
+            END { if (!found) exit 2 }
+          ' CHANGELOG.md > "$notes"
+          if ! grep --extended-regexp --quiet '^-[[:space:]]+[^[:space:]]' "$notes"; then
+            echo "$stable_tag CHANGELOG section has no update items." >&2
+            exit 1
+          fi
+
+      - name: Force update annotated nightly tag
         shell: bash
         env:
           NIGHTLY_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          git tag -f nightly "${NIGHTLY_SHA}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a -f --cleanup=verbatim -F "$RUNNER_TEMP/nightly-release-notes.md" nightly "${NIGHTLY_SHA}"
+          [[ "$(git cat-file -t refs/tags/nightly)" == tag ]]
           git push -f origin refs/tags/nightly
 
       - name: Purge custom assets from Nightly release
@@ -69,14 +107,20 @@ jobs:
         with:
           tag_name: nightly
           name: Nightly
-          body: |
-            ## Nightly Source Snapshot
-
-            自动发布自通过 CI 的 `main` 提交，仅提供 GitHub 自动生成的源码归档。
-
-            - Commit: ${{ github.event.workflow_run.head_sha }}
-            - CI 完成时间: ${{ github.event.workflow_run.updated_at }}
-
-            > 这是开发中的快照版本，可能不稳定。
+          body_path: ${{ runner.temp }}/nightly-release-notes.md
           prerelease: true
           make_latest: false
+
+      - name: Verify Nightly notes and zero custom assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/nightly-published-release.json"
+          published_body="$RUNNER_TEMP/nightly-published-body.md"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" > "$release_json"
+          jq --exit-status '.assets | length == 0' "$release_json" > /dev/null
+          jq --join-output '.body // ""' "$release_json" > "$published_body"
+          test -s "$published_body"
+          diff --unified "$RUNNER_TEMP/nightly-release-notes.md" "$published_body"

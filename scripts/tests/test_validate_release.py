@@ -38,6 +38,113 @@ class ReleaseIdentityTests(unittest.TestCase):
                 validate_release.release_identity(tag)
 
 
+class ChangelogNotesTests(unittest.TestCase):
+    @staticmethod
+    def changelog(content: str) -> mock.Mock:
+        path = mock.Mock(spec=Path)
+        path.read_text.return_value = content
+        return path
+
+    def test_extracts_exact_section_and_stops_at_next_version(self) -> None:
+        path = self.changelog(
+            "# Changelog\r\n\r\n"
+            "## [v0.5.0] - 2026-07-18\r\n\r\n"
+            "### Changed  \r\n\r\n"
+            "- Published source-only releases.  \r\n\r\n"
+            "## [v0.4.0]\r\n\r\n- Older change.\r\n"
+        )
+
+        section = validate_release.changelog_section(
+            path, "v0.5.0", "test"
+        )
+
+        self.assertEqual(
+            section,
+            "## [v0.5.0] - 2026-07-18\n\n"
+            "### Changed\n\n- Published source-only releases.",
+        )
+        self.assertNotIn("Older change", section)
+
+    def test_rejects_missing_or_content_free_section(self) -> None:
+        cases = (
+            "## [v0.5.1]\n\n- Different version.\n",
+            "## [v0.5.0]\n",
+            "## [v0.5.0]\n\n### Changed\n",
+        )
+        for content in cases:
+            with self.subTest(content=content):
+                path = self.changelog(content)
+                with self.assertRaises(ValueError):
+                    validate_release.changelog_section(
+                        path, "v0.5.0", "test"
+                    )
+
+    def test_accepts_annotated_tag_with_exact_changelog_section(self) -> None:
+        path = self.changelog(
+            "## [v0.5.0]\n\n### Changed\n\n- Real update.\n"
+        )
+        notes = (
+            "## [v0.5.0]  \r\n\r\n"
+            "### Changed\r\n\r\n- Real update.  \r\n"
+        )
+        with mock.patch.object(
+            validate_release, "git_text", side_effect=("tag", notes)
+        ):
+            section = validate_release.validate_annotated_tag_notes(
+                Path("repository"),
+                "v0.5.0-rc.3",
+                path,
+                "v0.5.0",
+                "test",
+            )
+
+        self.assertIn("- Real update.", section)
+
+    def test_rejects_lightweight_or_generic_tag_notes(self) -> None:
+        path = self.changelog(
+            "## [v0.5.0]\n\n### Changed\n\n- Real update.\n"
+        )
+        with mock.patch.object(
+            validate_release, "git_text", return_value="commit"
+        ), self.assertRaisesRegex(ValueError, "annotated tag"):
+            validate_release.validate_annotated_tag_notes(
+                Path("repository"),
+                "v0.5.0-rc.3",
+                path,
+                "v0.5.0",
+                "test",
+            )
+
+        with mock.patch.object(
+            validate_release,
+            "git_text",
+            side_effect=("tag", "RyFrame v0.5.0-rc.3"),
+        ), self.assertRaisesRegex(ValueError, "exact v0.5.0 CHANGELOG"):
+            validate_release.validate_annotated_tag_notes(
+                Path("repository"),
+                "v0.5.0-rc.3",
+                path,
+                "v0.5.0",
+                "test",
+            )
+
+        hidden_notes = (
+            "<!--\n## [v0.5.0]\n\n### Changed\n\n- Real update.\n-->"
+        )
+        with mock.patch.object(
+            validate_release,
+            "git_text",
+            side_effect=("tag", hidden_notes),
+        ), self.assertRaisesRegex(ValueError, "must equal"):
+            validate_release.validate_annotated_tag_notes(
+                Path("repository"),
+                "v0.5.0-rc.3",
+                path,
+                "v0.5.0",
+                "test",
+            )
+
+
 class RcObservationTests(unittest.TestCase):
     def test_observation_floor_cannot_be_weakened(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot be less than 48"):

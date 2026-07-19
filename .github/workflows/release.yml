@@ -31,6 +31,10 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       stable_tag: ${{ steps.release.outputs.stable_tag }}
       prerelease: ${{ steps.release.outputs.prerelease }}
+      backend_tag_oid: ${{ steps.release.outputs.backend_tag_oid }}
+      backend_commit: ${{ steps.release.outputs.backend_commit }}
+      frontend_tag_oid: ${{ steps.release.outputs.frontend_tag_oid }}
+      frontend_commit: ${{ steps.release.outputs.frontend_commit }}
     steps:
       - name: Check out backend tag
         uses: actions/checkout@v6
@@ -162,6 +166,10 @@ jobs:
             echo "tag=$GITHUB_REF_NAME"
             echo "stable_tag=v$version"
             echo "prerelease=$prerelease"
+            echo "backend_tag_oid=$(git rev-parse "refs/tags/$GITHUB_REF_NAME")"
+            echo "backend_commit=$(git rev-parse "$GITHUB_REF_NAME^{commit}")"
+            echo "frontend_tag_oid=$(git -C frontend rev-parse "refs/tags/$GITHUB_REF_NAME")"
+            echo "frontend_commit=$(git -C frontend rev-parse "$GITHUB_REF_NAME^{commit}")"
           } >> "$GITHUB_OUTPUT"
 
   backend-gate:
@@ -277,7 +285,8 @@ jobs:
           python -m compileall -q scripts
           python -m unittest discover -s scripts/tests -p 'test_*.py'
           ruby -e 'require "yaml"; ARGV.each { |path| YAML.parse_file(path) }' \
-            .github/workflows/ci.yml .github/workflows/release.yml docker-compose.test.yml
+            .github/workflows/ci.yml .github/workflows/release.yml \
+            .github/workflows/nightly.yml docker-compose.test.yml
           docker compose -f docker-compose.test.yml config --quiet
           cargo fmt --all -- --check
           mapfile -t shell_scripts < <(find deploy -type f -name '*.sh' -print)
@@ -529,6 +538,40 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.validate-release.outputs.backend_commit }}
+
+      - name: Check out matching frontend Changelog
+        uses: actions/checkout@v6
+        with:
+          repository: Edgar-ycy/ryframe-vue3
+          ref: ${{ needs.validate-release.outputs.frontend_commit }}
+          fetch-depth: 0
+          path: frontend
+
+      - name: Revalidate coordinated tag objects
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
+          BACKEND_TAG_OID: ${{ needs.validate-release.outputs.backend_tag_oid }}
+          BACKEND_COMMIT: ${{ needs.validate-release.outputs.backend_commit }}
+          FRONTEND_TAG_OID: ${{ needs.validate-release.outputs.frontend_tag_oid }}
+          FRONTEND_COMMIT: ${{ needs.validate-release.outputs.frontend_commit }}
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          git -C frontend fetch --force --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          [[ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" == tag ]]
+          [[ "$(git -C frontend cat-file -t "refs/tags/${RELEASE_TAG}")" == tag ]]
+          [[ "$(git rev-parse "refs/tags/${RELEASE_TAG}")" == "$BACKEND_TAG_OID" ]]
+          [[ "$(git rev-parse "${RELEASE_TAG}^{commit}")" == "$BACKEND_COMMIT" ]]
+          [[ "$(git rev-parse HEAD)" == "$BACKEND_COMMIT" ]]
+          [[ "$(git -C frontend rev-parse "refs/tags/${RELEASE_TAG}")" == "$FRONTEND_TAG_OID" ]]
+          [[ "$(git -C frontend rev-parse "${RELEASE_TAG}^{commit}")" == "$FRONTEND_COMMIT" ]]
+          [[ "$(git -C frontend rev-parse HEAD)" == "$FRONTEND_COMMIT" ]]
 
       - name: Purge custom assets from target release
         shell: bash
@@ -557,7 +600,7 @@ jobs:
             exit 1
           fi
 
-      - name: Extract exact changelog section
+      - name: Build non-empty release notes from both Changelogs
         shell: bash
         env:
           STABLE_TAG: ${{ needs.validate-release.outputs.stable_tag }}
@@ -565,21 +608,55 @@ jobs:
           PRERELEASE: ${{ needs.validate-release.outputs.prerelease }}
         run: |
           set -euo pipefail
-          awk -v version="$STABLE_TAG" '
-            index($0, "## [" version "]") == 1 { found=1; next }
-            found && /^## \[/ { exit }
-            found { print }
-            END { if (!found) exit 2 }
-          ' CHANGELOG.md > release_body.md
+          extract_section() {
+            local changelog="$1"
+            local label="$2"
+            local output="$3"
+            awk -v version="$STABLE_TAG" '
+              BEGIN { heading = "## [" version "]" }
+              !found && ($0 == heading || index($0, heading " ") == 1 || index($0, heading "\t") == 1) {
+                found=1
+              }
+              found && emitted && /^## \[/ { exit }
+              found { print; emitted=1 }
+              END { if (!found) exit 2 }
+            ' "$changelog" > "$output"
+            if ! grep --extended-regexp --quiet '^-[[:space:]]+[^[:space:]]' "$output"; then
+              echo "$label $STABLE_TAG CHANGELOG section has no update items." >&2
+              exit 1
+            fi
+          }
+
+          backend_notes="$RUNNER_TEMP/backend-release-notes.md"
+          frontend_notes="$RUNNER_TEMP/frontend-release-notes.md"
+          extract_section CHANGELOG.md Backend "$backend_notes"
+          extract_section frontend/CHANGELOG.md Frontend "$frontend_notes"
+
+          {
+            printf '# RyFrame %s\n\n' "$RELEASE_TAG"
+            if [[ "$PRERELEASE" == true ]]; then
+              printf '此候选版本至少完成 48 小时 RC 观察后才能晋级 stable。\n\n'
+            fi
+            printf '# 后端更新\n\n'
+            cat "$backend_notes"
+            printf '\n\n# 前端更新\n\n'
+            cat "$frontend_notes"
+            printf '\n'
+          } > release_body.md
           test -s release_body.md
-          if [[ "$PRERELEASE" == true ]]; then
-            {
-              printf '# Release candidate %s\n\n' "$RELEASE_TAG"
-              printf 'This candidate must complete at least 48 hours of RC observation before stable promotion.\n\n'
-              cat release_body.md
-            } > release_body.rc.md
-            mv release_body.rc.md release_body.md
-          fi
+
+      - name: Confirm tag refs immediately before publishing
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
+          BACKEND_TAG_OID: ${{ needs.validate-release.outputs.backend_tag_oid }}
+          FRONTEND_TAG_OID: ${{ needs.validate-release.outputs.frontend_tag_oid }}
+        run: |
+          set -euo pipefail
+          backend_remote_oid="$(git ls-remote --refs origin "refs/tags/${RELEASE_TAG}" | awk '{ print $1 }')"
+          frontend_remote_oid="$(git -C frontend ls-remote --refs origin "refs/tags/${RELEASE_TAG}" | awk '{ print $1 }')"
+          [[ -n "$backend_remote_oid" && "$backend_remote_oid" == "$BACKEND_TAG_OID" ]]
+          [[ -n "$frontend_remote_oid" && "$frontend_remote_oid" == "$FRONTEND_TAG_OID" ]]
 
       - name: Create source-only GitHub release
         uses: softprops/action-gh-release@v3
@@ -589,3 +666,19 @@ jobs:
           body_path: release_body.md
           prerelease: ${{ needs.validate-release.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.validate-release.outputs.prerelease == 'false' }}
+
+      - name: Verify published notes and zero custom assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/published-release.json"
+          published_body="$RUNNER_TEMP/published-release-body.md"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            > "$release_json"
+          jq --exit-status '.assets | length == 0' "$release_json" > /dev/null
+          jq --join-output '.body // ""' "$release_json" > "$published_body"
+          test -s "$published_body"
+          diff --unified release_body.md "$published_body"

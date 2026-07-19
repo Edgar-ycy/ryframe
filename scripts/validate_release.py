@@ -71,15 +71,84 @@ def workspace_version() -> str:
         fail(f"workspace.package.version is missing: {error}")
 
 
-def validate_changelog(stable_tag: str) -> None:
-    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    if (
-        re.search(
-            rf"^## \[{re.escape(stable_tag)}\](?:\s|$)", changelog, re.MULTILINE
+def normalize_markdown(value: str) -> str:
+    """Normalize line endings and insignificant trailing whitespace."""
+    lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    normalized = [line.rstrip() for line in lines]
+    while normalized and not normalized[0]:
+        normalized.pop(0)
+    while normalized and not normalized[-1]:
+        normalized.pop()
+    return "\n".join(normalized)
+
+
+def changelog_section(path: Path, stable_tag: str, label: str) -> str:
+    """Return one exact, non-empty Keep a Changelog version section."""
+    changelog = (
+        path.read_text(encoding="utf-8")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
+    heading = re.compile(
+        rf"^## \[{re.escape(stable_tag)}\](?:[ \t]+.*)?$", re.MULTILINE
+    )
+    match = heading.search(changelog)
+    if match is None:
+        fail(f"{label} CHANGELOG has no exact section for {stable_tag}")
+
+    remainder = changelog[match.end() :]
+    next_heading = re.search(
+        r"^## \[[^\]\r\n]+\](?:[ \t]+.*)?$", remainder, re.MULTILINE
+    )
+    end = match.end() + (next_heading.start() if next_heading else len(remainder))
+    section = normalize_markdown(changelog[match.start() : end])
+    if re.search(r"^-[ \t]+\S", section, re.MULTILINE) is None:
+        fail(
+            f"{label} CHANGELOG section {stable_tag} must contain at least "
+            "one update item"
         )
-        is None
-    ):
-        fail(f"CHANGELOG.md has no exact section for {stable_tag}")
+    return section
+
+
+def validate_changelog(stable_tag: str) -> str:
+    return changelog_section(ROOT / "CHANGELOG.md", stable_tag, "backend")
+
+
+def git_text(repository: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+
+
+def validate_annotated_tag_notes(
+    repository: Path,
+    tag: str,
+    changelog_path: Path,
+    stable_tag: str,
+    label: str,
+) -> str:
+    """Require an annotated tag equal to the repository's exact notes."""
+    tag_ref = f"refs/tags/{tag}"
+    object_type = git_text(repository, "cat-file", "-t", tag_ref)
+    if object_type != "tag":
+        fail(f"{label} tag {tag} must be an annotated tag, found {object_type}")
+
+    notes = normalize_markdown(
+        git_text(repository, "for-each-ref", "--format=%(contents)", tag_ref)
+    )
+    expected = changelog_section(changelog_path, stable_tag, label)
+    if not notes:
+        fail(f"{label} tag {tag} annotation must not be empty")
+    if notes != expected:
+        fail(
+            f"{label} tag {tag} annotation must equal the exact "
+            f"{stable_tag} CHANGELOG section"
+        )
+    return expected
 
 
 def validate_workspace_packages(expected: str) -> None:
@@ -115,7 +184,9 @@ def validate_openapi(path: Path, expected: str, label: str) -> object:
     return document
 
 
-def validate_frontend(frontend: Path, tag: str, expected: str) -> None:
+def validate_frontend(
+    frontend: Path, tag: str, expected: str, stable_tag: str
+) -> None:
     package = load_json(frontend / "package.json")
     if not isinstance(package, dict) or package.get("version") != expected:
         actual = package.get("version") if isinstance(package, dict) else None
@@ -132,6 +203,14 @@ def validate_frontend(frontend: Path, tag: str, expected: str) -> None:
 
     if git_commit(frontend, tag) != git_commit(frontend, "HEAD"):
         fail(f"frontend checkout does not point to expected tag {tag!r}")
+
+    validate_annotated_tag_notes(
+        frontend,
+        tag,
+        frontend / "CHANGELOG.md",
+        stable_tag,
+        "frontend",
+    )
 
 
 def parse_timestamp(value: str) -> dt.datetime:
@@ -349,13 +428,7 @@ def validate_stable_environment(
 
 
 def git_commit(repository: Path, revision: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(repository), "rev-parse", f"{revision}^{{commit}}"],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout.strip()
+    return git_text(repository, "rev-parse", f"{revision}^{{commit}}")
 
 
 def validate_rc_commit_identity(frontend: Path, rc_tag: str) -> str:
@@ -398,9 +471,21 @@ def main() -> int:
                 f"tag requires {identity.version!r}"
             )
         validate_changelog(identity.stable_tag)
+        validate_annotated_tag_notes(
+            ROOT,
+            identity.tag,
+            ROOT / "CHANGELOG.md",
+            identity.stable_tag,
+            "backend",
+        )
         validate_workspace_packages(identity.version)
         frontend = args.frontend_dir.resolve()
-        validate_frontend(frontend, identity.tag, identity.version)
+        validate_frontend(
+            frontend,
+            identity.tag,
+            identity.version,
+            identity.stable_tag,
+        )
 
         if identity.prerelease:
             if any(
@@ -423,6 +508,20 @@ def main() -> int:
                 args.github_releases_json,
                 identity.stable_tag,
                 args.minimum_rc_hours,
+            )
+            validate_annotated_tag_notes(
+                ROOT,
+                rc_release.tag,
+                ROOT / "CHANGELOG.md",
+                identity.stable_tag,
+                "backend RC",
+            )
+            validate_annotated_tag_notes(
+                frontend,
+                rc_release.tag,
+                frontend / "CHANGELOG.md",
+                identity.stable_tag,
+                "frontend RC",
             )
             rc_commit = validate_rc_commit_identity(frontend, rc_release.tag)
             deployment_id = validate_rc_observation(

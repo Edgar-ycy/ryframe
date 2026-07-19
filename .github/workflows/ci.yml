@@ -75,6 +75,7 @@ jobs:
           ruby -e 'require "yaml"; ARGV.each { |path| YAML.parse_file(path) }' \
             .github/workflows/ci.yml \
             .github/workflows/release.yml \
+            .github/workflows/nightly.yml \
             docker-compose.test.yml
           python -m compileall -q scripts
           python -m unittest discover -s scripts/tests -p 'test_*.py'

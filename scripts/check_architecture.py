@@ -708,6 +708,24 @@ def check_source_only_release(errors: list[str]) -> None:
         "name: Purge custom assets from target release",
         "releases/assets/${asset_id}",
         "softprops/action-gh-release@v3",
+        "python scripts/validate_release.py",
+        "frontend/CHANGELOG.md",
+        "body_path: release_body.md",
+        "name: Verify published notes and zero custom assets",
+        "'.assets | length == 0'",
+        "backend_tag_oid:",
+        "frontend_tag_oid:",
+        "name: Revalidate coordinated tag objects",
+        "name: Confirm tag refs immediately before publishing",
+    )
+    nightly_required_fragments = (
+        "CHANGELOG.md",
+        'git tag -a -f --cleanup=verbatim -F "$RUNNER_TEMP/nightly-release-notes.md" nightly',
+        "git cat-file -t refs/tags/nightly",
+        "CHANGELOG section has no update items",
+        "body_path: ${{ runner.temp }}/nightly-release-notes.md",
+        "name: Verify Nightly notes and zero custom assets",
+        "'.assets | length == 0'",
     )
     forbidden_fragments = (
         "actions/upload-artifact",
@@ -726,6 +744,9 @@ def check_source_only_release(errors: list[str]) -> None:
         ".cdx.json",
         "type=oci",
         "\n          files:",
+        "\n          body:",
+        "generate_release_notes:",
+        "git tag -f nightly",
     )
 
     for fragment in required_fragments:
@@ -733,6 +754,17 @@ def check_source_only_release(errors: list[str]) -> None:
             errors.append(
                 f"source-only release contract is missing in {workflow_path}: {fragment}"
             )
+    for path in sorted(
+        path for path in publishing_workflows if "nightly" in path.name.lower()
+    ):
+        source = path.read_text(encoding="utf-8")
+        relative_path = path.relative_to(ROOT)
+        for fragment in nightly_required_fragments:
+            if fragment not in source:
+                errors.append(
+                    f"Nightly Changelog release contract is missing in "
+                    f"{relative_path}: {fragment}"
+                )
     for path in sorted(publishing_workflows):
         source = path.read_text(encoding="utf-8")
         relative_path = path.relative_to(ROOT)
