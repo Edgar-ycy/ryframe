@@ -7,4 +7,4 @@
 - [架构与演进指南](architecture.md)：当前 crate 依赖、请求链路、架构问题、目标边界和分阶段改造计划。
 - [数据库指南](db-guide.md)：主库/只读副本、命名业务数据源、实体、仓储、迁移和 SQL 初始化说明。
 - [对象存储与 RustFS 指南](storage-guide.md)：RustFS 本机启动、配置、运行时检查、上传下载和 CI 覆盖。
-- [v0.5 发布与回滚指南](release-guide.md)：RC 观察、联合标签、发布门禁、制品、蓝绿切换和回滚约束。
+- [v0.5 发布与回滚指南](release-guide.md)：RC 观察、联合标签、源码 Release、蓝绿切换和回滚约束。

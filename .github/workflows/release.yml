@@ -29,8 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
-      artifact_version: ${{ steps.release.outputs.artifact_version }}
       stable_tag: ${{ steps.release.outputs.stable_tag }}
       prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
@@ -80,7 +78,6 @@ jobs:
           > "$RUNNER_TEMP/releases.json"
 
       - name: Collect commit-bound RC observation evidence
-        id: observation
         if: ${{ !contains(github.ref_name, '-rc.') }}
         shell: bash
         env:
@@ -132,11 +129,6 @@ jobs:
           gh api --method GET \
             "repos/${GITHUB_REPOSITORY}/environments/stable-release" \
             > "$RUNNER_TEMP/stable-environment.json"
-          {
-            echo "rc_tag=$rc_tag"
-            echo "rc_commit=$rc_commit"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Validate coordinated release inputs
         shell: bash
         run: |
@@ -155,59 +147,19 @@ jobs:
           fi
           python scripts/validate_release.py "${args[@]}"
 
-      - name: Preserve stable observation attestation
-        if: ${{ !contains(github.ref_name, '-rc.') }}
-        shell: bash
-        env:
-          RC_TAG: ${{ steps.observation.outputs.rc_tag }}
-          RC_COMMIT: ${{ steps.observation.outputs.rc_commit }}
-        run: |
-          set -euo pipefail
-          jq -n \
-            --arg schema_version "1" \
-            --arg stable_tag "$GITHUB_REF_NAME" \
-            --arg rc_tag "$RC_TAG" \
-            --arg rc_commit "$RC_COMMIT" \
-            --arg collected_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --arg workflow_run_url \
-              "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --slurpfile deployments "$RUNNER_TEMP/deployments.json" \
-            --slurpfile approval_policy "$RUNNER_TEMP/stable-environment.json" \
-            '{
-              schema_version: ($schema_version | tonumber),
-              stable_tag: $stable_tag,
-              rc_tag: $rc_tag,
-              rc_commit: $rc_commit,
-              collected_at: $collected_at,
-              workflow_run_url: $workflow_run_url,
-              deployments: $deployments[0],
-              stable_approval_policy: $approval_policy[0]
-            }' > rc-observation-attestation.json
-
-      - name: Upload stable observation attestation
-        if: ${{ !contains(github.ref_name, '-rc.') }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: stable-observation-${{ github.ref_name }}
-          path: rc-observation-attestation.json
-          if-no-files-found: error
-          retention-days: 90
-
       - name: Export release identity
         id: release
         shell: bash
         run: |
           set -euo pipefail
-          artifact_version="${GITHUB_REF_NAME#v}"
-          version="${artifact_version%%-rc.*}"
+          version="${GITHUB_REF_NAME#v}"
+          version="${version%%-rc.*}"
           prerelease=false
           if [[ "$GITHUB_REF_NAME" == *-rc.* ]]; then
             prerelease=true
           fi
           {
             echo "tag=$GITHUB_REF_NAME"
-            echo "version=$version"
-            echo "artifact_version=$artifact_version"
             echo "stable_tag=v$version"
             echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
@@ -493,14 +445,6 @@ jobs:
           cargo deny check licenses
           cargo deny check bans sources
 
-      - name: Upload runtime diagnostics on failure
-        if: failure() && hashFiles('target/release-runtime.log') != ''
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-runtime-log-${{ needs.validate-release.outputs.tag }}
-          path: target/release-runtime.log
-          if-no-files-found: error
-
       - name: Stop test services
         if: always()
         run: docker compose -f docker-compose.test.yml down --volumes
@@ -509,8 +453,6 @@ jobs:
     name: Frontend contract, quality, E2E, and bundle gate
     needs: validate-release
     runs-on: ubuntu-latest
-    env:
-      RYFRAME_PRODUCTION_API_BASE_URL: ${{ vars.RYFRAME_PRODUCTION_API_BASE_URL }}
     steps:
       - name: Check out backend contract
         uses: actions/checkout@v6
@@ -545,44 +487,11 @@ jobs:
       - name: Verify the cross-repository contract
         run: cmp openapi/openapi.json frontend/openapi/openapi.json
 
-      - name: Validate production API origin
-        shell: bash
-        run: |
-          case "$RYFRAME_PRODUCTION_API_BASE_URL" in
-            https://*/api/v1) ;;
-            *)
-              echo "Set RYFRAME_PRODUCTION_API_BASE_URL to an absolute HTTPS /api/v1 URL."
-              exit 1
-              ;;
-          esac
-
       - name: Run complete frontend release gate
         working-directory: frontend
         env:
           VITE_APP_BASE_API: /api/v1
         run: pnpm check
-
-      - name: Build production frontend artifact
-        working-directory: frontend
-        env:
-          VITE_APP_BASE_API: ${{ vars.RYFRAME_PRODUCTION_API_BASE_URL }}
-        run: |
-          pnpm build
-          pnpm check:bundle
-
-      - name: Capture frontend dependency graph
-        working-directory: frontend
-        run: pnpm list --json --depth Infinity > release-frontend-dependencies.json
-
-      - name: Upload validated frontend distribution
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-frontend-${{ needs.validate-release.outputs.tag }}
-          path: |
-            frontend/dist
-            frontend/release-frontend-dependencies.json
-          if-no-files-found: error
-          retention-days: 7
 
   stable-approval:
     name: Approve stable promotion
@@ -599,8 +508,8 @@ jobs:
         run: |
           echo "stable-release required-reviewer approval granted for $GITHUB_REF_NAME"
 
-  package-release:
-    name: Package executable, OCI image, dist, SBOM, and checksums
+  publish-release:
+    name: Publish source-only GitHub release
     needs:
       - validate-release
       - backend-gate
@@ -617,150 +526,36 @@ jobs:
       }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build locked release executable
-        run: >-
-          cargo build --locked --release -p ryframe
-          --bin ryframe --bin ryframe-db-reset
-
-      - name: Download validated frontend distribution
-        uses: actions/download-artifact@v7
-        with:
-          name: release-frontend-${{ needs.validate-release.outputs.tag }}
-          path: frontend-artifact
-
-      - name: Download validated RC observation attestation
-        if: ${{ needs.validate-release.outputs.prerelease == 'false' }}
-        uses: actions/download-artifact@v7
-        with:
-          name: stable-observation-${{ needs.validate-release.outputs.tag }}
-          path: release-assets
-
-      - name: Assemble binary and frontend archives
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets package-root/ryframe
-          install -m 0755 target/release/ryframe package-root/ryframe/ryframe
-          install -m 0755 target/release/ryframe-db-reset \
-            package-root/ryframe/ryframe-db-reset
-          install -m 0755 deploy.sh package-root/ryframe/deploy.sh
-          cp -R config locales openapi deploy docs package-root/ryframe/
-          cp README.md CHANGELOG.md LICENSE package-root/ryframe/
-          tar --sort=name --owner=0 --group=0 --numeric-owner \
-            -C package-root -czf "release-assets/ryframe-${RELEASE_TAG}-linux-amd64.tar.gz" ryframe
-
-          tar --sort=name --owner=0 --group=0 --numeric-owner \
-            -C frontend-artifact -czf "release-assets/ryframe-vue3-${RELEASE_TAG}-dist.tar.gz" dist
-          git archive --format=tar.gz \
-            --output="release-assets/ryframe-${RELEASE_TAG}-src.tar.gz" HEAD
-
-      - name: Generate coordinated CycloneDX SBOM
-        env:
-          RELEASE_VERSION: ${{ needs.validate-release.outputs.artifact_version }}
-          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
-        run: |
-          export SOURCE_DATE_EPOCH="$(git show --no-patch --format=%ct HEAD)"
-          python scripts/generate_release_sbom.py \
-            --version "$RELEASE_VERSION" \
-            --frontend-dependencies frontend-artifact/release-frontend-dependencies.json \
-            --output "release-assets/ryframe-${RELEASE_TAG}.cdx.json"
-
-      - name: Prepare immutable OCI build context
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/ryframe-docker-context"
-          git archive HEAD | tar -x -C "$RUNNER_TEMP/ryframe-docker-context"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Resolve OCI image name
-        id: image
-        shell: bash
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build once, export OCI archive, and publish immutable tag
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ runner.temp }}/ryframe-docker-context
-          file: ${{ runner.temp }}/ryframe-docker-context/deploy/Dockerfile
-          platforms: linux/amd64
-          tags: ${{ steps.image.outputs.name }}:${{ needs.validate-release.outputs.artifact_version }}
-          outputs: |
-            type=oci,dest=${{ github.workspace }}/release-assets/ryframe-${{ needs.validate-release.outputs.tag }}-linux-amd64.oci.tar
-            type=registry
-          provenance: mode=max
-          sbom: true
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ needs.validate-release.outputs.artifact_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Verify runtime image user, upload volume, and readiness healthcheck
-        shell: bash
-        run: |
-          set -euo pipefail
-          image="${{ steps.image.outputs.name }}:${{ needs.validate-release.outputs.artifact_version }}"
-          docker pull "$image"
-          docker run --rm --entrypoint sh "$image" -c '
-            test "$(id -u)" = 10001
-            test "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR" = /var/lib/ryframe/uploads
-            test -w "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR"
-          '
-          docker image inspect --format '{{json .Config.Healthcheck.Test}}' "$image" \
-            | grep --fixed-strings '/readyz'
-
-      - name: Create SHA-256 manifest
-        working-directory: release-assets
-        run: sha256sum * > SHA256SUMS
-
-      - name: Upload immutable release assets
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-assets-${{ needs.validate-release.outputs.tag }}
-          path: release-assets
-          if-no-files-found: error
-          retention-days: 30
-
-  publish-release:
-    name: Publish GitHub release
-    needs:
-      - validate-release
-      - package-release
-    runs-on: ubuntu-latest
-    permissions:
       contents: write
-      packages: write
     steps:
       - uses: actions/checkout@v6
 
-      - name: Download immutable release assets
-        uses: actions/download-artifact@v7
-        with:
-          name: release-assets-${{ needs.validate-release.outputs.tag }}
-          path: release-assets
+      - name: Purge custom assets from target release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/release.json"
+          release_error="$RUNNER_TEMP/release-error.log"
+          if gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            > "$release_json" 2> "$release_error"; then
+            release_id="$(jq -r '.id' "$release_json")"
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+              --jq '.[].id' > "$RUNNER_TEMP/release-asset-ids.txt"
+            while IFS= read -r asset_id; do
+              [[ -n "$asset_id" ]] || continue
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            done < "$RUNNER_TEMP/release-asset-ids.txt"
+          elif grep --quiet 'HTTP 404' "$release_error"; then
+            echo "No existing release assets to remove for $GITHUB_REF_NAME."
+          else
+            cat "$release_error" >&2
+            exit 1
+          fi
 
       - name: Extract exact changelog section
         shell: bash
@@ -786,7 +581,7 @@ jobs:
             mv release_body.rc.md release_body.md
           fi
 
-      - name: Create immutable GitHub release
+      - name: Create source-only GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.validate-release.outputs.tag }}
@@ -794,29 +589,3 @@ jobs:
           body_path: release_body.md
           prerelease: ${{ needs.validate-release.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.validate-release.outputs.prerelease == 'false' }}
-          fail_on_unmatched_files: true
-          files: release-assets/*
-
-      - name: Log in to GitHub Container Registry for stable alias
-        if: ${{ needs.validate-release.outputs.prerelease == 'false' }}
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx for stable alias
-        if: ${{ needs.validate-release.outputs.prerelease == 'false' }}
-        uses: docker/setup-buildx-action@v3
-
-      - name: Publish latest alias after the stable GitHub release exists
-        if: ${{ needs.validate-release.outputs.prerelease == 'false' }}
-        shell: bash
-        env:
-          ARTIFACT_VERSION: ${{ needs.validate-release.outputs.artifact_version }}
-        run: |
-          set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          docker buildx imagetools create \
-            --tag "$image:latest" \
-            "$image:$ARTIFACT_VERSION"

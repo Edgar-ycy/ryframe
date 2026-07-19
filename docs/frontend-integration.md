@@ -23,7 +23,7 @@ pnpm api:check
 VITE_APP_BASE_API=/api/v1
 ```
 
-生产环境的管理端和 API 使用不同的同站子域，必须改用 API 的绝对 HTTPS 地址，例如 `VITE_APP_BASE_API=https://api.example.com/api/v1`。不能继续使用相对 `/api/v1`，否则浏览器会把请求发送到只提供 SPA 的管理端域名。正式发布工作流从仓库变量 `RYFRAME_PRODUCTION_API_BASE_URL` 注入该值，并拒绝空值或非 HTTPS 地址。
+生产环境的管理端和 API 使用不同的同站子域，必须改用 API 的绝对 HTTPS 地址，例如 `VITE_APP_BASE_API=https://api.example.com/api/v1`。不能继续使用相对 `/api/v1`，否则浏览器会把请求发送到只提供 SPA 的管理端域名。GitHub Release 仅发布通用源码，不嵌入 API 地址；部署方必须在构建前通过 `VITE_APP_BASE_API` 注入实际地址。
 
 本地后端默认运行在 `http://localhost:8080`。Vite 开发代理建议把 `/api` 转发到后端服务，前端业务代码只关心相对路径，例如 `/auth/login`、`/system/users`。
 

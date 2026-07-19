@@ -697,11 +697,58 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
             )
 
 
+def check_source_only_release(errors: list[str]) -> None:
+    workflow_path = ".github/workflows/release.yml"
+    workflow = (ROOT / workflow_path).read_text(encoding="utf-8")
+    publishing_workflows = {ROOT / workflow_path}
+    publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yml"))
+    publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yaml"))
+    required_fragments = (
+        "name: Publish source-only GitHub release",
+        "name: Purge custom assets from target release",
+        "releases/assets/${asset_id}",
+        "softprops/action-gh-release@v3",
+    )
+    forbidden_fragments = (
+        "actions/upload-artifact",
+        "actions/download-artifact",
+        "RYFRAME_PRODUCTION_API_BASE_URL",
+        "docker/build-push-action",
+        "docker/login-action",
+        "docker buildx imagetools",
+        "generate_release_sbom.py",
+        "git archive",
+        "gh release upload",
+        "ghcr.io/",
+        "packages: write",
+        "release-assets/",
+        "SHA256SUMS",
+        ".cdx.json",
+        "type=oci",
+        "\n          files:",
+    )
+
+    for fragment in required_fragments:
+        if fragment not in workflow:
+            errors.append(
+                f"source-only release contract is missing in {workflow_path}: {fragment}"
+            )
+    for path in sorted(publishing_workflows):
+        source = path.read_text(encoding="utf-8")
+        relative_path = path.relative_to(ROOT)
+        for fragment in forbidden_fragments:
+            if fragment in source:
+                errors.append(
+                    f"source-only release contract forbids in {relative_path}: {fragment}"
+                )
+
+
 def main() -> int:
     errors: list[str] = []
     check_dependency_graph(errors)
     check_source_boundaries(errors)
     check_database_and_storage_topology(errors)
+    check_source_only_release(errors)
     check_openapi_registration(errors)
     check_openapi_contract_pipeline(errors)
     check_compiled_permission_catalog(errors)

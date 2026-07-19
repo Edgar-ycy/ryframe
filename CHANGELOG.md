@@ -10,7 +10,6 @@
 - 新增 `GET /api/v1/auth/csrf`、HttpOnly refresh Cookie、稳定 `sid`、Redis refresh family、Lua 原子轮换、5 秒并发宽限与重放撤销。
 - 新增 MySQL 8.4、Redis 7 和 RustFS 的 Docker Compose 测试栈，以及空库基线、旧结构升级、重复迁移、种子幂等和部分结构拒绝测试。
 - 新增可信代理 CIDR、作用域幂等、依赖降级与拒绝指标、上传统一限制和 stable 联合发布门禁。
-- stable 发布物新增后端可执行归档、OCI 归档与镜像、前端 dist、CycloneDX SBOM 和 SHA-256 清单。
 
 ### Changed
 
@@ -24,6 +23,7 @@
 - MySQL、Redis、验证码存储和对象存储运行时不可用统一返回 `503`；对象下载仅在元数据或对象真实不存在时返回 `404`。
 - 开发/测试数据库重置在确认目标库后直接删除并重新创建数据库，再运行 Migrator 与 Seeder，避免已移除的旧表阻塞空库基线。
 - CI 与 Release 的运行时 smoke 明确使用主库作为生成器数据源，并验证命名业务数据源集合为空，不再依赖额外测试数据库。
+- RC、stable 与前后端 Nightly GitHub Release 统一为通用源码发布，只保留 GitHub 自动提供的 Source code（zip）和 Source code（tar.gz）；Nightly 仅在对应仓库的 `main` CI 成功后更新，发布门禁不再依赖生产 API 地址。
 
 ### Removed
 
@@ -33,6 +33,7 @@
 - 删除响应与请求中的明文 `refresh_token`、`RefreshRequest`、前端 token localStorage API 和旧版会话兼容逻辑。
 - 删除旧 `/health` 路由、Nginx `/uploads/` alias、全局幂等层和公开文件/头像直链。
 - 删除针对本机 `ryframe_device` 的专用 Rust 集成测试、Runtime Smoke 生成器检查及发布门禁配置。
+- 删除自定义后端可执行归档、前端 dist、OCI/GHCR 镜像、CycloneDX SBOM、SHA-256 清单和 RC 观察证明附件；Release 重跑会清理目标标签已有的自定义附件。
 
 ### Fixed
 
