@@ -159,7 +159,7 @@ flowchart LR
 49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过 Lua CAS 轮换和检测重放。
 50. 根路径 `/livez` 只检查进程，`/readyz` 检查 MySQL、required Redis 和必要对象存储；探针绕过租户、认证、幂等和业务限流。
 51. 幂等只应用于认证后的 system/platform 写请求，键绑定租户、用户、方法、规范路径和 body；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
-52. 稳定发布验证标签位于 `main`、前后端同标签同版本，并要求同一 RC commit 的 GitHub Deployment 提供连续至少 48 小时的可审计观察记录，再经过启用防止自审的 `stable-release` required-reviewer 审批；管理员绕过必须在仓库设置中关闭并由审计日志复核。后端 RC/stable 与前后端 Nightly Release 只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照，不发布自定义归档、镜像、SBOM、校验和或证明附件；Nightly 仅在对应仓库的 `main` CI 成功后更新，前端同名 RC/stable 标签不在联合门禁前独立发布。
+52. 稳定发布验证标签位于 `main`、前后端同标签同版本，要求 annotated tag 说明与各自 CHANGELOG 完整版本章节一致，并在发布前再次锁定 tag object ID 与提交 SHA；同一 RC commit 的 GitHub Deployment 还需提供连续至少 48 小时的可审计观察记录，再经过启用防止自审的 `stable-release` required-reviewer 审批，管理员绕过必须在仓库设置中关闭并由审计日志复核。后端 RC/stable 与前后端 Nightly Release 只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照，不发布自定义归档、镜像、SBOM、校验和或证明附件；Nightly 仅在对应仓库的 `main` CI 成功后更新，前端同名 RC/stable 标签不在联合门禁前独立发布。
 
 ## 4. 后续优先级
 
