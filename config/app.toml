@@ -51,8 +51,11 @@ allow_origins = []
 
 [proxy]
 # Trust forwarding headers only from explicitly listed reverse proxies.
-trusted_cidrs = []
-
+# trusted_cidrs = []
+trusted_cidrs = [
+    "127.0.0.1/32",
+    "::1/128",
+]
 [upload]
 # File-size limits exclude a small multipart envelope allowance.
 file_max_bytes = 10485760

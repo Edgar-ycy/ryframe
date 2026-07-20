@@ -12,5 +12,11 @@ min_connections = 1
 access_token_expire = "5m"
 refresh_token_expire = "30m"
 
+[cors]
+allow_origins = []
+
+[proxy]
+trusted_cidrs = []
+
 [logger]
 level = "debug"

@@ -1,6 +1,11 @@
 # 生产环境配置
 # 敏感信息（密码、密钥）通过 APP_ 环境变量注入，不写入文件
 
+[cors]
+allow_origins = [
+    "https://ryframe.ryfac.com",
+]
+
 [logger]
 level = "info"
 format = "json"

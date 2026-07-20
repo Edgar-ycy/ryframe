@@ -57,5 +57,9 @@ allow_origins = [
     "http://localhost",
     "http://127.0.0.1",
 ]
+
+[proxy]
+trusted_cidrs = []
+
 [logger]
 level = "debug"
