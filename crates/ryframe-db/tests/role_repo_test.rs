@@ -16,7 +16,7 @@ const TENANT: &str = "system";
 
 fn make_role(name: &str, code: &str, status: &str) -> role::Model {
     role::Model {
-        id: snowflake::next_snowflake_id(),
+        id: snowflake::try_next_snowflake_id().expect("generate test ID"),
         tenant_id: TENANT.into(),
         name: name.into(),
         code: code.into(),
@@ -43,7 +43,7 @@ async fn insert_role(db: &DatabaseConnection, name: &str, code: &str) -> role::M
 }
 
 async fn insert_user(db: &DatabaseConnection, username: &str) -> i64 {
-    let id = snowflake::next_snowflake_id();
+    let id = snowflake::try_next_snowflake_id().expect("generate test ID");
     user::ActiveModel {
         id: sea_orm::ActiveValue::Set(id),
         tenant_id: sea_orm::ActiveValue::Set(TENANT.into()),
@@ -71,7 +71,7 @@ async fn insert_user(db: &DatabaseConnection, username: &str) -> i64 {
 
 async fn insert_dept(db: &DatabaseConnection, name: &str) -> i64 {
     let model = dept::Model {
-        id: snowflake::next_snowflake_id(),
+        id: snowflake::try_next_snowflake_id().expect("generate test ID"),
         tenant_id: TENANT.into(),
         name: name.into(),
         parent_id: None,

@@ -62,7 +62,10 @@ fn test_env_overrides_are_applied_before_validation() {
 
     unsafe {
         std::env::set_var("APP_ENV", "prod");
-        std::env::set_var("APP_AUTH_JWT_SECRET", "prod-secret-from-env");
+        std::env::set_var(
+            "APP_AUTH_JWT_SECRET",
+            "prod-secret-from-env-at-least-32-bytes",
+        );
         std::env::set_var("APP_DATABASE_PASSWORD", "db-secret-from-env");
         std::env::set_var(
             "APP_DATABASE_REPLICAS",
@@ -76,6 +79,7 @@ fn test_env_overrides_are_applied_before_validation() {
         std::env::set_var("APP_OBJECT_STORAGE_ACCESS_KEY", "object-access");
         std::env::set_var("APP_OBJECT_STORAGE_SECRET_KEY", "object-secret");
         std::env::set_var("APP_RATE_LIMIT_ENABLED", "false");
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "17");
         std::env::set_var(
             "APP_CORS_ALLOW_ORIGINS",
             "https://admin.example.com,https://api.example.com",
@@ -85,7 +89,10 @@ fn test_env_overrides_are_applied_before_validation() {
     let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
     let cfg = AppConfig::load(config_dir).unwrap();
 
-    assert_eq!(cfg.auth.jwt_secret, "prod-secret-from-env");
+    assert_eq!(
+        cfg.auth.jwt_secret,
+        "prod-secret-from-env-at-least-32-bytes"
+    );
     assert_eq!(cfg.database.primary.password, "db-secret-from-env");
     assert_eq!(cfg.database.replicas.len(), 1);
     assert_eq!(cfg.database.replicas[0].name, "replica-a");
@@ -195,9 +202,136 @@ fn production_alias_rejects_default_jwt_secret() {
     clear_config_env();
     unsafe {
         std::env::set_var("APP_ENV", "production");
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "17");
     }
     let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
     assert!(AppConfig::load(config_dir).is_err());
+    clear_config_env();
+}
+
+#[test]
+fn production_rejects_short_jwt_secret() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("APP_ENV", "prod");
+        std::env::set_var("APP_AUTH_JWT_SECRET", "too-short");
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "17");
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let error = AppConfig::load(config_dir).unwrap_err().to_string();
+    assert!(
+        error.contains("至少需要 32 字节"),
+        "unexpected error: {error}"
+    );
+    clear_config_env();
+}
+
+#[test]
+fn validation_rejects_whitespace_only_jwt_secret() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "17");
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let mut config = AppConfig::load(config_dir).unwrap();
+    config.auth.jwt_secret = " ".repeat(64);
+    let error = config.validate("prod").unwrap_err().to_string();
+    assert!(error.contains("不能为空"), "unexpected error: {error}");
+    clear_config_env();
+}
+
+#[test]
+fn production_validation_rejects_space_padded_default_jwt_secret() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "17");
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let mut config = AppConfig::load(config_dir).unwrap();
+    config.auth.jwt_secret = format!(
+        "{}change-me-in-production{}",
+        " ".repeat(16),
+        " ".repeat(16)
+    );
+    let error = config.validate("prod").unwrap_err().to_string();
+    assert!(
+        error.contains("不允许使用默认值"),
+        "unexpected error: {error}"
+    );
+    clear_config_env();
+}
+
+#[test]
+fn direct_validation_applies_production_alias_security_rules() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "17");
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let mut cfg = AppConfig::load(config_dir).unwrap();
+    cfg.auth.jwt_secret = "short-but-not-the-default".into();
+    let error = cfg.validate("production").unwrap_err().to_string();
+    assert!(
+        error.contains("至少需要 32 字节"),
+        "unexpected error: {error}"
+    );
+    clear_config_env();
+}
+
+#[test]
+fn login_lockout_policy_must_be_non_zero() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let mut cfg = AppConfig::load(config_dir).unwrap();
+    cfg.auth.max_login_attempts = 0;
+    assert!(cfg.validate("dev").is_err());
+
+    cfg.auth.max_login_attempts = 5;
+    cfg.auth.lockout_duration_minutes = 0;
+    assert!(cfg.validate("dev").is_err());
+}
+
+#[test]
+fn production_requires_explicit_snowflake_worker_id() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("APP_ENV", "prod");
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let error = AppConfig::load(config_dir).unwrap_err().to_string();
+    assert!(
+        error.contains("SNOWFLAKE_WORKER_ID"),
+        "unexpected error: {error}"
+    );
+    clear_config_env();
+}
+
+#[test]
+fn configured_snowflake_worker_id_is_validated_in_all_environments() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "1024");
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let error = AppConfig::load(config_dir).unwrap_err().to_string();
+    assert!(
+        error.contains("SNOWFLAKE_WORKER_ID") || error.contains("工作机器 ID"),
+        "unexpected error: {error}"
+    );
     clear_config_env();
 }
 
@@ -244,6 +378,7 @@ fn clear_config_env_removes_all_app_overrides() {
     assert!(std::env::var_os("APP_OBJECT_STORAGE_BACKEND").is_none());
     assert!(std::env::var_os("APP_FUTURE_CONFIG_OVERRIDE").is_none());
     assert!(std::env::var_os("CONFIG_MASTER_KEY").is_none());
+    assert!(std::env::var_os("SNOWFLAKE_WORKER_ID").is_none());
 }
 
 fn clear_config_env() {
@@ -251,7 +386,7 @@ fn clear_config_env() {
         .map(|(key, _)| key)
         .filter(|key| {
             let key = key.to_string_lossy();
-            key.starts_with("APP_") || key == "CONFIG_MASTER_KEY"
+            key.starts_with("APP_") || key == "CONFIG_MASTER_KEY" || key == "SNOWFLAKE_WORKER_ID"
         })
         .collect::<Vec<_>>();
 

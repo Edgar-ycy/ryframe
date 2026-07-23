@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use ryframe_common::AppResult;
 
 // ============================================================
 // 填充策略
@@ -97,7 +98,7 @@ impl Default for FillContext {
 // ============================================================
 pub trait AutoFill {
     /// 插入前自动填充
-    fn fill_on_insert(&mut self, ctx: &FillContext);
+    fn fill_on_insert(&mut self, ctx: &FillContext) -> AppResult<()>;
     /// 更新前自动填充
-    fn fill_on_update(&mut self, ctx: &FillContext);
+    fn fill_on_update(&mut self, ctx: &FillContext) -> AppResult<()>;
 }

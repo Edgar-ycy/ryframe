@@ -10,7 +10,7 @@ use ryframe_db::{UserRepository, entities::user};
 
 fn make_user(tenant_id: &str, username: &str) -> user::Model {
     user::Model {
-        id: snowflake::next_snowflake_id(),
+        id: snowflake::try_next_snowflake_id().expect("generate test ID"),
         tenant_id: tenant_id.into(),
         username: username.into(),
         password_hash: "test-hash".into(),

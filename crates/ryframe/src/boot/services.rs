@@ -69,6 +69,7 @@ pub async fn build_all(
 
     let profile = Arc::new(ProfileService::new(database.clone()));
     let file = Arc::new(FileService::new(database.clone(), object_storage));
+    file.spawn_upload_janitor();
 
     let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
         Arc::new(OnlineUserService::new_redis(redis.clone()))

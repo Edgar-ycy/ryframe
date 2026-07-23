@@ -6,6 +6,7 @@
 
 ### Added
 
+- 新增显式绑定已部署 RC 的定时公网观察与自动 stable 晋级工作流，持续校验 HTTPS 首页、前后端构建 SHA、`/livez`、`/readyz`、`/api/v1/version`、定时心跳和 48 小时 Deployment 证据。
 - 新增 `/livez` 与 `/readyz`，分别提供纯进程存活检查和 MySQL、required Redis、必要对象存储就绪检查。
 - 新增 `GET /api/v1/auth/csrf`、HttpOnly refresh Cookie、稳定 `sid`、Redis refresh family、Lua 原子轮换、5 秒并发宽限与重放撤销。
 - 新增 MySQL 8.4、Redis 7 和 RustFS 的 Docker Compose 测试栈，以及空库基线、旧结构升级、重复迁移、种子幂等和部分结构拒绝测试。
@@ -13,6 +14,8 @@
 
 ### Changed
 
+- stable 自动晋级仅允许显式启用的专用发布账号创建两仓 annotated tag；默认路径继续保留受保护 Environment 人工审批，自动路径仍执行完整联合发布门禁。
+- 后端构建通过 `RYFRAME_BUILD_COMMIT` 嵌入完整源码提交，`/api/v1/version` 返回 `source_commit`，用于拒绝把未实际部署的 RC 误记为已观察版本。
 - 发布工作流的 pnpm 初始化 Action 升级至 `pnpm/action-setup@v6`（Node.js 24 runtime），并新增架构和单元测试门禁以禁止回退到旧版。
 - 后端和前端统一升级为 `v0.5.0`，使用同一 Git tag 和发布窗口；不兼容旧 JSON refresh 协议。
 - Rust Migrator 与幂等 Seeder 成为唯一可执行 schema 来源，完整 SQL 降为由迁移生成并经 CI 校验的只读快照。
@@ -59,6 +62,7 @@
 
 ### Validation
 
+- CI 静态校验自动晋级工作流的 YAML、48 小时门槛、HTTPS 探针、心跳中断重置、CHANGELOG tag 说明、前端优先推送及专用机器人授权边界。
 - stable tag 必须位于 `main`，前后端 workspace/package/OpenAPI 版本与标签一致，并存在至少观察 48 小时的同版本 RC。
 - 后端发布门禁覆盖 fmt、Clippy、全量 MySQL 测试、Redis/对象存储 smoke、迁移升级、Seeder、应用 smoke、ShellCheck、依赖审计和备份恢复演练。
 - 前端发布门禁覆盖 contract、源码架构、typecheck、lint、单元/覆盖率、E2E 和 bundle budget，并校验同标签后端 OpenAPI。

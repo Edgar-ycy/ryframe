@@ -107,7 +107,7 @@ impl PermissionService {
             return Err(AppError::Conflict("权限码已存在".into()));
         }
         let mut model = permission::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: command.name,
             code: command.code,
@@ -119,7 +119,7 @@ impl PermissionService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        model.fill_on_insert(&FillContext::new());
+        model.fill_on_insert(&FillContext::new())?;
         let saved = self.perm_repo.insert(db, tenant_id, model).await?;
         Ok(PermissionVo::from(saved))
     }
@@ -152,7 +152,7 @@ impl PermissionService {
         model.icon = command.icon;
         model.sort = command.sort;
         model.status = command.status;
-        model.fill_on_update(&FillContext::new());
+        model.fill_on_update(&FillContext::new())?;
         let saved = self.perm_repo.update(db, tenant_id, model).await?;
         Ok(PermissionVo::from(saved))
     }
@@ -193,7 +193,7 @@ impl PermissionService {
             missing.push(code.clone());
             let name = code.rsplit(':').next().unwrap_or(&code).to_string();
             let mut model = permission::Model {
-                id: snowflake::next_snowflake_id(),
+                id: snowflake::try_next_snowflake_id()?,
                 tenant_id: tenant_id.to_owned(),
                 name,
                 code: code.clone(),
@@ -205,7 +205,7 @@ impl PermissionService {
                 created_at: Default::default(),
                 updated_at: Default::default(),
             };
-            model.fill_on_insert(&FillContext::new());
+            model.fill_on_insert(&FillContext::new())?;
             self.perm_repo.insert(db, tenant_id, model).await?;
             created += 1;
         }

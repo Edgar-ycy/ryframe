@@ -2232,6 +2232,11 @@ async fn test_version_endpoint() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["name"], "ryframe-api");
     assert!(body["version"].is_string());
+    assert!(
+        body["source_commit"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
     assert_eq!(body["api_prefix"], "/api/v1");
     assert!(body["endpoints"].is_object());
 }

@@ -35,7 +35,7 @@ fn make_permission(name: &str, code: &str, sort: i32) -> permission::Model {
         created_at: now(),
         updated_at: now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -54,7 +54,7 @@ fn make_role(name: &str, code: &str) -> role::Model {
         created_at: now(),
         updated_at: now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -71,7 +71,7 @@ fn make_post(name: &str, code: &str, status: &str) -> post::Model {
         created_at: now(),
         updated_at: now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -87,7 +87,7 @@ fn make_config(key: &str, value: &str) -> config::Model {
         created_at: now(),
         updated_at: now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -103,7 +103,7 @@ fn make_dict_type(name: &str, code: &str) -> dict_type::Model {
         created_at: now(),
         updated_at: now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -122,7 +122,7 @@ fn make_dict_data(type_code: &str, label: &str, value: &str, sort: i32) -> dict_
         created_at: now(),
         updated_at: now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -139,7 +139,7 @@ fn make_notice(title: &str, ntype: Option<&str>) -> notice::Model {
         created_at: now(),
         updated_at: now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -156,7 +156,7 @@ fn make_login_info(user: &str, status: &str) -> login_info::Model {
         msg: Some("登录成功".into()),
         login_time: Utc::now(),
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -179,7 +179,7 @@ fn make_oper_log(oper_name: &str, status: &str) -> oper_log::Model {
         oper_time: Utc::now(),
         cost_time: 23,
     };
-    m.fill_on_insert(&FillContext::new());
+    m.fill_on_insert(&FillContext::new()).unwrap();
     m
 }
 
@@ -679,7 +679,7 @@ async fn test_login_info_repo_clean_all() {
             msg: None,
             login_time: Utc::now(),
         };
-        m.fill_on_insert(&FillContext::new());
+        m.fill_on_insert(&FillContext::new()).unwrap();
         repo.insert(&db, "system", m).await.unwrap();
     }
 
@@ -788,7 +788,7 @@ async fn test_oper_log_repo_clean_all() {
             oper_time: Utc::now(),
             cost_time: 10,
         };
-        m.fill_on_insert(&FillContext::new());
+        m.fill_on_insert(&FillContext::new()).unwrap();
         repo.insert(&db, "system", m).await.unwrap();
     }
 

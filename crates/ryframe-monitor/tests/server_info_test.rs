@@ -13,3 +13,20 @@ fn test_server_info() {
     assert!(json.get("os").is_some());
     assert!(json.get("cpu_cores").is_some());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn async_collection_yields_to_the_runtime() {
+    let collection = ServerInfo::collect_async();
+    tokio::pin!(collection);
+
+    tokio::select! {
+        biased;
+        result = &mut collection => {
+            panic!("server information was collected inline: {result:?}");
+        }
+        _ = std::future::ready(()) => {}
+    }
+
+    let info = collection.await.unwrap();
+    assert!(info.cpu_cores > 0);
+}

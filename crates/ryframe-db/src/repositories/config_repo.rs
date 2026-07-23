@@ -64,8 +64,8 @@ impl Repository<config::Model, i64> for ConfigRepository {
     ) -> AppResult<config::Model> {
         use sea_orm::sea_query::Expr;
         let now = chrono::Utc::now();
-        // SeaORM 2.0-rc bug: ActiveModel::update() 在 auto_increment=false + MySQL
-        // 时不发出 UPDATE，改用 update_many() 显式更新
+        // 对 auto_increment=false 的 MySQL 主键使用显式更新，避免依赖
+        // ActiveModel::update() 在不同 SeaORM 2.0 版本间的执行差异。
         config::Entity::update_many()
             .col_expr(config::Column::Name, Expr::value(entity.name.clone()))
             .col_expr(config::Column::Key, Expr::value(entity.key.clone()))

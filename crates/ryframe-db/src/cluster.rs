@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use futures_util::future::{join_all, join3};
 use ryframe_core::{DatabaseNodeHealth, DatabaseTopologyHealth};
 use sea_orm::DatabaseConnection;
 
@@ -113,9 +114,12 @@ impl DatabaseCluster {
     }
 
     pub async fn health(&self) -> DatabaseTopologyHealth {
-        let primary_healthy = crate::connection::ping(self.write()).await.is_ok();
-        let replicas = node_health(self.replicas()).await;
-        let sources = node_health(self.sources()).await;
+        let (primary_healthy, replicas, sources) = join3(
+            async { crate::connection::ping(self.write()).await.is_ok() },
+            node_health(self.replicas()),
+            node_health(self.sources()),
+        )
+        .await;
 
         DatabaseTopologyHealth {
             primary_healthy,
@@ -155,14 +159,13 @@ fn node_connections(
 async fn node_health<'a>(
     nodes: impl ExactSizeIterator<Item = (&'a str, &'a DatabaseConnection)>,
 ) -> Vec<DatabaseNodeHealth> {
-    let mut health = Vec::with_capacity(nodes.len());
-    for (name, connection) in nodes {
-        health.push(DatabaseNodeHealth {
+    join_all(nodes.map(|(name, connection)| async move {
+        DatabaseNodeHealth {
             name: name.to_owned(),
             healthy: crate::connection::ping(connection).await.is_ok(),
-        });
-    }
-    health
+        }
+    }))
+    .await
 }
 
 impl From<DatabaseConnection> for DatabaseCluster {
@@ -207,5 +210,42 @@ mod tests {
 
         assert!(cluster.source("business").is_some());
         assert!(cluster.source("missing").is_none());
+    }
+
+    #[tokio::test]
+    async fn topology_health_preserves_configured_node_order() {
+        let cluster = DatabaseCluster::with_sources(
+            DatabaseConnection::default(),
+            [
+                ("replica-a".to_owned(), DatabaseConnection::default()),
+                ("replica-b".to_owned(), DatabaseConnection::default()),
+            ],
+            [
+                ("source-a".to_owned(), DatabaseConnection::default()),
+                ("source-b".to_owned(), DatabaseConnection::default()),
+            ],
+        );
+
+        let health = cluster.health().await;
+
+        assert!(!health.primary_healthy);
+        assert_eq!(
+            health
+                .replicas
+                .iter()
+                .map(|node| node.name.as_str())
+                .collect::<Vec<_>>(),
+            ["replica-a", "replica-b"]
+        );
+        assert_eq!(
+            health
+                .sources
+                .iter()
+                .map(|node| node.name.as_str())
+                .collect::<Vec<_>>(),
+            ["source-a", "source-b"]
+        );
+        assert!(health.replicas.iter().all(|node| !node.healthy));
+        assert!(health.sources.iter().all(|node| !node.healthy));
     }
 }

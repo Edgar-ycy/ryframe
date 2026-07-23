@@ -71,6 +71,25 @@ impl Repository<permission::Model, i64> for PermissionRepository {
 }
 
 impl PermissionRepository {
+    /// 查询租户内指定 ID 的权限，用于批量存在性校验。
+    pub async fn find_by_ids(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        perm_ids: &[i64],
+    ) -> AppResult<Vec<permission::Model>> {
+        if perm_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        permission::Entity::find()
+            .filter(permission::Column::Id.is_in(perm_ids.iter().copied()))
+            .filter(permission::Column::TenantId.eq(tenant_id))
+            .all(db)
+            .await
+            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+    }
+
     pub async fn find_affected_user_ids(
         &self,
         db: &DatabaseConnection,

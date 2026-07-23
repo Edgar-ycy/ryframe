@@ -166,7 +166,7 @@ impl ConfigService {
         }
 
         let mut new_config = config::Model {
-            id: ryframe_common::utils::snowflake::next_snowflake_id(),
+            id: ryframe_common::utils::snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             key: key.to_string(),
@@ -176,7 +176,7 @@ impl ConfigService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        new_config.fill_on_insert(&FillContext::new());
+        new_config.fill_on_insert(&FillContext::new())?;
 
         let saved = self.config_repo.insert(db, tenant_id, new_config).await?;
         Ok(ConfigVo::from(saved))
@@ -193,7 +193,7 @@ impl ConfigService {
 
         let key = cfg.key.clone();
         cfg.value = value.to_string();
-        cfg.fill_on_update(&FillContext::new());
+        cfg.fill_on_update(&FillContext::new())?;
 
         let saved = self.config_repo.update(db, tenant_id, cfg).await?;
         let vo = ConfigVo::from(saved);

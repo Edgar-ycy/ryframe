@@ -19,14 +19,25 @@ pub struct Model {
     pub content_type: String,
     pub file_md5: Option<String>,
     pub upload_by: Option<String>,
+    pub upload_status: String,
+    pub reservation_token: Option<String>,
+    pub reservation_expires_at: Option<DateTime<Utc>>,
     pub del_flag: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl Model {
+    pub const UPLOAD_STATUS_PENDING: &str = "pending";
+    pub const UPLOAD_STATUS_READY: &str = "ready";
+    pub const UPLOAD_STATUS_CLEANUP: &str = "cleanup";
+
     pub const DEL_FLAG_NORMAL: &str = "0";
     pub const DEL_FLAG_DELETED: &str = "2";
+    /// Upload reservations use a value unknown to the previous release, whose
+    /// readers only expose `del_flag = '0'`. This keeps pending/cleanup rows
+    /// invisible during rolling upgrades without colliding with soft delete.
+    pub const DEL_FLAG_UPLOAD_RESERVED: &str = "3";
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

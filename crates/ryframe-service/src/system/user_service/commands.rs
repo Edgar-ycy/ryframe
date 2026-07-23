@@ -1,11 +1,8 @@
 use ryframe_auth::password;
 use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
-use ryframe_core::{
-    Repository,
-    auto_fill::{AutoFill, FillContext},
-};
+use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_db::{TenantRepository, entities::user};
-use sea_orm::{ActiveModelTrait, TransactionTrait};
+use sea_orm::{ActiveModelTrait, DatabaseTransaction, TransactionTrait};
 use uuid::Uuid;
 
 use super::{CreateUserParams, UpdateUserParams, UserService, UserVo};
@@ -17,9 +14,6 @@ impl UserService {
         params: CreateUserParams<'_>,
     ) -> AppResult<UserVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        TenantRepository
-            .ensure_user_quota(self.db.write(), tenant_id)
-            .await?;
         let CreateUserParams {
             username,
             nickname,
@@ -43,7 +37,7 @@ impl UserService {
 
         let activation_secret = format!("pending:{}", Uuid::new_v4());
         let mut user = user::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             username: username.to_owned(),
             password_hash: password::hash(&activation_secret)?,
@@ -61,7 +55,7 @@ impl UserService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        user.fill_on_insert(&FillContext::new());
+        user.fill_on_insert(&FillContext::new())?;
 
         let transaction = self
             .db
@@ -69,6 +63,9 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantRepository
+            .ensure_user_quota_in_txn(&transaction, tenant_id)
+            .await?;
         let active: user::ActiveModel = user.into();
         let saved = active
             .insert(&transaction)
@@ -99,28 +96,34 @@ impl UserService {
             phone,
             dept_id,
         } = params;
-        self.ensure_user_accessible(actor, id).await?;
-        self.ensure_not_super_admin_user(actor, id).await?;
         self.validate_assignments(actor, dept_id, None).await?;
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         let mut user = self
-            .user_repo
-            .find_by_id(self.db.write(), tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+            .lock_manageable_user_in_txn(actor, &transaction, id)
+            .await?;
         user.nickname = nickname.to_owned();
         user.email = email.to_owned();
         user.phone = phone.to_owned();
         user.dept_id = dept_id;
-        user.fill_on_update(&FillContext::new());
+        user.fill_on_update(&FillContext::new())?;
 
         let active: user::ActiveModel = user.into();
         let saved = active
             .reset_all()
-            .update(self.db.write())
+            .update(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        self.invalidate_sessions_for_tenant(tenant_id, &[saved.id])
+        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[saved.id])
             .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
         Ok(UserVo::from(saved))
     }
 
@@ -135,12 +138,23 @@ impl UserService {
         if id == actor.user_id && status != user::Model::STATUS_NORMAL {
             return Err(AppError::Authorization("禁止停用自己".into()));
         }
-        self.ensure_user_accessible(actor, id).await?;
-        self.ensure_not_super_admin_user(actor, id).await?;
-        self.user_repo
-            .update_status(self.db.write(), tenant_id, id, status)
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.lock_manageable_user_in_txn(actor, &transaction, id)
             .await?;
-        self.invalidate_sessions_for_tenant(tenant_id, &[id]).await
+        self.user_repo
+            .update_status(&transaction, tenant_id, id, status)
+            .await?;
+        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[id])
+            .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))
     }
 
     pub async fn delete_many(&self, actor: &ActorContext, ids: &[i64]) -> AppResult<u64> {
@@ -148,18 +162,38 @@ impl UserService {
         if ids.is_empty() {
             return Err(AppError::Validation("请选择要删除的用户".into()));
         }
-        for id in ids {
+        let mut ids = ids.to_vec();
+        normalize_ids(&mut ids);
+        for id in &ids {
             if *id == actor.user_id {
                 return Err(AppError::Authorization("禁止删除自己".into()));
             }
-            self.ensure_user_accessible(actor, *id).await?;
-            self.ensure_not_super_admin_user(actor, *id).await?;
         }
-        self.invalidate_sessions_for_tenant(tenant_id, ids).await?;
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        // Always acquire user locks in ascending order so overlapping batch
+        // operations cannot deadlock by presenting the same IDs differently.
+        for id in &ids {
+            self.lock_manageable_user_in_txn(actor, &transaction, *id)
+                .await?;
+        }
+        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &ids)
+            .await?;
         let affected = self
             .user_repo
-            .delete_many(self.db.write(), tenant_id, ids)
+            .delete_many(&transaction, tenant_id, &ids)
             .await?;
+        if affected != ids.len() as u64 {
+            return Err(AppError::NotFound("用户不存在".into()));
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
         Ok(affected)
     }
 
@@ -168,14 +202,51 @@ impl UserService {
         if id == actor.user_id {
             return Err(AppError::Authorization("禁止删除自己".into()));
         }
-        self.ensure_user_accessible(actor, id).await?;
-        self.ensure_not_super_admin_user(actor, id).await?;
-        self.invalidate_sessions_for_tenant(tenant_id, &[id])
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.lock_manageable_user_in_txn(actor, &transaction, id)
             .await?;
-        self.user_repo
-            .delete(self.db.write(), tenant_id, id)
+        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[id])
             .await?;
+        let affected = self
+            .user_repo
+            .delete_many(&transaction, tenant_id, &[id])
+            .await?;
+        if affected != 1 {
+            return Err(AppError::NotFound("用户不存在".into()));
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
         Ok(())
+    }
+
+    pub(super) async fn lock_manageable_user_in_txn(
+        &self,
+        actor: &ActorContext,
+        transaction: &DatabaseTransaction,
+        id: i64,
+    ) -> AppResult<user::Model> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let scope = actor.data_scope_context();
+        let user = self
+            .user_repo
+            .find_by_id_with_data_scope_for_update(transaction, tenant_id, id, &scope)
+            .await?
+            .ok_or_else(|| AppError::Authorization("无权访问该用户数据".into()))?;
+        if self
+            .role_repo
+            .user_has_super_role_in_txn(transaction, tenant_id, id)
+            .await?
+        {
+            return Err(AppError::Authorization("禁止操作超级管理员".into()));
+        }
+        Ok(user)
     }
 }
 

@@ -9,12 +9,15 @@ use ryframe_common::{
         validate_extension, validate_file_signature,
     },
 };
-use ryframe_core::repository::Repository;
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{FileRepository, entities::sys_file};
 use ryframe_storage::{ObjectStorage, StorageError};
 use serde::Serialize;
 use utoipa::ToSchema;
+
+mod upload_reservation;
+
+use upload_reservation::{ReservationOutcome, UploadReservationGuard};
 
 /// 文件上传响应
 #[derive(Debug, Serialize, ToSchema)]
@@ -36,6 +39,79 @@ pub struct UploadCommand<'a> {
     pub config: &'a UploadConfig,
     pub bucket: &'a str,
     pub compress: bool,
+}
+
+struct PreparedUpload {
+    original_name: String,
+    final_data: Vec<u8>,
+    final_name: String,
+    content_type: String,
+    file_md5: String,
+}
+
+async fn prepare_upload_data(
+    original_name: String,
+    data: Vec<u8>,
+    compress: bool,
+) -> AppResult<PreparedUpload> {
+    run_blocking_task("file upload processing", move || {
+        prepare_upload_data_blocking(original_name, data, compress)
+    })
+    .await?
+}
+
+fn prepare_upload_data_blocking(
+    original_name: String,
+    data: Vec<u8>,
+    compress: bool,
+) -> AppResult<PreparedUpload> {
+    validate_file_signature(&original_name, &data)?;
+
+    let original_size = data.len();
+    let (final_data, final_name) = if compress {
+        match compress_image(&data, &original_name) {
+            Ok((compressed, compressed_name)) => {
+                if compressed.len() < original_size {
+                    let saved_pct = (1.0 - compressed.len() as f64 / original_size as f64) * 100.0;
+                    tracing::info!(
+                        original_size,
+                        compressed_size = compressed.len(),
+                        saved_pct,
+                        "image compressed"
+                    );
+                }
+                (compressed, compressed_name)
+            }
+            Err(error) => {
+                tracing::warn!(%error, "image compression failed; using original data");
+                (data, original_name.clone())
+            }
+        }
+    } else {
+        (data, original_name.clone())
+    };
+
+    let content_type = get_content_type(&final_name);
+    let file_md5 = format!("{:x}", md5::compute(&final_data));
+
+    Ok(PreparedUpload {
+        original_name,
+        final_data,
+        final_name,
+        content_type,
+        file_md5,
+    })
+}
+
+async fn run_blocking_task<T, F>(operation: &'static str, task: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|error| {
+        tracing::error!(operation, %error, "blocking task failed");
+        AppError::Internal(format!("{operation} task failed"))
+    })
 }
 
 pub struct FileService {
@@ -89,104 +165,74 @@ impl FileService {
 
         // 验证文件类型
         validate_extension(&original_name, &config.allowed_extensions)?;
-        validate_file_signature(&original_name, &data)?;
 
-        // 图片压缩（可选）
-        let (final_data, final_name, content_type) = if compress {
-            let (compressed, compressed_name) = compress_image(&data, &original_name)
-                .unwrap_or_else(|e| {
-                    tracing::warn!("图片压缩失败，使用原始数据: {}", e);
-                    (data.clone(), original_name.clone())
-                });
-            if compressed.len() < data.len() {
-                let saved_pct = (1.0 - compressed.len() as f64 / data.len() as f64) * 100.0;
-                tracing::info!(
-                    "图片压缩: {} → {} ({:.1}% 减小)",
-                    ryframe_common::utils::file_upload::format_file_size(data.len() as u64),
-                    ryframe_common::utils::file_upload::format_file_size(compressed.len() as u64),
-                    saved_pct
-                );
-            }
-            let ct = get_content_type(&compressed_name);
-            (compressed, compressed_name, ct)
-        } else {
-            let ct = get_content_type(&original_name);
-            (data, original_name.clone(), ct)
-        };
+        let PreparedUpload {
+            original_name,
+            final_data,
+            final_name,
+            content_type,
+            file_md5,
+        } = prepare_upload_data(original_name, data, compress).await?;
 
-        // 生成存储文件名 + 日期路径
-        let file_md5 = format!("{:x}", md5::compute(&final_data));
         if let Some(existing) = FileRepository
             .find_by_md5(self.db.write(), tenant_id, bucket, &file_md5)
             .await?
         {
-            return Ok(UploadResponse {
-                file_id: existing.id.to_string(),
-                file_url: self.build_file_url(&existing.bucket, &existing.storage_path)?,
-                file_info: UploadFileInfo {
-                    original_name: existing.original_name,
-                    storage_name: existing.storage_name,
-                    file_path: existing.storage_path,
-                    file_size: existing.file_size as u64,
-                    content_type: existing.content_type,
-                    upload_time: existing.created_at.to_rfc3339(),
-                },
-            });
+            return self.upload_response_for_existing(existing);
         }
-
-        ryframe_db::TenantRepository
-            .ensure_storage_quota(self.db.write(), tenant_id, final_data.len() as u64)
-            .await?;
 
         let storage_name = generate_storage_filename(&final_name);
         let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
         let object_key = format!("{tenant_id}/{date_prefix}/{storage_name}");
-
         let file_url = self.build_file_url(bucket, &object_key)?;
-
-        // 上传到对象存储
-        self.storage
-            .put(bucket, &object_key, &final_data, &content_type)
-            .await
-            .map_err(|error| {
-                tracing::error!(bucket, object_key, %error, "对象存储写入失败");
-                map_storage_write_error(error)
-            })?;
-
-        // 写入文件元数据到 sys_file 表
-        let relative_file_url = format!("{}/{}", bucket, object_key);
-        let file_id = ryframe_common::utils::snowflake::next_snowflake_id();
+        let now = Utc::now();
+        let reservation_token = uuid::Uuid::new_v4().to_string();
+        let file_id = ryframe_common::utils::snowflake::try_next_snowflake_id()?;
         let model = sys_file::Model {
             id: file_id,
             tenant_id: tenant_id.to_owned(),
             original_name: original_name.clone(),
             storage_name: storage_name.clone(),
             storage_path: object_key.clone(),
-            bucket: bucket.to_string(),
-            file_url: relative_file_url,
-            file_size: final_data.len() as i64,
+            bucket: bucket.to_owned(),
+            file_url: format!("{bucket}/{object_key}"),
+            file_size: i64::try_from(final_data.len())
+                .map_err(|_| AppError::PayloadTooLarge("文件大小超出数据库范围".into()))?,
             content_type: content_type.clone(),
-            file_md5: Some(file_md5),
+            file_md5: Some(file_md5.clone()),
             upload_by: Some(actor.username.clone()),
-            del_flag: sys_file::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            upload_status: sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
+            reservation_token: Some(reservation_token),
+            // Set from the primary database clock inside the reservation
+            // transaction, after any tenant-row lock wait.
+            reservation_expires_at: None,
+            del_flag: sys_file::Model::DEL_FLAG_UPLOAD_RESERVED.to_owned(),
+            created_at: now,
+            updated_at: now,
         };
-        if let Err(error) = FileRepository
-            .insert(self.db.write(), tenant_id, model)
-            .await
-        {
-            if let Err(cleanup_error) = self.storage.delete(bucket, &object_key).await {
-                tracing::error!(
-                    tenant_id,
-                    bucket,
-                    object_key,
-                    %cleanup_error,
-                    "文件元数据写入失败后清理对象也失败"
-                );
+
+        let reservation = match self.reserve_upload(tenant_id, model).await? {
+            ReservationOutcome::Ready(existing) => {
+                return self.upload_response_for_existing(existing);
             }
+            ReservationOutcome::InProgress(existing) => {
+                return self.recover_in_progress_upload(existing, &file_md5).await;
+            }
+            ReservationOutcome::Reserved(reservation) => reservation,
+        };
+        let mut guard =
+            UploadReservationGuard::new(self.db.clone(), self.storage.clone(), reservation);
+
+        if let Err(error) = self.put_reserved_object(&guard, &final_data).await {
+            guard.compensate().await;
             return Err(error);
         }
+
+        if let Err(error) = self.finalize_upload(&mut guard).await {
+            guard.compensate().await;
+            return Err(error);
+        }
+        guard.disarm();
 
         Ok(UploadResponse {
             file_id: file_id.to_string(),
@@ -238,6 +284,21 @@ impl FileService {
             utf8_percent_encode(bucket, NON_ALPHANUMERIC),
             utf8_percent_encode(key, NON_ALPHANUMERIC),
         ))
+    }
+
+    fn upload_response_for_existing(&self, existing: sys_file::Model) -> AppResult<UploadResponse> {
+        Ok(UploadResponse {
+            file_id: existing.id.to_string(),
+            file_url: self.build_file_url(&existing.bucket, &existing.storage_path)?,
+            file_info: UploadFileInfo {
+                original_name: existing.original_name,
+                storage_name: existing.storage_name,
+                file_path: existing.storage_path,
+                file_size: existing.file_size.max(0) as u64,
+                content_type: existing.content_type,
+                upload_time: existing.created_at.to_rfc3339(),
+            },
+        })
     }
 
     /// 上传头像（Avatar 专用便捷方法）
@@ -319,7 +380,9 @@ fn map_storage_read_error(error: StorageError) -> AppError {
 
 #[cfg(test)]
 mod storage_error_tests {
-    use super::{map_storage_read_error, map_storage_write_error};
+    use super::{
+        map_storage_read_error, map_storage_write_error, prepare_upload_data, run_blocking_task,
+    };
     use ryframe_common::AppError;
     use ryframe_storage::StorageError;
 
@@ -379,5 +442,45 @@ mod storage_error_tests {
             map_storage_write_error(StorageError::Configuration("missing key".into())),
             AppError::Internal(_)
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_work_yields_to_the_async_runtime() {
+        let (release, wait_for_release) = std::sync::mpsc::channel();
+        let work = run_blocking_task("test operation", move || {
+            wait_for_release.recv().unwrap();
+            42
+        });
+        tokio::pin!(work);
+
+        tokio::select! {
+            biased;
+            result = &mut work => panic!("blocking work completed inline: {result:?}"),
+            _ = std::future::ready(()) => {}
+        }
+
+        release.send(()).unwrap();
+        assert_eq!(work.await.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn image_compression_is_prepared_on_the_blocking_pool() {
+        let prepared = prepare_upload_data("avatar.bmp".into(), one_pixel_bmp(), true)
+            .await
+            .unwrap();
+
+        assert_eq!(prepared.original_name, "avatar.bmp");
+        assert_eq!(prepared.final_name, "avatar.jpg");
+        assert_eq!(prepared.content_type, "image/jpeg");
+        assert!(!prepared.final_data.is_empty());
+        assert_eq!(prepared.file_md5.len(), 32);
+    }
+
+    fn one_pixel_bmp() -> Vec<u8> {
+        vec![
+            0x42, 0x4d, 0x3a, 0, 0, 0, 0, 0, 0, 0, 0x36, 0, 0, 0, 0x28, 0, 0, 0, 1, 0, 0, 0, 1, 0,
+            0, 0, 1, 0, 24, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0x13, 0x0b, 0, 0, 0x13, 0x0b, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0xff, 0,
+        ]
     }
 }

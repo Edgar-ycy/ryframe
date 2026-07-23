@@ -28,7 +28,7 @@
 //!     created_at: Utc::now(),
 //!     login_date: None,
 //! };
-//! AutoFillModel::fill_on_insert(&mut user, &FillContext::new());
+//! AutoFillModel::fill_on_insert(&mut user, &FillContext::new()).expect("自动填充失败");
 //! assert_ne!(user.id, 0);
 //! ```
 
@@ -69,7 +69,7 @@ use syn::parse_macro_input;
 ///     created_at: Utc::now(),
 ///     login_date: None,
 /// };
-/// AutoFillModel::fill_on_insert(&mut user, &FillContext::new());
+/// AutoFillModel::fill_on_insert(&mut user, &FillContext::new()).expect("自动填充失败");
 /// assert_ne!(user.id, 0);
 /// ```
 #[proc_macro_derive(AutoFill, attributes(auto_fill))]

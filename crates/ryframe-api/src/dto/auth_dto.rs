@@ -2,7 +2,10 @@ use ryframe_service::{LoginResult, UserInfo};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::password_validation::validate_password_complexity;
+use super::{
+    password_validation::validate_password_complexity,
+    tenant_validation::validate_tenant_identifier,
+};
 
 #[derive(Deserialize, validator::Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -18,7 +21,8 @@ pub struct LoginRequest {
 #[derive(Deserialize, validator::Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompletePasswordResetRequest {
-    #[validate(length(min = 1, max = 64, message = "租户ID不能为空且不能超过64个字符"))]
+    #[validate(custom(function = "validate_tenant_identifier"))]
+    #[schema(pattern = r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])$")]
     pub tenant_id: String,
     pub request_id: String,
     #[validate(length(min = 1, message = "重置令牌不能为空"))]

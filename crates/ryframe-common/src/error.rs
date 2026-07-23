@@ -218,3 +218,10 @@ impl From<ValidationErrors> for AppError {
         AppError::Validation(e.to_string())
     }
 }
+
+impl From<crate::utils::snowflake::SnowflakeError> for AppError {
+    fn from(error: crate::utils::snowflake::SnowflakeError) -> Self {
+        tracing::error!(error = %error, "snowflake ID generation failed");
+        AppError::ServiceUnavailable("ID 生成服务暂时不可用，请稍后重试".into())
+    }
+}

@@ -14,6 +14,14 @@ use ryframe_config::RedisConfig;
 const SCAN_BATCH_SIZE: usize = 256;
 const GET_AND_DEL_SCRIPT: &str = "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value";
 
+fn prepare_mget_command<K: AsRef<str>>(keys: &[K]) -> redis::Cmd {
+    let mut command = redis::cmd("MGET");
+    for key in keys {
+        command.arg(key.as_ref());
+    }
+    command
+}
+
 fn prepare_script_invocation<'script, K, V>(
     script: &'script redis::Script,
     keys: &[K],
@@ -105,6 +113,19 @@ impl RedisClient {
     pub async fn get<K: AsRef<str>>(&self, key: K) -> Result<Option<String>, redis::RedisError> {
         let mut conn = self.conn.clone();
         conn.get(key.as_ref()).await
+    }
+
+    /// MGET 多个 key。返回值与输入 key 一一对应，不存在或已过期的 key 为 `None`。
+    pub async fn mget<K: AsRef<str>>(
+        &self,
+        keys: &[K],
+    ) -> Result<Vec<Option<String>>, redis::RedisError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conn = self.conn.clone();
+        prepare_mget_command(keys).query_async(&mut conn).await
     }
 
     /// DEL key（删除键，返回删除数量）
@@ -286,7 +307,7 @@ impl RedisClient {
 mod tests {
     use redis::{Arg, Cmd, Pipeline, RedisFuture, Value, aio::ConnectionLike};
 
-    use super::prepare_script_invocation;
+    use super::{prepare_mget_command, prepare_script_invocation};
 
     #[derive(Default)]
     struct RecordingConnection {
@@ -343,5 +364,26 @@ mod tests {
         assert_eq!(command[5], b"100.25");
         assert_eq!(command[6], b"60");
         assert_eq!(command[7], b"10");
+    }
+
+    #[test]
+    fn mget_command_preserves_input_key_order() {
+        let command = prepare_mget_command(&["online-user:c", "online-user:a"]);
+        let args = command
+            .args_iter()
+            .filter_map(|arg| match arg {
+                Arg::Simple(value) => Some(value.to_vec()),
+                Arg::Cursor => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                b"MGET".to_vec(),
+                b"online-user:c".to_vec(),
+                b"online-user:a".to_vec(),
+            ]
+        );
     }
 }

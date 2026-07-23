@@ -136,7 +136,7 @@ Handler → Service → Repository → Database
 - 错误统一使用 `AppResult<T>` / `AppError`
 - 分页上限 `MAX_PAGE_SIZE = 1000`
 - 软删除使用 `del_flag` 字段（`"0"` = 正常，`"2"` = 已删除）
-- 主键使用 UUID v7（`snowflake::next_snowflake_id()`）
+- 主键使用 Snowflake ID（`snowflake::try_next_snowflake_id()?`），生成失败必须沿 `AppResult` 传播
 - 数据库固定为 MySQL；数据库特定语义集中在迁移、Repository 和生成器边界
 - 配置只在启动时加载、解密和校验，任何配置变更都要求重启进程
 

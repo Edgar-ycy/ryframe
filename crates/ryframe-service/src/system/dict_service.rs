@@ -136,7 +136,7 @@ impl DictService {
             return Err(AppError::Conflict("字典类型编码已存在".into()));
         }
         let mut new_type = dict_type::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             code: code.to_string(),
@@ -146,7 +146,7 @@ impl DictService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        new_type.fill_on_insert(&FillContext::new());
+        new_type.fill_on_insert(&FillContext::new())?;
         Ok(DictTypeVo::from(
             self.dict_type_repo.insert(db, tenant_id, new_type).await?,
         ))
@@ -168,7 +168,7 @@ impl DictService {
             .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
         t.name = name.to_string();
         t.status = status;
-        t.fill_on_update(&FillContext::new());
+        t.fill_on_update(&FillContext::new())?;
         Ok(DictTypeVo::from(
             self.dict_type_repo.update(db, tenant_id, t).await?,
         ))
@@ -231,7 +231,7 @@ impl DictService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
         let mut new_data = dict_data::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             type_code: type_code.to_string(),
             label: label.to_string(),
@@ -244,7 +244,7 @@ impl DictService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        new_data.fill_on_insert(&FillContext::new());
+        new_data.fill_on_insert(&FillContext::new())?;
         let vo = DictDataVo::from(self.dict_data_repo.insert(db, tenant_id, new_data).await?);
 
         // 便新缓存
@@ -274,7 +274,7 @@ impl DictService {
         d.value = value.to_string();
         d.sort = sort;
         d.status = status;
-        d.fill_on_update(&FillContext::new());
+        d.fill_on_update(&FillContext::new())?;
         let vo = DictDataVo::from(self.dict_data_repo.update(db, tenant_id, d).await?);
 
         // 便新缓存

@@ -5,7 +5,7 @@ use std::{
 };
 
 use axum::{
-    extract::State,
+    extract::{MatchedPath, State},
     http::{HeaderValue, StatusCode, header::RETRY_AFTER},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -318,15 +318,48 @@ pub async fn api_rate_limit_middleware(
     }
 
     let method = request.method().as_str();
-    let path = request.uri().path();
-    let exact_rule = format!("{method} {path}");
-    let Some(&limit) = state
+    let concrete_path = request.uri().path();
+    let route_path = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or(concrete_path);
+    let method_concrete_rule = format!("{method} {concrete_path}");
+    let method_route_rule = format!("{method} {route_path}");
+    let configured_rule = state
         .config
         .api_limits
-        .get(&exact_rule)
-        .or_else(|| state.config.api_limits.get(path))
-        .or_else(|| state.config.api_limits.get(method))
-    else {
+        .get(&method_concrete_rule)
+        .map(|limit| (method_concrete_rule.as_str(), *limit))
+        .or_else(|| {
+            state
+                .config
+                .api_limits
+                .get(&method_route_rule)
+                .map(|limit| (method_route_rule.as_str(), *limit))
+        })
+        .or_else(|| {
+            state
+                .config
+                .api_limits
+                .get(concrete_path)
+                .map(|limit| (concrete_path, *limit))
+        })
+        .or_else(|| {
+            state
+                .config
+                .api_limits
+                .get(route_path)
+                .map(|limit| (route_path, *limit))
+        })
+        .or_else(|| {
+            state
+                .config
+                .api_limits
+                .get(method)
+                .map(|limit| (method, *limit))
+        });
+    let Some((rule_scope, limit)) = configured_rule else {
         return Ok(next.run(request).await);
     };
 
@@ -335,7 +368,10 @@ pub async fn api_rate_limit_middleware(
         .get::<ClientIp>()
         .map(|value| value.0)
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    let key = RateLimiter::api_client_key(&exact_rule, client_ip);
+    // Scope the bucket to the rule that matched. In particular, all concrete
+    // IDs for a `{param}` route and all paths for a method-wide rule must share
+    // one bucket; otherwise clients can evade the limit by varying the URL.
+    let key = RateLimiter::api_client_key(rule_scope, client_ip);
     match state
         .limiter
         .acquire(&key, state.config.api_window_secs, limit)

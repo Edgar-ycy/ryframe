@@ -12,8 +12,6 @@ impl UserService {
         mut role_ids: Vec<i64>,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.ensure_user_accessible(actor, user_id).await?;
-        self.ensure_not_super_admin_user(actor, user_id).await?;
         self.validate_assignments(actor, None, Some(&role_ids))
             .await?;
 
@@ -25,15 +23,18 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
+        self.lock_manageable_user_in_txn(actor, &transaction, user_id)
+            .await?;
         self.role_repo
             .replace_roles_in_txn(&transaction, tenant_id, user_id, &role_ids)
+            .await?;
+        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[user_id])
             .await?;
         transaction
             .commit()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        self.invalidate_sessions_for_tenant(tenant_id, &[user_id])
-            .await
+        Ok(())
     }
 
     pub(super) async fn validate_assignments(

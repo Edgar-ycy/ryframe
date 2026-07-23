@@ -88,9 +88,7 @@ impl TenantContext {
 /// exists. Background jobs may run without task-local state because their
 /// explicit tenant remains the authoritative input.
 pub fn validate_explicit_tenant(tenant_id: &str) -> AppResult<()> {
-    if tenant_id.trim().is_empty() {
-        return Err(AppError::Validation("租户ID不能为空".into()));
-    }
+    validate_tenant_identifier(tenant_id)?;
 
     REQUEST_TENANT_CONTEXT
         .try_with(|context| {
@@ -101,6 +99,27 @@ pub fn validate_explicit_tenant(tenant_id: &str) -> AppResult<()> {
             }
         })
         .unwrap_or(Ok(()))
+}
+
+/// Validate an identifier before it is used in database partitions, cache
+/// keys, or Redis glob patterns. The deliberately small alphabet prevents
+/// tenant-controlled wildcard and key-delimiter injection.
+pub fn validate_tenant_identifier(tenant_id: &str) -> AppResult<()> {
+    let bytes = tenant_id.as_bytes();
+    let is_alphanumeric = |byte: u8| byte.is_ascii_alphanumeric();
+    if !(2..=64).contains(&bytes.len())
+        || !bytes.first().is_some_and(|byte| is_alphanumeric(*byte))
+        || !bytes.last().is_some_and(|byte| is_alphanumeric(*byte))
+        || !bytes
+            .iter()
+            .all(|byte| is_alphanumeric(*byte) || matches!(byte, b'-' | b'_'))
+    {
+        return Err(AppError::Validation(
+            "tenant ID must be 2-64 ASCII letters, digits, hyphens, or underscores and start/end with a letter or digit"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Runs a future with an explicit tenant scope. Middleware uses this to make
@@ -257,7 +276,7 @@ pub async fn tenant_middleware(
     let tenant_id = extract_tenant_id(&request, &config);
 
     match tenant_id {
-        Some(id) => {
+        Some(id) if validate_tenant_identifier(&id).is_ok() => {
             let context = TenantContext {
                 tenant_id: id,
                 is_admin: false,
@@ -265,6 +284,11 @@ pub async fn tenant_middleware(
             request.extensions_mut().insert(context.clone());
             with_tenant_context(context, next.run(request)).await
         }
+        Some(_) => (
+            StatusCode::BAD_REQUEST,
+            "{\"code\":400,\"message\":\"invalid tenant ID\"}",
+        )
+            .into_response(),
         None => {
             // 无租户信息 → 403
             (
@@ -522,5 +546,20 @@ mod tests {
         assert!(!config.excludes("/livez/details"));
         assert!(config.excludes("/docs/index.html"));
         assert!(!config.excludes("/doc/index.html"));
+    }
+
+    #[test]
+    fn tenant_identifier_rejects_cache_glob_and_key_delimiter_injection() {
+        for valid in ["system", "tenant-001", "Tenant_42"] {
+            assert!(validate_tenant_identifier(valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "*", "**", "a*", "a?", "a[b]", "a\\b", "a:b", " a", "a ", "-ab", "ab-", "租户-a",
+        ] {
+            assert!(
+                validate_tenant_identifier(invalid).is_err(),
+                "unsafe tenant ID was accepted: {invalid}"
+            );
+        }
     }
 }

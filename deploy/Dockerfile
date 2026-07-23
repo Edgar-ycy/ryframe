@@ -1,11 +1,18 @@
 # syntax=docker/dockerfile:1.7
+ARG RYFRAME_BUILD_COMMIT
+
 FROM rust:bookworm AS builder
+ARG RYFRAME_BUILD_COMMIT
 
 WORKDIR /workspace
 COPY . .
-RUN cargo build --locked --release -p ryframe --bin ryframe
+RUN RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
+    cargo build --locked --release -p ryframe --bin ryframe
 
 FROM debian:bookworm-slim AS runtime
+ARG RYFRAME_BUILD_COMMIT
+
+LABEL org.opencontainers.image.revision="${RYFRAME_BUILD_COMMIT}"
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates curl \

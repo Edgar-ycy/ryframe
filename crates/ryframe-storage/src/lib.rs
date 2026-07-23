@@ -4,7 +4,10 @@ mod local;
 mod s3;
 mod signing;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 pub use local::LocalObjectStorage;
@@ -75,6 +78,17 @@ pub enum StorageError {
 /// Upload, download, delete, and locate objects without exposing a backend.
 #[async_trait]
 pub trait ObjectStorage: Send + Sync {
+    /// Maximum time a backend may still commit a PUT after the returned future
+    /// is cancelled. Upload cleanup tombstones are retained beyond this bound
+    /// so a second delete catches late remote completion.
+    ///
+    /// Implementations with a larger bound must override this method. The
+    /// bundled S3 client has a 30-second total request timeout; local writes do
+    /// not detach a remote operation.
+    fn late_put_completion_bound(&self) -> Duration {
+        Duration::from_secs(30)
+    }
+
     async fn put(
         &self,
         bucket: &str,

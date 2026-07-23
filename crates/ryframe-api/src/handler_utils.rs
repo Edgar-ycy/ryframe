@@ -4,13 +4,15 @@ use ryframe_common::{AppError, AppResult};
 const XLSX_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 pub(crate) fn tenant_id_from_headers(headers: &HeaderMap) -> AppResult<String> {
-    headers
+    let tenant_id = headers
         .get("X-Tenant-Id")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .ok_or_else(|| AppError::Validation("缺少租户信息".into()))
+        .ok_or_else(|| AppError::Validation("缺少租户信息".into()))?;
+    ryframe_core::validate_tenant_identifier(&tenant_id)?;
+    Ok(tenant_id)
 }
 
 pub(crate) fn excel_response(bytes: Vec<u8>, filename: &str) -> AppResult<Response> {
@@ -74,6 +76,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("X-Tenant-Id", " tenant-a ".parse().unwrap());
         assert_eq!(tenant_id_from_headers(&headers).unwrap(), "tenant-a");
+        headers.insert("X-Tenant-Id", "**".parse().unwrap());
+        assert!(tenant_id_from_headers(&headers).is_err());
         assert!(tenant_id_from_headers(&HeaderMap::new()).is_err());
     }
 }

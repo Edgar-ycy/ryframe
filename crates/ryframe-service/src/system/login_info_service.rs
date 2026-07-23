@@ -92,7 +92,7 @@ impl LoginInfoService {
         let db = self.db.write();
         let tenant_id = command.tenant_id;
         let log = login_info::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.clone(),
             user_name: command.user_name,
             ipaddr: command.ipaddr,

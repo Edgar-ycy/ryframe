@@ -121,7 +121,7 @@ impl ProfileService {
         user.nickname = nickname;
         user.email = email;
         user.phone = phone;
-        user.fill_on_update(&FillContext::new());
+        user.fill_on_update(&FillContext::new())?;
 
         self.user_repo.update(db, tenant_id, user).await?;
 
@@ -155,7 +155,7 @@ impl ProfileService {
         let new_hash = password::hash(new_password)?;
         user.password_hash = new_hash;
         user.auth_version = user.auth_version.saturating_add(1);
-        user.fill_on_update(&FillContext::new());
+        user.fill_on_update(&FillContext::new())?;
 
         self.user_repo.update(db, tenant_id, user).await?;
 
@@ -174,7 +174,7 @@ impl ProfileService {
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         let old_avatar = user.avatar.clone();
         user.avatar = Some(avatar_url);
-        user.fill_on_update(&FillContext::new());
+        user.fill_on_update(&FillContext::new())?;
         self.user_repo.update(db, tenant_id, user).await?;
 
         // 清理旧头像文件（仅清理本地上传的文件）

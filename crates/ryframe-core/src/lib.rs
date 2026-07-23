@@ -20,7 +20,7 @@ pub use distributed_lock::{
 pub use multi_tenant::{
     ExtractionMethod, IsolationStrategy, QuotaCheck, TenantConfig, TenantContext, TenantFilter,
     TenantIsolation, TenantQuota, TenantRateLimitCache, tenant_middleware,
-    validate_explicit_tenant, with_tenant_context,
+    validate_explicit_tenant, validate_tenant_identifier, with_tenant_context,
 };
 pub use redis_client::RedisClient;
 pub use refresh_session::{RefreshFamily, RefreshRotation, RefreshSessionStore};

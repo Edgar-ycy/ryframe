@@ -114,7 +114,9 @@ async fn backfill_button_menus(manager: &SchemaManager<'_>) -> Result<(), DbErr>
                         Alias::new("updated_at"),
                     ])
                     .values_panic([
-                        ryframe_common::utils::snowflake::next_snowflake_id().into(),
+                        ryframe_common::utils::snowflake::try_next_snowflake_id()
+                            .map_err(|error| DbErr::Custom(error.to_string()))?
+                            .into(),
                         tenant_id.into(),
                         name.into(),
                         parent_id.into(),

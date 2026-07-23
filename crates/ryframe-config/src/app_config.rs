@@ -8,6 +8,8 @@ use crate::{
     ProxyConfig, RateLimitConfig, RedisConfig, RedisMode, UploadLimitsConfig,
 };
 
+const MIN_PRODUCTION_JWT_SECRET_BYTES: usize = 32;
+
 /// 应用基础配置
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +86,11 @@ impl AppConfig {
 
     /// 校验必填配置项
     pub fn validate(&self, env: &str) -> AppResult<()> {
+        let env = normalize_environment(env)?;
+        // 生产部署中的每个实例必须使用独立 worker ID，避免跨实例生成重复主键。
+        // 开发/测试环境允许使用默认值，但显式配置时同样校验格式和范围。
+        ryframe_common::utils::snowflake::worker_id_from_environment(&env)
+            .map_err(AppError::Config)?;
         if self.app.name.is_empty() {
             return Err(AppError::Config("app.name 不能为空".into()));
         }
@@ -150,12 +157,25 @@ impl AppConfig {
                 "generator.data_source 未注册: {generator_source}"
             )));
         }
-        if self.auth.jwt_secret.is_empty() {
+        let jwt_secret = self.auth.jwt_secret.trim();
+        if jwt_secret.is_empty() {
             return Err(AppError::Config("auth.jwt_secret 不能为空".into()));
         }
-        if env == "prod" && self.auth.jwt_secret == "change-me-in-production" {
+        if env == "prod" {
+            if jwt_secret == "change-me-in-production" {
+                return Err(AppError::Config(
+                    "生产环境必须修改 auth.jwt_secret，不允许使用默认值".into(),
+                ));
+            }
+            if jwt_secret.len() < MIN_PRODUCTION_JWT_SECRET_BYTES {
+                return Err(AppError::Config(format!(
+                    "生产环境 auth.jwt_secret 至少需要 {MIN_PRODUCTION_JWT_SECRET_BYTES} 字节"
+                )));
+            }
+        }
+        if self.auth.max_login_attempts == 0 || self.auth.lockout_duration_minutes == 0 {
             return Err(AppError::Config(
-                "生产环境必须修改 auth.jwt_secret，不允许使用默认值".into(),
+                "auth.max_login_attempts 和 auth.lockout_duration_minutes 必须大于 0".into(),
             ));
         }
         let access_ttl =

@@ -55,7 +55,9 @@ pub fn protected_monitor_router(state: MonitorState) -> axum::Router {
 pub async fn server_info_handler(
     State(_state): State<MonitorState>,
 ) -> AppResult<Json<ApiResponse<ServerInfo>>> {
-    Ok(Json(ApiResponse::success(ServerInfo::collect())))
+    Ok(Json(ApiResponse::success(
+        ServerInfo::collect_async().await?,
+    )))
 }
 
 #[get("/cache")]

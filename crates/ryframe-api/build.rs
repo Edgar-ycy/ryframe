@@ -9,6 +9,18 @@ use std::{
 use syn::{Attribute, Item, LitStr};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    println!("cargo:rerun-if-env-changed=RYFRAME_BUILD_COMMIT");
+    let build_commit = env::var("RYFRAME_BUILD_COMMIT")
+        .unwrap_or_else(|_| "development".to_owned())
+        .trim()
+        .to_ascii_lowercase();
+    if build_commit != "development"
+        && (build_commit.len() != 40 || !build_commit.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        return Err("RYFRAME_BUILD_COMMIT must be a full 40-character Git commit SHA".into());
+    }
+    println!("cargo:rustc-env=RYFRAME_BUILD_COMMIT={build_commit}");
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let workspace_root = manifest_dir
         .parent()

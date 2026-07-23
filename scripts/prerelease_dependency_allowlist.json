@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "entries": [
+    {
+      "ecosystem": "cargo",
+      "name": "sea-orm-arrow",
+      "version": "2.0.0-rc.3",
+      "source": "Cargo.lock",
+      "review_after": "2026-08-23",
+      "reason": "SeaORM 2.0.0 records this optional Arrow integration in Cargo.lock, but the feature is not enabled and upstream has not published a stable sea-orm-arrow release.",
+      "evidence": "https://docs.rs/crate/sea-orm-arrow/latest"
+    },
+    {
+      "ecosystem": "container",
+      "name": "rustfs/rustfs",
+      "version": "1.0.0-beta.8",
+      "source": "docker-compose.test.yml",
+      "review_after": "2026-08-23",
+      "reason": "RustFS still publishes only prerelease 1.0.0 images. Keep the already validated beta.8 test image until a stable compatible tag exists instead of changing between beta builds implicitly.",
+      "evidence": "https://hub.docker.com/r/rustfs/rustfs/tags"
+    }
+  ]
+}

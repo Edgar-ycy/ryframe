@@ -37,3 +37,13 @@ fn test_super_admin_bypasses_permission_check() {
     let principal = principal(Vec::new(), true);
     assert!(check_permission(&principal, "system:any:action").is_ok());
 }
+
+#[test]
+fn blank_required_permission_fails_closed_for_regular_users() {
+    let regular_user = principal(Vec::new(), false);
+    assert!(check_permission(&regular_user, "").is_err());
+    assert!(check_permission(&regular_user, "   ").is_err());
+
+    let super_admin = principal(Vec::new(), true);
+    assert!(check_permission(&super_admin, "").is_err());
+}

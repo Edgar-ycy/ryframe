@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 
 /// Redis key 前缀
 const ONLINE_USER_KEY_PREFIX: &str = "ryframe:v0.5:online-user:";
+const ONLINE_USER_MGET_BATCH_SIZE: usize = 256;
 
 fn remaining_session_ttl(absolute_exp: i64) -> Option<u64> {
     let remaining = absolute_exp - Utc::now().timestamp();
@@ -21,6 +22,47 @@ fn online_user_key(tenant_id: &str, sid: &str) -> String {
 
 fn tenant_online_user_pattern(tenant_id: &str) -> String {
     format!("{ONLINE_USER_KEY_PREFIX}{tenant_id}:*")
+}
+
+fn decode_online_users(
+    expected_tenant_id: &str,
+    keys: &[String],
+    values: Vec<Option<String>>,
+) -> AppResult<Vec<OnlineUserVo>> {
+    if keys.len() != values.len() {
+        tracing::error!(
+            key_count = keys.len(),
+            value_count = values.len(),
+            "Redis MGET 在线用户返回数量异常"
+        );
+        return Err(AppError::Internal("查询在线用户失败".into()));
+    }
+
+    let mut users = Vec::with_capacity(keys.len());
+    for (key, value) in keys.iter().zip(values) {
+        let Some(json) = value else {
+            continue;
+        };
+        let session = serde_json::from_str::<UserSession>(&json).map_err(|error| {
+            tracing::error!(%error, %key, "反序列化在线用户失败");
+            AppError::Internal("在线用户数据损坏".into())
+        })?;
+        if session.tenant_id != expected_tenant_id
+            || key != &online_user_key(expected_tenant_id, &session.sid)
+        {
+            tracing::warn!(
+                %key,
+                expected_tenant_id,
+                session_tenant_id = session.tenant_id,
+                "ignored an online-user index outside the requested tenant"
+            );
+            continue;
+        }
+        if remaining_session_ttl(session.absolute_exp).is_some() {
+            users.push(session_to_vo(&session));
+        }
+    }
+    Ok(users)
 }
 
 /// 在线用户信息（DTO）
@@ -91,6 +133,10 @@ impl OnlineUserService {
 
     /// 添加在线用户
     pub async fn add_user(&self, session: UserSession) {
+        if let Err(error) = ryframe_core::validate_tenant_identifier(&session.tenant_id) {
+            tracing::error!(tenant_id = %session.tenant_id, %error, "refusing invalid tenant in online-user index");
+            return;
+        }
         let Some(ttl) = remaining_session_ttl(session.absolute_exp) else {
             return;
         };
@@ -117,6 +163,10 @@ impl OnlineUserService {
 
     /// 移除在线用户
     pub async fn remove_user(&self, tenant_id: &str, sid: &str) {
+        if let Err(error) = ryframe_core::validate_tenant_identifier(tenant_id) {
+            tracing::error!(tenant_id, %error, "refusing invalid tenant in online-user removal");
+            return;
+        }
         let key = online_user_key(tenant_id, sid);
         match self {
             Self::Redis { client } => {
@@ -187,24 +237,14 @@ impl OnlineUserService {
                     tracing::error!("Redis SCAN 在线用户失败: {}", error);
                     AppError::Internal("查询在线用户失败".into())
                 })?;
-
-                let mut users = Vec::new();
-                for key in keys {
-                    match client.get(&key).await {
-                        Ok(Some(json)) => {
-                            let session =
-                                serde_json::from_str::<UserSession>(&json).map_err(|error| {
-                                    tracing::error!("反序列化在线用户失败: {}", error);
-                                    AppError::Internal("在线用户数据损坏".into())
-                                })?;
-                            users.push(session_to_vo(&session));
-                        }
-                        Ok(None) => {} // 已过期
-                        Err(e) => {
-                            tracing::error!("Redis GET 在线用户 {} 失败: {}", key, e);
-                            return Err(AppError::Internal("查询在线用户失败".into()));
-                        }
-                    }
+                let mut users = Vec::with_capacity(keys.len());
+                for key_batch in keys.chunks(ONLINE_USER_MGET_BATCH_SIZE) {
+                    // MGET 与 keys 顺序一致；扫描后已过期的 key 返回 None 并被跳过。
+                    let values = client.mget(key_batch).await.map_err(|error| {
+                        tracing::error!("Redis MGET 在线用户失败: {}", error);
+                        AppError::Internal("查询在线用户失败".into())
+                    })?;
+                    users.extend(decode_online_users(tenant_id, key_batch, values)?);
                 }
                 Ok(users)
             }
@@ -223,6 +263,10 @@ impl OnlineUserService {
 
     /// 更新用户最后访问时间
     pub async fn touch_user(&self, tenant_id: &str, sid: &str) {
+        if let Err(error) = ryframe_core::validate_tenant_identifier(tenant_id) {
+            tracing::error!(tenant_id, %error, "refusing invalid tenant in online-user update");
+            return;
+        }
         let key = online_user_key(tenant_id, sid);
         match self {
             Self::Redis { client } => {
@@ -272,28 +316,7 @@ impl OnlineUserService {
 
     /// 获取在线用户数量
     pub async fn count(&self, actor: &ActorContext) -> AppResult<usize> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
-        match self {
-            Self::Redis { client } => {
-                let pattern = tenant_online_user_pattern(tenant_id);
-                match client.scan_keys(&pattern).await {
-                    Ok(keys) => Ok(keys.len()),
-                    Err(error) => {
-                        tracing::error!("Redis SCAN 在线用户失败: {}", error);
-                        Err(AppError::Internal("查询在线用户数量失败".into()))
-                    }
-                }
-            }
-            Self::InMemory { sessions } => {
-                let s = sessions.read().await;
-                Ok(s.values()
-                    .filter(|session| {
-                        session.tenant_id == tenant_id
-                            && remaining_session_ttl(session.absolute_exp).is_some()
-                    })
-                    .count())
-            }
-        }
+        Ok(self.list_online_users(actor).await?.len())
     }
 }
 
@@ -309,5 +332,102 @@ pub fn session_to_vo(s: &UserSession) -> OnlineUserVo {
         os: s.os.clone(),
         login_time: s.login_time.to_rfc3339(),
         last_access_time: s.last_access_time.to_rfc3339(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+    use ryframe_common::AppError;
+
+    use super::{ONLINE_USER_MGET_BATCH_SIZE, UserSession, decode_online_users, online_user_key};
+
+    fn session(sid: &str, username: &str) -> UserSession {
+        let now = Utc::now();
+        UserSession {
+            sid: sid.into(),
+            tenant_id: "system".into(),
+            user_id: 1,
+            username: username.into(),
+            dept_name: None,
+            ipaddr: "127.0.0.1".into(),
+            login_location: None,
+            browser: None,
+            os: None,
+            login_time: now,
+            last_access_time: now,
+            absolute_exp: (now + Duration::hours(1)).timestamp(),
+        }
+    }
+
+    #[test]
+    fn batch_decode_preserves_key_order_and_skips_expired_entries() {
+        let keys = vec![
+            online_user_key("system", "b"),
+            online_user_key("system", "expired"),
+            online_user_key("system", "a"),
+        ];
+        let values = vec![
+            Some(serde_json::to_string(&session("b", "bob")).unwrap()),
+            None,
+            Some(serde_json::to_string(&session("a", "alice")).unwrap()),
+        ];
+
+        let users = decode_online_users("system", &keys, values).unwrap();
+
+        assert_eq!(
+            users
+                .iter()
+                .map(|user| user.username.as_str())
+                .collect::<Vec<_>>(),
+            ["bob", "alice"]
+        );
+    }
+
+    #[test]
+    fn batch_decode_rejects_corrupted_or_misaligned_data() {
+        let corrupted = decode_online_users("system", &["bad".into()], vec![Some("{".into())]);
+        assert!(
+            matches!(corrupted, Err(AppError::Internal(message)) if message == "在线用户数据损坏")
+        );
+
+        let misaligned = decode_online_users("system", &["only-key".into()], Vec::new());
+        assert!(
+            matches!(misaligned, Err(AppError::Internal(message)) if message == "查询在线用户失败")
+        );
+    }
+
+    #[test]
+    fn batch_decode_filters_cross_tenant_and_mismatched_keys() {
+        let foreign = UserSession {
+            tenant_id: "tenant-b".into(),
+            ..session("foreign", "mallory")
+        };
+        let wrong_key_session = session("actual", "eve");
+        let keys = vec![
+            online_user_key("system", "foreign"),
+            online_user_key("system", "different"),
+        ];
+        let values = vec![
+            Some(serde_json::to_string(&foreign).unwrap()),
+            Some(serde_json::to_string(&wrong_key_session).unwrap()),
+        ];
+
+        assert!(
+            decode_online_users("system", &keys, values)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn online_user_mget_batches_are_bounded() {
+        let keys = (0..(ONLINE_USER_MGET_BATCH_SIZE * 2 + 1)).collect::<Vec<_>>();
+        assert_eq!(
+            keys.chunks(ONLINE_USER_MGET_BATCH_SIZE)
+                .map(<[usize]>::len)
+                .collect::<Vec<_>>(),
+            [ONLINE_USER_MGET_BATCH_SIZE, ONLINE_USER_MGET_BATCH_SIZE, 1]
+        );
     }
 }

@@ -16,6 +16,30 @@ pub struct BreakdownGuard<C: Cache> {
     null_cache_ttl: u64,
 }
 
+struct LockRegistration {
+    locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    key: String,
+    mutex: Option<Arc<tokio::sync::Mutex<()>>>,
+}
+
+impl LockRegistration {
+    fn mutex(&self) -> &tokio::sync::Mutex<()> {
+        self.mutex.as_deref().expect("lock registration is active")
+    }
+}
+
+impl Drop for LockRegistration {
+    fn drop(&mut self) {
+        // Release this caller's ownership before checking whether the map is
+        // the sole remaining owner. This also runs when the future is aborted
+        // or unwinds, so cancellation cannot strand registrations.
+        drop(self.mutex.take());
+        self.locks.remove_if(&self.key, |_, registered| {
+            Arc::strong_count(registered) == 1
+        });
+    }
+}
+
 impl<C: Cache> BreakdownGuard<C> {
     pub fn new(inner: C) -> Self {
         Self {
@@ -68,31 +92,40 @@ impl<C: Cache> BreakdownGuard<C> {
             CacheLookup::Miss => {}
         }
 
-        let mutex = self.get_mutex(key);
-        let _guard = match tokio::time::timeout(self.wait_timeout, mutex.lock()).await {
-            Ok(guard) => guard,
+        let registration = LockRegistration {
+            locks: Arc::clone(&self.locks),
+            key: key.to_owned(),
+            mutex: Some(self.get_mutex(key)),
+        };
+        match tokio::time::timeout(self.wait_timeout, registration.mutex().lock()).await {
+            Ok(lock_guard) => {
+                let result = async {
+                    match entry::read(&self.inner, key).await? {
+                        CacheLookup::Value(value) => return Ok(Some(value)),
+                        CacheLookup::Null => return Ok(None),
+                        CacheLookup::Miss => {}
+                    }
+
+                    match loader().await? {
+                        Some(value) => {
+                            entry::write_value(&self.inner, key, &value, ttl_secs).await?;
+                            Ok(Some(value))
+                        }
+                        None => {
+                            if self.null_cache_ttl > 0 {
+                                entry::write_null(&self.inner, key, self.null_cache_ttl).await?;
+                            }
+                            Ok(None)
+                        }
+                    }
+                }
+                .await;
+                drop(lock_guard);
+                result
+            }
             Err(_) => {
                 tracing::warn!(cache_key = key, "cache breakdown lock timed out");
-                return Ok(entry::read(&self.inner, key).await?.into_option());
-            }
-        };
-
-        match entry::read(&self.inner, key).await? {
-            CacheLookup::Value(value) => return Ok(Some(value)),
-            CacheLookup::Null => return Ok(None),
-            CacheLookup::Miss => {}
-        }
-
-        match loader().await? {
-            Some(value) => {
-                entry::write_value(&self.inner, key, &value, ttl_secs).await?;
-                Ok(Some(value))
-            }
-            None => {
-                if self.null_cache_ttl > 0 {
-                    entry::write_null(&self.inner, key, self.null_cache_ttl).await?;
-                }
-                Ok(None)
+                Ok(entry::read(&self.inner, key).await?.into_option())
             }
         }
     }
@@ -147,5 +180,101 @@ mod tests {
         }
 
         assert_eq!(loads.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn lock_registrations_are_released_after_unique_requests() {
+        let guard = BreakdownGuard::new(LocalMemoryCache::unlimited());
+
+        for index in 0..1_000 {
+            let key = format!("key:{index}");
+            assert_eq!(
+                guard
+                    .get_or_load_guarded(&key, 60, || async { Ok(Some(index)) })
+                    .await
+                    .unwrap(),
+                Some(index)
+            );
+        }
+
+        assert!(guard.locks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn lock_registration_is_released_after_loader_error() {
+        let guard = BreakdownGuard::new(LocalMemoryCache::unlimited());
+
+        let result = guard
+            .get_or_load_guarded::<String, _, _>("failing", 60, || async {
+                Err(CacheError::Operation("loader failed".into()))
+            })
+            .await;
+
+        assert!(matches!(result, Err(CacheError::Operation(_))));
+        assert!(guard.locks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn last_waiter_cleans_registration_after_timing_out() {
+        let guard = Arc::new(
+            BreakdownGuard::new(LocalMemoryCache::unlimited())
+                .with_wait_timeout(Duration::from_millis(5)),
+        );
+        let loader_started = Arc::new(tokio::sync::Notify::new());
+        let release_loader = Arc::new(tokio::sync::Notify::new());
+
+        let owner = {
+            let guard = Arc::clone(&guard);
+            let loader_started = Arc::clone(&loader_started);
+            let release_loader = Arc::clone(&release_loader);
+            tokio::spawn(async move {
+                guard
+                    .get_or_load_guarded("slow", 60, || async move {
+                        loader_started.notify_one();
+                        release_loader.notified().await;
+                        Ok(Some("loaded".to_owned()))
+                    })
+                    .await
+            })
+        };
+
+        loader_started.notified().await;
+        assert_eq!(
+            guard
+                .get_or_load_guarded::<String, _, _>("slow", 60, || async {
+                    panic!("timed-out waiter must not run the loader")
+                })
+                .await
+                .unwrap(),
+            None
+        );
+
+        release_loader.notify_one();
+        assert_eq!(owner.await.unwrap().unwrap().as_deref(), Some("loaded"));
+        assert!(guard.locks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn aborted_loader_does_not_strand_registration() {
+        let guard = Arc::new(BreakdownGuard::new(LocalMemoryCache::unlimited()));
+        let loader_started = Arc::new(tokio::sync::Notify::new());
+
+        let owner = {
+            let guard = Arc::clone(&guard);
+            let loader_started = Arc::clone(&loader_started);
+            tokio::spawn(async move {
+                guard
+                    .get_or_load_guarded::<String, _, _>("cancelled", 60, || async move {
+                        loader_started.notify_one();
+                        std::future::pending().await
+                    })
+                    .await
+            })
+        };
+
+        loader_started.notified().await;
+        owner.abort();
+        assert!(owner.await.unwrap_err().is_cancelled());
+        assert!(guard.locks.is_empty());
     }
 }

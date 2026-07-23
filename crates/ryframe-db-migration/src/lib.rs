@@ -16,6 +16,7 @@ mod m20260701_000002_menu_permission_binding;
 mod m20260701_000003_user_auth_version;
 mod m20260705_000004_relation_foreign_keys;
 mod m20260714_000005_super_role_permissions;
+mod m20260723_000006_file_upload_reservations;
 mod schema;
 mod seeder;
 
@@ -34,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260701_000003_user_auth_version::Migration),
             Box::new(m20260705_000004_relation_foreign_keys::Migration),
             Box::new(m20260714_000005_super_role_permissions::Migration),
+            Box::new(m20260723_000006_file_upload_reservations::Migration),
         ]
     }
 }

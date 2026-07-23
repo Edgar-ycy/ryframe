@@ -5,8 +5,9 @@ use ryframe_common::{
 };
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, ExprTrait,
-    QueryFilter, QueryOrder, Select, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    sea_query::{Expr, LockType},
 };
 
 use crate::entities::user;
@@ -230,12 +231,34 @@ impl UserRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    pub async fn delete_many(
+    /// Resolve data-scope access and lock the target user as one current read.
+    ///
+    /// Security-sensitive user mutations must call this before inspecting role
+    /// membership. The user row is the serialization point shared with role
+    /// replacement, so a waiter observes roles committed by the lock holder.
+    pub async fn find_by_id_with_data_scope_for_update(
         &self,
-        db: &DatabaseConnection,
+        txn: &DatabaseTransaction,
         tenant_id: &str,
-        ids: &[i64],
-    ) -> AppResult<u64> {
+        id: i64,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<Option<user::Model>> {
+        let select = Self::base_select(tenant_id).filter(user::Column::Id.eq(id));
+        let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
+            return Ok(None);
+        };
+
+        select
+            .lock(LockType::Update)
+            .one(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn delete_many<C>(&self, db: &C, tenant_id: &str, ids: &[i64]) -> AppResult<u64>
+    where
+        C: ConnectionTrait,
+    {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -256,13 +279,16 @@ impl UserRepository {
         Ok(result.rows_affected)
     }
 
-    pub async fn update_status(
+    pub async fn update_status<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         id: i64,
         status: String,
-    ) -> AppResult<()> {
+    ) -> AppResult<()>
+    where
+        C: ConnectionTrait,
+    {
         let result = user::Entity::update_many()
             .col_expr(
                 user::Column::Status,
@@ -283,12 +309,15 @@ impl UserRepository {
         Ok(())
     }
 
-    pub async fn increment_auth_versions(
+    pub async fn increment_auth_versions<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         user_ids: &[i64],
-    ) -> AppResult<u64> {
+    ) -> AppResult<u64>
+    where
+        C: ConnectionTrait,
+    {
         if user_ids.is_empty() {
             return Ok(0);
         }

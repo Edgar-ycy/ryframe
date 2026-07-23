@@ -16,7 +16,8 @@ use ryframe_core::{
 fn bench_snowflake_next_id(c: &mut Criterion) {
     c.bench_function("snowflake_next_id", |b| {
         b.iter(|| {
-            let id = ryframe_common::utils::snowflake::next_snowflake_id();
+            let id = ryframe_common::utils::snowflake::try_next_snowflake_id()
+                .expect("generate benchmark ID");
             std::hint::black_box(id);
         });
     });
@@ -27,7 +28,10 @@ fn bench_snowflake_batch_1000(c: &mut Criterion) {
         b.iter(|| {
             let mut ids = Vec::with_capacity(1000);
             for _ in 0..1000 {
-                ids.push(ryframe_common::utils::snowflake::next_snowflake_id());
+                ids.push(
+                    ryframe_common::utils::snowflake::try_next_snowflake_id()
+                        .expect("generate benchmark ID"),
+                );
             }
             std::hint::black_box(ids);
         });

@@ -3,12 +3,16 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use validator::Validate;
 
-use super::password_validation::validate_password_complexity;
+use super::{
+    password_validation::validate_password_complexity,
+    tenant_validation::validate_tenant_identifier,
+};
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTenantDto {
-    #[validate(length(min = 2, max = 64))]
+    #[validate(custom(function = "validate_tenant_identifier"))]
+    #[schema(pattern = r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])$")]
     pub tenant_id: String,
     #[validate(length(min = 1, max = 128))]
     pub name: String,

@@ -5,7 +5,6 @@ pub mod cors;
 pub mod idempotency;
 pub mod metrics;
 pub mod rate_limit;
-pub mod replay_protection;
 pub mod request_id;
 pub mod request_log;
 pub mod security_headers;
@@ -23,7 +22,6 @@ pub use rate_limit::{
     RateLimitState, RateLimiter, api_rate_limit_middleware, rate_limit_middleware,
     user_rate_limit_middleware,
 };
-pub use replay_protection::{ReplayProtectionState, replay_protection_middleware};
 pub use request_id::request_id_middleware;
 pub use request_log::{request_log_layer, request_log_layer_with_masking};
 pub use security_headers::{SecurityHeadersConfig, security_headers_middleware};

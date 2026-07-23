@@ -4,10 +4,13 @@ use ryframe_db::DatabaseCluster;
 use ryframe_db::{
     ProvisionTenantCommand, TenantProvisioningRepository, TenantRepository, entities::tenant,
 };
+use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
 use utoipa::ToSchema;
 
 const SYSTEM_TENANT_ID: &str = "system";
+const MIN_TENANT_USERS: i32 = 1;
+const MIN_TENANT_ROLES: i32 = 2;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TenantVo {
@@ -92,7 +95,18 @@ impl TenantService {
         params: CreateTenantParams,
     ) -> AppResult<TenantVo> {
         ensure_platform_admin(actor)?;
+        ryframe_core::validate_tenant_identifier(&params.tenant_id)?;
         ryframe_auth::password::validate_complexity(&params.admin_password)?;
+        let max_users = params.max_users.unwrap_or(100);
+        let max_roles = params.max_roles.unwrap_or(20);
+        let max_storage_mb = params.max_storage_mb.unwrap_or(1024);
+        let max_requests_per_minute = params.max_requests_per_min.unwrap_or(1000);
+        validate_tenant_limits(
+            max_users,
+            max_roles,
+            max_storage_mb,
+            max_requests_per_minute,
+        )?;
         if self
             .tenant_repo
             .find_by_tenant_id(self.db.write(), &params.tenant_id)
@@ -114,10 +128,10 @@ impl TenantService {
             name: params.name,
             domain: params.domain,
             expire_at: params.expire_at,
-            max_users: params.max_users.unwrap_or(100),
-            max_roles: params.max_roles.unwrap_or(20),
-            max_storage_mb: params.max_storage_mb.unwrap_or(1024),
-            max_requests_per_minute: params.max_requests_per_min.unwrap_or(1000),
+            max_users,
+            max_roles,
+            max_storage_mb,
+            max_requests_per_minute,
             admin_username: params.admin_username,
             admin_password_hash: ryframe_auth::password::hash(&params.admin_password)?,
         };
@@ -134,11 +148,28 @@ impl TenantService {
         params: UpdateTenantParams,
     ) -> AppResult<TenantVo> {
         ensure_platform_admin(actor)?;
+        validate_tenant_limits(
+            params.max_users,
+            params.max_roles,
+            params.max_storage_mb,
+            params.max_requests_per_min,
+        )?;
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         let mut tenant = self
             .tenant_repo
-            .find_by_tenant_id(self.db.write(), tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
+            .lock_and_validate_resource_limits_in_txn(
+                &transaction,
+                tenant_id,
+                params.max_users,
+                params.max_roles,
+                params.max_storage_mb,
+            )
+            .await?;
         if params.expire_at != tenant.expire_at {
             tenant.session_version = tenant.session_version.saturating_add(1);
         }
@@ -151,10 +182,17 @@ impl TenantService {
         tenant.max_requests_per_min = params.max_requests_per_min;
         tenant.updated_at = Utc::now();
 
-        self.tenant_repo
-            .update(self.db.write(), tenant)
+        let active: tenant::ActiveModel = tenant.into();
+        let saved = active
+            .reset_all()
+            .update(&transaction)
             .await
-            .map(TenantVo::from)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+        Ok(TenantVo::from(saved))
     }
 
     pub async fn update_status(
@@ -182,4 +220,49 @@ fn ensure_platform_admin(actor: &ActorContext) -> AppResult<()> {
         return Err(AppError::Authorization("仅平台管理员可以管理租户".into()));
     }
     Ok(())
+}
+
+fn validate_tenant_limits(
+    max_users: i32,
+    max_roles: i32,
+    max_storage_mb: i64,
+    max_requests_per_min: i32,
+) -> AppResult<()> {
+    if max_users < MIN_TENANT_USERS {
+        return Err(AppError::Validation(format!(
+            "用户额度不能低于 {MIN_TENANT_USERS}"
+        )));
+    }
+    if max_roles < MIN_TENANT_ROLES {
+        return Err(AppError::Validation(format!(
+            "角色额度不能低于 {MIN_TENANT_ROLES}"
+        )));
+    }
+    if max_storage_mb < 0 {
+        return Err(AppError::Validation("存储额度不能为负数".into()));
+    }
+    if max_requests_per_min < 0 {
+        return Err(AppError::Validation("每分钟请求额度不能为负数".into()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use ryframe_common::AppError;
+
+    use super::validate_tenant_limits;
+
+    #[test]
+    fn tenant_limits_cover_provisioned_minimums() {
+        assert!(validate_tenant_limits(1, 2, 0, 0).is_ok());
+        for invalid in [
+            validate_tenant_limits(0, 2, 0, 0),
+            validate_tenant_limits(1, 1, 0, 0),
+            validate_tenant_limits(1, 2, -1, 0),
+            validate_tenant_limits(1, 2, 0, -1),
+        ] {
+            assert!(matches!(invalid, Err(AppError::Validation(_))));
+        }
+    }
 }

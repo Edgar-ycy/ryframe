@@ -111,7 +111,7 @@ impl MenuService {
         )
         .await?;
         let mut new_menu = menu::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: command.name,
             parent_id: command.parent_id,
@@ -128,7 +128,7 @@ impl MenuService {
             updated_at: Default::default(),
         };
 
-        new_menu.fill_on_insert(&FillContext::new());
+        new_menu.fill_on_insert(&FillContext::new())?;
         let saved = self.menu_repo.insert(db, tenant_id, new_menu).await?;
         self.invalidate_menu_cache(tenant_id).await;
         Ok(MenuVo::from(saved))
@@ -167,7 +167,7 @@ impl MenuService {
         menu.sort = command.sort;
         menu.visible = command.visible;
         menu.status = command.status;
-        menu.fill_on_update(&FillContext::new());
+        menu.fill_on_update(&FillContext::new())?;
 
         let saved = self.menu_repo.update(db, tenant_id, menu).await?;
         self.invalidate_menu_cache(tenant_id).await;

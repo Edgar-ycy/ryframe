@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use ryframe_common::{ActorContext, AppError, AppResult};
-use ryframe_core::{Repository, repository::PageResult};
+use ryframe_core::repository::PageResult;
 use ryframe_db::UserFilter;
 use sea_orm::DatabaseConnection;
 
@@ -11,17 +13,32 @@ impl UserService {
         db: &DatabaseConnection,
         tenant_id: &str,
         records: &mut [UserVo],
-    ) {
+    ) -> AppResult<()> {
+        let mut dept_ids = records
+            .iter()
+            .filter_map(|user| user.dept_id.as_deref())
+            .filter_map(|value| value.parse::<i64>().ok())
+            .collect::<Vec<_>>();
+        dept_ids.sort_unstable();
+        dept_ids.dedup();
+
+        let dept_names = self
+            .dept_repo
+            .find_filtered_by_ids(db, tenant_id, None, None, &dept_ids)
+            .await?
+            .into_iter()
+            .map(|dept| (dept.id, dept.name))
+            .collect::<HashMap<_, _>>();
+
         for user in records {
-            if let Some(dept_id) = user
+            user.dept_name = user
                 .dept_id
                 .as_deref()
                 .and_then(|value| value.parse::<i64>().ok())
-                && let Ok(Some(dept)) = self.dept_repo.find_by_id(db, tenant_id, dept_id).await
-            {
-                user.dept_name = Some(dept.name);
-            }
+                .and_then(|dept_id| dept_names.get(&dept_id).cloned());
         }
+
+        Ok(())
     }
 
     pub async fn find_by_page(
@@ -47,7 +64,7 @@ impl UserService {
             .into_iter()
             .map(UserVo::from)
             .collect::<Vec<_>>();
-        self.fill_dept_names(db, tenant_id, &mut records).await;
+        self.fill_dept_names(db, tenant_id, &mut records).await?;
         Ok(PageResult::new(records, page.total, &params.page))
     }
 
@@ -69,7 +86,7 @@ impl UserService {
 
         let mut user = UserVo::from(user);
         self.fill_dept_names(db, tenant_id, std::slice::from_mut(&mut user))
-            .await;
+            .await?;
         let roles = self
             .role_repo
             .find_user_roles(db, tenant_id, id)

@@ -1,8 +1,11 @@
 mod common;
 
 use ryframe_common::{ActorContext, AppError, DataScope};
-use ryframe_db::{DatabaseCluster, TenantRepository};
-use ryframe_service::system::{CreateTenantParams, TenantService, UpdateTenantParams};
+use ryframe_db::{DatabaseCluster, RoleRepository, TenantRepository, UserRepository};
+use ryframe_service::system::{
+    CreateTenantParams, CreateUserParams, RoleService, TenantService, UpdateTenantParams,
+    UserService,
+};
 
 fn actor(tenant_id: &str, is_super_admin: bool) -> ActorContext {
     ActorContext {
@@ -59,6 +62,225 @@ async fn tenant_creation_rejects_weak_admin_password() {
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn tenant_creation_rejects_redis_glob_identifiers() {
+    let db = common::setup_test_db().await;
+    let service = TenantService::new(DatabaseCluster::single(db.clone()));
+    for tenant_id in ["**", "a?", "a[b]", "a:b", "a\\b"] {
+        let error = service
+            .create(
+                &actor("system", true),
+                CreateTenantParams {
+                    tenant_id: tenant_id.into(),
+                    name: "Unsafe tenant".into(),
+                    domain: None,
+                    expire_at: None,
+                    max_users: None,
+                    max_roles: None,
+                    max_storage_mb: None,
+                    max_requests_per_min: None,
+                    admin_username: "tenant-admin".into(),
+                    admin_password: "StrongPassword123!".into(),
+                },
+            )
+            .await
+            .expect_err("Redis glob characters must be rejected");
+        assert!(matches!(error, AppError::Validation(_)), "{tenant_id}");
+    }
+}
+
+#[tokio::test]
+async fn tenant_creation_rejects_limits_below_provisioned_resources() {
+    let db = common::setup_test_db().await;
+    let service = TenantService::new(DatabaseCluster::single(db.clone()));
+    let error = service
+        .create(
+            &actor("system", true),
+            CreateTenantParams {
+                tenant_id: "tenant-too-small".into(),
+                name: "Too Small".into(),
+                domain: None,
+                expire_at: None,
+                max_users: Some(0),
+                max_roles: Some(1),
+                max_storage_mb: Some(0),
+                max_requests_per_min: Some(0),
+                admin_username: "tenant-admin".into(),
+                admin_password: "StrongPassword123!".into(),
+            },
+        )
+        .await
+        .expect_err("provisioning minimums must be enforced");
+
+    assert!(matches!(error, AppError::Validation(_)));
+    assert!(
+        TenantRepository
+            .find_by_tenant_id(&db, "tenant-too-small")
+            .await
+            .expect("query tenant")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn concurrent_user_creation_cannot_exceed_tenant_quota() {
+    let db = common::setup_test_db().await;
+    let platform_admin = actor("system", true);
+    let cluster = DatabaseCluster::single(db.clone());
+    let tenant_service = TenantService::new(cluster.clone());
+    tenant_service
+        .update(
+            &platform_admin,
+            "system",
+            UpdateTenantParams {
+                name: "系统租户".into(),
+                domain: None,
+                expire_at: None,
+                max_users: 1,
+                max_roles: 20,
+                max_storage_mb: 1024,
+                max_requests_per_min: 1000,
+            },
+        )
+        .await
+        .expect("set one-user quota");
+
+    let user_service = UserService::new(cluster, None);
+    let (first, second) = tokio::join!(
+        user_service.create(
+            &platform_admin,
+            CreateUserParams {
+                username: "quota-first",
+                nickname: "Quota First",
+                email: "first@example.com",
+                phone: "10001",
+                dept_id: None,
+                role_ids: Vec::new(),
+            },
+        ),
+        user_service.create(
+            &platform_admin,
+            CreateUserParams {
+                username: "quota-second",
+                nickname: "Quota Second",
+                email: "second@example.com",
+                phone: "10002",
+                dept_id: None,
+                role_ids: Vec::new(),
+            },
+        ),
+    );
+
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let first_saved = UserRepository
+        .find_by_username(&db, "system", "quota-first")
+        .await
+        .expect("query first user")
+        .is_some();
+    let second_saved = UserRepository
+        .find_by_username(&db, "system", "quota-second")
+        .await
+        .expect("query second user")
+        .is_some();
+    assert_ne!(first_saved, second_saved);
+}
+
+#[tokio::test]
+async fn concurrent_role_creation_cannot_exceed_tenant_quota() {
+    let db = common::setup_test_db().await;
+    let platform_admin = actor("system", true);
+    let cluster = DatabaseCluster::single(db.clone());
+    RoleService::new(cluster.clone(), None)
+        .create(&platform_admin, "Existing Role", "quota-existing", 0, None)
+        .await
+        .expect("seed existing role");
+    let tenant_service = TenantService::new(cluster.clone());
+    tenant_service
+        .update(
+            &platform_admin,
+            "system",
+            UpdateTenantParams {
+                name: "系统租户".into(),
+                domain: None,
+                expire_at: None,
+                max_users: 100,
+                max_roles: 2,
+                max_storage_mb: 1024,
+                max_requests_per_min: 1000,
+            },
+        )
+        .await
+        .expect("leave one role slot");
+
+    let role_service = RoleService::new(cluster, None);
+    let (first, second) = tokio::join!(
+        role_service.create(&platform_admin, "Quota First", "quota-first", 1, None),
+        role_service.create(&platform_admin, "Quota Second", "quota-second", 2, None),
+    );
+
+    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let first_saved = RoleRepository
+        .find_by_code(&db, "system", "quota-first")
+        .await
+        .expect("query first role")
+        .is_some();
+    let second_saved = RoleRepository
+        .find_by_code(&db, "system", "quota-second")
+        .await
+        .expect("query second role")
+        .is_some();
+    assert_ne!(first_saved, second_saved);
+}
+
+#[tokio::test]
+async fn tenant_limits_cannot_be_lowered_below_current_usage() {
+    let db = common::setup_test_db().await;
+    let platform_admin = actor("system", true);
+    let cluster = DatabaseCluster::single(db.clone());
+    let user_service = UserService::new(cluster.clone(), None);
+    for (username, phone) in [("usage-first", "20001"), ("usage-second", "20002")] {
+        user_service
+            .create(
+                &platform_admin,
+                CreateUserParams {
+                    username,
+                    nickname: username,
+                    email: "usage@example.com",
+                    phone,
+                    dept_id: None,
+                    role_ids: Vec::new(),
+                },
+            )
+            .await
+            .expect("seed current user usage");
+    }
+
+    let error = TenantService::new(cluster)
+        .update(
+            &platform_admin,
+            "system",
+            UpdateTenantParams {
+                name: "系统租户".into(),
+                domain: None,
+                expire_at: None,
+                max_users: 1,
+                max_roles: 2,
+                max_storage_mb: 1024,
+                max_requests_per_min: 1000,
+            },
+        )
+        .await
+        .expect_err("limits below current usage must be rejected");
+
+    assert!(matches!(error, AppError::Validation(_)));
+    let tenant = TenantRepository
+        .find_by_tenant_id(&db, "system")
+        .await
+        .expect("query tenant")
+        .expect("tenant exists");
+    assert_eq!(tenant.max_users, 100);
 }
 
 #[tokio::test]

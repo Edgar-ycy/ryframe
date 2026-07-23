@@ -56,6 +56,9 @@ jobs:
       - name: Check source encoding and structure
         run: python scripts/check_source_hygiene.py
 
+      - name: Reject unreviewed prerelease dependencies
+        run: python scripts/check_prerelease_dependencies.py
+
       - name: Check permission bindings
         run: python scripts/check_permission_routes.py
 
@@ -74,6 +77,7 @@ jobs:
         run: |
           ruby -e 'require "yaml"; ARGV.each { |path| YAML.parse_file(path) }' \
             .github/workflows/ci.yml \
+            .github/workflows/auto-promote.yml \
             .github/workflows/release.yml \
             .github/workflows/nightly.yml \
             docker-compose.test.yml

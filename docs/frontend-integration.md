@@ -86,6 +86,8 @@ export interface PageQuery {
 
 v0.5 首次运行要主动删除旧版 access/refresh token localStorage 键，租户 ID 可以继续持久化。所有登录、刷新和登出请求都必须先确保 challenge 未过期，并在 `X-CSRF-Token` 中发送它。
 
+前端不得自行生成或发送 `X-Nonce` / `X-Timestamp`。它们不是 RyFrame API 契约的一部分，裸值也不能替代 CSRF、Bearer 授权或请求签名。业务写请求需要安全重试时使用 `Idempotency-Key`；登录、刷新和登出继续严格使用本节定义的签名 CSRF challenge 与 refresh 轮换流程，不增加额外双头。
+
 ### 登录
 
 ```http

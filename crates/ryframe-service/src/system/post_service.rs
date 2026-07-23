@@ -85,7 +85,7 @@ impl PostService {
         }
 
         let mut new_post = post::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             code: code.to_string(),
@@ -96,7 +96,7 @@ impl PostService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        new_post.fill_on_insert(&FillContext::new());
+        new_post.fill_on_insert(&FillContext::new())?;
         let saved = self.post_repo.insert(db, tenant_id, new_post).await?;
         Ok(PostVo::from(saved))
     }
@@ -120,7 +120,7 @@ impl PostService {
         post.name = name.to_string();
         post.sort = sort;
         post.status = status;
-        post.fill_on_update(&FillContext::new());
+        post.fill_on_update(&FillContext::new())?;
 
         let saved = self.post_repo.update(db, tenant_id, post).await?;
         Ok(PostVo::from(saved))

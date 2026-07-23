@@ -102,7 +102,7 @@ impl NoticeService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
         let mut new_notice = notice::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             title: title.to_string(),
             content: content.to_string(),
@@ -113,7 +113,7 @@ impl NoticeService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        new_notice.fill_on_insert(&FillContext::new());
+        new_notice.fill_on_insert(&FillContext::new())?;
         Ok(NoticeVo::from(
             self.notice_repo.insert(db, tenant_id, new_notice).await?,
         ))
@@ -139,7 +139,7 @@ impl NoticeService {
         n.content = content.to_string();
         n.r#type = notice_type.map(|s| s.to_string());
         n.status = status;
-        n.fill_on_update(&FillContext::new());
+        n.fill_on_update(&FillContext::new())?;
         Ok(NoticeVo::from(
             self.notice_repo.update(db, tenant_id, n).await?,
         ))

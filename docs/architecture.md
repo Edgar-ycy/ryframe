@@ -96,6 +96,7 @@ flowchart LR
 - 业务表采用共享表加 `tenant_id` 的隔离方式。
 - 认证中间件构造 `RequestPrincipal`，其中唯一的业务主体是不可变 `ActorContext`。
 - Service 的租户业务用例显式接收 `&ActorContext`；预认证流程显式接收经过校验的 `tenant_id`。
+- `tenant_id` 统一限制为 2–64 位 ASCII 字母、数字、连字符或下划线，且首尾必须为字母或数字；该约束在入口和 Service 边界重复校验，避免 Redis glob/键分隔符注入。
 - Repository 的每个租户查询显式接收 `tenant_id`，不得从 task-local 推断业务租户。
 - Tokio task-local 只由 HTTP 中间件建立，并用于校验显式租户与当前请求一致；后台任务可以只传递显式租户。
 - 数据库内部 ID 使用 `i64`；HTTP DTO/输出统一使用字符串，避免 JavaScript 64 位整数精度丢失。
@@ -160,6 +161,7 @@ flowchart LR
 50. 根路径 `/livez` 只检查进程，`/readyz` 检查 MySQL、required Redis 和必要对象存储；探针绕过租户、认证、幂等和业务限流。
 51. 幂等只应用于认证后的 system/platform 写请求，键绑定租户、用户、方法、规范路径和 body；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
 52. 稳定发布验证标签位于 `main`、前后端同标签同版本，要求 annotated tag 说明与各自 CHANGELOG 完整版本章节一致，并在发布前再次锁定 tag object ID 与提交 SHA；同一 RC commit 的 GitHub Deployment 还需提供连续至少 48 小时的可审计观察记录，再经过启用防止自审的 `stable-release` required-reviewer 审批，管理员绕过必须在仓库设置中关闭并由审计日志复核。后端 RC/stable 与前后端 Nightly Release 只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照，不发布自定义归档、镜像、SBOM、校验和或证明附件；Nightly 仅在对应仓库的 `main` CI 成功后更新，前端同名 RC/stable 标签不在联合门禁前独立发布。
+53. 未签名的 `X-Nonce` / `X-Timestamp` 防重放抽象已移除：它从未进入路由或配置，且客户端自报双头不能验证请求主体或内容。浏览器写请求继续使用 HTTPS、Bearer/权限、签名 CSRF、refresh CAS 与主体/方法/规范路径/body hash 幂等绑定；架构门禁禁止旧裸头契约回流，机器客户端持有者证明必须另行采用可验证消息签名。
 
 ## 4. 后续优先级
 

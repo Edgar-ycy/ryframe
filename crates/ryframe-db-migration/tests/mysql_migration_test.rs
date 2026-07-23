@@ -54,6 +54,18 @@ async fn complete_schema_without_migration_ledger_is_verified_and_registered() {
 async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonical() {
     let (admin, database, name) = isolated_database().await;
     execute_sql_fixture(&database, V0_4_2_FIXTURE).await;
+    database
+        .execute_unprepared(
+            "INSERT INTO sys_file \
+             (id, tenant_id, original_name, storage_name, storage_path, bucket, file_url, \
+              file_size, content_type, file_md5, upload_by, del_flag) \
+             VALUES \
+             (9002, 'legacy-fixture', 'legacy.txt', 'legacy.txt', \
+              'legacy-fixture/legacy.txt', 'uploads', 'uploads/legacy-fixture/legacy.txt', \
+              6, 'text/plain', '228c70bfc5589c58c044e03fff0e17eb', 'legacy', '0')",
+        )
+        .await
+        .unwrap();
 
     ryframe_db_migration::run(&database).await.unwrap();
     ryframe_db_migration::run(&database).await.unwrap();
@@ -90,6 +102,36 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
         )
         .await,
         0
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_file \
+             WHERE id = 9002 AND upload_status = 'ready' \
+             AND reservation_token IS NULL AND reservation_expires_at IS NULL",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
+             AND COLUMN_NAME IN ('upload_status', 'reservation_token', 'reservation_expires_at')",
+        )
+        .await,
+        3
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
+             AND INDEX_NAME IN ('idx_file_upload_reservation', 'idx_file_reservation_expiry')",
+        )
+        .await,
+        2
     );
 
     cleanup_database(admin, database, &name).await;

@@ -111,7 +111,7 @@ impl OperLogService {
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let log = oper_log::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             title: command.title,
             business_type: command.business_type,

@@ -1,8 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use ryframe_config::{RedisConfig, RedisMode};
+use axum::{Router, body::Body, http::Request, middleware, routing::get};
+use ryframe_common::utils::ip::TrustedProxySet;
+use ryframe_config::{RateLimitConfig, RedisConfig, RedisMode};
 use ryframe_core::RedisClient;
-use ryframe_middleware::rate_limit::RateLimiter;
+use ryframe_middleware::rate_limit::{RateLimitState, RateLimiter, api_rate_limit_middleware};
+use tower::ServiceExt;
 
 async fn docker_redis() -> RedisClient {
     let port = std::env::var("RYFRAME_TEST_REDIS_PORT")
@@ -103,6 +106,118 @@ async fn test_available_tokens() {
     assert_eq!(limiter.available_tokens("tok"), 5.0);
     limiter.try_acquire("tok").await;
     assert!(limiter.available_tokens("tok") < 5.0);
+}
+
+fn api_limited_router(rules: HashMap<String, u32>) -> Router {
+    let state = RateLimitState {
+        limiter: Arc::new(RateLimiter::new_in_memory(100, 0)),
+        config: Arc::new(RateLimitConfig {
+            enabled: true,
+            api_limits: rules,
+            api_window_secs: 60,
+            ..Default::default()
+        }),
+        trusted_proxies: TrustedProxySet::default(),
+    };
+    let routes = Router::new()
+        .route("/resources/{id}", get(|| async { "resource" }))
+        .route("/first", get(|| async { "first" }))
+        .route("/second", get(|| async { "second" }));
+    Router::new()
+        .nest("/api/v1", routes)
+        .layer(middleware::from_fn_with_state(
+            state,
+            api_rate_limit_middleware,
+        ))
+}
+
+#[tokio::test]
+async fn dynamic_route_ids_share_the_configured_route_bucket() {
+    let app = api_limited_router(HashMap::from([(
+        "GET /api/v1/resources/{id}".to_string(),
+        1,
+    )]));
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/resources/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let second = app
+        .oneshot(
+            Request::get("/api/v1/resources/2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first.status(), 200);
+    assert_eq!(second.status(), 429);
+}
+
+#[tokio::test]
+async fn concrete_method_rule_overrides_route_template_rule() {
+    let app = api_limited_router(HashMap::from([
+        ("GET /api/v1/resources/{id}".to_string(), 1),
+        ("GET /api/v1/resources/42".to_string(), 2),
+    ]));
+
+    for expected in [200, 200, 429] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/resources/42")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+
+    let first_template_response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/resources/43")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let second_template_response = app
+        .oneshot(
+            Request::get("/api/v1/resources/44")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first_template_response.status(), 200);
+    assert_eq!(second_template_response.status(), 429);
+}
+
+#[tokio::test]
+async fn method_wide_rule_uses_one_bucket_across_paths() {
+    let app = api_limited_router(HashMap::from([("GET".to_string(), 1)]));
+
+    let first = app
+        .clone()
+        .oneshot(Request::get("/api/v1/first").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let second = app
+        .oneshot(Request::get("/api/v1/second").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(first.status(), 200);
+    assert_eq!(second.status(), 429);
 }
 
 #[tokio::test]

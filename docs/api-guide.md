@@ -1,6 +1,6 @@
 # RyFrame API 使用指南
 
-> 最后核对：2026-07-18
+> 最后核对：2026-07-23
 > API 版本：`v1`
 
 本文档说明稳定约定和常见流程。所有路径、请求字段和响应 Schema 的唯一事实来源是 OpenAPI；运行时文档与仓库中的 `openapi/openapi.json` 必须精确一致：
@@ -95,6 +95,8 @@ X-Tenant-Id: <tenant_id>
 ### 重试、幂等和代理边界
 
 认证后的 `/system`、`/platform` 写请求可以携带 `Idempotency-Key`。服务端把它与租户、用户、HTTP 方法、规范路径和 body hash 绑定：处理中重复请求返回 `409` 与 `Retry-After`，完成结果保留 300 秒并可回放；同键不同 body 返回 `409`。超过 1 MiB 的成功响应不会被缓存，后续重复请求返回不可回放冲突，但首次成功响应保持不变。认证、上传下载、生成器、监控和流式响应不参与幂等缓存。
+
+API 不定义 `X-Nonce` / `X-Timestamp` 通用防重放协议，客户端不得依赖或发送这两个头。未签名且由客户端自行生成的 nonce 与时间戳不能证明请求来源，也没有绑定主体、方法、目标路径和 body；把它们当作安全校验会产生错误的保护预期。当前浏览器边界由 HTTPS、Bearer 身份与授权、签名 CSRF challenge、refresh family 原子轮换以及上述幂等绑定共同承担。未来若为外部机器客户端增加应用层持有者证明，必须设计独立的密钥注册与轮换流程，并采用 [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) 一类可验证签名，明确覆盖方法、目标 URI、内容摘要、创建时间与 nonce；不得恢复裸双头方案。
 
 应用只在 socket 对等端属于 `[proxy].trusted_cidrs` 时解析转发头；直连客户端发送的 XFF 不会影响审计、限流或登录保护。生产 CORS 必须显式列出管理端完整 Origin，空列表表示拒绝跨域，不表示允许任意来源。
 

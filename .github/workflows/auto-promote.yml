@@ -1,0 +1,732 @@
+name: Automatic RC observation and stable promotion
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: automatic-rc-stable-promotion
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+
+env:
+  FRONTEND_REPOSITORY: Edgar-ycy/ryframe-vue3
+  RC_MINIMUM_SECONDS: "172800"
+  RC_MAX_HEARTBEAT_GAP_SECONDS: "7200"
+  RELEASE_RETRY_LIMIT: "3"
+  RELEASE_RETRY_DELAY_SECONDS: "600"
+
+jobs:
+  observe-and-promote:
+    name: Observe newest RC and promote its exact commits
+    if: >-
+      ${{
+        vars.RYFRAME_AUTO_PROMOTE_STABLE == 'true' &&
+        github.ref == 'refs/heads/main'
+      }}
+    runs-on: ubuntu-latest
+    env:
+      ADMIN_URL: ${{ vars.RYFRAME_RC_ADMIN_URL }}
+      API_URL: ${{ vars.RYFRAME_RC_API_URL }}
+      RELEASE_BOT: ${{ vars.RYFRAME_RELEASE_BOT }}
+      TARGET_RC_TAG: ${{ vars.RYFRAME_AUTO_PROMOTE_RC_TAG }}
+    steps:
+      - name: Check out backend main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out frontend main
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.FRONTEND_REPOSITORY }}
+          fetch-depth: 0
+          path: frontend
+          persist-credentials: false
+
+      - name: Discover the newest published release candidate
+        id: candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$TARGET_RC_TAG" ]]; then
+            echo "RYFRAME_AUTO_PROMOTE_RC_TAG is not set; no deployed RC is authorized."
+            exit 0
+          fi
+          [[ "$TARGET_RC_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-rc\.[1-9][0-9]*$ ]] || {
+            echo "RYFRAME_AUTO_PROMOTE_RC_TAG is not a canonical RC tag." >&2
+            exit 1
+          }
+
+          releases="$RUNNER_TEMP/releases-discovery.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$releases"
+
+          newest_rc="$(jq -r '
+            [ .[]
+              | select(.prerelease == true and .draft != true)
+              | select(.published_at != null)
+              | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-rc\\.[1-9][0-9]*$"))
+            ]
+            | sort_by(.published_at, .tag_name)
+            | last
+            | .tag_name // empty
+          ' "$releases")"
+
+          [[ "$newest_rc" == "$TARGET_RC_TAG" ]] || {
+            echo "Configured deployed RC $TARGET_RC_TAG is not the newest published candidate ($newest_rc)." >&2
+            exit 1
+          }
+          rc_tag="$TARGET_RC_TAG"
+
+          stable_tag="${rc_tag%%-rc.*}"
+          if jq --exit-status --arg tag "$stable_tag" '
+            any(.[]; .tag_name == $tag and .draft != true and .published_at != null)
+          ' "$releases" > /dev/null; then
+            echo "$stable_tag is already published; no promotion is required."
+            exit 0
+          fi
+
+          published_at="$(jq -r --arg tag "$rc_tag" '
+            first(.[] | select(.tag_name == $tag)) | .published_at
+          ' "$releases")"
+          {
+            echo "rc_tag=$rc_tag"
+            echo "stable_tag=$stable_tag"
+            echo "published_at=$published_at"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate automatic-promotion configuration
+        if: ${{ steps.candidate.outputs.rc_tag != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RYFRAME_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "$GH_TOKEN" ]] || {
+            echo "RYFRAME_RELEASE_TOKEN is required." >&2
+            exit 1
+          }
+          [[ -n "$RELEASE_BOT" ]] || {
+            echo "RYFRAME_RELEASE_BOT is required." >&2
+            exit 1
+          }
+          [[ "$ADMIN_URL" == https://* ]] || {
+            echo "RYFRAME_RC_ADMIN_URL must be an HTTPS URL." >&2
+            exit 1
+          }
+          [[ "$API_URL" == https://* ]] || {
+            echo "RYFRAME_RC_API_URL must be an HTTPS URL." >&2
+            exit 1
+          }
+
+          token_owner="$(gh api user --jq .login)"
+          [[ "$token_owner" == "$RELEASE_BOT" ]] || {
+            echo "RYFRAME_RELEASE_TOKEN belongs to $token_owner, expected $RELEASE_BOT." >&2
+            exit 1
+          }
+
+      - name: Pin both repositories to the candidate commits
+        id: identity
+        if: ${{ steps.candidate.outputs.rc_tag != '' }}
+        shell: bash
+        env:
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          git fetch --no-tags origin +main:refs/remotes/origin/main
+          git -C frontend fetch --tags origin
+          git -C frontend fetch --no-tags origin +main:refs/remotes/origin/main
+
+          backend_commit="$(git rev-parse "$RC_TAG^{commit}")"
+          frontend_commit="$(git -C frontend rev-parse "$RC_TAG^{commit}")"
+          [[ "$backend_commit" == "$(git rev-parse refs/remotes/origin/main)" ]] || {
+            echo "Backend main changed after $RC_TAG; publish and observe a new RC." >&2
+            exit 1
+          }
+          [[ "$frontend_commit" == "$(git -C frontend rev-parse refs/remotes/origin/main)" ]] || {
+            echo "Frontend main changed after $RC_TAG; publish and observe a new RC." >&2
+            exit 1
+          }
+
+          git checkout --detach "$RC_TAG"
+          git -C frontend checkout --detach "$RC_TAG"
+          python scripts/validate_release.py \
+            --tag "$RC_TAG" \
+            --frontend-dir frontend \
+            --minimum-rc-hours 48
+
+          {
+            echo "backend_commit=$backend_commit"
+            echo "frontend_commit=$frontend_commit"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Inspect existing stable tags
+        id: tag_state
+        if: ${{ steps.candidate.outputs.rc_tag != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RYFRAME_RELEASE_TOKEN }}
+          STABLE_TAG: ${{ steps.candidate.outputs.stable_tag }}
+          BACKEND_COMMIT: ${{ steps.identity.outputs.backend_commit }}
+          FRONTEND_COMMIT: ${{ steps.identity.outputs.frontend_commit }}
+        run: |
+          set -euo pipefail
+          backend_exists=false
+          frontend_exists=false
+          if git ls-remote --exit-code --refs origin "refs/tags/${STABLE_TAG}" > /dev/null 2>&1; then
+            backend_exists=true
+          fi
+          if git -C frontend ls-remote --exit-code --refs origin "refs/tags/${STABLE_TAG}" > /dev/null 2>&1; then
+            frontend_exists=true
+          fi
+
+          if [[ "$backend_exists" == true && "$frontend_exists" == false ]]; then
+            echo "Backend $STABLE_TAG exists without the coordinated frontend tag." >&2
+            exit 1
+          fi
+
+          stop=false
+          if [[ "$backend_exists" == true && "$frontend_exists" == true ]]; then
+            git fetch origin "refs/tags/${STABLE_TAG}:refs/tags/${STABLE_TAG}"
+            git -C frontend fetch origin "refs/tags/${STABLE_TAG}:refs/tags/${STABLE_TAG}"
+            [[ "$(git cat-file -t "refs/tags/${STABLE_TAG}")" == tag ]]
+            [[ "$(git -C frontend cat-file -t "refs/tags/${STABLE_TAG}")" == tag ]]
+            [[ "$(git rev-parse "$STABLE_TAG^{commit}")" == "$BACKEND_COMMIT" ]]
+            [[ "$(git -C frontend rev-parse "$STABLE_TAG^{commit}")" == "$FRONTEND_COMMIT" ]]
+            python -c 'import sys; from pathlib import Path; from scripts.validate_release import validate_annotated_tag_notes as check; tag = sys.argv[1]; check(Path("."), tag, Path("CHANGELOG.md"), tag, "backend"); check(Path("frontend"), tag, Path("frontend/CHANGELOG.md"), tag, "frontend")' "$STABLE_TAG"
+
+            runs="$RUNNER_TEMP/stable-release-runs.json"
+            gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?per_page=100" \
+              > "$runs"
+            release_run="$(jq -c --arg title "Release $STABLE_TAG" '
+              [ .workflow_runs[] | select(.display_title == $title) ]
+              | sort_by(.created_at, .id)
+              | last // empty
+            ' "$runs")"
+
+            if [[ -z "$release_run" ]]; then
+              echo "Both stable tags exist without a release run; dispatching the guarded release workflow."
+              gh workflow run release.yml --ref main -f tag="$STABLE_TAG"
+            else
+              run_id="$(jq -r .id <<< "$release_run")"
+              run_status="$(jq -r .status <<< "$release_run")"
+              run_conclusion="$(jq -r '.conclusion // empty' <<< "$release_run")"
+              run_attempt="$(jq -r '.run_attempt // 1' <<< "$release_run")"
+              run_updated="$(jq -r .updated_at <<< "$release_run")"
+
+              if [[ "$run_status" != completed ]]; then
+                echo "Release workflow run $run_id is $run_status; waiting for it to finish."
+              else
+                retry=false
+                if [[ "$run_conclusion" == success ]]; then
+                  updated_epoch="$(date --date="$run_updated" +%s)"
+                  now_epoch="$(date -u +%s)"
+                  age_seconds="$((now_epoch - updated_epoch))"
+                  if [[ "$age_seconds" -lt "$RELEASE_RETRY_DELAY_SECONDS" ]]; then
+                    echo "Release run $run_id succeeded recently; waiting for Release API propagation."
+                  else
+                    retry=true
+                  fi
+                else
+                  retry=true
+                fi
+
+                if [[ "$retry" == true ]]; then
+                  if [[ "$run_attempt" -ge "$RELEASE_RETRY_LIMIT" ]]; then
+                    echo "Release run $run_id exhausted $RELEASE_RETRY_LIMIT attempts; manual diagnosis is required." >&2
+                    exit 1
+                  fi
+                  echo "Re-running release workflow $run_id after attempt $run_attempt ($run_conclusion)."
+                  gh api --method POST \
+                    "repos/$GITHUB_REPOSITORY/actions/runs/${run_id}/rerun" \
+                    > /dev/null
+                fi
+              fi
+            fi
+            stop=true
+          fi
+
+          {
+            echo "frontend_exists=$frontend_exists"
+            echo "stop=$stop"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Locate the latest candidate deployment
+        id: observation
+        if: >-
+          ${{
+            steps.candidate.outputs.rc_tag != '' &&
+            steps.tag_state.outputs.stop != 'true'
+          }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+          BACKEND_COMMIT: ${{ steps.identity.outputs.backend_commit }}
+        run: |
+          set -euo pipefail
+          deployments="$RUNNER_TEMP/auto-deployments.json"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/deployments" \
+            -f sha="$BACKEND_COMMIT" \
+            -f environment=release-candidate \
+            -f per_page=100 \
+            > "$deployments"
+
+          deployment="$(jq -c --arg ref "$RC_TAG" '
+            [ .[] | select(.ref == $ref) ]
+            | sort_by(.created_at, .id)
+            | last // empty
+          ' "$deployments")"
+          active_id=""
+          active_since=""
+          completed=false
+
+          if [[ -n "$deployment" ]]; then
+            deployment_id="$(jq -r .id <<< "$deployment")"
+            statuses="$RUNNER_TEMP/auto-deployment-statuses.json"
+            gh api \
+              "repos/$GITHUB_REPOSITORY/deployments/${deployment_id}/statuses?per_page=100" \
+              > "$statuses"
+            latest_state="$(jq -r 'sort_by(.created_at, .id) | last | .state // empty' "$statuses")"
+            if [[ "$latest_state" == in_progress ]]; then
+              active_id="$deployment_id"
+              active_since="$(jq -r '
+                [ .[] | select(.state == "in_progress") ]
+                | sort_by(.created_at, .id)
+                | last
+                | .created_at
+              ' "$statuses")"
+            elif [[ "$latest_state" == success ]]; then
+              completed=true
+              active_id="$deployment_id"
+            fi
+          fi
+
+          {
+            echo "active_id=$active_id"
+            echo "active_since=$active_since"
+            echo "completed=$completed"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Probe the public release-candidate environment
+        id: probe
+        if: >-
+          ${{
+            steps.candidate.outputs.rc_tag != '' &&
+            steps.tag_state.outputs.stop != 'true'
+          }}
+        continue-on-error: true
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.candidate.outputs.stable_tag }}
+          BACKEND_COMMIT: ${{ steps.identity.outputs.backend_commit }}
+          FRONTEND_COMMIT: ${{ steps.identity.outputs.frontend_commit }}
+        run: |
+          set -euo pipefail
+          expected_version="${EXPECTED_VERSION#v}"
+          admin_url="${ADMIN_URL%/}"
+          api_url="${API_URL%/}"
+          curl_options=(
+            --fail
+            --silent
+            --show-error
+            --location
+            --proto '=https'
+            --tlsv1.2
+            --connect-timeout 10
+            --max-time 30
+            --retry 2
+            --retry-delay 2
+            --header 'Cache-Control: no-cache'
+          )
+
+          curl "${curl_options[@]}" "$admin_url/" --output /dev/null
+          curl "${curl_options[@]}" \
+            "$admin_url/build-identity.json?run=$GITHUB_RUN_ID" \
+            --output "$RUNNER_TEMP/frontend-build-identity.json"
+          jq --exit-status --arg commit "$FRONTEND_COMMIT" \
+            '.frontend_commit == $commit' \
+            "$RUNNER_TEMP/frontend-build-identity.json" > /dev/null
+          curl "${curl_options[@]}" "$api_url/livez" --output /dev/null
+          curl "${curl_options[@]}" "$api_url/readyz" --output /dev/null
+          curl "${curl_options[@]}" \
+            "$api_url/api/v1/version?run=$GITHUB_RUN_ID" \
+            --output "$RUNNER_TEMP/rc-version.json"
+          jq --exit-status \
+            --arg version "$expected_version" \
+            --arg commit "$BACKEND_COMMIT" \
+            '.version == $version and .source_commit == $commit' \
+            "$RUNNER_TEMP/rc-version.json" > /dev/null
+
+      - name: Record a failed observation
+        if: >-
+          ${{
+            steps.probe.outcome == 'failure' &&
+            steps.observation.outputs.active_id != ''
+          }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RYFRAME_RELEASE_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.observation.outputs.active_id }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/${DEPLOYMENT_ID}/statuses" \
+            -f state=failure \
+            -f environment=release-candidate \
+            -f description='Automated RC health check failed; observation reset' \
+            -f environment_url="${ADMIN_URL%/}" \
+            -f log_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -F auto_inactive=false > /dev/null
+
+      - name: Stop when the public probes fail
+        if: ${{ steps.probe.outcome == 'failure' }}
+        run: |
+          echo "Public RC probes failed; stable promotion is blocked." >&2
+          exit 1
+
+      - name: Ensure an uninterrupted observation window
+        id: window
+        if: >-
+          ${{
+            steps.candidate.outputs.rc_tag != '' &&
+            steps.tag_state.outputs.stop != 'true' &&
+            steps.observation.outputs.completed != 'true' &&
+            steps.probe.outcome == 'success'
+          }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TOKEN: ${{ secrets.RYFRAME_RELEASE_TOKEN }}
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+          BACKEND_COMMIT: ${{ steps.identity.outputs.backend_commit }}
+          ACTIVE_ID: ${{ steps.observation.outputs.active_id }}
+          ACTIVE_SINCE: ${{ steps.observation.outputs.active_since }}
+        run: |
+          set -euo pipefail
+          deployment_id="$ACTIVE_ID"
+          active_since="$ACTIVE_SINCE"
+          reset_window=false
+
+          if [[ -n "$deployment_id" ]]; then
+            runs="$RUNNER_TEMP/previous-auto-promotion-runs.json"
+            gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/auto-promote.yml/runs?status=completed&per_page=100" \
+              > "$runs"
+            previous_run="$(jq -c \
+              --arg sha "$BACKEND_COMMIT" \
+              --arg since "$active_since" '
+                [ .workflow_runs[]
+                  | select(.head_sha == $sha)
+                  | select(.updated_at >= $since)
+                ]
+                | sort_by(.updated_at, .id)
+                | last // empty
+              ' "$runs")"
+
+            if [[ -z "$previous_run" ]]; then
+              reset_window=true
+            else
+              previous_run_id="$(jq -r .id <<< "$previous_run")"
+              previous_conclusion="$(jq -r .conclusion <<< "$previous_run")"
+              previous_updated="$(jq -r .updated_at <<< "$previous_run")"
+              previous_jobs="$RUNNER_TEMP/previous-auto-promotion-jobs.json"
+              gh api \
+                "repos/$GITHUB_REPOSITORY/actions/runs/${previous_run_id}/jobs?filter=latest&per_page=100" \
+                > "$previous_jobs"
+              probe_conclusion="$(jq -r '
+                [ .jobs[].steps[]?
+                  | select(.name == "Probe the public release-candidate environment")
+                ]
+                | last
+                | .conclusion // empty
+              ' "$previous_jobs")"
+              previous_epoch="$(date --date="$previous_updated" +%s)"
+              now_epoch="$(date -u +%s)"
+              gap_seconds="$((now_epoch - previous_epoch))"
+              if [[ "$previous_conclusion" != success ||
+                    "$probe_conclusion" != success ||
+                    "$gap_seconds" -gt "$RC_MAX_HEARTBEAT_GAP_SECONDS" ]]; then
+                reset_window=true
+              fi
+            fi
+          fi
+
+          if [[ "$reset_window" == true ]]; then
+            GH_TOKEN="$RELEASE_TOKEN" gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/deployments/${deployment_id}/statuses" \
+              -f state=failure \
+              -f environment=release-candidate \
+              -f description='Automated RC observation heartbeat was interrupted' \
+              -f environment_url="${ADMIN_URL%/}" \
+              -f log_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              -F auto_inactive=false > /dev/null
+            deployment_id=""
+            active_since=""
+          fi
+
+          if [[ -z "$deployment_id" ]]; then
+            request="$RUNNER_TEMP/create-auto-deployment.json"
+            jq -n \
+              --arg ref "$RC_TAG" \
+              --arg run_id "$GITHUB_RUN_ID" \
+              '{
+                ref: $ref,
+                environment: "release-candidate",
+                description: "Automated 48-hour RC observation",
+                auto_merge: false,
+                required_contexts: [],
+                transient_environment: true,
+                production_environment: false,
+                payload: {
+                  source: "auto-promote",
+                  workflow_run_id: $run_id
+                }
+              }' > "$request"
+            deployment_id="$(GH_TOKEN="$RELEASE_TOKEN" gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/deployments" \
+              --input "$request" \
+              --jq .id)"
+            status="$RUNNER_TEMP/start-auto-observation.json"
+            jq -n \
+              --arg environment_url "${ADMIN_URL%/}" \
+              --arg log_url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              '{
+                state: "in_progress",
+                environment: "release-candidate",
+                description: "Automated RC observation started",
+                environment_url: $environment_url,
+                log_url: $log_url,
+                auto_inactive: false
+              }' > "$status"
+            GH_TOKEN="$RELEASE_TOKEN" gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/deployments/${deployment_id}/statuses" \
+              --input "$status" > /dev/null
+            active_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          fi
+
+          {
+            echo "deployment_id=$deployment_id"
+            echo "active_since=$active_since"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Complete a qualified observation window
+        id: readiness
+        if: >-
+          ${{
+            steps.candidate.outputs.rc_tag != '' &&
+            steps.tag_state.outputs.stop != 'true'
+          }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RYFRAME_RELEASE_TOKEN }}
+          COMPLETED: ${{ steps.observation.outputs.completed }}
+          COMPLETED_ID: ${{ steps.observation.outputs.active_id }}
+          DEPLOYMENT_ID: ${{ steps.window.outputs.deployment_id }}
+          ACTIVE_SINCE: ${{ steps.window.outputs.active_since }}
+        run: |
+          set -euo pipefail
+          if [[ "$COMPLETED" == true ]]; then
+            {
+              echo "ready=true"
+              echo "deployment_id=$COMPLETED_ID"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          start_epoch="$(date --date="$ACTIVE_SINCE" +%s)"
+          now_epoch="$(date -u +%s)"
+          observed_seconds="$((now_epoch - start_epoch))"
+          if [[ "$observed_seconds" -lt "$RC_MINIMUM_SECONDS" ]]; then
+            observed_hours="$((observed_seconds / 3600))"
+            echo "RC observation is healthy at $observed_hours hours; 48 hours are required."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/${DEPLOYMENT_ID}/statuses" \
+            -f state=success \
+            -f environment=release-candidate \
+            -f description='Automated continuous 48-hour RC observation passed' \
+            -f environment_url="${ADMIN_URL%/}" \
+            -f log_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -F auto_inactive=false > /dev/null
+          {
+            echo "ready=true"
+            echo "deployment_id=$DEPLOYMENT_ID"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Collect immutable promotion evidence
+        if: ${{ steps.readiness.outputs.ready == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+          BACKEND_COMMIT: ${{ steps.identity.outputs.backend_commit }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > "$RUNNER_TEMP/releases.json"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/deployments" \
+            -f sha="$BACKEND_COMMIT" \
+            -f environment=release-candidate \
+            -f per_page=100 \
+            > "$RUNNER_TEMP/deployments-source.json"
+
+          output="$RUNNER_TEMP/deployments.json"
+          printf '[' > "$output"
+          first=true
+          while IFS= read -r deployment; do
+            deployment_id="$(jq -r .id <<< "$deployment")"
+            gh api \
+              "repos/$GITHUB_REPOSITORY/deployments/${deployment_id}/statuses?per_page=100" \
+              > "$RUNNER_TEMP/deployment-statuses.json"
+            if [[ "$first" == false ]]; then
+              printf ',' >> "$output"
+            fi
+            jq -c --argjson deployment "$deployment" \
+              --slurpfile statuses "$RUNNER_TEMP/deployment-statuses.json" \
+              '$deployment + {statuses: $statuses[0]}' >> "$output"
+            first=false
+          done < <(jq -c --arg ref "$RC_TAG" '.[] | select(.ref == $ref)' \
+            "$RUNNER_TEMP/deployments-source.json")
+          printf ']\n' >> "$output"
+
+          gh api "repos/$GITHUB_REPOSITORY/environments/stable-release" \
+            > "$RUNNER_TEMP/stable-environment.json"
+
+      - name: Create and validate local coordinated stable tags
+        if: ${{ steps.readiness.outputs.ready == 'true' }}
+        shell: bash
+        env:
+          STABLE_TAG: ${{ steps.candidate.outputs.stable_tag }}
+          BACKEND_COMMIT: ${{ steps.identity.outputs.backend_commit }}
+          FRONTEND_COMMIT: ${{ steps.identity.outputs.frontend_commit }}
+        run: |
+          set -euo pipefail
+          extract_section() {
+            local changelog="$1"
+            local output="$2"
+            awk -v version="$STABLE_TAG" '
+              BEGIN { heading = "## [" version "]" }
+              !found && ($0 == heading || index($0, heading " ") == 1 || index($0, heading "\t") == 1) {
+                found=1
+              }
+              found && emitted && /^## \[/ { exit }
+              found { print; emitted=1 }
+              END { if (!found) exit 2 }
+            ' "$changelog" > "$output"
+            grep --extended-regexp --quiet '^-[[:space:]]+[^[:space:]]' "$output"
+          }
+
+          backend_notes="$RUNNER_TEMP/backend-stable-notes.md"
+          frontend_notes="$RUNNER_TEMP/frontend-stable-notes.md"
+          extract_section CHANGELOG.md "$backend_notes"
+          extract_section frontend/CHANGELOG.md "$frontend_notes"
+          git config user.name "RyFrame Release Bot"
+          git config user.email "${RELEASE_BOT}@users.noreply.github.com"
+          git -C frontend config user.name "RyFrame Release Bot"
+          git -C frontend config user.email "${RELEASE_BOT}@users.noreply.github.com"
+
+          if ! git show-ref --verify --quiet "refs/tags/${STABLE_TAG}"; then
+            git tag -a --cleanup=verbatim -F "$backend_notes" \
+              "$STABLE_TAG" "$BACKEND_COMMIT"
+          fi
+          if ! git -C frontend show-ref --verify --quiet "refs/tags/${STABLE_TAG}"; then
+            git -C frontend tag -a --cleanup=verbatim -F "$frontend_notes" \
+              "$STABLE_TAG" "$FRONTEND_COMMIT"
+          fi
+
+          python scripts/validate_release.py \
+            --tag "$STABLE_TAG" \
+            --frontend-dir frontend \
+            --minimum-rc-hours 48 \
+            --github-releases-json "$RUNNER_TEMP/releases.json" \
+            --github-deployments-json "$RUNNER_TEMP/deployments.json" \
+            --stable-environment-json "$RUNNER_TEMP/stable-environment.json"
+
+      - name: Revalidate remote state and push frontend then backend
+        if: ${{ steps.readiness.outputs.ready == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RYFRAME_RELEASE_TOKEN }}
+          RC_TAG: ${{ steps.candidate.outputs.rc_tag }}
+          STABLE_TAG: ${{ steps.candidate.outputs.stable_tag }}
+          BACKEND_COMMIT: ${{ steps.identity.outputs.backend_commit }}
+          FRONTEND_COMMIT: ${{ steps.identity.outputs.frontend_commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +main:refs/remotes/origin/main
+          git -C frontend fetch --no-tags origin +main:refs/remotes/origin/main
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$BACKEND_COMMIT" ]]
+          [[ "$(git -C frontend rev-parse refs/remotes/origin/main)" == "$FRONTEND_COMMIT" ]]
+
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            > "$RUNNER_TEMP/releases-final.json"
+          escaped_stable="${STABLE_TAG//./\\.}"
+          newest_rc="$(jq -r --arg pattern "^${escaped_stable}-rc\\.[1-9][0-9]*$" '
+            [ .[]
+              | select(.prerelease == true and .draft != true)
+              | select(.published_at != null)
+              | select(.tag_name | test($pattern))
+            ]
+            | sort_by(.published_at, .tag_name)
+            | last
+            | .tag_name // empty
+          ' "$RUNNER_TEMP/releases-final.json")"
+          [[ "$newest_rc" == "$RC_TAG" ]] || {
+            echo "A newer RC replaced $RC_TAG before promotion." >&2
+            exit 1
+          }
+
+          gh auth setup-git
+          frontend_remote_oid="$(git -C frontend ls-remote --refs origin \
+            "refs/tags/${STABLE_TAG}" | awk '{ print $1 }')"
+          if [[ -z "$frontend_remote_oid" ]]; then
+            git -C frontend push origin "refs/tags/${STABLE_TAG}"
+          else
+            [[ "$frontend_remote_oid" == "$(git -C frontend rev-parse "refs/tags/${STABLE_TAG}")" ]]
+          fi
+
+          frontend_refs="$(git -C frontend ls-remote origin \
+            "refs/tags/${STABLE_TAG}" "refs/tags/${STABLE_TAG}^{}")"
+          [[ "$(awk -v ref="refs/tags/${STABLE_TAG}" '$2 == ref { print $1 }' <<< "$frontend_refs")" \
+            == "$(git -C frontend rev-parse "refs/tags/${STABLE_TAG}")" ]]
+          [[ "$(awk -v ref="refs/tags/${STABLE_TAG}^{}" '$2 == ref { print $1 }' <<< "$frontend_refs")" \
+            == "$FRONTEND_COMMIT" ]]
+
+          backend_remote_oid="$(git ls-remote --refs origin \
+            "refs/tags/${STABLE_TAG}" | awk '{ print $1 }')"
+          if [[ -z "$backend_remote_oid" ]]; then
+            git push origin "refs/tags/${STABLE_TAG}"
+          else
+            [[ "$backend_remote_oid" == "$(git rev-parse "refs/tags/${STABLE_TAG}")" ]]
+          fi
+
+          backend_refs="$(git ls-remote origin \
+            "refs/tags/${STABLE_TAG}" "refs/tags/${STABLE_TAG}^{}")"
+          [[ "$(awk -v ref="refs/tags/${STABLE_TAG}" '$2 == ref { print $1 }' <<< "$backend_refs")" \
+            == "$(git rev-parse "refs/tags/${STABLE_TAG}")" ]]
+          [[ "$(awk -v ref="refs/tags/${STABLE_TAG}^{}" '$2 == ref { print $1 }' <<< "$backend_refs")" \
+            == "$BACKEND_COMMIT" ]]
+
+          {
+            echo "### Stable promotion started"
+            echo
+            echo "- RC: $RC_TAG"
+            echo "- Stable: $STABLE_TAG"
+            echo "- Frontend commit: $FRONTEND_COMMIT"
+            echo "- Backend commit: $BACKEND_COMMIT"
+            echo "- The backend tag push starts the full release gate."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -119,6 +119,28 @@ def production_rust_sources() -> list[Path]:
     return sorted(ROOT.glob("crates/*/src/**/*.rs"))
 
 
+UNSIGNED_REPLAY_HEADER = re.compile(r'''(?i)["']x-(?:nonce|timestamp)["']''')
+
+
+def exposes_unsigned_replay_contract(source: str) -> bool:
+    return UNSIGNED_REPLAY_HEADER.search(source) is not None
+
+
+def check_unsigned_replay_contract(errors: list[str]) -> None:
+    """Reject the retired, unsigned X-Nonce/X-Timestamp pseudo-protocol.
+
+    A client-controlled nonce and timestamp are not authenticated request
+    components. Machine-to-machine proof-of-possession must use a separately
+    reviewed message-signature contract instead of reviving these headers.
+    """
+    for path in production_rust_sources():
+        if exposes_unsigned_replay_contract(path.read_text(encoding="utf-8")):
+            errors.append(
+                "production code reintroduces the unsigned replay-header contract: "
+                f"{path.relative_to(ROOT)}"
+            )
+
+
 def attributed_functions(path: Path) -> list[tuple[str, list[str]]]:
     functions: list[tuple[str, list[str]]] = []
     attributes: list[str] = []
@@ -774,6 +796,22 @@ def check_source_only_release(errors: list[str]) -> None:
                     f"source-only release contract forbids in {relative_path}: {fragment}"
                 )
 
+    dockerfile_path = "deploy/Dockerfile"
+    dockerfile = (ROOT / dockerfile_path).read_text(encoding="utf-8")
+    for fragment in (
+        "ARG RYFRAME_BUILD_COMMIT",
+        'RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}"',
+        'org.opencontainers.image.revision="${RYFRAME_BUILD_COMMIT}"',
+    ):
+        if fragment not in dockerfile:
+            errors.append(
+                f"release image build identity is missing in {dockerfile_path}: {fragment}"
+            )
+    if "ARG RYFRAME_BUILD_COMMIT=" in dockerfile:
+        errors.append(
+            f"release image build identity must be explicit in {dockerfile_path}"
+        )
+
 
 def check_github_action_runtimes(errors: list[str]) -> None:
     workflow_paths = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
@@ -793,6 +831,7 @@ def check_github_action_runtimes(errors: list[str]) -> None:
 def main() -> int:
     errors: list[str] = []
     check_dependency_graph(errors)
+    check_unsigned_replay_contract(errors)
     check_source_boundaries(errors)
     check_database_and_storage_topology(errors)
     check_source_only_release(errors)

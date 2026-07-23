@@ -2,6 +2,8 @@ use serde::Serialize;
 use sysinfo::System;
 use utoipa::ToSchema;
 
+use ryframe_common::{AppError, AppResult};
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ServerInfo {
     /// 操作系统
@@ -26,6 +28,17 @@ pub struct ServerInfo {
 }
 
 impl ServerInfo {
+    /// Collect server metrics without blocking an async runtime worker.
+    pub async fn collect_async() -> AppResult<Self> {
+        tokio::task::spawn_blocking(Self::collect)
+            .await
+            .map_err(|error| {
+                AppError::Internal(format!(
+                    "server information collection task failed: {error}"
+                ))
+            })
+    }
+
     pub fn collect() -> Self {
         let mut sys = System::new_all();
         sys.refresh_all();

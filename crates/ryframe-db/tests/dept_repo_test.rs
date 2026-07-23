@@ -22,7 +22,7 @@ fn make_dept(
     status: &str,
 ) -> dept::Model {
     dept::Model {
-        id: snowflake::next_snowflake_id(),
+        id: snowflake::try_next_snowflake_id().expect("generate test ID"),
         tenant_id: TENANT.into(),
         name: name.into(),
         parent_id,

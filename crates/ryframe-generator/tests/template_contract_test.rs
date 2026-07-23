@@ -86,6 +86,9 @@ fn generated_templates_follow_application_boundaries() {
     assert!(!service.contains("pub widget_repo"));
     assert!(!service.contains("Arc<DatabaseConnection>"));
     assert!(!service.contains("crate::dto"));
+    assert!(service.contains("snowflake::try_next_snowflake_id()?"));
+    assert!(service.contains("model.fill_on_insert(&FillContext::new())?"));
+    assert!(!service.contains("snowflake::next_snowflake_id()"));
 
     let dto = source("dto");
     assert!(dto.contains("#[serde(deny_unknown_fields)]"));
@@ -110,7 +113,7 @@ fn generated_template_output_matches_golden_hashes() {
         ("entity", 15_143_636_760_214_386_781),
         ("repository", 13_192_807_906_955_434_705),
         ("dto", 8_322_372_481_273_473_967),
-        ("service", 15_943_526_325_768_460_924),
+        ("service", 6_467_106_141_933_554_713),
         ("handler", 4_400_737_824_380_872_182),
     ];
     assert_eq!(actual, expected);

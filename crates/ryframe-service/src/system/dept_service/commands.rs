@@ -22,7 +22,7 @@ impl DeptService {
             .await?;
 
         let mut new_dept = dept::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: command.name,
             parent_id: command.parent_id,
@@ -34,7 +34,7 @@ impl DeptService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        new_dept.fill_on_insert(&FillContext::new());
+        new_dept.fill_on_insert(&FillContext::new())?;
         let saved = self.dept_repo.insert(db, tenant_id, new_dept).await?;
         self.invalidate_dept_cache(tenant_id).await;
         Ok(DeptVo::from(saved))
@@ -82,7 +82,7 @@ impl DeptService {
         dept.parent_id = command.parent_id;
         dept.sort = command.sort;
         dept.status = command.status;
-        dept.fill_on_update(&FillContext::new());
+        dept.fill_on_update(&FillContext::new())?;
 
         if !parent_changed {
             let saved = self.dept_repo.update(db, tenant_id, dept).await?;
@@ -107,7 +107,7 @@ impl DeptService {
                 .strip_prefix(&old_prefix)
                 .ok_or_else(|| AppError::Internal("部门祖级路径不一致，无法移动子树".into()))?;
             child.ancestors = format!("{new_prefix}{suffix}");
-            child.fill_on_update(&FillContext::new());
+            child.fill_on_update(&FillContext::new())?;
             dept::ActiveModel::from(child)
                 .update(&transaction)
                 .await

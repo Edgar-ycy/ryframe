@@ -14,14 +14,15 @@
 /// assert!(!has_permission(&perms, "system:role:list"));
 /// ```
 pub fn has_permission(user_perms: &[String], required: &str) -> bool {
-    // 空权限码表示公开接口，直接放行
-    if required.is_empty() {
-        return true;
+    // Public routes must omit the permission middleware. Failing closed here
+    // prevents a blank route annotation from silently disabling authorization.
+    if required.trim().is_empty() {
+        return false;
     }
 
     user_perms
         .iter()
-        .any(|p| p == required || p == "admin" || p == "*:*:*" || wildcard_match(p, required))
+        .any(|p| p == required || p == "*:*:*" || wildcard_match(p, required))
 }
 
 fn wildcard_match(pattern: &str, required: &str) -> bool {
@@ -40,8 +41,8 @@ fn wildcard_match(pattern: &str, required: &str) -> bool {
 
 /// 检查用户是否拥有指定角色
 pub fn has_role(user_roles: &[String], required: &str) -> bool {
-    if required.is_empty() {
-        return true;
+    if required.trim().is_empty() {
+        return false;
     }
     user_roles.iter().any(|r| r == required)
 }

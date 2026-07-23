@@ -1,15 +1,23 @@
 name: RC and Stable Release
+run-name: Release ${{ inputs.tag || github.ref_name }}
 
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing coordinated RC or stable tag to validate and publish
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   CARGO_TERM_COLOR: always
   CARGO_HTTP_TIMEOUT: "600"
   CARGO_NET_RETRY: "5"
@@ -40,6 +48,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Verify backend tag belongs to main
         shell: bash
@@ -51,13 +60,13 @@ jobs:
             echo "Release tag must point to a backend commit contained in main."
             exit 1
           }
-          [[ "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" == "$(git rev-parse HEAD)" ]]
+          [[ "$(git rev-parse "$RELEASE_TAG^{commit}")" == "$(git rev-parse HEAD)" ]]
 
       - name: Check out matching frontend tag
         uses: actions/checkout@v6
         with:
           repository: Edgar-ycy/ryframe-vue3
-          ref: ${{ github.ref_name }}
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
           path: frontend
 
@@ -73,7 +82,7 @@ jobs:
           }
 
       - name: Read published release candidates for stable
-        if: ${{ !contains(github.ref_name, '-rc.') }}
+        if: ${{ !contains(inputs.tag || github.ref_name, '-rc.') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
@@ -82,13 +91,13 @@ jobs:
           > "$RUNNER_TEMP/releases.json"
 
       - name: Collect commit-bound RC observation evidence
-        if: ${{ !contains(github.ref_name, '-rc.') }}
+        if: ${{ !contains(inputs.tag || github.ref_name, '-rc.') }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          escaped_tag="${GITHUB_REF_NAME//./\\.}"
+          escaped_tag="${RELEASE_TAG//./\\.}"
           rc_pattern="^${escaped_tag}-rc\\.[1-9][0-9]*$"
           rc_tag="$(jq -r --arg pattern "$rc_pattern" '
             [ .[]
@@ -101,7 +110,7 @@ jobs:
             | .tag_name // empty
           ' "$RUNNER_TEMP/releases.json")"
           [[ -n "$rc_tag" ]] || {
-            echo "No published RC exists for $GITHUB_REF_NAME."
+            echo "No published RC exists for $RELEASE_TAG."
             exit 1
           }
           rc_commit="$(git rev-parse "$rc_tag^{commit}")"
@@ -138,11 +147,11 @@ jobs:
         run: |
           set -euo pipefail
           args=(
-            --tag "$GITHUB_REF_NAME"
+            --tag "$RELEASE_TAG"
             --frontend-dir frontend
             --minimum-rc-hours 48
           )
-          if [[ "$GITHUB_REF_NAME" != *-rc.* ]]; then
+          if [[ "$RELEASE_TAG" != *-rc.* ]]; then
             args+=(
               --github-releases-json "$RUNNER_TEMP/releases.json"
               --github-deployments-json "$RUNNER_TEMP/deployments.json"
@@ -156,20 +165,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           version="${version%%-rc.*}"
           prerelease=false
-          if [[ "$GITHUB_REF_NAME" == *-rc.* ]]; then
+          if [[ "$RELEASE_TAG" == *-rc.* ]]; then
             prerelease=true
           fi
           {
-            echo "tag=$GITHUB_REF_NAME"
+            echo "tag=$RELEASE_TAG"
             echo "stable_tag=v$version"
             echo "prerelease=$prerelease"
-            echo "backend_tag_oid=$(git rev-parse "refs/tags/$GITHUB_REF_NAME")"
-            echo "backend_commit=$(git rev-parse "$GITHUB_REF_NAME^{commit}")"
-            echo "frontend_tag_oid=$(git -C frontend rev-parse "refs/tags/$GITHUB_REF_NAME")"
-            echo "frontend_commit=$(git -C frontend rev-parse "$GITHUB_REF_NAME^{commit}")"
+            echo "backend_tag_oid=$(git rev-parse "refs/tags/$RELEASE_TAG")"
+            echo "backend_commit=$(git rev-parse "$RELEASE_TAG^{commit}")"
+            echo "frontend_tag_oid=$(git -C frontend rev-parse "refs/tags/$RELEASE_TAG")"
+            echo "frontend_commit=$(git -C frontend rev-parse "$RELEASE_TAG^{commit}")"
           } >> "$GITHUB_OUTPUT"
 
   backend-gate:
@@ -280,12 +289,14 @@ jobs:
       - name: Source, format, architecture, and deployment checks
         run: |
           python scripts/check_source_hygiene.py
+          python scripts/check_prerelease_dependencies.py
           python scripts/check_permission_routes.py
           python scripts/check_architecture.py
           python -m compileall -q scripts
           python -m unittest discover -s scripts/tests -p 'test_*.py'
           ruby -e 'require "yaml"; ARGV.each { |path| YAML.parse_file(path) }' \
-            .github/workflows/ci.yml .github/workflows/release.yml \
+            .github/workflows/ci.yml .github/workflows/auto-promote.yml \
+            .github/workflows/release.yml \
             .github/workflows/nightly.yml docker-compose.test.yml
           docker compose -f docker-compose.test.yml config --quiet
           cargo fmt --all -- --check
@@ -504,7 +515,13 @@ jobs:
 
   stable-approval:
     name: Approve stable promotion
-    if: ${{ needs.validate-release.outputs.prerelease == 'false' }}
+    if: >-
+      ${{
+        needs.validate-release.outputs.prerelease == 'false' &&
+        !(vars.RYFRAME_AUTO_PROMOTE_STABLE == 'true' &&
+          vars.RYFRAME_RELEASE_BOT != '' &&
+          github.actor == vars.RYFRAME_RELEASE_BOT)
+      }}
     needs:
       - validate-release
       - backend-gate
@@ -515,7 +532,7 @@ jobs:
     steps:
       - name: Record protected environment approval
         run: |
-          echo "stable-release required-reviewer approval granted for $GITHUB_REF_NAME"
+          echo "stable-release required-reviewer approval granted for $RELEASE_TAG"
 
   publish-release:
     name: Publish source-only GitHub release
@@ -531,7 +548,12 @@ jobs:
         needs.backend-gate.result == 'success' &&
         needs.frontend-gate.result == 'success' &&
         (needs.validate-release.outputs.prerelease == 'true' ||
-         needs.stable-approval.result == 'success')
+         needs.stable-approval.result == 'success' ||
+         (needs.validate-release.outputs.prerelease == 'false' &&
+          needs.stable-approval.result == 'skipped' &&
+          vars.RYFRAME_AUTO_PROMOTE_STABLE == 'true' &&
+          vars.RYFRAME_RELEASE_BOT != '' &&
+          github.actor == vars.RYFRAME_RELEASE_BOT))
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -582,7 +604,7 @@ jobs:
           release_json="$RUNNER_TEMP/release.json"
           release_error="$RUNNER_TEMP/release-error.log"
           if gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
             > "$release_json" 2> "$release_error"; then
             release_id="$(jq -r '.id' "$release_json")"
             gh api --paginate \
@@ -594,7 +616,7 @@ jobs:
                 "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
             done < "$RUNNER_TEMP/release-asset-ids.txt"
           elif grep --quiet 'HTTP 404' "$release_error"; then
-            echo "No existing release assets to remove for $GITHUB_REF_NAME."
+            echo "No existing release assets to remove for $RELEASE_TAG."
           else
             cat "$release_error" >&2
             exit 1
@@ -676,7 +698,7 @@ jobs:
           release_json="$RUNNER_TEMP/published-release.json"
           published_body="$RUNNER_TEMP/published-release-body.md"
           gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
             > "$release_json"
           jq --exit-status '.assets | length == 0' "$release_json" > /dev/null
           jq --join-output '.body // ""' "$release_json" > "$published_body"

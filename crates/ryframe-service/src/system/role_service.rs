@@ -5,9 +5,31 @@ use ryframe_core::{
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::DatabaseCluster;
-use ryframe_db::{DeptRepository, PermissionRepository, RoleRepository, entities::role};
+use ryframe_db::{
+    DeptRepository, PermissionRepository, RoleRepository, TenantRepository, entities::role,
+};
+use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
 use utoipa::ToSchema;
+
+fn first_missing_id<T, F>(requested_ids: &[i64], existing: &[T], id: F) -> Option<i64>
+where
+    F: Fn(&T) -> i64,
+{
+    let existing_ids = existing
+        .iter()
+        .map(id)
+        .collect::<std::collections::HashSet<_>>();
+    requested_ids
+        .iter()
+        .copied()
+        .find(|requested_id| !existing_ids.contains(requested_id))
+}
+
+fn normalize_ids(ids: &mut Vec<i64>) {
+    ids.sort_unstable();
+    ids.dedup();
+}
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RoleVo {
@@ -76,6 +98,26 @@ impl RoleService {
         }
     }
 
+    fn validate_status(status: &str) -> AppResult<()> {
+        if matches!(
+            status,
+            role::Model::STATUS_NORMAL | role::Model::STATUS_DISABLED
+        ) {
+            Ok(())
+        } else {
+            Err(AppError::Validation("无效的角色状态".into()))
+        }
+    }
+
+    fn ensure_super_role_remains(available: usize, becoming_unavailable: usize) -> AppResult<()> {
+        if becoming_unavailable > 0 && available <= becoming_unavailable {
+            return Err(AppError::Conflict(
+                "系统必须保留至少一个可用的超级管理员角色".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn get_role_model(&self, actor: &ActorContext, id: i64) -> AppResult<role::Model> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
@@ -111,15 +153,73 @@ impl RoleService {
     /// 批量删除角色
     pub async fn delete_many(&self, actor: &ActorContext, ids: &[i64]) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
         if ids.is_empty() {
             return Err(AppError::Validation("请选择要删除的角色".into()));
         }
-        for id in ids {
-            self.get_role_model(actor, *id).await?;
+
+        let mut ids = ids.to_vec();
+        normalize_ids(&mut ids);
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        // Every role create/update/delete uses the tenant row as its first
+        // lock. Batch target locks are then acquired in ascending ID order.
+        let operation: AppResult<u64> = async {
+            TenantRepository
+                .lock_tenant_in_txn(&transaction, tenant_id)
+                .await?;
+            let mut roles = Vec::with_capacity(ids.len());
+            for id in &ids {
+                let role = self
+                    .role_repo
+                    .find_by_id_for_update(&transaction, tenant_id, *id)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+                roles.push(role);
+            }
+
+            let active_super_roles = roles
+                .iter()
+                .filter(|role| role.is_super == 1 && role.status == role::Model::STATUS_NORMAL)
+                .count();
+            if active_super_roles > 0 {
+                let available = self
+                    .role_repo
+                    .count_available_super_roles_for_update(&transaction, tenant_id)
+                    .await?;
+                Self::ensure_super_role_remains(available, active_super_roles)?;
+            }
+
+            let affected = self
+                .role_repo
+                .delete_many(&transaction, tenant_id, &ids)
+                .await?;
+            if affected != ids.len() as u64 {
+                return Err(AppError::NotFound("角色不存在".into()));
+            }
+            Ok(affected)
         }
-        let affected = self.role_repo.delete_many(db, tenant_id, ids).await?;
-        Ok(affected)
+        .await;
+
+        match operation {
+            Ok(affected) => {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+                Ok(affected)
+            }
+            Err(error) => {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| AppError::Database(format!("回滚事务失败: {error}")))?;
+                Err(error)
+            }
+        }
     }
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<RoleVo>> {
@@ -158,9 +258,6 @@ impl RoleService {
     ) -> AppResult<RoleVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        ryframe_db::TenantRepository
-            .ensure_role_quota(db, tenant_id)
-            .await?;
         if self
             .role_repo
             .find_by_code(db, tenant_id, code)
@@ -173,7 +270,7 @@ impl RoleService {
         let data_scope = data_scope.unwrap_or_else(|| "1".to_string());
         Self::validate_data_scope(&data_scope)?;
         let mut new_role = role::Model {
-            id: snowflake::next_snowflake_id(),
+            id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             code: code.to_string(),
@@ -186,10 +283,39 @@ impl RoleService {
             created_at: Default::default(),
             updated_at: Default::default(),
         };
-        new_role.fill_on_insert(&FillContext::new());
+        new_role.fill_on_insert(&FillContext::new())?;
 
-        let saved = self.role_repo.insert(db, tenant_id, new_role).await?;
-        Ok(RoleVo::from(saved))
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let operation: AppResult<role::Model> = async {
+            TenantRepository
+                .ensure_role_quota_in_txn(&transaction, tenant_id)
+                .await?;
+            role::ActiveModel::from(new_role)
+                .insert(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))
+        }
+        .await;
+
+        match operation {
+            Ok(saved) => {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+                Ok(RoleVo::from(saved))
+            }
+            Err(error) => {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| AppError::Database(format!("回滚事务失败: {error}")))?;
+                Err(error)
+            }
+        }
     }
 
     pub async fn update(
@@ -202,27 +328,74 @@ impl RoleService {
         data_scope: Option<String>,
     ) -> AppResult<RoleVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let mut role = self.get_role_model(actor, id).await?;
-
-        role.name = name.to_string();
-        role.sort = sort;
-        role.status = status;
-        if let Some(ds) = data_scope {
-            Self::validate_data_scope(&ds)?;
-            role.data_scope = ds;
+        Self::validate_status(&status)?;
+        if let Some(data_scope) = data_scope.as_deref() {
+            Self::validate_data_scope(data_scope)?;
         }
-        role.fill_on_update(&FillContext::new());
 
-        let saved = self.role_repo.update(db, tenant_id, role).await?;
-        Ok(RoleVo::from(saved))
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let operation: AppResult<role::Model> = async {
+            TenantRepository
+                .lock_tenant_in_txn(&transaction, tenant_id)
+                .await?;
+            let mut role = self
+                .role_repo
+                .find_by_id_for_update(&transaction, tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+
+            if role.is_super == 1
+                && role.status == role::Model::STATUS_NORMAL
+                && status != role::Model::STATUS_NORMAL
+            {
+                let available = self
+                    .role_repo
+                    .count_available_super_roles_for_update(&transaction, tenant_id)
+                    .await?;
+                Self::ensure_super_role_remains(available, 1)?;
+            }
+
+            role.name = name.to_string();
+            role.sort = sort;
+            role.status = status;
+            if let Some(ds) = data_scope {
+                role.data_scope = ds;
+            }
+            role.fill_on_update(&FillContext::new())?;
+
+            role::ActiveModel::from(role)
+                .reset_all()
+                .update(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))
+        }
+        .await;
+
+        match operation {
+            Ok(saved) => {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+                Ok(RoleVo::from(saved))
+            }
+            Err(error) => {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| AppError::Database(format!("回滚事务失败: {error}")))?;
+                Err(error)
+            }
+        }
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        self.get_role_model(actor, id).await?;
-        self.role_repo.delete(db, tenant_id, id).await?;
+        self.delete_many(actor, &[id]).await?;
         Ok(())
     }
 
@@ -230,16 +403,16 @@ impl RoleService {
         &self,
         actor: &ActorContext,
         role_id: i64,
-        perm_ids: Vec<i64>,
+        mut perm_ids: Vec<i64>,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
         self.get_role_model(actor, role_id).await?;
-        for perm_id in &perm_ids {
-            self.perm_repo
-                .find_by_id(db, tenant_id, *perm_id)
-                .await?
-                .ok_or_else(|| AppError::NotFound(format!("权限不存在: {}", perm_id)))?;
+        normalize_ids(&mut perm_ids);
+        let permissions = self.perm_repo.find_by_ids(db, tenant_id, &perm_ids).await?;
+        if let Some(perm_id) = first_missing_id(&perm_ids, &permissions, |permission| permission.id)
+        {
+            return Err(AppError::NotFound(format!("权限不存在: {}", perm_id)));
         }
         self.perm_repo
             .assign_perms(db, tenant_id, role_id, &perm_ids)
@@ -314,5 +487,33 @@ impl RoleService {
             .replace_data_scope(db, tenant_id, role_id, data_scope, &unique_dept_ids)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{first_missing_id, normalize_ids};
+
+    #[test]
+    fn batch_existence_check_preserves_first_missing_request_and_allows_duplicates() {
+        let existing = [(20_i64, "second"), (10_i64, "first")];
+
+        assert_eq!(
+            first_missing_id(&[10, 10, 30, 40], &existing, |item| item.0),
+            Some(30)
+        );
+        assert_eq!(
+            first_missing_id(&[20, 10, 20], &existing, |item| item.0),
+            None
+        );
+    }
+
+    #[test]
+    fn mutation_ids_use_one_deterministic_lock_order() {
+        let mut ids = vec![30, 10, 20, 10, 30];
+
+        normalize_ids(&mut ids);
+
+        assert_eq!(ids, vec![10, 20, 30]);
     }
 }

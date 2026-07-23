@@ -14,5 +14,6 @@ pub mod post_dto;
 pub mod profile_dto;
 pub mod role_dto;
 pub mod tenant_dto;
+mod tenant_validation;
 pub mod user_dto;
 pub mod user_import_dto;

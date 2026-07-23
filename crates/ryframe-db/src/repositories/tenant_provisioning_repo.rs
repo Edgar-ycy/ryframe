@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use ryframe_common::{AppError, AppResult, utils::snowflake};
@@ -59,36 +59,44 @@ impl TenantProvisioningRepository {
 
         let system_menus = menu::Entity::find()
             .filter(menu::Column::TenantId.eq(TEMPLATE_TENANT_ID))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .order_by_asc(menu::Column::Id)
             .all(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_posts = post::Entity::find()
             .filter(post::Column::TenantId.eq(TEMPLATE_TENANT_ID))
+            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
             .all(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_configs = config::Entity::find()
             .filter(config::Column::TenantId.eq(TEMPLATE_TENANT_ID))
+            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
             .all(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_dict_types = dict_type::Entity::find()
             .filter(dict_type::Column::TenantId.eq(TEMPLATE_TENANT_ID))
+            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .all(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        let system_dict_data = dict_data::Entity::find()
+        let mut system_dict_data = dict_data::Entity::find()
             .filter(dict_data::Column::TenantId.eq(TEMPLATE_TENANT_ID))
+            .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
             .all(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_depts = dept::Entity::find()
             .filter(dept::Column::TenantId.eq(TEMPLATE_TENANT_ID))
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .order_by_asc(dept::Column::Id)
             .all(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
+
+        retain_data_for_active_dict_types(&system_dict_types, &mut system_dict_data);
         let system_permissions = permission::Entity::find()
             .filter(permission::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(permission::Column::Code.ne("*:*:*"))
@@ -100,7 +108,7 @@ impl TenantProvisioningRepository {
 
         let tenant_id = command.tenant_id;
         let tenant = tenant::ActiveModel {
-            id: ActiveValue::Set(snowflake::next_snowflake_id()),
+            id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
             tenant_id: ActiveValue::Set(tenant_id.clone()),
             name: ActiveValue::Set(command.name),
             domain: ActiveValue::Set(command.domain),
@@ -118,9 +126,9 @@ impl TenantProvisioningRepository {
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
 
-        let admin_role_id = snowflake::next_snowflake_id();
-        let user_role_id = snowflake::next_snowflake_id();
-        let user_id = snowflake::next_snowflake_id();
+        let admin_role_id = snowflake::try_next_snowflake_id()?;
+        let user_role_id = snowflake::try_next_snowflake_id()?;
+        let user_id = snowflake::try_next_snowflake_id()?;
 
         role::ActiveModel {
             id: ActiveValue::Set(admin_role_id),
@@ -189,8 +197,9 @@ impl TenantProvisioningRepository {
         .map_err(|error| AppError::Database(error.to_string()))?;
 
         let mut permission_ids = HashMap::new();
+        let mut role_permissions = Vec::new();
         for source in system_permissions {
-            let id = snowflake::next_snowflake_id();
+            let id = snowflake::try_next_snowflake_id()?;
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| permission_ids.get(&parent_id).copied());
@@ -211,33 +220,33 @@ impl TenantProvisioningRepository {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
 
-            role_permission::ActiveModel {
+            role_permissions.push(role_permission::ActiveModel {
                 tenant_id: ActiveValue::Set(tenant_id.clone()),
                 role_id: ActiveValue::Set(admin_role_id),
                 perm_id: ActiveValue::Set(id),
-            }
-            .insert(&transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            });
             if source.code.ends_with(":query")
                 || source.code.ends_with(":list")
                 || source.code.ends_with(":view")
             {
-                role_permission::ActiveModel {
+                role_permissions.push(role_permission::ActiveModel {
                     tenant_id: ActiveValue::Set(tenant_id.clone()),
                     role_id: ActiveValue::Set(user_role_id),
                     perm_id: ActiveValue::Set(id),
-                }
-                .insert(&transaction)
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                });
             }
             permission_ids.insert(source.id, id);
+        }
+        if !role_permissions.is_empty() {
+            role_permission::Entity::insert_many(role_permissions)
+                .exec(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
         let mut menu_ids = HashMap::new();
         for source in system_menus {
-            let id = snowflake::next_snowflake_id();
+            let id = snowflake::try_next_snowflake_id()?;
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| menu_ids.get(&parent_id).copied());
@@ -267,81 +276,105 @@ impl TenantProvisioningRepository {
             menu_ids.insert(source.id, id);
         }
 
-        for source in system_posts {
-            post::ActiveModel {
-                id: ActiveValue::Set(snowflake::next_snowflake_id()),
-                tenant_id: ActiveValue::Set(tenant_id.clone()),
-                name: ActiveValue::Set(source.name),
-                code: ActiveValue::Set(source.code),
-                sort: ActiveValue::Set(source.sort),
-                status: ActiveValue::Set(source.status),
-                remark: ActiveValue::Set(source.remark),
-                del_flag: ActiveValue::Set(source.del_flag),
-                created_at: ActiveValue::Set(now),
-                updated_at: ActiveValue::Set(now),
-            }
-            .insert(&transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let posts = system_posts
+            .into_iter()
+            .map(|source| -> AppResult<_> {
+                Ok(post::ActiveModel {
+                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    tenant_id: ActiveValue::Set(tenant_id.clone()),
+                    name: ActiveValue::Set(source.name),
+                    code: ActiveValue::Set(source.code),
+                    sort: ActiveValue::Set(source.sort),
+                    status: ActiveValue::Set(source.status),
+                    remark: ActiveValue::Set(source.remark),
+                    del_flag: ActiveValue::Set(source.del_flag),
+                    created_at: ActiveValue::Set(now),
+                    updated_at: ActiveValue::Set(now),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        if !posts.is_empty() {
+            post::Entity::insert_many(posts)
+                .exec(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
-        for source in system_configs {
-            config::ActiveModel {
-                id: ActiveValue::Set(snowflake::next_snowflake_id()),
-                tenant_id: ActiveValue::Set(tenant_id.clone()),
-                name: ActiveValue::Set(source.name),
-                key: ActiveValue::Set(source.key),
-                value: ActiveValue::Set(source.value),
-                remark: ActiveValue::Set(source.remark),
-                del_flag: ActiveValue::Set(source.del_flag),
-                created_at: ActiveValue::Set(now),
-                updated_at: ActiveValue::Set(now),
-            }
-            .insert(&transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let configs = system_configs
+            .into_iter()
+            .map(|source| -> AppResult<_> {
+                Ok(config::ActiveModel {
+                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    tenant_id: ActiveValue::Set(tenant_id.clone()),
+                    name: ActiveValue::Set(source.name),
+                    key: ActiveValue::Set(source.key),
+                    value: ActiveValue::Set(source.value),
+                    remark: ActiveValue::Set(source.remark),
+                    del_flag: ActiveValue::Set(source.del_flag),
+                    created_at: ActiveValue::Set(now),
+                    updated_at: ActiveValue::Set(now),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        if !configs.is_empty() {
+            config::Entity::insert_many(configs)
+                .exec(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
-        for source in system_dict_types {
-            dict_type::ActiveModel {
-                id: ActiveValue::Set(snowflake::next_snowflake_id()),
-                tenant_id: ActiveValue::Set(tenant_id.clone()),
-                name: ActiveValue::Set(source.name),
-                code: ActiveValue::Set(source.code),
-                status: ActiveValue::Set(source.status),
-                remark: ActiveValue::Set(source.remark),
-                del_flag: ActiveValue::Set(source.del_flag),
-                created_at: ActiveValue::Set(now),
-                updated_at: ActiveValue::Set(now),
-            }
-            .insert(&transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let dict_types = system_dict_types
+            .into_iter()
+            .map(|source| -> AppResult<_> {
+                Ok(dict_type::ActiveModel {
+                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    tenant_id: ActiveValue::Set(tenant_id.clone()),
+                    name: ActiveValue::Set(source.name),
+                    code: ActiveValue::Set(source.code),
+                    status: ActiveValue::Set(source.status),
+                    remark: ActiveValue::Set(source.remark),
+                    del_flag: ActiveValue::Set(source.del_flag),
+                    created_at: ActiveValue::Set(now),
+                    updated_at: ActiveValue::Set(now),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        if !dict_types.is_empty() {
+            dict_type::Entity::insert_many(dict_types)
+                .exec(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
-        for source in system_dict_data {
-            dict_data::ActiveModel {
-                id: ActiveValue::Set(snowflake::next_snowflake_id()),
-                tenant_id: ActiveValue::Set(tenant_id.clone()),
-                type_code: ActiveValue::Set(source.type_code),
-                label: ActiveValue::Set(source.label),
-                value: ActiveValue::Set(source.value),
-                sort: ActiveValue::Set(source.sort),
-                status: ActiveValue::Set(source.status),
-                css_class: ActiveValue::Set(source.css_class),
-                remark: ActiveValue::Set(source.remark),
-                del_flag: ActiveValue::Set(source.del_flag),
-                created_at: ActiveValue::Set(now),
-                updated_at: ActiveValue::Set(now),
-            }
-            .insert(&transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let dict_data_models = system_dict_data
+            .into_iter()
+            .map(|source| -> AppResult<_> {
+                Ok(dict_data::ActiveModel {
+                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    tenant_id: ActiveValue::Set(tenant_id.clone()),
+                    type_code: ActiveValue::Set(source.type_code),
+                    label: ActiveValue::Set(source.label),
+                    value: ActiveValue::Set(source.value),
+                    sort: ActiveValue::Set(source.sort),
+                    status: ActiveValue::Set(source.status),
+                    css_class: ActiveValue::Set(source.css_class),
+                    remark: ActiveValue::Set(source.remark),
+                    del_flag: ActiveValue::Set(source.del_flag),
+                    created_at: ActiveValue::Set(now),
+                    updated_at: ActiveValue::Set(now),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        if !dict_data_models.is_empty() {
+            dict_data::Entity::insert_many(dict_data_models)
+                .exec(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
         let mut dept_ids: HashMap<i64, i64> = HashMap::new();
         for source in system_depts {
-            let id = snowflake::next_snowflake_id();
+            let id = snowflake::try_next_snowflake_id()?;
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| dept_ids.get(&parent_id).copied());
@@ -377,5 +410,68 @@ impl TenantProvisioningRepository {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         Ok(tenant)
+    }
+}
+
+/// A soft-deleted dictionary type must not make provisioning fail through its
+/// composite foreign key, nor leave data reachable without a copied type.
+fn retain_data_for_active_dict_types(
+    dictionary_types: &[dict_type::Model],
+    dictionary_data: &mut Vec<dict_data::Model>,
+) {
+    let active_codes: HashSet<&str> = dictionary_types
+        .iter()
+        .map(|dictionary| dictionary.code.as_str())
+        .collect();
+    dictionary_data.retain(|data| active_codes.contains(data.type_code.as_str()));
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::retain_data_for_active_dict_types;
+    use crate::entities::{dict_data, dict_type};
+
+    fn dictionary_type(code: &str) -> dict_type::Model {
+        dict_type::Model {
+            id: 1,
+            tenant_id: "system".into(),
+            name: code.into(),
+            code: code.into(),
+            status: dict_type::Model::STATUS_NORMAL.into(),
+            remark: None,
+            del_flag: dict_type::Model::DEL_FLAG_NORMAL.into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn dictionary_data(id: i64, type_code: &str) -> dict_data::Model {
+        dict_data::Model {
+            id,
+            tenant_id: "system".into(),
+            type_code: type_code.into(),
+            label: id.to_string(),
+            value: id.to_string(),
+            sort: 0,
+            status: dict_data::Model::STATUS_NORMAL.into(),
+            css_class: None,
+            remark: None,
+            del_flag: dict_data::Model::DEL_FLAG_NORMAL.into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn provisioning_drops_data_whose_type_is_not_copied() {
+        let types = vec![dictionary_type("active")];
+        let mut data = vec![dictionary_data(1, "active"), dictionary_data(2, "deleted")];
+
+        retain_data_for_active_dict_types(&types, &mut data);
+
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].type_code, "active");
     }
 }

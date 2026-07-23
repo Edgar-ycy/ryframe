@@ -54,7 +54,7 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
                 if column.is_auto_increment {
                     "Default::default()".into()
                 } else if column.rust_type == "i64" {
-                    "snowflake::next_snowflake_id()".into()
+                    "snowflake::try_next_snowflake_id()?".into()
                 } else {
                     "Default::default()".into()
                 }
@@ -164,7 +164,7 @@ impl {struct_name}Service {{
         let mut model = {snake}::Model {{
 {create_model_fields}
         }};
-        model.fill_on_insert(&FillContext::new());
+        model.fill_on_insert(&FillContext::new())?;
         let saved = self.{repository_field}.insert(db, tenant_id, model).await?;
         Ok({struct_name}Vo::from(saved))
     }}
@@ -183,7 +183,7 @@ impl {struct_name}Service {{
             .await?
             .ok_or_else(|| AppError::NotFound("记录不存在".into()))?;
 {update_fields}
-        model.fill_on_update(&FillContext::new());
+        model.fill_on_update(&FillContext::new())?;
         let saved = self.{repository_field}.update(db, tenant_id, model).await?;
         Ok({struct_name}Vo::from(saved))
     }}

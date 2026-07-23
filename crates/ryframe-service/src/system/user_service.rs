@@ -10,6 +10,7 @@ use ryframe_db::{
     DeptRepository, RoleRepository, UserRepository,
     entities::{password_reset_request, role, user},
 };
+use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -135,8 +136,9 @@ impl UserService {
         }
     }
 
-    pub(super) async fn invalidate_sessions_for_tenant(
+    pub(super) async fn invalidate_sessions_for_tenant_in_txn(
         &self,
+        txn: &DatabaseTransaction,
         tenant_id: &str,
         user_ids: &[i64],
     ) -> AppResult<()> {
@@ -149,9 +151,9 @@ impl UserService {
 
         let affected = self
             .user_repo
-            .increment_auth_versions(self.db.write(), tenant_id, &user_ids)
+            .increment_auth_versions(txn, tenant_id, &user_ids)
             .await?;
-        if affected == 0 {
+        if affected != user_ids.len() as u64 {
             return Err(AppError::NotFound("用户不存在".into()));
         }
         Ok(())

@@ -88,25 +88,7 @@ impl GeneratorService {
     pub async fn download_zip(&self, opts: GenerateOptions) -> AppResult<Vec<u8>> {
         let db = self.database()?;
         let files = ryframe_generator::generate(db, &opts).await?;
-        let mut zip = std::io::Cursor::new(Vec::new());
-        {
-            let mut writer = zip::ZipWriter::new(&mut zip);
-            let options = zip::write::SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated);
-
-            for file in &files {
-                writer.start_file(&file.path, options).map_err(|e| {
-                    ryframe_common::AppError::Internal(format!("创建 zip 条目失败: {}", e))
-                })?;
-                std::io::Write::write_all(&mut writer, file.content.as_bytes()).map_err(|e| {
-                    ryframe_common::AppError::Internal(format!("写入 zip 内容失败: {}", e))
-                })?;
-            }
-            writer.finish().map_err(|e| {
-                ryframe_common::AppError::Internal(format!("完成 zip 打包失败: {}", e))
-            })?;
-        }
-        Ok(zip.into_inner())
+        run_blocking_task("generator zip creation", move || build_zip(files)).await?
     }
 
     fn database(&self) -> AppResult<&DatabaseConnection> {
@@ -117,6 +99,37 @@ impl GeneratorService {
             AppError::Config(format!("代码生成器数据源未连接: {}", self.data_source))
         })
     }
+}
+
+fn build_zip(files: Vec<GeneratedFile>) -> AppResult<Vec<u8>> {
+    let zip = std::io::Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(zip);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    for file in files {
+        writer
+            .start_file(file.path, options)
+            .map_err(|error| AppError::Internal(format!("创建 zip 条目失败: {error}")))?;
+        std::io::Write::write_all(&mut writer, file.content.as_bytes())
+            .map_err(|error| AppError::Internal(format!("写入 zip 内容失败: {error}")))?;
+    }
+
+    let zip = writer
+        .finish()
+        .map_err(|error| AppError::Internal(format!("完成 zip 打包失败: {error}")))?;
+    Ok(zip.into_inner())
+}
+
+async fn run_blocking_task<T, F>(operation: &'static str, task: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(task).await.map_err(|error| {
+        tracing::error!(operation, %error, "blocking task failed");
+        AppError::Internal(format!("{operation} task failed"))
+    })
 }
 
 async fn prepare_output_root(project_root: &Path, requested_root: &Path) -> AppResult<PathBuf> {
@@ -192,7 +205,34 @@ fn ensure_external_output_root(project_root: &Path, output_root: &Path) -> AppRe
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+
     use super::*;
+
+    #[test]
+    fn zip_builder_preserves_generated_paths_and_contents() {
+        let bytes = build_zip(vec![GeneratedFile {
+            path: "src/generated.rs".into(),
+            content: "pub const VALUE: u8 = 7;".into(),
+        }])
+        .unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut entry = archive.by_name("src/generated.rs").unwrap();
+        let mut content = String::new();
+        entry.read_to_string(&mut content).unwrap();
+
+        assert_eq!(content, "pub const VALUE: u8 = 7;");
+    }
+
+    #[tokio::test]
+    async fn blocking_task_panics_are_mapped_to_internal_errors() {
+        let result: AppResult<()> = run_blocking_task("test operation", || -> () {
+            panic!("expected test panic");
+        })
+        .await;
+
+        assert!(matches!(result, Err(AppError::Internal(_))));
+    }
 
     #[tokio::test]
     async fn output_root_must_be_absolute() {

@@ -185,6 +185,7 @@ async fn api_version() -> Json<serde_json::Value> {
     Json(json!({
         "name": env!("CARGO_PKG_NAME"),
         "version": env!("CARGO_PKG_VERSION"),
+        "source_commit": env!("RYFRAME_BUILD_COMMIT"),
         "api_prefix": "/api/v1",
         "endpoints": {
             "auth": "/api/v1/auth",

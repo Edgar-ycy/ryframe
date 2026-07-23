@@ -838,6 +838,10 @@ fn is_upgrade_column(table: &str, column: &str) -> bool {
             | ("sys_role", "is_super")
             | ("sys_menu", "perm_id" | "route_key")
             | (
+                "sys_file",
+                "upload_status" | "reservation_token" | "reservation_expires_at"
+            )
+            | (
                 "sys_login_info" | "sys_oper_log" | "password_reset_requests",
                 "tenant_id"
             )
@@ -852,6 +856,10 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
             "idx_perm_id" | "idx_menu_tenant_perm" | "idx_menu_tenant_route"
         ) | ("sys_login_info" | "sys_oper_log", "idx_tenant_id")
             | ("password_reset_requests", "idx_password_reset_tenant")
+            | (
+                "sys_file",
+                "idx_file_upload_reservation" | "idx_file_reservation_expiry"
+            )
     )
 }
 
@@ -1000,7 +1008,14 @@ mod tests {
     #[test]
     fn legacy_allowlist_is_narrow_and_explicit() {
         assert!(is_upgrade_column("sys_menu", "route_key"));
+        assert!(is_upgrade_column("sys_file", "upload_status"));
+        assert!(is_upgrade_column("sys_file", "reservation_token"));
+        assert!(is_upgrade_column("sys_file", "reservation_expires_at"));
+        assert!(is_upgrade_index("sys_file", "idx_file_upload_reservation"));
+        assert!(is_upgrade_index("sys_file", "idx_file_reservation_expiry"));
         assert!(!is_upgrade_column("sys_menu", "name"));
+        assert!(!is_upgrade_column("sys_file", "file_size"));
+        assert!(!is_upgrade_index("sys_file", "idx_file_md5"));
         assert!(!is_legacy_extra_foreign_key(
             "sys_user_role",
             "fk_sys_user_role_user"

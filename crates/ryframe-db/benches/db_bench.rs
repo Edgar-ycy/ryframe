@@ -41,7 +41,8 @@ fn bench_db_insert(c: &mut Criterion) {
                 rt.block_on(async {
                     let user = ryframe_db::entities::user::Model {
                         id: std::hint::black_box(
-                            ryframe_common::utils::snowflake::next_snowflake_id(),
+                            ryframe_common::utils::snowflake::try_next_snowflake_id()
+                                .expect("generate benchmark ID"),
                         ),
                         tenant_id: "system".into(),
                         username: format!("bench_user_{}", rand::random::<u32>()),
