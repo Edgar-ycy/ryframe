@@ -12,7 +12,7 @@ ryframe-common = { path = "../ryframe-common" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-core = { path = "../ryframe-core" }
 async-trait = { workspace = true }
-jsonwebtoken = { workspace = true, features = ["rust_crypto"] }
+jsonwebtoken = { workspace = true, features = ["aws_lc_rs"] }
 argon2 = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

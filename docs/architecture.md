@@ -173,8 +173,8 @@ flowchart LR
 
 ### P2：控制剩余复杂度热点
 
-- `ryframe-config/src/app_config.rs` 仍集中较多配置组合与校验；新增配置域时应按领域拆分类型和验证，不继续扩大单文件。
-- 在线用户 Service 同时包含 Redis/内存实现、会话生命周期和查询映射；新增会话策略前应先按后端与用例拆分，避免继续扩大单文件。
+- `ryframe-config/src/app_config.rs` 保留配置加载、合并和校验编排；环境变量映射、值解析与 TOML 路径写入位于私有 `app_config/environment_overrides/` 子模块。新增配置域时继续按领域拆分类型和验证，不把映射细节移回主文件。
+- 在线用户 Service 主文件只保留公开模型、租户校验和后端分派；Redis、内存、keyspace 与会话编解码位于私有 `online_user_service/` 子模块。新增会话策略应进入对应后端或编解码模块，避免重新耦合。
 - `ryframe-core` 继续只保留被生产链路使用的稳定能力；新增平台抽象必须同时有生产者、消费者、配置、监控和测试。
 
 ## 5. 二次开发书写规范

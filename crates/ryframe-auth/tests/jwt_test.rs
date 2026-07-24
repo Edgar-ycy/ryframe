@@ -5,6 +5,52 @@ use ryframe_auth::jwt::{
 };
 use ryframe_config::AuthConfig;
 
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+struct GoldenHs256Claims {
+    sub: String,
+    name: String,
+    iat: usize,
+}
+
+#[test]
+fn hs256_matches_fixed_golden_vectors() {
+    const SECRET: &str = "your-256-bit-secret";
+    const STANDARD_TOKEN: &str = concat!(
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.",
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.",
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    );
+    const GENERATED_TOKEN: &str = concat!(
+        "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.",
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.",
+        "wrJ__8Q_6BcB2ug9370TBuK5JoAjErqsQtYf7aLcFBk"
+    );
+    let expected = GoldenHs256Claims {
+        sub: "1234567890".into(),
+        name: "John Doe".into(),
+        iat: 1_516_239_022,
+    };
+
+    let encoded = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &expected,
+        &jsonwebtoken::EncodingKey::from_secret(SECRET.as_bytes()),
+    )
+    .unwrap();
+    assert_eq!(encoded, GENERATED_TOKEN);
+
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.required_spec_claims.clear();
+    validation.validate_exp = false;
+    let decoded = jsonwebtoken::decode::<GoldenHs256Claims>(
+        STANDARD_TOKEN,
+        &jsonwebtoken::DecodingKey::from_secret(SECRET.as_bytes()),
+        &validation,
+    )
+    .unwrap();
+    assert_eq!(decoded.claims, expected);
+}
+
 #[test]
 fn test_parse_duration() {
     assert_eq!(parse_duration("1h").unwrap(), 3600);

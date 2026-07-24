@@ -8,6 +8,7 @@ use ryframe_common::{
     ApiResponse, AppError, AppResult,
     utils::file_upload::{UploadConfig, get_content_type},
 };
+use ryframe_core::resilience::CircuitBreaker;
 use ryframe_macro::{get, post, route};
 use ryframe_service::system::file_service::{AVATAR_BUCKET, UPLOAD_BUCKET, UploadResponse};
 use serde::Deserialize;
@@ -33,6 +34,23 @@ pub struct DownloadQuery {
 
 fn default_bucket() -> String {
     UPLOAD_BUCKET.to_string()
+}
+
+fn upload_failure_affects_circuit_breaker(error: &AppError) -> bool {
+    matches!(
+        error,
+        AppError::Database(_) | AppError::ServiceUnavailable(_)
+    )
+}
+
+fn record_upload_result<T>(circuit_breaker: &CircuitBreaker, result: &AppResult<T>) {
+    match result {
+        Ok(_) => circuit_breaker.record_success(),
+        Err(error) if upload_failure_affects_circuit_breaker(error) => {
+            circuit_breaker.record_failure();
+        }
+        Err(_) => {}
+    }
 }
 
 /// 上传文件路由（公开）
@@ -188,7 +206,7 @@ async fn process_multipart_upload(
         }
 
         // 委托 FileService 处理业务逻辑
-        let result = match state
+        let result = state
             .services
             .file
             .upload_single(
@@ -201,17 +219,9 @@ async fn process_multipart_upload(
                     compress,
                 },
             )
-            .await
-        {
-            Ok(result) => {
-                state.runtime.upload_circuit_breaker.record_success();
-                result
-            }
-            Err(err) => {
-                state.runtime.upload_circuit_breaker.record_failure();
-                return Err(err);
-            }
-        };
+            .await;
+        record_upload_result(state.runtime.upload_circuit_breaker.as_ref(), &result);
+        let result = result?;
 
         results.push(result);
     }
@@ -269,4 +279,80 @@ pub async fn download_file(
     );
 
     Ok((headers, data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{record_upload_result, upload_failure_affects_circuit_breaker};
+    use ryframe_common::{AppError, AppResult};
+    use ryframe_core::resilience::{CircuitBreaker, CircuitState};
+
+    fn record_error(circuit_breaker: &CircuitBreaker, error: AppError) {
+        let result: AppResult<()> = Err(error);
+        record_upload_result(circuit_breaker, &result);
+    }
+
+    #[test]
+    fn only_transient_dependency_failures_affect_the_upload_circuit_breaker() {
+        for error in [
+            AppError::Validation("invalid extension".into()),
+            AppError::Authentication("unauthenticated".into()),
+            AppError::Authorization("forbidden".into()),
+            AppError::NotFound("missing".into()),
+            AppError::Conflict("quota race".into()),
+            AppError::PayloadTooLarge("too large".into()),
+            AppError::RateLimited("slow down".into(), 1),
+            AppError::Config("invalid configuration".into()),
+            AppError::Internal("non-transient bug".into()),
+        ] {
+            assert!(!upload_failure_affects_circuit_breaker(&error), "{error}");
+        }
+
+        for error in [
+            AppError::Database("database unavailable".into()),
+            AppError::ServiceUnavailable("object storage unavailable".into()),
+        ] {
+            assert!(upload_failure_affects_circuit_breaker(&error), "{error}");
+        }
+    }
+
+    #[test]
+    fn repeated_client_errors_from_one_tenant_do_not_block_other_tenants() {
+        let circuit_breaker = CircuitBreaker::new(2, 60, 1);
+
+        for _ in 0..10 {
+            record_error(
+                &circuit_breaker,
+                AppError::Validation("unsupported extension".into()),
+            );
+            record_error(
+                &circuit_breaker,
+                AppError::PayloadTooLarge("file is too large".into()),
+            );
+        }
+
+        assert_eq!(circuit_breaker.current_state(), CircuitState::Closed);
+        assert!(circuit_breaker.allow_request());
+    }
+
+    #[test]
+    fn dependency_failures_still_open_the_shared_upload_circuit_breaker() {
+        let circuit_breaker = CircuitBreaker::new(2, 60, 1);
+
+        record_error(
+            &circuit_breaker,
+            AppError::Database("database unavailable for tenant-a".into()),
+        );
+        record_error(
+            &circuit_breaker,
+            AppError::Validation("invalid upload from tenant-b".into()),
+        );
+        record_error(
+            &circuit_breaker,
+            AppError::ServiceUnavailable("storage unavailable for tenant-c".into()),
+        );
+
+        assert_eq!(circuit_breaker.current_state(), CircuitState::Open);
+        assert!(!circuit_breaker.allow_request());
+    }
 }

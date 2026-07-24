@@ -301,6 +301,17 @@ impl RedisClient {
             .invoke_async(&mut conn)
             .await
     }
+
+    /// 执行返回整数状态码的 Lua 脚本。
+    pub async fn eval_script_i64<S: AsRef<str>, K: AsRef<str>, V: AsRef<str>>(
+        &self,
+        script: S,
+        keys: &[K],
+        args: &[V],
+    ) -> Result<i64, redis::RedisError> {
+        let value = self.eval_script(script, keys, args).await?;
+        redis::from_redis_value(&value)
+    }
 }
 
 #[cfg(test)]

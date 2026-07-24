@@ -4,27 +4,13 @@
 
 [advisories]
 ignore = [
-    # protobuf < 3.7.2 存在失控递归崩溃漏洞
-    # 传播路径: prometheus 0.13.4 → protobuf 2.28.0
-    # 风险: 中低 - metrics 端点不直接暴露 protobuf 解析面
-    # 解决: 升级 Rust 版本后，prometheus 0.14+ 将使用 protobuf 3.x
-    "RUSTSEC-2024-0437",
-
-    # rsa 0.9.10 存在 Marvin Attack 时序侧信道漏洞
-    # 传播路径: sqlx-mysql → jsonwebtoken 10.4.0 → rsa 0.9.10
-    # 风险: 中 - 需要本地访问且大量请求才能利用
-    # 解决: 上游 rsa crate 已弃用，需等 jsonwebtoken 迁移到 rsa-next 或 rustls-crypto
-    "RUSTSEC-2023-0071",
-
-    # paste 1.0.15 已停止维护
-    # 传播路径: ryframe-common → image 0.25 → ravif 0.13 → rav1e 0.8 → paste 1.0.15
-    # 风险: 极低 - paste 是 macro-only 编译时依赖，无运行时攻击面
-    # 解决: 等待 image crate 升级 ravif 或将 AVIF 设为可选 feature
-    "RUSTSEC-2024-0436",
-
     # proc-macro-error2 已停止维护
-    # 传播路径: 间接依赖（proc macro 编译时依赖）
-    # 风险: 极低 - 仅编译时使用，无运行时攻击面，且功能稳定
-    # 解决: 等待上游 crate 迁移到 manyhow 或 proc-macro2-diagnostics
+    # 传播路径:
+    #   sea-orm 2.0.0 → sea-orm-macros 2.0.0 → sea-bae 0.2.1 → proc-macro-error2
+    #   validator 0.20.0 → validator_derive 0.20.0 → proc-macro-error2
+    # 风险: 极低 - 仅编译时使用，无运行时攻击面；仓库已应用本地兼容补丁
+    # 处置: 等待 SeaORM/validator 上游迁移到维护中的诊断库。
+    # 复查: 每次升级 SeaORM 或 validator 时重新运行 cargo tree -i proc-macro-error2；
+    #       最迟于 2026-10-24 再次评估。
     "RUSTSEC-2026-0173",
 ]

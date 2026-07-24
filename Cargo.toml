@@ -52,7 +52,13 @@ http = "1"
 
 sysinfo = "0.39"
 
-image = { version = "0.25" }
+image = { version = "0.25", default-features = false, features = [
+    "bmp",
+    "gif",
+    "jpeg",
+    "png",
+    "webp",
+] }
 calamine = { version = "0.36" }
 rust_xlsxwriter = { version = "0.94" }
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
@@ -64,7 +70,9 @@ tower = { version = "0.5" }
 tower-http = { version = "0.6" }
 ammonia = "4"
 dashmap = "6"
-zip = "8.6"
+zip = { version = "8.6", default-features = false, features = [
+    "deflate-flate2-zlib-rs",
+] }
 prometheus = "0.14"
 lazy_static = "1"
 criterion = { version = "0.8", default-features = false }
