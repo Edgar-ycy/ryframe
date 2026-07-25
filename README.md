@@ -156,9 +156,14 @@ config/app.prod.toml
 | `APP_GENERATOR_DATA_SOURCE` | 代码生成器读取的数据源名 | `primary` |
 | `APP_AUTH_JWT_SECRET` | JWT 签名密钥；生产环境必须随机生成且至少 32 字节 | 开发配置值 |
 | `APP_REDIS_MODE` | `required`、`optional` 或 `disabled`；生产固定 required | `optional` |
+| `APP_REDIS_TLS` | Redis 是否使用证书校验的 `rediss://`；远程生产 Redis 必须启用 | `false` |
+| `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；远程生产数据库使用 `verify_identity` | `disabled` |
 | `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
+| `APP_API_DOCS_ENABLED` | 是否暴露运行时 Swagger/OpenAPI；生产必须关闭 | `true` |
+| `APP_MONITOR_METRICS_BEARER_TOKEN` | Prometheus 专用 Bearer Token；生产至少 32 字节 | 空 |
 | `APP_OBJECT_STORAGE_BACKEND` | `local`、`rustfs`、`minio` 或 `s3` | 按环境配置 |
 | `APP_OBJECT_STORAGE_ENDPOINT` | RustFS/MinIO/S3 API 地址 | 按环境配置 |
+| `APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION` | 显式确认生产单实例/共享卷使用本地存储 | `false` |
 | `OTEL_ENABLED` | 是否启用链路追踪 | `false` |
 | `OTEL_ENDPOINT` | OTLP 上报地址 | `http://localhost:4318/v1/traces` |
 | `OTEL_SERVICE_NAME` | 服务名 | `ryframe` |
@@ -167,6 +172,7 @@ config/app.prod.toml
 生产环境不要把密钥、数据库密码、对象存储凭据写入仓库，建议通过环境变量或部署平台注入。
 配置在启动时完成解密和严格校验；配置文件或环境变量变化后必须重启进程才会生效。
 容器镜像默认使用 `APP_ENV=prod`，启动时必须通过 `docker run -e SNOWFLAKE_WORKER_ID=<唯一节点号> ...` 或编排平台注入节点 ID；滚动发布期间新旧实例也不能复用同一个值。Snowflake 遇到时钟回拨或单毫秒序列耗尽会立即返回可重试的 503，不会等待或生成逻辑未来时间；由于时间戳高水位不跨重启持久化，同一 worker ID 只能在物理时间超过其最后生成时间后复用。
+生产环境的数据库、Redis 和对象存储如果跨主机，必须启用证书校验的 TLS；多实例部署应使用 RustFS/MinIO/S3，本地存储只允许单实例或经过验证的共享持久卷。详细要求见[生产部署基线](docs/production-deployment.md)。
 
 ## 文档
 
@@ -176,6 +182,9 @@ config/app.prod.toml
 - [数据库指南](docs/db-guide.md)
 - [对象存储与 RustFS 指南](docs/storage-guide.md)
 - [前端集成指南](docs/frontend-integration.md)
+- [生产部署基线](docs/production-deployment.md)
+- [生产监控与值班手册](docs/operations-runbook.md)
+- [容量测试与验收标准](docs/capacity-guide.md)
 
 
 ## 许可

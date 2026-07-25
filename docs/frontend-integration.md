@@ -304,7 +304,7 @@ Content-Disposition: attachment; filename="users.xlsx"
 
 | 接口 | 响应类型 | 说明 |
 | --- | --- | --- |
-| `GET /monitor/metrics` | `text/plain` | Prometheus 指标文本，不是统一 JSON。 |
+| `GET /monitor/metrics` | `text/plain` | Prometheus 指标文本，不是统一 JSON；生产由内网 allowlist 和独立 Bearer Token 保护，不供管理端浏览器调用。 |
 | `GET /monitor/server` | JSON | 服务器 CPU、内存、磁盘等信息。 |
 | `GET /monitor/cache` | JSON | Redis 或缓存概览。 |
 | `GET /monitor/cache/commands` | JSON | 缓存命令统计。 |

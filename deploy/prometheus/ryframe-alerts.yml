@@ -1,0 +1,200 @@
+groups:
+  - name: ryframe.application
+    interval: 30s
+    rules:
+      - alert: RyFrameHighHttpErrorRate
+        expr: |
+          (
+            sum(rate(ryframe_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(ryframe_http_requests_total[5m])), 0.001)
+          ) > 0.02
+          and sum(rate(ryframe_http_requests_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "RyFrame 5xx error rate is above 2%"
+          description: "The 5xx ratio has exceeded 2% for 10 minutes."
+          runbook: "docs/operations-runbook.md#http-5xx-与高延迟"
+
+      - alert: RyFrameHttpLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(ryframe_http_request_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame HTTP P95 latency is above 500 ms"
+          runbook: "docs/operations-runbook.md#http-5xx-与高延迟"
+
+      - alert: RyFrameHttpLatencyP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(ryframe_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "RyFrame HTTP P99 latency is above 1 second"
+          runbook: "docs/operations-runbook.md#http-5xx-与高延迟"
+
+      - alert: RyFrameRedisDegraded
+        expr: max by (instance, subsystem) (ryframe_redis_degraded_state) == 1
+        for: 2m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "RyFrame reports Redis degradation"
+          description: "Redis-dependent subsystem {{ $labels.subsystem }} is degraded on {{ $labels.instance }}."
+          runbook: "docs/operations-runbook.md#redis-降级"
+
+      - alert: RyFrameRedisDegradationEvents
+        expr: sum by (instance, subsystem) (increase(ryframe_redis_degraded_total[10m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "Repeated Redis degradation events"
+          description: "Subsystem {{ $labels.subsystem }} recorded repeated degradation events."
+          runbook: "docs/operations-runbook.md#redis-降级"
+
+      - alert: RyFrameRefreshTokenReplay
+        expr: increase(ryframe_auth_refresh_replay_total[5m]) > 0
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "Refresh-token replay detected"
+          description: "At least one confirmed refresh-token replay was detected in the last 5 minutes."
+          runbook: "docs/operations-runbook.md#refresh-token-重放"
+
+      - alert: RyFrameRateLimitRejectionsHigh
+        expr: sum by (instance, scope) (rate(ryframe_rate_limit_rejections_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame rate-limit rejection rate is high"
+          description: "Scope {{ $labels.scope }} is rejecting more than one request per second."
+          runbook: "docs/operations-runbook.md#限流拒绝"
+
+  - name: ryframe.dependencies
+    interval: 30s
+    rules:
+      # Requires prometheus/mysqld_exporter. Adjust the job label to the deployment.
+      - alert: RyFrameMySqlConnectionPoolNearCapacity
+        expr: |
+          (
+            mysql_global_status_threads_connected
+            /
+            clamp_min(mysql_global_variables_max_connections, 1)
+          ) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "MySQL connections exceed 80% of capacity"
+          runbook: "docs/operations-runbook.md#数据库连接容量"
+
+      - alert: RyFrameMySqlConnectionPoolExhausted
+        expr: |
+          (
+            mysql_global_status_threads_connected
+            /
+            clamp_min(mysql_global_variables_max_connections, 1)
+          ) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "MySQL connections exceed 95% of capacity"
+          runbook: "docs/operations-runbook.md#数据库连接容量"
+
+      # Requires prometheus/node_exporter on application and storage nodes.
+      - alert: RyFrameDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            /
+            node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}
+          ) < 0.15
+        for: 15m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "Filesystem has less than 15% free space"
+          description: "{{ $labels.instance }} mount {{ $labels.mountpoint }} is running low on space."
+          runbook: "docs/operations-runbook.md#磁盘容量"
+
+      - alert: RyFrameDiskSpaceCritical
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            /
+            node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}
+          ) < 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "Filesystem has less than 5% free space"
+          runbook: "docs/operations-runbook.md#磁盘容量"
+
+      # The backup job must publish this Unix timestamp through node_exporter's
+      # textfile collector or Pushgateway only after backup validation succeeds.
+      - alert: RyFrameBackupStale
+        expr: time() - ryframe_backup_last_success_timestamp_seconds > 90000
+        for: 30m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "No validated RyFrame backup in the last 25 hours"
+          runbook: "docs/operations-runbook.md#备份失败或过期"
+
+      - alert: RyFrameBackupMetricMissing
+        expr: absent(ryframe_backup_last_success_timestamp_seconds)
+        for: 30m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "RyFrame backup success metric is missing"
+          runbook: "docs/operations-runbook.md#备份失败或过期"
+
+      # Requires blackbox_exporter probe_success and TLS expiry metrics.
+      - alert: RyFrameTlsCertificateExpiresSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 14 * 24 * 60 * 60
+        for: 1h
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame TLS certificate expires within 14 days"
+          runbook: "docs/operations-runbook.md#tls-证书"
+
+      - alert: RyFrameTlsCertificateExpiresCritical
+        expr: probe_ssl_earliest_cert_expiry - time() < 3 * 24 * 60 * 60
+        for: 15m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "RyFrame TLS certificate expires within 3 days"
+          runbook: "docs/operations-runbook.md#tls-证书"

@@ -10,6 +10,10 @@ GET /api/v1/api-docs/openapi.json
 GET /api/v1/swagger-ui
 ```
 
+以上运行时文档只用于开发和受控测试环境。生产配置强制
+`APP_API_DOCS_ENABLED=false`，公网 Nginx 也应返回 `404`；生产排查使用仓库中经过
+CI 校验的 `openapi/openapi.json`。
+
 ## 1. 基础约定
 
 默认前缀：

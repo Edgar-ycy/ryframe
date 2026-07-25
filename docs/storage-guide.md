@@ -80,6 +80,18 @@ backend = "local"
 local_base_dir = "uploads"
 ```
 
+生产环境默认拒绝 `local`。只有单实例，或所有实例挂载同一个且已验证锁、原子重命名和
+read-after-write 语义的共享持久卷时，才能显式设置：
+
+```text
+APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION=true
+APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads
+```
+
+该开关只是风险确认，不会自动创建共享卷或备份。容器重建、滚动部署和跨节点读取都必须
+看到同一对象集合；无法证明时使用 RustFS/MinIO/S3。远程对象存储必须启用 HTTPS
+（`APP_OBJECT_STORAGE_USE_SSL=true`），并让容器信任服务端证书链。
+
 ## 4. 运行时检查
 
 受保护接口 `GET /api/v1/monitor/runtime` 返回对象存储后端、端点和动态连接状态。`connected` 会实际检查 `uploads` 与 `avatar`，不是静态配置回显。
