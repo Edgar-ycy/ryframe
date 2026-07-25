@@ -1,8 +1,8 @@
 use std::sync::Mutex;
 
 use ryframe_config::{
-    AppConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, RedisConfig, RedisMode,
-    StorageBackend,
+    AppConfig, AuthConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, DbTlsMode,
+    GeneratorConfig, LoggerConfig, RateLimitConfig, RedisConfig, RedisMode, StorageBackend,
 };
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -22,6 +22,12 @@ fn test_load_and_validate_config() {
     assert_eq!(cfg.database.sources.len(), 1);
     assert_ne!(cfg.database.sources[0].name, "primary");
     assert_eq!(cfg.generator.data_source, cfg.database.sources[0].name);
+    assert_eq!(
+        cfg.rate_limit
+            .api_limits
+            .get("POST /api/v1/auth/password-reset/complete"),
+        Some(&3)
+    );
 
     // 空应用名应校验失败
     let mut bad = cfg.clone();
@@ -69,15 +75,20 @@ fn test_env_overrides_are_applied_before_validation() {
         std::env::set_var("APP_DATABASE_PASSWORD", "db-secret-from-env");
         std::env::set_var(
             "APP_DATABASE_REPLICAS",
-            r#"[{"name":"replica-a","host":"replica-a","port":3306,"database":"ryframe","username":"root","password":"replica-secret","max_connections":5,"min_connections":1}]"#,
+            r#"[{"name":"replica-a","host":"replica-a","port":3306,"database":"ryframe","username":"root","password":"replica-secret","max_connections":5,"min_connections":1,"tls_mode":"verify_identity","tls_ca":"certs/mysql-ca.pem"}]"#,
         );
         std::env::set_var(
             "APP_DATABASE_SOURCES",
-            r#"[{"name":"reporting","host":"reporting-db","port":3306,"database":"reporting_data","username":"reporting","password":"reporting-secret","max_connections":5,"min_connections":1}]"#,
+            r#"[{"name":"reporting","host":"reporting-db","port":3306,"database":"reporting_data","username":"reporting","password":"reporting-secret","max_connections":5,"min_connections":1,"tls_mode":"verify_identity","tls_ca":"certs/mysql-ca.pem"}]"#,
         );
         std::env::set_var("APP_GENERATOR_DATA_SOURCE", "reporting");
         std::env::set_var("APP_OBJECT_STORAGE_ACCESS_KEY", "object-access");
         std::env::set_var("APP_OBJECT_STORAGE_SECRET_KEY", "object-secret");
+        std::env::set_var("APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION", "true");
+        std::env::set_var(
+            "APP_MONITOR_METRICS_BEARER_TOKEN",
+            "metrics-token-for-production-tests-32-bytes",
+        );
         std::env::set_var("APP_RATE_LIMIT_ENABLED", "false");
         std::env::set_var("SNOWFLAKE_WORKER_ID", "17");
         std::env::set_var(
@@ -175,10 +186,11 @@ fn test_connection_urls() {
         idle_timeout_secs: 600,
         max_lifetime_secs: 1800,
         connect_timeout_secs: 10,
+        ..DbConnection::default()
     };
     assert_eq!(
         conn.connection_url(),
-        "mysql://admin:secret@db.example.com:3306/myapp?collation=utf8mb4_general_ci"
+        "mysql://admin:secret@db.example.com:3306/myapp?collation=utf8mb4_general_ci&ssl-mode=disabled"
     );
 
     let redis = RedisConfig {
@@ -189,11 +201,92 @@ fn test_connection_urls() {
         database: 1,
         max_pool_size: 10,
         timeout_secs: 5,
+        ..RedisConfig::default()
     };
     assert_eq!(
         redis.connection_url(),
         "redis://:redispass@cache.example.com:6380/1"
     );
+}
+
+#[test]
+fn nested_configuration_rejects_unknown_fields() {
+    assert!(
+        toml::from_str::<AuthConfig>(
+            r#"
+            jwt_secret = "secret"
+            access_token_expire = "1h"
+            refresh_token_expire = "24h"
+            max_login_atempts = 5
+            "#,
+        )
+        .is_err()
+    );
+    assert!(toml::from_str::<RateLimitConfig>("capcity = 100").is_err());
+    assert!(
+        toml::from_str::<LoggerConfig>(
+            r#"
+            level = "info"
+            format = "json"
+            output = "stdout"
+            formt = "text"
+            "#,
+        )
+        .is_err()
+    );
+    assert!(
+        toml::from_str::<GeneratorConfig>(
+            r#"
+            data_source = "primary"
+            data_sorce = "typo"
+            "#,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn production_hardening_requires_secure_remote_dependencies_and_explicit_exposure() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("APP_ENV", "dev");
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "27");
+    }
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let mut config = AppConfig::load(config_dir).unwrap();
+    config.auth.jwt_secret = "production-secret-with-at-least-32-bytes".into();
+    config.cors.allow_origins = vec!["https://admin.example.com".into()];
+    config.api_docs.enabled = false;
+    config.monitor.metrics_bearer_token = "metrics-secret-with-at-least-32-bytes".into();
+    config.redis.as_mut().unwrap().mode = RedisMode::Required;
+
+    config.api_docs.enabled = true;
+    assert!(config.validate("prod").is_err());
+    config.api_docs.enabled = false;
+
+    config.monitor.metrics_bearer_token.clear();
+    assert!(config.validate("prod").is_err());
+    config.monitor.metrics_bearer_token = "metrics-secret-with-at-least-32-bytes".into();
+
+    config.database.primary.host = "db.example.com".into();
+    assert!(config.validate("prod").is_err());
+    config.database.primary.tls_mode = DbTlsMode::VerifyIdentity;
+    config.database.primary.tls_ca = Some("certs/mysql-ca.pem".into());
+
+    let redis = config.redis.as_mut().unwrap();
+    redis.host = "redis.example.com".into();
+    assert!(config.validate("prod").is_err());
+    config.redis.as_mut().unwrap().tls = true;
+    assert!(config.validate("prod").is_ok());
+
+    config.object_storage.backend = StorageBackend::Local;
+    config.object_storage.allow_local_in_production = false;
+    assert!(config.validate("prod").is_err());
+    config.object_storage.allow_local_in_production = true;
+    assert!(config.validate("prod").is_ok());
+
+    clear_config_env();
 }
 
 #[test]

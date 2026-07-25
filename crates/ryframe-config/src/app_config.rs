@@ -4,8 +4,9 @@ use ryframe_common::{AppError, AppResult};
 use serde::Deserialize;
 
 use crate::{
-    AuthConfig, CorsConfig, DatabaseConfig, GeneratorConfig, LoggerConfig, ObjectStorageConfig,
-    ProxyConfig, RateLimitConfig, RedisConfig, RedisMode, UploadLimitsConfig,
+    ApiDocsConfig, AuthConfig, CorsConfig, DatabaseConfig, GeneratorConfig, LoggerConfig,
+    MonitorConfig, ObjectStorageConfig, ProxyConfig, RateLimitConfig, RedisConfig, RedisMode,
+    UploadLimitsConfig,
 };
 
 mod environment_overrides;
@@ -63,6 +64,10 @@ pub struct AppConfig {
     pub proxy: ProxyConfig,
     #[serde(default)]
     pub upload: UploadLimitsConfig,
+    #[serde(default)]
+    pub api_docs: ApiDocsConfig,
+    #[serde(default)]
+    pub monitor: MonitorConfig,
 }
 
 impl AppConfig {
@@ -104,7 +109,7 @@ impl AppConfig {
         if self.app.port == 0 {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
-        validate_database_connection("database.primary", &self.database.primary)?;
+        validate_database_connection("database.primary", &self.database.primary, env == "prod")?;
 
         let mut replica_names = HashSet::with_capacity(self.database.replicas.len());
         for (index, replica) in self.database.replicas.iter().enumerate() {
@@ -122,6 +127,7 @@ impl AppConfig {
             validate_database_connection(
                 &format!("database.replicas[{index}]"),
                 &replica.connection,
+                env == "prod",
             )?;
         }
         let mut source_names = HashSet::with_capacity(self.database.sources.len());
@@ -150,6 +156,7 @@ impl AppConfig {
             validate_database_connection(
                 &format!("database.sources[{index}]"),
                 &source.connection,
+                env == "prod",
             )?;
         }
         let generator_source = self.generator.data_source.trim();
@@ -206,9 +213,22 @@ impl AppConfig {
                 "production requires redis.mode = \"required\"".into(),
             ));
         }
+        if let Some(redis) = &self.redis {
+            validate_redis_tls(redis, env == "prod")?;
+        }
         if env == "prod" && self.cors.allow_origins.is_empty() {
             return Err(AppError::Config(
                 "production requires at least one explicit CORS origin".into(),
+            ));
+        }
+        if env == "prod" && self.api_docs.enabled {
+            return Err(AppError::Config(
+                "production requires api_docs.enabled = false".into(),
+            ));
+        }
+        if env == "prod" && self.monitor.metrics_bearer_token.trim().len() < 32 {
+            return Err(AppError::Config(
+                "production monitor.metrics_bearer_token must be at least 32 bytes".into(),
             ));
         }
         for origin in &self.cors.allow_origins {
@@ -232,6 +252,13 @@ impl AppConfig {
                 if self.object_storage.local_base_dir.trim().is_empty() {
                     return Err(AppError::Config(
                         "object_storage.local_base_dir 不能为空".into(),
+                    ));
+                }
+                if env == "prod" && !self.object_storage.allow_local_in_production {
+                    return Err(AppError::Config(
+                        "production local object storage requires \
+                         object_storage.allow_local_in_production = true"
+                            .into(),
                     ));
                 }
             }
@@ -313,7 +340,11 @@ fn validate_origin(origin: &str, production: bool) -> AppResult<()> {
     Ok(())
 }
 
-fn validate_database_connection(path: &str, connection: &crate::DbConnection) -> AppResult<()> {
+fn validate_database_connection(
+    path: &str,
+    connection: &crate::DbConnection,
+    production: bool,
+) -> AppResult<()> {
     if connection.database.trim().is_empty() {
         return Err(AppError::Config(format!("{path}.database 不能为空")));
     }
@@ -341,7 +372,68 @@ fn validate_database_connection(path: &str, connection: &crate::DbConnection) ->
             "{path} 的 acquire_timeout_secs 和 connect_timeout_secs 必须大于 0"
         )));
     }
+    let client_cert = non_empty(connection.tls_client_cert.as_deref());
+    let client_key = non_empty(connection.tls_client_key.as_deref());
+    if client_cert.is_some() != client_key.is_some() {
+        return Err(AppError::Config(format!(
+            "{path}.tls_client_cert and tls_client_key must be configured together"
+        )));
+    }
+    if matches!(
+        connection.tls_mode,
+        crate::DbTlsMode::VerifyCa | crate::DbTlsMode::VerifyIdentity
+    ) && non_empty(connection.tls_ca.as_deref()).is_none()
+    {
+        return Err(AppError::Config(format!(
+            "{path}.tls_ca is required for certificate verification"
+        )));
+    }
+    if production
+        && !is_loopback_host(&connection.host)
+        && connection.tls_mode != crate::DbTlsMode::VerifyIdentity
+    {
+        return Err(AppError::Config(format!(
+            "remote production {path} requires tls_mode = \"verify_identity\""
+        )));
+    }
     Ok(())
+}
+
+fn validate_redis_tls(redis: &crate::RedisConfig, production: bool) -> AppResult<()> {
+    let client_cert = non_empty(redis.tls_client_cert.as_deref());
+    let client_key = non_empty(redis.tls_client_key.as_deref());
+    if client_cert.is_some() != client_key.is_some() {
+        return Err(AppError::Config(
+            "redis.tls_client_cert and tls_client_key must be configured together".into(),
+        ));
+    }
+    if !redis.tls
+        && (non_empty(redis.tls_ca.as_deref()).is_some()
+            || client_cert.is_some()
+            || client_key.is_some())
+    {
+        return Err(AppError::Config(
+            "Redis TLS certificate paths require redis.tls = true".into(),
+        ));
+    }
+    if production && !is_loopback_host(&redis.host) && !redis.tls {
+        return Err(AppError::Config(
+            "remote production Redis requires redis.tls = true".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim().trim_matches(['[', ']']);
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 fn normalize_environment(value: &str) -> AppResult<String> {

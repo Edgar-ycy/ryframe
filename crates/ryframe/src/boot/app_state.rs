@@ -28,6 +28,7 @@ pub fn assemble(
     let monitor = ryframe_monitor::MonitorState {
         database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
         redis: redis_client.clone(),
+        metrics_bearer_token: Arc::from(config.monitor.metrics_bearer_token.as_str()),
     };
 
     ryframe_api::AppState {

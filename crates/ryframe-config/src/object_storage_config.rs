@@ -45,6 +45,9 @@ pub struct ObjectStorageConfig {
     /// 本地存储根目录（local 模式下使用）
     #[serde(default = "default_local_base_dir")]
     pub local_base_dir: String,
+    /// Explicit acknowledgement for single-instance/shared-volume production use.
+    #[serde(default)]
+    pub allow_local_in_production: bool,
 
     // ---- RustFS / MinIO / S3 配置 ----
     /// 服务端点 (e.g., "http://localhost:9000")
@@ -73,6 +76,7 @@ impl Default for ObjectStorageConfig {
         Self {
             backend: StorageBackend::Local,
             local_base_dir: "uploads".to_string(),
+            allow_local_in_production: false,
             endpoint: String::new(),
             access_key: String::new(),
             secret_key: String::new(),

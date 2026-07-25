@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 /// 认证配置
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     /// JWT 签名密钥（生产环境务必修改）
     pub jwt_secret: String,

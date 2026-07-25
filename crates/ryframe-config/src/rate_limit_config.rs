@@ -26,6 +26,7 @@ fn default_user_capacity() -> u32 {
 ///
 /// 支持三级限流：全局（IP）、用户级、接口级。
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
     /// 是否启用限流
     #[serde(default = "default_enabled")]

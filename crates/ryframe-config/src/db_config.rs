@@ -1,6 +1,27 @@
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DbTlsMode {
+    #[default]
+    Disabled,
+    Required,
+    VerifyCa,
+    VerifyIdentity,
+}
+
+impl DbTlsMode {
+    const fn as_sqlx_value(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Required => "required",
+            Self::VerifyCa => "verify_ca",
+            Self::VerifyIdentity => "verify_identity",
+        }
+    }
+}
+
 /// SQL 日志输出级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -89,6 +110,18 @@ pub struct DbConnection {
     /// 连接建立超时（秒），默认 10
     #[serde(default = "default_connect_timeout")]
     pub connect_timeout_secs: u64,
+    /// TLS policy. Remote production databases must use `verify_identity`.
+    #[serde(default)]
+    pub tls_mode: DbTlsMode,
+    /// PEM CA certificate used for server verification.
+    #[serde(default)]
+    pub tls_ca: Option<String>,
+    /// Optional mTLS client certificate.
+    #[serde(default)]
+    pub tls_client_cert: Option<String>,
+    /// Optional mTLS client private key.
+    #[serde(default)]
+    pub tls_client_key: Option<String>,
 }
 
 fn default_acquire_timeout() -> u64 {
@@ -109,10 +142,28 @@ impl DbConnection {
     pub fn connection_url(&self) -> String {
         let username = utf8_percent_encode(&self.username, NON_ALPHANUMERIC);
         let password = utf8_percent_encode(&self.password, NON_ALPHANUMERIC);
-        format!(
-            "mysql://{}:{}@{}:{}/{}?collation=utf8mb4_general_ci",
-            username, password, self.host, self.port, self.database
-        )
+        let mut url = format!(
+            "mysql://{}:{}@{}:{}/{}?collation=utf8mb4_general_ci&ssl-mode={}",
+            username,
+            password,
+            self.host,
+            self.port,
+            self.database,
+            self.tls_mode.as_sqlx_value()
+        );
+        for (name, path) in [
+            ("ssl-ca", self.tls_ca.as_deref()),
+            ("ssl-cert", self.tls_client_cert.as_deref()),
+            ("ssl-key", self.tls_client_key.as_deref()),
+        ] {
+            if let Some(path) = path.filter(|value| !value.trim().is_empty()) {
+                url.push('&');
+                url.push_str(name);
+                url.push('=');
+                url.push_str(&utf8_percent_encode(path, NON_ALPHANUMERIC).to_string());
+            }
+        }
+        url
     }
 }
 
@@ -130,6 +181,10 @@ impl Default for DbConnection {
             idle_timeout_secs: 600,
             max_lifetime_secs: 1800,
             connect_timeout_secs: 10,
+            tls_mode: DbTlsMode::Disabled,
+            tls_ca: None,
+            tls_client_cert: None,
+            tls_client_key: None,
         }
     }
 }
@@ -151,7 +206,27 @@ mod tests {
 
         assert_eq!(
             connection.connection_url(),
-            "mysql://user%40name:p%3Aa%2Fs%23%25@127.0.0.1:3306/ryframe-test?collation=utf8mb4_general_ci"
+            "mysql://user%40name:p%3Aa%2Fs%23%25@127.0.0.1:3306/ryframe-test?collation=utf8mb4_general_ci&ssl-mode=disabled"
         );
+    }
+
+    #[test]
+    fn connection_url_includes_tls_identity_and_client_certificates() {
+        let connection = DbConnection {
+            host: "db.example.com".into(),
+            database: "ryframe".into(),
+            username: "app".into(),
+            tls_mode: DbTlsMode::VerifyIdentity,
+            tls_ca: Some("certs/ca.pem".into()),
+            tls_client_cert: Some("certs/client.pem".into()),
+            tls_client_key: Some("certs/client.key".into()),
+            ..DbConnection::default()
+        };
+
+        let url = connection.connection_url();
+        assert!(url.contains("ssl-mode=verify_identity"));
+        assert!(url.contains("ssl-ca=certs%2Fca%2Epem"));
+        assert!(url.contains("ssl-cert=certs%2Fclient%2Epem"));
+        assert!(url.contains("ssl-key=certs%2Fclient%2Ekey"));
     }
 }

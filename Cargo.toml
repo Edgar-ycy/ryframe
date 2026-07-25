@@ -9,10 +9,12 @@ resolver = "3"
 [workspace.package]
 version = "0.5.0"
 edition = "2024"
+rust-version = "1.97"
 authors = ["edgar_ye <edgar@example.com>"]
 license = "MIT"
-repository = ""
-description = "rust开发的框架"
+repository = "https://github.com/Edgar-ycy/ryframe"
+homepage = "https://github.com/Edgar-ycy/ryframe"
+description = "Production-oriented Rust 2024 admin backend with Vue 3, RBAC, observability, and multi-tenant support"
 
 
 [workspace.dependencies]
@@ -62,7 +64,7 @@ image = { version = "0.25", default-features = false, features = [
 calamine = { version = "0.36" }
 rust_xlsxwriter = { version = "0.94" }
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.27", features = ["tokio-rustls-comp", "connection-manager"] }
 
 regex = "1"
 http-body-util = "0.1"

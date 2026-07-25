@@ -145,25 +145,37 @@ pub struct CircuitBreaker {
     half_open_max: u32,
     /// 当前失败计数
     failure_count: AtomicU32,
-    /// HalfOpen 状态下的成功计数
-    half_open_success: AtomicU32,
-    /// 状态变更时间
-    state_changed_at: RwLock<Instant>,
-    /// 当前状态
-    state: RwLock<CircuitState>,
+    /// 当前状态以及 HalfOpen 探测统计
+    ///
+    /// 这些值必须在同一把锁下更新，否则从 Open 切换到 HalfOpen 时，
+    /// 并发请求可能重复重置计数并突破探测上限。
+    status: RwLock<CircuitStatus>,
+}
+
+#[derive(Debug)]
+struct CircuitStatus {
+    state: CircuitState,
+    changed_at: Instant,
+    half_open_success: u32,
+    half_open_in_flight: u32,
 }
 
 impl CircuitBreaker {
     /// 创建新熔断器
     pub fn new(failure_threshold: u32, timeout_secs: u64, half_open_max: u32) -> Self {
+        assert!(half_open_max > 0, "half_open_max must be greater than zero");
+
         Self {
             failure_threshold,
             timeout: Duration::from_secs(timeout_secs),
             half_open_max,
             failure_count: AtomicU32::new(0),
-            half_open_success: AtomicU32::new(0),
-            state_changed_at: RwLock::new(Instant::now()),
-            state: RwLock::new(CircuitState::Closed),
+            status: RwLock::new(CircuitStatus {
+                state: CircuitState::Closed,
+                changed_at: Instant::now(),
+                half_open_success: 0,
+                half_open_in_flight: 0,
+            }),
         }
     }
 
@@ -176,19 +188,29 @@ impl CircuitBreaker {
     ///
     /// 返回 `true` 表示允许执行，`false` 表示熔断中
     pub fn allow_request(&self) -> bool {
-        let state = *self.state.read().unwrap();
-        match state {
+        let mut status = self.status.write().unwrap();
+        match status.state {
             CircuitState::Closed => true,
-            CircuitState::HalfOpen => true,
+            CircuitState::HalfOpen => {
+                // A HalfOpen generation may issue at most half_open_max probes.
+                // Counting completed successes as consumed permits prevents the
+                // breaker from closing while a previously admitted probe is
+                // still in flight.
+                if status.half_open_success + status.half_open_in_flight >= self.half_open_max {
+                    false
+                } else {
+                    status.half_open_in_flight += 1;
+                    true
+                }
+            }
             CircuitState::Open => {
-                let elapsed = self.state_changed_at.read().unwrap().elapsed();
+                let elapsed = status.changed_at.elapsed();
                 if elapsed >= self.timeout {
                     // 超时到期，切换到 HalfOpen
-                    let mut s = self.state.write().unwrap();
-                    let mut t = self.state_changed_at.write().unwrap();
-                    *s = CircuitState::HalfOpen;
-                    *t = Instant::now();
-                    self.half_open_success.store(0, Ordering::SeqCst);
+                    status.state = CircuitState::HalfOpen;
+                    status.changed_at = Instant::now();
+                    status.half_open_success = 0;
+                    status.half_open_in_flight = 1;
                     info!("熔断器进入 HalfOpen 状态，尝试恢复");
                     true
                 } else {
@@ -200,20 +222,26 @@ impl CircuitBreaker {
 
     /// 记录操作成功
     pub fn record_success(&self) {
-        let state = *self.state.read().unwrap();
-        match state {
+        let mut status = self.status.write().unwrap();
+        match status.state {
             CircuitState::Closed => {
                 self.failure_count.store(0, Ordering::SeqCst);
             }
             CircuitState::HalfOpen => {
-                let success = self.half_open_success.fetch_add(1, Ordering::SeqCst) + 1;
-                if success >= self.half_open_max {
-                    let mut s = self.state.write().unwrap();
-                    *s = CircuitState::Closed;
+                // 只接受由 allow_request 发出的探测结果，避免未获许可的
+                // 调用推进 HalfOpen 成功计数。
+                if status.half_open_in_flight == 0 {
+                    return;
+                }
+
+                status.half_open_in_flight -= 1;
+                status.half_open_success += 1;
+                if status.half_open_success >= self.half_open_max {
+                    status.state = CircuitState::Closed;
                     self.failure_count.store(0, Ordering::SeqCst);
-                    self.half_open_success.store(0, Ordering::SeqCst);
-                    let mut t = self.state_changed_at.write().unwrap();
-                    *t = Instant::now();
+                    status.half_open_success = 0;
+                    status.half_open_in_flight = 0;
+                    status.changed_at = Instant::now();
                     info!("熔断器恢复正常（Closed）");
                 }
             }
@@ -226,15 +254,13 @@ impl CircuitBreaker {
 
     /// 记录操作失败
     pub fn record_failure(&self) {
-        let state = *self.state.read().unwrap();
-        match state {
+        let mut status = self.status.write().unwrap();
+        match status.state {
             CircuitState::Closed => {
                 let count = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
                 if count >= self.failure_threshold {
-                    let mut s = self.state.write().unwrap();
-                    *s = CircuitState::Open;
-                    let mut t = self.state_changed_at.write().unwrap();
-                    *t = Instant::now();
+                    status.state = CircuitState::Open;
+                    status.changed_at = Instant::now();
                     warn!(
                         "熔断器触发（Open）: 连续失败 {} 次，将在 {}s 后尝试恢复",
                         count,
@@ -244,11 +270,10 @@ impl CircuitBreaker {
             }
             CircuitState::HalfOpen => {
                 // HalfOpen 状态下失败，立即回到 Open
-                let mut s = self.state.write().unwrap();
-                *s = CircuitState::Open;
-                self.half_open_success.store(0, Ordering::SeqCst);
-                let mut t = self.state_changed_at.write().unwrap();
-                *t = Instant::now();
+                status.state = CircuitState::Open;
+                status.half_open_success = 0;
+                status.half_open_in_flight = 0;
+                status.changed_at = Instant::now();
                 warn!("熔断器恢复失败，重新进入 Open 状态");
             }
             CircuitState::Open => {
@@ -260,6 +285,6 @@ impl CircuitBreaker {
 
     /// 获取当前状态
     pub fn current_state(&self) -> CircuitState {
-        *self.state.read().unwrap()
+        self.status.read().unwrap().state
     }
 }

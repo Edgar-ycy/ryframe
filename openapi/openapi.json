@@ -1653,16 +1653,12 @@
               "request_id": {
                 "type": "string"
               },
-              "reset_token": {
-                "type": "string"
-              },
               "reset_url": {
                 "type": "string"
               }
             },
             "required": [
               "request_id",
-              "reset_token",
               "reset_url",
               "expires_at"
             ],
@@ -5353,16 +5349,12 @@
           "request_id": {
             "type": "string"
           },
-          "reset_token": {
-            "type": "string"
-          },
           "reset_url": {
             "type": "string"
           }
         },
         "required": [
           "request_id",
-          "reset_token",
           "reset_url",
           "expires_at"
         ],
@@ -7575,6 +7567,9 @@
               }
             },
             "description": "Prometheus 指标文本"
+          },
+          "401": {
+            "description": "缺少或无效的监控 Bearer Token"
           }
         },
         "tags": [

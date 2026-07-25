@@ -275,6 +275,8 @@ pub fn test_config() -> AppConfig {
         object_storage: Default::default(),
         proxy: Default::default(),
         upload: Default::default(),
+        api_docs: Default::default(),
+        monitor: Default::default(),
     }
 }
 
@@ -306,6 +308,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
         monitor: ryframe_monitor::MonitorState {
             database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database.clone())),
             redis: None,
+            metrics_bearer_token: Arc::from(""),
         },
         config: config_arc,
         services: Arc::new(AppServices {

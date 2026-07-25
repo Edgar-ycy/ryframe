@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 /// 日志配置
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LoggerConfig {
     /// 日志级别：trace / debug / info / warn / error
     pub level: String,

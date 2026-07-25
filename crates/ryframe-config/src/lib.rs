@@ -3,6 +3,7 @@ mod auth_config;
 mod config_crypto;
 mod cors_config;
 mod db_config;
+mod exposure_config;
 mod generator_config;
 mod logger_config;
 mod object_storage_config;
@@ -15,8 +16,10 @@ pub use auth_config::AuthConfig;
 pub use config_crypto::{ConfigCrypto, decrypt_config};
 pub use cors_config::CorsConfig;
 pub use db_config::{
-    DatabaseConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, SqlLogLevel,
+    DatabaseConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, DbTlsMode,
+    SqlLogLevel,
 };
+pub use exposure_config::{ApiDocsConfig, MonitorConfig};
 pub use generator_config::GeneratorConfig;
 pub use logger_config::LoggerConfig;
 pub use object_storage_config::{ObjectStorageConfig, StorageBackend};

@@ -9,6 +9,13 @@ version = "0.5.0"
 host = "0.0.0.0"
 port = 8080
 
+[api_docs]
+enabled = true
+
+[monitor]
+# Production must inject a random value of at least 32 bytes.
+metrics_bearer_token = ""
+
 [database]
 # SQL 日志级别: off(关闭) / summary(SQL+耗时+行数) / full(含完整SQL)
 sql_log_level = "off"
@@ -21,6 +28,10 @@ username = "root"
 password = ""
 max_connections = 10
 min_connections = 1
+tls_mode = "disabled"
+# tls_ca = "/run/secrets/mysql-ca.pem"
+# tls_client_cert = "/run/secrets/mysql-client.pem"
+# tls_client_key = "/run/secrets/mysql-client.key"
 
 [generator]
 # 读取表结构的数据源名称；默认使用 primary。
@@ -39,6 +50,10 @@ password = ""
 database = 0
 max_pool_size = 16
 timeout_secs = 3
+tls = false
+# tls_ca = "/run/secrets/redis-ca.pem"
+# tls_client_cert = "/run/secrets/redis-client.pem"
+# tls_client_key = "/run/secrets/redis-client.key"
 
 [logger]
 level = "info"
@@ -85,6 +100,7 @@ user_capacity = 500
 # 示例：{"POST /api/v1/auth/login" = 5} 表示登录接口每分钟最多 5 次
 [rate_limit.api_limits]
 "POST /api/v1/auth/login" = 5
+"POST /api/v1/auth/password-reset/complete" = 3
 "GET /api/v1/auth/csrf" = 30
 # 接口级窗口时长（秒）
 api_window_secs = 60
@@ -94,6 +110,8 @@ api_window_secs = 60
 backend = "local"
 # 本地存储根目录
 local_base_dir = "uploads"
+# Must be explicitly enabled for a single replica or a correctly configured shared volume.
+allow_local_in_production = false
 # RustFS / MinIO / S3 端点
 endpoint = ""
 # Access Key（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY 注入）

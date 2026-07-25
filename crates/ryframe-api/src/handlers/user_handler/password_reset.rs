@@ -41,9 +41,8 @@ pub(crate) async fn request_password_reset(
         .await?;
     let response = PasswordResetRequestResponse {
         request_id: outcome.request.id.to_string(),
-        reset_token: outcome.token.clone(),
         reset_url: format!(
-            "/reset-password?tenant_id={}&request_id={}&token={}",
+            "/reset-password#tenant_id={}&request_id={}&token={}",
             outcome.request.tenant_id, outcome.request.id, outcome.token
         ),
         expires_at: outcome.request.expires_at.to_rfc3339(),

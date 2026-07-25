@@ -3,7 +3,12 @@ pub mod server_info;
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode, header},
+    response::IntoResponse,
+};
 use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::{DatabaseMonitor, RedisClient};
 use ryframe_macro::{get, route};
@@ -25,6 +30,7 @@ pub struct DbPoolInfo {
 pub struct MonitorState {
     pub database: Arc<dyn DatabaseMonitor>,
     pub redis: Option<RedisClient>,
+    pub metrics_bearer_token: Arc<str>,
 }
 
 /// Public metrics route. Process and dependency probes live at `/livez` and
@@ -90,10 +96,42 @@ pub async fn cache_commands_handler(
 }
 
 #[utoipa::path(get, path = "/api/v1/monitor/metrics", tag = "服务器监控",
-    responses((status = 200, description = "Prometheus 指标文本", body = String, content_type = "text/plain")))]
-pub async fn metrics_handler() -> axum::response::Response {
+    responses(
+        (status = 200, description = "Prometheus 指标文本", body = String, content_type = "text/plain"),
+        (status = 401, description = "缺少或无效的监控 Bearer Token")
+    ))]
+pub async fn metrics_handler(
+    State(state): State<MonitorState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    if !state.metrics_bearer_token.is_empty()
+        && !has_valid_metrics_token(&headers, &state.metrics_bearer_token)
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let text = ryframe_middleware::metrics::metrics_text();
     text_response(text, "text/plain; version=0.0.4")
+}
+
+fn has_valid_metrics_token(headers: &HeaderMap, expected: &str) -> bool {
+    let Some(actual) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    constant_time_eq(actual.as_bytes(), expected.as_bytes())
+}
+
+fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
+    let max_len = actual.len().max(expected.len());
+    let mut difference = actual.len() ^ expected.len();
+    for index in 0..max_len {
+        difference |= usize::from(actual.get(index).copied().unwrap_or(0))
+            ^ usize::from(expected.get(index).copied().unwrap_or(0));
+    }
+    difference == 0
 }
 
 #[get("/db-pool")]
@@ -124,4 +162,37 @@ fn current_timestamp() -> String {
 
 fn text_response(text: String, content_type: &'static str) -> axum::response::Response {
     ([(axum::http::header::CONTENT_TYPE, content_type)], text).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    use super::{constant_time_eq, has_valid_metrics_token};
+
+    #[test]
+    fn metrics_token_requires_exact_bearer_value() {
+        let mut headers = HeaderMap::new();
+        assert!(!has_valid_metrics_token(&headers, "expected-secret"));
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer wrong-secret"),
+        );
+        assert!(!has_valid_metrics_token(&headers, "expected-secret"));
+
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer expected-secret"),
+        );
+        assert!(has_valid_metrics_token(&headers, "expected-secret"));
+    }
+
+    #[test]
+    fn constant_time_comparison_rejects_prefixes_and_length_mismatches() {
+        assert!(constant_time_eq(b"same", b"same"));
+        assert!(!constant_time_eq(b"same", b"same-but-longer"));
+        assert!(!constant_time_eq(b"same-but-longer", b"same"));
+        assert!(!constant_time_eq(b"same", b"diff"));
+    }
 }

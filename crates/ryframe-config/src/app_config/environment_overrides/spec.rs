@@ -53,6 +53,11 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_APP_VERSION", &["app", "version"]),
     EnvOverride::string("APP_APP_HOST", &["app", "host"]),
     EnvOverride::integer("APP_APP_PORT", &["app", "port"]),
+    EnvOverride::boolean("APP_API_DOCS_ENABLED", &["api_docs", "enabled"]),
+    EnvOverride::string(
+        "APP_MONITOR_METRICS_BEARER_TOKEN",
+        &["monitor", "metrics_bearer_token"],
+    ),
     EnvOverride::string("APP_DATABASE_SQL_LOG_LEVEL", &["database", "sql_log_level"]),
     EnvOverride::string("APP_DATABASE_HOST", &["database", "primary", "host"]),
     EnvOverride::integer("APP_DATABASE_PORT", &["database", "primary", "port"]),
@@ -89,6 +94,19 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_DATABASE_CONNECT_TIMEOUT_SECS",
         &["database", "primary", "connect_timeout_secs"],
     ),
+    EnvOverride::string(
+        "APP_DATABASE_TLS_MODE",
+        &["database", "primary", "tls_mode"],
+    ),
+    EnvOverride::string("APP_DATABASE_TLS_CA", &["database", "primary", "tls_ca"]),
+    EnvOverride::string(
+        "APP_DATABASE_TLS_CLIENT_CERT",
+        &["database", "primary", "tls_client_cert"],
+    ),
+    EnvOverride::string(
+        "APP_DATABASE_TLS_CLIENT_KEY",
+        &["database", "primary", "tls_client_key"],
+    ),
     EnvOverride::json("APP_DATABASE_REPLICAS", &["database", "replicas"]),
     EnvOverride::json("APP_DATABASE_SOURCES", &["database", "sources"]),
     EnvOverride::string("APP_GENERATOR_DATA_SOURCE", &["generator", "data_source"]),
@@ -116,6 +134,10 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::integer("APP_REDIS_DATABASE", &["redis", "database"]),
     EnvOverride::integer("APP_REDIS_MAX_POOL_SIZE", &["redis", "max_pool_size"]),
     EnvOverride::integer("APP_REDIS_TIMEOUT_SECS", &["redis", "timeout_secs"]),
+    EnvOverride::boolean("APP_REDIS_TLS", &["redis", "tls"]),
+    EnvOverride::string("APP_REDIS_TLS_CA", &["redis", "tls_ca"]),
+    EnvOverride::string("APP_REDIS_TLS_CLIENT_CERT", &["redis", "tls_client_cert"]),
+    EnvOverride::string("APP_REDIS_TLS_CLIENT_KEY", &["redis", "tls_client_key"]),
     EnvOverride::string("APP_LOGGER_LEVEL", &["logger", "level"]),
     EnvOverride::string("APP_LOGGER_FORMAT", &["logger", "format"]),
     EnvOverride::string("APP_LOGGER_OUTPUT", &["logger", "output"]),
@@ -165,6 +187,10 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string(
         "APP_OBJECT_STORAGE_LOCAL_BASE_DIR",
         &["object_storage", "local_base_dir"],
+    ),
+    EnvOverride::boolean(
+        "APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION",
+        &["object_storage", "allow_local_in_production"],
     ),
     EnvOverride::string(
         "APP_OBJECT_STORAGE_ENDPOINT",

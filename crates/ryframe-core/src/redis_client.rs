@@ -55,7 +55,7 @@ impl RedisClient {
     /// # Errors
     /// 连接超时或 Redis 不可达时返回错误
     pub async fn connect(config: &RedisConfig) -> Result<Self, redis::RedisError> {
-        let client = redis::Client::open(config.connection_url())?;
+        let client = build_client(config).await?;
 
         // 带超时的连接
         let timeout = Duration::from_secs(config.timeout_secs.max(1));
@@ -312,6 +312,48 @@ impl RedisClient {
         let value = self.eval_script(script, keys, args).await?;
         redis::from_redis_value(&value)
     }
+}
+
+async fn build_client(config: &RedisConfig) -> Result<redis::Client, redis::RedisError> {
+    let url = config.connection_url();
+    if !config.tls {
+        return redis::Client::open(url);
+    }
+
+    let root_cert = read_optional_pem(config.tls_ca.as_deref()).await?;
+    let client_tls = match (
+        config.tls_client_cert.as_deref(),
+        config.tls_client_key.as_deref(),
+    ) {
+        (Some(cert), Some(key)) => Some(redis::ClientTlsConfig {
+            client_cert: read_pem(cert).await?,
+            client_key: read_pem(key).await?,
+        }),
+        _ => None,
+    };
+    redis::Client::build_with_tls(
+        url,
+        redis::TlsCertificates {
+            client_tls,
+            root_cert,
+        },
+    )
+}
+
+async fn read_optional_pem(path: Option<&str>) -> Result<Option<Vec<u8>>, redis::RedisError> {
+    match path.filter(|path| !path.trim().is_empty()) {
+        Some(path) => read_pem(path).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+async fn read_pem(path: &str) -> Result<Vec<u8>, redis::RedisError> {
+    tokio::fs::read(path).await.map_err(|error| {
+        redis::RedisError::from(std::io::Error::new(
+            error.kind(),
+            format!("unable to read Redis TLS file {path}: {error}"),
+        ))
+    })
 }
 
 #[cfg(test)]

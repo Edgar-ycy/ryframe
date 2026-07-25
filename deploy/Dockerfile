@@ -1,15 +1,22 @@
 # syntax=docker/dockerfile:1.7
 ARG RYFRAME_BUILD_COMMIT
+ARG RUST_IMAGE=rust:1.97.1-bookworm
+ARG DEBIAN_IMAGE=debian:12-slim
 
-FROM rust:bookworm AS builder
+FROM ${RUST_IMAGE} AS builder
 ARG RYFRAME_BUILD_COMMIT
 
 WORKDIR /workspace
 COPY . .
-RUN RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
-    cargo build --locked --release -p ryframe --bin ryframe
+RUN --mount=type=cache,id=ryframe-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=ryframe-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=ryframe-target,target=/workspace/target,sharing=locked \
+    RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
+    cargo build --locked --release -p ryframe --bin ryframe \
+    && install --directory /workspace/out \
+    && install --mode=0755 /workspace/target/release/ryframe /workspace/out/ryframe
 
-FROM debian:bookworm-slim AS runtime
+FROM ${DEBIAN_IMAGE} AS runtime
 ARG RYFRAME_BUILD_COMMIT
 
 LABEL org.opencontainers.image.revision="${RYFRAME_BUILD_COMMIT}"
@@ -21,7 +28,7 @@ RUN apt-get update \
     && install --directory --owner=ryframe --group=ryframe /var/lib/ryframe/uploads
 
 WORKDIR /opt/ryframe
-COPY --from=builder /workspace/target/release/ryframe /usr/local/bin/ryframe
+COPY --from=builder /workspace/out/ryframe /usr/local/bin/ryframe
 COPY --chown=ryframe:ryframe config ./config
 COPY --chown=ryframe:ryframe locales ./locales
 

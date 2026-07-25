@@ -48,7 +48,6 @@ pub struct PasswordResetRequestDto {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PasswordResetRequestResponse {
     pub request_id: String,
-    pub reset_token: String,
     pub reset_url: String,
     pub expires_at: String,
 }

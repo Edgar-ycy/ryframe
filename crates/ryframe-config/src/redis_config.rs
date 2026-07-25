@@ -42,6 +42,18 @@ pub struct RedisConfig {
     /// 连接超时（秒）
     #[serde(default = "default_redis_timeout")]
     pub timeout_secs: u64,
+    /// Enable certificate-verified TLS (`rediss://`).
+    #[serde(default)]
+    pub tls: bool,
+    /// Optional PEM CA certificate when the server CA is not in the system trust store.
+    #[serde(default)]
+    pub tls_ca: Option<String>,
+    /// Optional mTLS client certificate in PEM format.
+    #[serde(default)]
+    pub tls_client_cert: Option<String>,
+    /// Optional mTLS client key in PEM format.
+    #[serde(default)]
+    pub tls_client_key: Option<String>,
 }
 
 impl Default for RedisConfig {
@@ -54,6 +66,10 @@ impl Default for RedisConfig {
             database: 0,
             max_pool_size: default_redis_pool_size(),
             timeout_secs: default_redis_timeout(),
+            tls: false,
+            tls_ca: None,
+            tls_client_cert: None,
+            tls_client_key: None,
         }
     }
 }
@@ -79,12 +95,13 @@ impl RedisConfig {
     ///
     /// 示例："redis://:password@127.0.0.1:6379/0"
     pub fn connection_url(&self) -> String {
+        let scheme = if self.tls { "rediss" } else { "redis" };
         if self.password.is_empty() {
-            format!("redis://{}:{}/{}", self.host, self.port, self.database)
+            format!("{scheme}://{}:{}/{}", self.host, self.port, self.database)
         } else {
             let password = utf8_percent_encode(&self.password, NON_ALPHANUMERIC);
             format!(
-                "redis://:{}@{}:{}/{}",
+                "{scheme}://:{}@{}:{}/{}",
                 password, self.host, self.port, self.database
             )
         }
@@ -105,5 +122,15 @@ mod tests {
             config.connection_url(),
             "redis://:p%3Aa%2Fs%23%25%40@127.0.0.1:6379/0"
         );
+    }
+
+    #[test]
+    fn connection_url_uses_rediss_when_tls_is_enabled() {
+        let config = RedisConfig {
+            host: "redis.example.com".into(),
+            tls: true,
+            ..RedisConfig::default()
+        };
+        assert_eq!(config.connection_url(), "rediss://redis.example.com:6379/0");
     }
 }

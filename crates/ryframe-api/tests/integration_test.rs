@@ -1,4 +1,4 @@
-//! API 集成测试
+﻿//! API 集成测试
 //!
 //! 使用隔离 MySQL 8.4 数据库 + axum test client 测试端到端流程。
 
@@ -246,6 +246,8 @@ fn test_config() -> AppConfig {
         object_storage: Default::default(),
         proxy: Default::default(),
         upload: Default::default(),
+        api_docs: Default::default(),
+        monitor: Default::default(),
     }
 }
 
@@ -288,6 +290,7 @@ async fn build_test_app_with_redis(
         monitor: ryframe_monitor::MonitorState {
             database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database.clone())),
             redis: redis.clone(),
+            metrics_bearer_token: Arc::from(""),
         },
         config: config_arc,
         services: Arc::new(AppServices {
@@ -1375,8 +1378,14 @@ async fn test_update_and_delete_operations() {
     assert_eq!(s, StatusCode::OK);
     let reset_data = &body["data"];
     assert!(reset_data["request_id"].as_str().is_some());
-    assert!(reset_data["reset_token"].as_str().is_some());
     assert!(reset_data["reset_url"].as_str().is_some());
+    assert!(reset_data.get("reset_token").is_none());
+    let reset_url = reset_data["reset_url"].as_str().unwrap();
+    assert!(reset_url.starts_with("/reset-password#"));
+    let reset_token = reset_url
+        .split("token=")
+        .nth(1)
+        .expect("reset URL should contain a token fragment");
 
     let request_id = reset_data["request_id"]
         .as_str()
@@ -1421,7 +1430,7 @@ async fn test_update_and_delete_operations() {
             serde_json::to_string(&serde_json::json!({
                 "tenant_id": "system",
                 "request_id": reset_data["request_id"].as_str().unwrap(),
-                "token": reset_data["reset_token"].as_str().unwrap(),
+                "token": reset_token,
                 "new_password": "NewPass123!"
             }))
             .unwrap(),
@@ -1649,7 +1658,7 @@ async fn test_validation_error_scenarios() {
 
 // ==================== 监控端点测试 ====================
 
-/// 监控端点（/metrics 公开，/server /cache /db-pool 需认证；旧 health 已删除）
+/// 监控端点（/metrics 使用独立监控 Token，其他端点使用用户认证）
 #[tokio::test]
 async fn test_monitor_endpoints() {
     let db = setup_test_db().await;
@@ -1698,6 +1707,33 @@ async fn test_monitor_endpoints() {
     let (status, body) = send_request(router.clone(), req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["status"], "connected");
+}
+
+#[tokio::test]
+async fn metrics_endpoint_requires_configured_bearer_token() {
+    let db = setup_test_db().await;
+    let mut state = build_test_app(db.clone()).await;
+    state.monitor.metrics_bearer_token = Arc::from("metrics-test-secret");
+    let router = api_router(state, test_rate_limit_state());
+
+    let request = Request::builder()
+        .uri("/monitor/metrics")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let request = Request::builder()
+        .uri("/monitor/metrics")
+        .header("authorization", "Bearer metrics-test-secret")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        router.oneshot(request).await.unwrap().status(),
+        StatusCode::OK
+    );
 }
 
 // ==================== 日志端点测试 ====================
@@ -2261,6 +2297,23 @@ async fn test_swagger_ui_endpoint() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     assert!(content_type.contains("text/html"), "Swagger UI 应返回 HTML");
+}
+
+#[tokio::test]
+async fn api_documentation_routes_can_be_disabled() {
+    let db = setup_test_db().await;
+    let mut state = build_test_app(db.connection().clone()).await;
+    Arc::make_mut(&mut state.config).api_docs.enabled = false;
+    let router = api_router(state, test_rate_limit_state());
+
+    for uri in ["/swagger-ui", "/api-docs/openapi.json"] {
+        let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        assert_eq!(
+            router.clone().oneshot(request).await.unwrap().status(),
+            StatusCode::NOT_FOUND,
+            "{uri} must not be exposed when API docs are disabled"
+        );
+    }
 }
 
 /// OpenAPI JSON 文档端点

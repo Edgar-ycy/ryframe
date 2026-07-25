@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -213,7 +213,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         &state,
     );
 
-    Router::new()
+    let mut router = Router::new()
         .nest("/auth", auth_router(state.clone()))
         .nest("/platform/tenants", platform)
         .nest(
@@ -230,11 +230,14 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         .nest("/common", common_router(state.clone()))
         // API 版本信息端点
-        .route("/version", get(api_version))
-        // OpenAPI JSON 文档: /api-docs/openapi.json
-        .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
-        // Swagger UI 交互文档: /swagger-ui
-        .route("/swagger-ui", get(swagger_ui))
+        .route("/version", get(api_version));
+
+    if state.config.api_docs.enabled {
+        router = router
+            .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
+            .route("/swagger-ui", get(swagger_ui));
+    }
+    router
 }
 
 fn monitor_router(state: AppState, monitor_state: ryframe_monitor::MonitorState) -> Router {
