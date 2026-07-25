@@ -1,4 +1,4 @@
-name: RC and Stable Release
+name: Release
 run-name: Release ${{ inputs.tag || github.ref_name }}
 
 on:
@@ -33,12 +33,11 @@ permissions:
 
 jobs:
   validate-release:
-    name: Validate coordinated tag and RC identity
+    name: Validate release tag and identity
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       stable_tag: ${{ steps.release.outputs.stable_tag }}
-      prerelease: ${{ steps.release.outputs.prerelease }}
       backend_tag_oid: ${{ steps.release.outputs.backend_tag_oid }}
       backend_commit: ${{ steps.release.outputs.backend_commit }}
       frontend_tag_oid: ${{ steps.release.outputs.frontend_tag_oid }}
@@ -81,84 +80,15 @@ jobs:
             exit 1
           }
 
-      - name: Read published release candidates for stable
-        if: ${{ !contains(inputs.tag || github.ref_name, '-rc.') }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh api
-          "repos/${GITHUB_REPOSITORY}/releases?per_page=100"
-          > "$RUNNER_TEMP/releases.json"
 
-      - name: Collect commit-bound RC observation evidence
-        if: ${{ !contains(inputs.tag || github.ref_name, '-rc.') }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          escaped_tag="${RELEASE_TAG//./\\.}"
-          rc_pattern="^${escaped_tag}-rc\\.[1-9][0-9]*$"
-          rc_tag="$(jq -r --arg pattern "$rc_pattern" '
-            [ .[]
-              | select(.prerelease == true and .draft != true)
-              | select(.published_at != null)
-              | select(.tag_name | test($pattern))
-            ]
-            | sort_by(.published_at, .tag_name)
-            | last
-            | .tag_name // empty
-          ' "$RUNNER_TEMP/releases.json")"
-          [[ -n "$rc_tag" ]] || {
-            echo "No published RC exists for $RELEASE_TAG."
-            exit 1
-          }
-          rc_commit="$(git rev-parse "$rc_tag^{commit}")"
 
-          gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
-            -f sha="$rc_commit" \
-            -f environment=release-candidate \
-            -f per_page=100 \
-            > "$RUNNER_TEMP/deployments-source.json"
-
-          output="$RUNNER_TEMP/deployments.json"
-          printf '[' > "$output"
-          first=true
-          while IFS= read -r deployment; do
-            deployment_id="$(jq -r '.id' <<< "$deployment")"
-            gh api --method GET \
-              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses?per_page=100" \
-              > "$RUNNER_TEMP/deployment-statuses.json"
-            if [[ "$first" == false ]]; then
-              printf ',' >> "$output"
-            fi
-            jq -c --argjson deployment "$deployment" \
-              --slurpfile statuses "$RUNNER_TEMP/deployment-statuses.json" \
-              '$deployment + {statuses: $statuses[0]}' >> "$output"
-            first=false
-          done < <(jq -c '.[]' "$RUNNER_TEMP/deployments-source.json")
-          printf ']\n' >> "$output"
-
-          gh api --method GET \
-            "repos/${GITHUB_REPOSITORY}/environments/stable-release" \
-            > "$RUNNER_TEMP/stable-environment.json"
-      - name: Validate coordinated release inputs
+      - name: Validate release inputs
         shell: bash
         run: |
           set -euo pipefail
-          args=(
-            --tag "$RELEASE_TAG"
+          python scripts/validate_release.py \
+            --tag "$RELEASE_TAG" \
             --frontend-dir frontend
-            --minimum-rc-hours 48
-          )
-          if [[ "$RELEASE_TAG" != *-rc.* ]]; then
-            args+=(
-              --github-releases-json "$RUNNER_TEMP/releases.json"
-              --github-deployments-json "$RUNNER_TEMP/deployments.json"
-              --stable-environment-json "$RUNNER_TEMP/stable-environment.json"
-            )
-          fi
-          python scripts/validate_release.py "${args[@]}"
 
       - name: Export release identity
         id: release
@@ -166,15 +96,9 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          version="${version%%-rc.*}"
-          prerelease=false
-          if [[ "$RELEASE_TAG" == *-rc.* ]]; then
-            prerelease=true
-          fi
           {
             echo "tag=$RELEASE_TAG"
             echo "stable_tag=v$version"
-            echo "prerelease=$prerelease"
             echo "backend_tag_oid=$(git rev-parse "refs/tags/$RELEASE_TAG")"
             echo "backend_commit=$(git rev-parse "$RELEASE_TAG^{commit}")"
             echo "frontend_tag_oid=$(git -C frontend rev-parse "refs/tags/$RELEASE_TAG")"
@@ -295,7 +219,7 @@ jobs:
           python -m compileall -q scripts
           python -m unittest discover -s scripts/tests -p 'test_*.py'
           ruby -e 'require "yaml"; ARGV.each { |path| YAML.parse_file(path) }' \
-            .github/workflows/ci.yml .github/workflows/auto-promote.yml \
+            .github/workflows/ci.yml \
             .github/workflows/release.yml \
             .github/workflows/nightly.yml docker-compose.test.yml
           docker compose -f docker-compose.test.yml config --quiet
@@ -515,13 +439,6 @@ jobs:
 
   stable-approval:
     name: Approve stable promotion
-    if: >-
-      ${{
-        needs.validate-release.outputs.prerelease == 'false' &&
-        !(vars.RYFRAME_AUTO_PROMOTE_STABLE == 'true' &&
-          vars.RYFRAME_RELEASE_BOT != '' &&
-          github.actor == vars.RYFRAME_RELEASE_BOT)
-      }}
     needs:
       - validate-release
       - backend-gate
@@ -547,13 +464,7 @@ jobs:
         needs.validate-release.result == 'success' &&
         needs.backend-gate.result == 'success' &&
         needs.frontend-gate.result == 'success' &&
-        (needs.validate-release.outputs.prerelease == 'true' ||
-         needs.stable-approval.result == 'success' ||
-         (needs.validate-release.outputs.prerelease == 'false' &&
-          needs.stable-approval.result == 'skipped' &&
-          vars.RYFRAME_AUTO_PROMOTE_STABLE == 'true' &&
-          vars.RYFRAME_RELEASE_BOT != '' &&
-          github.actor == vars.RYFRAME_RELEASE_BOT))
+        needs.stable-approval.result == 'success'
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -627,7 +538,6 @@ jobs:
         env:
           STABLE_TAG: ${{ needs.validate-release.outputs.stable_tag }}
           RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
-          PRERELEASE: ${{ needs.validate-release.outputs.prerelease }}
         run: |
           set -euo pipefail
           extract_section() {
@@ -656,9 +566,6 @@ jobs:
 
           {
             printf '# RyFrame %s\n\n' "$RELEASE_TAG"
-            if [[ "$PRERELEASE" == true ]]; then
-              printf '此候选版本至少完成 48 小时 RC 观察后才能晋级 stable。\n\n'
-            fi
             printf '# 后端更新\n\n'
             cat "$backend_notes"
             printf '\n\n# 前端更新\n\n'
@@ -686,8 +593,8 @@ jobs:
           tag_name: ${{ needs.validate-release.outputs.tag }}
           name: RyFrame ${{ needs.validate-release.outputs.tag }}
           body_path: release_body.md
-          prerelease: ${{ needs.validate-release.outputs.prerelease == 'true' }}
-          make_latest: ${{ needs.validate-release.outputs.prerelease == 'false' }}
+          prerelease: false
+          make_latest: true
 
       - name: Verify published notes and zero custom assets
         shell: bash

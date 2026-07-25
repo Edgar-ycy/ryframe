@@ -1,4 +1,4 @@
-# v0.5 发布与回滚指南
+﻿# v0.5 发布与回滚指南
 
 > 最后核对：2026-07-22
 
@@ -80,54 +80,16 @@ gh api --method POST \
 
 stable 工作流会从 GitHub Releases 选择同版本最新发布的 prerelease，同时校验该 RC 的发布时间已超过 48 小时、同一 Deployment 的 `in_progress` 到 `success` 连续至少 48 小时、Deployment 精确绑定 RC 标签与提交，并要求 stable 的后端提交和前端提交都与该 RC 完全相同。仅有 `published_at` 不再构成观察证明。RC 后若修改任何代码，或观察过程被中断，必须发布/部署新的 RC 并重新开始 48 小时窗口。
 
-### 1.1 自动观察与晋级
-
-`.github/workflows/auto-promote.yml` 每小时第 17、47 分钟检查一次最新已发布 RC，不使用长时间 `sleep`。功能默认关闭；启用前在后端仓库 Actions 配置中创建：
-
-- Repository variable `RYFRAME_AUTO_PROMOTE_STABLE=true`。
-- Repository variable `RYFRAME_AUTO_PROMOTE_RC_TAG=v0.5.0-rc.N`，只在该同名 RC 已经真实部署到下述公网地址后设置。
-- Repository variable `RYFRAME_RC_ADMIN_URL=https://ryframe.ryfac.com`。
-- Repository variable `RYFRAME_RC_API_URL=https://api.ryframe.ryfac.com`。
-- Repository variable `RYFRAME_RELEASE_BOT`，值为专用发布账号的 GitHub login。
-- Actions secret `RYFRAME_RELEASE_TOKEN`，值为该账号的 fine-grained PAT。
-
-PAT 只授权 `ryframe` 和 `ryframe-vue3` 两个仓库，Repository permissions 设置为 Actions 读写、Deployments 读写和 Contents 读写；Deployments 和 Actions 写权限只在后端仓库实际使用。使用有有效期的专用账号凭据，不使用个人长期 classic PAT。工作流会通过 `/user` 校验 token 所属账号与 `RYFRAME_RELEASE_BOT` 完全一致，并且只在需要写 Deployment、重试 Release 工作流或推送 tag 的步骤中注入 secret。
-
-被观察的部署必须从两仓对应 RC tag 的干净检出构建，并把完整提交 SHA 写入产物。后端构建时设置 `RYFRAME_BUILD_COMMIT`，前端构建时设置 `VITE_APP_BUILD_COMMIT`：
-
-```bash
-test -z "$(git status --porcelain)"
-commit="$(git rev-parse HEAD)"
-RYFRAME_BUILD_COMMIT="$commit" cargo build --release
-
-# 使用仓库内的生产 Dockerfile 时也必须传入同一提交；缺失或无效 SHA 会直接使镜像构建失败。
-docker build --file deploy/Dockerfile \
-  --build-arg RYFRAME_BUILD_COMMIT="$commit" \
-  --tag "ryframe:$commit" .
-```
-
-```bash
-test -z "$(git status --porcelain)"
-commit="$(git rev-parse HEAD)"
-VITE_APP_BUILD_COMMIT="$commit" pnpm build
-```
-
-后端 `/api/v1/version` 会返回 `source_commit`，前端 dist 根目录会生成 `build-identity.json`。自动路径只处理 `RYFRAME_AUTO_PROMOTE_RC_TAG` 明确登记、且仍是最新已发布 prerelease 的候选版本；设置该变量就是部署方对“公网环境正在运行此 RC”的显式声明。工作流还要求它的前后端提交分别等于两仓当前 `main`，并在每次轮询时通过 HTTPS 检查管理端首页、前端构建 SHA、API `/livez`、`/readyz`、版本及后端构建 SHA。任一 SHA 与候选 tag 提交不一致或探针失败，都会把当前 Deployment 标为 `failure`。工作流还检查前一次定时运行，连续超过 2 小时没有成功心跳时废弃原观察窗口，从新的 `in_progress` 重新计算 48 小时。满足窗口后，它会：
-
-1. 使用现有 `validate_release.py` 复核 RC 发布时间、Deployment、Environment、版本、OpenAPI、提交身份和两仓 CHANGELOG。
-2. 从两仓 `vX.Y.Z` 完整 CHANGELOG 章节创建 annotated stable tag，不允许空说明、lightweight tag、移动或覆盖已有 tag。
-3. 先推送前端 tag 并复核远端 tag object 与 peeled commit，再推送后端 tag。
-4. 由后端 tag push 启动原有 `release.yml` 全量后端/前端门禁；全部通过后创建只包含 GitHub 标准源码快照的 stable Release。
-
-若 RC 发布后任一仓库 `main` 发生变化，自动晋级会拒绝继续，必须发布并部署包含最新代码的同版本下一号 RC、更新 `RYFRAME_AUTO_PROMOTE_RC_TAG`，再重新观察 48 小时。若两仓 stable tag 已存在但 GitHub Release 尚未生成，自动工作流不会移动或重建标签，而是按同一标签调度或重跑 `release.yml`；失败最多尝试 3 次，每次仍执行完整发布门禁，超过上限后要求人工诊断。关闭 `RYFRAME_AUTO_PROMOTE_STABLE` 后，stable 仍走受保护 Environment 的人工审批路径。
 
 ## 2. 上线前准备
 
 1. 确认后端和前端 `main` 均已通过各自 CI，版本、OpenAPI 和生成类型一致。
 2. 使用 `deploy.sh backup` 备份 MySQL，并执行 `validate` 与 `rehearse` 临时库恢复演练。
 3. 备份旧配置；以 `deploy/redis/redis.conf` 为基线确认生产 Redis 开启 AOF 持久化并使用 `noeviction`，同时配置部署环境专属的 TLS、网络边界和 ACL。
-4. 验证 API 与管理端证书、同站子域、可信代理 CIDR、CORS Origin 和 Cookie Secure 属性。
-5. 准备蓝绿或双 upstream，两端的新版本在未接流量时先通过 `/livez` 和 `/readyz`。
+4. 按[生产部署基线](production-deployment.md)核对 MySQL/Redis/对象存储 TLS、metrics allowlist 与 Token、API 文档关闭和持久存储；按[容量验收标准](capacity-guide.md)保留当前版本报告。
+5. 加载 `deploy/prometheus/ryframe-alerts.yml`，逐条确认查询有数据并完成 Alertmanager 测试通知；值班人熟悉[生产监控与值班手册](operations-runbook.md)。
+6. 验证 API 与管理端证书、同站子域、可信代理 CIDR、CORS Origin 和 Cookie Secure 属性。
+7. 准备蓝绿或双 upstream，两端的新版本在未接流量时先通过 `/livez` 和 `/readyz`。
 
 v0.4 会话没有 `sid`，切换后会主动失效，用户需要重新登录。上线公告必须明确这一点。
 

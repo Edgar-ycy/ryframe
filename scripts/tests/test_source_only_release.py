@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 import unittest
@@ -75,61 +75,6 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
                 self.assertIn(fragment, source)
         self.assertNotIn("ARG RYFRAME_BUILD_COMMIT=", source)
 
-    def test_automatic_promotion_preserves_rc_and_release_gates(self) -> None:
-        promotion = (WORKFLOWS / "auto-promote.yml").read_text(encoding="utf-8")
-        release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-
-        for fragment in (
-            "RYFRAME_AUTO_PROMOTE_STABLE == 'true'",
-            "github.ref == 'refs/heads/main'",
-            "RYFRAME_AUTO_PROMOTE_RC_TAG",
-            'RC_MINIMUM_SECONDS: "172800"',
-            'RC_MAX_HEARTBEAT_GAP_SECONDS: "7200"',
-            'RELEASE_RETRY_LIMIT: "3"',
-            'RELEASE_RETRY_DELAY_SECONDS: "600"',
-            "RYFRAME_RELEASE_TOKEN",
-            "RYFRAME_RELEASE_BOT",
-            '"$admin_url/"',
-            '"$admin_url/build-identity.json?run=$GITHUB_RUN_ID"',
-            '"$api_url/livez"',
-            '"$api_url/readyz"',
-            '"$api_url/api/v1/version?run=$GITHUB_RUN_ID"',
-            ".frontend_commit == $commit",
-            ".source_commit == $commit",
-            "--minimum-rc-hours 48",
-            "Automated RC observation heartbeat was interrupted",
-            "Probe the public release-candidate environment",
-            "persist-credentials: false",
-            "git tag -a --cleanup=verbatim",
-            'git -C frontend push origin "refs/tags/${STABLE_TAG}"',
-            'git push origin "refs/tags/${STABLE_TAG}"',
-            'gh workflow run release.yml --ref main -f tag="$STABLE_TAG"',
-            '"repos/$GITHUB_REPOSITORY/actions/runs/${run_id}/rerun"',
-        ):
-            with self.subTest(fragment=fragment):
-                self.assertIn(fragment, promotion)
-
-        self.assertNotIn("sleep 48", promotion)
-        self.assertNotIn("git tag -f", promotion)
-        self.assertNotIn("git push --force", promotion)
-        self.assertNotIn(
-            "RYFRAME_RELEASE_TOKEN",
-            promotion.split("    steps:", maxsplit=1)[0],
-        )
-        self.assertLess(
-            promotion.index('git -C frontend push origin "refs/tags/${STABLE_TAG}"'),
-            promotion.index('git push origin "refs/tags/${STABLE_TAG}"'),
-        )
-        self.assertIn("github.actor == vars.RYFRAME_RELEASE_BOT", release)
-        self.assertIn("needs.stable-approval.result == 'skipped'", release)
-        self.assertIn("workflow_dispatch:", release)
-        self.assertIn("inputs.tag || github.ref_name", release)
-
-    def test_ci_parses_the_automatic_promotion_workflow(self) -> None:
-        for workflow in ("ci.yml", "release.yml"):
-            source = (WORKFLOWS / workflow).read_text(encoding="utf-8")
-            with self.subTest(workflow=workflow):
-                self.assertIn(".github/workflows/auto-promote.yml", source)
 
     def test_pnpm_action_uses_node24_runtime(self) -> None:
         references: list[tuple[str, str]] = []
