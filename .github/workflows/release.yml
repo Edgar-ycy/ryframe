@@ -44,7 +44,7 @@ jobs:
       frontend_commit: ${{ steps.release.outputs.frontend_commit }}
     steps:
       - name: Check out backend tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref_name }}
@@ -62,7 +62,7 @@ jobs:
           [[ "$(git rev-parse "$RELEASE_TAG^{commit}")" == "$(git rev-parse HEAD)" ]]
 
       - name: Check out matching frontend tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: Edgar-ycy/ryframe-vue3
           ref: ${{ inputs.tag || github.ref_name }}
@@ -144,7 +144,7 @@ jobs:
       DB_PASSWORD: ryframe_test_password
       BACKUP_DIR: target/release-gate-backups
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -161,7 +161,7 @@ jobs:
         uses: taiki-e/install-action@cargo-deny
 
       - name: Set up Node.js for runtime smoke
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
 
@@ -171,7 +171,7 @@ jobs:
           sudo apt-get install --yes shellcheck default-mysql-client
 
       - name: Rust cache
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry/index/
@@ -399,22 +399,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out backend contract
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Check out matching frontend tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: Edgar-ycy/ryframe-vue3
           ref: ${{ needs.validate-release.outputs.tag }}
           path: frontend
 
       - name: Set up pinned pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@v4
         with:
           version: 10.28.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
@@ -470,20 +470,20 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
       - name: Check out matching frontend Changelog
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: Edgar-ycy/ryframe-vue3
           ref: ${{ needs.validate-release.outputs.frontend_commit }}
           fetch-depth: 0
           path: frontend
 
-      - name: Revalidate coordinated tag objects
+      - name: Revalidate tag objects
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
