@@ -3,6 +3,7 @@ use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 
 use crate::entities::{dict_data, dict_type};
@@ -72,6 +73,38 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
 }
 
 impl DictTypeRepository {
+    /// 按主键递增游标读取字典类型导出批次。
+    pub async fn find_for_export_after_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        filter: &DictTypeFilter<'_>,
+        after_id: Option<i64>,
+        limit: u64,
+    ) -> AppResult<Vec<dict_type::Model>> {
+        let mut select = dict_type::Entity::find()
+            .filter(dict_type::Column::TenantId.eq(tenant_id))
+            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL));
+        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(dict_type::Column::Name.contains(name));
+        }
+        if let Some(code) = filter.code.filter(|value| !value.is_empty()) {
+            select = select.filter(dict_type::Column::Code.contains(code));
+        }
+        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(dict_type::Column::Status.eq(status));
+        }
+        if let Some(id) = after_id {
+            select = select.filter(dict_type::Column::Id.gt(id));
+        }
+        select
+            .order_by_asc(dict_type::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,

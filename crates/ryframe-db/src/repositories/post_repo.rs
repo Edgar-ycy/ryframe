@@ -3,11 +3,19 @@ use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 
 use crate::entities::post;
 
 pub struct PostRepository;
+
+#[derive(Debug, Default)]
+pub struct PostFilter<'a> {
+    pub name: Option<&'a str>,
+    pub code: Option<&'a str>,
+    pub status: Option<&'a str>,
+}
 
 #[async_trait]
 impl Repository<post::Model, i64> for PostRepository {
@@ -65,6 +73,38 @@ impl Repository<post::Model, i64> for PostRepository {
 }
 
 impl PostRepository {
+    /// 按主键递增游标读取岗位导出批次。
+    pub async fn find_for_export_after_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        filter: &PostFilter<'_>,
+        after_id: Option<i64>,
+        limit: u64,
+    ) -> AppResult<Vec<post::Model>> {
+        let mut select = post::Entity::find()
+            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+            .filter(post::Column::TenantId.eq(tenant_id));
+        if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(post::Column::Name.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
+            select = select.filter(post::Column::Code.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(post::Column::Status.eq(value));
+        }
+        if let Some(id) = after_id {
+            select = select.filter(post::Column::Id.gt(id));
+        }
+        select
+            .order_by_asc(post::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     /// 按岗位编码查找
     pub async fn find_by_code(
         &self,

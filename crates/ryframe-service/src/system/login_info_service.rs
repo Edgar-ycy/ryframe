@@ -137,6 +137,47 @@ impl LoginInfoService {
         })
     }
 
+    /// 以稳定主键游标分批读取登录日志导出数据，并延续当前数据范围约束。
+    pub async fn find_for_export(
+        &self,
+        actor: &ActorContext,
+        query: &LoginInfoQuery,
+        maximum_records: usize,
+    ) -> AppResult<Vec<LoginInfoVo>> {
+        const BATCH_SIZE: u64 = 1_000;
+
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let scope_ctx = actor.data_scope_context();
+        let db = self.db.read();
+        let (begin_time, end_time) =
+            parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref());
+        let mut after_id = None;
+        let mut records = Vec::new();
+        loop {
+            let filter = LoginInfoFilter {
+                user_name: query.user_name.as_deref(),
+                status: query.status.as_deref(),
+                begin_time,
+                end_time,
+            };
+            let batch = self
+                .login_info_repo
+                .find_for_export_after_id(&db, tenant_id, filter, &scope_ctx, after_id, BATCH_SIZE)
+                .await?;
+            if batch.is_empty() {
+                break;
+            }
+            after_id = batch.last().map(|log| log.id);
+            records.extend(batch.into_iter().map(LoginInfoVo::from));
+            if records.len() > maximum_records {
+                return Err(ryframe_kernel::AppError::Validation(format!(
+                    "导出记录数超过 {maximum_records} 条上限"
+                )));
+            }
+        }
+        Ok(records)
+    }
+
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();

@@ -5,7 +5,8 @@ use ryframe_core::{
 };
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
-    DeptRepository, PermissionRepository, RoleRepository, TenantRepository, entities::role,
+    DeptRepository, PermissionRepository, RoleFilter, RoleRepository, TenantRepository,
+    entities::role,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -149,6 +150,43 @@ impl RoleService {
             .await?;
         let records = page.records.into_iter().map(RoleVo::from).collect();
         Ok(PageResult::new(records, page.total, &params.page))
+    }
+
+    /// 以稳定主键游标分批读取角色导出数据。
+    pub async fn find_for_export(
+        &self,
+        actor: &ActorContext,
+        params: &RoleListParams,
+        maximum_records: usize,
+    ) -> AppResult<Vec<RoleVo>> {
+        const BATCH_SIZE: u64 = 1_000;
+
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.read();
+        let filter = RoleFilter {
+            name: params.name.as_deref(),
+            code: params.code.as_deref(),
+            status: params.status.as_deref(),
+        };
+        let mut after_id = None;
+        let mut records = Vec::new();
+        loop {
+            let batch = self
+                .role_repo
+                .find_for_export_after_id(&db, tenant_id, &filter, after_id, BATCH_SIZE)
+                .await?;
+            if batch.is_empty() {
+                break;
+            }
+            after_id = batch.last().map(|role| role.id);
+            records.extend(batch.into_iter().map(RoleVo::from));
+            if records.len() > maximum_records {
+                return Err(AppError::Validation(format!(
+                    "导出记录数超过 {maximum_records} 条上限"
+                )));
+            }
+        }
+        Ok(records)
     }
 
     /// 批量删除角色

@@ -83,6 +83,42 @@ impl ConfigService {
         Ok(PageResult::new(records, page.total, &params.page))
     }
 
+    /// 以稳定主键游标分批读取参数配置导出数据。
+    pub async fn find_for_export(
+        &self,
+        actor: &ActorContext,
+        params: &ConfigListParams,
+        maximum_records: usize,
+    ) -> AppResult<Vec<ConfigVo>> {
+        const BATCH_SIZE: u64 = 1_000;
+
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.read();
+        let filter = ConfigFilter {
+            name: params.name.as_deref(),
+            key: params.key.as_deref(),
+        };
+        let mut after_id = None;
+        let mut records = Vec::new();
+        loop {
+            let batch = self
+                .config_repo
+                .find_for_export_after_id(&db, tenant_id, &filter, after_id, BATCH_SIZE)
+                .await?;
+            if batch.is_empty() {
+                break;
+            }
+            after_id = batch.last().map(|config| config.id);
+            records.extend(batch.into_iter().map(ConfigVo::from));
+            if records.len() > maximum_records {
+                return Err(AppError::Validation(format!(
+                    "导出记录数超过 {maximum_records} 条上限"
+                )));
+            }
+        }
+        Ok(records)
+    }
+
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<ConfigVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.read();

@@ -3,6 +3,7 @@ use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 
 use crate::entities::config;
@@ -92,6 +93,35 @@ impl Repository<config::Model, i64> for ConfigRepository {
 }
 
 impl ConfigRepository {
+    /// 按主键递增游标读取参数配置导出批次。
+    pub async fn find_for_export_after_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        filter: &ConfigFilter<'_>,
+        after_id: Option<i64>,
+        limit: u64,
+    ) -> AppResult<Vec<config::Model>> {
+        let mut select = config::Entity::find()
+            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+            .filter(config::Column::TenantId.eq(tenant_id));
+        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(config::Column::Name.contains(name));
+        }
+        if let Some(key) = filter.key.filter(|value| !value.is_empty()) {
+            select = select.filter(config::Column::Key.contains(key));
+        }
+        if let Some(id) = after_id {
+            select = select.filter(config::Column::Id.gt(id));
+        }
+        select
+            .order_by_asc(config::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,

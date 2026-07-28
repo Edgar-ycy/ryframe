@@ -4,6 +4,7 @@ use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 
 use crate::entities::login_info;
@@ -72,6 +73,48 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
 }
 
 impl LoginInfoRepository {
+    /// 按主键递增游标读取登录日志导出批次，并保留数据范围约束。
+    pub async fn find_for_export_after_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        filter: LoginInfoFilter<'_>,
+        scope_ctx: &DataScopeContext,
+        after_id: Option<i64>,
+        limit: u64,
+    ) -> AppResult<Vec<login_info::Model>> {
+        let mut select =
+            login_info::Entity::find().filter(login_info::Column::TenantId.eq(tenant_id));
+        if let Some(name) = filter.user_name.filter(|value| !value.is_empty()) {
+            select = select.filter(login_info::Column::UserName.contains(name));
+        }
+        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(login_info::Column::Status.eq(status));
+        }
+        if let Some(begin) = filter.begin_time {
+            select = select.filter(login_info::Column::LoginTime.gte(begin));
+        }
+        if let Some(end) = filter.end_time {
+            select = select.filter(login_info::Column::LoginTime.lte(end));
+        }
+        if let Some(condition) = crate::data_scope::owner_username_condition(
+            login_info::Column::UserName,
+            tenant_id,
+            scope_ctx,
+        ) {
+            select = select.filter(condition);
+        }
+        if let Some(id) = after_id {
+            select = select.filter(login_info::Column::Id.gt(id));
+        }
+        select
+            .order_by_asc(login_info::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,

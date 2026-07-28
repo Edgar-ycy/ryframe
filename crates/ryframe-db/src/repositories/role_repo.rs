@@ -11,6 +11,13 @@ use crate::entities::{role, user, user_role};
 
 pub struct RoleRepository;
 
+#[derive(Debug, Default)]
+pub struct RoleFilter<'a> {
+    pub name: Option<&'a str>,
+    pub code: Option<&'a str>,
+    pub status: Option<&'a str>,
+}
+
 #[async_trait]
 impl Repository<role::Model, i64> for RoleRepository {
     async fn find_by_id(
@@ -67,6 +74,38 @@ impl Repository<role::Model, i64> for RoleRepository {
 }
 
 impl RoleRepository {
+    /// 按主键递增游标读取角色导出批次，避免大偏移分页造成重复或遗漏。
+    pub async fn find_for_export_after_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        filter: &RoleFilter<'_>,
+        after_id: Option<i64>,
+        limit: u64,
+    ) -> AppResult<Vec<role::Model>> {
+        let mut select = role::Entity::find()
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .filter(role::Column::TenantId.eq(tenant_id));
+        if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(role::Column::Name.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
+            select = select.filter(role::Column::Code.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(role::Column::Status.eq(value));
+        }
+        if let Some(id) = after_id {
+            select = select.filter(role::Column::Id.gt(id));
+        }
+        select
+            .order_by_asc(role::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     /// 带搜索条件的分页查询
     pub async fn find_by_page_filtered(
         &self,

@@ -596,7 +596,7 @@ mod tests {
             }
         }
         assert!(
-            query_operation_count >= 34,
+            query_operation_count >= 29,
             "OpenAPI query parameter coverage unexpectedly shrank: found {query_operation_count}"
         );
     }

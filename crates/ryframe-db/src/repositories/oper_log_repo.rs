@@ -4,6 +4,7 @@ use ryframe_core::repository::{PageQuery, PageResult, Repository};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 
 use crate::entities::oper_log;
@@ -78,6 +79,47 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
 }
 
 impl OperLogRepository {
+    /// 按主键递增游标读取操作日志导出批次，并保留数据范围约束。
+    pub async fn find_for_export_after_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        filter: OperLogFilter<'_>,
+        scope_ctx: &DataScopeContext,
+        after_id: Option<i64>,
+        limit: u64,
+    ) -> AppResult<Vec<oper_log::Model>> {
+        let mut select = oper_log::Entity::find().filter(oper_log::Column::TenantId.eq(tenant_id));
+        if let Some(name) = filter.oper_name.filter(|value| !value.is_empty()) {
+            select = select.filter(oper_log::Column::OperName.contains(name));
+        }
+        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(oper_log::Column::Status.eq(status));
+        }
+        if let Some(begin) = filter.begin_time {
+            select = select.filter(oper_log::Column::OperTime.gte(begin));
+        }
+        if let Some(end) = filter.end_time {
+            select = select.filter(oper_log::Column::OperTime.lte(end));
+        }
+        if let Some(condition) = crate::data_scope::owner_username_condition(
+            oper_log::Column::OperName,
+            tenant_id,
+            scope_ctx,
+        ) {
+            select = select.filter(condition);
+        }
+        if let Some(id) = after_id {
+            select = select.filter(oper_log::Column::Id.gt(id));
+        }
+        select
+            .order_by_asc(oper_log::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,

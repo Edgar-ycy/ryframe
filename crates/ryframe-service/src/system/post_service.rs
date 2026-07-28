@@ -4,7 +4,7 @@ use ryframe_core::{
     repository::{PageQuery, PageResult},
 };
 use ryframe_db::DatabaseCluster;
-use ryframe_db::{PostRepository, entities::post};
+use ryframe_db::{PostFilter, PostRepository, entities::post};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
 use serde::Serialize;
@@ -158,5 +158,42 @@ impl PostService {
             .await?;
         let records = page.records.into_iter().map(PostVo::from).collect();
         Ok(PageResult::new(records, page.total, &params.page))
+    }
+
+    /// 以稳定主键游标分批读取岗位导出数据。
+    pub async fn find_for_export(
+        &self,
+        actor: &ActorContext,
+        params: &PostListParams,
+        maximum_records: usize,
+    ) -> AppResult<Vec<PostVo>> {
+        const BATCH_SIZE: u64 = 1_000;
+
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.read();
+        let filter = PostFilter {
+            name: params.name.as_deref(),
+            code: params.code.as_deref(),
+            status: params.status.as_deref(),
+        };
+        let mut after_id = None;
+        let mut records = Vec::new();
+        loop {
+            let batch = self
+                .post_repo
+                .find_for_export_after_id(&db, tenant_id, &filter, after_id, BATCH_SIZE)
+                .await?;
+            if batch.is_empty() {
+                break;
+            }
+            after_id = batch.last().map(|post| post.id);
+            records.extend(batch.into_iter().map(PostVo::from));
+            if records.len() > maximum_records {
+                return Err(AppError::Validation(format!(
+                    "导出记录数超过 {maximum_records} 条上限"
+                )));
+            }
+        }
+        Ok(records)
     }
 }

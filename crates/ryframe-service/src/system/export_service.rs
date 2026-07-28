@@ -19,7 +19,6 @@ use super::{
     LoginInfoService, OperLogQuery, OperLogService, PostListParams, PostService, RoleListParams,
     RoleService, UserListParams, UserService,
 };
-use ryframe_core::PageQuery;
 
 /// Worker 消费异步导出任务的稳定类型标识。
 pub const EXPORT_JOB_TYPE: &str = "system.export.execute";
@@ -447,7 +446,7 @@ impl ExportService {
                     status: filters.status,
                     dept_id: filters.dept_id,
                 },
-                500_000,
+                EXPORT_MAX_RECORDS,
             )
             .await?;
         let data = users
@@ -483,17 +482,17 @@ impl ExportService {
         let filters: RoleExportFilters = decode_export_filters(request, "角色")?;
         let roles = self
             .roles
-            .find_by_page(
+            .find_for_export(
                 &actor,
-                RoleListParams {
-                    page: export_page(),
+                &RoleListParams {
+                    page: Default::default(),
                     name: filters.name,
                     code: filters.code,
                     status: filters.status,
                 },
+                EXPORT_MAX_RECORDS,
             )
-            .await?
-            .records;
+            .await?;
         let data = roles
             .into_iter()
             .map(|item| {
@@ -519,17 +518,17 @@ impl ExportService {
         let filters: PostExportFilters = decode_export_filters(request, "岗位")?;
         let posts = self
             .posts
-            .find_by_page(
+            .find_for_export(
                 &actor,
-                PostListParams {
-                    page: export_page(),
+                &PostListParams {
+                    page: Default::default(),
                     name: filters.name,
                     code: filters.code,
                     status: filters.status,
                 },
+                EXPORT_MAX_RECORDS,
             )
-            .await?
-            .records;
+            .await?;
         let data = posts.into_iter().map(|item| serde_json::json!({
             "post_id": item.id, "name": item.name, "code": item.code, "sort": item.sort,
             "status": item.status, "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
@@ -549,13 +548,14 @@ impl ExportService {
         let filters: ConfigExportFilters = decode_export_filters(request, "参数配置")?;
         let configs = self
             .configs
-            .find_all(
+            .find_for_export(
                 &actor,
-                ConfigListParams {
-                    page: export_page(),
+                &ConfigListParams {
+                    page: Default::default(),
                     name: filters.name,
                     key: filters.key,
                 },
+                EXPORT_MAX_RECORDS,
             )
             .await?;
         let data = configs
@@ -583,17 +583,17 @@ impl ExportService {
         let filters: DictTypeExportFilters = decode_export_filters(request, "字典类型")?;
         let types = self
             .dicts
-            .find_types_by_page(
+            .find_types_for_export(
                 &actor,
-                DictTypeListParams {
-                    page: export_page(),
+                &DictTypeListParams {
+                    page: Default::default(),
                     name: filters.name,
                     code: filters.code,
                     status: filters.status,
                 },
+                EXPORT_MAX_RECORDS,
             )
-            .await?
-            .records;
+            .await?;
         let data = types.into_iter().map(|item| serde_json::json!({
             "name": item.name, "code": item.code, "status": item.status, "remark": item.remark,
             "created_at": item.created_at.to_rfc3339(),
@@ -614,15 +614,16 @@ impl ExportService {
         let filters: LogExportFilters = decode_export_filters(request, "操作日志")?;
         let logs = self
             .oper_logs
-            .find_all(
+            .find_for_export(
                 &actor,
-                OperLogQuery {
-                    page: export_page(),
+                &OperLogQuery {
+                    page: Default::default(),
                     oper_name: filters.name,
                     status: filters.status,
                     begin_time: filters.begin_time,
                     end_time: filters.end_time,
                 },
+                EXPORT_MAX_RECORDS,
             )
             .await?;
         let data = logs.into_iter().map(|item| serde_json::json!({
@@ -646,15 +647,16 @@ impl ExportService {
         let filters: LogExportFilters = decode_export_filters(request, "登录日志")?;
         let logs = self
             .login_infos
-            .find_all(
+            .find_for_export(
                 &actor,
-                LoginInfoQuery {
-                    page: export_page(),
+                &LoginInfoQuery {
+                    page: Default::default(),
                     user_name: filters.name,
                     status: filters.status,
                     begin_time: filters.begin_time,
                     end_time: filters.end_time,
                 },
+                EXPORT_MAX_RECORDS,
             )
             .await?;
         let data = logs.into_iter().map(|item| serde_json::json!({
@@ -805,7 +807,7 @@ struct LogExportFilters {
     end_time: Option<String>,
 }
 
-const EXPORT_PAGE_SIZE: u64 = 500_000;
+const EXPORT_MAX_RECORDS: usize = 500_000;
 const ROLE_HEADERS: &[(&str, &str)] = &[
     ("role_id", "角色 ID"),
     ("role_name", "角色名称"),
@@ -859,13 +861,6 @@ const LOGIN_LOG_HEADERS: &[(&str, &str)] = &[
     ("msg", "提示消息"),
     ("login_time", "登录时间"),
 ];
-
-fn export_page() -> PageQuery {
-    PageQuery {
-        page: 1,
-        page_size: EXPORT_PAGE_SIZE,
-    }
-}
 
 fn decode_export_filters<T: serde::de::DeserializeOwned>(
     request: Value,

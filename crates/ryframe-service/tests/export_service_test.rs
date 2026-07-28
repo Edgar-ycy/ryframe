@@ -230,10 +230,11 @@ async fn revoked_export_permission_stops_queued_job_without_retrying() {
         JobRunResult::Succeeded
     );
 
-    let completed = exports
-        .find_for_requester(&actor(), requested.id.parse().unwrap())
+    let completed = export_job::Entity::find_by_id(requested.id.parse::<i64>().unwrap())
+        .one(database.connection())
         .await
-        .unwrap();
+        .unwrap()
+        .expect("已撤权的导出任务仍应保留失败记录");
     assert_eq!(completed.status, export_job::Model::STATUS_FAILED);
     assert!(
         completed
@@ -241,6 +242,80 @@ async fn revoked_export_permission_stops_queued_job_without_retrying() {
             .as_deref()
             .is_some_and(|message| message.contains("权限已被撤销"))
     );
+}
+
+/// 每种导出资源都必须能由 Worker 正确分派、生成受控结果文件并完成任务。
+#[tokio::test]
+async fn worker_processes_every_supported_export_resource() {
+    let database = common::setup_test_db().await;
+    let schema = Schema::new(sea_orm::DatabaseBackend::MySql);
+    database
+        .execute(&schema.create_table_from_entity(background_job::Entity))
+        .await
+        .unwrap();
+    database
+        .execute(&schema.create_table_from_entity(export_job::Entity))
+        .await
+        .unwrap();
+    seed_export_requester(database.connection()).await;
+    let directory = tempdir().unwrap();
+    let cluster = DatabaseCluster::single(database.connection().clone());
+    let users = Arc::new(UserService::new(cluster.clone(), None));
+    let exports = Arc::new(ExportService::new(
+        cluster.clone(),
+        users,
+        Arc::new(ryframe_storage::LocalObjectStorage::new(directory.path())),
+    ));
+    let queue = Arc::new(JobQueue::new(cluster));
+    let worker = JobWorker::new(queue, &JobConfig::default())
+        .unwrap()
+        .with_handler(Arc::new(ExportJobHandler::new(exports.clone())))
+        .unwrap();
+
+    for (resource, permission_code) in [
+        ("users", "system:user:export"),
+        ("roles", "system:role:export"),
+        ("posts", "system:post:export"),
+        ("configs", "system:config:export"),
+        ("dict-types", "system:dict:export"),
+        ("operlogs", "system:operlog:export"),
+        ("loginlogs", "system:logininfor:export"),
+    ] {
+        let requested = exports
+            .request(
+                &actor(),
+                RequestExportCommand {
+                    resource: resource.into(),
+                    permission_code: permission_code.into(),
+                    request_params: serde_json::json!({}),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            run_until_claimed(&worker, &format!("{resource}-export-worker")).await,
+            JobRunResult::Succeeded,
+            "资源 {resource} 未被 Worker 成功处理"
+        );
+        let completed = exports
+            .find_for_requester(&actor(), requested.id.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            completed.status,
+            export_job::Model::STATUS_SUCCEEDED,
+            "资源 {resource} 导出失败：{:?}",
+            completed.error_message
+        );
+        assert!(
+            completed
+                .result_file_name
+                .as_deref()
+                .is_some_and(|file_name| file_name.starts_with(resource)),
+            "资源 {resource} 未生成对应的结果文件"
+        );
+    }
 }
 
 /// 导出查询必须跨越单批大小后仍以主键严格递增，避免页码偏移导致的重复或遗漏。

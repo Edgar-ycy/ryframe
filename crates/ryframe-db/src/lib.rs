@@ -28,8 +28,8 @@ pub use repositories::{
     LoginInfoRepository, MarkExportJobSucceeded, MenuFilter, MenuRepository, MessageAudienceKind,
     MessageAudienceSelector, MessageInboxQuery, MessageRepository, NoticeFilter, NoticeRepository,
     OperLogFilter, OperLogRepository, OutboxEventRepository, OutboxFailureDisposition,
-    PasswordResetRequestRepository, PermissionRepository, PostRepository, ProvisionTenantCommand,
-    PublishMessageCommand, PublishedMessage, RecipientMessage, RecipientMessagePage,
-    RecordOutboxEvent, RoleRepository, TenantProvisioningRepository, TenantRepository, UserFilter,
-    UserRepository,
+    PasswordResetRequestRepository, PermissionRepository, PostFilter, PostRepository,
+    ProvisionTenantCommand, PublishMessageCommand, PublishedMessage, RecipientMessage,
+    RecipientMessagePage, RecordOutboxEvent, RoleFilter, RoleRepository,
+    TenantProvisioningRepository, TenantRepository, UserFilter, UserRepository,
 };
