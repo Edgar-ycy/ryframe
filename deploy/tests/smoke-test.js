@@ -63,6 +63,27 @@ function assertPage(json, label) {
   }
 }
 
+function sleep(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function waitForExport(id, accessToken) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/common/exports/${id}`, {
+      headers: authHeaders(accessToken),
+    });
+    await assertOk(res, "Export Status");
+    const job = json?.data;
+    if (job?.status === "succeeded") return job;
+    if (["failed", "cancelled", "expired"].includes(job?.status)) {
+      throw new Error(`export terminated unexpectedly: ${JSON.stringify(job)}`);
+    }
+    await sleep(300);
+  }
+  throw new Error("export did not complete within 30 seconds");
+}
+
 function storeResponseCookies(res, jar) {
   const values = typeof res.headers.getSetCookie === "function"
     ? res.headers.getSetCookie()
@@ -302,6 +323,27 @@ async function runSmokeTests() {
     });
     await assertOk(res, "OperLog List");
     assertPage(json, "OperLog List");
+  });
+
+  await test("async user export via Worker", async () => {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/users/exports`, {
+      method: "POST",
+      headers: { ...authHeaders(accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    await assertStatus(res, 202, "Create Export");
+    const id = json?.data?.id;
+    if (!id) throw new Error(`export creation response missing id: ${JSON.stringify(json)}`);
+
+    const job = await waitForExport(id, accessToken);
+    if (!job.result_file_name) throw new Error("completed export is missing result file name");
+    const download = await fetch(`${BASE_URL}/api/v1/common/exports/${id}/download`, {
+      headers: authHeaders(accessToken),
+    });
+    await assertOk(download, "Export Download");
+    if ((await download.arrayBuffer()).byteLength === 0) {
+      throw new Error("export download is empty");
+    }
   });
 
   await test("invalid token rejected", async () => {

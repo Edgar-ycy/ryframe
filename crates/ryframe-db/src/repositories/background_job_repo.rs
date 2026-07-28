@@ -238,7 +238,7 @@ impl BackgroundJobRepository {
             .map_err(database_error)
     }
 
-    /// 在选择新任务前回收崩溃 Worker 遗留的租约。
+    /// 回收崩溃 Worker 遗留的过期租约。
     ///
     /// 任务被领取时即消耗一次尝试；最后一次已过期的租约直接进入 `dead`，其余任务
     /// 回到 `pending` 并立即可再次领取。先处理死信再重入队，避免耗尽任务被错误复活。
@@ -253,7 +253,7 @@ impl BackgroundJobRepository {
     /// 通过 `FOR UPDATE SKIP LOCKED` 领取一条可执行任务。
     ///
     /// 这是进入 `running` 的唯一状态迁移；行锁和 `attempts` 自增位于同一事务中。
-    /// 因而进程在提交后崩溃时，任务会在租约过期后再次投递。
+    /// 因而进程在提交后崩溃时，任务会在独立的租约回收循环中再次投递。
     pub async fn claim_next(
         &self,
         db: &DatabaseConnection,
@@ -263,8 +263,6 @@ impl BackgroundJobRepository {
     ) -> AppResult<Option<background_job::Model>> {
         validate_lease(worker_id, lease_duration)?;
         let txn = db.begin().await.map_err(database_error)?;
-
-        self.recover_expired_leases_on(&txn, now).await?;
 
         let Some(job) = Self::claimable_query(now)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)

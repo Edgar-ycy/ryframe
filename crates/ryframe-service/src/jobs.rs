@@ -232,6 +232,15 @@ impl JobQueue {
             .await
     }
 
+    /// 回收崩溃 Worker 遗留的过期任务租约。
+    pub async fn recover_expired_leases(&self) -> AppResult<()> {
+        let now = self.database_now().await?;
+        self.repository
+            .recover_expired_leases(self.primary(), now)
+            .await?;
+        Ok(())
+    }
+
     /// 写入一条任务。调用方不需要自行提供时间戳，时间统一由数据库确定。
     pub async fn enqueue(
         &self,
@@ -575,7 +584,7 @@ impl JobWorker {
         if self.queue.has_metrics_observer() && !self.handlers.is_empty() {
             let queue = self.queue.clone();
             let job_types = self.handlers.keys().cloned().collect::<Vec<_>>();
-            let mut receiver = shutdown;
+            let mut receiver = shutdown.clone();
             tasks.push(tokio::spawn(async move {
                 loop {
                     if let Err(error) = queue.report_metrics_for_types(&job_types).await {
@@ -592,6 +601,11 @@ impl JobWorker {
                 }
             }));
         }
+
+        let worker = self.clone();
+        tasks.push(tokio::spawn(async move {
+            worker.recover_expired_leases_until_shutdown(shutdown).await;
+        }));
 
         tasks
     }
@@ -747,6 +761,26 @@ impl JobWorker {
         }
         tracing::info!(worker_id = %worker_id, "后台任务 Worker 已停止");
     }
+
+    /// 单独回收过期租约，避免与并发领取任务共享同一事务。
+    async fn recover_expired_leases_until_shutdown(&self, mut shutdown: watch::Receiver<bool>) {
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            if let Err(error) = self.queue.recover_expired_leases().await {
+                tracing::warn!(%error, "后台任务过期租约回收失败，将在下次轮询重试");
+            }
+            tokio::select! {
+                _ = time::sleep(self.poll_interval) => {}
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// 将任务执行结果映射为固定的低基数指标标签。
@@ -794,7 +828,7 @@ impl OutboxWorker {
     /// 启动多个 Outbox 消费循环，并在收到关闭信号后有序退出。
     pub fn spawn(self, shutdown: watch::Receiver<bool>) -> Vec<JoinHandle<()>> {
         let instance = Uuid::new_v4().simple().to_string();
-        (0..self.concurrency)
+        let mut tasks = (0..self.concurrency)
             .map(|slot| {
                 let worker = self.clone();
                 let worker_id = format!("{}-{slot}-{}", worker.worker_prefix, &instance[..12]);
@@ -803,7 +837,12 @@ impl OutboxWorker {
                     worker.run_until_shutdown(worker_id, receiver).await;
                 })
             })
-            .collect()
+            .collect::<Vec<_>>();
+        let worker = self.clone();
+        tasks.push(tokio::spawn(async move {
+            worker.recover_expired_leases_until_shutdown(shutdown).await;
+        }));
+        tasks
     }
 
     /// 执行一次领取和投递，供测试及自定义运行器使用。
@@ -980,6 +1019,36 @@ impl OutboxWorker {
             }
         }
         tracing::info!(worker_id = %worker_id, "Outbox Worker 已停止");
+    }
+
+    /// 单独回收过期租约，避免与并发领取事件共享同一事务。
+    async fn recover_expired_leases_until_shutdown(&self, mut shutdown: watch::Receiver<bool>) {
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            let recovery = async {
+                let now = self
+                    .repository
+                    .database_utc_now(self.queue.primary())
+                    .await?;
+                self.repository
+                    .recover_expired_leases(self.queue.primary(), now)
+                    .await
+            }
+            .await;
+            if let Err(error) = recovery {
+                tracing::warn!(%error, "Outbox 过期租约回收失败，将在下次轮询重试");
+            }
+            tokio::select! {
+                _ = time::sleep(self.poll_interval) => {}
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 

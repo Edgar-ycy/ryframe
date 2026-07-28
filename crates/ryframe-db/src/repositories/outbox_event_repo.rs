@@ -120,7 +120,6 @@ impl OutboxEventRepository {
     ) -> AppResult<Option<outbox_event::Model>> {
         validate_lease(worker_id, lease_duration)?;
         let transaction = db.begin().await.map_err(database_error)?;
-        self.recover_expired_leases_on(&transaction, now).await?;
         let Some(event) = Self::claimable_query(now)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(&transaction)
@@ -265,6 +264,18 @@ impl OutboxEventRepository {
             .one(db)
             .await
             .map_err(database_error)
+    }
+
+    /// 回收已过期的 Worker 租约。
+    ///
+    /// 该维护操作由单独的恢复循环调用，避免与并发领取操作位于同一事务中，
+    /// 从而保持统一的锁顺序并降低 MySQL 死锁风险。
+    pub async fn recover_expired_leases(
+        &self,
+        db: &DatabaseConnection,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        self.recover_expired_leases_on(db, now).await
     }
 
     async fn recover_expired_leases_on<C>(&self, db: &C, now: DateTime<Utc>) -> AppResult<()>

@@ -73,6 +73,8 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::integer("APP_JOBS_LEASE_SECONDS", &["jobs", "lease_seconds"]),
     EnvOverride::integer("APP_JOBS_CONCURRENCY", &["jobs", "concurrency"]),
     EnvOverride::string("APP_JOBS_WORKER_ID", &["jobs", "worker_id"]),
+    EnvOverride::string("APP_JOBS_HEALTH_HOST", &["jobs", "health_host"]),
+    EnvOverride::integer("APP_JOBS_HEALTH_PORT", &["jobs", "health_port"]),
     EnvOverride::boolean("APP_TELEMETRY_ENABLED", &["telemetry", "enabled"]),
     EnvOverride::string("APP_TELEMETRY_ENDPOINT", &["telemetry", "endpoint"]),
     EnvOverride::string("APP_TELEMETRY_SERVICE_NAME", &["telemetry", "service_name"]),
