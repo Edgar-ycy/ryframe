@@ -14,7 +14,12 @@ use serde_json::Value;
 use sha2::Digest;
 use utoipa::ToSchema;
 
-use super::{UserListParams, UserService};
+use super::{
+    ConfigListParams, ConfigService, DictService, DictTypeListParams, LoginInfoQuery,
+    LoginInfoService, OperLogQuery, OperLogService, PostListParams, PostService, RoleListParams,
+    RoleService, UserListParams, UserService,
+};
+use ryframe_core::PageQuery;
 
 /// Worker 消费异步导出任务的稳定类型标识。
 pub const EXPORT_JOB_TYPE: &str = "system.export.execute";
@@ -81,6 +86,12 @@ pub struct ExportService {
     exports: ExportJobRepository,
     files: FileRepository,
     users: Arc<UserService>,
+    roles: RoleService,
+    posts: PostService,
+    configs: ConfigService,
+    dicts: DictService,
+    oper_logs: OperLogService,
+    login_infos: LoginInfoService,
     storage: Arc<dyn ryframe_storage::ObjectStorage>,
 }
 
@@ -91,10 +102,16 @@ impl ExportService {
         storage: Arc<dyn ryframe_storage::ObjectStorage>,
     ) -> Self {
         Self {
-            db,
+            db: db.clone(),
             background_jobs: BackgroundJobRepository,
             exports: ExportJobRepository,
             files: FileRepository,
+            roles: RoleService::new(db.clone(), None),
+            posts: PostService::new(db.clone()),
+            configs: ConfigService::new(db.clone(), None),
+            dicts: DictService::new(db.clone(), None),
+            oper_logs: OperLogService::new(db.clone()),
+            login_infos: LoginInfoService::new(db.clone()),
             users,
             storage,
         }
@@ -167,11 +184,36 @@ impl ExportService {
     ) -> AppResult<ExportJobVo> {
         validate_job_id(id)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.exports
+        let export = self
+            .exports
             .find_by_id_for_requester(self.db.write(), tenant_id, actor.user_id, id)
             .await?
-            .map(ExportJobVo::from)
-            .ok_or_else(|| AppError::NotFound("导出任务不存在或不属于当前用户".into()))
+            .ok_or_else(|| AppError::NotFound("导出任务不存在或不属于当前用户".into()))?;
+        self.users
+            .ensure_current_permission(actor, &export.permission_code)
+            .await?;
+        Ok(ExportJobVo::from(export))
+    }
+
+    /// 读取当前申请人仍具备查看权限的最近导出任务。
+    pub async fn list_for_requester(&self, actor: &ActorContext) -> AppResult<Vec<ExportJobVo>> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let exports = self
+            .exports
+            .list_for_requester(self.db.write(), tenant_id, actor.user_id, 100)
+            .await?;
+        let mut result = Vec::with_capacity(exports.len());
+        for export in exports {
+            if self
+                .users
+                .ensure_current_permission(actor, &export.permission_code)
+                .await
+                .is_ok()
+            {
+                result.push(ExportJobVo::from(export));
+            }
+        }
+        Ok(result)
     }
 
     /// 取消申请人自己的尚未完成导出任务。
@@ -182,6 +224,14 @@ impl ExportService {
     ) -> AppResult<ExportJobVo> {
         validate_job_id(id)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
+        let export = self
+            .exports
+            .find_by_id_for_requester(self.db.write(), tenant_id, actor.user_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("导出任务不存在或不属于当前用户".into()))?;
+        self.users
+            .ensure_current_permission(actor, &export.permission_code)
+            .await?;
         let now = self
             .background_jobs
             .database_utc_now(self.db.write())
@@ -211,6 +261,9 @@ impl ExportService {
             .find_by_id_for_requester(self.db.write(), tenant_id, actor.user_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("导出任务不存在或不属于当前用户".into()))?;
+        self.users
+            .ensure_current_permission(actor, &export.permission_code)
+            .await?;
         let now = self
             .background_jobs
             .database_utc_now(self.db.write())
@@ -314,6 +367,30 @@ impl ExportService {
                 self.execute_user_export(export, request.actor, request.request, now)
                     .await
             }
+            "roles" => {
+                self.execute_role_export(export, request.actor, request.request, now)
+                    .await
+            }
+            "posts" => {
+                self.execute_post_export(export, request.actor, request.request, now)
+                    .await
+            }
+            "configs" => {
+                self.execute_config_export(export, request.actor, request.request, now)
+                    .await
+            }
+            "dict-types" => {
+                self.execute_dict_type_export(export, request.actor, request.request, now)
+                    .await
+            }
+            "operlogs" => {
+                self.execute_oper_log_export(export, request.actor, request.request, now)
+                    .await
+            }
+            "loginlogs" => {
+                self.execute_login_log_export(export, request.actor, request.request, now)
+                    .await
+            }
             resource => Err(AppError::Validation(format!(
                 "不支持的导出资源: {resource}"
             ))),
@@ -392,7 +469,214 @@ impl ExportService {
             "用户数据",
             UserExportRow::headers(),
         )?;
-        let file_name = format!("users-{}.xlsx", export.id);
+        self.persist_export_file(export, actor, bytes, "users", now)
+            .await
+    }
+
+    async fn execute_role_export(
+        &self,
+        export: export_job::Model,
+        actor: ActorContext,
+        request: Value,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let filters: RoleExportFilters = decode_export_filters(request, "角色")?;
+        let roles = self
+            .roles
+            .find_by_page(
+                &actor,
+                RoleListParams {
+                    page: export_page(),
+                    name: filters.name,
+                    code: filters.code,
+                    status: filters.status,
+                },
+            )
+            .await?
+            .records;
+        let data = roles
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "role_id": item.id, "role_name": item.name, "role_code": item.code,
+                    "data_scope": item.data_scope, "status": item.status, "sort": item.sort,
+                    "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let bytes = ryframe_excel::ExcelExporter::export_to_bytes(&data, "角色数据", ROLE_HEADERS)?;
+        self.persist_export_file(export, actor, bytes, "roles", now)
+            .await
+    }
+
+    async fn execute_post_export(
+        &self,
+        export: export_job::Model,
+        actor: ActorContext,
+        request: Value,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let filters: PostExportFilters = decode_export_filters(request, "岗位")?;
+        let posts = self
+            .posts
+            .find_by_page(
+                &actor,
+                PostListParams {
+                    page: export_page(),
+                    name: filters.name,
+                    code: filters.code,
+                    status: filters.status,
+                },
+            )
+            .await?
+            .records;
+        let data = posts.into_iter().map(|item| serde_json::json!({
+            "post_id": item.id, "name": item.name, "code": item.code, "sort": item.sort,
+            "status": item.status, "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
+        })).collect::<Vec<_>>();
+        let bytes = ryframe_excel::ExcelExporter::export_to_bytes(&data, "岗位数据", POST_HEADERS)?;
+        self.persist_export_file(export, actor, bytes, "posts", now)
+            .await
+    }
+
+    async fn execute_config_export(
+        &self,
+        export: export_job::Model,
+        actor: ActorContext,
+        request: Value,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let filters: ConfigExportFilters = decode_export_filters(request, "参数配置")?;
+        let configs = self
+            .configs
+            .find_all(
+                &actor,
+                ConfigListParams {
+                    page: export_page(),
+                    name: filters.name,
+                    key: filters.key,
+                },
+            )
+            .await?;
+        let data = configs
+            .into_iter()
+            .map(|item| {
+                serde_json::json!({
+                    "name": item.name, "key": item.key, "value": item.value, "remark": item.remark,
+                    "created_at": item.created_at.to_rfc3339(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let bytes =
+            ryframe_excel::ExcelExporter::export_to_bytes(&data, "参数配置", CONFIG_HEADERS)?;
+        self.persist_export_file(export, actor, bytes, "configs", now)
+            .await
+    }
+
+    async fn execute_dict_type_export(
+        &self,
+        export: export_job::Model,
+        actor: ActorContext,
+        request: Value,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let filters: DictTypeExportFilters = decode_export_filters(request, "字典类型")?;
+        let types = self
+            .dicts
+            .find_types_by_page(
+                &actor,
+                DictTypeListParams {
+                    page: export_page(),
+                    name: filters.name,
+                    code: filters.code,
+                    status: filters.status,
+                },
+            )
+            .await?
+            .records;
+        let data = types.into_iter().map(|item| serde_json::json!({
+            "name": item.name, "code": item.code, "status": item.status, "remark": item.remark,
+            "created_at": item.created_at.to_rfc3339(),
+        })).collect::<Vec<_>>();
+        let bytes =
+            ryframe_excel::ExcelExporter::export_to_bytes(&data, "字典类型", DICT_TYPE_HEADERS)?;
+        self.persist_export_file(export, actor, bytes, "dict-types", now)
+            .await
+    }
+
+    async fn execute_oper_log_export(
+        &self,
+        export: export_job::Model,
+        actor: ActorContext,
+        request: Value,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let filters: LogExportFilters = decode_export_filters(request, "操作日志")?;
+        let logs = self
+            .oper_logs
+            .find_all(
+                &actor,
+                OperLogQuery {
+                    page: export_page(),
+                    oper_name: filters.name,
+                    status: filters.status,
+                    begin_time: filters.begin_time,
+                    end_time: filters.end_time,
+                },
+            )
+            .await?;
+        let data = logs.into_iter().map(|item| serde_json::json!({
+            "title": item.title, "business_type": item.business_type, "oper_name": item.oper_name,
+            "oper_url": item.oper_url, "oper_ip": item.oper_ip, "status": item.status,
+            "cost_time": item.cost_time, "oper_time": item.oper_time,
+        })).collect::<Vec<_>>();
+        let bytes =
+            ryframe_excel::ExcelExporter::export_to_bytes(&data, "操作日志", OPER_LOG_HEADERS)?;
+        self.persist_export_file(export, actor, bytes, "operlogs", now)
+            .await
+    }
+
+    async fn execute_login_log_export(
+        &self,
+        export: export_job::Model,
+        actor: ActorContext,
+        request: Value,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let filters: LogExportFilters = decode_export_filters(request, "登录日志")?;
+        let logs = self
+            .login_infos
+            .find_all(
+                &actor,
+                LoginInfoQuery {
+                    page: export_page(),
+                    user_name: filters.name,
+                    status: filters.status,
+                    begin_time: filters.begin_time,
+                    end_time: filters.end_time,
+                },
+            )
+            .await?;
+        let data = logs.into_iter().map(|item| serde_json::json!({
+            "user_name": item.user_name, "ipaddr": item.ipaddr, "login_location": item.login_location,
+            "browser": item.browser, "os": item.os, "status": item.status, "msg": item.msg,
+            "login_time": item.login_time,
+        })).collect::<Vec<_>>();
+        let bytes =
+            ryframe_excel::ExcelExporter::export_to_bytes(&data, "登录日志", LOGIN_LOG_HEADERS)?;
+        self.persist_export_file(export, actor, bytes, "loginlogs", now)
+            .await
+    }
+
+    async fn persist_export_file(
+        &self,
+        export: export_job::Model,
+        actor: ActorContext,
+        bytes: Vec<u8>,
+        resource: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let file_name = format!("{resource}-{}.xlsx", export.id);
         let key = format!("{}/exports/{}", export.tenant_id, file_name);
         self.storage
             .ensure_bucket(EXPORT_BUCKET)
@@ -483,6 +767,112 @@ pub struct UserExportFilters {
     pub phone: Option<String>,
     pub status: Option<String>,
     pub dept_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct RoleExportFilters {
+    name: Option<String>,
+    code: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PostExportFilters {
+    name: Option<String>,
+    code: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ConfigExportFilters {
+    name: Option<String>,
+    key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DictTypeExportFilters {
+    name: Option<String>,
+    code: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LogExportFilters {
+    #[serde(alias = "oper_name", alias = "user_name")]
+    name: Option<String>,
+    status: Option<String>,
+    begin_time: Option<String>,
+    end_time: Option<String>,
+}
+
+const EXPORT_PAGE_SIZE: u64 = 500_000;
+const ROLE_HEADERS: &[(&str, &str)] = &[
+    ("role_id", "角色 ID"),
+    ("role_name", "角色名称"),
+    ("role_code", "角色编码"),
+    ("data_scope", "数据范围"),
+    ("status", "状态"),
+    ("sort", "排序"),
+    ("remark", "备注"),
+    ("created_at", "创建时间"),
+];
+const POST_HEADERS: &[(&str, &str)] = &[
+    ("post_id", "岗位 ID"),
+    ("name", "岗位名称"),
+    ("code", "岗位编码"),
+    ("sort", "排序"),
+    ("status", "状态"),
+    ("remark", "备注"),
+    ("created_at", "创建时间"),
+];
+const CONFIG_HEADERS: &[(&str, &str)] = &[
+    ("name", "参数名称"),
+    ("key", "参数键名"),
+    ("value", "参数键值"),
+    ("remark", "备注"),
+    ("created_at", "创建时间"),
+];
+const DICT_TYPE_HEADERS: &[(&str, &str)] = &[
+    ("name", "字典名称"),
+    ("code", "字典类型"),
+    ("status", "状态"),
+    ("remark", "备注"),
+    ("created_at", "创建时间"),
+];
+const OPER_LOG_HEADERS: &[(&str, &str)] = &[
+    ("title", "操作模块"),
+    ("business_type", "业务类型"),
+    ("oper_name", "操作人员"),
+    ("oper_url", "请求地址"),
+    ("oper_ip", "操作 IP"),
+    ("status", "状态"),
+    ("cost_time", "耗时(ms)"),
+    ("oper_time", "操作时间"),
+];
+const LOGIN_LOG_HEADERS: &[(&str, &str)] = &[
+    ("user_name", "用户名"),
+    ("ipaddr", "IP 地址"),
+    ("login_location", "登录地点"),
+    ("browser", "浏览器"),
+    ("os", "操作系统"),
+    ("status", "状态"),
+    ("msg", "提示消息"),
+    ("login_time", "登录时间"),
+];
+
+fn export_page() -> PageQuery {
+    PageQuery {
+        page: 1,
+        page_size: EXPORT_PAGE_SIZE,
+    }
+}
+
+fn decode_export_filters<T: serde::de::DeserializeOwned>(
+    request: Value,
+    resource: &str,
+) -> AppResult<T> {
+    serde_json::from_value(request)
+        .map_err(|error| AppError::Validation(format!("{resource} 导出筛选条件无效: {error}")))
 }
 
 #[derive(Serialize)]

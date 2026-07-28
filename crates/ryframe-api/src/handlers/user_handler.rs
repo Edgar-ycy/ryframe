@@ -78,7 +78,6 @@ pub fn user_router(state: AppState) -> Router {
         .merge(route!(replace_roles))
         .merge(route!(update_status))
         .merge(route!(request_user_export))
-        .merge(route!(export_users))
         .merge(route!(import_users))
         .merge(route!(download_import_template))
         .with_state(state)

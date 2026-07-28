@@ -489,7 +489,7 @@ fn common_router(state: AppState) -> Router {
     Router::new()
         .nest("/upload", upload)
         .nest("/file", download)
-        .nest("/exports", exports)
+        .nest("/jobs", exports)
 }
 
 /// Swagger UI 交互文档页面

@@ -1,26 +1,26 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
 use ryframe_core::PageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::ConfigVo;
-use serde::Serialize;
 use validator::Validate;
 
 use crate::dto::config_dto::{
     ConfigFilterQuery, ConfigListQuery, CreateConfigDto, UpdateConfigDto,
 };
-use crate::handler_utils::excel_response;
 use crate::state::AppState;
+use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 
 pub fn config_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
         .merge(route!(list_no_page))
-        .merge(route!(export_configs))
+        .merge(route!(request_config_export))
         .merge(route!(refresh_cache))
         .merge(route!(get_by_key))
         .merge(route!(detail))
@@ -207,65 +207,28 @@ async fn refresh_cache(
     ))))
 }
 
-/// 参数导出数据
-#[derive(Debug, Serialize)]
-struct ConfigExportData {
-    pub name: String,
-    pub key: String,
-    pub value: String,
-    pub remark: Option<String>,
-    pub created_at: String,
-}
-
-impl ConfigExportData {
-    fn excel_headers() -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("name", "参数名称"),
-            ("key", "参数键名"),
-            ("value", "参数键值"),
-            ("remark", "备注"),
-            ("created_at", "创建时间"),
-        ]
-    }
-}
-
-/// 导出参数配置
-#[get("/export")]
+/// 创建参数配置异步导出任务。
+#[post("/exports")]
 #[perm("system:config:export")]
-#[utoipa::path(get, path = "/api/v1/system/configs/export", tag = "参数配置",
-    params(ConfigFilterQuery),
-    responses((status = 200, description = "导出配置 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
-async fn export_configs(
+#[utoipa::path(post, path = "/api/v1/system/configs/exports", tag = "参数配置",
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    responses((status = 202, description = "参数配置导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+async fn request_config_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Query(query): Query<ConfigFilterQuery>,
-) -> AppResult<axum::response::Response> {
-    use ryframe_excel::ExcelExporter;
-
-    let configs = state
-        .services
-        .config
-        .find_all(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await?;
-    let export_data: Vec<ConfigExportData> = configs
-        .into_iter()
-        .map(|c| ConfigExportData {
-            name: c.name,
-            key: c.key,
-            value: c.value,
-            remark: c.remark,
-            created_at: c.created_at.to_rfc3339(),
-        })
-        .collect();
-
-    let bytes = ExcelExporter::export_to_bytes(
-        &export_data,
-        "参数配置",
-        &ConfigExportData::excel_headers(),
-    )?;
-
-    excel_response(bytes, "configs.xlsx")
+    headers: HeaderMap,
+    Json(request): Json<ExportRequestDto>,
+) -> AppResult<(
+    StatusCode,
+    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
+)> {
+    request_export(
+        state,
+        current_user,
+        headers,
+        "configs",
+        "system:config:export",
+        request.0,
+    )
+    .await
 }

@@ -1,22 +1,22 @@
 use axum::{
     Json, Router,
     extract::{Query, State},
+    http::{HeaderMap, StatusCode},
 };
 use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
-use ryframe_macro::{get, route};
+use ryframe_macro::{get, post, route};
 use ryframe_service::system::OperLogVo;
-use serde::Serialize;
 
 use crate::dto::oper_log_dto::{OperLogFilterQuery, OperLogPageQuery};
-use crate::handler_utils::excel_response;
 use crate::state::AppState;
+use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 use ryframe_auth::RequestPrincipal;
 
 pub fn oper_log_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
         .merge(route!(list_no_page))
-        .merge(route!(export_oper_logs))
+        .merge(route!(request_oper_log_export))
         .with_state(state)
 }
 
@@ -76,77 +76,28 @@ async fn list_no_page(
     Ok(Json(ApiResponse::success(logs)))
 }
 
-/// 操作日志导出数据
-#[derive(Debug, Serialize)]
-struct OperLogExportData {
-    pub title: String,
-    pub business_type: String,
-    pub oper_name: String,
-    pub oper_url: String,
-    pub oper_ip: String,
-    pub status: String,
-    pub cost_time: i64,
-    pub oper_time: String,
-}
-
-impl OperLogExportData {
-    fn excel_headers() -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("title", "操作模块"),
-            ("business_type", "业务类型"),
-            ("oper_name", "操作人员"),
-            ("oper_url", "请求地址"),
-            ("oper_ip", "操作IP"),
-            ("status", "状态"),
-            ("cost_time", "耗时(ms)"),
-            ("oper_time", "操作时间"),
-        ]
-    }
-}
-
-/// 导出操作日志
-#[get("/export")]
+/// 创建操作日志异步导出任务。
+#[post("/exports")]
 #[perm("system:operlog:export")]
-#[utoipa::path(get, path = "/api/v1/system/operlogs/export", tag = "操作日志",
-    params(OperLogFilterQuery),
-    responses((status = 200, description = "导出操作日志 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
-async fn export_oper_logs(
+#[utoipa::path(post, path = "/api/v1/system/operlogs/exports", tag = "操作日志",
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    responses((status = 202, description = "操作日志导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+async fn request_oper_log_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Query(query): Query<OperLogFilterQuery>,
-) -> AppResult<axum::response::Response> {
-    use ryframe_excel::ExcelExporter;
-
-    let logs = state
-        .services
-        .oper_log
-        .find_all(
-            &current_user,
-            query.into_service_query(ryframe_core::PageQuery::bounded_unpaged(
-                &state.config.pagination,
-            )?),
-        )
-        .await?;
-
-    let export_data: Vec<OperLogExportData> = logs
-        .into_iter()
-        .map(|l| OperLogExportData {
-            title: l.title,
-            business_type: l.business_type,
-            oper_name: l.oper_name,
-            oper_url: l.oper_url,
-            oper_ip: l.oper_ip,
-            status: l.status,
-            cost_time: l.cost_time,
-            oper_time: l.oper_time,
-        })
-        .collect();
-
-    let bytes = ExcelExporter::export_to_bytes(
-        &export_data,
-        "操作日志",
-        &OperLogExportData::excel_headers(),
-    )?;
-
-    excel_response(bytes, "oper_logs.xlsx")
+    headers: HeaderMap,
+    Json(request): Json<ExportRequestDto>,
+) -> AppResult<(
+    StatusCode,
+    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
+)> {
+    request_export(
+        state,
+        current_user,
+        headers,
+        "operlogs",
+        "system:operlog:export",
+        request.0,
+    )
+    .await
 }

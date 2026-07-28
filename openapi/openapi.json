@@ -3374,6 +3374,113 @@
         ],
         "type": "object"
       },
+      "ApiResponse_Vec_ExportJobVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "description": "面向 API 的导出任务安全视图，不暴露内部后台任务载荷。",
+              "properties": {
+                "completed_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "content_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "error_message": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "expires_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "file_size": {
+                  "format": "int64",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "resource": {
+                  "type": "string"
+                },
+                "result_file_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "resource",
+                "status",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_Vec_GeneratedFile": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -5860,6 +5967,9 @@
           "updated_at"
         ],
         "type": "object"
+      },
+      "ExportRequestDto": {
+        "description": "资源导出的筛选条件快照。\n\n各资源沿用其列表接口的筛选字段，服务端会按资源类型严格反序列化并校验。"
       },
       "FileUploadForm": {
         "properties": {
@@ -10013,132 +10123,6 @@
         ]
       }
     },
-    "/api/v1/common/exports/{id}": {
-      "get": {
-        "operationId": "get_common_exports_by_id",
-        "parameters": [
-          {
-            "description": "导出任务 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
-                }
-              }
-            },
-            "description": "导出任务详情"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "查询当前用户自己的导出任务。",
-        "tags": [
-          "导出任务"
-        ]
-      }
-    },
-    "/api/v1/common/exports/{id}/cancel": {
-      "post": {
-        "operationId": "post_common_exports_by_id_cancel",
-        "parameters": [
-          {
-            "description": "导出任务 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CancelExportJobDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
-                }
-              }
-            },
-            "description": "导出任务已取消"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "取消当前用户尚未完成的导出任务。",
-        "tags": [
-          "导出任务"
-        ]
-      }
-    },
-    "/api/v1/common/exports/{id}/download": {
-      "get": {
-        "operationId": "get_common_exports_by_id_download",
-        "parameters": [
-          {
-            "description": "导出任务 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
-                "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "导出文件"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "下载当前用户尚未过期的导出结果。",
-        "tags": [
-          "导出任务"
-        ]
-      }
-    },
     "/api/v1/common/file/download": {
       "get": {
         "operationId": "get_common_file_download",
@@ -10193,6 +10177,158 @@
         "summary": "下载文件（薄层：HTTP 参数提取 + 构建响应头，业务委托 FileService）",
         "tags": [
           "通用"
+        ]
+      }
+    },
+    "/api/v1/common/jobs": {
+      "get": {
+        "operationId": "get_common_jobs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_ExportJobVo"
+                }
+              }
+            },
+            "description": "导出任务列表"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "查询当前用户可以访问的最近导出任务。",
+        "tags": [
+          "导出任务"
+        ]
+      }
+    },
+    "/api/v1/common/jobs/{id}": {
+      "get": {
+        "operationId": "get_common_jobs_by_id",
+        "parameters": [
+          {
+            "description": "导出任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
+                }
+              }
+            },
+            "description": "导出任务详情"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "查询当前用户自己的导出任务。",
+        "tags": [
+          "导出任务"
+        ]
+      }
+    },
+    "/api/v1/common/jobs/{id}/cancel": {
+      "post": {
+        "operationId": "post_common_jobs_by_id_cancel",
+        "parameters": [
+          {
+            "description": "导出任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelExportJobDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
+                }
+              }
+            },
+            "description": "导出任务已取消"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "取消当前用户尚未完成的导出任务。",
+        "tags": [
+          "导出任务"
+        ]
+      }
+    },
+    "/api/v1/common/jobs/{id}/download": {
+      "get": {
+        "operationId": "get_common_jobs_by_id_download",
+        "parameters": [
+          {
+            "description": "导出任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "导出文件"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "下载当前用户尚未过期的导出结果。",
+        "tags": [
+          "导出任务"
         ]
       }
     },
@@ -10926,42 +11062,40 @@
         ]
       }
     },
-    "/api/v1/system/configs/export": {
-      "get": {
-        "operationId": "get_system_configs_export",
+    "/api/v1/system/configs/exports": {
+      "post": {
+        "operationId": "post_system_configs_exports",
         "parameters": [
           {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "key",
-            "required": false,
+            "description": "幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
+          "202": {
             "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "application/json": {
                 "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
                 }
               }
             },
-            "description": "导出配置 Excel"
+            "description": "参数配置导出任务已创建"
           }
         },
         "security": [
@@ -10969,7 +11103,7 @@
             "bearer": []
           }
         ],
-        "summary": "导出参数配置",
+        "summary": "创建参数配置异步导出任务。",
         "tags": [
           "参数配置"
         ]
@@ -11762,50 +11896,40 @@
         ]
       }
     },
-    "/api/v1/system/dict/types/export": {
-      "get": {
-        "operationId": "get_system_dict_types_export",
+    "/api/v1/system/dict/types/exports": {
+      "post": {
+        "operationId": "post_system_dict_types_exports",
         "parameters": [
           {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "code",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
+            "description": "幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
+          "202": {
             "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "application/json": {
                 "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
                 }
               }
             },
-            "description": "导出字典类型 Excel"
+            "description": "字典类型导出任务已创建"
           }
         },
         "security": [
@@ -11813,7 +11937,7 @@
             "bearer": []
           }
         ],
-        "summary": "导出字典类型",
+        "summary": "创建字典类型异步导出任务。",
         "tags": [
           "字典管理"
         ]
@@ -12043,58 +12167,40 @@
         ]
       }
     },
-    "/api/v1/system/loginlogs/export": {
-      "get": {
-        "operationId": "get_system_loginlogs_export",
+    "/api/v1/system/loginlogs/exports": {
+      "post": {
+        "operationId": "post_system_loginlogs_exports",
         "parameters": [
           {
-            "in": "query",
-            "name": "user_name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "begin_time",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "end_time",
-            "required": false,
+            "description": "幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
+          "202": {
             "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "application/json": {
                 "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
                 }
               }
             },
-            "description": "导出登录日志 Excel"
+            "description": "登录日志导出任务已创建"
           }
         },
         "security": [
@@ -12102,7 +12208,7 @@
             "bearer": []
           }
         ],
-        "summary": "导出登录日志",
+        "summary": "创建登录日志异步导出任务。",
         "tags": [
           "登录日志"
         ]
@@ -13249,58 +13355,40 @@
         ]
       }
     },
-    "/api/v1/system/operlogs/export": {
-      "get": {
-        "operationId": "get_system_operlogs_export",
+    "/api/v1/system/operlogs/exports": {
+      "post": {
+        "operationId": "post_system_operlogs_exports",
         "parameters": [
           {
-            "in": "query",
-            "name": "oper_name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "begin_time",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "end_time",
-            "required": false,
+            "description": "幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
+          "202": {
             "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "application/json": {
                 "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
                 }
               }
             },
-            "description": "导出操作日志 Excel"
+            "description": "操作日志导出任务已创建"
           }
         },
         "security": [
@@ -13308,7 +13396,7 @@
             "bearer": []
           }
         ],
-        "summary": "导出操作日志",
+        "summary": "创建操作日志异步导出任务。",
         "tags": [
           "操作日志"
         ]
@@ -13683,50 +13771,40 @@
         ]
       }
     },
-    "/api/v1/system/posts/export": {
-      "get": {
-        "operationId": "get_system_posts_export",
+    "/api/v1/system/posts/exports": {
+      "post": {
+        "operationId": "post_system_posts_exports",
         "parameters": [
           {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "code",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
+            "description": "幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
+          "202": {
             "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "application/json": {
                 "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
                 }
               }
             },
-            "description": "导出岗位 Excel"
+            "description": "岗位导出任务已创建"
           }
         },
         "security": [
@@ -13734,7 +13812,7 @@
             "bearer": []
           }
         ],
-        "summary": "导出岗位数据为 Excel",
+        "summary": "创建岗位异步导出任务。",
         "tags": [
           "岗位管理"
         ]
@@ -14053,50 +14131,40 @@
         ]
       }
     },
-    "/api/v1/system/roles/export": {
-      "get": {
-        "operationId": "get_system_roles_export",
+    "/api/v1/system/roles/exports": {
+      "post": {
+        "operationId": "post_system_roles_exports",
         "parameters": [
           {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "code",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
+            "description": "幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
             "schema": {
               "type": "string"
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "200": {
+          "202": {
             "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "application/json": {
                 "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
+                  "$ref": "#/components/schemas/ApiResponse_ExportJobVo"
                 }
               }
             },
-            "description": "导出角色 Excel"
+            "description": "角色导出任务已创建"
           }
         },
         "security": [
@@ -14104,7 +14172,7 @@
             "bearer": []
           }
         ],
-        "summary": "导出角色数据为 Excel",
+        "summary": "创建角色异步导出任务。",
         "tags": [
           "角色管理"
         ]
@@ -14531,73 +14599,20 @@
         ]
       }
     },
-    "/api/v1/system/users/export": {
-      "get": {
-        "operationId": "get_system_users_export",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "username",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "phone",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "dept_id",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
-                "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "导出用户 Excel"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "用户管理"
-        ]
-      }
-    },
     "/api/v1/system/users/exports": {
       "post": {
         "operationId": "post_system_users_exports",
+        "parameters": [
+          {
+            "description": "幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {

@@ -2,27 +2,24 @@ use std::time::Duration;
 
 use axum::{
     Json,
-    extract::{Multipart, Query, State},
-    http::StatusCode,
+    extract::{Multipart, State},
+    http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_core::PageQuery;
 use ryframe_http::{ApiResponse, AppError, AppResult};
 use ryframe_kernel::AppError as KernelAppError;
 use ryframe_macro::{get, post};
-use ryframe_service::system::{
-    CreateUserParams, ExportJobVo, RequestExportCommand, UserExportFilters,
-};
+use ryframe_service::system::{CreateUserParams, ExportJobVo, UserExportFilters};
 use validator::Validate;
 
-use super::UserFilterQuery;
 use crate::{
     dto::{
         multipart_dto::FileUploadForm,
         user_dto::UserExportRequestDto,
-        user_import_dto::{UserExportData, UserImportData, UserImportResult},
+        user_import_dto::{UserImportData, UserImportResult},
     },
     handler_utils::{excel_response, parse_optional_i64_str},
+    handlers::export_handler::request_export,
     state::AppState,
 };
 
@@ -30,12 +27,14 @@ use crate::{
 #[post("/exports")]
 #[perm("system:user:export")]
 #[utoipa::path(post, path = "/api/v1/system/users/exports", tag = "用户管理",
+    params(("Idempotency-Key" = String, Header, description = "幂等键")),
     request_body = UserExportRequestDto,
     responses((status = 202, description = "用户导出任务已创建", body = ApiResponse<ExportJobVo>)),
     security(("bearer" = [])))]
 pub(crate) async fn request_user_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
+    headers: HeaderMap,
     Json(request): Json<UserExportRequestDto>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     let dept_id = request
@@ -48,70 +47,21 @@ pub(crate) async fn request_user_export(
                 .map_err(|_| AppError::Validation(format!("无效的部门ID: {id}")))
         })
         .transpose()?;
-    let export = state
-        .services
-        .export
-        .request(
-            &current_user,
-            RequestExportCommand {
-                resource: "users".into(),
-                permission_code: "system:user:export".into(),
-                request_params: serde_json::to_value(UserExportFilters {
-                    username: request.username,
-                    phone: request.phone,
-                    status: request.status,
-                    dept_id,
-                })
-                .map_err(|error| {
-                    AppError::Internal(format!("用户导出筛选条件序列化失败: {error}"))
-                })?,
-            },
-        )
-        .await
-        .map_err(AppError::from)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::success_msg("导出任务已创建", export)),
-    ))
-}
-
-#[get("/export")]
-#[perm("system:user:export")]
-#[utoipa::path(get, path = "/api/v1/system/users/export", tag = "用户管理",
-    params(UserFilterQuery),
-    responses((status = 200, description = "导出用户 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
-pub(crate) async fn export_users(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<UserFilterQuery>,
-) -> AppResult<axum::response::Response> {
-    use ryframe_excel::ExcelExporter;
-
-    let params =
-        query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?)?;
-    let page = state
-        .services
-        .user
-        .find_by_page(&current_user, params)
-        .await?;
-    let users = page
-        .records
-        .into_iter()
-        .map(|user| UserExportData {
-            user_id: user.id,
-            username: user.username,
-            nickname: user.nickname,
-            email: user.email,
-            phone: user.phone,
-            dept_name: user.dept_name,
-            status: user.status,
-            remark: user.remark,
-            created_at: user.created_at.to_rfc3339(),
+    request_export(
+        state,
+        current_user,
+        headers,
+        "users",
+        "system:user:export",
+        serde_json::to_value(UserExportFilters {
+            username: request.username,
+            phone: request.phone,
+            status: request.status,
+            dept_id,
         })
-        .collect::<Vec<_>>();
-    let bytes =
-        ExcelExporter::export_to_bytes(&users, "用户数据", UserExportData::excel_headers())?;
-    excel_response(bytes, "users.xlsx")
+        .map_err(|error| AppError::Internal(format!("用户导出筛选条件序列化失败: {error}")))?,
+    )
+    .await
 }
 
 #[post("/import")]

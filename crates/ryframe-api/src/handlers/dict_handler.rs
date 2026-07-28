@@ -1,21 +1,22 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
 use ryframe_core::PageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{DictDataVo, DictTypeListParams, DictTypeVo};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use validator::Validate;
 
 use crate::dto::dict_dto::{
     CreateDictDataDto, CreateDictTypeDto, DictOptionDto, UpdateDictDataDto, UpdateDictTypeDto,
 };
-use crate::handler_utils::excel_response;
 use crate::list_query;
 use crate::state::AppState;
+use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 
 list_query!(pub DictTypeListQuery, DictTypeFilterQuery {
     name: String,
@@ -38,7 +39,7 @@ pub fn dict_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list_types))
         .merge(route!(list_types_no_page))
-        .merge(route!(export_dict_types))
+        .merge(route!(request_dict_type_export))
         .merge(route!(create_type))
         .merge(route!(update_type))
         .merge(route!(delete_type))
@@ -286,66 +287,28 @@ async fn delete_data(
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
 
-/// 字典类型导出数据
-#[derive(Debug, Serialize)]
-struct DictTypeExportData {
-    pub name: String,
-    pub code: String,
-    pub status: String,
-    pub remark: Option<String>,
-    pub created_at: String,
-}
-
-impl DictTypeExportData {
-    fn excel_headers() -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("name", "字典名称"),
-            ("code", "字典类型"),
-            ("status", "状态"),
-            ("remark", "备注"),
-            ("created_at", "创建时间"),
-        ]
-    }
-}
-
-/// 导出字典类型
-#[get("/types/export")]
+/// 创建字典类型异步导出任务。
+#[post("/types/exports")]
 #[perm("system:dict:export")]
-#[utoipa::path(get, path = "/api/v1/system/dict/types/export", tag = "字典管理",
-    params(DictTypeFilterQuery),
-    responses((status = 200, description = "导出字典类型 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
-async fn export_dict_types(
+#[utoipa::path(post, path = "/api/v1/system/dict/types/exports", tag = "字典管理",
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    responses((status = 202, description = "字典类型导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+async fn request_dict_type_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Query(query): Query<DictTypeFilterQuery>,
-) -> AppResult<axum::response::Response> {
-    use ryframe_excel::ExcelExporter;
-
-    let page_result = state
-        .services
-        .dict
-        .find_types_by_page(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await?;
-    let export_data: Vec<DictTypeExportData> = page_result
-        .records
-        .into_iter()
-        .map(|t| DictTypeExportData {
-            name: t.name,
-            code: t.code,
-            status: t.status,
-            remark: t.remark,
-            created_at: t.created_at.to_rfc3339(),
-        })
-        .collect();
-
-    let bytes = ExcelExporter::export_to_bytes(
-        &export_data,
-        "字典类型",
-        &DictTypeExportData::excel_headers(),
-    )?;
-
-    excel_response(bytes, "dict_types.xlsx")
+    headers: HeaderMap,
+    Json(request): Json<ExportRequestDto>,
+) -> AppResult<(
+    StatusCode,
+    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
+)> {
+    request_export(
+        state,
+        current_user,
+        headers,
+        "dict-types",
+        "system:dict:export",
+        request.0,
+    )
+    .await
 }

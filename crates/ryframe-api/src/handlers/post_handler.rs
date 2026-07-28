@@ -1,19 +1,19 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
 use ryframe_core::PageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{PostListParams, PostVo};
-use serde::Serialize;
 use validator::Validate;
 
 use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
-use crate::handler_utils::excel_response;
 use crate::state::AppState;
 use crate::{detail_body, list_query, remove_body};
+use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 
 list_query!(pub PostListQuery, PostFilterQuery {
     name: String,
@@ -36,7 +36,7 @@ pub fn post_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
         .merge(route!(list_no_page))
-        .merge(route!(export_posts))
+        .merge(route!(request_post_export))
         .merge(route!(detail))
         .merge(route!(create))
         .merge(route!(update))
@@ -174,69 +174,28 @@ async fn remove(
     remove_body!(state, current_user, id, post)
 }
 
-/// 岗位导出数据
-#[derive(Debug, Serialize)]
-struct PostExportData {
-    pub post_id: String,
-    pub name: String,
-    pub code: String,
-    pub sort: i32,
-    pub status: String,
-    pub remark: Option<String>,
-    pub created_at: String,
-}
-
-impl PostExportData {
-    fn excel_headers() -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("post_id", "岗位ID"),
-            ("name", "岗位名称"),
-            ("code", "岗位编码"),
-            ("sort", "排序"),
-            ("status", "状态"),
-            ("remark", "备注"),
-            ("created_at", "创建时间"),
-        ]
-    }
-}
-
-/// 导出岗位数据为 Excel
-#[get("/export")]
+/// 创建岗位异步导出任务。
+#[post("/exports")]
 #[perm("system:post:export")]
-#[utoipa::path(get, path = "/api/v1/system/posts/export", tag = "岗位管理",
-    params(PostFilterQuery),
-    responses((status = 200, description = "导出岗位 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
-async fn export_posts(
+#[utoipa::path(post, path = "/api/v1/system/posts/exports", tag = "岗位管理",
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    responses((status = 202, description = "岗位导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+async fn request_post_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Query(query): Query<PostFilterQuery>,
-) -> AppResult<axum::response::Response> {
-    use ryframe_excel::ExcelExporter;
-
-    let all_posts = state
-        .services
-        .post
-        .find_by_page(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await?
-        .records;
-    let export_data: Vec<PostExportData> = all_posts
-        .into_iter()
-        .map(|p| PostExportData {
-            post_id: p.id,
-            name: p.name,
-            code: p.code,
-            sort: p.sort,
-            status: p.status,
-            remark: p.remark,
-            created_at: p.created_at.to_rfc3339(),
-        })
-        .collect();
-
-    let bytes =
-        ExcelExporter::export_to_bytes(&export_data, "岗位数据", &PostExportData::excel_headers())?;
-
-    excel_response(bytes, "posts.xlsx")
+    headers: HeaderMap,
+    Json(request): Json<ExportRequestDto>,
+) -> AppResult<(
+    StatusCode,
+    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
+)> {
+    request_export(
+        state,
+        current_user,
+        headers,
+        "posts",
+        "system:post:export",
+        request.0,
+    )
+    .await
 }

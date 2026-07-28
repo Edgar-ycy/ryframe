@@ -76,7 +76,6 @@ use utoipa::OpenApi;
         crate::handlers::user_handler::update_status,
         crate::handlers::user_handler::replace_roles,
         crate::handlers::user_handler::request_user_export,
-        crate::handlers::user_handler::export_users,
         crate::handlers::user_handler::import_users,
         crate::handlers::user_handler::download_import_template,
         // 角色管理
@@ -90,7 +89,7 @@ use utoipa::OpenApi;
         crate::handlers::role_handler::replace_permissions,
         crate::handlers::role_handler::get_role_perms,
         crate::handlers::role_handler::replace_data_scope,
-        crate::handlers::role_handler::export_roles,
+        crate::handlers::role_handler::request_role_export,
         // 部门管理
         crate::handlers::dept_handler::tree,
         crate::handlers::dept_handler::list_page,
@@ -106,7 +105,7 @@ use utoipa::OpenApi;
         crate::handlers::post_handler::create,
         crate::handlers::post_handler::update,
         crate::handlers::post_handler::remove,
-        crate::handlers::post_handler::export_posts,
+        crate::handlers::post_handler::request_post_export,
         // 菜单管理
         crate::handlers::menu_handler::tree,
         crate::handlers::menu_handler::user_tree,
@@ -125,7 +124,7 @@ use utoipa::OpenApi;
         crate::handlers::config_handler::remove,
         crate::handlers::config_handler::get_by_key,
         crate::handlers::config_handler::refresh_cache,
-        crate::handlers::config_handler::export_configs,
+        crate::handlers::config_handler::request_config_export,
         // 字典管理
         crate::handlers::dict_handler::list_types,
         crate::handlers::dict_handler::list_types_no_page,
@@ -137,7 +136,7 @@ use utoipa::OpenApi;
         crate::handlers::dict_handler::create_data,
         crate::handlers::dict_handler::update_data,
         crate::handlers::dict_handler::delete_data,
-        crate::handlers::dict_handler::export_dict_types,
+        crate::handlers::dict_handler::request_dict_type_export,
         // 通知公告
         crate::handlers::notice_handler::list,
         crate::handlers::notice_handler::list_no_page,
@@ -156,11 +155,11 @@ use utoipa::OpenApi;
         // 操作日志
         crate::handlers::oper_log_handler::list,
         crate::handlers::oper_log_handler::list_no_page,
-        crate::handlers::oper_log_handler::export_oper_logs,
+        crate::handlers::oper_log_handler::request_oper_log_export,
         // 登录日志
         crate::handlers::login_log_handler::list,
         crate::handlers::login_log_handler::list_no_page,
-        crate::handlers::login_log_handler::export_login_logs,
+        crate::handlers::login_log_handler::request_login_log_export,
         // 在线用户
         crate::handlers::online_user_handler::list_online_users,
         crate::handlers::online_user_handler::list_online_users_page,
@@ -169,6 +168,7 @@ use utoipa::OpenApi;
         crate::handlers::job_handler::list,
         crate::handlers::job_handler::stats,
         crate::handlers::job_handler::retry_dead,
+        crate::handlers::export_handler::list,
         crate::handlers::export_handler::detail,
         crate::handlers::export_handler::cancel,
         crate::handlers::export_handler::download,

@@ -70,7 +70,7 @@ function sleep(milliseconds) {
 async function waitForExport(id, accessToken) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/common/exports/${id}`, {
+    const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/common/jobs/${id}`, {
       headers: authHeaders(accessToken),
     });
     await assertOk(res, "Export Status");
@@ -328,7 +328,11 @@ async function runSmokeTests() {
   await test("async user export via Worker", async () => {
     const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/system/users/exports`, {
       method: "POST",
-      headers: { ...authHeaders(accessToken), "Content-Type": "application/json" },
+      headers: {
+        ...authHeaders(accessToken),
+        "Content-Type": "application/json",
+        "Idempotency-Key": `smoke-user-export-${Date.now()}`,
+      },
       body: JSON.stringify({}),
     });
     await assertStatus(res, 202, "Create Export");
@@ -337,7 +341,7 @@ async function runSmokeTests() {
 
     const job = await waitForExport(id, accessToken);
     if (!job.result_file_name) throw new Error("completed export is missing result file name");
-    const download = await fetch(`${BASE_URL}/api/v1/common/exports/${id}/download`, {
+    const download = await fetch(`${BASE_URL}/api/v1/common/jobs/${id}/download`, {
       headers: authHeaders(accessToken),
     });
     await assertOk(download, "Export Download");

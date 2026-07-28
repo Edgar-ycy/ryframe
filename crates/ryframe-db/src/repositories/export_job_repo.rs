@@ -84,6 +84,25 @@ impl ExportJobRepository {
             .map_err(database_error)
     }
 
+    /// 按创建时间倒序读取申请人最近的导出任务。
+    pub async fn list_for_requester(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        requester_id: i64,
+        limit: u64,
+    ) -> AppResult<Vec<export_job::Model>> {
+        export_job::Entity::find()
+            .filter(export_job::Column::TenantId.eq(tenant_id))
+            .filter(export_job::Column::RequesterId.eq(requester_id))
+            .order_by_desc(export_job::Column::CreatedAt)
+            .order_by_desc(export_job::Column::Id)
+            .limit(limit.clamp(1, 100))
+            .all(db)
+            .await
+            .map_err(database_error)
+    }
+
     /// 根据内部后台任务定位对应的导出任务，供 Worker 使用。
     pub async fn find_by_background_job_id(
         &self,

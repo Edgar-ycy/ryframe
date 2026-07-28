@@ -1,21 +1,22 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::rbac;
 use ryframe_core::PageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{RoleListParams, RoleVo};
-use serde::Serialize;
 use validator::Validate;
 
 use crate::dto::role_dto::{
     CreateRoleDto, ReplaceRoleDataScopeDto, ReplaceRolePermissionsDto, UpdateRoleDto,
 };
-use crate::handler_utils::{excel_response, parse_csv_i64, parse_i64_strings};
+use crate::handler_utils::{parse_csv_i64, parse_i64_strings};
 use crate::state::AppState;
 use crate::{detail_body, list_query};
+use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 use ryframe_auth::RequestPrincipal;
 
 list_query!(pub RoleListQuery, RoleFilterQuery {
@@ -58,7 +59,7 @@ pub fn role_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
         .merge(route!(list_no_page))
-        .merge(route!(export_roles))
+        .merge(route!(request_role_export))
         .merge(route!(detail))
         .merge(route!(create))
         .merge(route!(update))
@@ -238,79 +239,30 @@ async fn batch_remove(
     ))))
 }
 
-/// 导出角色数据为 Excel
-#[get("/export")]
+/// 创建角色异步导出任务。
+#[post("/exports")]
 #[perm("system:role:export")]
-#[utoipa::path(get, path = "/api/v1/system/roles/export", tag = "角色管理",
-    params(RoleFilterQuery),
-    responses((status = 200, description = "导出角色 Excel", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
-async fn export_roles(
+#[utoipa::path(post, path = "/api/v1/system/roles/exports", tag = "角色管理",
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    responses((status = 202, description = "角色导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+async fn request_role_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Query(query): Query<RoleFilterQuery>,
-) -> AppResult<axum::response::Response> {
-    use ryframe_excel::ExcelExporter;
-
-    // 查询所有角色
-    let page_result = state
-        .services
-        .role
-        .find_by_page(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await?;
-
-    // 转换为导出数据
-    let export_data: Vec<RoleExportData> = page_result
-        .records
-        .into_iter()
-        .map(|r| RoleExportData {
-            role_id: r.id,
-            role_name: r.name,
-            role_code: r.code,
-            data_scope: r.data_scope,
-            status: r.status,
-            sort: r.sort,
-            remark: r.remark,
-            created_at: r.created_at.to_rfc3339(),
-        })
-        .collect();
-
-    // 生成 Excel
-    let bytes =
-        ExcelExporter::export_to_bytes(&export_data, "角色数据", &RoleExportData::excel_headers())?;
-
-    // 返回文件
-    excel_response(bytes, "roles.xlsx")
-}
-
-/// 角色导出数据结构
-#[derive(Debug, Serialize)]
-struct RoleExportData {
-    pub role_id: String,
-    pub role_name: String,
-    pub role_code: String,
-    pub data_scope: String,
-    pub status: String,
-    pub sort: i32,
-    pub remark: Option<String>,
-    pub created_at: String,
-}
-
-impl RoleExportData {
-    fn excel_headers() -> Vec<(&'static str, &'static str)> {
-        vec![
-            ("role_id", "角色ID"),
-            ("role_name", "角色名称"),
-            ("role_code", "角色编码"),
-            ("data_scope", "数据范围"),
-            ("status", "状态"),
-            ("sort", "排序"),
-            ("remark", "备注"),
-            ("created_at", "创建时间"),
-        ]
-    }
+    headers: HeaderMap,
+    Json(request): Json<ExportRequestDto>,
+) -> AppResult<(
+    StatusCode,
+    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
+)> {
+    request_export(
+        state,
+        current_user,
+        headers,
+        "roles",
+        "system:role:export",
+        request.0,
+    )
+    .await
 }
 
 /// 替换一个角色已分配的全部权限。
