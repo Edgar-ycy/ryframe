@@ -2,12 +2,12 @@ mod common;
 
 use common::setup_test_db;
 use ryframe_auth::password;
-use ryframe_common::{ActorContext, AppError, DataScope};
 use ryframe_core::Repository;
 use ryframe_db::{
     DatabaseCluster, PasswordResetRequestRepository, RoleRepository, UserRepository,
     entities::{password_reset_request, role, user},
 };
+use ryframe_kernel::{ActorContext, AppError, DataScope};
 use ryframe_service::system::{CreateUserParams, UserService};
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 

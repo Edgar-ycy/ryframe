@@ -11,19 +11,22 @@ use axum::{
     response::Response,
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::utils::ip::ClientIp;
-use ryframe_service::system::{OperLogService, OperLogStatus, RecordOperLogCommand};
+use ryframe_service::{
+    JobQueue,
+    system::{OperLogStatus, RecordOperLogCommand},
+};
+use ryframe_utils::ip::ClientIp;
 
 /// 操作日志中间件状态
 #[derive(Clone)]
 pub struct OperLogMiddlewareState {
-    service: Arc<OperLogService>,
+    queue: Arc<JobQueue>,
 }
 
 impl OperLogMiddlewareState {
-    /// 创建 Arc 包装的状态（用于 axum layer 注入）
-    pub fn new_arc(service: Arc<OperLogService>) -> Arc<Self> {
-        Arc::new(Self { service })
+    /// 创建供 axum 中间件注入的共享状态。
+    pub fn new_arc(queue: Arc<JobQueue>) -> Arc<Self> {
+        Arc::new(Self { queue })
     }
 }
 
@@ -78,9 +81,8 @@ pub async fn oper_log_middleware(
     let http_status = response.status();
     let is_success = http_status.is_success();
 
-    // Never persist request or response bodies in operation logs. A deny-list
-    // cannot prove that future DTO fields, configuration values or tokens are
-    // safe, and buffering responses also breaks large/streaming downloads.
+    // 绝不在操作日志中持久化请求体或响应体。拒绝列表无法证明未来的 DTO 字段、
+    // 配置值或令牌均安全；缓冲响应也会破坏大文件或流式下载。
     let oper_param = None;
     let json_result = None;
     let error_msg = (!is_success).then(|| format!("HTTP {}", http_status.as_u16()));
@@ -91,7 +93,7 @@ pub async fn oper_log_middleware(
         OperLogStatus::Failure
     };
 
-    // 异步记录日志（spawn 独立任务，不阻塞响应）
+    // 同步完成轻量入队；真正的日志写入由 Worker 执行，因此进程在响应后退出也不会丢失任务。
     let command = RecordOperLogCommand {
         title,
         business_type,
@@ -107,12 +109,13 @@ pub async fn oper_log_middleware(
         cost_time,
     };
 
-    let service = state.service.clone();
-    tokio::spawn(async move {
-        if let Err(e) = service.record(&current_user, command).await {
-            tracing::warn!("操作日志记录失败: {}", e);
-        }
-    });
+    if let Err(error) = state
+        .queue
+        .enqueue_oper_log(current_user.tenant_id.clone(), command)
+        .await
+    {
+        tracing::warn!(error = %error, "操作日志任务入队失败");
+    }
 
     response
 }
@@ -179,6 +182,8 @@ fn resource_to_title(module: &str, resource: &str) -> String {
         ("system", "operlogs") => "操作日志".into(),
         ("system", "loginlogs") => "登录日志".into(),
         ("system", "online") => "在线用户".into(),
+        ("platform", "tenants") => "租户管理".into(),
+        ("monitor", "jobs") => "后台任务".into(),
         ("monitor", _) => "服务监控".into(),
         ("tools", "gen") => "代码生成".into(),
         ("common", _) => "通用功能".into(),
@@ -190,5 +195,16 @@ fn resource_to_title(module: &str, resource: &str) -> String {
                 None => "未知模块".into(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resource_to_title;
+
+    #[test]
+    fn platform_tenant_and_job_writes_have_auditable_titles() {
+        assert_eq!(resource_to_title("platform", "tenants"), "租户管理");
+        assert_eq!(resource_to_title("monitor", "jobs"), "后台任务");
     }
 }

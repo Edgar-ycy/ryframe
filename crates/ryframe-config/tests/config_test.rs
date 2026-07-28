@@ -1,8 +1,10 @@
 use std::sync::Mutex;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ryframe_config::{
-    AppConfig, AuthConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, DbTlsMode,
-    GeneratorConfig, LoggerConfig, RateLimitConfig, RedisConfig, RedisMode, StorageBackend,
+    AppConfig, AuthConfig, ConfigCrypto, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection,
+    DbTlsMode, GeneratorConfig, JobWorkerMode, LoggerConfig, MigrationMode, RateLimitConfig,
+    RedisConfig, RedisMode, StorageBackend,
 };
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -28,6 +30,11 @@ fn test_load_and_validate_config() {
             .get("POST /api/v1/auth/password-reset/complete"),
         Some(&3)
     );
+    assert_eq!(cfg.pagination.default_page_size, 10);
+    assert_eq!(cfg.pagination.max_page_size, 100);
+    assert_eq!(cfg.pagination.unpaged_max_records, 1_000);
+    assert_eq!(cfg.database.migration_mode, MigrationMode::Auto);
+    assert_eq!(cfg.jobs.mode, JobWorkerMode::Embedded);
 
     // 空应用名应校验失败
     let mut bad = cfg.clone();
@@ -38,6 +45,68 @@ fn test_load_and_validate_config() {
     missing_s3_credentials.object_storage.backend = StorageBackend::S3;
     missing_s3_credentials.object_storage.endpoint.clear();
     assert!(missing_s3_credentials.validate("dev").is_err());
+}
+
+#[test]
+fn pagination_policy_is_overridable_and_validated() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("APP_PAGINATION_DEFAULT_PAGE_SIZE", "25");
+        std::env::set_var("APP_PAGINATION_MAX_PAGE_SIZE", "50");
+        std::env::set_var("APP_PAGINATION_UNPAGED_MAX_RECORDS", "500");
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let mut cfg = AppConfig::load(config_dir).unwrap();
+    assert_eq!(cfg.pagination.default_page_size, 25);
+    assert_eq!(cfg.pagination.max_page_size, 50);
+    assert_eq!(cfg.pagination.unpaged_max_records, 500);
+
+    cfg.pagination.default_page_size = 51;
+    assert!(cfg.validate("dev").is_err());
+    cfg.pagination.default_page_size = 25;
+    cfg.pagination.unpaged_max_records = 10_001;
+    assert!(cfg.validate("dev").is_err());
+    clear_config_env();
+}
+
+#[test]
+fn migration_mode_defaults_by_environment_and_rejects_unsafe_production_values() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+
+    unsafe {
+        std::env::set_var("APP_ENV", "prod");
+        std::env::set_var(
+            "APP_AUTH_JWT_SECRET",
+            "prod-secret-from-env-at-least-32-bytes",
+        );
+        std::env::set_var("APP_DATABASE_PASSWORD", "db-secret");
+        std::env::set_var("APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION", "true");
+        std::env::set_var(
+            "APP_MONITOR_METRICS_BEARER_TOKEN",
+            "metrics-token-for-production-tests-32-bytes",
+        );
+        std::env::set_var("SNOWFLAKE_WORKER_ID", "18");
+    }
+    let config = AppConfig::load(config_dir).unwrap();
+    assert_eq!(config.database.migration_mode, MigrationMode::Verify);
+    assert_eq!(config.jobs.mode, JobWorkerMode::External);
+
+    unsafe {
+        std::env::set_var("APP_DATABASE_MIGRATION_MODE", "auto");
+    }
+    assert!(AppConfig::load(config_dir).is_err());
+
+    unsafe {
+        std::env::remove_var("APP_DATABASE_MIGRATION_MODE");
+        std::env::set_var("APP_JOBS_MODE", "embedded");
+    }
+    assert!(AppConfig::load(config_dir).is_err());
+
+    clear_config_env();
 }
 
 #[test]
@@ -278,7 +347,16 @@ fn production_hardening_requires_secure_remote_dependencies_and_explicit_exposur
     redis.host = "redis.example.com".into();
     assert!(config.validate("prod").is_err());
     config.redis.as_mut().unwrap().tls = true;
+    assert!(config.validate("prod").is_err());
+
+    config.object_storage.use_ssl = true;
+    assert!(config.validate("prod").is_err());
+    config.object_storage.endpoint = "https://storage.example.com".into();
     assert!(config.validate("prod").is_ok());
+
+    config.object_storage.endpoint = "http://storage.example.com".into();
+    assert!(config.validate("prod").is_err());
+    config.object_storage.endpoint = "https://storage.example.com".into();
 
     config.object_storage.backend = StorageBackend::Local;
     config.object_storage.allow_local_in_production = false;
@@ -286,6 +364,32 @@ fn production_hardening_requires_secure_remote_dependencies_and_explicit_exposur
     config.object_storage.allow_local_in_production = true;
     assert!(config.validate("prod").is_ok());
 
+    clear_config_env();
+}
+
+#[test]
+fn encrypted_metrics_bearer_token_requires_a_master_key_and_is_decrypted() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    let key = [7_u8; 32];
+    let plaintext = "metrics-token-for-encryption-tests-32-bytes";
+    let encrypted = ConfigCrypto::encrypt(&key, plaintext).expect("加密监控令牌");
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+
+    unsafe {
+        std::env::set_var("APP_ENV", "dev");
+        std::env::set_var("APP_MONITOR_METRICS_BEARER_TOKEN", &encrypted);
+    }
+    let error = AppConfig::load(config_dir)
+        .expect_err("加密监控令牌必须要求主密钥")
+        .to_string();
+    assert!(error.contains("CONFIG_MASTER_KEY"));
+
+    unsafe {
+        std::env::set_var("CONFIG_MASTER_KEY", BASE64.encode(key));
+    }
+    let config = AppConfig::load(config_dir).expect("解密监控令牌");
+    assert_eq!(config.monitor.metrics_bearer_token, plaintext);
     clear_config_env();
 }
 
@@ -472,6 +576,33 @@ fn clear_config_env_removes_all_app_overrides() {
     assert!(std::env::var_os("APP_FUTURE_CONFIG_OVERRIDE").is_none());
     assert!(std::env::var_os("CONFIG_MASTER_KEY").is_none());
     assert!(std::env::var_os("SNOWFLAKE_WORKER_ID").is_none());
+}
+
+#[test]
+fn load_from_env_uses_config_directory_override() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    unsafe {
+        std::env::set_var("APP_CONFIG_DIR", config_dir);
+    }
+
+    let config = AppConfig::load_from_env().expect("config directory override should load");
+    assert_eq!(config.app.name, "ryframe");
+    clear_config_env();
+}
+
+#[test]
+fn load_from_env_rejects_empty_config_directory() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    unsafe {
+        std::env::set_var("APP_CONFIG_DIR", "   ");
+    }
+
+    let error = AppConfig::load_from_env().unwrap_err().to_string();
+    assert!(error.contains("APP_CONFIG_DIR"));
+    clear_config_env();
 }
 
 fn clear_config_env() {

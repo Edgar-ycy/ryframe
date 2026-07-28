@@ -48,4 +48,8 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::sys_file::Entity);
+    create!(ryframe_db::entities::background_job::Entity);
+    create!(ryframe_db::entities::message::Entity);
+    create!(ryframe_db::entities::message_audience::Entity);
+    create!(ryframe_db::entities::message_recipient::Entity);
 }

@@ -5,7 +5,7 @@ use super::{Cache, CacheError};
 type WarmUpFuture = Pin<Box<dyn Future<Output = Result<String, CacheError>> + Send>>;
 type WarmUpLoader = Arc<dyn Fn() -> WarmUpFuture + Send + Sync>;
 
-/// One cache warm-up definition.
+/// 一项缓存预热定义。
 #[derive(Clone)]
 pub struct WarmUpTask<C: Cache> {
     pub key: String,
@@ -24,7 +24,7 @@ impl<C: Cache> std::fmt::Debug for WarmUpTask<C> {
     }
 }
 
-/// Concurrently loads configured hot values into a cache.
+/// 并发将配置的热点值加载到缓存中。
 pub struct CacheWarmer<C: Cache> {
     cache: C,
     tasks: Vec<WarmUpTask<C>>,
@@ -38,7 +38,7 @@ impl<C: Cache + 'static> CacheWarmer<C> {
         }
     }
 
-    /// Register a warm-up task without requiring callers to box its future.
+    /// 注册预热任务，无需调用方对其异步任务装箱。
     pub fn add_task<F, Fut>(&mut self, key: impl Into<String>, ttl_secs: u64, loader: F)
     where
         F: Fn() -> Fut + Send + Sync + 'static,
@@ -56,7 +56,7 @@ impl<C: Cache + 'static> CacheWarmer<C> {
         });
     }
 
-    /// Execute all tasks and return `(successful, failed)` counts.
+    /// 执行所有任务并返回成功数和失败数。
     pub async fn warm_up(&self) -> (usize, usize) {
         let handles: Vec<_> = self
             .tasks

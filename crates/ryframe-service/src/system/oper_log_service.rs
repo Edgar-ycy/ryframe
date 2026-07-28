@@ -1,9 +1,10 @@
 use chrono::Utc;
-use ryframe_common::{ActorContext, AppResult, utils::snowflake};
 use ryframe_core::{LoggedRepo, PageQuery, PageResult, Repository};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{OperLogFilter, OperLogRepository, entities::oper_log};
-use serde::Serialize;
+use ryframe_kernel::{ActorContext, AppResult};
+use ryframe_utils::snowflake;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::log_time_range::parse_log_time_range;
@@ -60,7 +61,8 @@ pub struct OperLogQuery {
     pub end_time: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OperLogStatus {
     Success,
     Failure,
@@ -75,7 +77,7 @@ impl OperLogStatus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RecordOperLogCommand {
     pub title: String,
     pub business_type: String,
@@ -110,6 +112,16 @@ impl OperLogService {
         command: RecordOperLogCommand,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
+        self.record_for_tenant(tenant_id, command).await
+    }
+
+    /// 由后台任务使用租户标识写入操作日志，不依赖请求上下文。
+    pub async fn record_for_tenant(
+        &self,
+        tenant_id: &str,
+        command: RecordOperLogCommand,
+    ) -> AppResult<()> {
+        ryframe_core::validate_explicit_tenant(tenant_id)?;
         let log = oper_log::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
@@ -153,7 +165,7 @@ impl OperLogService {
 
         let result = self
             .oper_log_repo
-            .find_by_page_filtered(db, tenant_id, &query.page, filter, &scope_ctx)
+            .find_by_page_filtered(&db, tenant_id, &query.page, filter, &scope_ctx)
             .await?;
         Ok(PageResult {
             records: result.records.into_iter().map(OperLogVo::from).collect(),
@@ -173,9 +185,8 @@ impl OperLogService {
     pub async fn find_all(
         &self,
         actor: &ActorContext,
-        mut query: OperLogQuery,
+        query: OperLogQuery,
     ) -> AppResult<Vec<OperLogVo>> {
-        query.page = PageQuery::all_records();
         let result = self.find_by_page(actor, query).await?;
         Ok(result.records)
     }

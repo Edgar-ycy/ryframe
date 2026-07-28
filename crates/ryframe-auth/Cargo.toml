@@ -9,7 +9,8 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-ryframe-common = { path = "../ryframe-common" }
+ryframe-http = { path = "../ryframe-http" }
+ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-core = { path = "../ryframe-core" }
 async-trait = { workspace = true }
@@ -20,6 +21,7 @@ serde = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
 tracing = { workspace = true }
+lazy_static = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

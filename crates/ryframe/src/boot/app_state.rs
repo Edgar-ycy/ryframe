@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
 use ryframe_api::{AppServices, runtime::RuntimeComponents};
-use ryframe_common::utils::ip::TrustedProxySet;
 use ryframe_config::AppConfig;
 use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_db::DatabaseCluster;
+use ryframe_i18n::Localizer;
 use ryframe_middleware::RateLimiter;
+use ryframe_utils::ip::TrustedProxySet;
 
 /// 将所有已初始化的组件聚合为 AppState
 pub fn assemble(
     database: DatabaseCluster,
     config: Arc<AppConfig>,
+    localizer: Arc<Localizer>,
     redis_client: Option<RedisClient>,
     token_blacklist: TokenBlacklist,
     services: AppServices,
@@ -35,8 +37,12 @@ pub fn assemble(
         auth,
         monitor,
         config,
+        localizer: localizer.clone(),
         services: Arc::new(services),
         redis: redis_client.clone(),
+        message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
+            localizer.clone(),
+        )),
         token_blacklist,
         rate_limiter: limiter,
         trusted_proxies,

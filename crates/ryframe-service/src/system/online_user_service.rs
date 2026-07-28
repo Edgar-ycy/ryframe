@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use chrono::Utc;
-use ryframe_common::{ActorContext, AppResult};
 use ryframe_core::RedisClient;
+use ryframe_kernel::{ActorContext, AppResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
@@ -17,7 +17,7 @@ use session_codec::remaining_ttl;
 /// 在线用户信息（DTO）
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OnlineUserVo {
-    /// Stable refresh-family session identifier, not an access-token JTI.
+    /// 稳定的刷新令牌族会话标识，而非访问令牌 JTI。
     pub sid: String,
     pub username: String,
     pub dept_name: Option<String>,
@@ -43,8 +43,7 @@ pub struct UserSession {
     pub os: Option<String>,
     pub login_time: chrono::DateTime<Utc>,
     pub last_access_time: chrono::DateTime<Utc>,
-    /// Absolute refresh-family expiry. The online index must never outlive
-    /// the authoritative device session.
+    /// 刷新令牌族的绝对过期时间。在线索引绝不能比权威设备会话存活更久。
     pub absolute_exp: i64,
 }
 
@@ -191,7 +190,7 @@ impl OnlineUserService {
     }
 }
 
-/// UserSession → OnlineUserVo
+/// `UserSession` → `OnlineUserVo` 的转换。
 pub fn session_to_vo(s: &UserSession) -> OnlineUserVo {
     OnlineUserVo {
         sid: s.sid.clone(),

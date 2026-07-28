@@ -13,12 +13,14 @@ port = 8080
 enabled = true
 
 [monitor]
-# Production must inject a random value of at least 32 bytes.
+# 生产环境必须注入至少 32 字节的随机值。
 metrics_bearer_token = ""
 
 [database]
 # SQL 日志级别: off(关闭) / summary(SQL+耗时+行数) / full(含完整SQL)
 sql_log_level = "off"
+# 未设置时，开发/测试环境的 migration_mode 默认为 auto，生产环境默认为 verify。
+# 生产 DDL 应由独立的 `ryframe-migrate up` 部署任务执行。
 
 [database.primary]
 host = "localhost"
@@ -29,9 +31,9 @@ password = ""
 max_connections = 10
 min_connections = 1
 tls_mode = "disabled"
-# tls_ca = "/run/secrets/mysql-ca.pem"
-# tls_client_cert = "/run/secrets/mysql-client.pem"
-# tls_client_key = "/run/secrets/mysql-client.key"
+# MySQL TLS CA 证书路径示例：tls_ca = "/run/secrets/mysql-ca.pem"
+# MySQL TLS 客户端证书路径示例：tls_client_cert = "/run/secrets/mysql-client.pem"
+# MySQL TLS 客户端私钥路径示例：tls_client_key = "/run/secrets/mysql-client.key"
 
 [generator]
 # 读取表结构的数据源名称；默认使用 primary。
@@ -51,28 +53,37 @@ database = 0
 max_pool_size = 16
 timeout_secs = 3
 tls = false
-# tls_ca = "/run/secrets/redis-ca.pem"
-# tls_client_cert = "/run/secrets/redis-client.pem"
-# tls_client_key = "/run/secrets/redis-client.key"
+# Redis TLS CA 证书路径示例：tls_ca = "/run/secrets/redis-ca.pem"
+# Redis TLS 客户端证书路径示例：tls_client_cert = "/run/secrets/redis-client.pem"
+# Redis TLS 客户端私钥路径示例：tls_client_key = "/run/secrets/redis-client.key"
 
 [logger]
 level = "info"
 format = "text"
 output = "stdout"
 
+[telemetry]
+# OTLP 导出失败只会降级为本地日志，不会影响应用就绪状态。
+enabled = false
+endpoint = "http://localhost:4318/v1/traces"
+service_name = "ryframe"
+sample_ratio = 0.1
+export_timeout_secs = 5
+max_queue_size = 2048
+
 [cors]
-#allow_origins = ["https://admin.example.com"]
+# 允许来源示例：allow_origins = ["https://admin.example.com"]
 allow_origins = []
 
 [proxy]
-# Trust forwarding headers only from explicitly listed reverse proxies.
-# trusted_cidrs = []
+# 仅信任显式列出的反向代理发送的转发请求头。
+# 可信代理 CIDR 示例：trusted_cidrs = []
 trusted_cidrs = [
     "127.0.0.1/32",
     "::1/128",
 ]
 [upload]
-# File-size limits exclude a small multipart envelope allowance.
+# 文件大小限制不包含预留的少量 multipart 信封开销。
 file_max_bytes = 10485760
 avatar_max_bytes = 5242880
 multipart_envelope_bytes = 65536
@@ -105,20 +116,40 @@ user_capacity = 500
 # 接口级窗口时长（秒）
 api_window_secs = 60
 
+[pagination]
+# 省略 `page_size` 时按此策略取值；提供 page=0、page_size=0 或超过
+# max_page_size 的 page_size 时，请求会以 400 被拒绝。
+default_page_size = 10
+max_page_size = 100
+# 显式的 /all 风格查询和导出端点仍然受上限约束。
+unpaged_max_records = 1000
+
+[jobs]
+# 后台任务：开发环境由 Web 进程内置 Worker 消费；生产环境默认改为 external，
+# 并由独立的 `ryframe-worker` 进程运行。
+poll_interval_ms = 500
+lease_seconds = 60
+concurrency = 4
+# 独立 `ryframe-worker` 的存活、就绪和 Prometheus 指标端口。
+health_host = "0.0.0.0"
+health_port = 9091
+# 嵌入模式示例：mode = "embedded"
+# 工作进程 ID 示例：worker_id = "worker-a"
+
 [object_storage]
-# 存储后端: local（本地）| rustfs（RustFS）| minio（MinIO）| s3（S3-compatible）
+# 存储后端: local（本地）| rustfs（RustFS）| minio（MinIO）| s3（兼容 S3）
 backend = "local"
 # 本地存储根目录
 local_base_dir = "uploads"
-# Must be explicitly enabled for a single replica or a correctly configured shared volume.
+# 仅可在单副本或正确配置的共享卷场景中显式启用。
 allow_local_in_production = false
 # RustFS / MinIO / S3 端点
 endpoint = ""
-# Access Key（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY 注入）
+# 访问密钥（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY 注入）
 access_key = ""
-# Secret Key（生产环境通过 APP_OBJECT_STORAGE_SECRET_KEY 注入）
+# 私密访问密钥（生产环境通过 APP_OBJECT_STORAGE_SECRET_KEY 注入）
 secret_key = ""
-# 是否启用 SSL
+# 是否启用 TLS；生产远程存储必须为 true，且 endpoint 必须以 https:// 开头
 use_ssl = false
-# AWS Region
+# AWS 区域
 region = "us-east-1"

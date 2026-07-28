@@ -7,9 +7,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiResponse, AppError, AppResult};
+use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_core::TenantContext;
+use ryframe_http::{ApiResponse, AppError, AppResult};
+use ryframe_kernel::AppError as KernelAppError;
 use ryframe_service::{
     UserInfo,
     system::{LoginStatus, RecordLoginCommand},
@@ -19,7 +20,10 @@ use validator::Validate;
 use crate::dto::auth_dto::{
     CompletePasswordResetRequest, CsrfResponse, LoginRequest, LoginResponse,
 };
-use crate::{handler_utils::tenant_id_from_headers, state::AppState};
+use crate::{
+    handler_utils::tenant_id_from_headers, message_socket::WebSocketTicketResponse,
+    request_locale::RequestLocale, state::AppState,
+};
 
 // ==================== 登录辅助：参数提取 ====================
 
@@ -92,9 +96,8 @@ fn refresh_cookie_for_environment(
     if let Ok(timestamp) = i64::try_from(absolute_exp)
         && let Ok(expires) = cookie::time::OffsetDateTime::from_unix_timestamp(timestamp)
     {
-        // The browser deadline is the family deadline committed at login,
-        // rather than a second wall-clock calculation that could slide at a
-        // second boundary during rotation.
+        // 浏览器过期时间采用登录时已提交的令牌族截止时间，而不在轮换期间再次
+        // 按墙上时钟计算，避免跨越秒边界时出现滑动。
         cookie.set_expires(expires);
     }
     cookie
@@ -224,7 +227,7 @@ async fn enforce_login_rate_limit(
     let window = state.config.rate_limit.api_window_secs.max(1);
     let normalized_username = username.trim().to_lowercase();
     let principal_digest =
-        ryframe_common::utils::key::stable_scope_digest(&[tenant_id, &normalized_username]);
+        ryframe_utils::key::stable_scope_digest(&[tenant_id, &normalized_username]);
     for (scope, key) in [
         (
             "login_principal",
@@ -247,7 +250,8 @@ async fn enforce_login_rate_limit(
                 axum::http::StatusCode::TOO_MANY_REQUESTS,
                 Json(ApiResponse::<()>::fail(
                     429,
-                    "too many login attempts; try again later".into(),
+                    "too many login attempts; try again later",
+                    "rate_limited",
                 )),
             )
                 .into_response();
@@ -319,8 +323,8 @@ async fn record_login_success(
             tenant_id: tenant_id.into(),
             user_name: username.into(),
             ipaddr: ip.into(),
-            browser: ryframe_common::utils::user_agent::parse_browser(ua),
-            os: ryframe_common::utils::user_agent::parse_os(ua),
+            browser: ryframe_utils::user_agent::parse_browser(ua),
+            os: ryframe_utils::user_agent::parse_os(ua),
             status: LoginStatus::Success,
             message: None,
         })
@@ -337,7 +341,7 @@ async fn record_login_failure_log(
     username: &str,
     ip: &str,
     ua: &str,
-    err: &AppError,
+    err: &KernelAppError,
 ) {
     if let Err(e) = state
         .services
@@ -346,8 +350,8 @@ async fn record_login_failure_log(
             tenant_id: tenant_id.into(),
             user_name: username.into(),
             ipaddr: ip.into(),
-            browser: ryframe_common::utils::user_agent::parse_browser(ua),
-            os: ryframe_common::utils::user_agent::parse_os(ua),
+            browser: ryframe_utils::user_agent::parse_browser(ua),
+            os: ryframe_utils::user_agent::parse_os(ua),
             status: LoginStatus::Failure,
             message: Some(err.to_string()),
         })
@@ -368,7 +372,7 @@ async fn add_online_user(
     use ryframe_service::system::UserSession;
 
     let user_id: i64 = result.user_info.id.parse().unwrap_or(0);
-    let login_location = ryframe_common::utils::ip::get_ip_location(ip);
+    let login_location = ryframe_utils::ip::get_ip_location(ip);
     let now = chrono::Utc::now();
 
     state
@@ -382,8 +386,8 @@ async fn add_online_user(
             dept_name: result.user_info.dept_name.clone(),
             ipaddr: ip.to_string(),
             login_location,
-            browser: ryframe_common::utils::user_agent::parse_browser(ua),
-            os: ryframe_common::utils::user_agent::parse_os(ua),
+            browser: ryframe_utils::user_agent::parse_browser(ua),
+            os: ryframe_utils::user_agent::parse_os(ua),
             login_time: now,
             last_access_time: now,
             absolute_exp: result.refresh_expires_at as i64,
@@ -391,14 +395,14 @@ async fn add_online_user(
         .await;
 }
 
-/// 获取短期 CSRF challenge
+/// 获取短期 CSRF 挑战令牌
 ///
 /// GET /api/v1/auth/csrf
 #[utoipa::path(
     get,
     path = "/api/v1/auth/csrf",
     tag = "认证",
-    responses((status = 200, description = "CSRF challenge", body = ApiResponse<CsrfResponse>))
+    responses((status = 200, description = "CSRF 挑战令牌", body = ApiResponse<CsrfResponse>))
 )]
 pub async fn csrf(
     State(state): State<AppState>,
@@ -438,7 +442,7 @@ pub async fn csrf(
     path = "/api/v1/auth/login",
     tag = "认证",
     request_body = LoginRequest,
-    params(("X-CSRF-Token" = String, Header, description = "Signed CSRF challenge")),
+    params(("X-CSRF-Token" = String, Header, description = "已签名的 CSRF 挑战令牌")),
     responses(
         (status = 200, description = "登录成功", body = ApiResponse<LoginResponse>),
         (status = 400, description = "参数校验失败"),
@@ -506,7 +510,7 @@ pub async fn login(
                 .await
             {
                 ryframe_middleware::metrics::record_redis_degraded("login_protection");
-                return Err(error);
+                return Err(error.into());
             }
             // 记录登录成功日志
             record_login_success(&state, &tenant_id, &req.username, &ip, ua).await;
@@ -523,11 +527,11 @@ pub async fn login(
                 .into_response())
         }
         Err(e) => {
-            if matches!(e, AppError::ServiceUnavailable(_)) {
+            if matches!(&e, KernelAppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("login_session");
             }
             // 登录失败：记录失败次数 + 记录失败日志
-            if matches!(&e, AppError::Authentication(_))
+            if matches!(&e, KernelAppError::Authentication(_))
                 && let Err(error) = state
                     .services
                     .auth
@@ -535,10 +539,10 @@ pub async fn login(
                     .await
             {
                 ryframe_middleware::metrics::record_redis_degraded("login_protection");
-                return Err(error);
+                return Err(error.into());
             }
             record_login_failure_log(&state, &tenant_id, &req.username, &ip, ua, &e).await;
-            Err(e)
+            Err(e.into())
         }
     }
 }
@@ -551,11 +555,11 @@ pub async fn login(
     path = "/api/v1/auth/logout",
     tag = "认证",
     responses(
-        (status = 200, description = "登出成功", body = ryframe_common::ApiEmptyResponse),
-        (status = 403, description = "CSRF challenge 缺失、无效或与会话不匹配"),
+        (status = 200, description = "登出成功", body = ryframe_http::ApiEmptyResponse),
+        (status = 403, description = "CSRF 挑战令牌缺失、无效或与会话不匹配"),
         (status = 503, description = "Redis 会话或撤销服务不可用"),
     ),
-    params(("X-CSRF-Token" = String, Header, description = "Signed challenge; bound to sid when a refresh cookie is present")),
+    params(("X-CSRF-Token" = String, Header, description = "已签名的挑战令牌；存在刷新 Cookie 时与 sid 绑定")),
     security((), ("refreshCookie" = []))
 )]
 pub async fn logout(
@@ -632,14 +636,14 @@ pub async fn logout(
 #[utoipa::path(
     post,
     path = "/api/v1/auth/refresh",
-    params(("X-CSRF-Token" = String, Header, description = "Session-bound CSRF challenge")),
+    params(("X-CSRF-Token" = String, Header, description = "与会话绑定的 CSRF 挑战令牌")),
     security(("refreshCookie" = [])),
     tag = "认证",
     responses(
         (status = 200, description = "刷新成功", body = ApiResponse<LoginResponse>),
         (status = 401, description = "令牌无效、已过期、被撤销或确认重放"),
-        (status = 403, description = "CSRF challenge 缺失、无效或与会话不匹配"),
-        (status = 409, description = "另一个 rotation attempt 正在处理", headers(("Retry-After" = String, description = "再次刷新前等待的秒数"))),
+        (status = 403, description = "CSRF 挑战令牌缺失、无效或与会话不匹配"),
+        (status = 409, description = "另一个令牌轮换请求正在处理", headers(("Retry-After" = String, description = "再次刷新前等待的秒数"))),
         (status = 503, description = "Redis 会话服务不可用；显式重试必须复用原 X-CSRF-Token")
     )
 )]
@@ -697,20 +701,21 @@ pub async fn refresh(
                 .into_response())
         }
         Err(e) => {
-            if matches!(e, AppError::ServiceUnavailable(_)) {
+            if matches!(&e, KernelAppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("refresh_session");
             }
             record_login_failure_log(&state, &claims.tenant_id, "unknown", &ip, ua, &e).await;
-            let clear_cookie = matches!(e, AppError::Authentication(_));
-            let concurrent = matches!(&e, AppError::Conflict(message) if message == "refresh already in progress");
-            if matches!(&e, AppError::Authentication(message) if message.contains("replay detected"))
+            let clear_cookie = matches!(&e, KernelAppError::Authentication(_));
+            let concurrent = matches!(&e, KernelAppError::Conflict(message) if message == "refresh already in progress");
+            if matches!(&e, KernelAppError::Authentication(message) if message.contains("replay detected"))
             {
                 ryframe_middleware::metrics::record_refresh_replay();
             }
+            let error: AppError = e.into();
             let mut response = if clear_cookie {
-                (clear_auth_cookies(jar), e).into_response()
+                (clear_auth_cookies(jar), error).into_response()
             } else {
-                e.into_response()
+                error.into_response()
             };
             if concurrent {
                 response
@@ -728,7 +733,7 @@ pub async fn refresh(
     tag = "认证",
     request_body = CompletePasswordResetRequest,
     responses(
-        (status = 200, description = "密码已重置", body = ryframe_common::ApiEmptyResponse),
+        (status = 200, description = "密码已重置", body = ryframe_http::ApiEmptyResponse),
         (status = 400, description = "参数校验失败"),
         (status = 401, description = "重置令牌无效")
     )
@@ -772,6 +777,38 @@ pub async fn me(
     let user_info = state.services.auth.get_current_user(&current_user).await?;
 
     Ok(Json(ApiResponse::success(user_info)))
+}
+
+/// 申请仅可用于一次 WebSocket 握手的短期票据。
+///
+/// GET 升级请求不再携带 access token，避免令牌出现在 URL、代理日志或浏览器历史中。
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/ws-ticket",
+    tag = "认证",
+    responses(
+        (status = 200, description = "一次性 WebSocket 票据", body = ApiResponse<WebSocketTicketResponse>),
+        (status = 401, description = "未认证"),
+        (status = 503, description = "Redis 不可用")
+    ),
+    security(("bearer" = []))
+)]
+pub async fn websocket_ticket(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    Extension(claims): Extension<Claims>,
+    Extension(request_locale): Extension<RequestLocale>,
+) -> AppResult<Json<ApiResponse<WebSocketTicketResponse>>> {
+    let grant = state
+        .services
+        .websocket_ticket
+        .issue(&current_user, &claims, request_locale.0.as_str())
+        .await?;
+    ryframe_middleware::metrics::record_ws_ticket("issued");
+    Ok(Json(ApiResponse::success(WebSocketTicketResponse {
+        ticket: grant.ticket,
+        expires_in: grant.expires_in,
+    })))
 }
 
 #[cfg(test)]

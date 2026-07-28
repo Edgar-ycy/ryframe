@@ -187,7 +187,7 @@ pub async fn cache_control_middleware(
     if let Some(ref client_etag) = if_none_match
         && client_etag == &etag
     {
-        // 304 Not Modified
+        // 304 未修改
         let mut headers = parts.headers.clone();
         headers.insert(
             header::ETAG,

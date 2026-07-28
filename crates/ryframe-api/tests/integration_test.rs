@@ -1,4 +1,4 @@
-﻿//! API 集成测试
+//! API 集成测试
 //!
 //! 使用隔离 MySQL 8.4 数据库 + axum test client 测试端到端流程。
 
@@ -71,12 +71,16 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::post::Entity);
     create!(ryframe_db::entities::role::Entity);
     create!(ryframe_db::entities::menu::Entity);
+    create!(ryframe_db::entities::sys_file::Entity);
     create!(ryframe_db::entities::user::Entity);
     create!(ryframe_db::entities::password_reset_request::Entity);
     create!(ryframe_db::entities::user_role::Entity);
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
-    create!(ryframe_db::entities::sys_file::Entity);
+    create!(ryframe_db::entities::background_job::Entity);
+    create!(ryframe_db::entities::message::Entity);
+    create!(ryframe_db::entities::message_audience::Entity);
+    create!(ryframe_db::entities::message_recipient::Entity);
 }
 
 async fn seed_test_data(db: &DatabaseConnection) {
@@ -130,6 +134,8 @@ async fn seed_test_data(db: &DatabaseConnection) {
         email: "admin@test.com".into(),
         phone: "13800000000".into(),
         avatar: None,
+        avatar_file_id: None,
+        preferred_locale: None,
         status: user::Model::STATUS_NORMAL.to_string(),
         auth_version: 1,
         dept_id: Some(1),
@@ -242,12 +248,15 @@ fn test_config() -> AppConfig {
             ..Default::default()
         },
         rate_limit: RateLimitConfig::default(),
+        pagination: Default::default(),
         cors: Default::default(),
         object_storage: Default::default(),
         proxy: Default::default(),
         upload: Default::default(),
         api_docs: Default::default(),
         monitor: Default::default(),
+        jobs: Default::default(),
+        telemetry: Default::default(),
     }
 }
 
@@ -280,6 +289,7 @@ async fn build_test_app_with_redis(
         .as_ref()
         .map(|client| OnlineUserService::new_redis(client.clone()))
         .unwrap_or_default();
+    let localizer = Arc::new(ryframe_i18n::Localizer::embedded().expect("内嵌国际化资源"));
     AppState {
         auth: ryframe_auth::middleware::AuthState {
             config: config_arc.clone(),
@@ -293,6 +303,7 @@ async fn build_test_app_with_redis(
             metrics_bearer_token: Arc::from(""),
         },
         config: config_arc,
+        localizer: localizer.clone(),
         services: Arc::new(AppServices {
             auth: auth_service,
             user: Arc::new(UserService::new(database.clone(), None)),
@@ -304,8 +315,21 @@ async fn build_test_app_with_redis(
             post: Arc::new(PostService::new(database.clone())),
             config: Arc::new(ConfigService::new(database.clone(), None)),
             dict: Arc::new(DictService::new(database.clone(), None)),
+            export: Arc::new(ryframe_service::system::ExportService::new(
+                database.clone(),
+                Arc::new(UserService::new(database.clone(), None)),
+                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
+            )),
             notice: Arc::new(NoticeService::new(database.clone())),
+            message: Arc::new(ryframe_service::system::MessageService::new(
+                database.clone(),
+                Arc::new(ryframe_service::JobQueue::new(database.clone())),
+            )),
+            websocket_ticket: Arc::new(ryframe_service::system::WebSocketTicketService::new(
+                redis.clone(),
+            )),
             oper_log: Arc::new(OperLogService::new(database.clone())),
+            job_queue: Arc::new(ryframe_service::JobQueue::new(database.clone())),
             login_info: Arc::new(LoginInfoService::new(database.clone())),
             generator: Arc::new(GeneratorService::new(
                 database.clone(),
@@ -321,6 +345,9 @@ async fn build_test_app_with_redis(
             captcha: CaptchaStore::new_in_memory(300),
         }),
         redis: redis.clone(),
+        message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
+            localizer.clone(),
+        )),
         token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
         trusted_proxies: Default::default(),
@@ -457,8 +484,7 @@ async fn test_login_rejects_missing_csrf_cookie() {
         .method("POST")
         .header("X-Tenant-Id", "system")
         .header("content-type", "application/json")
-        // Suppress the test helper's automatic challenge while deliberately
-        // omitting the matching challenge cookie.
+        // 抑制测试辅助函数自动添加挑战值，同时刻意省略匹配的挑战 Cookie。
         .header("x-csrf-token", "invalid")
         .body(Body::from(r#"{"username":"admin","password":"test123"}"#))
         .unwrap();
@@ -591,7 +617,7 @@ async fn test_auth_full_flow() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(headers.get_all("set-cookie").iter().count(), 0);
 
-    // Ensure a sliding seven-day cookie would move its Expires timestamp.
+    // 确保滑动的七天 Cookie 会更新其 Expires 时间戳。
     tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
 
     let refresh_req = Request::builder()
@@ -643,8 +669,8 @@ async fn test_auth_full_flow() {
         body["data"]["user_info"]["perms"]
     );
 
-    // If the success response is lost, retrying the old cookie with the same
-    // signed CSRF challenge recovers the exact committed refresh token.
+    // 若成功响应丢失，使用同一个已签名 CSRF 挑战值重试旧 Cookie，仍可恢复
+    // 已提交的准确刷新令牌。
     let recovered_req = Request::builder()
         .uri("/auth/refresh")
         .method("POST")
@@ -863,7 +889,7 @@ async fn test_system_crud_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["total"], 1);
+    assert_eq!(b["data"]["total"], 1);
 
     let (s, b) = auth_get(&db, "/system/posts/all?code=test_post", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -888,8 +914,8 @@ async fn test_system_crud_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["total"], 1);
-    assert_eq!(b["rows"][0]["key"], "test.config.key");
+    assert_eq!(b["data"]["total"], 1);
+    assert_eq!(b["data"]["items"][0]["key"], "test.config.key");
 
     let (s, _) = auth_get(&db, "/system/configs/all", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -913,7 +939,7 @@ async fn test_system_crud_operations() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["total"], 1);
+    assert_eq!(b["data"]["total"], 1);
 
     let (s, b) = auth_get(&db, "/system/dict/types/all?code=test_dict", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -933,7 +959,7 @@ async fn test_system_crud_operations() {
     assert_eq!(b["data"]["title"], "测试公告");
     let (s, b) = auth_get(&db, "/system/notices?page=1&page_size=10&status=1", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["total"], 1);
+    assert_eq!(b["data"]["total"], 1);
 
     let (s, b) = auth_get(&db, "/system/notices/all?status=1", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -949,14 +975,14 @@ async fn test_system_query_endpoints() {
 
     let (s, b) = auth_get(&db, "/system/users?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some());
+    assert!(b["data"].get("items").is_some());
 
     let (s, _) = auth_get(&db, "/system/users/all", &token).await;
     assert_eq!(s, StatusCode::OK);
 
     let (s, b) = auth_get(&db, "/system/roles?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some());
+    assert!(b["data"].get("items").is_some());
 
     let (s, b) = auth_get(&db, "/system/roles/all?code=admin", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -968,7 +994,7 @@ async fn test_system_query_endpoints() {
 
     let (s, b) = auth_get(&db, "/system/depts?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some());
+    assert!(b["data"].get("items").is_some());
 
     let (s, _) = auth_get(&db, "/system/depts/all", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -979,7 +1005,7 @@ async fn test_system_query_endpoints() {
 
     let (s, b) = auth_get(&db, "/system/menus?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some());
+    assert!(b["data"].get("items").is_some());
 
     let (s, _) = auth_get(&db, "/system/menus/all", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -990,7 +1016,7 @@ async fn test_system_query_endpoints() {
 
     let (s, b) = auth_get(&db, "/system/online", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b["rows"].as_array().is_some());
+    assert!(b["data"]["items"].as_array().is_some());
 }
 
 /// 未认证访问系统接口应返回 401
@@ -1748,7 +1774,7 @@ async fn test_log_endpoints() {
     // 登录日志列表
     let (s, b) = auth_get(&db, "/system/loginlogs?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some(), "登录日志应返回 rows");
+    assert!(b["data"].get("items").is_some(), "登录日志应返回分页数据");
 
     // 登录日志不分页
     let (s, _) = auth_get(&db, "/system/loginlogs/all", &token).await;
@@ -1761,7 +1787,7 @@ async fn test_log_endpoints() {
     // 操作日志列表
     let (s, b) = auth_get(&db, "/system/operlogs?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some(), "操作日志应返回 rows");
+    assert!(b["data"].get("items").is_some(), "操作日志应返回分页数据");
 
     // 操作日志不分页
     let (s, _) = auth_get(&db, "/system/operlogs/all", &token).await;
@@ -1820,17 +1846,18 @@ async fn test_profile_endpoints() {
 
 fn force_logout_principal(tenant_id: &str) -> ryframe_auth::RequestPrincipal {
     ryframe_auth::RequestPrincipal {
-        actor: ryframe_common::ActorContext {
+        actor: ryframe_kernel::ActorContext {
             user_id: 1,
             tenant_id: tenant_id.into(),
             username: "admin".into(),
             dept_id: None,
             dept_path: None,
-            data_scope: ryframe_common::DataScope::All,
+            data_scope: ryframe_kernel::DataScope::All,
             custom_dept_ids: Vec::new(),
             include_self: true,
             is_super_admin: true,
         },
+        preferred_locale: None,
         roles: vec!["admin".into()],
         role_ids: vec![1],
         permissions: vec!["monitor:online:force-logout".into()],
@@ -1838,9 +1865,8 @@ fn force_logout_principal(tenant_id: &str) -> ryframe_auth::RequestPrincipal {
     }
 }
 
-/// Exercises the handler orchestration against the Compose Redis service:
-/// tenant validation, revoke-before-index-delete, transient 503, retry, and
-/// idempotent repeated force logout.
+/// 针对 Compose Redis 服务验证处理器编排：租户校验、先撤销再删除索引、瞬时
+/// 503、重试以及幂等的重复强制登出。
 #[tokio::test]
 #[ignore = "requires Docker Compose MySQL and Redis services"]
 async fn force_logout_uses_authoritative_family_and_recovers_after_redis_failure() {
@@ -1908,7 +1934,7 @@ async fn force_logout_uses_authoritative_family_and_recovers_after_redis_failure
     .await;
     assert!(matches!(
         cross_tenant,
-        Err(ryframe_common::AppError::NotFound(_))
+        Err(ryframe_http::AppError::NotFound(_))
     ));
     assert!(refresh_sessions.is_active(&sid).await.unwrap());
     assert_eq!(
@@ -1937,7 +1963,7 @@ async fn force_logout_uses_authoritative_family_and_recovers_after_redis_failure
     .await;
     assert!(matches!(
         unavailable,
-        Err(ryframe_common::AppError::ServiceUnavailable(_))
+        Err(ryframe_http::AppError::ServiceUnavailable(_))
     ));
 
     tokio::time::sleep(std::time::Duration::from_millis(1_750)).await;
@@ -1970,16 +1996,14 @@ async fn force_logout_uses_authoritative_family_and_recovers_after_redis_failure
         0
     );
 
-    // The revoked family remains until its absolute expiry, making retries
-    // successful even after the index has already been deleted.
+    // 已撤销的令牌族会保留到其绝对过期时间，因此即使索引已被删除，重试仍能成功。
     let _response = online_user_handler::force_logout(State(state), system_actor, Path(sid))
         .await
         .unwrap();
 }
 
-/// A signed, unexpired access token must not bypass distributed session
-/// validation when Redis is unavailable. This exercises the complete Axum
-/// middleware stack for an authenticated business route.
+/// Redis 不可用时，已签名且未过期的访问令牌不得绕过分布式会话校验。本测试覆盖
+/// 已认证业务路由的完整 Axum 中间件链。
 #[tokio::test]
 #[ignore = "requires Docker Compose MySQL and Redis services"]
 async fn auth_middleware_fails_closed_when_redis_is_unavailable() {
@@ -2020,8 +2044,8 @@ async fn auth_middleware_fails_closed_when_redis_is_unavailable() {
     .unwrap();
     assert!(access_claims.exp > chrono::Utc::now().timestamp() as usize);
 
-    // Keep the access-JTI blacklist local in this fault injection so the 503
-    // specifically proves that the mandatory sid-family lookup fails closed.
+    // 在此故障注入中保持访问 JTI 黑名单为本地状态，使 503 专门证明必需的
+    // sid 令牌族查询会以失败即拒绝的方式处理。
     state.auth.blacklist = ryframe_core::TokenBlacklist::new(None);
 
     let router = api_router(state.clone(), test_rate_limit_state());
@@ -2042,8 +2066,8 @@ async fn auth_middleware_fails_closed_when_redis_is_unavailable() {
     let (status, _) = send_request(router, request).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 
-    // Do not leak the pause into the next Redis acceptance test. The failed
-    // check must also leave the authoritative family active for a safe retry.
+    // 不要让暂停状态泄漏到下一个 Redis 验收测试。失败的校验还必须保持权威
+    // 令牌族为活动状态，以便安全重试。
     tokio::time::sleep(std::time::Duration::from_millis(1_750)).await;
     assert!(
         state
@@ -2088,8 +2112,7 @@ async fn test_logout_flow() {
         2
     );
 
-    // A repeated logout obtains a fresh unbound challenge after the browser
-    // has removed both authentication cookies.
+    // 浏览器删除两个认证 Cookie 后，重复登出会获得一个新的未绑定挑战值。
     let repeated_csrf =
         ryframe_auth::jwt::encode_csrf("test-jwt-secret-for-integration-tests", None, 300).unwrap();
     let repeated = Request::builder()
@@ -2203,7 +2226,7 @@ async fn test_generator_endpoints() {
     // 列出数据库表
     let (s, b) = auth_get(&db, "/tools/gen/tables?table_name=sys_user", &token).await;
     assert_eq!(s, StatusCode::OK);
-    let tables = b["rows"].as_array().unwrap();
+    let tables = b["data"]["items"].as_array().unwrap();
     assert!(!tables.is_empty(), "应至少包含一张表");
 
     // 预览代码生成（使用确定存在且包含单主键的业务表）

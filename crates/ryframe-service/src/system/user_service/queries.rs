@@ -1,13 +1,100 @@
 use std::collections::HashMap;
 
-use ryframe_common::{ActorContext, AppError, AppResult};
-use ryframe_core::repository::PageResult;
+use ryframe_core::{Repository, repository::PageResult};
 use ryframe_db::UserFilter;
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::DatabaseConnection;
 
 use super::{RoleBriefVo, UserDetailVo, UserListParams, UserService, UserVo};
 
 impl UserService {
+    /// 以稳定的主键游标分批读取可导出的用户，避免大页码查询在并发写入时产生重复或遗漏。
+    pub async fn find_for_export(
+        &self,
+        actor: &ActorContext,
+        params: &UserListParams,
+        maximum_records: usize,
+    ) -> AppResult<Vec<UserVo>> {
+        const BATCH_SIZE: u64 = 1_000;
+
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let scope = actor.data_scope_context();
+        let db = self.db.read();
+        let filter = UserFilter {
+            username: params.username.as_deref(),
+            phone: params.phone.as_deref(),
+            status: params.status.as_deref(),
+            dept_id: params.dept_id,
+        };
+        let mut after_id = None;
+        let mut records = Vec::new();
+
+        loop {
+            let batch = self
+                .user_repo
+                .find_for_export_after_id(&db, tenant_id, &filter, &scope, after_id, BATCH_SIZE)
+                .await?;
+            if batch.is_empty() {
+                break;
+            }
+            after_id = batch.last().map(|user| user.id);
+            records.extend(batch.into_iter().map(UserVo::from));
+            if records.len() > maximum_records {
+                return Err(AppError::Validation(format!(
+                    "导出记录数超过 {maximum_records} 条上限"
+                )));
+            }
+        }
+
+        self.fill_dept_names(&db, tenant_id, &mut records).await?;
+        Ok(records)
+    }
+
+    /// 在异步任务真正执行前按数据库当前状态重新校验申请人的账号和权限。
+    ///
+    /// 数据范围继续使用任务创建时保存的快照，防止等待期间扩大可导出范围；权限则必须
+    /// 使用当前角色和授权重新计算，确保撤权或停用会立即阻止任务继续执行。
+    pub async fn ensure_current_permission(
+        &self,
+        actor: &ActorContext,
+        permission_code: &str,
+    ) -> AppResult<()> {
+        if permission_code.trim().is_empty() {
+            return Err(AppError::Validation("权限代码不能为空".into()));
+        }
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.read();
+        let user = self
+            .user_repo
+            .find_by_id(&db, tenant_id, actor.user_id)
+            .await?
+            .ok_or_else(|| AppError::Authorization("导出申请人已不存在".into()))?;
+        if !user.is_enabled() {
+            return Err(AppError::Authorization("导出申请人的账号已停用".into()));
+        }
+        let roles = self
+            .role_repo
+            .find_user_roles(&db, tenant_id, actor.user_id)
+            .await?;
+        if roles.iter().any(|role| role.is_super == 1) {
+            return Ok(());
+        }
+        let role_ids = roles.iter().map(|role| role.id).collect::<Vec<_>>();
+        let permissions = self
+            .perm_repo
+            .find_role_perms(&db, tenant_id, &role_ids)
+            .await?;
+        let permission_codes = permissions
+            .into_iter()
+            .map(|permission| permission.code)
+            .collect::<Vec<_>>();
+        if ryframe_auth::rbac::has_permission(&permission_codes, permission_code) {
+            Ok(())
+        } else {
+            Err(AppError::Authorization("导出申请人的权限已被撤销".into()))
+        }
+    }
+
     async fn fill_dept_names(
         &self,
         db: &DatabaseConnection,
@@ -57,14 +144,14 @@ impl UserService {
         };
         let page = self
             .user_repo
-            .find_by_page_filtered_with_data_scope(db, tenant_id, &params.page, &filter, &scope)
+            .find_by_page_filtered_with_data_scope(&db, tenant_id, &params.page, &filter, &scope)
             .await?;
         let mut records = page
             .records
             .into_iter()
             .map(UserVo::from)
             .collect::<Vec<_>>();
-        self.fill_dept_names(db, tenant_id, &mut records).await?;
+        self.fill_dept_names(&db, tenant_id, &mut records).await?;
         Ok(PageResult::new(records, page.total, &params.page))
     }
 
@@ -78,18 +165,18 @@ impl UserService {
         let db = self.db.read();
         let Some(user) = self
             .user_repo
-            .find_by_id_with_data_scope(db, tenant_id, id, &scope)
+            .find_by_id_with_data_scope(&db, tenant_id, id, &scope)
             .await?
         else {
             return Ok(None);
         };
 
         let mut user = UserVo::from(user);
-        self.fill_dept_names(db, tenant_id, std::slice::from_mut(&mut user))
+        self.fill_dept_names(&db, tenant_id, std::slice::from_mut(&mut user))
             .await?;
         let roles = self
             .role_repo
-            .find_user_roles(db, tenant_id, id)
+            .find_user_roles(&db, tenant_id, id)
             .await?
             .into_iter()
             .map(RoleBriefVo::from)

@@ -141,7 +141,7 @@ pub struct CircuitBreaker {
     failure_threshold: u32,
     /// 熔断恢复超时
     timeout: Duration,
-    /// HalfOpen 状态下需要连续成功多少次才恢复
+    /// `HalfOpen` 状态下需要连续成功多少次才恢复
     half_open_max: u32,
     /// 当前失败计数
     failure_count: AtomicU32,
@@ -192,10 +192,8 @@ impl CircuitBreaker {
         match status.state {
             CircuitState::Closed => true,
             CircuitState::HalfOpen => {
-                // A HalfOpen generation may issue at most half_open_max probes.
-                // Counting completed successes as consumed permits prevents the
-                // breaker from closing while a previously admitted probe is
-                // still in flight.
+                // 一个 `HalfOpen` 世代最多只能发出 half_open_max 次探测。将已完成的成功次数
+                // 计入已用配额，可防止先前已准入的探测仍在执行时熔断器提前关闭。
                 if status.half_open_success + status.half_open_in_flight >= self.half_open_max {
                     false
                 } else {
@@ -269,7 +267,7 @@ impl CircuitBreaker {
                 }
             }
             CircuitState::HalfOpen => {
-                // HalfOpen 状态下失败，立即回到 Open
+                // `HalfOpen` 状态下失败，立即回到 `Open`
                 status.state = CircuitState::Open;
                 status.half_open_success = 0;
                 status.half_open_in_flight = 0;

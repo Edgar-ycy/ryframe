@@ -12,10 +12,10 @@ pub struct Model {
     pub tenant_id: String,
     pub name: String,
     pub parent_id: Option<i64>,
-    /// Menu type: M directory, C page, F action.
+    /// 菜单类型：M 为目录，C 为页面，F 为操作。
     pub menu_type: String,
     pub perm_id: Option<i64>,
-    /// Stable frontend page identifier. It must not depend on the database ID.
+    /// 稳定的前端页面标识，不能依赖数据库 ID。
     pub route_key: Option<String>,
     pub icon: Option<String>,
     pub sort: i32,

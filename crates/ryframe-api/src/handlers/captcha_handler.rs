@@ -7,14 +7,10 @@ use axum::{
     response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ryframe_common::{
-    ApiResponse, AppError, AppResult,
-    utils::{
-        captcha::{CaptchaType, generate_captcha},
-        ip::ClientIp,
-    },
-};
+use ryframe_captcha::{CaptchaType, generate_captcha};
+use ryframe_http::{ApiResponse, AppError, AppResult};
 use ryframe_macro::{get, post, route};
+use ryframe_utils::ip::ClientIp;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;

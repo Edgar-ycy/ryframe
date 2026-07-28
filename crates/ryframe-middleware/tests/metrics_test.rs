@@ -1,4 +1,11 @@
-use ryframe_middleware::metrics::{metrics_text, normalize_path};
+use std::time::Duration;
+
+use ryframe_middleware::metrics::{
+    metrics_text, normalize_path, observe_job_duration, observe_message_ack_latency,
+    record_database_read_fallback, record_database_read_selection, record_otel_exporter_failure,
+    set_database_node_health, set_job_oldest_ready_age, set_job_queue_depth,
+    set_otel_exporter_degraded,
+};
 
 #[test]
 fn test_normalize_path_static() {
@@ -38,8 +45,36 @@ fn test_normalize_path_mixed() {
 #[test]
 fn test_metrics_text_format() {
     let text = metrics_text();
-    // Unlabelled process gauges are exported immediately; labelled HTTP
-    // series appear only after the first request for that label set.
+    // 未带标签的进程指标会立即导出；带标签的 HTTP
+    // 序列只会在该标签集合的首次请求后出现。
     assert!(text.contains("# HELP ryframe_process_cpu_seconds_total"));
     assert!(text.contains("# TYPE ryframe_process_resident_memory_bytes gauge"));
+}
+
+#[test]
+fn operational_metrics_use_bounded_labels() {
+    set_database_node_health("replica-a", "replica", false);
+    record_database_read_selection("primary", "fallback");
+    record_database_read_fallback();
+    set_job_queue_depth("system.message.dispatch", "pending", 3);
+    set_job_oldest_ready_age("system.message.dispatch", Duration::from_secs(90));
+    observe_job_duration(
+        "system.message.dispatch",
+        "succeeded",
+        Duration::from_millis(25),
+    );
+    observe_message_ack_latency(Duration::from_millis(10));
+    record_otel_exporter_failure();
+    set_otel_exporter_degraded(false);
+
+    let text = metrics_text();
+    assert!(text.contains("ryframe_db_node_up"));
+    assert!(text.contains("ryframe_db_read_selection_total"));
+    assert!(text.contains("ryframe_db_read_fallback_total"));
+    assert!(text.contains("ryframe_job_queue_depth"));
+    assert!(text.contains("ryframe_job_oldest_ready_age_seconds"));
+    assert!(text.contains("ryframe_job_duration_seconds"));
+    assert!(text.contains("ryframe_message_ack_latency_seconds"));
+    assert!(text.contains("ryframe_otel_exporter_failures_total"));
+    assert!(text.contains("ryframe_otel_exporter_degraded"));
 }

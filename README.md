@@ -16,7 +16,8 @@ RyFrame 是一个基于 Rust 2024 的后台管理系统框架，采用 Cargo Wor
 
 ### 环境要求
 
-- Rust 1.85+
+- Rust 1.97.1（仓库通过 `rust-toolchain.toml` 固定）
+- Python 3.11+（用于后端质量门禁与发布校验脚本）
 - MySQL 8.4
 - Redis 7+；生产环境强制使用并要求持久化与 `noeviction`，开发环境才允许显式的内存降级
 - RustFS；开发配置默认连接本机 `9000` 端口，也可显式切换为本地存储
@@ -43,6 +44,8 @@ docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_K
 cargo run
 ```
 
+首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。日常联合检查使用 `cargo xtask check`；提交前需要完整验证时使用 `cargo xtask verify`。两者都可附加 `--scope backend` 或 `--scope frontend` 缩小范围。
+
 默认服务地址：
 
 - API：`http://localhost:8080`
@@ -65,6 +68,7 @@ cargo run
 ```bash
 git clone https://github.com/Edgar-ycy/ryframe-vue3.git ryframe-vue3
 cd ryframe-vue3
+corepack enable
 pnpm install
 pnpm dev
 ```
@@ -110,15 +114,22 @@ cargo nextest run --workspace
 ```text
 .
 ├── crates/
-│   ├── ryframe/              # 应用入口
-│   ├── ryframe-api/          # HTTP 路由、处理器、DTO、OpenAPI
-│   ├── ryframe-service/      # 业务逻辑
+│   ├── ryframe/              # 应用、迁移与独立 Worker 的可执行入口
+│   ├── ryframe-api/          # HTTP 路由、处理器、DTO、OpenAPI 与消息 WebSocket
+│   ├── ryframe-service/      # 业务用例、后台任务与消息中心
 │   ├── ryframe-db/           # SeaORM 实体、仓储、事务和数据库拓扑
 │   ├── ryframe-db-migration/ # 数据库迁移
 │   ├── ryframe-auth/         # 认证、授权、权限中间件
+│   ├── ryframe-kernel/       # 传输无关的领域类型、错误码与主体上下文
+│   ├── ryframe-http/         # HTTP 错误映射与统一响应信封
+│   ├── ryframe-i18n/         # 显式注入的语言协商、资源校验与文本渲染
+│   ├── ryframe-utils/        # 雪花 ID、脱敏、差异与文件处理等通用工具
+│   ├── ryframe-captcha/      # 验证码生成与图像渲染
+│   ├── ryframe-excel/        # Excel 导入导出
+│   ├── ryframe-mail/         # 邮件发送适配
 │   ├── ryframe-core/         # 分页、缓存、租户上下文、分布式锁与熔断
 │   ├── ryframe-config/       # 配置加载与环境覆盖
-│   ├── ryframe-common/       # 公共类型、错误、工具函数、国际化
+│   ├── ryframe-common/       # 仅供外部旧调用使用的兼容入口，内部禁止依赖
 │   ├── ryframe-middleware/   # 通用中间件
 │   ├── ryframe-monitor/      # 监控与健康检查
 │   ├── ryframe-generator/    # 代码生成
@@ -163,6 +174,7 @@ config/app.prod.toml
 | `APP_MONITOR_METRICS_BEARER_TOKEN` | Prometheus 专用 Bearer Token；生产至少 32 字节 | 空 |
 | `APP_OBJECT_STORAGE_BACKEND` | `local`、`rustfs`、`minio` 或 `s3` | 按环境配置 |
 | `APP_OBJECT_STORAGE_ENDPOINT` | RustFS/MinIO/S3 API 地址 | 按环境配置 |
+| `APP_OBJECT_STORAGE_USE_SSL` | 远程对象存储是否使用 TLS；生产还要求 `https://` endpoint | `false` |
 | `APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION` | 显式确认生产单实例/共享卷使用本地存储 | `false` |
 | `OTEL_ENABLED` | 是否启用链路追踪 | `false` |
 | `OTEL_ENDPOINT` | OTLP 上报地址 | `http://localhost:4318/v1/traces` |

@@ -1,21 +1,10 @@
-use ryframe_common::{AppError, AppResult};
 use ryframe_config::{RedisConfig, RedisMode};
 use ryframe_core::{RedisClient, TokenBlacklist};
+use ryframe_kernel::{AppError, AppResult};
 
 pub struct RedisState {
     pub client: Option<RedisClient>,
     pub token_blacklist: TokenBlacklist,
-}
-
-async fn flush_config_cache(redis: &RedisClient) {
-    const PREFIX: &str = "sys_config:key:";
-    match redis.delete_by_pattern(&format!("{PREFIX}*")).await {
-        Ok(deleted) if deleted > 0 => {
-            tracing::info!(deleted, "cleared stale configuration cache entries");
-        }
-        Ok(_) => {}
-        Err(error) => tracing::warn!(%error, "failed to clear configuration cache"),
-    }
 }
 
 pub async fn init(config: &Option<RedisConfig>) -> AppResult<RedisState> {
@@ -41,11 +30,10 @@ pub async fn init(config: &Option<RedisConfig>) -> AppResult<RedisState> {
         }
     };
 
-    if let Some(redis) = &client {
-        if is_production() {
-            verify_production_policy(redis).await?;
-        }
-        flush_config_cache(redis).await;
+    if let Some(redis) = &client
+        && is_production()
+    {
+        verify_production_policy(redis).await?;
     }
 
     let token_blacklist = TokenBlacklist::new(client.clone());

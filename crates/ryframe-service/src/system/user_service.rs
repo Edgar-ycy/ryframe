@@ -3,13 +3,13 @@ mod password_reset;
 mod queries;
 mod roles;
 
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::{LoggedRepo, RedisClient, repository::PageQuery};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
-    DeptRepository, RoleRepository, UserRepository,
+    DeptRepository, PermissionRepository, RoleRepository, UserRepository,
     entities::{password_reset_request, role, user},
 };
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -85,6 +85,7 @@ pub struct UserService {
     db: DatabaseCluster,
     user_repo: LoggedRepo<UserRepository>,
     role_repo: LoggedRepo<RoleRepository>,
+    perm_repo: LoggedRepo<PermissionRepository>,
     dept_repo: LoggedRepo<DeptRepository>,
 }
 
@@ -132,6 +133,7 @@ impl UserService {
             db,
             user_repo: LoggedRepo::new(UserRepository),
             role_repo: LoggedRepo::new(RoleRepository),
+            perm_repo: LoggedRepo::new(PermissionRepository),
             dept_repo: LoggedRepo::new(DeptRepository),
         }
     }

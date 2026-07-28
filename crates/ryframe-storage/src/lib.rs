@@ -1,18 +1,16 @@
-//! Object storage port and production backends.
+//! 对象存储端口与生产后端。
 
 mod local;
 mod s3;
 mod signing;
 
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
+use std::{future::Future, time::Duration};
 
 use async_trait::async_trait;
 pub use local::LocalObjectStorage;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 pub use s3::{S3Config, S3ObjectStorage};
+use tracing::Instrument;
 
 const OBJECT_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b' ')
@@ -44,10 +42,71 @@ const OBJECT_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'|')
     .add(b'}');
-static READINESS_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-const READINESS_PAYLOAD: &[u8] = b"ryframe-storage-ready";
 
 pub type StorageResult<T> = Result<T, StorageError>;
+
+/// 对象存储 span 使用的固定操作集合，禁止将存储桶、对象键、端点或签名写入属性。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StorageOperation {
+    Put,
+    Get,
+    Delete,
+    Exists,
+    Readiness,
+    EnsureBucket,
+    BucketHead,
+    BucketCreate,
+    BucketSetAcl,
+    BucketGetPolicy,
+    ObjectHead,
+}
+
+impl StorageOperation {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Put => "PUT",
+            Self::Get => "GET",
+            Self::Delete => "DELETE",
+            Self::Exists => "EXISTS",
+            Self::Readiness => "READINESS",
+            Self::EnsureBucket => "ENSURE_BUCKET",
+            Self::BucketHead => "BUCKET_HEAD",
+            Self::BucketCreate => "BUCKET_CREATE",
+            Self::BucketSetAcl => "BUCKET_SET_ACL",
+            Self::BucketGetPolicy => "BUCKET_GET_POLICY",
+            Self::ObjectHead => "OBJECT_HEAD",
+        }
+    }
+}
+
+pub(crate) async fn trace_storage_operation<T>(
+    backend: &'static str,
+    operation: StorageOperation,
+    future: impl Future<Output = StorageResult<T>>,
+) -> StorageResult<T> {
+    let span = storage_operation_span(backend, operation);
+    let result = future.instrument(span.clone()).await;
+    span.record("storage.result", storage_result_label(&result));
+    result
+}
+
+pub(crate) fn storage_operation_span(
+    backend: &'static str,
+    operation: StorageOperation,
+) -> tracing::Span {
+    tracing::info_span!(
+        "storage.operation",
+        otel.name = operation.as_str(),
+        otel.kind = "client",
+        storage.backend = backend,
+        storage.operation = operation.as_str(),
+        storage.result = tracing::field::Empty,
+    )
+}
+
+fn storage_result_label<T>(result: &StorageResult<T>) -> &'static str {
+    if result.is_ok() { "success" } else { "error" }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -75,16 +134,14 @@ pub enum StorageError {
     Readiness(String),
 }
 
-/// Upload, download, delete, and locate objects without exposing a backend.
+/// 在不暴露具体后端的前提下上传、下载、删除和定位对象。
 #[async_trait]
 pub trait ObjectStorage: Send + Sync {
-    /// Maximum time a backend may still commit a PUT after the returned future
-    /// is cancelled. Upload cleanup tombstones are retained beyond this bound
-    /// so a second delete catches late remote completion.
+    /// 返回的 future 被取消后，后端仍可能提交 PUT 的最长时间。上传清理墓碑会保留超过该时长，
+    /// 以便第二次删除能够捕获远端延迟完成。
     ///
-    /// Implementations with a larger bound must override this method. The
-    /// bundled S3 client has a 30-second total request timeout; local writes do
-    /// not detach a remote operation.
+    /// 具有更大上限的实现必须覆盖此方法。内置 S3 客户端的总请求超时为 30 秒；本地写入
+    /// 不会脱离远端操作。
     fn late_put_completion_bound(&self) -> Duration {
         Duration::from_secs(30)
     }
@@ -107,29 +164,13 @@ pub trait ObjectStorage: Send + Sync {
         validate_bucket(bucket)
     }
 
-    /// Exercise the same private object operations used by the application.
-    /// Bucket creation and policy enforcement happen once during startup; the
-    /// readiness probe only writes, reads, and removes a tiny private canary.
+    /// 在不改变存储状态的情况下检查已配置存储桶是否可访问。创建存储桶和强制策略应在启动阶段完成，
+    /// 而非放入频繁调用的就绪探针。
     async fn readiness_check(&self, bucket: &str) -> StorageResult<()> {
         validate_bucket(bucket)?;
-        let sequence = READINESS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let key = format!(
-            ".ryframe-readiness/{}-{}-{sequence}",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        self.put(bucket, &key, READINESS_PAYLOAD, "application/octet-stream")
-            .await?;
-        let read_result = self.get(bucket, &key).await;
-        let delete_result = self.delete(bucket, &key).await;
-
-        let payload = read_result?;
-        delete_result?;
-        if payload != READINESS_PAYLOAD {
-            return Err(StorageError::Readiness(
-                "canary content did not round-trip exactly".to_owned(),
-            ));
-        }
+        // 对通用实现而言，刻意只查询元数据已足够。内置后端会以存储桶级检查覆盖它，
+        // 从而也能检测到存储桶被删除的情况。
+        let _ = self.exists(bucket, ".ryframe-readiness/probe").await?;
         Ok(())
     }
 }
@@ -186,6 +227,7 @@ fn encoded_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn location_validation_rejects_unsafe_paths() {
@@ -211,5 +253,59 @@ mod tests {
                 "unsafe bucket was accepted: {bucket}"
             );
         }
+    }
+
+    #[test]
+    fn tracing_uses_only_fixed_storage_labels() {
+        assert_eq!(StorageOperation::Put.as_str(), "PUT");
+        assert_eq!(StorageOperation::BucketHead.as_str(), "BUCKET_HEAD");
+        assert_eq!(StorageOperation::EnsureBucket.as_str(), "ENSURE_BUCKET");
+
+        let result = Err::<(), _>(StorageError::Readiness("private bucket name".to_owned()));
+        assert_eq!(storage_result_label(&result), "error");
+    }
+
+    #[derive(Default)]
+    struct ReadinessProbeStorage {
+        writes: AtomicUsize,
+        reads: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ObjectStorage for ReadinessProbeStorage {
+        async fn put(
+            &self,
+            _bucket: &str,
+            _key: &str,
+            _data: &[u8],
+            _content_type: &str,
+        ) -> StorageResult<()> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        async fn get(&self, _bucket: &str, _key: &str) -> StorageResult<Vec<u8>> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            Ok(Vec::new())
+        }
+
+        async fn delete(&self, _bucket: &str, _key: &str) -> StorageResult<()> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        async fn exists(&self, _bucket: &str, _key: &str) -> StorageResult<bool> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn readiness_check_is_read_only() {
+        let storage = ReadinessProbeStorage::default();
+        storage.readiness_check("uploads").await.unwrap();
+
+        assert_eq!(storage.writes.load(Ordering::Relaxed), 0);
+        assert_eq!(storage.reads.load(Ordering::Relaxed), 1);
     }
 }

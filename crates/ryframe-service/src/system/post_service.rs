@@ -1,4 +1,3 @@
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
     auto_fill::{AutoFill, FillContext},
@@ -6,6 +5,8 @@ use ryframe_core::{
 };
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{PostRepository, entities::post};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -61,7 +62,7 @@ impl PostService {
         let db = self.db.read();
         Ok(self
             .post_repo
-            .find_by_id(db, tenant_id, id)
+            .find_by_id(&db, tenant_id, id)
             .await?
             .map(PostVo::from))
     }
@@ -147,7 +148,7 @@ impl PostService {
         let page = self
             .post_repo
             .find_by_page_filtered(
-                db,
+                &db,
                 tenant_id,
                 params.page.clone(),
                 params.name.as_deref(),

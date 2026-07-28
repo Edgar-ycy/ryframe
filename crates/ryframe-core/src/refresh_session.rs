@@ -1,13 +1,12 @@
-//! Refresh-token family state.
+//! 刷新令牌族状态。
 //!
-//! A family is keyed by a stable session id (`sid`). Redis mode uses one Lua
-//! script for compare-and-swap rotation so two application instances cannot
-//! both accept the same refresh token.
+//! 一个令牌族由稳定会话标识（`sid`）定位。Redis 模式使用一个 Lua 脚本进行比较并交换轮换，
+//! 以确保两个应用实例无法同时接受同一个刷新令牌。
 
 use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
 use crate::RedisClient;
@@ -66,9 +65,8 @@ redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[7]))
 return 1
 "#;
 
-// The refresh family is the authority for force logout.  Keep the tenant
-// check and revocation in one Redis operation so an online-user index entry
-// can never authorize revoking another tenant's session.
+// 刷新令牌族是强制登出的权威依据。将租户校验与撤销放在一次 Redis 操作中，确保在线用户
+// 索引条目永远无法授权撤销其他租户的会话。
 const REVOKE_FOR_TENANT_SCRIPT: &str = r#"
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('HGET', KEYS[1], 'tenant_id') ~= ARGV[1] then return 0 end
@@ -250,12 +248,10 @@ impl RefreshSessionStore {
         }
     }
 
-    /// Idempotently revoke a refresh family after atomically verifying that
-    /// it belongs to `tenant_id`.
+    /// 原子验证刷新令牌族属于 `tenant_id` 后，以幂等方式撤销该令牌族。
     ///
-    /// `false` intentionally covers both a missing family and a tenant
-    /// mismatch, so callers cannot use this operation to enumerate another
-    /// tenant's sessions. Redis failures remain distinguishable as 503s.
+    /// `false` 有意同时涵盖令牌族不存在和租户不匹配，调用方不能借此枚举其他租户的会话。
+    /// Redis 失败仍可区分为 503。
     pub async fn revoke_for_tenant(&self, tenant_id: &str, sid: &str) -> AppResult<bool> {
         if tenant_id.is_empty() || sid.is_empty() {
             return Ok(false);

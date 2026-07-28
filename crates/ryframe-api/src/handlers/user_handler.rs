@@ -8,8 +8,9 @@ pub(crate) use password_reset::*;
 
 use axum::Router;
 use ryframe_auth::{RequestPrincipal, rbac};
-use ryframe_common::{AppError, AppResult};
+use ryframe_config::PaginationConfig;
 use ryframe_core::PageQuery;
+use ryframe_http::{AppError, AppResult};
 use ryframe_macro::route;
 use ryframe_service::system::UserListParams;
 
@@ -36,8 +37,8 @@ list_query!(pub UserListQuery, UserFilterQuery {
 });
 
 impl UserListQuery {
-    fn into_service_params(self) -> AppResult<UserListParams> {
-        let (page, filter) = self.into_parts();
+    fn into_service_params(self, policy: &PaginationConfig) -> AppResult<UserListParams> {
+        let (page, filter) = self.into_parts(policy)?;
         filter.into_service_params(page)
     }
 }
@@ -76,6 +77,7 @@ pub fn user_router(state: AppState) -> Router {
         .merge(route!(request_password_reset))
         .merge(route!(replace_roles))
         .merge(route!(update_status))
+        .merge(route!(request_user_export))
         .merge(route!(export_users))
         .merge(route!(import_users))
         .merge(route!(download_import_template))

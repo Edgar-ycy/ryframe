@@ -1,8 +1,7 @@
-//! MySQL-only schema initialization and versioned upgrades.
+//! 仅支持 MySQL 的 schema 初始化与版本升级。
 //!
-//! The baseline migration creates a complete empty installation. Existing v0.4
-//! databases are accepted only when every baseline table is present; partially
-//! initialized schemas are rejected instead of being silently repaired.
+//! 基线迁移会创建完整的空安装。仅当现有 v0.4 数据库包含全部基线表时才会被接受；
+//! 不完整初始化的 schema 会被拒绝，而不会被静默修复。
 
 use sea_orm::{
     ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, Statement, TransactionTrait,
@@ -17,11 +16,34 @@ mod m20260701_000003_user_auth_version;
 mod m20260705_000004_relation_foreign_keys;
 mod m20260714_000005_super_role_permissions;
 mod m20260723_000006_file_upload_reservations;
+mod m20260726_000007_file_sha256;
+mod m20260726_000008_background_jobs;
+mod m20260726_000009_message_center;
+mod m20260726_000010_message_job_permissions;
+mod m20260726_000011_platform_message_permission_scope;
+mod m20260727_000012_avatar_file_relation;
+mod m20260728_000013_outbox_events;
+mod m20260728_000014_export_jobs;
 mod schema;
 mod seeder;
 
 pub use schema::verify_current_schema;
 pub use seeder::{mysql_snapshot_sql, seed};
+
+const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
+
+/// 迁移账本状态，适用于部署 CLI 和就绪报告。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationStatus {
+    pub applied: usize,
+    pub expected: usize,
+}
+
+impl MigrationStatus {
+    pub fn is_up_to_date(&self) -> bool {
+        self.applied == self.expected
+    }
+}
 
 pub struct Migrator;
 
@@ -36,14 +58,28 @@ impl MigratorTrait for Migrator {
             Box::new(m20260705_000004_relation_foreign_keys::Migration),
             Box::new(m20260714_000005_super_role_permissions::Migration),
             Box::new(m20260723_000006_file_upload_reservations::Migration),
+            Box::new(m20260726_000007_file_sha256::Migration),
+            Box::new(m20260726_000008_background_jobs::Migration),
+            Box::new(m20260726_000009_message_center::Migration),
+            Box::new(m20260726_000010_message_job_permissions::Migration),
+            Box::new(m20260726_000011_platform_message_permission_scope::Migration),
+            Box::new(m20260727_000012_avatar_file_relation::Migration),
+            Box::new(m20260728_000013_outbox_events::Migration),
+            Box::new(m20260728_000014_export_jobs::Migration),
         ]
     }
 }
 
+/// 完整迁移操作的向后兼容别名。
 pub async fn run(db: &DatabaseConnection) -> Result<(), DbErr> {
-    if db.get_database_backend() != DatabaseBackend::MySql {
-        return Err(DbErr::Custom("RyFrame v0.5 only supports MySQL".into()));
-    }
+    up(db).await
+}
+
+/// 应用待执行迁移，幂等地初始化系统数据，并校验 schema。
+///
+/// 这是唯一允许执行 DDL 的操作，供独立部署任务使用，而非生产 API 启动过程。
+pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
+    ensure_mysql(db)?;
     let transaction = db.begin().await?;
     if let Err(error) = acquire_migration_lock(&transaction).await {
         let _ = transaction.rollback().await;
@@ -58,6 +94,57 @@ pub async fn run(db: &DatabaseConnection) -> Result<(), DbErr> {
             Err(error)
         }
     }
+}
+
+/// 在不执行 DDL 或初始化写入的情况下，校验迁移账本完整且主库 schema 与当前迁移
+/// 指纹相匹配。
+pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
+    ensure_mysql(db)?;
+    let status = status(db).await?;
+    if !status.is_up_to_date() {
+        return Err(DbErr::Custom(format!(
+            "migration ledger is not current: applied {}, expected {}; run `ryframe-migrate up` before starting the API",
+            status.applied, status.expected
+        )));
+    }
+    verify_current_schema(db)
+        .await
+        .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
+}
+
+/// 在不改变数据库状态的情况下读取迁移账本状态。
+pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
+    ensure_mysql(db)?;
+    let expected = Migrator::migrations().len();
+    let ledger_exists = scalar_i64(
+        db,
+        "SELECT COUNT(*) FROM information_schema.tables \
+         WHERE table_schema = DATABASE() AND table_name = 'seaql_migrations'",
+    )
+    .await?
+        > 0;
+    let applied = if ledger_exists {
+        scalar_i64(db, "SELECT COUNT(*) FROM seaql_migrations").await? as usize
+    } else {
+        0
+    };
+    Ok(MigrationStatus { applied, expected })
+}
+
+fn ensure_mysql(db: &DatabaseConnection) -> Result<(), DbErr> {
+    if db.get_database_backend() != DatabaseBackend::MySql {
+        return Err(DbErr::Custom("RyFrame supports MySQL only".into()));
+    }
+    Ok(())
+}
+
+async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> Result<i64, DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_string(DbBackend::MySql, sql.to_owned()))
+        .await?
+        .ok_or_else(|| DbErr::Custom(format!("query returned no result: {sql}")))?;
+    Option::<i64>::try_get_by_index(&row, 0)?
+        .ok_or_else(|| DbErr::Custom(format!("query returned a NULL scalar value: {sql}")))
 }
 
 async fn migrate_seed_verify<C>(db: &C) -> Result<(), DbErr>
@@ -83,8 +170,9 @@ where
     let row = db
         .query_one_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT GET_LOCK(SHA2(CONCAT('ryframe:v0.5:migration:', DATABASE()), 256), 60)"
-                .to_owned(),
+            format!(
+                "SELECT GET_LOCK(SHA2(CONCAT('{MIGRATION_LOCK_SQL_PREFIX}', DATABASE()), 256), 60)"
+            ),
         ))
         .await?
         .ok_or_else(|| DbErr::Custom("MySQL migration lock returned no result".into()))?;
@@ -103,8 +191,9 @@ where
     let row = db
         .query_one_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT RELEASE_LOCK(SHA2(CONCAT('ryframe:v0.5:migration:', DATABASE()), 256))"
-                .to_owned(),
+            format!(
+                "SELECT RELEASE_LOCK(SHA2(CONCAT('{MIGRATION_LOCK_SQL_PREFIX}', DATABASE()), 256))"
+            ),
         ))
         .await?
         .ok_or_else(|| DbErr::Custom("MySQL migration lock release returned no result".into()))?;

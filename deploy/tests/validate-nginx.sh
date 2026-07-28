@@ -56,3 +56,17 @@ if grep -Eq 'location[^\n]*/uploads/' "$config"; then
   printf 'Private uploads must not be exposed through an Nginx alias.\n' >&2
   exit 1
 fi
+
+if ! awk '
+  /^[[:space:]]*location[[:space:]]+=[[:space:]]+\/api\/v1\/ws[[:space:]]*\{/ { in_ws = 1; found = 1; next }
+  in_ws && /^[[:space:]]*}/ { in_ws = 0; next }
+  in_ws && /proxy_http_version[[:space:]]+1\.1;/ { http11 = 1 }
+  in_ws && /proxy_set_header[[:space:]]+Upgrade[[:space:]]+\$http_upgrade;/ { upgrade = 1 }
+  in_ws && /proxy_set_header[[:space:]]+Connection[[:space:]]+"upgrade";/ { connection = 1 }
+  in_ws && /proxy_buffering[[:space:]]+off;/ { buffering = 1 }
+  in_ws && /access_log[[:space:]]+off;/ { no_access_log = 1 }
+  END { exit(found && http11 && upgrade && connection && buffering && no_access_log ? 0 : 1) }
+' "$config"; then
+  printf 'WebSocket proxy must upgrade connections, disable buffering, and suppress ticket access logs.\n' >&2
+  exit 1
+fi

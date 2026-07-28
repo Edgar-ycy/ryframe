@@ -3,10 +3,10 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult};
 use ryframe_db::DatabaseCluster;
 pub use ryframe_generator::{ColumnInfo, GenerateOptions, GeneratedFile, TableInfo, WriteReport};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::DatabaseConnection;
 
 #[derive(Debug)]
@@ -56,7 +56,7 @@ impl GeneratorService {
                     })
             })
             .collect::<Vec<_>>();
-        let page = params.page.normalize(100);
+        let page = params.page;
         let total = filtered.len() as u64;
         let records = filtered
             .into_iter()

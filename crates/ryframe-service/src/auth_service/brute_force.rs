@@ -1,4 +1,4 @@
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 use super::AuthService;
 
@@ -103,7 +103,6 @@ fn redis_unavailable(error: impl std::fmt::Display) -> AppError {
 
 fn login_subject_key(tenant_id: &str, username: &str) -> String {
     let normalized_username = username.trim().to_lowercase();
-    let digest =
-        ryframe_common::utils::key::stable_scope_digest(&[tenant_id, &normalized_username]);
+    let digest = ryframe_utils::key::stable_scope_digest(&[tenant_id, &normalized_username]);
     format!("ryframe:v0.5:login_fail:principal:{digest}")
 }

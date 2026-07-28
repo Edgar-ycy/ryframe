@@ -1,4 +1,4 @@
-use ryframe_common::{DataScope, DataScopeContext};
+use ryframe_kernel::{DataScope, DataScopeContext};
 use sea_orm::sea_query::{Expr, Query};
 use sea_orm::{ColumnTrait, Condition};
 

@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
 use ryframe_api::AppServices;
-use ryframe_common::AppError;
 use ryframe_config::AppConfig;
 use ryframe_core::RedisClient;
 use ryframe_db::DatabaseCluster;
+use ryframe_kernel::AppError;
 use ryframe_service::{
-    AuthService,
+    AuthService, JobQueue,
     system::{
-        CaptchaStore, ConfigService, DeptService, DictService, FileService, GeneratorService,
-        LoginInfoService, MenuService, NoticeService, OnlineUserService, OperLogService,
-        PermissionService, PostService, ProfileService, RoleService, TenantService, UserService,
+        CaptchaStore, ConfigService, DeptService, DictService, ExportService, FileService,
+        GeneratorService, LoginInfoService, MenuService, MessageService, NoticeService,
+        OnlineUserService, OperLogService, PermissionService, PostService, ProfileService,
+        RoleService, TenantService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_storage::ObjectStorage;
@@ -37,8 +38,6 @@ pub async fn build_all(
         redis_client.clone(),
     ));
     let menu = Arc::new(MenuService::new(database.clone(), redis_client.clone()));
-    // 启动时清除菜单树缓存，确保迁移新增的菜单项能立即显示
-    menu.invalidate_all_menu_caches().await;
 
     let dept = Arc::new(DeptService::new(database.clone(), redis_client.clone()));
     let post = Arc::new(PostService::new(database.clone()));
@@ -47,6 +46,9 @@ pub async fn build_all(
     let dict = Arc::new(DictService::new(database.clone(), redis_client.clone()));
     let notice = Arc::new(NoticeService::new(database.clone()));
     let oper_log = Arc::new(OperLogService::new(database.clone()));
+    let job_queue = Arc::new(JobQueue::new(database.clone()));
+    let message = Arc::new(MessageService::new(database.clone(), job_queue.clone()));
+    let websocket_ticket = Arc::new(WebSocketTicketService::new(redis_client.clone()));
     let login_info = Arc::new(LoginInfoService::new(database.clone()));
 
     let project_root = std::env::current_dir()
@@ -68,8 +70,13 @@ pub async fn build_all(
     ));
 
     let profile = Arc::new(ProfileService::new(database.clone()));
-    let file = Arc::new(FileService::new(database.clone(), object_storage));
+    let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
     file.spawn_upload_janitor();
+    let export = Arc::new(ExportService::new(
+        database.clone(),
+        user.clone(),
+        object_storage,
+    ));
 
     let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
         Arc::new(OnlineUserService::new_redis(redis.clone()))
@@ -95,8 +102,12 @@ pub async fn build_all(
         post,
         config: config_service,
         dict,
+        export,
         notice,
+        message,
+        websocket_ticket,
         oper_log,
+        job_queue,
         login_info,
         generator,
         profile,

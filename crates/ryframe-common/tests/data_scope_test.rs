@@ -113,7 +113,7 @@ fn test_merge_priority() {
     assert_eq!(merged.custom_dept_ids, vec![1]);
     assert!(merged.include_self);
 
-    // All 最优先
+    // 全部数据权限最优先
     let scopes = vec![
         DataScopeContext {
             scope: DataScope::Custom,

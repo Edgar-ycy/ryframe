@@ -1,4 +1,4 @@
-/// email 模块测试
+/// 邮件模块测试。
 /// 从 crates/ryframe-common/src/utils/email.rs 内联测试迁移
 use ryframe_common::utils::email::{EmailConfig, EmailSender};
 

@@ -1,6 +1,6 @@
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::Repository;
 use ryframe_db::entities::menu;
+use ryframe_kernel::{AppError, AppResult};
 
 use super::{MenuService, MenuType};
 

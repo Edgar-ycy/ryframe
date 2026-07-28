@@ -1,4 +1,3 @@
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
@@ -6,6 +5,8 @@ use ryframe_core::{
 };
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{MenuFilter, MenuRepository, PermissionRepository, entities::menu};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 
 mod model;
 mod validation;
@@ -64,7 +65,7 @@ impl MenuService {
 
         let tree = self
             .menu_repo
-            .find_tree(db, tenant_id)
+            .find_tree(&db, tenant_id)
             .await?
             .into_iter()
             .map(MenuTreeNode::from)
@@ -88,7 +89,7 @@ impl MenuService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.read();
         self.menu_repo
-            .find_tree_by_permission_codes(db, tenant_id, permission_codes)
+            .find_tree_by_permission_codes(&db, tenant_id, permission_codes)
             .await
             .map(|nodes| nodes.into_iter().map(MenuTreeNode::from).collect())
     }
@@ -201,7 +202,7 @@ impl MenuService {
         let page = self
             .menu_repo
             .find_by_page_filtered(
-                db,
+                &db,
                 tenant_id,
                 &params.page,
                 &MenuFilter {
@@ -218,7 +219,7 @@ impl MenuService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.read();
         self.menu_repo
-            .find_by_id(db, tenant_id, id)
+            .find_by_id(&db, tenant_id, id)
             .await
             .map(|menu| menu.map(MenuVo::from))
     }

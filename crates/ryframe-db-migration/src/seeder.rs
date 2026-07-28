@@ -2,12 +2,10 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
 use crate::m20260522_000000_mysql_baseline::{ddl_statements, seed_statements};
 
-/// Insert canonical bootstrap records without overwriting operational changes.
+/// 插入规范的引导记录，而不覆盖运行中的变更。
 ///
-/// Duplicate keys use an explicit no-op upsert; unrelated SQL errors are never
-/// suppressed. Every canonical semantic identity and relationship is verified
-/// after the write, so a conflicting primary or unique key cannot masquerade as
-/// a successful bootstrap.
+/// 重复键使用显式的无操作 upsert，绝不压制无关 SQL 错误。每个规范语义标识和关系
+/// 都会在写入后校验，因此冲突的主键或唯一键无法伪装成成功的引导操作。
 pub async fn seed<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -19,22 +17,23 @@ where
         db.execute_unprepared(&idempotent_upsert(statement)?)
             .await?;
     }
+    crate::m20260726_000010_message_job_permissions::seed_permissions(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }
 
 pub fn mysql_snapshot_sql() -> String {
     let mut snapshot = String::from(
-        "-- GENERATED FILE: RyFrame v0.5 canonical MySQL schema snapshot.\n\
-         -- Source of truth: ryframe-db-migration Migrator + Seeder.\n\
-         -- REVIEW ONLY: deployment and reset tools must never execute this file.\n\
-         -- Regenerate with: cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
+        "-- 自动生成文件：RyFrame v0.5 规范 MySQL 架构快照。\n\
+         -- 唯一事实来源：ryframe-db-migration Migrator 与 Seeder。\n\
+         -- 仅供审阅：部署和重置工具不得执行此文件。\n\
+         -- 重新生成命令：cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
     );
     for statement in ddl_statements() {
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }
-    snapshot.push_str("-- Idempotent bootstrap data (production users start locked).\n\n");
+    snapshot.push_str("-- 幂等初始化数据（生产环境用户默认锁定）。\n\n");
     for statement in seed_statements() {
         snapshot.push_str(
             &idempotent_upsert(statement)
@@ -358,7 +357,7 @@ mod tests {
     #[test]
     fn snapshot_is_generated_safe_and_mysql_only() {
         let snapshot = mysql_snapshot_sql();
-        assert!(snapshot.starts_with("-- GENERATED FILE"));
+        assert!(snapshot.starts_with("-- 自动生成文件"));
         assert!(snapshot.contains("CREATE TABLE IF NOT EXISTS `sys_user`"));
         assert!(snapshot.contains("ON DUPLICATE KEY UPDATE `id` = `id`"));
         assert!(!snapshot.contains("INSERT IGNORE"));

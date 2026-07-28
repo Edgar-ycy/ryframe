@@ -68,6 +68,7 @@ fn generated_templates_follow_application_boundaries() {
     assert!(handler.contains("use crate::state::AppState;"));
     assert!(handler.contains("use ryframe_auth::RequestPrincipal;"));
     assert!(handler.contains("current_user: RequestPrincipal"));
+    assert!(handler.contains("query.into_parts(&state.config.pagination)?"));
     assert!(handler.contains(".find_by_page(&current_user, page_query)"));
     assert!(handler.contains(".services\n        .widget"));
     assert!(!handler.contains("sea_orm"));
@@ -110,11 +111,11 @@ fn generated_template_output_matches_golden_hashes() {
         .map(|(name, source)| (name, fnv1a64(source.as_bytes())))
         .collect::<Vec<_>>();
     let expected = vec![
-        ("entity", 15_143_636_760_214_386_781),
-        ("repository", 13_192_807_906_955_434_705),
-        ("dto", 8_322_372_481_273_473_967),
-        ("service", 6_467_106_141_933_554_713),
-        ("handler", 4_400_737_824_380_872_182),
+        ("entity", 15_105_740_694_095_249_589),
+        ("repository", 1_251_828_980_566_588_877),
+        ("dto", 4_473_523_187_890_384_743),
+        ("service", 10_639_329_197_836_940_592),
+        ("handler", 17_639_238_241_314_148_278),
     ];
     assert_eq!(actual, expected);
 }

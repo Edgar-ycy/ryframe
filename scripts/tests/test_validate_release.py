@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import datetime as dt
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -16,23 +16,25 @@ sys.modules[SPEC.name] = validate_release
 SPEC.loader.exec_module(validate_release)
 
 
+COMMIT_A = "a" * 40
+COMMIT_B = "b" * 40
+
+
 class ReleaseIdentityTests(unittest.TestCase):
-    def test_accepts_stable_and_canonical_rc(self) -> None:
-        stable = validate_release.release_identity("v0.5.0")
-        candidate = validate_release.release_identity("v0.5.0-rc.2")
+    def test_accepts_only_canonical_stable_tags(self) -> None:
+        identity = validate_release.release_identity("v0.5.0")
 
-        self.assertFalse(stable.prerelease)
-        self.assertEqual(candidate.version, "0.5.0")
-        self.assertEqual(candidate.stable_tag, "v0.5.0")
-        self.assertTrue(candidate.prerelease)
+        self.assertEqual(identity.tag, "v0.5.0")
+        self.assertEqual(identity.version, "0.5.0")
+        self.assertEqual(identity.stable_tag, "v0.5.0")
 
-    def test_rejects_ambiguous_rc_tags(self) -> None:
+    def test_rejects_prerelease_and_ambiguous_tags(self) -> None:
         for tag in (
             "0.5.0",
-            "v0.5.0-rc",
-            "v0.5.0-rc.0",
-            "v0.5.0-rc1",
+            "v0.5.0-rc.1",
             "v0.5.0-beta.1",
+            "v0.5",
+            "v01.5.0",
         ):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 validate_release.release_identity(tag)
@@ -50,18 +52,16 @@ class ChangelogNotesTests(unittest.TestCase):
             "# Changelog\r\n\r\n"
             "## [v0.5.0] - 2026-07-18\r\n\r\n"
             "### Changed  \r\n\r\n"
-            "- Published source-only releases.  \r\n\r\n"
+            "- Published manifest-only releases.  \r\n\r\n"
             "## [v0.4.0]\r\n\r\n- Older change.\r\n"
         )
 
-        section = validate_release.changelog_section(
-            path, "v0.5.0", "test"
-        )
+        section = validate_release.changelog_section(path, "v0.5.0", "test")
 
         self.assertEqual(
             section,
             "## [v0.5.0] - 2026-07-18\n\n"
-            "### Changed\n\n- Published source-only releases.",
+            "### Changed\n\n- Published manifest-only releases.",
         )
         self.assertNotIn("Older change", section)
 
@@ -72,305 +72,137 @@ class ChangelogNotesTests(unittest.TestCase):
             "## [v0.5.0]\n\n### Changed\n",
         )
         for content in cases:
-            with self.subTest(content=content):
-                path = self.changelog(content)
-                with self.assertRaises(ValueError):
-                    validate_release.changelog_section(
-                        path, "v0.5.0", "test"
-                    )
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                validate_release.changelog_section(
+                    self.changelog(content), "v0.5.0", "test"
+                )
 
-    def test_accepts_annotated_tag_with_exact_changelog_section(self) -> None:
-        path = self.changelog(
-            "## [v0.5.0]\n\n### Changed\n\n- Real update.\n"
-        )
-        notes = (
-            "## [v0.5.0]  \r\n\r\n"
-            "### Changed\r\n\r\n- Real update.  \r\n"
-        )
+    def test_requires_annotated_tag_notes_to_match_stable_section(self) -> None:
+        path = self.changelog("## [v0.5.0]\n\n### Changed\n\n- Real update.\n")
+        notes = "## [v0.5.0]  \r\n\r\n### Changed\r\n\r\n- Real update.  \r\n"
         with mock.patch.object(
             validate_release, "git_text", side_effect=("tag", notes)
         ):
             section = validate_release.validate_annotated_tag_notes(
-                Path("repository"),
-                "v0.5.0-rc.3",
-                path,
-                "v0.5.0",
-                "test",
+                Path("repository"), "v0.5.0", path, "v0.5.0", "test"
             )
 
         self.assertIn("- Real update.", section)
 
     def test_rejects_lightweight_or_generic_tag_notes(self) -> None:
-        path = self.changelog(
-            "## [v0.5.0]\n\n### Changed\n\n- Real update.\n"
-        )
+        path = self.changelog("## [v0.5.0]\n\n### Changed\n\n- Real update.\n")
         with mock.patch.object(
             validate_release, "git_text", return_value="commit"
         ), self.assertRaisesRegex(ValueError, "annotated tag"):
             validate_release.validate_annotated_tag_notes(
-                Path("repository"),
-                "v0.5.0-rc.3",
-                path,
-                "v0.5.0",
-                "test",
+                Path("repository"), "v0.5.0", path, "v0.5.0", "test"
             )
 
         with mock.patch.object(
             validate_release,
             "git_text",
-            side_effect=("tag", "RyFrame v0.5.0-rc.3"),
+            side_effect=("tag", "RyFrame v0.5.0"),
         ), self.assertRaisesRegex(ValueError, "exact v0.5.0 CHANGELOG"):
             validate_release.validate_annotated_tag_notes(
-                Path("repository"),
-                "v0.5.0-rc.3",
-                path,
-                "v0.5.0",
-                "test",
+                Path("repository"), "v0.5.0", path, "v0.5.0", "test"
             )
 
-        hidden_notes = (
-            "<!--\n## [v0.5.0]\n\n### Changed\n\n- Real update.\n-->"
+
+class FixedSourceTests(unittest.TestCase):
+    def test_repository_and_commit_inputs_are_strict(self) -> None:
+        self.assertEqual(
+            validate_release.repository_slug("example-org/ryframe-vue3", "frontend"),
+            "example-org/ryframe-vue3",
         )
+        self.assertEqual(validate_release.commit_sha(COMMIT_A, "frontend"), COMMIT_A)
+        for value in ("ryframe-vue3", "owner/repo/extra", "owner/ repo"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_release.repository_slug(value, "frontend")
+        for value in ("abc", "A" * 40, "g" * 40):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_release.commit_sha(value, "frontend")
+
+    def test_fixed_tag_commit_must_match(self) -> None:
+        with mock.patch.object(validate_release, "git_commit", return_value=COMMIT_A), mock.patch.object(
+            validate_release, "git_tag_object", return_value=COMMIT_B
+        ):
+            ref = validate_release.validate_repository_ref(
+                Path("frontend"), "v0.5.0", COMMIT_A, "frontend"
+            )
+        self.assertEqual(ref.commit, COMMIT_A)
+        self.assertEqual(ref.tag_object, COMMIT_B)
+
+        with mock.patch.object(validate_release, "git_commit", return_value=COMMIT_B):
+            with self.assertRaisesRegex(ValueError, "expected fixed commit"):
+                validate_release.validate_repository_ref(
+                    Path("frontend"), "v0.5.0", COMMIT_A, "frontend"
+                )
+
+    def test_frontend_version_and_contract_are_validated(self) -> None:
+        frontend = MODULE_PATH.parents[1] / "ryframe-vue3"
         with mock.patch.object(
+            validate_release, "validate_package_version"
+        ) as package_version, mock.patch.object(
+            validate_release, "validate_openapi", return_value="c" * 64
+        ) as openapi, mock.patch.object(
+            validate_release, "validate_annotated_tag_notes"
+        ), mock.patch.object(
             validate_release,
-            "git_text",
-            side_effect=("tag", hidden_notes),
-        ), self.assertRaisesRegex(ValueError, "must equal"):
-            validate_release.validate_annotated_tag_notes(
-                Path("repository"),
-                "v0.5.0-rc.3",
-                path,
-                "v0.5.0",
-                "test",
-            )
-
-
-class RcObservationTests(unittest.TestCase):
-    def test_observation_floor_cannot_be_weakened(self) -> None:
-        with self.assertRaisesRegex(ValueError, "cannot be less than 48"):
-            validate_release.latest_eligible_rc(
-                Path("releases.json"), "v0.5.0", 47
-            )
-
-    def test_newest_rc_must_complete_window(self) -> None:
-        now = dt.datetime(2026, 7, 18, 12, tzinfo=dt.timezone.utc)
-        releases = [
-            {
-                "tag_name": "v0.5.0-rc.1",
-                "prerelease": True,
-                "draft": False,
-                "published_at": "2026-07-15T12:00:00Z",
-            },
-            {
-                "tag_name": "v0.5.0-rc.2",
-                "prerelease": True,
-                "draft": False,
-                "published_at": "2026-07-17T12:00:00Z",
-            },
-        ]
-        with mock.patch.object(validate_release, "load_json", return_value=releases):
-            with self.assertRaisesRegex(ValueError, "24.0 observed hours"):
-                validate_release.latest_eligible_rc(
-                    Path("releases.json"), "v0.5.0", 48, now=now
-                )
-
-    def test_returns_newest_qualified_rc(self) -> None:
-        now = dt.datetime(2026, 7, 18, 12, tzinfo=dt.timezone.utc)
-        releases = [
-            {
-                "tag_name": "v0.5.0-rc.1",
-                "prerelease": True,
-                "draft": False,
-                "published_at": "2026-07-14T12:00:00Z",
-            },
-            {
-                "tag_name": "v0.5.0-rc.2",
-                "prerelease": True,
-                "draft": False,
-                "published_at": "2026-07-16T12:00:00Z",
-            },
-        ]
-        with mock.patch.object(validate_release, "load_json", return_value=releases):
-            self.assertEqual(
-                validate_release.latest_eligible_rc(
-                    Path("releases.json"), "v0.5.0", 48, now=now
-                ),
-                "v0.5.0-rc.2",
-            )
-
-    def test_stable_requires_both_commits_to_match_rc(self) -> None:
-        commits = iter(("backend", "backend", "frontend", "different"))
-        with mock.patch.object(
-            validate_release, "git_commit", side_effect=lambda *_args: next(commits)
+            "validate_repository_ref",
+            return_value=validate_release.RepositoryRef("", COMMIT_B, COMMIT_A),
         ):
-            with self.assertRaisesRegex(ValueError, "stable frontend commit"):
-                validate_release.validate_rc_commit_identity(
-                    Path("frontend"), "v0.5.0-rc.2"
-                )
-
-    @staticmethod
-    def deployment(statuses: list[dict[str, object]]) -> dict[str, object]:
-        return {
-            "id": 782,
-            "created_at": "2026-07-16T11:30:00Z",
-            "environment": "release-candidate",
-            "ref": "v0.5.0-rc.2",
-            "sha": "abc123",
-            "statuses": statuses,
-        }
-
-    @staticmethod
-    def status(state: str, created_at: str) -> dict[str, object]:
-        return {
-            "state": state,
-            "created_at": created_at,
-            "creator": {"login": "release-operator", "type": "User"},
-            "description": "RC observation dashboard reviewed",
-            "environment_url": "https://monitoring.example/rc/v0.5.0-rc.2",
-        }
-
-    def test_accepts_commit_bound_continuous_deployment_observation(self) -> None:
-        statuses = [
-            self.status("success", "2026-07-18T13:00:00Z"),
-            self.status("in_progress", "2026-07-16T12:00:00Z"),
-        ]
-        evidence = [self.deployment(statuses)]
-        with mock.patch.object(
-            validate_release, "load_json", return_value=evidence
-        ):
-            self.assertEqual(
-                validate_release.validate_rc_observation(
-                    Path("deployments.json"),
-                    "v0.5.0-rc.2",
-                    "abc123",
-                    48,
-                    not_before=dt.datetime(
-                        2026, 7, 16, 11, tzinfo=dt.timezone.utc
-                    ),
-                    now=dt.datetime(2026, 7, 18, 14, tzinfo=dt.timezone.utc),
-                ),
-                782,
+            ref, openapi_hash = validate_release.validate_frontend(
+                frontend, "v0.5.0", "0.5.0", "v0.5.0", COMMIT_A
             )
 
-    def test_failure_interrupts_deployment_observation(self) -> None:
-        statuses = [
-            self.status("in_progress", "2026-07-16T12:00:00Z"),
-            self.status("failure", "2026-07-17T12:00:00Z"),
-            self.status("success", "2026-07-19T12:00:00Z"),
-        ]
-        with mock.patch.object(
-            validate_release,
-            "load_json",
-            return_value=[self.deployment(statuses)],
-        ):
-            with self.assertRaisesRegex(ValueError, "continuous 48-hour"):
-                validate_release.validate_rc_observation(
-                    Path("deployments.json"),
-                    "v0.5.0-rc.2",
-                    "abc123",
-                    48,
-                    not_before=dt.datetime(
-                        2026, 7, 16, 11, tzinfo=dt.timezone.utc
-                    ),
-                    now=dt.datetime(2026, 7, 19, 13, tzinfo=dt.timezone.utc),
-                )
-
-    def test_newer_failed_deployment_supersedes_old_success(self) -> None:
-        old = self.deployment(
-            [
-                self.status("in_progress", "2026-07-16T12:00:00Z"),
-                self.status("success", "2026-07-18T13:00:00Z"),
-            ]
+        self.assertEqual(ref.commit, COMMIT_A)
+        self.assertEqual(openapi_hash, "c" * 64)
+        package_version.assert_called_once_with(frontend, "0.5.0")
+        openapi.assert_called_once_with(
+            frontend / "openapi" / "openapi.json", "0.5.0", "frontend"
         )
-        newer = self.deployment(
-            [
-                self.status("in_progress", "2026-07-18T14:00:00Z"),
-                self.status("failure", "2026-07-18T15:00:00Z"),
-            ]
+
+    def test_frontend_package_version_mismatch_is_rejected(self) -> None:
+        with mock.patch.object(
+            validate_release, "json_object", return_value={"version": "0.5.1"}
+        ), self.assertRaisesRegex(ValueError, "package.json version"):
+            validate_release.validate_package_version(Path("frontend"), "0.5.0")
+
+
+class ManifestTests(unittest.TestCase):
+    def test_manifest_is_deterministic_and_records_both_fixed_sources(self) -> None:
+        identity = validate_release.release_identity("v0.5.0")
+        backend = validate_release.RepositoryRef("example/ryframe", COMMIT_A, COMMIT_A)
+        frontend = validate_release.RepositoryRef(
+            "example/ryframe-vue3", COMMIT_B, COMMIT_B
         )
-        newer["id"] = 783
-        newer["created_at"] = "2026-07-18T13:30:00Z"
-        with mock.patch.object(
-            validate_release, "load_json", return_value=[newer, old]
-        ):
-            with self.assertRaisesRegex(ValueError, "continuous 48-hour"):
-                validate_release.validate_rc_observation(
-                    Path("deployments.json"),
-                    "v0.5.0-rc.2",
-                    "abc123",
-                    48,
-                    not_before=dt.datetime(
-                        2026, 7, 16, 11, tzinfo=dt.timezone.utc
-                    ),
-                    now=dt.datetime(2026, 7, 18, 16, tzinfo=dt.timezone.utc),
-                )
+        contract_hash = "c" * 64
+        manifest = validate_release.release_manifest(
+            identity, backend, frontend, contract_hash, contract_hash
+        )
 
-    def test_observation_requires_evidence_link_and_attestor(self) -> None:
-        success = self.status("success", "2026-07-18T13:00:00Z")
-        success["environment_url"] = ""
-        success["creator"] = {}
-        statuses = [
-            self.status("in_progress", "2026-07-16T12:00:00Z"),
-            success,
-        ]
-        with mock.patch.object(
-            validate_release,
-            "load_json",
-            return_value=[self.deployment(statuses)],
-        ):
-            with self.assertRaisesRegex(ValueError, "continuous 48-hour"):
-                validate_release.validate_rc_observation(
-                    Path("deployments.json"),
-                    "v0.5.0-rc.2",
-                    "abc123",
-                    48,
-                    not_before=dt.datetime(
-                        2026, 7, 16, 11, tzinfo=dt.timezone.utc
-                    ),
-                    now=dt.datetime(2026, 7, 18, 14, tzinfo=dt.timezone.utc),
-                )
+        first = validate_release.serialize_manifest(manifest)
+        second = validate_release.serialize_manifest(manifest)
+        self.assertEqual(first, second)
+        written = json.loads(first)
 
+        self.assertEqual(written["release"], {"tag": "v0.5.0", "version": "0.5.0"})
+        self.assertEqual(written["backend"]["commit"], COMMIT_A)
+        self.assertEqual(written["backend"]["version"], "0.5.0")
+        self.assertEqual(written["frontend"]["commit"], COMMIT_B)
+        self.assertEqual(written["frontend"]["version"], "0.5.0")
+        self.assertEqual(written["contract"]["openapi_sha256"], contract_hash)
 
-class StableEnvironmentTests(unittest.TestCase):
-    def test_accepts_independent_required_reviewers(self) -> None:
-        environment = {
-            "name": "stable-release",
-            "protection_rules": [
-                {
-                    "type": "required_reviewers",
-                    "prevent_self_review": True,
-                    "reviewers": [{"type": "Team", "id": 42}],
-                }
-            ],
-        }
-        with mock.patch.object(
-            validate_release, "load_json", return_value=environment
-        ):
-            validate_release.validate_stable_environment(Path("environment.json"))
-
-    def test_rejects_self_reviewable_or_unreviewed_environment(self) -> None:
-        for environment in (
-            {
-                "name": "stable-release",
-                "protection_rules": [
-                    {
-                        "type": "required_reviewers",
-                        "prevent_self_review": False,
-                        "reviewers": [{"id": 42}],
-                    }
-                ],
-            },
-            {
-                "name": "stable-release",
-                "protection_rules": [],
-            },
-        ):
-            with self.subTest(environment=environment), mock.patch.object(
-                validate_release, "load_json", return_value=environment
-            ), self.assertRaises(ValueError):
-                validate_release.validate_stable_environment(
-                    Path("environment.json")
-                )
+    def test_manifest_rejects_different_contract_hashes(self) -> None:
+        identity = validate_release.release_identity("v0.5.0")
+        backend = validate_release.RepositoryRef("example/ryframe", COMMIT_A, COMMIT_A)
+        frontend = validate_release.RepositoryRef(
+            "example/ryframe-vue3", COMMIT_B, COMMIT_B
+        )
+        with self.assertRaisesRegex(ValueError, "OpenAPI hashes differ"):
+            validate_release.release_manifest(
+                identity, backend, frontend, "a" * 64, "b" * 64
+            )
 
 
 if __name__ == "__main__":

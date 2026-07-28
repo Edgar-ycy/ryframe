@@ -1,7 +1,7 @@
--- GENERATED FILE: RyFrame v0.5 canonical MySQL schema snapshot.
--- Source of truth: ryframe-db-migration Migrator + Seeder.
--- REVIEW ONLY: deployment and reset tools must never execute this file.
--- Regenerate with: cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
+-- 自动生成文件：RyFrame v0.5 规范 MySQL 架构快照。
+-- 唯一事实来源：ryframe-db-migration Migrator 与 Seeder。
+-- 仅供审阅：部署和重置工具不得执行此文件。
+-- 重新生成命令：cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
 
 CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `id`                     BIGINT       NOT NULL COMMENT '租户ID',
@@ -55,8 +55,10 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `email`          VARCHAR(128) NOT NULL DEFAULT ''       COMMENT '邮箱',
     `phone`          VARCHAR(32)  NOT NULL DEFAULT ''       COMMENT '手机号',
     `avatar`         VARCHAR(255)          DEFAULT NULL     COMMENT '头像URL',
+    `avatar_file_id` BIGINT                DEFAULT NULL     COMMENT '头像文件ID',
     `status`         VARCHAR(32)  NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定 pending_activation待激活 must_reset_password需改密',
     `auth_version`   INT          NOT NULL DEFAULT 1        COMMENT '用户认证版本，权限变更时递增',
+    `preferred_locale` VARCHAR(16)         DEFAULT NULL      COMMENT '用户偏好语言',
     `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID(软删除场景由代码校验合法性)',
     `remark`         VARCHAR(512)          DEFAULT NULL     COMMENT '备注',
     `login_ip`       VARCHAR(128)          DEFAULT NULL     COMMENT '最后登录IP',
@@ -68,6 +70,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_dept_id` (`dept_id`),
+    KEY `idx_user_avatar_file` (`avatar_file_id`),
     CONSTRAINT `fk_sys_user_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -385,6 +388,7 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     `file_size`     BIGINT       NOT NULL DEFAULT 0          COMMENT '字节数',
     `content_type`  VARCHAR(100) NOT NULL                    COMMENT 'MIME类型',
     `file_md5`      CHAR(32)              DEFAULT NULL       COMMENT 'MD5去重校验',
+    `file_sha256`   CHAR(64)              DEFAULT NULL       COMMENT 'SHA-256内容摘要',
     `upload_by`     VARCHAR(64)           DEFAULT NULL       COMMENT '上传者',
     `upload_status` VARCHAR(16)  NOT NULL DEFAULT 'ready'    COMMENT '上传状态: pending/ready/cleanup',
     `reservation_token` VARCHAR(64)       DEFAULT NULL       COMMENT '上传预留所有权令牌',
@@ -398,13 +402,91 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     KEY `idx_upload_by` (`upload_by`),
     KEY `idx_del_flag` (`del_flag`),
     KEY `idx_file_upload_reservation` (`tenant_id`, `bucket`, `file_md5`, `upload_status`),
+    KEY `idx_file_sha256` (`tenant_id`, `bucket`, `file_sha256`, `upload_status`),
     KEY `idx_file_reservation_expiry` (`upload_status`, `reservation_expires_at`),
     CONSTRAINT `fk_sys_file_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='文件元数据表';
 
--- Idempotent bootstrap data (production users start locked).
+CREATE TABLE IF NOT EXISTS `sys_background_job` (
+    `id`            BIGINT       NOT NULL COMMENT '任务ID',
+    `tenant_id`     VARCHAR(64)           DEFAULT NULL COMMENT '租户标识',
+    `job_type`      VARCHAR(96)  NOT NULL COMMENT '任务类型',
+    `payload`       JSON         NOT NULL COMMENT '任务载荷',
+    `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
+    `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
+    `available_at`  DATETIME     NOT NULL COMMENT '最早可执行时间',
+    `attempts`      INT          NOT NULL DEFAULT 0 COMMENT '已领取次数',
+    `max_attempts`  INT          NOT NULL DEFAULT 5 COMMENT '最大领取次数',
+    `lease_owner`   VARCHAR(128)          DEFAULT NULL COMMENT '当前租约持有者',
+    `lease_until`   DATETIME              DEFAULT NULL COMMENT '租约失效时间',
+    `dedupe_key`    VARCHAR(191)          DEFAULT NULL COMMENT '同类型幂等键',
+    `traceparent`   VARCHAR(255)          DEFAULT NULL COMMENT 'W3C Trace Context',
+    `last_error`    TEXT                  DEFAULT NULL COMMENT '最后失败原因',
+    `created_at`    DATETIME     NOT NULL COMMENT '创建时间',
+    `updated_at`    DATETIME     NOT NULL COMMENT '更新时间',
+    `completed_at`  DATETIME              DEFAULT NULL COMMENT '终态时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_bg_job_dedupe` (`job_type`, `dedupe_key`),
+    KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
+    KEY `idx_bg_job_lease` (`status`, `lease_until`),
+    KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务';
+
+CREATE TABLE IF NOT EXISTS `sys_message` (
+    `id` BIGINT NOT NULL COMMENT '消息ID',
+    `tenant_id` VARCHAR(64) NOT NULL COMMENT '租户标识',
+    `topic` VARCHAR(64) NOT NULL COMMENT '消息主题',
+    `title_text` VARCHAR(200) DEFAULT NULL COMMENT '原文标题',
+    `body_text` TEXT DEFAULT NULL COMMENT '原文正文',
+    `title_key` VARCHAR(128) DEFAULT NULL COMMENT '标题国际化键',
+    `body_key` VARCHAR(128) DEFAULT NULL COMMENT '正文国际化键',
+    `args_json` JSON DEFAULT NULL COMMENT '国际化参数',
+    `severity` VARCHAR(16) NOT NULL COMMENT '级别: info/success/warning/error',
+    `payload_json` JSON DEFAULT NULL COMMENT '结构化载荷',
+    `source_type` VARCHAR(64) DEFAULT NULL COMMENT '业务来源类型',
+    `source_id` VARCHAR(128) DEFAULT NULL COMMENT '业务来源标识',
+    `created_by` BIGINT DEFAULT NULL COMMENT '创建用户ID',
+    `published_at` DATETIME NOT NULL COMMENT '发布时间',
+    `expires_at` DATETIME DEFAULT NULL COMMENT '过期时间',
+    `created_at` DATETIME NOT NULL COMMENT '创建时间',
+    `updated_at` DATETIME NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_message_source` (`tenant_id`, `source_type`, `source_id`),
+    KEY `idx_message_tenant_published` (`tenant_id`, `published_at`, `id`),
+    KEY `idx_message_expires_at` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='消息中心消息表';
+
+CREATE TABLE IF NOT EXISTS `sys_message_audience` (
+    `message_id` BIGINT NOT NULL COMMENT '消息ID',
+    `tenant_id` VARCHAR(64) NOT NULL COMMENT '租户标识',
+    `kind` VARCHAR(16) NOT NULL COMMENT '受众类型: tenant/role/user',
+    `target_id` BIGINT NOT NULL COMMENT '受众目标ID',
+    PRIMARY KEY (`message_id`, `kind`, `target_id`),
+    KEY `idx_message_audience_tenant` (`tenant_id`, `kind`, `target_id`),
+    CONSTRAINT `fk_message_audience_message`
+        FOREIGN KEY (`message_id`) REFERENCES `sys_message` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='消息受众快照表';
+
+CREATE TABLE IF NOT EXISTS `sys_message_recipient` (
+    `message_id` BIGINT NOT NULL COMMENT '消息ID',
+    `user_id` BIGINT NOT NULL COMMENT '收件用户ID',
+    `tenant_id` VARCHAR(64) NOT NULL COMMENT '租户标识',
+    `created_at` DATETIME NOT NULL COMMENT '收件记录创建时间',
+    `enqueued_at` DATETIME DEFAULT NULL COMMENT '已推送时间',
+    `acked_at` DATETIME DEFAULT NULL COMMENT '已确认时间',
+    `read_at` DATETIME DEFAULT NULL COMMENT '已读时间',
+    PRIMARY KEY (`message_id`, `user_id`),
+    KEY `idx_message_recipient_inbox` (`tenant_id`, `user_id`, `read_at`, `created_at`, `message_id`),
+    KEY `idx_message_recipient_ack` (`tenant_id`, `user_id`, `acked_at`, `message_id`),
+    CONSTRAINT `fk_message_recipient_message`
+        FOREIGN KEY (`message_id`) REFERENCES `sys_message` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='消息收件箱表';
+
+-- 幂等初始化数据（生产环境用户默认锁定）。
 
 INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
 VALUES (1, 'system', '系统租户', '1') ON DUPLICATE KEY UPDATE `id` = `id`;

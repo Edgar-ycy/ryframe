@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-/// i18n 模块测试
+/// 国际化模块测试。
 /// 从 crates/ryframe-common/src/i18n.rs 内联测试迁移
 use ryframe_common::i18n::{I18nManager, detect_language};
 

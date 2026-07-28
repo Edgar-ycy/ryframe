@@ -12,20 +12,20 @@ async fn test_local_storage_put_get_delete() {
 
     let bucket = "my-app";
 
-    // Put
+    // 上传
     storage
         .put(bucket, "test/file.txt", b"hello world", "text/plain")
         .await
         .unwrap();
 
-    // Exists
+    // 检查是否存在
     assert!(storage.exists(bucket, "test/file.txt").await.unwrap());
 
-    // Get
+    // 下载
     let data = storage.get(bucket, "test/file.txt").await.unwrap();
     assert_eq!(data, b"hello world");
 
-    // Delete
+    // 删除
     storage.delete(bucket, "test/file.txt").await.unwrap();
     assert!(!storage.exists(bucket, "test/file.txt").await.unwrap());
 }

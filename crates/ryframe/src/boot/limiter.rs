@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use ryframe_common::{AppError, AppResult, utils::ip::TrustedProxySet};
 use ryframe_config::AppConfig;
 use ryframe_core::RedisClient;
+use ryframe_kernel::{AppError, AppResult};
 use ryframe_middleware::{RateLimitState, RateLimiter};
+use ryframe_utils::ip::TrustedProxySet;
 
 /// 限流器初始化结果
 pub struct LimiterState {

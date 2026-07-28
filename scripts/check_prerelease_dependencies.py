@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject unreviewed prerelease packages, tools, and deployment images."""
+"""拒绝未经评审的预发布包、工具和部署镜像。"""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def is_unresolved_deployment_reference(reference: str) -> bool:
 
 
 def yaml_scalar(value: str) -> str:
-    """Return a simple YAML scalar without quotes or an unquoted comment."""
+    """返回去除引号和未加引号注释的简单 YAML 标量。"""
     value = value.strip()
     if not value:
         return value
@@ -84,7 +84,7 @@ def yaml_scalar(value: str) -> str:
 
 
 def split_container_reference(reference: str) -> tuple[str, str] | None:
-    """Split an OCI reference at the tag colon, not a registry-port colon."""
+    """按标签冒号而非镜像仓库端口冒号拆分 OCI 引用。"""
     reference = reference.strip()
     if not reference:
         return None
@@ -136,7 +136,7 @@ def resolve_deployment_reference(reference: str, variables: dict[str, str]) -> s
 
 
 def docker_from_image(value: str) -> str | None:
-    """Extract the image from a Docker FROM line, including platform options."""
+    """从 Docker FROM 行提取镜像，并处理平台选项。"""
     try:
         tokens = shlex.split(value, comments=True, posix=True)
     except ValueError:
@@ -206,11 +206,9 @@ def deployment_source_findings(source: str, relative: str) -> set[Finding]:
         if separator and name and is_prerelease_reference(version):
             add_structured(Finding("tool", name, version, relative))
 
-    # Fail closed when YAML features or variable scoping exceed the deliberately
-    # small line parser above. This catches anchors, aliases, flow mappings,
-    # folded scalars, and shadowed variables without silently accepting a
-    # prerelease literal. Versions already attributed to an image/action keep
-    # their more useful structured finding.
+    # 当 YAML 特性或变量作用域超出上方刻意保持精简的行解析器能力时，采取失败即拒绝的策略。
+    # 这会捕获锚点、别名、流式映射、折叠标量和被遮蔽变量，而不会静默接受预发布版本字面量。
+    # 已归属到镜像或 action 的版本仍保留更有用的结构化发现结果。
     uncovered_literals = Counter(PRERELEASE_IN_TEXT.findall(source))
     uncovered_literals.subtract(structured_versions)
     for version, count in uncovered_literals.items():

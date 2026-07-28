@@ -1,10 +1,10 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use axum::{Router, body::Body, http::Request, middleware, routing::get};
-use ryframe_common::utils::ip::TrustedProxySet;
 use ryframe_config::{RateLimitConfig, RedisConfig, RedisMode};
 use ryframe_core::RedisClient;
 use ryframe_middleware::rate_limit::{RateLimitState, RateLimiter, api_rate_limit_middleware};
+use ryframe_utils::ip::TrustedProxySet;
 use tower::ServiceExt;
 
 async fn docker_redis() -> RedisClient {

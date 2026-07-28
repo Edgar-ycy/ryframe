@@ -4,8 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ryframe_common::{AppError, AppResult, CAPTCHA_KEY_PREFIX};
 use ryframe_core::RedisClient;
+use ryframe_kernel::{AppError, AppResult, CAPTCHA_KEY_PREFIX};
 use tokio::sync::Mutex;
 
 /// 验证码条目（含过期时间，仅内存模式使用）

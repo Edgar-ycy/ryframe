@@ -17,10 +17,13 @@ macro_rules! list_query {
         #[serde(deny_unknown_fields)]
         #[into_params(parameter_in = Query)]
         $vis struct $name {
-            #[serde(default = "ryframe_core::repository::default_page")]
-            pub page: u64,
-            #[serde(default = "ryframe_core::repository::default_page_size")]
-            pub page_size: u64,
+            /// 页码，从 1 开始；未提供时由运行时 TOML 策略解析。
+            #[param(minimum = 1)]
+            pub page: Option<u64>,
+            /// 公共 API 仅接受 snake_case 形式的 `page_size`，并受
+            /// `pagination.max_page_size` 限制（默认值为 100）。
+            #[param(minimum = 1)]
+            pub page_size: Option<u64>,
             $(
                 pub $field: Option<$ty>,
             )*
@@ -36,16 +39,16 @@ macro_rules! list_query {
         }
 
         impl $name {
-            pub fn into_parts(self) -> (ryframe_core::PageQuery, $filter_name) {
-                (
-                    ryframe_core::PageQuery {
-                        page: self.page,
-                        page_size: self.page_size,
-                    },
+            pub fn into_parts(
+                self,
+                policy: &ryframe_config::PaginationConfig,
+            ) -> ryframe_http::AppResult<(ryframe_core::PageQuery, $filter_name)> {
+                Ok((
+                    ryframe_core::PageQuery::from_optional(self.page, self.page_size, policy)?,
                     $filter_name {
                         $($field: self.$field),*
                     },
-                )
+                ))
             }
         }
     };
@@ -56,14 +59,14 @@ macro_rules! list_query {
 /// 配合 #[utoipa::path] 使用：
 /// ```
 /// use ryframe_api::detail_body;
-/// use ryframe_common::{ApiResponse, AppResult};
+/// use ryframe_http::{ApiResponse, AppResult};
 ///
 /// struct NoticeService;
 ///
 /// impl NoticeService {
 ///     async fn find_by_id(
 ///         &self,
-///         _actor: &ryframe_common::ActorContext,
+///         _actor: &ryframe_kernel::ActorContext,
 ///         _id: i64,
 ///     ) -> AppResult<Option<String>> {
 ///         Ok(None)
@@ -80,7 +83,7 @@ macro_rules! list_query {
 ///
 /// async fn detail(
 ///     state: AppState,
-///     actor: ryframe_common::ActorContext,
+///     actor: ryframe_kernel::ActorContext,
 ///     id: i64,
 /// ) -> AppResult<axum::Json<ApiResponse<String>>> {
 ///     detail_body!(state, actor, id, notice, String, "通知公告")
@@ -90,8 +93,8 @@ macro_rules! list_query {
 macro_rules! detail_body {
     ($state:ident, $actor:ident, $id:ident, $service:ident, $vo:ty, $entity:literal) => {{
         match $state.services.$service.find_by_id(&$actor, $id).await? {
-            Some(v) => Ok(axum::Json(ryframe_common::ApiResponse::success(v))),
-            None => Err(ryframe_common::AppError::NotFound(format!(
+            Some(v) => Ok(axum::Json(ryframe_http::ApiResponse::success(v))),
+            None => Err(ryframe_http::AppError::NotFound(format!(
                 "{}不存在",
                 $entity
             ))),
@@ -99,19 +102,19 @@ macro_rules! detail_body {
     }};
 }
 
-/// 生成标准 remove 处理函数体（delete → 成功消息）。
+/// 生成标准 `remove` 处理函数体（删除 → 成功消息）。
 ///
 /// 配合 #[utoipa::path] 使用：
 /// ```
 /// use ryframe_api::remove_body;
-/// use ryframe_common::{ApiResponse, AppResult};
+/// use ryframe_http::{ApiResponse, AppResult};
 ///
 /// struct NoticeService;
 ///
 /// impl NoticeService {
 ///     async fn delete(
 ///         &self,
-///         _actor: &ryframe_common::ActorContext,
+///         _actor: &ryframe_kernel::ActorContext,
 ///         _id: i64,
 ///     ) -> AppResult<()> {
 ///         Ok(())
@@ -128,7 +131,7 @@ macro_rules! detail_body {
 ///
 /// async fn remove(
 ///     state: AppState,
-///     actor: ryframe_common::ActorContext,
+///     actor: ryframe_kernel::ActorContext,
 ///     id: i64,
 /// ) -> AppResult<axum::Json<ApiResponse<()>>> {
 ///     remove_body!(state, actor, id, notice)
@@ -139,7 +142,39 @@ macro_rules! remove_body {
     ($state:ident, $actor:ident, $id:ident, $service:ident) => {{
         $state.services.$service.delete(&$actor, $id).await?;
         Ok(axum::Json(
-            ryframe_common::ApiResponse::success_no_data_with_msg("删除成功"),
+            ryframe_http::ApiResponse::success_no_data_with_msg("删除成功"),
         ))
     }};
+}
+
+#[cfg(test)]
+mod pagination_query_tests {
+    use axum::extract::Query;
+    use ryframe_config::PaginationConfig;
+
+    crate::list_query!(TestListQuery, TestFilterQuery {});
+
+    #[test]
+    fn axum_query_uses_runtime_default_and_rejects_invalid_values() {
+        let policy = PaginationConfig {
+            default_page_size: 25,
+            max_page_size: 100,
+            unpaged_max_records: 1_000,
+        };
+        let uri = "/?page=2".parse().unwrap();
+        let Query(query) = Query::<TestListQuery>::try_from_uri(&uri).unwrap();
+        let (page, _) = query.into_parts(&policy).unwrap();
+        assert_eq!(page.page, 2);
+        assert_eq!(page.page_size, 25);
+
+        let uri = "/?page=0&page_size=101".parse().unwrap();
+        let Query(query) = Query::<TestListQuery>::try_from_uri(&uri).unwrap();
+        assert!(query.into_parts(&policy).is_err());
+    }
+
+    #[test]
+    fn axum_query_rejects_legacy_camel_case_page_size() {
+        let uri = "/?pageSize=20".parse().unwrap();
+        assert!(Query::<TestListQuery>::try_from_uri(&uri).is_err());
+    }
 }

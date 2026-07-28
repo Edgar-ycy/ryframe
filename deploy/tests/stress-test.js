@@ -2,18 +2,18 @@
 // RyFrame 压力测试脚本
 //
 // 使用方式：
-//   node deploy/tests/stress-test.js [base_url]
+//   命令：node deploy/tests/stress-test.js [base_url]
 //
 // 示例：
-//   node deploy/tests/stress-test.js
-//   node deploy/tests/stress-test.js http://localhost:8080
-//   node deploy/tests/stress-test.js https://api.example.com
+//   默认地址：node deploy/tests/stress-test.js
+//   本地服务：node deploy/tests/stress-test.js http://localhost:8080
+//   远程服务：node deploy/tests/stress-test.js https://api.example.com
 //
 // 测试场景：
-//   1. Health Check - 基准可用性
+//   1. 健康检查 - 基准可用性
 //   2. 登录接口 - 认证压力
 //   3. 公开 API - 并发吞吐
-//   4. Metrics - 监控端点
+//   4. 指标 - 监控端点
 // ============================================================
 
 const BASE_URL = process.argv[2] || "http://localhost:8080";

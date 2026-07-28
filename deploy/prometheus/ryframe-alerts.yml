@@ -90,10 +90,98 @@ groups:
           description: "Scope {{ $labels.scope }} is rejecting more than one request per second."
           runbook: "docs/operations-runbook.md#限流拒绝"
 
+      - alert: RyFrameDatabaseReplicaUnavailable
+        expr: max by (instance, name, kind) (ryframe_db_node_up{kind="replica"}) == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame database replica is unavailable"
+          description: "Replica {{ $labels.name }} on {{ $labels.instance }} is unavailable for read routing."
+          runbook: "docs/operations-runbook.md#数据库副本与读回退"
+
+      - alert: RyFrameDatabaseReadFallbackHigh
+        expr: |
+          (
+            sum by (instance) (rate(ryframe_db_read_fallback_total[5m]))
+            /
+            clamp_min(
+              sum by (instance) (rate(ryframe_db_read_selection_total{reason!="strong"}[5m])),
+              0.001
+            )
+          ) > 0.05
+          and on (instance)
+          sum by (instance) (rate(ryframe_db_read_fallback_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame reads are frequently falling back to primary"
+          description: "More than 5% of eventual-consistency reads are falling back to primary on {{ $labels.instance }}."
+          runbook: "docs/operations-runbook.md#数据库副本与读回退"
+
+      - alert: RyFrameJobReadyBacklog
+        expr: max by (instance, type) (ryframe_job_oldest_ready_age_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame background-job backlog is waiting too long"
+          description: "The oldest ready {{ $labels.type }} job on {{ $labels.instance }} has waited over 5 minutes."
+          runbook: "docs/operations-runbook.md#后台任务"
+
+      - alert: RyFrameDeadBackgroundJob
+        expr: max by (instance, type) (ryframe_job_queue_depth{status="dead"}) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "RyFrame background job entered the dead-letter queue"
+          description: "{{ $labels.type }} has dead-letter jobs on {{ $labels.instance }}."
+          runbook: "docs/operations-runbook.md#后台任务"
+
+      - alert: RyFrameMessageDeliveryFailures
+        expr: sum by (instance) (increase(ryframe_message_delivery_total{result=~"slow_consumer|closed"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame message WebSocket delivery is failing"
+          description: "More than five message deliveries were dropped for slow or closed consumers on {{ $labels.instance }}."
+          runbook: "docs/operations-runbook.md#消息中心投递"
+
+      - alert: RyFrameOtlpExporterDegraded
+        expr: max by (instance) (ryframe_otel_exporter_degraded) == 1
+        for: 5m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame OTLP exporter is degraded"
+          description: "The OTLP exporter failed to initialize on {{ $labels.instance }}."
+          runbook: "docs/operations-runbook.md#opentelemetry-导出器"
+
+      - alert: RyFrameOtlpExporterRuntimeFailure
+        expr: sum by (instance) (increase(ryframe_otel_exporter_runtime_failures_total[5m])) > 0
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame OTLP 导出器运行期失败"
+          description: "{{ $labels.instance }} 在过去五分钟内发生了 OTLP 导出或关闭失败。"
+          runbook: "docs/operations-runbook.md#opentelemetry-导出器"
+
+      # 票据自然过期与重放尚无法精确区分，待原子消费语义确定后再新增告警。
+
   - name: ryframe.dependencies
     interval: 30s
     rules:
-      # Requires prometheus/mysqld_exporter. Adjust the job label to the deployment.
+      # 依赖 prometheus/mysqld_exporter；请按部署情况调整 job 标签。
       - alert: RyFrameMySqlConnectionPoolNearCapacity
         expr: |
           (
@@ -124,7 +212,7 @@ groups:
           summary: "MySQL connections exceed 95% of capacity"
           runbook: "docs/operations-runbook.md#数据库连接容量"
 
-      # Requires prometheus/node_exporter on application and storage nodes.
+      # 应用和存储节点均依赖 prometheus/node_exporter。
       - alert: RyFrameDiskSpaceLow
         expr: |
           (
@@ -156,8 +244,8 @@ groups:
           summary: "Filesystem has less than 5% free space"
           runbook: "docs/operations-runbook.md#磁盘容量"
 
-      # The backup job must publish this Unix timestamp through node_exporter's
-      # textfile collector or Pushgateway only after backup validation succeeds.
+      # 备份任务只能在备份校验成功后，通过 node_exporter 的文本文件采集器或
+      # Pushgateway 发布此 Unix 时间戳。
       - alert: RyFrameBackupStale
         expr: time() - ryframe_backup_last_success_timestamp_seconds > 90000
         for: 30m
@@ -178,7 +266,7 @@ groups:
           summary: "RyFrame backup success metric is missing"
           runbook: "docs/operations-runbook.md#备份失败或过期"
 
-      # Requires blackbox_exporter probe_success and TLS expiry metrics.
+      # 依赖 blackbox_exporter 的 probe_success 和 TLS 到期指标。
       - alert: RyFrameTlsCertificateExpiresSoon
         expr: probe_ssl_earliest_cert_expiry - time() < 14 * 24 * 60 * 60
         for: 1h

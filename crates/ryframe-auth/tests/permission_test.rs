@@ -1,5 +1,5 @@
 use ryframe_auth::{RequestPrincipal, permission::check_permission};
-use ryframe_common::{ActorContext, annotations::data_scope::DataScope};
+use ryframe_kernel::{ActorContext, DataScope};
 
 fn principal(permissions: Vec<String>, is_super_admin: bool) -> RequestPrincipal {
     RequestPrincipal {
@@ -14,6 +14,7 @@ fn principal(permissions: Vec<String>, is_super_admin: bool) -> RequestPrincipal
             include_self: true,
             is_super_admin,
         },
+        preferred_locale: None,
         roles: vec!["operator".into()],
         role_ids: vec![1],
         permissions,

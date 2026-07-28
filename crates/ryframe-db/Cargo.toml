@@ -9,7 +9,8 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-ryframe-common = { path = "../ryframe-common" }
+ryframe-kernel = { path = "../ryframe-kernel" }
+ryframe-utils = { path = "../ryframe-utils" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-macro = { path = "../ryframe-macro" }
@@ -20,8 +21,10 @@ log = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["registry", "std", "fmt"] }
 serde = { workspace = true ,features = ["derive"]}
+serde_json = { workspace = true }
 chrono = {workspace = true,features = ["serde"]}
 rand = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 criterion = { workspace = true }

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing coordinated RC or stable tag to validate and publish
+        description: Existing coordinated stable tag to validate and publish
         required: true
         type: string
 
@@ -25,11 +25,11 @@ env:
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
   RUSTDOCFLAGS: "-Dwarnings"
+  FRONTEND_REPOSITORY: ${{ vars.RYFRAME_FRONTEND_REPOSITORY || format('{0}/ryframe-vue3', github.repository_owner) }}
 
 permissions:
   actions: read
   contents: read
-  deployments: read
 
 jobs:
   validate-release:
@@ -42,12 +42,16 @@ jobs:
       backend_commit: ${{ steps.release.outputs.backend_commit }}
       frontend_tag_oid: ${{ steps.release.outputs.frontend_tag_oid }}
       frontend_commit: ${{ steps.release.outputs.frontend_commit }}
+      frontend_repository: ${{ steps.release.outputs.frontend_repository }}
     steps:
       - name: Check out backend tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Install Rust toolchain for release metadata
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Verify backend tag belongs to main
         shell: bash
@@ -64,7 +68,7 @@ jobs:
       - name: Check out matching frontend tag
         uses: actions/checkout@v4
         with:
-          repository: Edgar-ycy/ryframe-vue3
+          repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
           path: frontend
@@ -84,11 +88,20 @@ jobs:
 
       - name: Validate release inputs
         shell: bash
+        env:
+          BACKEND_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          backend_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          frontend_commit="$(git -C frontend rev-parse "${RELEASE_TAG}^{commit}")"
           python scripts/validate_release.py \
             --tag "$RELEASE_TAG" \
-            --frontend-dir frontend
+            --frontend-dir frontend \
+            --backend-repository "$BACKEND_REPOSITORY" \
+            --backend-commit "$backend_commit" \
+            --frontend-repository "$FRONTEND_REPOSITORY" \
+            --frontend-commit "$frontend_commit" \
+            --manifest-path "$RUNNER_TEMP/release-manifest.json"
 
       - name: Export release identity
         id: release
@@ -103,6 +116,7 @@ jobs:
             echo "backend_commit=$(git rev-parse "$RELEASE_TAG^{commit}")"
             echo "frontend_tag_oid=$(git -C frontend rev-parse "refs/tags/$RELEASE_TAG")"
             echo "frontend_commit=$(git -C frontend rev-parse "$RELEASE_TAG^{commit}")"
+            echo "frontend_repository=$FRONTEND_REPOSITORY"
           } >> "$GITHUB_OUTPUT"
 
   backend-gate:
@@ -145,6 +159,11 @@ jobs:
       BACKUP_DIR: target/release-gate-backups
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release.outputs.backend_commit }}
+
+      - name: Lint GitHub Actions workflows
+        uses: docker://rhysd/actionlint:1.7.7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -163,7 +182,7 @@ jobs:
       - name: Set up Node.js for runtime smoke
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24.11.0"
 
       - name: Install shell and MySQL clients
         run: |
@@ -218,16 +237,27 @@ jobs:
           python scripts/check_architecture.py
           python -m compileall -q scripts
           python -m unittest discover -s scripts/tests -p 'test_*.py'
-          ruby -e 'require "yaml"; ARGV.each { |path| YAML.parse_file(path) }' \
-            .github/workflows/ci.yml \
-            .github/workflows/release.yml \
-            .github/workflows/nightly.yml docker-compose.test.yml
           docker compose -f docker-compose.test.yml config --quiet
           cargo fmt --all -- --check
           mapfile -t shell_scripts < <(find deploy -type f -name '*.sh' -print)
           bash -n deploy.sh "${shell_scripts[@]}"
           shellcheck deploy.sh "${shell_scripts[@]}"
           bash deploy/tests/validate-nginx.sh
+
+      - name: Build production container and verify build identity
+        shell: bash
+        env:
+          RYFRAME_BUILD_COMMIT: ${{ needs.validate-release.outputs.backend_commit }}
+        run: |
+          set -euo pipefail
+          DOCKER_BUILDKIT=1 docker build \
+            --file deploy/Dockerfile \
+            --build-arg RYFRAME_BUILD_COMMIT="$RYFRAME_BUILD_COMMIT" \
+            --tag ryframe:release-gate .
+          revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            ryframe:release-gate)"
+          [[ "$revision" == "$RYFRAME_BUILD_COMMIT" ]]
 
       - name: Verify generated API and MySQL schema snapshots
         run: |
@@ -400,12 +430,14 @@ jobs:
     steps:
       - name: Check out backend contract
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release.outputs.backend_commit }}
 
       - name: Check out matching frontend tag
         uses: actions/checkout@v4
         with:
-          repository: Edgar-ycy/ryframe-vue3
-          ref: ${{ needs.validate-release.outputs.tag }}
+          repository: ${{ needs.validate-release.outputs.frontend_repository }}
+          ref: ${{ needs.validate-release.outputs.frontend_commit }}
           path: frontend
 
       - name: Set up pinned pnpm
@@ -416,7 +448,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24.11.0"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -438,7 +470,7 @@ jobs:
         run: pnpm check
 
   stable-approval:
-    name: Approve stable promotion
+    name: Approve stable release
     needs:
       - validate-release
       - backend-gate
@@ -452,7 +484,7 @@ jobs:
           echo "stable-release required-reviewer approval granted for $RELEASE_TAG"
 
   publish-release:
-    name: Publish source-only GitHub release
+    name: Publish source and release-manifest GitHub release
     needs:
       - validate-release
       - backend-gate
@@ -478,7 +510,7 @@ jobs:
       - name: Check out matching frontend Changelog
         uses: actions/checkout@v4
         with:
-          repository: Edgar-ycy/ryframe-vue3
+          repository: ${{ needs.validate-release.outputs.frontend_repository }}
           ref: ${{ needs.validate-release.outputs.frontend_commit }}
           fetch-depth: 0
           path: frontend
@@ -505,6 +537,27 @@ jobs:
           [[ "$(git -C frontend rev-parse "refs/tags/${RELEASE_TAG}")" == "$FRONTEND_TAG_OID" ]]
           [[ "$(git -C frontend rev-parse "${RELEASE_TAG}^{commit}")" == "$FRONTEND_COMMIT" ]]
           [[ "$(git -C frontend rev-parse HEAD)" == "$FRONTEND_COMMIT" ]]
+
+      - name: Install Rust toolchain for manifest verification
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build deterministic release manifest
+        shell: bash
+        env:
+          BACKEND_COMMIT: ${{ needs.validate-release.outputs.backend_commit }}
+          FRONTEND_COMMIT: ${{ needs.validate-release.outputs.frontend_commit }}
+          FRONTEND_REPOSITORY: ${{ needs.validate-release.outputs.frontend_repository }}
+        run: |
+          set -euo pipefail
+          python scripts/validate_release.py \
+            --tag "$RELEASE_TAG" \
+            --frontend-dir frontend \
+            --backend-repository "$GITHUB_REPOSITORY" \
+            --backend-commit "$BACKEND_COMMIT" \
+            --frontend-repository "$FRONTEND_REPOSITORY" \
+            --frontend-commit "$FRONTEND_COMMIT" \
+            --manifest-path release-manifest.json
+          sha256sum release-manifest.json
 
       - name: Purge custom assets from target release
         shell: bash
@@ -587,16 +640,17 @@ jobs:
           [[ -n "$backend_remote_oid" && "$backend_remote_oid" == "$BACKEND_TAG_OID" ]]
           [[ -n "$frontend_remote_oid" && "$frontend_remote_oid" == "$FRONTEND_TAG_OID" ]]
 
-      - name: Create source-only GitHub release
+      - name: Create source and release-manifest GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.validate-release.outputs.tag }}
           name: RyFrame ${{ needs.validate-release.outputs.tag }}
           body_path: release_body.md
+          files: release-manifest.json
           prerelease: false
           make_latest: true
 
-      - name: Verify published notes and zero custom assets
+      - name: Verify published notes and release manifest
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -607,7 +661,13 @@ jobs:
           gh api \
             "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
             > "$release_json"
-          jq --exit-status '.assets | length == 0' "$release_json" > /dev/null
+          jq --exit-status \
+            '(.assets | length == 1) and (.assets[0].name == "release-manifest.json")' \
+            "$release_json" > /dev/null
           jq --join-output '.body // ""' "$release_json" > "$published_body"
           test -s "$published_body"
           diff --unified release_body.md "$published_body"
+          gh release download "$RELEASE_TAG" \
+            --pattern release-manifest.json \
+            --dir "$RUNNER_TEMP"
+          cmp --silent release-manifest.json "$RUNNER_TEMP/release-manifest.json"

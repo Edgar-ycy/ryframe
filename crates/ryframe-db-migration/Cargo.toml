@@ -9,7 +9,7 @@ license.workspace = true
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 async-trait = { workspace = true }
-ryframe-common = { path = "../ryframe-common" }
+ryframe-utils = { path = "../ryframe-utils" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -9,13 +9,15 @@ pub mod enums;
 pub mod i18n;
 pub mod utils;
 
-// ========== 核心类型重导出（方便其他 crate 用 ryframe_common::AppError 直接引用）==========
-// ========== 注解重导出 ==========
+// 为既有依赖 `ryframe-common` 的调用方保留领域类型入口。
 pub use actor_context::ActorContext;
 pub use annotations::data_scope::{DataScope, DataScopeContext};
 pub use constants::*;
-// ========== 枚举重导出 ==========
 pub use enums::business_type::BusinessType;
 pub use enums::user_status::UserStatus;
-pub use error::{ApiEmptyResponse, ApiPageResponse, ApiResponse, AppError};
+pub use error::{
+    ApiEmptyResponse, ApiPageResponse, ApiResponse, AppError, HttpAppError, app_error_response,
+};
 pub use result::AppResult;
+pub use ryframe_excel::define_excel_mapping;
+pub use ryframe_kernel::{AppError as KernelAppError, AppResult as KernelAppResult, ErrorCode};

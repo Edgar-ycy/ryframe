@@ -1,4 +1,4 @@
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 use crate::{principal::RequestPrincipal, rbac};
 

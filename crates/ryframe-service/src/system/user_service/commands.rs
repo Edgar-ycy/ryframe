@@ -1,7 +1,8 @@
 use ryframe_auth::password;
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::auto_fill::{AutoFill, FillContext};
 use ryframe_db::{TenantRepository, entities::user};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 use sea_orm::{ActiveModelTrait, DatabaseTransaction, TransactionTrait};
 use uuid::Uuid;
 
@@ -45,6 +46,8 @@ impl UserService {
             email: email.to_owned(),
             phone: phone.to_owned(),
             avatar: None,
+            avatar_file_id: None,
+            preferred_locale: None,
             status: user::Model::STATUS_PENDING_ACTIVATION.into(),
             auth_version: 1,
             dept_id,
@@ -175,8 +178,7 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        // Always acquire user locks in ascending order so overlapping batch
-        // operations cannot deadlock by presenting the same IDs differently.
+        // 始终按升序获取用户锁，避免重叠的批量操作因以不同顺序提供相同 ID 而死锁。
         for id in &ids {
             self.lock_manageable_user_in_txn(actor, &transaction, *id)
                 .await?;

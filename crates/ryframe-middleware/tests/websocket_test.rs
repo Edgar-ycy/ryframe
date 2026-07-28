@@ -63,14 +63,14 @@ async fn test_send_to_room() {
 
     mgr.join_room(&"c1".into(), "test-room");
     mgr.join_room(&"c3".into(), "test-room");
-    // c2 NOT in test-room
+    // c2 不在 test-room 中
 
     let count = mgr.send_to_room_text("test-room", "room msg").await;
     assert_eq!(count, 2);
 
     assert!(rx1.recv().await.is_some());
     assert!(rx3.recv().await.is_some());
-    // c2 should NOT receive
+    // c2 不应收到消息
     assert!(rx2.try_recv().is_err());
 }
 

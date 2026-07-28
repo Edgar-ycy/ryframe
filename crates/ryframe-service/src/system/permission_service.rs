@@ -1,12 +1,13 @@
 use std::collections::{BTreeSet, HashSet};
 
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
 };
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{PermissionRepository, entities::permission};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 
 mod model;
 mod tree;
@@ -36,7 +37,7 @@ impl PermissionService {
         role_ids: &[i64],
     ) -> AppResult<Vec<String>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.read_strong();
         self.perm_repo
             .find_role_perms(db, tenant_id, role_ids)
             .await
@@ -54,7 +55,7 @@ impl PermissionService {
         role_id: i64,
     ) -> AppResult<Vec<i64>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.read_strong();
         self.perm_repo
             .find_role_perm_ids(db, tenant_id, role_id)
             .await
@@ -66,7 +67,7 @@ impl PermissionService {
         perm_type: Option<&str>,
     ) -> AppResult<Vec<PermissionTreeNode>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.read_strong();
         let all = self.perm_repo.find_all(db, tenant_id).await?;
         let filtered: Vec<&permission::Model> = if let Some(t) = perm_type {
             all.iter().filter(|p| p.perm_type == t).collect()
@@ -84,7 +85,7 @@ impl PermissionService {
         id: i64,
     ) -> AppResult<Option<PermissionVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.read_strong();
         self.perm_repo
             .find_by_id(db, tenant_id, id)
             .await

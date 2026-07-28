@@ -18,6 +18,9 @@ pub struct Model {
     pub file_size: i64,
     pub content_type: String,
     pub file_md5: Option<String>,
+    /// 对 v0.6 及以后写入的文件，SHA-256 是权威摘要。迁移历史记录期间，旧 MD5
+    /// 列仍可为空。
+    pub file_sha256: Option<String>,
     pub upload_by: Option<String>,
     pub upload_status: String,
     pub reservation_token: Option<String>,
@@ -34,9 +37,8 @@ impl Model {
 
     pub const DEL_FLAG_NORMAL: &str = "0";
     pub const DEL_FLAG_DELETED: &str = "2";
-    /// Upload reservations use a value unknown to the previous release, whose
-    /// readers only expose `del_flag = '0'`. This keeps pending/cleanup rows
-    /// invisible during rolling upgrades without colliding with soft delete.
+    /// 上传预留使用旧版本未知的值；旧版本读取器只暴露 `del_flag = '0'`。这使
+    /// pending/cleanup 记录在滚动升级期间保持不可见，并且不会与软删除冲突。
     pub const DEL_FLAG_UPLOAD_RESERVED: &str = "3";
 }
 

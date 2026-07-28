@@ -1,4 +1,4 @@
-//! Streaming-safe request body limits.
+//! 流式请求体安全大小限制。
 
 use axum::{
     body::{Body, to_bytes},
@@ -12,9 +12,9 @@ use ryframe_config::UploadLimitsConfig;
 pub const FILE_UPLOAD_LIMIT_BYTES: usize = 10 * 1024 * 1024;
 pub const AVATAR_UPLOAD_LIMIT_BYTES: usize = 5 * 1024 * 1024;
 
-/// Buffer at most the route-specific limit before handing the request to an
-/// extractor. `to_bytes` enforces the limit while consuming the body, so a
-/// chunked request cannot bypass the same 413 boundary used for Content-Length.
+/// 在将请求交给提取器前，最多缓冲路由特定的限制大小。
+/// `to_bytes` 会在消费请求体时强制该限制，因此分块请求也无法绕过与 Content-Length
+/// 相同的 413 边界。
 pub async fn body_limit_middleware(
     State(config): State<UploadLimitsConfig>,
     request: Request,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail CI when an attribute route is missing a permission annotation."""
+"""当属性路由缺少权限标注时使 CI 失败。"""
 
 from __future__ import annotations
 
@@ -15,8 +15,7 @@ EXTRA_PROTECTED_FILES = [
     ROOT / "crates" / "ryframe-monitor" / "src" / "lib.rs",
 ]
 
-# These files are mounted either publicly or behind authentication-only router
-# policies and intentionally do not use per-route RBAC permission codes.
+# 这些文件要么公开挂载，要么位于仅认证路由策略之后，故意不使用逐路由 RBAC 权限码。
 NON_RBAC_FILES = {
     "auth_handler.rs",
     "captcha_handler.rs",
@@ -24,13 +23,28 @@ NON_RBAC_FILES = {
     "profile_handler.rs",
 }
 
-AUTHENTICATED_ONLY_ROUTES = {("menu_handler.rs", "/current")}
+AUTHENTICATED_ONLY_ROUTES = {
+    ("menu_handler.rs", "/current"),
+    # 消息收件箱是当前认证用户的自有资源，不依赖管理端 RBAC 权限码。
+    ("message_handler.rs", "/"),
+    ("message_handler.rs", "/unread-count"),
+    ("message_handler.rs", "/ack"),
+    ("message_handler.rs", "/{id}/read"),
+    ("message_handler.rs", "/read-all"),
+}
 
 ROUTE_ATTR = re.compile(
     r'^\s*#\[(get|post|put|delete)\(([^\]]+)\)\]'
     r'(?:\s*\n\s*#\[perm\("([^"]+)"\)\])?',
     re.MULTILINE,
 )
+
+
+def routes_are_authenticated_only(filename: str, route_paths: list[str]) -> bool:
+    return bool(route_paths) and all(
+        (filename, route_path) in AUTHENTICATED_ONLY_ROUTES
+        for route_path in route_paths
+    )
 
 
 def main() -> int:
@@ -45,10 +59,7 @@ def main() -> int:
         text = path.read_text(encoding="utf-8")
         for match in ROUTE_ATTR.finditer(text):
             route_paths = re.findall(r'"([^"]+)"', match.group(2))
-            if any(
-                (path.name, route_path) in AUTHENTICATED_ONLY_ROUTES
-                for route_path in route_paths
-            ):
+            if routes_are_authenticated_only(path.name, route_paths):
                 continue
             if match.group(3) is None:
                 route_label = ", ".join(route_paths) or "<unknown>"

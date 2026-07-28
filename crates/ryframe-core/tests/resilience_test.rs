@@ -134,7 +134,7 @@ fn any_half_open_failure_reopens_and_discards_outstanding_probes() {
     cb.record_failure();
     assert_eq!(cb.current_state(), CircuitState::Open);
 
-    // A completion from another formerly in-flight probe must not close the breaker.
+    // 前一轮仍在执行的另一探测完成时，不得关闭熔断器。
     cb.record_success();
     assert_eq!(cb.current_state(), CircuitState::Open);
 }

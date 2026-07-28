@@ -1,6 +1,6 @@
 # 数据库开发指南
 
-> 最后核对：2026-07-22
+> 最后核对：2026-07-26
 
 ## 1. 技术和边界
 
@@ -143,7 +143,7 @@ APP_DATABASE_PASSWORD
 | `crates/ryframe-db/src/cluster.rs` | 主库/副本池、命名业务数据源、读轮询和拓扑健康状态 |
 | `crates/ryframe-db/src/migration/` | 与数据库 crate 同属的数据规则辅助模块 |
 | `crates/ryframe-db-migration/src/` | 启动时执行的增量迁移 |
-| `crates/ryframe/src/boot/datasource.rs` | 连接全部节点，并在主库迁移后只校验主库/副本结构 |
+| `crates/ryframe/src/boot/datasource.rs` | 连接主库和业务数据源；以受限超时持续连接、探测并校验副本结构 |
 | `sql/` | 由迁移基线对齐的只读审查快照，不作为运行时输入 |
 | `crates/ryframe-service/` | 事务边界、业务校验和 Entity 到 Output 的转换 |
 
@@ -279,7 +279,7 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
 
 ## 9. 迁移与重置
 
-应用启动时只在主库自动运行 `ryframe-db-migration`，完成后校验主库和全部副本的业务表。命名业务数据源只执行连接和健康检查，不执行系统迁移或系统表校验。复制延迟或外部迁移系统必须保证副本结构在应用接流量前就绪。新增结构变更时：
+应用启动时只在主库自动运行 `ryframe-db-migration`，完成后校验主库结构。副本以不可路由槽位注册：监督器每 5 秒以 2 秒总超时执行连接/PING/结构校验，连续两次完整成功后才接收最终一致性读取；连续三次网络失败会摘除，结构不一致会立即摘除，并按 5、10、20、40、60 秒上限退避重连。主库就绪探针不等待副本。命名业务数据源只执行连接和健康检查，不执行系统迁移或系统表校验。复制延迟或外部迁移系统必须保证副本结构在应用接流量前就绪。新增结构变更时：
 
 1. 新增迁移文件并注册到迁移器。
 2. 同步 Entity 和 Repository。
@@ -317,7 +317,7 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 | `max_lifetime_secs` | 1800 | 单连接最大生命周期 |
 | `connect_timeout_secs` | 10 | 建连超时 |
 
-`GET /api/v1/monitor/db-pool` 当前展示主库池统计；`GET /api/v1/monitor/runtime` 分别展示主库、副本和业务数据源的连接状态及读取策略。数据库总连接预算为每个应用实例的主库池、全部副本池和全部业务数据源池之和，还要预留迁移任务和管理连接。活跃连接长期接近上限时，应先检查慢查询、长事务和并发模型，不要只按 CPU 公式扩大连接池。
+`GET /api/v1/monitor/db-pool` 当前展示主库池统计；`GET /api/v1/monitor/runtime` 分别展示主库、副本和业务数据源的状态及有效读取策略，其中副本 `connected` 表示当前可参与读路由。数据库总连接预算为每个应用实例的主库池、全部副本池和全部业务数据源池之和，还要预留迁移任务和管理连接。活跃连接长期接近上限时，应先检查慢查询、长事务和并发模型，不要只按 CPU 公式扩大连接池。
 
 ## 11. 提交前检查
 

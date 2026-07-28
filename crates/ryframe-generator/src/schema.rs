@@ -1,4 +1,4 @@
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -26,7 +26,7 @@ pub struct ColumnInfo {
 pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult<TableInfo> {
     // 验证表名只包含字母、数字和下划线，防止注入
     if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return Err(ryframe_common::AppError::Validation(
+        return Err(AppError::Validation(
             "表名只能包含字母、数字和下划线".into(),
         ));
     }

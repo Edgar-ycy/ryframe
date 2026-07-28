@@ -1,8 +1,9 @@
 use chrono::Utc;
-use ryframe_common::{ActorContext, AppResult, utils::snowflake};
 use ryframe_core::{LoggedRepo, PageQuery, PageResult, Repository};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{LoginInfoFilter, LoginInfoRepository, entities::login_info};
+use ryframe_kernel::{ActorContext, AppResult};
+use ryframe_utils::snowflake;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -126,7 +127,7 @@ impl LoginInfoService {
 
         let result = self
             .login_info_repo
-            .find_by_page_filtered(db, tenant_id, &query.page, filter, &scope_ctx)
+            .find_by_page_filtered(&db, tenant_id, &query.page, filter, &scope_ctx)
             .await?;
         Ok(PageResult {
             records: result.records.into_iter().map(LoginInfoVo::from).collect(),
@@ -146,9 +147,8 @@ impl LoginInfoService {
     pub async fn find_all(
         &self,
         actor: &ActorContext,
-        mut query: LoginInfoQuery,
+        query: LoginInfoQuery,
     ) -> AppResult<Vec<LoginInfoVo>> {
-        query.page = PageQuery::all_records();
         let result = self.find_by_page(actor, query).await?;
         Ok(result.records)
     }

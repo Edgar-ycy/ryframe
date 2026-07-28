@@ -3,8 +3,8 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::rbac;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{RoleListParams, RoleVo};
 use serde::Serialize;
@@ -81,13 +81,23 @@ async fn list(
     current_user: RequestPrincipal,
     Query(query): Query<RoleListQuery>,
 ) -> AppResult<Json<ApiPageResponse<RoleVo>>> {
-    let (page, filter) = query.into_parts();
+    let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
         .role
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map(|p| Json(p.to_page_response("查询成功")))
+        .map_err(AppError::from)
+        .map(|p| {
+            Json(ApiPageResponse::new(
+                p.records,
+                p.total,
+                p.page,
+                p.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 /// 角色列表不分页查询（返回全部数据）
@@ -107,9 +117,10 @@ async fn list_no_page(
         .role
         .find_by_page(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await
+        .map_err(AppError::from)
         .map(|p| Json(ApiResponse::success(p.records)))
 }
 
@@ -148,6 +159,7 @@ async fn create(
             dto.data_scope,
         )
         .await
+        .map_err(AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -184,7 +196,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:role:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/{id}", tag = "角色管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -200,7 +212,7 @@ async fn remove(
 #[perm("system:role:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/batch/{ids}", tag = "角色管理",
     params(("ids" = String, Path)),
-    responses((status = 200, description = "批量删除成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "批量删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn batch_remove(
     State(state): State<AppState>,
@@ -210,7 +222,7 @@ async fn batch_remove(
     let ids = parse_csv_i64(&ids_str)?;
 
     if ids.is_empty() {
-        return Err(ryframe_common::AppError::Validation(
+        return Err(ryframe_http::AppError::Validation(
             "请选择要删除的角色".into(),
         ));
     }
@@ -237,7 +249,7 @@ async fn export_roles(
     current_user: RequestPrincipal,
     Query(query): Query<RoleFilterQuery>,
 ) -> AppResult<axum::response::Response> {
-    use ryframe_common::utils::ExcelExporter;
+    use ryframe_excel::ExcelExporter;
 
     // 查询所有角色
     let page_result = state
@@ -245,7 +257,7 @@ async fn export_roles(
         .role
         .find_by_page(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await?;
 
@@ -301,12 +313,12 @@ impl RoleExportData {
     }
 }
 
-/// Replace all permissions assigned to one role.
+/// 替换一个角色已分配的全部权限。
 #[put("/{id}/permissions")]
 #[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
     params(("id" = i64, Path)), request_body = ReplaceRolePermissionsDto,
-    responses((status = 200, description = "权限分配成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "权限分配成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn replace_permissions(
     State(state): State<AppState>,
@@ -346,12 +358,12 @@ async fn get_role_perms(
     Ok(Json(ApiResponse::success(ids)))
 }
 
-/// Atomically replace one role's data scope and custom departments.
+/// 原子替换一个角色的数据范围和自定义部门。
 #[put("/{id}/data-scope")]
 #[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/data-scope", tag = "角色管理",
     params(("id" = i64, Path)), request_body = ReplaceRoleDataScopeDto,
-    responses((status = 200, description = "数据权限更新成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "数据权限更新成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn replace_data_scope(
     State(state): State<AppState>,

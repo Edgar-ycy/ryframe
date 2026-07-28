@@ -1,6 +1,6 @@
 # RyFrame 后端架构与演进指南
 
-> 最后核对：2026-07-18
+> 最后核对：2026-07-26
 > 适用范围：后端仓库 `ryframe` 与独立前端仓库 `ryframe-vue3`
 
 本文档只描述当前代码事实和已经确认的演进方向。接口细节以运行时 OpenAPI 文档为准，不在 Markdown 中维护第二份完整契约。
@@ -11,8 +11,8 @@ RyFrame 采用前后端独立 Git 和独立 CI，但稳定版使用同一版本�
 
 | 仓库 | 职责 | 主要产物 |
 | --- | --- | --- |
-| `ryframe` | Rust 服务、数据库迁移、OpenAPI、部署配置和联合发布门禁 | RC/stable 标签、项目级源码 Release 与 Nightly 源码快照 |
-| `ryframe-vue3` | Vue 3 管理端 | 同名 RC/stable 标签与 Nightly 源码快照 |
+| `ryframe` | Rust 服务、数据库迁移、OpenAPI、部署配置和联合发布门禁 | 稳定版标签、项目级源码快照与 `release-manifest.json`、Nightly 源码快照 |
+| `ryframe-vue3` | Vue 3 管理端 | 同名稳定版标签与 Nightly 源码快照 |
 
 本地开发工作区固定将独立前端仓库检出到后端的 `ryframe-vue3/` 目录，后端通过 `/ryframe-vue3/` 忽略该嵌套仓库：
 
@@ -34,8 +34,8 @@ GET /api/v1/api-docs/openapi.json
 
 | Crate | 当前职责 |
 | --- | --- |
-| `ryframe` | 唯一可执行入口、配置加载、迁移、依赖装配和服务启动 |
-| `ryframe-api` | Router、Handler、传输 DTO、OpenAPI 和 HTTP 组合策略 |
+| `ryframe` | API、`ryframe-worker`、`ryframe-migrate` 可执行入口，负责配置加载、依赖装配和服务启动 |
+| `ryframe-api` | Router、Handler、传输 DTO、OpenAPI、请求语言与消息 WebSocket 组合策略 |
 | `ryframe-service` | 应用用例、业务规则、输出模型和 Repository 编排 |
 | `ryframe-db` | SeaORM Entity、Repository、数据范围查询、主库/副本和命名业务数据源拓扑 |
 | `ryframe-db-migration` | 可重复执行的数据库迁移 |
@@ -46,7 +46,14 @@ GET /api/v1/api-docs/openapi.json
 | `ryframe-storage` | `ObjectStorage` 端口、本地/RustFS/MinIO/S3 后端、路径校验和 SigV4 签名 |
 | `ryframe-config` | 类型化配置、环境变量覆盖和敏感配置解密 |
 | `ryframe-core` | 分页、Repository 基础、缓存、Redis、租户一致性校验、数据库监控端口、锁和熔断 |
-| `ryframe-common` | 错误、响应、常量、i18n 和通用工具 |
+| `ryframe-kernel` | 传输无关的主体、数据范围、错误、错误码、常量和枚举 |
+| `ryframe-http` | HTTP 错误映射、统一响应信封和 Axum 响应适配 |
+| `ryframe-i18n` | 显式注入的语言协商、资源一致性校验与本地化文本渲染 |
+| `ryframe-utils` | 雪花 ID、脱敏、数据差异、客户端信息与文件处理等通用工具 |
+| `ryframe-captcha` | 验证码题目生成与图像渲染 |
+| `ryframe-excel` | Excel 导入导出 |
+| `ryframe-mail` | 邮件发送适配 |
+| `ryframe-common` | 仅为外部旧调用保留的兼容入口；工作区内部 crate 和生产源码禁止依赖 |
 | `ryframe-macro` | 路由、权限、Repository 等过程宏 |
 
 当前没有为尚未闭环的能力保留空壳。未消费的事件总线、消息队列、任务队列、gRPC、硬编码功能开关和 task-local 动态切库已经删除。数据库拓扑明确区分同结构只读副本与命名业务数据源；业务数据源只有存在具体消费者、配置、监控和测试时才能加入。
@@ -91,7 +98,7 @@ flowchart LR
 - `[[database.sources]]` 表达按名称显式访问的业务数据库；本机 `ryframe_device` 由代码生成器消费，不参与系统查询路由。
 - 主库、副本和命名业务数据源全部使用 MySQL；业务数据源可以有独立结构，但不参与系统查询路由。
 - 命令、事务、认证授权、配额/唯一性校验和其他一致性敏感读取固定使用主库；普通查询从副本轮询，未配置副本时回退主库。
-- 已配置副本连接或结构校验失败会阻止启动，不会静默缩减拓扑；运行时状态会报告每个节点，查询失败也不会隐式转发主库。
+- 已配置副本始终保留在拓扑中；连接或结构校验失败不会阻止主库启动，但副本在连续两次完整探测成功前不参与路由。监督器每 5 秒以 2 秒超时探测，网络故障连续三次摘除并按 5–60 秒退避重连；结构不一致立即摘除。运行时状态会报告每个节点，查询失败也不会隐式转发主库。
 - 已配置业务数据源连接失败同样阻止启动，但应用不会对其执行主库迁移或系统表校验。
 - 业务表采用共享表加 `tenant_id` 的隔离方式。
 - 认证中间件构造 `RequestPrincipal`，其中唯一的业务主体是不可变 `ActorContext`。
@@ -160,8 +167,14 @@ flowchart LR
 49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过 Lua CAS 轮换和检测重放。
 50. 根路径 `/livez` 只检查进程，`/readyz` 检查 MySQL、required Redis 和必要对象存储；探针绕过租户、认证、幂等和业务限流。
 51. 幂等只应用于认证后的 system/platform 写请求，键绑定租户、用户、方法、规范路径和 body；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
-52. 稳定发布验证标签位于 `main`、前后端同标签同版本，要求 annotated tag 说明与各自 CHANGELOG 完整版本章节一致，并在发布前再次锁定 tag object ID 与提交 SHA；同一 RC commit 的 GitHub Deployment 还需提供连续至少 48 小时的可审计观察记录，再经过启用防止自审的 `stable-release` required-reviewer 审批，管理员绕过必须在仓库设置中关闭并由审计日志复核。后端 RC/stable 与前后端 Nightly Release 只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照，不发布自定义归档、镜像、SBOM、校验和或证明附件；Nightly 仅在对应仓库的 `main` CI 成功后更新，前端同名 RC/stable 标签不在联合门禁前独立发布。
+52. 稳定发布只接受位于 `main` 的 `vMAJOR.MINOR.PATCH` annotated tag，前后端必须同标签同版本，且 annotation 与各自 CHANGELOG 完整版本章节一致；发布前再次锁定两仓 tag object ID 与完整 commit SHA。后端是联合发布主控：它校验前端仓库和精确 commit、两份 OpenAPI 的 SHA-256，并发布确定性的 `release-manifest.json`。全部自动门禁通过后必须经过启用防止自审的 `stable-release` required-reviewer 审批，管理员绕过必须在仓库设置中关闭并由审计日志复核。稳定版 Release 保留 GitHub 自动生成的 zip、tar.gz 源码快照和唯一的 `release-manifest.json`；Nightly 仅在对应仓库的 `main` CI 成功后更新，并只保留源码快照。
 53. 未签名的 `X-Nonce` / `X-Timestamp` 防重放抽象已移除：它从未进入路由或配置，且客户端自报双头不能验证请求主体或内容。浏览器写请求继续使用 HTTPS、Bearer/权限、签名 CSRF、refresh CAS 与主体/方法/规范路径/body hash 幂等绑定；架构门禁禁止旧裸头契约回流，机器客户端持有者证明必须另行采用可验证消息签名。
+54. 领域类型、HTTP 响应适配、国际化、通用工具、验证码、Excel 和邮件能力已拆分为独立 crate；业务层返回 `ryframe-kernel::AppError`，API 边界才映射为 `ryframe-http::AppError`，避免 HTTP 类型反向进入 Service。
+55. `ryframe-common` 已从全部工作区依赖与生产源码中移除，架构门禁会阻止回流；它暂时只保留外部旧调用的兼容入口，旧 i18n API 的最终兼容方式仍需单独决策。
+56. 语言资源由 `ryframe-i18n::Localizer` 显式注入应用状态，启动时校验 `zh-CN` 与 `en-US` 键集一致；REST 响应协商语言并返回 `Content-Language`，用户偏好可持久化。
+57. 数据库迁移支持 `auto`、`verify` 和 `off` 模式；生产可先使用 `ryframe-migrate` 独立验证/执行迁移，再启动 API。持久化后台任务使用租约、退避和死信状态，开发可内嵌、生产可使用独立 `ryframe-worker`。
+58. 消息中心在主库事务内写入消息、受众、收件人快照和派发任务；一次性 WebSocket ticket 经 Redis 原子消费，收件箱、确认、已读和公告显式发布均复用同一服务边界。
+59. 架构门禁已把新 crate 依赖基线、内核禁止依赖和旧 `ryframe-common` 禁用纳入自动检查，防止分层迁移在后续开发中回退。
 
 ## 4. 后续优先级
 
@@ -247,7 +260,7 @@ pnpm check
 
 前端虽保留独立 Git 历史，但本地工作区固定为 `ryframe-vue3/`。所有 `pnpm` 命令必须以该目录为工作目录；后端根目录出现 `.pnpm-store` 会被源码门禁判定为错误。
 
-门禁当前锁定：UTF-8/乱码、非外部依赖的忽略测试、ignored doctest、legacy API 字段、Rust lint `allow`、MySQL-only 依赖、静态配置、Handler 数据库/Redis 访问和内存分页、认证和监控数据库实现依赖、权限目录运行时源码扫描、阻塞式 Redis `KEYS`、非原子一次性读取、分离式缓存失效、公开 Service 数据库参数、Service 反向依赖和公开 Repository、主库/副本配置与读写路由、RustFS 启动及 CI 冒烟覆盖、路由宏、兼容别名、OpenAPI 注册完整性、Query DTO 与提取器一致性、全量操作禁止分页参数、规范快照导出、请求/响应 schema、Cookie/CSRF 会话契约、默认 `route_key` 集合、统一密码策略以及前端 bundle/覆盖率预算。每完成一个架构阶段，应把新边界加入脚本，避免回退。
+门禁当前锁定：UTF-8/乱码、非外部依赖的忽略测试、ignored doctest、legacy API 字段、Rust lint `allow`、MySQL-only 依赖、静态配置、Handler 数据库/Redis 访问和内存分页、认证和监控数据库实现依赖、权限目录运行时源码扫描、阻塞式 Redis `KEYS`、非原子一次性读取、分离式缓存失效、公开 Service 数据库参数、Service 反向依赖和公开 Repository、主库/副本配置与读写路由、RustFS 启动及 CI 冒烟覆盖、路由宏、兼容别名、OpenAPI 注册完整性、Query DTO 与提取器一致性、全量操作禁止分页参数、规范快照导出、请求/响应 schema、Cookie/CSRF 会话契约、默认 `route_key` 集合、统一密码策略、旧 `ryframe-common` 回流以及前端 bundle/覆盖率预算。说明性源码注释统一使用中文，协议名、命令、代码示例和必要技术专名可保留原样。每完成一个架构阶段，应把新边界加入脚本，避免回退。
 
 ## 7. 完成标准
 

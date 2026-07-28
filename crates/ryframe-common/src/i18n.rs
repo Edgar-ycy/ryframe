@@ -1,11 +1,11 @@
-//! 国际化 i18n 支持
+//! 国际化支持
 //!
 //! 提供多语言翻译能力：
 //! - TOML 格式翻译资源文件加载（`locales/zh-CN.toml`, `locales/en-US.toml`...）
 //! - 基于 `Accept-Language` 请求头的语言检测
 //! - 翻译键嵌套查找（`error.not_found` → 按 `.` 分隔递归查找）
 //! - 参数化翻译（`"Hello {name}"` 替换占位符）
-//! - Axum 中间件：自动注入翻译函数到请求 extensions
+//! - Axum 中间件：自动将翻译函数注入请求扩展
 //!
 //! # 使用示例
 //!
@@ -16,7 +16,7 @@
 //! let i18n = I18nManager::load("nonexistent_dir").unwrap();
 //! assert_eq!(i18n.default_lang(), "zh-CN");
 //!
-//! // 翻译回退到 key 本身
+//! // 翻译回退到键本身
 //! let msg = i18n.translate("unknown.key", "zh-CN");
 //! assert_eq!(msg, "unknown.key");
 //!
@@ -42,7 +42,7 @@ use tracing::{info, warn};
 
 static GLOBAL_I18N: OnceLock<I18nManager> = OnceLock::new();
 
-/// 获取全局 I18nManager（需先调用 `set_global()`）
+/// 获取全局国际化管理器（需先调用 `set_global()`）。
 pub fn global_i18n() -> Option<&'static I18nManager> {
     GLOBAL_I18N.get()
 }
@@ -248,9 +248,9 @@ impl I18nManager {
 
 // ============ 便捷函数 ============
 
-/// 翻译（使用全局 I18nManager）
+/// 使用全局国际化管理器翻译。
 ///
-/// 在 Handler 中直接调用，无需传递 I18nManager。
+/// 可在处理器中直接调用，无需传递国际化管理器。
 ///
 /// # 示例
 /// ```
@@ -260,7 +260,7 @@ impl I18nManager {
 /// let i18n = I18nManager::load("nonexistent_dir").unwrap();
 /// i18n.set_global();
 ///
-/// // 翻译（key 不存在时回退到 key 本身）
+/// // 翻译（键不存在时回退到键本身）
 /// let msg = translate("common.success", "zh-CN");
 /// assert_eq!(msg, "common.success");
 /// ```
@@ -270,7 +270,7 @@ pub fn translate(key: &str, lang: &str) -> String {
         .unwrap_or_else(|| key.to_string())
 }
 
-/// 带参数翻译（使用全局 I18nManager）
+/// 使用全局国际化管理器进行带参数翻译。
 pub fn translate_with_args(key: &str, lang: &str, args: &[(&str, &str)]) -> String {
     global_i18n()
         .map(|i18n| i18n.translate_with_args(key, lang, args))

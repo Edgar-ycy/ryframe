@@ -9,7 +9,7 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-ryframe-common = { path = "../ryframe-common" }
+ryframe-kernel = { path = "../ryframe-kernel" }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }

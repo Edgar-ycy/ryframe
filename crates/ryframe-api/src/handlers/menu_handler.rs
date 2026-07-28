@@ -2,8 +2,8 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{
     CreateMenuCommand, MenuListParams, MenuTreeNode, MenuVo, UpdateMenuCommand,
@@ -58,6 +58,7 @@ async fn tree(
         .menu
         .find_tree(&current_user)
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -96,13 +97,23 @@ async fn list_page(
     current_user: RequestPrincipal,
     Query(query): Query<MenuListQuery>,
 ) -> AppResult<Json<ApiPageResponse<MenuVo>>> {
-    let (page, filter) = query.into_parts();
+    let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
         .menu
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map(|page| Json(page.to_page_response("查询成功")))
+        .map_err(ryframe_http::AppError::from)
+        .map(|page| {
+            Json(ApiPageResponse::new(
+                page.records,
+                page.total,
+                page.page,
+                page.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 /// 菜单列表不分页查询（返回全部数据）
@@ -122,9 +133,10 @@ async fn list_no_page(
         .menu
         .find_by_page(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|page| Json(ApiResponse::success(page.records)))
 }
 
@@ -158,6 +170,7 @@ async fn create(
             },
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -195,6 +208,7 @@ async fn update(
             },
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -215,7 +229,7 @@ async fn detail(
         .menu
         .find_by_id(&current_user, id)
         .await?
-        .ok_or_else(|| ryframe_common::AppError::NotFound("菜单不存在".into()))
+        .ok_or_else(|| ryframe_http::AppError::NotFound("菜单不存在".into()))
         .map(|menu| Json(ApiResponse::success(menu)))
 }
 
@@ -223,7 +237,7 @@ async fn detail(
 #[delete("/{id}")]
 #[perm("system:menu:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

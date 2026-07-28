@@ -1,12 +1,10 @@
 use async_trait::async_trait;
-use ryframe_common::{
-    AppError, AppResult,
-    annotations::data_scope::{DataScope, DataScopeContext},
-};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_kernel::{AppError, AppResult, DataScope, DataScopeContext};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    DatabaseTransaction, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Select,
     sea_query::{Expr, LockType},
 };
 
@@ -196,6 +194,31 @@ impl UserRepository {
         crate::pagination::paginate(db, select.order_by_desc(user::Column::CreatedAt), query).await
     }
 
+    /// 按主键递增游标读取数据范围内的用户，用于长时间运行的导出任务。
+    pub async fn find_for_export_after_id(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        filter: &UserFilter<'_>,
+        scope_ctx: &DataScopeContext,
+        after_id: Option<i64>,
+        limit: u64,
+    ) -> AppResult<Vec<user::Model>> {
+        let select = Self::apply_filters(Self::base_select(tenant_id), filter);
+        let Some(mut select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
+            return Ok(Vec::new());
+        };
+        if let Some(after_id) = after_id {
+            select = select.filter(user::Column::Id.gt(after_id));
+        }
+        select
+            .order_by_asc(user::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn find_by_page_with_data_scope(
         &self,
         db: &DatabaseConnection,
@@ -231,11 +254,10 @@ impl UserRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    /// Resolve data-scope access and lock the target user as one current read.
+    /// 在一次当前读中解析数据范围访问权限并锁定目标用户。
     ///
-    /// Security-sensitive user mutations must call this before inspecting role
-    /// membership. The user row is the serialization point shared with role
-    /// replacement, so a waiter observes roles committed by the lock holder.
+    /// 安全敏感的用户变更必须在检查角色归属前调用此方法。用户行是与角色替换共享的
+    /// 串行化点，因此等待者会观察到锁持有者已提交的角色。
     pub async fn find_by_id_with_data_scope_for_update(
         &self,
         txn: &DatabaseTransaction,
@@ -251,6 +273,64 @@ impl UserRepository {
         select
             .lock(LockType::Update)
             .one(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 在事务中锁定租户内用户，用于和文件引用计数保持一致的资料更新。
+    pub async fn find_by_id_for_update(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<user::Model>> {
+        Self::base_select(tenant_id)
+            .filter(user::Column::Id.eq(id))
+            .lock(LockType::Update)
+            .one(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 在已锁定的用户行上更新头像 URL 和关联的文件元数据 ID。
+    pub async fn update_avatar_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+        avatar_url: String,
+        avatar_file_id: i64,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<()> {
+        let result = user::Entity::update_many()
+            .col_expr(user::Column::Avatar, Expr::value(Some(avatar_url)))
+            .col_expr(
+                user::Column::AvatarFileId,
+                Expr::value(Some(avatar_file_id)),
+            )
+            .col_expr(user::Column::UpdatedAt, Expr::value(updated_at))
+            .filter(user::Column::Id.eq(id))
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .exec(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("用户不存在".into()));
+        }
+        Ok(())
+    }
+
+    /// 统计仍引用指定头像文件的有效用户数。
+    pub async fn count_avatar_file_references_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        avatar_file_id: i64,
+    ) -> AppResult<u64> {
+        Self::base_select(tenant_id)
+            .filter(user::Column::AvatarFileId.eq(avatar_file_id))
+            .count(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))
     }

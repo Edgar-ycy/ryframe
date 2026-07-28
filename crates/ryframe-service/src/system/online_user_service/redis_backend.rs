@@ -1,6 +1,6 @@
 use chrono::Utc;
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::RedisClient;
+use ryframe_kernel::{AppError, AppResult};
 
 use super::{
     OnlineUserVo, UserSession,
@@ -88,7 +88,7 @@ pub(super) async fn list(client: &RedisClient, tenant_id: &str) -> AppResult<Vec
     })?;
     let mut users = Vec::with_capacity(keys.len());
     for key_batch in keys.chunks(MGET_BATCH_SIZE) {
-        // MGET preserves key order; keys expiring after SCAN are returned as None.
+        // MGET 保持键顺序；在 SCAN 之后过期的键会以 None 返回。
         let values = client.mget(key_batch).await.map_err(|error| {
             tracing::error!("Redis MGET 在线用户失败: {}", error);
             AppError::Internal("查询在线用户失败".into())

@@ -1,4 +1,3 @@
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, Repository,
     auto_fill::{AutoFill, FillContext},
@@ -9,6 +8,8 @@ use ryframe_db::{
     DictDataRepository, DictTypeFilter, DictTypeRepository,
     entities::{dict_data, dict_type},
 };
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -113,7 +114,7 @@ impl DictService {
         };
         let page = self
             .dict_type_repo
-            .find_by_page_filtered(db, tenant_id, &params.page, &filter)
+            .find_by_page_filtered(&db, tenant_id, &params.page, &filter)
             .await?;
         let records = page.records.into_iter().map(DictTypeVo::from).collect();
         Ok(PageResult::new(records, page.total, &params.page))
@@ -203,7 +204,7 @@ impl DictService {
 
         let data = self
             .dict_data_repo
-            .find_by_type_code(db, tenant_id, type_code)
+            .find_by_type_code(&db, tenant_id, type_code)
             .await?;
         let vos: Vec<DictDataVo> = data.into_iter().map(DictDataVo::from).collect();
 

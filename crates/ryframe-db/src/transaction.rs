@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
 
 /// 闭包式事务管理器
@@ -9,7 +9,7 @@ use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
 ///
 /// ```
 /// use ryframe_db::transaction::Transaction;
-/// use ryframe_common::AppResult;
+/// use ryframe_kernel::AppResult;
 /// use sea_orm::DatabaseTransaction;
 /// use std::pin::Pin;
 /// use std::future::Future;

@@ -23,7 +23,7 @@ hard_tabs = false
 # 如需启用，取消下面的注释并运行:
 #   cargo +nightly fmt --all
 #
-# unstable_features = true
-# imports_granularity = "Crate"
-# group_imports = "StdExternalCrate"
-# reorder_imports = true
+# 启用 nightly 特性：unstable_features = true
+# 按 crate 粒度合并导入：imports_granularity = "Crate"
+# 依次分组标准库、外部 crate 与工作区 crate：group_imports = "StdExternalCrate"
+# 按字母顺序重排导入：reorder_imports = true

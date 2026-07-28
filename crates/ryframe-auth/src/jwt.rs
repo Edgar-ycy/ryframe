@@ -1,34 +1,32 @@
 use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use ryframe_common::{AppError, AppResult};
 use ryframe_config::AuthConfig;
+use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
-/// JWT Claims
+/// JWT 声明
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     /// 用户 UUID
     pub sub: String,
-    /// Tenant identity bound when the token is issued.
+    /// 令牌签发时绑定的租户身份。
     pub tenant_id: String,
-    /// Tenant session generation. A tenant status transition invalidates all
-    /// earlier access and refresh tokens by increasing this value.
+    /// 租户会话版本。租户状态变更时递增该值，使此前的访问令牌和刷新令牌全部失效。
     pub tenant_session_version: i32,
-    /// Per-user authentication generation. Role, permission and credential
-    /// changes increment it so existing access and refresh tokens expire.
+    /// 用户认证版本。角色、权限或凭据变更时递增该值，使现有访问令牌和刷新令牌失效。
     pub user_auth_version: i32,
     /// 用户名
     pub username: String,
     /// 令牌类型: "access" | "refresh"
     pub token_type: String,
-    /// Stable login-session identifier shared by access and refresh tokens.
+    /// 访问令牌与刷新令牌共享的稳定登录会话标识。
     #[serde(default)]
     pub sid: String,
     /// 令牌唯一标识（用于在线用户管理）
     pub jti: String,
-    /// 签发时间 (UNIX timestamp)
+    /// 签发时间（UNIX 时间戳）
     pub iat: usize,
-    /// 过期时间 (UNIX timestamp)
+    /// 过期时间（UNIX 时间戳）
     pub exp: usize,
 }
 
@@ -97,10 +95,9 @@ pub fn encode_refresh_for_session(
     encode_refresh_for_session_at(identity, sid, jti, now, absolute_exp, config)
 }
 
-/// Encode a refresh token with an explicit issuance timestamp.
+/// 使用明确的签发时间戳编码刷新令牌。
 ///
-/// Rotation recovery uses the timestamp committed with the Redis CAS so the
-/// same signed token can be reconstructed after an ambiguous/lost response.
+/// 轮换恢复使用 Redis CAS 已提交的时间戳，以便在响应不明确或丢失后重建相同的已签名令牌。
 pub fn encode_refresh_for_session_at(
     identity: &TokenIdentity<'_>,
     sid: &str,

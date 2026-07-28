@@ -32,7 +32,7 @@ use std::{
 };
 
 use dashmap::{DashMap, mapref::entry::Entry};
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 use crate::redis_client::RedisClient;
 
@@ -225,8 +225,7 @@ impl DistributedLock for RedisDistributedLock {
                 let key = key_owned.clone();
                 let holder = holder_clone.clone();
 
-                // Drop cannot await. Schedule the compare-and-delete operation
-                // on the current runtime without blocking a Tokio worker.
+                // `Drop` 中无法 `await`。应在当前运行时调度比较并删除操作，且不能阻塞 Tokio 工作线程。
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(async move {
                         let release_script = redis::Script::new(
@@ -293,8 +292,7 @@ struct LocalLockEntry {
     expires_at: Instant,
 }
 
-/// Process-local lock used only by the explicit single-instance development
-/// fallback. Unlike `NoopLock`, it preserves mutual exclusion.
+/// 仅用于显式单实例开发回退的进程内锁。与 `NoopLock` 不同，它仍可保证互斥。
 #[derive(Clone, Default)]
 pub struct LocalDistributedLock {
     entries: Arc<DashMap<String, LocalLockEntry>>,

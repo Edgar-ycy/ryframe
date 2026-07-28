@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiResponse, AppResult};
+use ryframe_http::{ApiResponse, AppResult};
 use ryframe_macro::{get, post, put, route};
 use ryframe_service::system::{CreateTenantParams, TenantVo, UpdateTenantParams};
 use validator::Validate;
@@ -101,7 +101,7 @@ async fn update(
 #[put("/{tenant_id}/status")]
 #[perm("tenant:status")]
 #[utoipa::path(put, path = "/api/v1/platform/tenants/{tenant_id}/status", tag = "租户管理",
-    params(("tenant_id" = String, Path)), responses((status = 200, description = "租户状态更新成功", body = ryframe_common::ApiEmptyResponse)),
+    params(("tenant_id" = String, Path)), responses((status = 200, description = "租户状态更新成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn update_status(
     State(state): State<AppState>,

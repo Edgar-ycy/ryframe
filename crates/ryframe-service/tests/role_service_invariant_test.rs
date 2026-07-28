@@ -3,12 +3,12 @@ mod common;
 use std::{sync::Arc, time::Duration};
 
 use common::setup_test_db;
-use ryframe_common::{ActorContext, AppError, DataScope};
 use ryframe_core::Repository;
 use ryframe_db::{
     DatabaseCluster, PermissionRepository, RoleRepository,
     entities::{permission, role},
 };
+use ryframe_kernel::{ActorContext, AppError, DataScope};
 use ryframe_service::system::RoleService;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait,

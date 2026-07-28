@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 use ryframe_core::{DatabaseMonitor, DatabaseTopologyHealth};
 use sea_orm::{DatabaseBackend, FromQueryResult, Statement};
@@ -20,10 +22,15 @@ impl SeaOrmDatabaseMonitor {
 #[async_trait]
 impl DatabaseMonitor for SeaOrmDatabaseMonitor {
     async fn ping(&self) -> bool {
-        let health = self.database.health().await;
-        health.primary_healthy
-            && health.replicas.iter().all(|replica| replica.healthy)
-            && health.sources.iter().all(|source| source.healthy)
+        // 就绪探针只保障写路径；副本与业务数据源的状态由运行时拓扑端点读取快照。
+        matches!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                crate::connection::ping(self.database.write()),
+            )
+            .await,
+            Ok(Ok(()))
+        )
     }
 
     async fn active_connections(&self) -> Option<i64> {

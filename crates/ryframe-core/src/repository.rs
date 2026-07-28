@@ -1,7 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
 use async_trait::async_trait;
-use ryframe_common::AppResult;
+use ryframe_config::PaginationConfig;
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 
@@ -10,47 +11,69 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct PageQuery {
     /// 页码，从 1 开始
-    #[serde(default = "default_page")]
     pub page: u64,
     /// 每页记录数
-    #[serde(default = "default_page_size")]
     pub page_size: u64,
 }
 
-pub fn default_page() -> u64 {
-    1
-}
-
-/// `#[serde(default = "ryframe_core::repository::default_page_size")]` 的全局默认页大小
-pub fn default_page_size() -> u64 {
-    10
-}
-
 impl PageQuery {
-    pub fn all_records() -> Self {
-        Self {
+    /// 根据可选查询参数和运行时生效策略解析 HTTP 请求分页值。HTTP 处理器必须使用此方法，
+    /// 而非 `Default`，以确保 TOML 配置仍是省略参数的唯一依据。
+    pub fn from_optional(
+        page: Option<u64>,
+        page_size: Option<u64>,
+        policy: &PaginationConfig,
+    ) -> AppResult<Self> {
+        let query = Self {
+            page: page.unwrap_or(1),
+            page_size: page_size.unwrap_or(policy.default_page_size),
+        };
+        query.validate(policy)?;
+        Ok(query)
+    }
+
+    /// 返回刻意提供非分页集合（如查找端点或导出批次）时使用的显式有界分页值。它与正常
+    /// 请求分页保持分离。
+    pub fn bounded_unpaged(policy: &PaginationConfig) -> AppResult<Self> {
+        policy.validate().map_err(AppError::Config)?;
+        Ok(Self {
             page: 1,
-            page_size: 10000,
-        }
+            page_size: policy.unpaged_max_records,
+        })
     }
 
-    /// 计算 SQL OFFSET 值
-    pub fn offset(&self) -> u64 {
-        (self.page.saturating_sub(1)) * self.page_size
-    }
-
-    /// 规范化分页参数（限制最大值，防止传入非法值）
-    pub fn normalize(mut self, max_page_size: u64) -> Self {
-        if self.page_size > max_page_size {
-            self.page_size = max_page_size;
+    /// 拒绝非法分页参数，避免静默裁剪客户端输入。
+    pub fn validate(&self, policy: &PaginationConfig) -> AppResult<()> {
+        if self.page == 0 {
+            return Err(AppError::Validation("page must be greater than 0".into()));
         }
         if self.page_size == 0 {
-            self.page_size = 10;
+            return Err(AppError::Validation(
+                "page_size must be greater than 0".into(),
+            ));
         }
-        if self.page == 0 {
-            self.page = 1;
+        if self.page_size > policy.max_page_size {
+            return Err(AppError::Validation(format!(
+                "page_size must not exceed the configured maximum of {}",
+                policy.max_page_size
+            )));
         }
-        self
+        if self
+            .page
+            .saturating_sub(1)
+            .checked_mul(self.page_size)
+            .is_none()
+        {
+            return Err(AppError::Validation(
+                "page and page_size produce an offset that is too large".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// 计算 SQL 偏移量
+    pub fn offset(&self) -> u64 {
+        self.page.saturating_sub(1).saturating_mul(self.page_size)
     }
 }
 
@@ -66,13 +89,19 @@ impl Default for PageQuery {
 #[cfg(test)]
 mod page_query_tests {
     use super::PageQuery;
+    use ryframe_config::PaginationConfig;
 
     #[test]
-    fn missing_pagination_uses_canonical_defaults() {
-        let query: PageQuery = serde_json::from_str("{}").expect("page query should deserialize");
+    fn omitted_pagination_uses_runtime_policy_defaults() {
+        let policy = PaginationConfig {
+            default_page_size: 25,
+            max_page_size: 100,
+            unpaged_max_records: 1_000,
+        };
+        let query = PageQuery::from_optional(None, None, &policy).unwrap();
 
         assert_eq!(query.page, 1);
-        assert_eq!(query.page_size, 10);
+        assert_eq!(query.page_size, 25);
     }
 
     #[test]
@@ -81,6 +110,15 @@ mod page_query_tests {
             .expect_err("legacy pagination must not be accepted");
 
         assert!(error.to_string().contains("unknown field `pageSize`"));
+    }
+
+    #[test]
+    fn invalid_pagination_is_rejected_without_clamping() {
+        let policy = PaginationConfig::default();
+
+        assert!(PageQuery::from_optional(Some(0), Some(10), &policy).is_err());
+        assert!(PageQuery::from_optional(Some(1), Some(0), &policy).is_err());
+        assert!(PageQuery::from_optional(Some(1), Some(101), &policy).is_err());
     }
 }
 
@@ -115,17 +153,9 @@ impl<T> PageResult<T> {
         }
         self.total.div_ceil(self.page_size)
     }
-
-    /// 转换为统一的 API 分页响应
-    pub fn to_page_response(self, msg: impl Into<String>) -> ryframe_common::ApiPageResponse<T>
-    where
-        T: Serialize,
-    {
-        ryframe_common::ApiPageResponse::new(self.records, self.total, msg)
-    }
 }
 
-/// 通用 Repository trait
+/// 通用 Repository 特征
 ///
 /// `T` 为实体 Model 类型，`ID` 为主键类型。
 #[async_trait]
@@ -156,9 +186,8 @@ pub trait Repository<T, ID>: Send + Sync {
     async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: ID) -> AppResult<()>;
 }
 
-/// Repository wrapper retained for API compatibility. It deliberately never
-/// logs entity values: models can contain password hashes, configuration
-/// secrets and other credentials.
+/// 为保持 API 兼容性而保留的 Repository 包装器。它刻意绝不记录实体值：模型可能包含密码
+/// 哈希、配置机密和其他凭据。
 #[derive(Debug, Clone, Copy)]
 pub struct LoggedRepo<R>(pub R);
 

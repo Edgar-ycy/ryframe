@@ -1,5 +1,5 @@
-use ryframe_common::{ActorContext, AppError, AppResult};
 use ryframe_core::Repository;
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 
 use super::UserService;

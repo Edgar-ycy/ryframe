@@ -1,7 +1,7 @@
 mod common;
 
-use ryframe_common::{ActorContext, DataScope};
 use ryframe_db::DatabaseCluster;
+use ryframe_kernel::{ActorContext, DataScope};
 use ryframe_service::system::{CreateMenuCommand, MenuService, MenuType, RoleService};
 
 fn actor() -> ActorContext {

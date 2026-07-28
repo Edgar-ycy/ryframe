@@ -17,7 +17,7 @@ pub fn safe_field_name(name: &str) -> String {
 }
 
 /// 从表名中剥离前缀后转为 PascalCase 结构体名
-/// 例如 "t_user" + prefixes ["t_"] → "User"
+/// 例如，表名 `t_user` 配合前缀列表 `["t_"]` 会得到 `User`。
 pub fn table_to_struct_name(table_name: &str, prefixes: &[String]) -> String {
     let stripped = strip_prefixes(table_name, prefixes);
     to_pascal_case(&stripped)

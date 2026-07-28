@@ -5,8 +5,9 @@ use axum::{
     http::header,
     response::IntoResponse,
 };
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_config::PaginationConfig;
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_macro::{get, post, route};
 use ryframe_service::system::generator_service::{
     GeneratedFile, TableInfo, TableListParams, WriteReport,
@@ -31,24 +32,23 @@ pub fn generator_router(state: AppState) -> Router {
 #[serde(deny_unknown_fields)]
 #[into_params(parameter_in = Query)]
 struct TableListQuery {
-    #[serde(default = "ryframe_core::repository::default_page")]
-    page: u64,
-    #[serde(default = "ryframe_core::repository::default_page_size")]
-    page_size: u64,
+    /// 页码，从 1 开始。
+    #[param(minimum = 1)]
+    page: Option<u64>,
+    /// 每页记录数，受 `pagination.max_page_size` 限制（默认值为 100）。
+    #[param(minimum = 1)]
+    page_size: Option<u64>,
     table_name: Option<String>,
     table_comment: Option<String>,
 }
 
 impl TableListQuery {
-    fn into_service_params(self) -> TableListParams {
-        TableListParams {
-            page: PageQuery {
-                page: self.page,
-                page_size: self.page_size,
-            },
+    fn into_service_params(self, policy: &PaginationConfig) -> AppResult<TableListParams> {
+        Ok(TableListParams {
+            page: PageQuery::from_optional(self.page, self.page_size, policy)?,
             table_name: self.table_name,
             table_comment: self.table_comment,
-        }
+        })
     }
 }
 
@@ -65,9 +65,19 @@ async fn list_tables(
     state
         .services
         .generator
-        .list_tables(query.into_service_params())
+        .list_tables(query.into_service_params(&state.config.pagination)?)
         .await
-        .map(|page| Json(page.to_page_response("查询成功")))
+        .map_err(ryframe_http::AppError::from)
+        .map(|page| {
+            Json(ApiPageResponse::new(
+                page.records,
+                page.total,
+                page.page,
+                page.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 /// 预览生成内容
@@ -108,7 +118,7 @@ async fn generate(
 async fn download(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptionsDto>,
-) -> Result<impl IntoResponse, ryframe_common::AppError> {
+) -> Result<impl IntoResponse, ryframe_http::AppError> {
     let zip_data = state.services.generator.download_zip(opts.into()).await?;
 
     let headers = [

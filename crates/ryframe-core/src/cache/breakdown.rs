@@ -8,7 +8,7 @@ use super::{
     entry::{self, CacheLookup},
 };
 
-/// Per-key double-checked locking for hot cache entries.
+/// 面向热点缓存条目的按键双重检查锁。
 pub struct BreakdownGuard<C: Cache> {
     inner: C,
     locks: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -30,9 +30,8 @@ impl LockRegistration {
 
 impl Drop for LockRegistration {
     fn drop(&mut self) {
-        // Release this caller's ownership before checking whether the map is
-        // the sole remaining owner. This also runs when the future is aborted
-        // or unwinds, so cancellation cannot strand registrations.
+        // 在检查映射是否为唯一剩余持有者之前，先释放当前调用方的所有权。此逻辑在
+        // 异步任务被中止或展开时同样执行，因此取消操作不会遗留注册项。
         drop(self.mutex.take());
         self.locks.remove_if(&self.key, |_, registered| {
             Arc::strong_count(registered) == 1
@@ -60,8 +59,8 @@ impl<C: Cache> BreakdownGuard<C> {
         self
     }
 
-    /// Access the backend for unrelated keys. Guard-managed keys must be read
-    /// and written through [`Self::get_or_load_guarded`].
+    /// 访问不相关键对应的后端。受守卫管理的键必须通过 [`Self::get_or_load_guarded`]
+    /// 读写。
     pub fn inner(&self) -> &C {
         &self.inner
     }
@@ -74,7 +73,7 @@ impl<C: Cache> BreakdownGuard<C> {
             .clone()
     }
 
-    /// Load one hot key at a time and let concurrent callers consume its result.
+    /// 每次仅加载一个热点键，并让并发调用方消费其结果。
     pub async fn get_or_load_guarded<T, F, Fut>(
         &self,
         key: &str,
@@ -130,7 +129,7 @@ impl<C: Cache> BreakdownGuard<C> {
         }
     }
 
-    /// Remove mutex registrations that are no longer used by a request.
+    /// 移除不再被任何请求使用的互斥锁注册项。
     pub fn clean_stale_locks(&self) {
         self.locks.retain(|_, mutex| Arc::strong_count(mutex) > 1);
     }

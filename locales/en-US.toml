@@ -47,3 +47,10 @@ avatar_updated = "Avatar updated successfully"
 sent = "Notification sent"
 read = "Marked as read"
 all_read = "All marked as read"
+
+[message_socket]
+invalid_frame = "Invalid message frame"
+invalid_message_id = "Invalid message identifier"
+acknowledge_failed = "Could not acknowledge the message"
+acknowledge_limit = "A maximum of 100 messages can be acknowledged at once"
+unsupported_frame = "Unsupported message frame type"

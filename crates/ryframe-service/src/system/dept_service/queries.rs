@@ -1,11 +1,8 @@
-use ryframe_common::{
-    ActorContext, AppResult,
-    annotations::data_scope::{DataScope, DataScopeContext},
-};
 use ryframe_core::{
     Repository,
     repository::{PageQuery, PageResult},
 };
+use ryframe_kernel::{ActorContext, AppResult, DataScope, DataScopeContext};
 use sea_orm::DatabaseConnection;
 
 use super::{CACHE_TTL_SECS, DeptService, DeptTreeNode, DeptVo, dept_tree_cache_key};
@@ -67,11 +64,11 @@ impl DeptService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
         let db = self.db.read();
-        match self.visible_dept_ids(db, tenant_id, &scope).await? {
-            None => self.tree_list(db, tenant_id).await,
+        match self.visible_dept_ids(&db, tenant_id, &scope).await? {
+            None => self.tree_list(&db, tenant_id).await,
             Some(ids) => self
                 .dept_repo
-                .find_tree_by_visible_ids(db, tenant_id, &ids)
+                .find_tree_by_visible_ids(&db, tenant_id, &ids)
                 .await
                 .map(|nodes| nodes.into_iter().map(DeptTreeNode::from).collect()),
         }
@@ -86,15 +83,15 @@ impl DeptService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
         let db = self.db.read();
-        let models = match self.visible_dept_ids(db, tenant_id, &scope).await? {
+        let models = match self.visible_dept_ids(&db, tenant_id, &scope).await? {
             None => {
                 self.dept_repo
-                    .find_filtered(db, tenant_id, name, status)
+                    .find_filtered(&db, tenant_id, name, status)
                     .await?
             }
             Some(ids) => {
                 self.dept_repo
-                    .find_filtered_by_ids(db, tenant_id, name, status, &ids)
+                    .find_filtered_by_ids(&db, tenant_id, name, status, &ids)
                     .await?
             }
         };
@@ -111,15 +108,15 @@ impl DeptService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
         let db = self.db.read();
-        let page = match self.visible_dept_ids(db, tenant_id, &scope).await? {
+        let page = match self.visible_dept_ids(&db, tenant_id, &scope).await? {
             None => {
                 self.dept_repo
-                    .find_by_page_filtered(db, tenant_id, query.clone(), name, status)
+                    .find_by_page_filtered(&db, tenant_id, query.clone(), name, status)
                     .await?
             }
             Some(ids) => {
                 self.dept_repo
-                    .find_by_page_filtered_by_ids(db, tenant_id, query.clone(), name, status, &ids)
+                    .find_by_page_filtered_by_ids(&db, tenant_id, query.clone(), name, status, &ids)
                     .await?
             }
         };
@@ -131,14 +128,14 @@ impl DeptService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
         let db = self.db.read();
-        if let Some(ids) = self.visible_dept_ids(db, tenant_id, &scope).await?
+        if let Some(ids) = self.visible_dept_ids(&db, tenant_id, &scope).await?
             && !ids.contains(&id)
         {
             return Ok(None);
         }
         Ok(self
             .dept_repo
-            .find_by_id(db, tenant_id, id)
+            .find_by_id(&db, tenant_id, id)
             .await?
             .map(DeptVo::from))
     }

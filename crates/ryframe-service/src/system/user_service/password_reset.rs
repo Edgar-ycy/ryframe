@@ -1,10 +1,11 @@
 use ryframe_auth::password;
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     Repository,
     auto_fill::{AutoFill, FillContext},
 };
 use ryframe_db::{PasswordResetRequestRepository, entities::password_reset_request};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 use sea_orm::{
     ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QuerySelect, TransactionTrait,
     sea_query::{Expr, LockType},
@@ -172,8 +173,7 @@ impl UserService {
             return Err(AppError::Authorization("禁止操作超级管理员".into()));
         }
 
-        // Update only authentication fields. Guarding the observed status prevents a
-        // concurrent administrator action or password change from being overwritten.
+        // 仅更新认证字段。守卫已观察到的状态，避免并发的管理员操作或密码修改被覆盖。
         let update_result =
             guarded_password_update(&target_user, password_hash, next_status, completed_at)
                 .exec(&transaction)
@@ -244,6 +244,8 @@ mod tests {
             email: String::new(),
             phone: String::new(),
             avatar: None,
+            avatar_file_id: None,
+            preferred_locale: None,
             status: ryframe_db::entities::user::Model::STATUS_NORMAL.into(),
             auth_version: 7,
             dept_id: None,

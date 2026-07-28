@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RyFrame MySQL backup and recovery utility.
+# RyFrame MySQL 备份与恢复工具。
 
 set -Eeuo pipefail
 umask 077
@@ -92,8 +92,8 @@ validate_backup() {
     [[ -f "$file" ]] || fail "backup does not exist: $file"
     [[ "$file" == *.sql.gz ]] || fail "only .sql.gz backups are accepted"
     gzip -t -- "$file" || fail "gzip integrity check failed: $file"
-    # Read the complete gzip stream. Exiting a grep pipeline on the first match
-    # can SIGPIPE gunzip under `set -o pipefail` and reject a healthy backup.
+    # 必须读取完整的 gzip 流。首个匹配项出现后提前退出 grep 管道，会在
+    # `set -o pipefail` 下向 gunzip 发送 SIGPIPE，从而误判健康备份失败。
     gunzip -c -- "$file" | awk '
         /^(-- MySQL dump|CREATE TABLE|INSERT INTO|DROP TABLE)/ { found = 1 }
         END { exit(found ? 0 : 1) }

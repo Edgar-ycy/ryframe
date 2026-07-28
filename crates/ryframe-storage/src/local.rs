@@ -7,7 +7,10 @@ use std::{
 use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 
-use super::{ObjectStorage, StorageError, StorageResult, key_segments, validate_bucket};
+use super::{
+    ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
+    trace_storage_operation, validate_bucket,
+};
 use cleanup::{ActiveStagingRegistry, CleanupSchedule};
 
 mod cleanup;
@@ -15,8 +18,8 @@ mod cleanup;
 const STAGING_FILE_PREFIX: &str = ".ryframe-staging-";
 const STAGING_FILE_SUFFIX: &str = ".part";
 const STAGING_DIRECTORY_NAME: &str = ".ryframe-staging";
-// A local in-memory upload should never approach this age. Keeping a full day
-// avoids racing a slow writer while bounding artifacts left by crash/kill.
+// 本地内存中的上传不应接近该存活时间。保留整整一天既可避免与缓慢写入竞争，
+// 又能限制崩溃或被终止后遗留的临时文件。
 const STAGING_STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 fn is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
@@ -101,7 +104,7 @@ struct PublishPause {
     released: std::sync::atomic::AtomicBool,
 }
 
-/// Process-local filesystem backend.
+/// 进程内本地文件系统后端。
 #[derive(Clone, Debug)]
 pub struct LocalObjectStorage {
     base_dir: PathBuf,
@@ -409,9 +412,8 @@ impl LocalObjectStorage {
 #[async_trait]
 impl ObjectStorage for LocalObjectStorage {
     fn late_put_completion_bound(&self) -> Duration {
-        // Async work only writes the private staging file. Publishing is a
-        // synchronous same-filesystem rename, so cancellation can never cause
-        // the final object key to appear later.
+        // 异步工作仅写入私有暂存文件。发布操作是在同一文件系统内同步重命名，
+        // 因而取消操作不会导致最终对象键在之后才出现。
         Duration::ZERO
     }
 
@@ -422,121 +424,144 @@ impl ObjectStorage for LocalObjectStorage {
         data: &[u8],
         _content_type: &str,
     ) -> StorageResult<()> {
-        let segments = self.validate_location(bucket, key)?;
-        let bucket_root = self.canonical_bucket_directory(bucket, true).await?;
-        self.prepare_write_path(&bucket_root, &segments).await?;
-        let staging_directory = self
-            .canonical_staging_directory_in(&bucket_root, true)
-            .await?;
-        self.trigger_staging_cleanup(bucket, false);
-        let staging = self.active_staging.create(&staging_directory)?;
-        let writer = staging
-            .as_file()?
-            .try_clone()
-            .map_err(|source| StorageError::Io {
-                operation: "open local object staging file",
+        trace_storage_operation("local", StorageOperation::Put, async {
+            let segments = self.validate_location(bucket, key)?;
+            let bucket_root = self.canonical_bucket_directory(bucket, true).await?;
+            self.prepare_write_path(&bucket_root, &segments).await?;
+            let staging_directory = self
+                .canonical_staging_directory_in(&bucket_root, true)
+                .await?;
+            self.trigger_staging_cleanup(bucket, false);
+            let staging = self.active_staging.create(&staging_directory)?;
+            let writer = staging
+                .as_file()?
+                .try_clone()
+                .map_err(|source| StorageError::Io {
+                    operation: "open local object staging file",
+                    source,
+                })?;
+            let mut writer = tokio::fs::File::from_std(writer);
+            writer
+                .write_all(data)
+                .await
+                .map_err(|source| StorageError::Io {
+                    operation: "write local object staging file",
+                    source,
+                })?;
+            writer.flush().await.map_err(|source| StorageError::Io {
+                operation: "flush local object staging file",
                 source,
             })?;
-        let mut writer = tokio::fs::File::from_std(writer);
-        writer
-            .write_all(data)
-            .await
-            .map_err(|source| StorageError::Io {
-                operation: "write local object staging file",
-                source,
-            })?;
-        writer.flush().await.map_err(|source| StorageError::Io {
-            operation: "flush local object staging file",
-            source,
-        })?;
-        drop(writer);
+            drop(writer);
 
-        // Re-check the canonical parent after the asynchronous write. No await
-        // occurs after this check in production: persist performs the atomic
-        // overwrite synchronously (including MoveFileEx on Windows).
-        let publish_path = self.validate_publish_path(&bucket_root, &segments).await?;
-        #[cfg(test)]
-        self.pause_before_publish().await;
+            // 异步写入后再次检查规范化父目录。生产路径在此检查后不再执行 await：
+            // persist 会同步执行原子覆盖（Windows 上包括 MoveFileEx）。
+            let publish_path = self.validate_publish_path(&bucket_root, &segments).await?;
+            #[cfg(test)]
+            self.pause_before_publish().await;
 
-        staging.persist(&publish_path)
+            staging.persist(&publish_path)
+        })
+        .await
     }
 
     async fn get(&self, bucket: &str, key: &str) -> StorageResult<Vec<u8>> {
-        let segments = self.validate_location(bucket, key)?;
-        let bucket_root = self.canonical_bucket_directory(bucket, false).await?;
-        let resolved = self.resolve_existing_path(&bucket_root, &segments).await?;
-        tokio::fs::read(resolved)
-            .await
-            .map_err(|source| StorageError::Io {
-                operation: "read local object",
-                source,
-            })
+        trace_storage_operation("local", StorageOperation::Get, async {
+            let segments = self.validate_location(bucket, key)?;
+            let bucket_root = self.canonical_bucket_directory(bucket, false).await?;
+            let resolved = self.resolve_existing_path(&bucket_root, &segments).await?;
+            tokio::fs::read(resolved)
+                .await
+                .map_err(|source| StorageError::Io {
+                    operation: "read local object",
+                    source,
+                })
+        })
+        .await
     }
 
     async fn delete(&self, bucket: &str, key: &str) -> StorageResult<()> {
-        let segments = self.validate_location(bucket, key)?;
-        let bucket_root = match self.canonical_bucket_directory(bucket, false).await {
-            Ok(path) => path,
-            Err(StorageError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        };
-        let resolved = match self.resolve_existing_path(&bucket_root, &segments).await {
-            Ok(path) => path,
-            Err(StorageError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        };
-        tokio::fs::remove_file(resolved)
-            .await
-            .map_err(|source| StorageError::Io {
-                operation: "delete local object",
-                source,
-            })
+        trace_storage_operation("local", StorageOperation::Delete, async {
+            let segments = self.validate_location(bucket, key)?;
+            let bucket_root = match self.canonical_bucket_directory(bucket, false).await {
+                Ok(path) => path,
+                Err(StorageError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
+            let resolved = match self.resolve_existing_path(&bucket_root, &segments).await {
+                Ok(path) => path,
+                Err(StorageError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
+            tokio::fs::remove_file(resolved)
+                .await
+                .map_err(|source| StorageError::Io {
+                    operation: "delete local object",
+                    source,
+                })
+        })
+        .await
     }
 
     async fn exists(&self, bucket: &str, key: &str) -> StorageResult<bool> {
-        let segments = self.validate_location(bucket, key)?;
-        let bucket_root = match self.canonical_bucket_directory(bucket, false).await {
-            Ok(path) => path,
-            Err(StorageError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
-                return Ok(false);
+        trace_storage_operation("local", StorageOperation::Exists, async {
+            let segments = self.validate_location(bucket, key)?;
+            let bucket_root = match self.canonical_bucket_directory(bucket, false).await {
+                Ok(path) => path,
+                Err(StorageError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            };
+            match self.resolve_existing_path(&bucket_root, &segments).await {
+                Ok(resolved) => tokio::fs::metadata(resolved)
+                    .await
+                    .map(|metadata| metadata.is_file())
+                    .map_err(|source| StorageError::Io {
+                        operation: "inspect local object",
+                        source,
+                    }),
+                Err(StorageError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    Ok(false)
+                }
+                Err(error) => Err(error),
             }
-            Err(error) => return Err(error),
-        };
-        match self.resolve_existing_path(&bucket_root, &segments).await {
-            Ok(resolved) => tokio::fs::metadata(resolved)
-                .await
-                .map(|metadata| metadata.is_file())
-                .map_err(|source| StorageError::Io {
-                    operation: "inspect local object",
-                    source,
-                }),
-            Err(StorageError::Io { source, .. })
-                if source.kind() == std::io::ErrorKind::NotFound =>
-            {
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        }
+        })
+        .await
+    }
+
+    async fn readiness_check(&self, bucket: &str) -> StorageResult<()> {
+        trace_storage_operation("local", StorageOperation::Readiness, async {
+            // 健康探针不得创建存储根目录、存储桶、暂存目录或探测对象。已配置的
+            // 存储桶缺失或不可读即表示就绪检查失败。
+            self.canonical_bucket_directory(bucket, false).await?;
+            Ok(())
+        })
+        .await
     }
 
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
-        self.canonical_bucket_directory(bucket, true).await?;
-        self.canonical_staging_directory(bucket, true).await?;
-        // Startup cleanup is best-effort: invalid bucket paths still fail
-        // closed above, while cleanup I/O failures are logged and do not make
-        // otherwise usable local storage unavailable.
-        self.trigger_staging_cleanup(bucket, true);
-        Ok(())
+        trace_storage_operation("local", StorageOperation::EnsureBucket, async {
+            self.canonical_bucket_directory(bucket, true).await?;
+            self.canonical_staging_directory(bucket, true).await?;
+            // 启动清理由尽力而为：无效存储桶路径仍会在上方以失败即拒绝方式处理；
+            // 清理 I/O 失败只记录日志，不会使原本可用的本地存储失效。
+            self.trigger_staging_cleanup(bucket, true);
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -561,9 +586,8 @@ mod tests {
     #[cfg(windows)]
     fn create_directory_link(target: &Path, link: &Path) {
         if let Err(symlink_error) = std::os::windows::fs::symlink_dir(target, link) {
-            // Directory junctions do not require the symbolic-link privilege
-            // on older Windows hosts. Keep this test exercising a reparse
-            // point even when Developer Mode is disabled.
+            // 目录联接在旧版 Windows 主机上不需要符号链接权限。即使未启用开发者模式，
+            // 也应让此测试继续覆盖重解析点。
             let output = std::process::Command::new("cmd")
                 .args(["/C", "mklink", "/J"])
                 .arg(link)
@@ -1044,9 +1068,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Long names, case aliases, and Windows 8.3 names all converge to this
-        // same canonical path. The post-resolution guard therefore does not
-        // depend on which textual alias the filesystem accepted.
+        // 长名称、大小写别名和 Windows 8.3 名称都会收敛为同一个规范化路径。
+        // 因此，解析后的保护逻辑不依赖文件系统接受的是哪一种文本别名。
         assert!(
             LocalObjectStorage::reject_resolved_reserved_path(&staging, Some(&staging)).is_err()
         );
@@ -1080,8 +1103,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Call below the textual validation layer to prove the filesystem
-        // resolution check catches an alternate directory spelling itself.
+        // 在文本校验层之下调用，以证明文件系统解析检查本身能够捕获目录的另一种拼写。
         let result = storage
             .object_path_in_bucket(&bucket_root, &[".RYFRAME-STAGING", "guessed.part"], false)
             .await;

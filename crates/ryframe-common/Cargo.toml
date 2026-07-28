@@ -9,28 +9,20 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-serde = {workspace = true,features = ["derive"]}
-serde_json = {workspace = true}
-axum = {workspace = true}
-thiserror = {workspace = true}
-http = {workspace = true}
-rand = {workspace = true}
-md5 = {workspace = true}
-base64 = {workspace = true}
-uuid = {workspace = true,features = ["v4"]}
-chrono = {workspace = true, features = ["serde"]}
-image = {workspace = true}
-calamine = {workspace = true}
-rust_xlsxwriter = {workspace = true}
+serde = { workspace = true, features = ["derive"] }
+ryframe-kernel = { path = "../ryframe-kernel" }
+ryframe-http = { path = "../ryframe-http" }
+ryframe-utils = { path = "../ryframe-utils" }
+ryframe-captcha = { path = "../ryframe-captcha" }
+ryframe-excel = { path = "../ryframe-excel" }
+ryframe-mail = { path = "../ryframe-mail" }
+ryframe-i18n = { path = "../ryframe-i18n" }
 dashmap = {workspace = true}
 tracing = {workspace = true}
-sha2 = {workspace = true}
-hex = {workspace = true}
 toml = {workspace = true}
-lettre = {workspace = true}
-validator = {workspace = true}
-utoipa = {workspace = true}
 
 [dev-dependencies]
+axum = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,12 +1,13 @@
 mod common;
 
 use chrono::Utc;
-use ryframe_common::{DataScope, DataScopeContext};
+use ryframe_config::PaginationConfig;
 use ryframe_core::PageQuery;
 use ryframe_db::{
     UserRepository,
     entities::{dept, user},
 };
+use ryframe_kernel::{DataScope, DataScopeContext};
 use sea_orm::{ActiveModelTrait, ActiveValue};
 
 async fn insert_dept(
@@ -48,6 +49,8 @@ async fn insert_user(
         email: ActiveValue::Set(String::new()),
         phone: ActiveValue::Set(String::new()),
         avatar: ActiveValue::Set(None),
+        avatar_file_id: ActiveValue::Set(None),
+        preferred_locale: ActiveValue::Set(None),
         status: ActiveValue::Set("1".into()),
         auth_version: ActiveValue::Set(1),
         dept_id: ActiveValue::Set(dept_id),
@@ -86,7 +89,12 @@ async fn visible_ids(
     ctx: &DataScopeContext,
 ) -> Vec<i64> {
     let mut ids = UserRepository
-        .find_by_page_with_data_scope(db, tenant_id, PageQuery::all_records(), ctx)
+        .find_by_page_with_data_scope(
+            db,
+            tenant_id,
+            PageQuery::bounded_unpaged(&PaginationConfig::default()).unwrap(),
+            ctx,
+        )
         .await
         .unwrap()
         .records

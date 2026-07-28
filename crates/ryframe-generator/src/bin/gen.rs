@@ -1,7 +1,7 @@
 //! RyFrame 代码生成器 — 独立可执行二进制
 //!
 //! 所有配置均在下方硬编码，无需外部配置文件。
-//! 编译仅依赖 ryframe-generator + sea-orm，无需编译 ryframe 主 crate。
+//! 编译仅依赖 `ryframe-generator` 和 `sea-orm`，无需编译 `ryframe` 主包。
 //!
 //! 使用方式:
 //! ```bash
@@ -14,14 +14,14 @@ use std::process;
 use ryframe_generator::{GenerateOptions, generate, write_to_disk};
 use sea_orm::Database;
 
-// ═══════════════════════════════════════════════════════════
+// ═══════════════════════ 配置区域开始 ═══════════════════════
 // 配置区域 — 按需修改以下常量
-// ═══════════════════════════════════════════════════════════
+// ═══════════════════════ 配置区域结束 ═══════════════════════
 
 /// 数据库连接 URL
 const DB_URL: &str = "mysql://root:123456@localhost:3306/ryframe_device";
 
-/// workspace 根目录（代码输出的基准路径）
+/// 工作区根目录（代码输出的基准路径）
 const WORKSPACE_ROOT: &str = "./example";
 
 /// 要生成代码的表名列表
@@ -30,19 +30,19 @@ const TABLES: &[&str] = &["t_gongxv", "t_xiangmu"];
 /// 表名前缀过滤列表，如 ["t_"] 会将 "t_gongxv" 剥离为 "gongxv" 来命名
 const TABLE_PREFIXES: &[&str] = &["t_"];
 
-/// Entity 输出目录（相对于 WORKSPACE_ROOT）
+/// 实体输出目录（相对于 `WORKSPACE_ROOT`）
 const ENTITY_DIR: &str = "src/entities";
 
-/// Repository 输出目录
+/// 仓储输出目录
 const REPOSITORY_DIR: &str = "src/repositories";
 
-/// Service 输出目录
+/// 服务输出目录
 const SERVICE_DIR: &str = "src/service";
 
-/// Handler 输出目录
+/// 处理器输出目录
 const HANDLER_DIR: &str = "src/handlers";
 
-/// DTO 输出目录
+/// 数据传输对象输出目录
 const DTO_DIR: &str = "src/dto";
 
 /// 是否覆盖已存在的文件
@@ -51,7 +51,7 @@ const OVERWRITE: bool = true;
 /// 是否在实体中生成数据库注释（字段 + 表级别）
 const GENERATE_COMMENTS: bool = true;
 
-// ═══════════════════════════════════════════════════════════
+// ═══════════════════════ 生成流程开始 ═══════════════════════
 
 #[tokio::main]
 async fn main() {

@@ -3,7 +3,7 @@ use axum::{
     extract::{Multipart, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiResponse, AppError, AppResult};
+use ryframe_http::{ApiResponse, AppError, AppResult};
 use ryframe_macro::{get, put, route};
 use ryframe_service::system::profile_service::UserProfileResponse;
 use validator::Validate;
@@ -44,7 +44,7 @@ pub async fn get_profile(
 /// 更新个人信息
 #[put("/")]
 #[utoipa::path(put, path = "/api/v1/auth/profile", tag = "个人中心",
-    request_body = UpdateProfileRequest, responses((status = 200, description = "更新成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    request_body = UpdateProfileRequest, responses((status = 200, description = "更新成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 pub async fn update_profile(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -59,6 +59,7 @@ pub async fn update_profile(
             req.nickname,
             req.email.unwrap_or_default(),
             req.phone.unwrap_or_default(),
+            req.preferred_locale,
         )
         .await?;
 
@@ -70,7 +71,7 @@ pub async fn update_profile(
 /// 修改密码
 #[put("/password")]
 #[utoipa::path(put, path = "/api/v1/auth/profile/password", tag = "个人中心",
-    request_body = ChangePasswordRequest, responses((status = 200, description = "修改成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    request_body = ChangePasswordRequest, responses((status = 200, description = "修改成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 pub async fn change_password(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -105,7 +106,7 @@ pub async fn update_avatar(
     current_user: RequestPrincipal,
     mut multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<AvatarResponse>>> {
-    let mut avatar_url = String::new();
+    let mut avatar_upload = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -123,28 +124,49 @@ pub async fn update_avatar(
             .map_err(|e| AppError::Internal(format!("读取文件数据失败: {}", e)))?;
 
         // 委托 FileService 处理上传逻辑
-        avatar_url = state
-            .services
-            .file
-            .upload_avatar(
-                &current_user,
-                filename,
-                data.to_vec(),
-                state.config.upload.avatar_max_bytes as u64,
-            )
-            .await?;
+        avatar_upload = Some(
+            state
+                .services
+                .file
+                .upload_avatar(
+                    &current_user,
+                    filename,
+                    data.to_vec(),
+                    state.config.upload.avatar_max_bytes as u64,
+                )
+                .await?,
+        );
         break;
     }
 
-    if avatar_url.is_empty() {
-        return Err(AppError::Validation("未找到上传的头像文件".into()));
-    }
+    let avatar_upload =
+        avatar_upload.ok_or_else(|| AppError::Validation("未找到上传的头像文件".into()))?;
+    let avatar_file_id = avatar_upload
+        .file_id
+        .parse::<i64>()
+        .map_err(|_| AppError::Internal("头像文件标识无效".into()))?;
+    let avatar_url = avatar_upload.file_url;
 
-    state
+    if let Err(error) = state
         .services
         .profile
-        .update_avatar(&current_user, avatar_url.clone())
-        .await?;
+        .update_avatar(&current_user, avatar_url.clone(), avatar_file_id)
+        .await
+    {
+        if let Err(cleanup_error) = state
+            .services
+            .profile
+            .schedule_unreferenced_avatar_cleanup(&current_user, avatar_file_id)
+            .await
+        {
+            tracing::error!(
+                file_id = avatar_file_id,
+                %cleanup_error,
+                "头像关联失败后无法安排孤儿文件回收"
+            );
+        }
+        return Err(error.into());
+    }
 
     Ok(Json(ApiResponse::success(AvatarResponse { avatar_url })))
 }

@@ -1,5 +1,5 @@
-use ryframe_common::AppResult;
 use ryframe_core::{PageQuery, PageResult};
+use ryframe_kernel::AppResult;
 use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, Select};
 /// 使用方式：
 /// ```
@@ -34,12 +34,12 @@ where
     let total = paginator
         .num_items()
         .await
-        .map_err(|e| ryframe_common::AppError::Database(format!("查询总数失败: {}", e)))?;
+        .map_err(|e| ryframe_kernel::AppError::Database(format!("查询总数失败: {}", e)))?;
 
     let records = paginator
         .fetch_page(query.page.saturating_sub(1))
         .await
-        .map_err(|e| ryframe_common::AppError::Database(format!("分页查询失败: {}", e)))?;
+        .map_err(|e| ryframe_kernel::AppError::Database(format!("分页查询失败: {}", e)))?;
 
     Ok(PageResult::new(records, total, query))
 }

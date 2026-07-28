@@ -3,7 +3,6 @@
 //! 测量中间件核心操作的吞吐量和延迟：
 //! - 令牌桶限流（内存模式）
 //! - 安全响应头构建
-//! - XSS 过滤（JSON 净化）
 //! - 请求 ID 生成
 //! - 限流 key 生成
 
@@ -106,54 +105,6 @@ fn bench_security_headers_config_dev(c: &mut Criterion) {
     });
 }
 
-// ============ XSS 过滤 ============
-
-fn bench_xss_filter_simple_json(c: &mut Criterion) {
-    let input = br#"{"name": "<script>alert(1)</script>", "age": 25}"#;
-    let bytes = axum::body::Bytes::from_static(input);
-
-    c.bench_function("xss_filter_simple_json", |b| {
-        b.iter(|| {
-            let sanitized =
-                ryframe_middleware::xss_filter::sanitize_json_bytes(std::hint::black_box(&bytes));
-            std::hint::black_box(sanitized);
-        });
-    });
-}
-
-fn bench_xss_filter_nested_json(c: &mut Criterion) {
-    let input = br#"{
-        "user": {"name": "<img onerror=alert(1) src=x>", "email": "test@test.com"},
-        "items": [
-            {"title": "<b>hello</b>", "desc": "<a href=javascript:evil()>click</a>"},
-            {"title": "safe", "desc": "normal text"}
-        ],
-        "meta": {"key1": "<script>bad</script>", "key2": "ok"}
-    }"#;
-    let bytes = axum::body::Bytes::from_static(input);
-
-    c.bench_function("xss_filter_nested_json", |b| {
-        b.iter(|| {
-            let sanitized =
-                ryframe_middleware::xss_filter::sanitize_json_bytes(std::hint::black_box(&bytes));
-            std::hint::black_box(sanitized);
-        });
-    });
-}
-
-fn bench_xss_filter_no_xss(c: &mut Criterion) {
-    let input = br#"{"name": "John Doe", "email": "john@example.com", "roles": ["admin", "user"]}"#;
-    let bytes = axum::body::Bytes::from_static(input);
-
-    c.bench_function("xss_filter_clean_json", |b| {
-        b.iter(|| {
-            let sanitized =
-                ryframe_middleware::xss_filter::sanitize_json_bytes(std::hint::black_box(&bytes));
-            std::hint::black_box(sanitized);
-        });
-    });
-}
-
 // ============ 请求 ID 生成 ============
 
 fn bench_request_id_uuid_v7(c: &mut Criterion) {
@@ -173,9 +124,6 @@ criterion_group!(
     bench_security_headers_config_default,
     bench_security_headers_config_strict,
     bench_security_headers_config_dev,
-    bench_xss_filter_simple_json,
-    bench_xss_filter_nested_json,
-    bench_xss_filter_no_xss,
     bench_request_id_uuid_v7,
 );
 criterion_main!(benches);

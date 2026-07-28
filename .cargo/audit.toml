@@ -6,8 +6,8 @@
 ignore = [
     # proc-macro-error2 已停止维护
     # 传播路径:
-    #   sea-orm 2.0.0 → sea-orm-macros 2.0.0 → sea-bae 0.2.1 → proc-macro-error2
-    #   validator 0.20.0 → validator_derive 0.20.0 → proc-macro-error2
+    #   SeaORM 依赖链：sea-orm 2.0.0 → sea-orm-macros 2.0.0 → sea-bae 0.2.1 → proc-macro-error2
+    #   validator 依赖链：validator 0.20.0 → validator_derive 0.20.0 → proc-macro-error2
     # 风险: 极低 - 仅编译时使用，无运行时攻击面；仓库已应用本地兼容补丁
     # 处置: 等待 SeaORM/validator 上游迁移到维护中的诊断库。
     # 复查: 每次升级 SeaORM 或 validator 时重新运行 cargo tree -i proc-macro-error2；

@@ -69,13 +69,18 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::post::Entity);
     create!(ryframe_db::entities::role::Entity);
     create!(ryframe_db::entities::menu::Entity);
+    create!(ryframe_db::entities::sys_file::Entity);
     create!(ryframe_db::entities::user::Entity);
     create!(ryframe_db::entities::password_reset_request::Entity);
     create!(ryframe_db::entities::config::Entity);
     create!(ryframe_db::entities::user_role::Entity);
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
-    create!(ryframe_db::entities::sys_file::Entity);
+    create!(ryframe_db::entities::background_job::Entity);
+    create!(ryframe_db::entities::export_job::Entity);
+    create!(ryframe_db::entities::message::Entity);
+    create!(ryframe_db::entities::message_audience::Entity);
+    create!(ryframe_db::entities::message_recipient::Entity);
 }
 
 /// 填充测试数据：管理员 + 部门 + 角色
@@ -228,6 +233,8 @@ pub async fn seed_user(
         email: format!("{}@test.com", username),
         phone: "13800000000".to_string(),
         avatar: None,
+        avatar_file_id: None,
+        preferred_locale: None,
         status: user::Model::STATUS_NORMAL.to_string(),
         auth_version: 1,
         dept_id,
@@ -271,12 +278,15 @@ pub fn test_config() -> AppConfig {
             ..Default::default()
         },
         rate_limit: RateLimitConfig::default(),
+        pagination: Default::default(),
         cors: Default::default(),
         object_storage: Default::default(),
         proxy: Default::default(),
         upload: Default::default(),
         api_docs: Default::default(),
         monitor: Default::default(),
+        jobs: Default::default(),
+        telemetry: Default::default(),
     }
 }
 
@@ -298,6 +308,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
     let token_blacklist = ryframe_core::TokenBlacklist::new(None);
     let database = DatabaseCluster::single(db.clone());
     let auth_service = Arc::new(AuthService::new(database.clone(), config_arc.clone(), None));
+    let localizer = Arc::new(ryframe_i18n::Localizer::embedded().expect("内嵌国际化资源"));
     AppState {
         auth: ryframe_auth::middleware::AuthState {
             config: config_arc.clone(),
@@ -311,6 +322,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
             metrics_bearer_token: Arc::from(""),
         },
         config: config_arc,
+        localizer: localizer.clone(),
         services: Arc::new(AppServices {
             auth: auth_service,
             user: Arc::new(UserService::new(database.clone(), None)),
@@ -322,8 +334,19 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
             post: Arc::new(PostService::new(database.clone())),
             config: Arc::new(ConfigService::new(database.clone(), None)),
             dict: Arc::new(DictService::new(database.clone(), None)),
+            export: Arc::new(ryframe_service::system::ExportService::new(
+                database.clone(),
+                Arc::new(UserService::new(database.clone(), None)),
+                Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
+            )),
             notice: Arc::new(NoticeService::new(database.clone())),
+            message: Arc::new(ryframe_service::system::MessageService::new(
+                database.clone(),
+                Arc::new(ryframe_service::JobQueue::new(database.clone())),
+            )),
+            websocket_ticket: Arc::new(ryframe_service::system::WebSocketTicketService::new(None)),
             oper_log: Arc::new(OperLogService::new(database.clone())),
+            job_queue: Arc::new(ryframe_service::JobQueue::new(database.clone())),
             login_info: Arc::new(LoginInfoService::new(database.clone())),
             generator: Arc::new(GeneratorService::new(
                 database.clone(),
@@ -339,6 +362,9 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
             captcha: CaptchaStore::new_in_memory(300),
         }),
         redis: None,
+        message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
+            localizer.clone(),
+        )),
         token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
         trusted_proxies: Default::default(),

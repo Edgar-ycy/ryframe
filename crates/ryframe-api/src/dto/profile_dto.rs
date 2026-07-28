@@ -16,6 +16,8 @@ pub struct UpdateProfileRequest {
     #[validate(length(max = 32, message = "手机号最多 32 个字符"))]
     #[validate(regex(path = *PHONE_REGEX, message = "手机号格式不正确"))]
     pub phone: Option<String>,
+    /// 用户界面和服务端消息的语言偏好；空值表示使用请求语言或系统默认语言。
+    pub preferred_locale: Option<String>,
 }
 
 static PHONE_REGEX: LazyLock<regex::Regex> =

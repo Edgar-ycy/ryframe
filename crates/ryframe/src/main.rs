@@ -3,87 +3,166 @@ mod boot;
 
 use std::{net::SocketAddr, sync::Arc};
 
-use ryframe_common::AppError;
-use ryframe_config::AppConfig;
+use ryframe_config::{AppConfig, JobWorkerMode, MigrationMode};
+use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
+use ryframe_http::AppError;
+use ryframe_i18n::Localizer;
+use ryframe_service::{
+    CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue, JobWorker,
+    MessageDispatchJobHandler, MessageRetentionJobHandler, OperLogJobHandler, OutboxWorker,
+    spawn_message_retention_scheduler,
+};
+use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     ryframe_auth::middleware::set_backend_failure_hook(
         ryframe_middleware::metrics::record_redis_degraded,
     );
-    // 1. 加载配置
-    let config = AppConfig::load("config")?;
-    tracing::info!(
-        "配置加载完成, 环境: {}",
-        std::env::var("APP_ENV").unwrap_or_else(|_| "dev".into())
+
+    let config = AppConfig::load_from_env()?;
+    let localizer = Arc::new(
+        Localizer::load_from_environment()
+            .map_err(|error| AppError::Config(format!("国际化资源加载失败: {error}")))?,
     );
-    // 2. 初始化日志 + OpenTelemetry
     let (_logger_guard, _telemetry_guard) = boot::logging::init(&config);
     tracing::info!(
-        "日志系统初始化完成, 级别: {}, 输出: {}",
-        config.logger.level,
-        config.logger.output
+        environment = %std::env::var("APP_ENV").unwrap_or_else(|_| "dev".into()),
+        "configuration loaded"
     );
-
-    // 3. 启动进程指标采集
     ryframe_middleware::metrics::spawn_process_metrics_updater();
 
-    // 4. 连接数据库 + 健康检查 + 表校验
     let database = boot::datasource::connect(&config).await?;
-    ryframe_db_migration::run(database.write())
-        .await
-        .map_err(|error| AppError::Database(format!("数据库迁移失败: {error}")))?;
+    install_database_metrics(&database);
+    match config.database.migration_mode {
+        MigrationMode::Auto => ryframe_db_migration::up(database.write())
+            .await
+            .map_err(|error| AppError::Database(format!("database migration failed: {error}")))?,
+        MigrationMode::Verify => ryframe_db_migration::verify(database.write())
+            .await
+            .map_err(|error| {
+                AppError::Database(format!("database migration verification failed: {error}"))
+            })?,
+        MigrationMode::Off => {
+            tracing::warn!("database migration checks are disabled for the test environment");
+        }
+    }
     boot::datasource::verify_schema(&database).await?;
+    let replica_health_monitor = boot::datasource::spawn_replica_health_monitor(
+        database.clone(),
+        config.database.replicas.clone(),
+        config.database.sql_log_level,
+    );
 
-    // 5. 共享应用配置
     let config_arc = Arc::new(config.clone());
-
-    // 6. 初始化 Redis + Token 黑名单
     let redis = boot::redis::init(&config.redis).await?;
-
-    // 7. 初始化对象存储
     let object_storage = boot::storage::init(&config).await?;
-
-    // 8. 构造所有 Service
     let services =
         boot::services::build_all(&database, &config, &redis.client, object_storage).await?;
-
-    // 9. 初始化限流器
+    install_job_metrics(&services.job_queue);
     let limit = boot::limiter::init(&config, &redis.client)?;
 
-    // 10. 聚合 AppState + 构建 Router
     let state = boot::app_state::assemble(
         database,
         config_arc,
+        localizer,
         redis.client.clone(),
         redis.token_blacklist,
-        services,
+        services.clone(),
         limit.limiter.clone(),
     );
+    let message_listener = state
+        .message_hub
+        .spawn_redis_listener(redis.client.clone(), services.message.clone());
     let router = app::build_app(state, limit.rate_limit_state, &config.cors)?;
 
-    // 11. 启动 HTTP 服务
     let addr = format!("{}:{}", config.app.host, config.app.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .map_err(|e| AppError::Internal(format!("绑定地址 {} 失败: {}", addr, e)))?;
-    tracing::info!("服务启动: http://{}", addr);
+        .map_err(|error| AppError::Internal(format!("failed to bind {addr}: {error}")))?;
+    tracing::info!(address = %addr, "HTTP server started");
 
-    // 使用 tokio::select 同时等待服务和停机信号
-    tokio::select! {
-        result = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-            .with_graceful_shutdown(shutdown_signal()) =>
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let mut retention_scheduler =
+        spawn_message_retention_scheduler(services.job_queue.clone(), shutdown_receiver.clone());
+    let mut worker_tasks = match config.jobs.mode {
+        JobWorkerMode::Embedded => {
+            let worker = JobWorker::new(services.job_queue.clone(), &config.jobs)?
+                .with_handler(Arc::new(OperLogJobHandler::new(services.oper_log.clone())))?
+                .with_handler(Arc::new(ExportJobHandler::new(services.export.clone())))?
+                .with_handler(Arc::new(ExportCleanupJobHandler::new(
+                    services.export.clone(),
+                )))?
+                .with_handler(Arc::new(
+                    MessageDispatchJobHandler::new(services.message.clone(), redis.client.clone())
+                        .with_redis_wakeup_failure_observer(Arc::new(|| {
+                            ryframe_middleware::metrics::record_redis_degraded(
+                                "message_dispatch_wakeup",
+                            );
+                        })),
+                ))?
+                .with_handler(Arc::new(
+                    MessageRetentionJobHandler::new(services.message.clone())
+                        .with_deleted_observer(Arc::new(
+                            ryframe_middleware::metrics::record_message_retention_deleted,
+                        )),
+                ))?;
+            tracing::info!(
+                concurrency = config.jobs.concurrency,
+                "已启动内置后台任务 Worker"
+            );
+            let mut tasks = worker.spawn(shutdown_receiver.clone());
+            tasks.extend(
+                OutboxWorker::new(services.job_queue.clone(), &config.jobs)?
+                    .spawn(shutdown_receiver),
+            );
+            tasks
+        }
+        JobWorkerMode::External => {
+            tracing::info!("后台任务由独立 ryframe-worker 进程消费");
+            Vec::new()
+        }
+        JobWorkerMode::Disabled => {
+            tracing::warn!("后台任务 Worker 已禁用，仅应在测试环境使用");
+            Vec::new()
+        }
+    };
+
+    let result = axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(shutdown_sender.clone()))
+    .await
+    .map_err(|error| AppError::Internal(format!("HTTP server stopped unexpectedly: {error}")));
+
+    let _ = shutdown_sender.send(true);
+    let worker_shutdown_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    for task in &mut worker_tasks {
+        if tokio::time::timeout_at(worker_shutdown_deadline, &mut *task)
+            .await
+            .is_err()
         {
-            result.map_err(|e| AppError::Internal(format!("服务异常退出: {}", e)))?;
+            tracing::warn!("后台任务 Worker 未在总宽限时间内退出，已中止");
+            task.abort();
         }
     }
-
-    tracing::info!("服务已停止");
-    Ok(())
+    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut retention_scheduler)
+        .await
+        .is_err()
+    {
+        tracing::warn!("消息保留调度器未在宽限期内停止");
+        retention_scheduler.abort();
+    }
+    replica_health_monitor.abort();
+    if let Some(listener) = message_listener {
+        listener.abort();
+    }
+    tracing::info!("HTTP server stopped");
+    result
 }
 
-/// 优雅停机信号
-async fn shutdown_signal() {
+async fn shutdown_signal(shutdown_sender: watch::Sender<bool>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -93,7 +172,7 @@ async fn shutdown_signal() {
     #[cfg(unix)]
     let terminate = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
+            .expect("failed to install SIGTERM handler")
             .recv()
             .await;
     };
@@ -106,5 +185,35 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    tracing::info!("收到停机信号，开始优雅停机...");
+    tracing::info!("shutdown signal received");
+    let _ = shutdown_sender.send(true);
+}
+
+/// 在应用边界将底层数据库事件绑定到 Prometheus 指标。
+fn install_database_metrics(database: &DatabaseCluster) {
+    database.set_metrics_observer(Arc::new(CallbackDatabaseMetricsObserver::new(
+        Arc::new(|kind, name, healthy| {
+            ryframe_middleware::metrics::set_database_node_health(
+                name,
+                kind.metric_label(),
+                healthy,
+            );
+        }),
+        Arc::new(|target, reason| {
+            ryframe_middleware::metrics::record_database_read_selection(
+                target.metric_label(),
+                reason.metric_label(),
+            );
+        }),
+        Arc::new(ryframe_middleware::metrics::record_database_read_fallback),
+    )));
+}
+
+/// 在应用边界将后台任务队列事件绑定到 Prometheus 指标。
+fn install_job_metrics(queue: &JobQueue) {
+    queue.set_metrics_observer(Arc::new(CallbackJobMetricsObserver::new(
+        Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
+        Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
+        Arc::new(ryframe_middleware::metrics::observe_job_duration),
+    )));
 }

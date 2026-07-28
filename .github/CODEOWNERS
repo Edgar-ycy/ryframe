@@ -1,0 +1,9 @@
+# 默认代码所有者；涉及前端的变更还需要在前端仓库完成对应审查。
+* @Edgar-ycy
+
+/deploy/ @Edgar-ycy
+/config/ @Edgar-ycy
+/crates/ryframe-auth/ @Edgar-ycy
+/crates/ryframe-config/ @Edgar-ycy
+/crates/ryframe-db-migration/ @Edgar-ycy
+/.github/ @Edgar-ycy

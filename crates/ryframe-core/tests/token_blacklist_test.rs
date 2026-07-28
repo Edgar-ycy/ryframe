@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-/// token_blacklist 模块测试
+/// `token_blacklist` 模块测试
 /// 从 crates/ryframe-core/src/token_blacklist.rs 内联测试迁移
 use ryframe_core::token_blacklist::{TokenBlacklist, blacklist_key};
 

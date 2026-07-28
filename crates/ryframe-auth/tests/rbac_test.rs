@@ -22,9 +22,8 @@ fn test_has_permission() {
     assert!(!has_permission(&Vec::<String>::new(), ""));
     assert!(!has_permission(&Vec::<String>::new(), "   "));
 
-    // `admin` is a role code, not a magic permission. Super-admin bypass is
-    // represented explicitly on RequestPrincipal; `*:*:*` remains the only
-    // persisted all-permissions code.
+    // `admin` 是角色编码而非特殊权限。超级管理员绕过由 RequestPrincipal 显式表示；
+    // `*:*:*` 仍是唯一持久化的全权限编码。
     let perms = vec!["admin".to_string()];
     assert!(!has_permission(&perms, "system:user:list"));
 }

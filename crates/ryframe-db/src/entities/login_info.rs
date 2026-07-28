@@ -9,7 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     #[auto_fill(snowflake)]
     pub id: i64,
-    /// Tenant selected before authentication succeeds or fails.
+    /// 认证成功或失败前所选的租户。
     pub tenant_id: String,
     /// 用户名
     pub user_name: String,

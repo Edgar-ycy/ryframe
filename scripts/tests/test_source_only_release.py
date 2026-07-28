@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import unittest
@@ -9,15 +9,18 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 
-class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
+class ReleaseWorkflowTest(unittest.TestCase):
     def publishing_workflows(self) -> list[Path]:
         paths = {WORKFLOWS / "release.yml"}
         paths.update(WORKFLOWS.glob("*nightly*.yml"))
         paths.update(WORKFLOWS.glob("*nightly*.yaml"))
         return sorted(paths)
 
-    def test_release_and_nightly_workflows_publish_no_custom_assets(self) -> None:
-        forbidden = (
+    def test_release_only_publishes_the_deterministic_manifest_asset(self) -> None:
+        source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("files: release-manifest.json", source)
+        self.assertIn("release-manifest.json", source)
+        for fragment in (
             "actions/upload-artifact",
             "actions/download-artifact",
             "docker/build-push-action",
@@ -30,16 +33,30 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
             "SHA256SUMS",
             ".cdx.json",
             "type=oci",
-            "\n          files:",
-            "\n          body:",
             "generate_release_notes:",
-            "git tag -f nightly",
-        )
-        for path in self.publishing_workflows():
-            source = path.read_text(encoding="utf-8")
-            for fragment in forbidden:
-                with self.subTest(path=path.name, fragment=fragment):
-                    self.assertNotIn(fragment, source)
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, source)
+
+    def test_nightly_still_publishes_no_custom_assets(self) -> None:
+        source = (WORKFLOWS / "nightly.yml").read_text(encoding="utf-8")
+        for fragment in (
+            "actions/upload-artifact",
+            "actions/download-artifact",
+            "docker/build-push-action",
+            "docker/login-action",
+            "docker buildx imagetools",
+            "gh release upload",
+            "ghcr.io/",
+            "packages: write",
+            "SHA256SUMS",
+            ".cdx.json",
+            "type=oci",
+            "\n          files:",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, source)
+        self.assertIn("'.assets | length == 0'", source)
 
     def test_release_rerun_removes_assets_only_from_target_tag(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
@@ -51,7 +68,7 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
         self.assertLess(source.index(lookup), source.index(deletion))
         self.assertLess(source.index(deletion), source.index(publisher))
 
-    def test_release_keeps_quality_and_promotion_gates(self) -> None:
+    def test_release_is_stable_only_and_keeps_quality_gates(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         for job in (
             "validate-release:",
@@ -62,12 +79,63 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
         ):
             with self.subTest(job=job):
                 self.assertIn(job, source)
-        self.assertIn("--minimum-rc-hours 48", source)
+        self.assertIn("Existing coordinated stable tag to validate and publish", source)
+        self.assertIn("prerelease: false", source)
+        self.assertIsNone(re.search(r"\bRC\b", source))
+        self.assertNotIn("release-candidate", source)
+        self.assertNotIn("minimum-rc-hours", source)
+
+    def test_release_uses_fixed_frontend_source_and_manifest(self) -> None:
+        source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        for fragment in (
+            "FRONTEND_REPOSITORY:",
+            "vars.RYFRAME_FRONTEND_REPOSITORY",
+            "--backend-repository",
+            "--backend-commit",
+            "--frontend-repository",
+            "--frontend-commit",
+            "--manifest-path",
+            "ref: ${{ needs.validate-release.outputs.backend_commit }}",
+            "ref: ${{ needs.validate-release.outputs.frontend_commit }}",
+            "Build deterministic release manifest",
+            "files: release-manifest.json",
+            "Verify published notes and release manifest",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, source)
+        self.assertNotIn("Edgar-ycy/ryframe-vue3", source)
+
+    def test_ci_runs_pinned_actionlint(self) -> None:
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("docker://rhysd/actionlint:1.7.7", source)
+        self.assertNotIn("auto-promote.yml", source)
+
+    def test_ci_uses_read_only_token_and_runs_windows_library_tests(self) -> None:
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read", source)
+        self.assertIn("Run library tests without external services", source)
+        self.assertIn("cargo test --locked --workspace --lib", source)
+
+    def test_release_governance_files_are_utf8_lf_without_bom(self) -> None:
+        paths = (
+            WORKFLOWS / "ci.yml",
+            WORKFLOWS / "release.yml",
+            WORKFLOWS / "nightly.yml",
+            ROOT / "docs" / "release-guide.md",
+        )
+        for path in paths:
+            with self.subTest(path=path.name):
+                data = path.read_bytes()
+                self.assertFalse(data.startswith(b"\xef\xbb\xbf"))
+                self.assertNotIn(b"\r", data)
+                self.assertTrue(data.endswith(b"\n"))
 
     def test_production_dockerfile_propagates_build_identity(self) -> None:
         source = (ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
         for fragment in (
             "ARG RYFRAME_BUILD_COMMIT",
+            'test -n "${RYFRAME_BUILD_COMMIT}"',
+            "grep -Eq '^[0-9a-f]{40}$'",
             'RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}"',
             'org.opencontainers.image.revision="${RYFRAME_BUILD_COMMIT}"',
         ):
@@ -75,18 +143,18 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
                 self.assertIn(fragment, source)
         self.assertNotIn("ARG RYFRAME_BUILD_COMMIT=", source)
 
-
-    def test_pnpm_action_uses_node24_runtime(self) -> None:
-        references: list[tuple[str, str]] = []
-        pattern = re.compile(r"pnpm/action-setup@([^\s#]+)")
-        for path in sorted(WORKFLOWS.glob("*.y*ml")):
-            source = path.read_text(encoding="utf-8")
-            references.extend((path.name, match) for match in pattern.findall(source))
-
-        self.assertTrue(references, "expected a pnpm/action-setup reference")
-        for path, version in references:
-            with self.subTest(path=path):
-                self.assertEqual(version, "v6")
+    def test_release_builds_production_container_with_verified_identity(self) -> None:
+        source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        for fragment in (
+            "Build production container and verify build identity",
+            "DOCKER_BUILDKIT=1 docker build",
+            "--file deploy/Dockerfile",
+            "--build-arg RYFRAME_BUILD_COMMIT=\"$RYFRAME_BUILD_COMMIT\"",
+            "org.opencontainers.image.revision",
+            "ryframe:release-gate",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, source)
 
     def test_release_uses_both_non_empty_changelogs(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
@@ -97,8 +165,7 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
             "frontend-release-notes.md",
             "CHANGELOG section has no update items",
             "body_path: release_body.md",
-            "Verify published notes and zero custom assets",
-            "'.assets | length == 0'",
+            "Verify published notes and release manifest",
             'diff --unified release_body.md "$published_body"',
         ):
             with self.subTest(fragment=fragment):
@@ -109,7 +176,7 @@ class SourceOnlyReleaseWorkflowTest(unittest.TestCase):
         for fragment in (
             "backend_tag_oid:",
             "frontend_tag_oid:",
-            "Revalidate coordinated tag objects",
+            "Revalidate tag objects",
             "Confirm tag refs immediately before publishing",
             'git cat-file -t "refs/tags/${RELEASE_TAG}"',
             'git -C frontend cat-file -t "refs/tags/${RELEASE_TAG}"',

@@ -1,5 +1,5 @@
 use chrono::Utc;
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 use super::{OnlineUserVo, UserSession, keyspace::session_key, session_to_vo};
 
@@ -56,7 +56,7 @@ pub(super) fn decode_batch(
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, Utc};
-    use ryframe_common::AppError;
+    use ryframe_kernel::AppError;
 
     use super::{decode_batch, encode};
     use crate::system::online_user_service::{UserSession, keyspace::session_key};

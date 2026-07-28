@@ -1,11 +1,14 @@
 mod common;
 
-use ryframe_common::{ActorContext, AppError, DataScope};
-use ryframe_db::{DatabaseCluster, RoleRepository, TenantRepository, UserRepository};
+use ryframe_db::{
+    DatabaseCluster, RoleRepository, TenantRepository, UserRepository, entities::permission,
+};
+use ryframe_kernel::{ActorContext, AppError, DataScope};
 use ryframe_service::system::{
     CreateTenantParams, CreateUserParams, RoleService, TenantService, UpdateTenantParams,
     UserService,
 };
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
 
 fn actor(tenant_id: &str, is_super_admin: bool) -> ActorContext {
     ActorContext {
@@ -357,5 +360,70 @@ async fn tenant_lifecycle_initializes_admin_and_invalidates_sessions() {
             .update_status(&platform_admin, "system", "0".into())
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+async fn tenant_provisioning_does_not_copy_platform_permissions() {
+    let db = common::setup_test_db().await;
+    let now = chrono::Utc::now();
+    for (id, code) in [
+        (1001, "system:message:publish"),
+        (1002, "platform:message:publish"),
+    ] {
+        permission::ActiveModel {
+            id: ActiveValue::Set(id),
+            tenant_id: ActiveValue::Set("system".into()),
+            name: ActiveValue::Set(code.into()),
+            code: ActiveValue::Set(code.into()),
+            parent_id: ActiveValue::Set(None),
+            perm_type: ActiveValue::Set("api".into()),
+            icon: ActiveValue::Set(None),
+            sort: ActiveValue::Set(0),
+            status: ActiveValue::Set("1".into()),
+            created_at: ActiveValue::Set(now),
+            updated_at: ActiveValue::Set(now),
+        }
+        .insert(&db)
+        .await
+        .expect("seed system permission");
+    }
+
+    TenantService::new(DatabaseCluster::single(db.clone()))
+        .create(
+            &actor("system", true),
+            CreateTenantParams {
+                tenant_id: "tenant-no-platform-permission".into(),
+                name: "权限隔离租户".into(),
+                domain: None,
+                expire_at: None,
+                max_users: None,
+                max_roles: None,
+                max_storage_mb: None,
+                max_requests_per_min: None,
+                admin_username: "tenant-admin".into(),
+                admin_password: "StrongPassword123!".into(),
+            },
+        )
+        .await
+        .expect("provision tenant");
+
+    let copied_codes = permission::Entity::find()
+        .filter(permission::Column::TenantId.eq("tenant-no-platform-permission"))
+        .all(&db)
+        .await
+        .expect("query provisioned permissions")
+        .into_iter()
+        .map(|permission| permission.code)
+        .collect::<Vec<_>>();
+    assert!(
+        copied_codes
+            .iter()
+            .any(|code| code == "system:message:publish")
+    );
+    assert!(
+        !copied_codes
+            .iter()
+            .any(|code| code == "platform:message:publish")
     );
 }

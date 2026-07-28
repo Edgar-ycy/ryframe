@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{CreateDeptCommand, DeptTreeNode, DeptVo, UpdateDeptCommand};
 use validator::Validate;
@@ -44,6 +44,7 @@ async fn tree(
         .dept
         .filter_dept_by_user(&current_user)
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -59,7 +60,7 @@ async fn list_page(
     current_user: RequestPrincipal,
     Query(query): Query<DeptListQuery>,
 ) -> AppResult<Json<ApiPageResponse<DeptVo>>> {
-    let (page, filter) = query.into_parts();
+    let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
         .dept
@@ -70,7 +71,17 @@ async fn list_page(
             filter.status.as_deref(),
         )
         .await
-        .map(|p| Json(p.to_page_response("查询成功")))
+        .map_err(ryframe_http::AppError::from)
+        .map(|p| {
+            Json(ApiPageResponse::new(
+                p.records,
+                p.total,
+                p.page,
+                p.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 /// 部门列表不分页查询（返回全部数据）
@@ -94,6 +105,7 @@ async fn list_no_page(
             query.status.as_deref(),
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -121,6 +133,7 @@ async fn create(
             },
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -152,6 +165,7 @@ async fn update(
             },
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -172,7 +186,7 @@ async fn detail(
         .dept
         .find_by_id(&current_user, id)
         .await?
-        .ok_or_else(|| ryframe_common::AppError::NotFound("部门不存在".into()))
+        .ok_or_else(|| ryframe_http::AppError::NotFound("部门不存在".into()))
         .map(|value| Json(ApiResponse::success(value)))
 }
 
@@ -180,7 +194,7 @@ async fn detail(
 #[delete("/{id}")]
 #[perm("system:dept:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/depts/{id}", tag = "部门管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

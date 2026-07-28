@@ -47,3 +47,10 @@ avatar_updated = "头像更新成功"
 sent = "通知已发送"
 read = "已标记为已读"
 all_read = "全部已读"
+
+[message_socket]
+invalid_frame = "消息帧格式无效"
+invalid_message_id = "消息标识无效"
+acknowledge_failed = "消息确认失败"
+acknowledge_limit = "每次最多确认 100 条消息"
+unsupported_frame = "不支持的消息帧类型"

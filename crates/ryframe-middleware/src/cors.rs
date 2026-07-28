@@ -1,5 +1,5 @@
-use ryframe_common::{AppError, AppResult};
 use ryframe_config::CorsConfig;
+use ryframe_kernel::{AppError, AppResult};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 /// 创建 CORS 层

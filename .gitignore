@@ -2,6 +2,7 @@ debug
 target
 /ryframe-vue3/
 .pnpm-store/
+uploads/
 **/*.rs.bk
 *.pdb
 __pycache__/

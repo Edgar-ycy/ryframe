@@ -1,7 +1,7 @@
-//! Token 黑名单
+//! 令牌黑名单
 //!
 //! 用于实现 JWT 主动撤销：
-//! - Redis 模式：存储 jti → "1"，设置 TTL = token 剩余有效时间
+//! - Redis 模式：存储 jti → "1"，将 TTL 设为令牌剩余有效时间
 //! - 内存模式（仅在启动时显式选择 optional/disabled）：DashMap 存储，后台 GC 清理过期
 
 use std::{
@@ -12,9 +12,9 @@ use std::{
 use dashmap::DashMap;
 
 use crate::RedisClient;
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
-/// Token 黑名单
+/// 令牌黑名单
 ///
 /// 用于在登出时主动撤销 JWT，防止令牌在有效期内被滥用。
 /// 运行中的 Redis 错误会失败关闭；是否使用内存模式只在启动阶段决定。
@@ -34,7 +34,7 @@ impl TokenBlacklist {
         }
     }
 
-    /// 将 token 加入黑名单。Redis 写失败必须由调用者处理。
+    /// 将令牌加入黑名单。Redis 写失败必须由调用者处理。
     pub async fn try_blacklist(&self, jti: &str, ttl_seconds: u64) -> AppResult<()> {
         if let Some(ref redis) = self.redis {
             let key = blacklist_key(jti);
@@ -50,7 +50,7 @@ impl TokenBlacklist {
         Ok(())
     }
 
-    /// 检查 token 是否在黑名单中
+    /// 检查令牌是否在黑名单中
     pub async fn is_blacklisted(&self, jti: &str) -> bool {
         self.try_is_blacklisted(jti).await.unwrap_or(true)
     }
@@ -108,7 +108,7 @@ fn redis_unavailable(error: redis::RedisError) -> AppError {
     AppError::ServiceUnavailable("session revocation service unavailable".into())
 }
 
-/// 生成 Redis key
+/// 生成 Redis 键
 pub fn blacklist_key(jti: &str) -> String {
     format!("ryframe:v0.5:access-revocation:{jti}")
 }

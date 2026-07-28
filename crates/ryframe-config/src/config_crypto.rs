@@ -17,7 +17,7 @@
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use rand::Rng;
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 /// 加密值前缀标记
 const ENCRYPTED_PREFIX: &str = "ENC[";
@@ -47,7 +47,7 @@ impl ConfigCrypto {
             .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| AppError::Config(format!("配置加密失败: {}", e)))?;
 
-        // nonce(12) + ciphertext
+        // 12 字节 nonce + 密文
         let mut combined = Vec::with_capacity(12 + ciphertext.len());
         combined.extend_from_slice(&nonce_bytes);
         combined.extend_from_slice(&ciphertext);
@@ -183,6 +183,11 @@ pub fn decrypt_config(config: &mut crate::AppConfig) -> AppResult<()> {
             ConfigCrypto::decrypt(&master_key, &config.object_storage.secret_key)?;
     }
 
+    if !config.monitor.metrics_bearer_token.is_empty() {
+        config.monitor.metrics_bearer_token =
+            ConfigCrypto::decrypt(&master_key, &config.monitor.metrics_bearer_token)?;
+    }
+
     Ok(())
 }
 
@@ -209,6 +214,7 @@ fn contains_encrypted_value(config: &crate::AppConfig) -> bool {
             .is_some_and(|redis| is_encrypted(&redis.password))
         || is_encrypted(&config.object_storage.access_key)
         || is_encrypted(&config.object_storage.secret_key)
+        || is_encrypted(&config.monitor.metrics_bearer_token)
 }
 
 #[cfg(test)]

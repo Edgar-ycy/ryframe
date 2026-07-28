@@ -43,21 +43,33 @@ X-Tenant-Id: <tenant_id>
 ```json
 {
   "code": 200,
-  "msg": "操作成功",
-  "data": {}
+  "message": "操作成功",
+  "data": {},
+  "request_id": "0198f7e8-0000-7000-8000-000000000001",
+  "error_key": null,
+  "details": null
 }
 ```
 
-无数据的成功响应可能省略或返回空 `data`，调用方应以 `code` 和 HTTP 状态判断结果。
+`code` 与 HTTP 状态码一致；`request_id` 与 `X-Request-Id` 响应头一致，且为 UUID v7。无数据的成功响应返回 `data: null`。
 
 ### 分页响应
 
 ```json
 {
   "code": 200,
-  "msg": "查询成功",
-  "rows": [],
-  "total": 0
+  "message": "查询成功",
+  "data": {
+    "items": [],
+    "page": 1,
+    "page_size": 20,
+    "total": 0,
+    "total_pages": 0,
+    "max_page_size": 100
+  },
+  "request_id": "0198f7e8-0000-7000-8000-000000000001",
+  "error_key": null,
+  "details": null
 }
 ```
 
@@ -68,7 +80,7 @@ X-Tenant-Id: <tenant_id>
 | `page` | integer | 页码，从 1 开始 |
 | `page_size` | integer | 每页数量，受服务端上限约束 |
 
-### ID
+### 标识符（ID）
 
 所有 HTTP ID 都是十进制字符串：
 
@@ -94,7 +106,7 @@ X-Tenant-Id: <tenant_id>
 | `503` | Redis、数据库或必要对象存储暂不可用 |
 | `500` | 未预期的服务端错误 |
 
-客户端应展示服务端 `msg`，同时保留 HTTP 状态和请求 ID用于排障。
+客户端应优先按稳定的 `error_key` 映射本地化文案，未命中时回退到服务端 `message`，同时保留 HTTP 状态和 `request_id` 用于排障。`details` 仅包含可安全公开的结构化参数。
 
 ### 重试、幂等和代理边界
 

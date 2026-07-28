@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, Statement,
@@ -71,8 +71,7 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
 }
 
 impl PasswordResetRequestRepository {
-    /// Read MySQL's UTC clock so expiry and completion decisions are consistent
-    /// across application nodes.
+    /// 读取 MySQL 的 UTC 时钟，确保各应用节点的过期和完成决策保持一致。
     pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<chrono::DateTime<chrono::Utc>>
     where
         C: ConnectionTrait + ?Sized,
@@ -94,9 +93,8 @@ impl PasswordResetRequestRepository {
         ))
     }
 
-    /// Expire only a request that is still pending at `evaluated_at`.
-    /// A concurrent completion that wins the row lock cannot be overwritten by
-    /// a caller holding a stale pre-expiry model.
+    /// 仅使 `evaluated_at` 时仍处于 pending 状态的请求过期。赢得行锁的并发完成操作
+    /// 不能被持有过期前旧模型的调用方覆盖。
     pub async fn expire_pending(
         &self,
         db: &DatabaseConnection,
@@ -135,11 +133,10 @@ impl PasswordResetRequestRepository {
             .filter(password_reset_request::Column::ExpiresAt.lte(evaluated_at))
     }
 
-    /// Atomically consume a still-valid pending request inside the caller's transaction.
+    /// 在调用方事务内原子消费仍有效的 pending 请求。
     ///
-    /// The guarded update is the serialization point for password reset completion:
-    /// concurrent callers can verify the same token, but only one can transition the
-    /// request from `pending` to `completed`.
+    /// 受守卫的更新是密码重置完成的串行化点：并发调用方可校验同一个令牌，但只有一个
+    /// 调用方能将请求从 `pending` 转为 `completed`。
     pub async fn complete_pending_in_txn(
         &self,
         txn: &DatabaseTransaction,

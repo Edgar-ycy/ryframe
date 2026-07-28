@@ -1,3 +1,4 @@
+use ryframe_config::PaginationConfig;
 use ryframe_core::{LoggedRepo, PageQuery, PageResult};
 
 #[test]
@@ -35,35 +36,20 @@ fn test_page_query_offset() {
 }
 
 #[test]
-fn test_page_query_normalize() {
-    let q = PageQuery {
-        page: 1,
-        page_size: 5000,
-    }
-    .normalize(1000);
-    assert_eq!(q.page_size, 1000);
+fn test_page_query_rejects_invalid_values_instead_of_clamping() {
+    let policy = PaginationConfig {
+        default_page_size: 20,
+        max_page_size: 100,
+        unpaged_max_records: 1_000,
+    };
 
-    let q = PageQuery {
-        page: 1,
-        page_size: 0,
-    }
-    .normalize(1000);
-    assert_eq!(q.page_size, 10);
+    assert!(PageQuery::from_optional(Some(1), Some(5_000), &policy).is_err());
+    assert!(PageQuery::from_optional(Some(1), Some(0), &policy).is_err());
+    assert!(PageQuery::from_optional(Some(0), Some(10), &policy).is_err());
 
-    let q = PageQuery {
-        page: 0,
-        page_size: 10,
-    }
-    .normalize(1000);
-    assert_eq!(q.page, 1);
-
-    let q = PageQuery {
-        page: 3,
-        page_size: 25,
-    }
-    .normalize(1000);
-    assert_eq!(q.page, 3);
-    assert_eq!(q.page_size, 25);
+    let query = PageQuery::from_optional(Some(3), Some(25), &policy).unwrap();
+    assert_eq!(query.page, 3);
+    assert_eq!(query.page_size, 25);
 }
 
 #[test]

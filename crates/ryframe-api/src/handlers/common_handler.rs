@@ -4,17 +4,16 @@ use axum::{
     http::{HeaderMap, header},
     response::IntoResponse,
 };
-use ryframe_common::{
-    ApiResponse, AppError, AppResult,
-    utils::file_upload::{UploadConfig, get_content_type},
-};
 use ryframe_core::resilience::CircuitBreaker;
+use ryframe_http::{ApiResponse, AppError, AppResult};
+use ryframe_kernel::{AppError as KernelAppError, AppResult as KernelAppResult};
 use ryframe_macro::{get, post, route};
 use ryframe_service::system::file_service::{AVATAR_BUCKET, UPLOAD_BUCKET, UploadResponse};
+use ryframe_utils::file_upload::{UploadConfig, get_content_type};
 use serde::Deserialize;
 
 use crate::dto::multipart_dto::FileUploadForm;
-use crate::state::AppState;
+use crate::{handler_utils::attachment_content_disposition, state::AppState};
 use ryframe_auth::RequestPrincipal;
 
 /// 多文件上传响应
@@ -36,14 +35,14 @@ fn default_bucket() -> String {
     UPLOAD_BUCKET.to_string()
 }
 
-fn upload_failure_affects_circuit_breaker(error: &AppError) -> bool {
+fn upload_failure_affects_circuit_breaker(error: &KernelAppError) -> bool {
     matches!(
         error,
-        AppError::Database(_) | AppError::ServiceUnavailable(_)
+        KernelAppError::Database(_) | KernelAppError::ServiceUnavailable(_)
     )
 }
 
-fn record_upload_result<T>(circuit_breaker: &CircuitBreaker, result: &AppResult<T>) {
+fn record_upload_result<T>(circuit_breaker: &CircuitBreaker, result: &KernelAppResult<T>) {
     match result {
         Ok(_) => circuit_breaker.record_success(),
         Err(error) if upload_failure_affects_circuit_breaker(error) => {
@@ -273,9 +272,7 @@ pub async fn download_file(
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        format!("attachment; filename=\"{}\"", filename)
-            .parse()
-            .map_err(|e| AppError::Internal(format!("设置 Content-Disposition 失败: {}", e)))?,
+        attachment_content_disposition(&filename)?,
     );
 
     Ok((headers, data))
@@ -284,8 +281,8 @@ pub async fn download_file(
 #[cfg(test)]
 mod tests {
     use super::{record_upload_result, upload_failure_affects_circuit_breaker};
-    use ryframe_common::{AppError, AppResult};
     use ryframe_core::resilience::{CircuitBreaker, CircuitState};
+    use ryframe_kernel::{AppError, AppResult};
 
     fn record_error(circuit_breaker: &CircuitBreaker, error: AppError) {
         let result: AppResult<()> = Err(error);

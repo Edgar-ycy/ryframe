@@ -3,8 +3,8 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, post, put};
 use ryframe_service::system::{
     CreateUserParams, UpdateUserParams, UserDetailVo, UserListParams, UserVo,
@@ -29,13 +29,23 @@ pub(crate) async fn list(
     current_user: RequestPrincipal,
     Query(query): Query<UserListQuery>,
 ) -> AppResult<Json<ApiPageResponse<UserVo>>> {
-    let params = query.into_service_params()?;
+    let params = query.into_service_params(&state.config.pagination)?;
     state
         .services
         .user
         .find_by_page(&current_user, params)
         .await
-        .map(|page| Json(page.to_page_response("查询成功")))
+        .map_err(AppError::from)
+        .map(|page| {
+            Json(ApiPageResponse::new(
+                page.records,
+                page.total,
+                page.page,
+                page.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 #[get("/all")]
@@ -52,9 +62,10 @@ pub(crate) async fn list_no_page(
         .user
         .find_by_page(
             &current_user,
-            UserListParams::page_only(PageQuery::all_records()),
+            UserListParams::page_only(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await
+        .map_err(AppError::from)
         .map(|page| Json(ApiResponse::success(page.records)))
 }
 
@@ -107,6 +118,7 @@ pub(crate) async fn create(
             },
         )
         .await
+        .map_err(AppError::from)
         .map(|user| Json(ApiResponse::success(user)))
 }
 
@@ -139,6 +151,7 @@ pub(crate) async fn update(
             },
         )
         .await
+        .map_err(AppError::from)
         .map(|user| Json(ApiResponse::success(user)))
 }
 
@@ -147,7 +160,7 @@ pub(crate) async fn update(
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/roles", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
     request_body = ReplaceUserRolesDto,
-    responses((status = 200, description = "角色分配成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "角色分配成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn replace_roles(
     State(state): State<AppState>,
@@ -185,7 +198,7 @@ pub(crate) async fn replace_roles(
 #[perm("system:user:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
-    responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn remove(
     State(state): State<AppState>,
@@ -200,7 +213,7 @@ pub(crate) async fn remove(
 #[perm("system:user:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/users/batch/{ids}", tag = "用户管理",
     params(("ids" = String, Path, description = "用户ID列表，逗号分隔")),
-    responses((status = 200, description = "批量删除成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "批量删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn batch_remove(
     State(state): State<AppState>,
@@ -222,7 +235,7 @@ pub(crate) async fn batch_remove(
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/status", tag = "用户管理",
     params(("id" = i64, Path, description = "用户ID")),
     request_body = UpdateUserStatusDto,
-    responses((status = 200, description = "状态修改成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "状态修改成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn update_status(
     State(state): State<AppState>,

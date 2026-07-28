@@ -24,7 +24,5 @@ pub use multi_tenant::{
 };
 pub use redis_client::RedisClient;
 pub use refresh_session::{RefreshFamily, RefreshRotation, RefreshSessionStore};
-pub use repository::{
-    LoggedRepo, PageQuery, PageResult, Repository, default_page, default_page_size,
-};
+pub use repository::{LoggedRepo, PageQuery, PageResult, Repository};
 pub use token_blacklist::TokenBlacklist;

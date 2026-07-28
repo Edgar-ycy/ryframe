@@ -3,7 +3,8 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppError, AppResult};
+use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
+use ryframe_kernel::AppError as KernelAppError;
 use ryframe_macro::{delete, get, route};
 use ryframe_service::system::online_user_service::OnlineUserVo;
 
@@ -61,7 +62,7 @@ pub async fn list_online_users_page(
     current_user: RequestPrincipal,
     Query(query): Query<OnlineUserQuery>,
 ) -> AppResult<Json<ApiPageResponse<OnlineUserVo>>> {
-    let (page, filter) = query.into_parts();
+    let (page, filter) = query.into_parts(&state.config.pagination)?;
     let (rows, total) = state
         .services
         .online_user
@@ -73,7 +74,14 @@ pub async fn list_online_users_page(
             page.page_size,
         )
         .await?;
-    Ok(Json(ApiPageResponse::new(rows, total, "查询成功")))
+    Ok(Json(ApiPageResponse::new(
+        rows,
+        total,
+        page.page,
+        page.page_size,
+        state.config.pagination.max_page_size,
+        "查询成功",
+    )))
 }
 
 /// 强制下线用户
@@ -81,9 +89,9 @@ pub async fn list_online_users_page(
 #[perm("monitor:online:force-logout")]
 /// 强制下线用户
 #[utoipa::path(delete, path = "/api/v1/system/online/{sid}", tag = "在线用户",
-    params(("sid" = String, Path, description = "Stable device-session identifier")),
+    params(("sid" = String, Path, description = "稳定的设备会话标识")),
     responses(
-        (status = 200, description = "强退成功", body = ryframe_common::ApiEmptyResponse),
+        (status = 200, description = "强退成功", body = ryframe_http::ApiEmptyResponse),
         (status = 404, description = "会话不存在或不属于当前租户"),
         (status = 503, description = "Redis 会话服务不可用")
     ),
@@ -93,9 +101,8 @@ pub async fn force_logout(
     current_user: RequestPrincipal,
     Path(sid): Path<String>,
 ) -> AppResult<Json<ApiResponse<()>>> {
-    // The refresh family is authoritative. Revoke it first, atomically
-    // validating tenant + sid. A Redis failure therefore returns 503 without
-    // deleting the display index, and the same request can safely be retried.
+    // 刷新令牌族是权威状态。先撤销它，同时原子校验 tenant + sid。若 Redis
+    // 失败则返回 503 而不删除展示索引，同一请求可以安全重试。
     let revoked = state
         .services
         .auth
@@ -103,7 +110,7 @@ pub async fn force_logout(
         .revoke_for_tenant(&current_user.tenant_id, &sid)
         .await
         .inspect_err(|error| {
-            if matches!(error, AppError::ServiceUnavailable(_)) {
+            if matches!(error, KernelAppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("force_logout_session");
             }
         })?;
@@ -111,8 +118,8 @@ pub async fn force_logout(
         return Err(AppError::NotFound("在线会话不存在".into()));
     }
 
-    // This is a best-effort secondary index cleanup. The already-revoked
-    // family makes every access/refresh token for the sid unusable.
+    // 这是尽力而为的二级索引清理。已撤销的令牌族会使该 sid 的所有访问/刷新
+    // 令牌均无法使用。
     state
         .services
         .online_user

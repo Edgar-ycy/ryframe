@@ -138,7 +138,9 @@ impl Visit for SqlxVisitor {
 /// 为每个 sqlx 查询自动创建 `tracing::Span`，OpenTelemetry Layer 会将其导出为 DB Span。
 ///
 /// - 自动提取 SQL 操作类型（SELECT / INSERT / UPDATE / DELETE）
-/// - 记录耗时、影响行数、数据库系统
+/// - 记录数据库系统和稳定的操作类型；耗时由 span 生命周期自动计算
+/// - 不向 OpenTelemetry 写入原始 SQL，避免文本值、标识符或动态语句造成敏感信息和
+///   高基数字段扩散
 /// - Span 作为当前 HTTP 请求 Span 的子 Span，在 Jaeger/Tempo 中展示完整调用链
 ///
 /// # 使用方式
@@ -194,12 +196,8 @@ where
             .as_deref()
             .or(visitor.summary.as_deref())
             .unwrap_or("");
-        let sql_clean = clean_sql(sql);
-        let elapsed_ms = visitor.elapsed_secs.unwrap_or(0.0) * 1000.0;
-        let rows = visitor.rows_returned.or(visitor.rows_affected).unwrap_or(0);
-
         // 提取 SQL 操作类型
-        let operation = extract_sql_operation(&sql_clean);
+        let operation = extract_sql_operation(sql);
 
         // 创建 DB 查询子 Span（继承当前 HTTP Span 作为父 Span）
         let span = tracing::info_span!(
@@ -208,9 +206,6 @@ where
             otel.kind = "client",
             db.system = "mysql",
             db.operation = %operation,
-            db.statement = %sql_clean,
-            db.rows = rows,
-            db.duration_ms = elapsed_ms,
         );
 
         let _enter = span.enter();
@@ -240,5 +235,27 @@ fn extract_sql_operation(sql: &str) -> &str {
         "TXN"
     } else {
         "OTHER"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_sql_operation;
+
+    #[test]
+    fn sql_span_uses_a_bounded_operation_category() {
+        assert_eq!(extract_sql_operation("SELECT * FROM sys_user"), "SELECT");
+        assert_eq!(
+            extract_sql_operation("INSERT INTO sys_user VALUES (?)"),
+            "INSERT"
+        );
+        assert_eq!(
+            extract_sql_operation("ALTER TABLE sys_user ADD COLUMN x INT"),
+            "DDL"
+        );
+        assert_eq!(
+            extract_sql_operation("CALL untrusted_dynamic_sql()"),
+            "OTHER"
+        );
     }
 }

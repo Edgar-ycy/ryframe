@@ -47,20 +47,20 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
 
 tokio::task_local! {
-    /// Request-scoped tenant identity used only to verify explicit use-case input.
+    /// 仅用于核验显式用例输入的请求范围租户身份。
     static REQUEST_TENANT_CONTEXT: TenantContext;
 }
 
 // ============ 核心类型 ============
 
-/// 租户上下文（注入到 request extensions）
+/// 租户上下文（注入到请求扩展）
 #[derive(Debug, Clone)]
 pub struct TenantContext {
     /// 当前租户 ID
@@ -70,7 +70,7 @@ pub struct TenantContext {
 }
 
 impl TenantContext {
-    /// 从 request extensions 提取租户上下文
+    /// 从请求扩展提取租户上下文
     pub fn from_request(req: &http::Request<axum::body::Body>) -> Option<&Self> {
         req.extensions().get::<Self>()
     }
@@ -84,9 +84,8 @@ impl TenantContext {
     }
 }
 
-/// Verifies an explicit use-case tenant against request-local state when one
-/// exists. Background jobs may run without task-local state because their
-/// explicit tenant remains the authoritative input.
+/// 存在请求本地状态时，核验显式用例租户是否与其一致。后台任务可不使用任务本地状态，
+/// 因为显式租户始终是权威输入。
 pub fn validate_explicit_tenant(tenant_id: &str) -> AppResult<()> {
     validate_tenant_identifier(tenant_id)?;
 
@@ -101,9 +100,8 @@ pub fn validate_explicit_tenant(tenant_id: &str) -> AppResult<()> {
         .unwrap_or(Ok(()))
 }
 
-/// Validate an identifier before it is used in database partitions, cache
-/// keys, or Redis glob patterns. The deliberately small alphabet prevents
-/// tenant-controlled wildcard and key-delimiter injection.
+/// 标识符用于数据库分区、缓存键或 Redis 通配模式前必须校验。刻意限制字符集可防止
+/// 租户可控的通配符和键分隔符注入。
 pub fn validate_tenant_identifier(tenant_id: &str) -> AppResult<()> {
     let bytes = tenant_id.as_bytes();
     let is_alphanumeric = |byte: u8| byte.is_ascii_alphanumeric();
@@ -122,8 +120,7 @@ pub fn validate_tenant_identifier(tenant_id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Runs a future with an explicit tenant scope. Middleware uses this to make
-/// the authenticated tenant available for consistency checks.
+/// 在显式租户范围内运行一个异步任务。中间件用它使已认证租户可用于一致性校验。
 pub async fn with_tenant_context<F>(context: TenantContext, future: F) -> F::Output
 where
     F: Future,
@@ -187,7 +184,7 @@ impl TenantRateLimitCache {
 /// 租户提取方式
 #[derive(Debug, Clone)]
 pub enum ExtractionMethod {
-    /// 从 HTTP Header 提取（如 X-Tenant-Id）
+    /// 从 HTTP 请求头提取（如 `X-Tenant-Id`）
     Header(String),
     /// 从子域名提取（如 tenant1.example.com → tenant1）
     Subdomain,
@@ -261,7 +258,7 @@ impl TenantConfig {
 
 /// 租户识别中间件
 ///
-/// 从请求中提取 tenant_id，构造 `TenantContext` 并注入 `request.extensions()`。
+/// 从请求中提取租户 ID，构造 `TenantContext` 并注入 `request.extensions()`。
 /// 如果未找到租户信息且未配置默认租户，返回 403 Forbidden。
 pub async fn tenant_middleware(
     State(config): State<Arc<TenantConfig>>,
@@ -327,7 +324,7 @@ fn extract_tenant_id(request: &axum::extract::Request, config: &TenantConfig) ->
 /// 租户数据隔离 trait
 ///
 /// 仓库层实现此 trait 以自动过滤租户数据。
-/// SharedTable 策略下，所有查询自动添加 `tenant_id = ?` 条件。
+/// `SharedTable` 策略下，所有查询自动添加 `tenant_id = ?` 条件。
 #[async_trait::async_trait]
 pub trait TenantIsolation {
     /// 设置当前租户上下文

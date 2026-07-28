@@ -97,7 +97,7 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
                 FillSource::UserId => quote!(ctx.user_id),
                 FillSource::Username => quote!(ctx.username),
                 FillSource::Snowflake => {
-                    quote!(ryframe_common::utils::snowflake::try_next_snowflake_id()?)
+                    quote!(ryframe_utils::snowflake::try_next_snowflake_id()?)
                 }
             };
             match rule.strategy {
@@ -121,7 +121,7 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
         if field_names.iter().any(|f| f == field_name) {
             let field = Ident::new(field_name, proc_macro2::Span::call_site());
             insert_stmts.push(quote! {
-                self.#field = ryframe_common::utils::snowflake::try_next_snowflake_id()?;
+                self.#field = ryframe_utils::snowflake::try_next_snowflake_id()?;
             });
         }
     }
@@ -132,14 +132,14 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
             fn fill_on_insert(
                 &mut self,
                 ctx: &ryframe_core::auto_fill::FillContext,
-            ) -> ryframe_common::AppResult<()> {
+            ) -> ryframe_kernel::AppResult<()> {
                 #(#insert_stmts)*
                 Ok(())
             }
             fn fill_on_update(
                 &mut self,
                 ctx: &ryframe_core::auto_fill::FillContext,
-            ) -> ryframe_common::AppResult<()> {
+            ) -> ryframe_kernel::AppResult<()> {
                 #(#update_stmts)*
                 Ok(())
             }

@@ -97,7 +97,7 @@ async fn backfill_super_only_permissions(manager: &SchemaManager<'_>) -> Result<
                             Alias::new("updated_at"),
                         ])
                         .values_panic([
-                            ryframe_common::utils::snowflake::try_next_snowflake_id()
+                            ryframe_utils::snowflake::try_next_snowflake_id()
                                 .map_err(|error| DbErr::Custom(error.to_string()))?
                                 .into(),
                             tenant_id.into(),
@@ -169,7 +169,7 @@ async fn backfill_super_only_button_menus(manager: &SchemaManager<'_>) -> Result
                             Alias::new("updated_at"),
                         ])
                         .values_panic([
-                            ryframe_common::utils::snowflake::try_next_snowflake_id()
+                            ryframe_utils::snowflake::try_next_snowflake_id()
                                 .map_err(|error| DbErr::Custom(error.to_string()))?
                                 .into(),
                             tenant_id.into(),

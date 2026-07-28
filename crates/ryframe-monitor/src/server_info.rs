@@ -2,7 +2,7 @@ use serde::Serialize;
 use sysinfo::System;
 use utoipa::ToSchema;
 
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ServerInfo {
@@ -20,7 +20,7 @@ pub struct ServerInfo {
     pub used_memory: f64,
     /// 内存使用率（百分比）
     pub memory_usage: f32,
-    /// JVM... no, Rust doesn't have JVM
+    /// Rust 不使用 JVM。
     /// 进程 PID
     pub pid: u32,
     /// 运行时长（秒）
@@ -28,7 +28,7 @@ pub struct ServerInfo {
 }
 
 impl ServerInfo {
-    /// Collect server metrics without blocking an async runtime worker.
+    /// 在不阻塞异步运行时工作线程的情况下采集服务器指标。
     pub async fn collect_async() -> AppResult<Self> {
         tokio::task::spawn_blocking(Self::collect)
             .await

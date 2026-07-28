@@ -7,12 +7,12 @@ use super::{
     entry::{self, CacheLookup},
 };
 
-/// Configuration for cache avalanche and penetration protection.
+/// 缓存雪崩与穿透防护配置。
 #[derive(Clone, Debug)]
 pub struct CacheStrategyConfig {
-    /// Random TTL variation in the inclusive range `0.0..=0.5`.
+    /// 随机 TTL 浮动比例，取值范围为 `0.0..=0.5`。
     pub avalanche_jitter: f64,
-    /// TTL for a cached null result. Zero disables null caching.
+    /// 空结果的缓存 TTL。零表示禁止缓存空结果。
     pub null_cache_ttl: u64,
 }
 
@@ -25,7 +25,7 @@ impl Default for CacheStrategyConfig {
     }
 }
 
-/// Cache proxy adding randomized TTLs and typed null-value caching.
+/// 为缓存添加随机 TTL 和带类型空值缓存的代理。
 pub struct CacheStrategy<C: Cache> {
     inner: C,
     config: CacheStrategyConfig,
@@ -63,7 +63,7 @@ impl<C: Cache> CacheStrategy<C> {
         (base_ttl as f64 * factor).round().max(1.0) as u64
     }
 
-    /// Load a typed value on a cache miss while protecting null results.
+    /// 缓存未命中时加载带类型的值，并防护空结果。
     pub async fn get_or_load_with_protection<T, F, Fut>(
         &self,
         key: &str,

@@ -3,8 +3,11 @@ default-members = ["crates/ryframe"]
 
 members = [
     "crates/ryframe",
-    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-middleware", "crates/ryframe-service",
-    "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro", "crates/ryframe-storage"]
+    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-http", "crates/ryframe-i18n", "crates/ryframe-kernel", "crates/ryframe-middleware", "crates/ryframe-service",
+    "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro", "crates/ryframe-storage",
+    "crates/ryframe-utils", "crates/ryframe-captcha", "crates/ryframe-excel", "crates/ryframe-mail",
+    "xtask",
+]
 resolver = "3"
 [workspace.package]
 version = "0.5.0"
@@ -28,6 +31,7 @@ sea-orm = { version = "=2.0.0", default-features = false, features = [
     "runtime-tokio-rustls",
     "macros",
     "with-chrono",
+    "with-json",
     "sqlx-mysql",
 ] }
 sea-orm-migration = { version = "=2.0.0", default-features = false, features = ["runtime-tokio-rustls", "sqlx-mysql"] }
@@ -70,7 +74,6 @@ regex = "1"
 http-body-util = "0.1"
 tower = { version = "0.5" }
 tower-http = { version = "0.6" }
-ammonia = "4"
 dashmap = "6"
 zip = { version = "8.6", default-features = false, features = [
     "deflate-flate2-zlib-rs",
@@ -87,7 +90,7 @@ opentelemetry-semantic-conventions = { version = "0.32" }
 tracing-opentelemetry = "0.33"
 # SMTP 邮件发送
 lettre = { version = "0.11", default-features = false, features = ["builder", "rustls-tls", "smtp-transport", "tokio1", "tokio1-rustls"] }
-# gRPC
+# gRPC 传输支持
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 aes-gcm = "0.10"
@@ -101,7 +104,7 @@ quote = "1"
 proc-macro2 = "1"
 tempfile = "3"
 
-# Dev profile: 轻微优化以降低 rustc 单态化栈压力，
+# 开发配置：轻微优化以降低 rustc 单态化栈压力，
 # 解决 Windows MSVC 下 ryframe-core 测试编译时栈溢出问题
 [patch.crates-io]
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }

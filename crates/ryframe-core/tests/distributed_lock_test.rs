@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-/// distributed_lock 模块测试
+/// `distributed_lock` 模块测试
 /// 从 crates/ryframe-core/src/distributed_lock.rs 内联测试迁移
 use ryframe_core::distributed_lock::{DistributedLock, LocalDistributedLock, RedisDistributedLock};
 

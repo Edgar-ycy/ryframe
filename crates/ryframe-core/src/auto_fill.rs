@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_common::AppResult;
+use ryframe_kernel::AppResult;
 
 // ============================================================
 // 填充策略
@@ -30,7 +30,7 @@ pub enum FillSource {
 }
 
 // ============================================================
-// 默认填充规则表（唯一定义点，proc macro 引用此处）
+// 默认填充规则表（唯一定义点，过程宏引用此处）
 // ============================================================
 pub struct DefaultRule {
     pub field_name: &'static str,

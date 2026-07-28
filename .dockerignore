@@ -7,5 +7,6 @@ backup
 coverage
 ryframe-vue3
 target
+uploads
 **/*.log
 **/node_modules

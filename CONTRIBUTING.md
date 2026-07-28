@@ -6,7 +6,8 @@
 
 ### 系统要求
 
-- **Rust**：stable toolchain（推荐通过 [rustup](https://rustup.rs/) 安装）
+- **Rust**：由 `rust-toolchain.toml` 固定的 1.97.1（[rustup](https://rustup.rs/) 会自动选择）
+- **Python**：3.11+（用于质量门禁和发布校验脚本）
 - **数据库**：MySQL 8.4；数据库集成测试要求 Docker
 - **Redis**：生产会话、撤销、幂等和分布式锁的强制依赖
 
@@ -36,10 +37,17 @@ cargo run
 ```
 ryframe/
 ├── crates/                  # 工作区 crate
-│   ├── ryframe/             # 启动入口 (bin)
-│   ├── ryframe-api/         # HTTP API 层 (handler/dto/router)
+│   ├── ryframe/             # 应用、迁移和独立 Worker 入口
+│   ├── ryframe-api/         # HTTP API、OpenAPI 与消息 WebSocket
 │   ├── ryframe-auth/        # 认证授权 (JWT/RBAC/权限)
-│   ├── ryframe-common/      # 公共工具 & 错误定义
+│   ├── ryframe-kernel/      # 传输无关领域类型、错误码与主体上下文
+│   ├── ryframe-http/        # HTTP 错误映射与统一响应信封
+│   ├── ryframe-i18n/        # 语言协商、资源校验与文本渲染
+│   ├── ryframe-utils/       # 雪花 ID、脱敏、差异与文件处理工具
+│   ├── ryframe-captcha/     # 验证码生成与图像渲染
+│   ├── ryframe-excel/       # Excel 导入导出
+│   ├── ryframe-mail/        # 邮件发送适配
+│   ├── ryframe-common/      # 仅供外部旧调用使用的兼容入口，内部禁止依赖
 │   ├── ryframe-config/      # 配置管理 (多环境 TOML)
 │   ├── ryframe-core/        # 基础设施 (缓存/Redis/锁/熔断)
 │   ├── ryframe-db/          # 数据访问层 (entities/repositories)
@@ -62,6 +70,7 @@ ryframe/
 
 - 遵循 Rust 官方命名规范（snake_case 变量/函数，CamelCase 类型）
 - 所有公共 API 需添加文档注释（`///`）
+- 所有新增或修改的说明性注释、文档注释使用中文；协议名、命令、代码示例和必要技术专有名词可保留原样
 - **禁止使用 `unsafe` 代码块**
 - 测试代码放在各 crate 的 `tests/` 目录下
 

@@ -86,7 +86,7 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
-        // Existing menu bindings are operational data. Do not discard them.
+        // 现有菜单绑定属于运行数据，不能丢弃。
         Ok(())
     }
 }

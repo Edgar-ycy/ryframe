@@ -3,8 +3,8 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{DictDataVo, DictTypeListParams, DictTypeVo};
 use serde::{Deserialize, Serialize};
@@ -61,13 +61,20 @@ async fn list_types(
     current_user: RequestPrincipal,
     Query(query): Query<DictTypeListQuery>,
 ) -> AppResult<Json<ApiPageResponse<DictTypeVo>>> {
-    let (page, filter) = query.into_parts();
+    let (page, filter) = query.into_parts(&state.config.pagination)?;
     let page_result = state
         .services
         .dict
         .find_types_by_page(&current_user, filter.into_service_params(page))
         .await?;
-    Ok(Json(page_result.to_page_response("查询成功")))
+    Ok(Json(ApiPageResponse::new(
+        page_result.records,
+        page_result.total,
+        page_result.page,
+        page_result.page_size,
+        state.config.pagination.max_page_size,
+        "查询成功",
+    )))
 }
 
 /// 字典类型不分页查询
@@ -87,7 +94,7 @@ async fn list_types_no_page(
         .dict
         .find_types_by_page(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await?;
     Ok(Json(ApiResponse::success(page_result.records)))
@@ -109,6 +116,7 @@ async fn create_type(
         .dict
         .create_type(&current_user, &dto.name, &dto.code)
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -132,6 +140,7 @@ async fn update_type(
         .dict
         .update_type(&current_user, id, &dto.name, dto.status)
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -140,7 +149,7 @@ async fn update_type(
 #[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
     params(("id" = i64, Path)),
-    responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn delete_type(
     State(state): State<AppState>,
@@ -173,6 +182,7 @@ async fn list_data(
         .dict
         .find_data_by_type(&current_user, &query.type_code)
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -225,6 +235,7 @@ async fn create_data(
             dto.sort.unwrap_or(0),
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -255,6 +266,7 @@ async fn update_data(
             dto.status,
         )
         .await
+        .map_err(AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -263,7 +275,7 @@ async fn update_data(
 #[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
     params(("id" = i64, Path)),
-    responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)),
+    responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn delete_data(
     State(state): State<AppState>,
@@ -307,14 +319,14 @@ async fn export_dict_types(
     current_user: RequestPrincipal,
     Query(query): Query<DictTypeFilterQuery>,
 ) -> AppResult<axum::response::Response> {
-    use ryframe_common::utils::ExcelExporter;
+    use ryframe_excel::ExcelExporter;
 
     let page_result = state
         .services
         .dict
         .find_types_by_page(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await?;
     let export_data: Vec<DictTypeExportData> = page_result

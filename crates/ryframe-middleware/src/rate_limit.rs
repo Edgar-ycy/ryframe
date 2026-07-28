@@ -11,8 +11,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
-use ryframe_common::utils::ip::{ClientIp, TrustedProxySet};
 use ryframe_core::RedisClient;
+use ryframe_utils::ip::{ClientIp, TrustedProxySet};
 
 use crate::metrics::{record_rate_limit_rejection, record_redis_degraded};
 
@@ -65,9 +65,9 @@ impl RateLimiter {
         }
     }
 
-    /// Create the development-only in-memory limiter.
-    /// `refill_per_sec` is retained for source compatibility; fixed windows are
-    /// used so configured API/user limits have identical semantics in both modes.
+    /// 创建仅用于开发环境的内存限流器。
+    /// 为保持源码兼容性保留 `refill_per_sec`；两个模式均使用固定窗口，
+    /// 以使配置的 API/用户限额语义一致。
     pub fn new_in_memory(capacity: u32, refill_per_sec: u32) -> Self {
         let default_window_secs = if refill_per_sec == 0 {
             DEFAULT_WINDOW_SECS
@@ -368,9 +368,8 @@ pub async fn api_rate_limit_middleware(
         .get::<ClientIp>()
         .map(|value| value.0)
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    // Scope the bucket to the rule that matched. In particular, all concrete
-    // IDs for a `{param}` route and all paths for a method-wide rule must share
-    // one bucket; otherwise clients can evade the limit by varying the URL.
+    // 将令牌桶限定到命中的规则。尤其是，`{param}` 路由的所有具体 ID 以及方法级规则的所有路径
+    // 必须共享同一个令牌桶；否则客户端可通过变换 URL 绕过限额。
     let key = RateLimiter::api_client_key(rule_scope, client_ip);
     match state
         .limiter

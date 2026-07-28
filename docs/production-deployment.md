@@ -18,6 +18,9 @@ DOCKER_BUILDKIT=1 docker build \
   --tag registry.example.com/ryframe:"$(git rev-parse --short HEAD)" .
 ```
 
+`RYFRAME_BUILD_COMMIT` 必须是小写的完整 40 位 Git commit SHA；Dockerfile 会拒绝空值或其他格式，
+避免生成无法追溯的镜像。
+
 仓库不写死基础镜像 digest，因为 digest 必须由交付方在镜像仓库和目标架构上验证，
 不能凭空填写。正式交付应先解析并通过漏洞扫描批准两个基础镜像，再用不可变 digest
 覆盖构建参数：
@@ -37,9 +40,13 @@ docker build \
 
 - 仅 Nginx/负载均衡器暴露 443；应用 8080、MySQL、Redis 和对象存储 API 只在受控
   网络内开放。
+- 生产的 `ryframe-worker` 使用 `jobs.health_port`（默认 `9091`）提供内网
+  `/livez`、`/readyz` 和 `/metrics`。该端口只允许 Prometheus/VPN 与编排探针访问，
+  不得经公网 Nginx 暴露；外置 Worker 的队列告警必须抓取该端点。
 - 使用 `deploy/nginx/ryframe.conf` 时，将 metrics 的示例私网 CIDR 替换为精确的
   Prometheus/VPN 地址。安全组也应执行同样限制，不能只依赖 Nginx。
 - Nginx 必须覆盖客户端提供的转发头；`APP_PROXY_TRUSTED_CIDRS` 仅包含真实代理地址。
+- `/api/v1/ws` 必须使用 WebSocket 专用反向代理：转发 `Upgrade`，关闭缓冲，并将读取超时设为高于心跳间隔。一次性 ticket 位于查询参数，Nginx、负载均衡器和 CDN 均不得记录完整请求 URI 或 ticket；模板已对该路径关闭访问日志。
 - `APP_API_DOCS_ENABLED=false`，并在 Nginx 阻断 Swagger/OpenAPI；`APP_MONITOR_METRICS_BEARER_TOKEN`
   使用独立随机 secret。配置和轮换方法见[值班手册](operations-runbook.md)。
 
@@ -69,8 +76,8 @@ APP_REDIS_TLS_CLIENT_KEY=/run/secrets/redis-client.key
 ```
 
 MySQL/Redis 的服务地址必须与证书身份匹配。禁止通过关闭主机名或证书校验解决证书错误。
-对象存储使用 `APP_OBJECT_STORAGE_USE_SSL=true` 和 HTTPS endpoint；其 CA 应进入容器
-系统信任链。
+对象存储必须同时使用 `APP_OBJECT_STORAGE_USE_SSL=true` 和 `https://` endpoint；显式
+`http://` endpoint 即使开启 `use_ssl` 也会被启动校验拒绝。其 CA 应进入容器系统信任链。
 
 ## 4. 对象存储和横向扩展
 
@@ -90,6 +97,7 @@ MySQL/Redis 的服务地址必须与证书身份匹配。禁止通过关闭主�
 
 - 配置校验通过，密钥均由 secret 管理注入，日志中无敏感值。
 - `/livez=200`、`/readyz=200`，公网 Swagger/OpenAPI 为 `404`。
+- 登录后可建立 `/api/v1/ws` 并收到 `101 Switching Protocols`；抽查 Nginx、负载均衡器和 CDN 日志，确认其中不包含 `ticket=`。
 - Prometheus 从允许网段携带 Bearer Token 抓取成功；公网或无 Token 请求被拒绝。
 - MySQL/Redis/对象存储 TLS 证书校验成功，数据库迁移和隔离库恢复演练通过。
 - 告警规则加载成功，Alertmanager 测试通知到达；备份与证书指标有实际数据。

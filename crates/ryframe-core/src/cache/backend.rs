@@ -12,7 +12,7 @@ use crate::RedisClient;
 
 use super::{Cache, CacheError};
 
-/// Cache backend used when caching is disabled.
+/// 缓存功能关闭时使用的后端。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoopCache;
 
@@ -44,7 +44,7 @@ impl Cache for NoopCache {
     }
 }
 
-/// Redis-backed cache using JSON serialization.
+/// 基于 Redis 且使用 JSON 序列化的缓存后端。
 #[derive(Clone)]
 pub struct RedisCache {
     client: RedisClient,
@@ -129,10 +129,9 @@ struct CachedEntry {
     last_accessed_at: Instant,
 }
 
-/// Process-local cache for single-node deployments and graceful degradation.
+/// 供单节点部署和优雅降级使用的进程内缓存。
 ///
-/// A finite capacity uses least-recently-used eviction. Expired entries are
-/// removed lazily by every operation that inspects the store.
+/// 有限容量时采用最近最少使用淘汰策略。检查存储的每个操作都会惰性移除过期条目。
 #[derive(Clone)]
 pub struct LocalMemoryCache {
     store: Arc<RwLock<HashMap<String, CachedEntry>>>,
@@ -140,7 +139,7 @@ pub struct LocalMemoryCache {
 }
 
 impl LocalMemoryCache {
-    /// Create a local cache. Zero and `usize::MAX` mean unlimited capacity.
+    /// 创建本地缓存。零和 `usize::MAX` 表示容量不受限。
     pub fn new(capacity: usize) -> Self {
         let capacity = match capacity {
             0 | usize::MAX => None,
@@ -156,7 +155,7 @@ impl LocalMemoryCache {
         Self::new(0)
     }
 
-    /// Remove all expired entries immediately.
+    /// 立即移除所有过期条目。
     pub async fn clean_expired(&self) {
         let mut store = self.store.write().await;
         Self::remove_expired(&mut store, Instant::now());
@@ -259,7 +258,7 @@ impl Cache for LocalMemoryCache {
     }
 }
 
-/// Runtime-selected cache backend.
+/// 运行时选择的缓存后端。
 pub enum CacheBackend {
     Redis(Box<RedisCache>),
     Local(LocalMemoryCache),
@@ -267,7 +266,7 @@ pub enum CacheBackend {
 }
 
 impl CacheBackend {
-    /// Prefer Redis when configured, otherwise use process-local storage.
+    /// 已配置 Redis 时优先使用 Redis，否则使用进程内存储。
     pub fn from_redis(redis: Option<RedisClient>) -> Self {
         match redis {
             Some(client) => Self::Redis(Box::new(RedisCache::new(client))),

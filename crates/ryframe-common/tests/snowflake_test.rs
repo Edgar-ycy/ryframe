@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 
-use ryframe_common::AppError;
+use ryframe_common::KernelAppError;
 use ryframe_common::utils::snowflake::{Snowflake, SnowflakeError, try_next_snowflake_id};
 
 const TEST_TIMESTAMP: i64 = 1_800_000_000_000;
@@ -155,13 +155,13 @@ fn global_generator_returns_distinct_ids() {
 
 #[test]
 fn generation_failure_maps_to_a_retryable_service_error() {
-    let error = AppError::from(SnowflakeError::SequenceExhausted {
+    let error = KernelAppError::from(SnowflakeError::SequenceExhausted {
         timestamp: TEST_TIMESTAMP,
     });
 
     assert!(matches!(
         error,
-        AppError::ServiceUnavailable(message)
+        KernelAppError::ServiceUnavailable(message)
             if message == "ID 生成服务暂时不可用，请稍后重试"
     ));
 }

@@ -1,4 +1,4 @@
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, EntityTrait, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,
@@ -23,11 +23,10 @@ impl TenantRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
-    /// Check the user quota while holding the tenant row lock.
+    /// 持有租户行锁时检查用户配额。
     ///
-    /// Callers must insert the user in the same transaction. Serializing quota
-    /// checks on the tenant row prevents concurrent creates from both observing
-    /// the same remaining slot.
+    /// 调用方必须在同一事务中插入用户。将配额检查串行化到租户行上，可防止并发创建
+    /// 同时观察到同一个剩余名额。
     pub async fn ensure_user_quota_in_txn(
         &self,
         txn: &DatabaseTransaction,
@@ -47,10 +46,10 @@ impl TenantRepository {
         Ok(())
     }
 
-    /// Lock the tenant row for quota-sensitive work performed in `txn`.
+    /// 为在 `txn` 中执行的配额敏感操作锁定租户行。
     ///
-    /// Every caller must keep the quota check and the corresponding insert in
-    /// this same transaction so all resource reservations share one lock order.
+    /// 每个调用方都必须将配额检查及对应插入保留在同一事务中，使所有资源预留共享
+    /// 同一种锁定顺序。
     pub async fn lock_tenant_in_txn(
         &self,
         txn: &DatabaseTransaction,
@@ -88,7 +87,7 @@ impl TenantRepository {
         Ok(())
     }
 
-    /// Lock a tenant and reject limits that are below its current persisted usage.
+    /// 锁定租户，并拒绝低于其当前持久化用量的限制值。
     pub async fn lock_and_validate_resource_limits_in_txn(
         &self,
         txn: &DatabaseTransaction,
@@ -144,10 +143,10 @@ impl TenantRepository {
         Ok(tenant)
     }
 
-    /// Check storage capacity under the same tenant-row lock used by uploads.
+    /// 在上传使用的同一租户行锁下检查存储容量。
     ///
-    /// The caller must insert the corresponding `sys_file` row before committing
-    /// `txn`, so concurrent uploads cannot reserve the same remaining bytes.
+    /// 调用方必须在提交 `txn` 前插入对应的 `sys_file` 记录，避免并发上传预留
+    /// 同一批剩余字节。
     pub async fn ensure_storage_quota_in_txn(
         &self,
         txn: &DatabaseTransaction,

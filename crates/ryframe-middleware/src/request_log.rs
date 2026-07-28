@@ -10,6 +10,10 @@ use tower_http::{
     trace::{DefaultOnFailure, DefaultOnResponse, MakeSpan, TraceLayer},
 };
 
+pub(crate) const REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
+
+const UNMATCHED_ROUTE: &str = "/unmatched";
+
 /// 请求日志中间件工厂
 ///
 /// 基于 tower-http TraceLayer，记录：
@@ -21,20 +25,17 @@ pub fn request_log_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures
     TraceLayer::new_for_http()
 }
 
-/// 扩展的请求日志层（包含脱敏后的请求 URI）
+/// 扩展的请求日志层（使用路由模板）
 ///
-/// 使用 `make_span_with` 将脱敏后的 URI 记录到 Span 中。
+/// 使用 `make_span_with` 将路由模板记录到 Span 中；未匹配请求使用固定值。
 pub fn request_log_layer_with_masking()
 -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, impl MakeSpan<axum::body::Body> + Clone> {
     TraceLayer::new_for_http()
         .make_span_with(|request: &Request<axum::body::Body>| {
             let method = request.method().to_string();
-            // Never place a query string in a request span. Even an allow-list of
-            // known keys is unsafe because routes and clients evolve independently.
-            let path = request.extensions().get::<MatchedPath>().map_or_else(
-                || log_path(request.uri()).to_string(),
-                |path| path.as_str().to_owned(),
-            );
+            // 请求 Span 不携带原始 URI；未匹配路由也必须使用固定值，
+            // 防止用户输入直接成为日志和遥测的高基数属性。
+            let path = request_route(request);
             let request_id = request
                 .extensions()
                 .get::<crate::request_id::RequestId>()
@@ -42,11 +43,11 @@ pub fn request_log_layer_with_masking()
                 .unwrap_or("-");
             let client_ip = request
                 .extensions()
-                .get::<ryframe_common::utils::ip::ClientIp>()
+                .get::<ryframe_utils::ip::ClientIp>()
                 .map(|value| value.0.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
-            tracing::info_span!(
+            tracing::info_span!(target: REQUEST_LOG_SPAN_TARGET,
                 "request",
                 http.method = %method,
                 http.route = %path,
@@ -69,9 +70,12 @@ pub fn request_log_layer_with_masking()
         )
 }
 
-/// 掩码 URI 中的敏感查询参数
-fn log_path(uri: &axum::http::Uri) -> &str {
-    uri.path()
+/// 返回日志 span 使用的路由模板；未匹配请求使用固定值以控制属性基数。
+fn request_route<B>(request: &Request<B>) -> &str {
+    request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or(UNMATCHED_ROUTE, MatchedPath::as_str)
 }
 
 #[cfg(test)]
@@ -79,14 +83,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn log_path_keeps_only_the_path() {
-        let uri: axum::http::Uri = "/api/v1/users?page=1&password=secret".parse().unwrap();
-        assert_eq!(log_path(&uri), "/api/v1/users");
+    fn unmatched_requests_use_a_fixed_log_route() {
+        let request = Request::builder()
+            .uri("/not-found/123?token=secret")
+            .body(())
+            .expect("construct an unmatched request");
+
+        assert_eq!(request_route(&request), UNMATCHED_ROUTE);
     }
 
     #[test]
-    fn log_path_handles_a_path_without_query() {
-        let uri: axum::http::Uri = "/api/v1/users".parse().unwrap();
-        assert_eq!(log_path(&uri), "/api/v1/users");
+    fn request_log_span_target_is_stable() {
+        assert_eq!(REQUEST_LOG_SPAN_TARGET, "ryframe.request_log");
     }
 }

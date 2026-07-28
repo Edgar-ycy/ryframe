@@ -1,6 +1,6 @@
 use std::{collections::HashSet, path::Path};
 
-use ryframe_common::AppResult;
+use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -103,16 +103,10 @@ pub struct WriteReport {
 /// 验证表名合法性
 fn validate_table_name(name: &str) -> AppResult<()> {
     if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return Err(ryframe_common::AppError::Validation(format!(
-            "表名包含非法字符: {}",
-            name
-        )));
+        return Err(AppError::Validation(format!("表名包含非法字符: {}", name)));
     }
     if name.contains("..") {
-        return Err(ryframe_common::AppError::Validation(format!(
-            "非法表名: {}",
-            name
-        )));
+        return Err(AppError::Validation(format!("非法表名: {}", name)));
     }
     Ok(())
 }
@@ -121,7 +115,7 @@ fn normalize_relative_path(path: &str, label: &str) -> AppResult<String> {
     let portable = path.replace('\\', "/");
     let has_drive_prefix = portable.as_bytes().get(1) == Some(&b':');
     if portable.is_empty() || portable.starts_with('/') || has_drive_prefix {
-        return Err(ryframe_common::AppError::Validation(format!(
+        return Err(AppError::Validation(format!(
             "{}必须是非空的工作区相对路径",
             label
         )));
@@ -132,10 +126,7 @@ fn normalize_relative_path(path: &str, label: &str) -> AppResult<String> {
         .iter()
         .any(|segment| segment.is_empty() || matches!(*segment, "." | ".."))
     {
-        return Err(ryframe_common::AppError::Validation(format!(
-            "{}包含非法路径片段",
-            label
-        )));
+        return Err(AppError::Validation(format!("{}包含非法路径片段", label)));
     }
     Ok(segments.join("/"))
 }
@@ -146,9 +137,7 @@ pub async fn generate(
     opts: &GenerateOptions,
 ) -> AppResult<Vec<GeneratedFile>> {
     if opts.tables.is_empty() {
-        return Err(ryframe_common::AppError::Validation(
-            "未指定要生成的表名".into(),
-        ));
+        return Err(AppError::Validation("未指定要生成的表名".into()));
     }
 
     let entity_base = normalize_relative_path(&opts.entity_dir, "实体输出目录")?;
@@ -170,14 +159,14 @@ pub async fn generate(
             .filter(|column| column.is_primary_key)
             .count();
         if primary_key_count != 1 {
-            return Err(ryframe_common::AppError::Validation(format!(
+            return Err(AppError::Validation(format!(
                 "表 {} 必须且只能包含一个主键，当前为 {} 个",
                 table_name, primary_key_count
             )));
         }
         let base_name = crate::naming::strip_prefixes(table_name, &opts.table_prefixes);
         if base_name.is_empty() {
-            return Err(ryframe_common::AppError::Validation(format!(
+            return Err(AppError::Validation(format!(
                 "表 {} 去除前缀后名称为空",
                 table_name
             )));
@@ -246,7 +235,7 @@ fn push_generated_file(
     content: String,
 ) -> AppResult<()> {
     if !paths.insert(path.clone()) {
-        return Err(ryframe_common::AppError::Validation(format!(
+        return Err(AppError::Validation(format!(
             "多个表生成了相同文件路径: {}",
             path
         )));
@@ -266,11 +255,11 @@ pub async fn write_to_disk(
 
     tokio::fs::create_dir_all(workspace_root)
         .await
-        .map_err(|e| ryframe_common::AppError::Internal(format!("创建输出根目录失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("创建输出根目录失败: {}", e)))?;
 
     let canonical_workspace = tokio::fs::canonicalize(workspace_root)
         .await
-        .map_err(|e| ryframe_common::AppError::Internal(format!("解析输出目录失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("解析输出目录失败: {}", e)))?;
 
     for f in files {
         let relative_path = normalize_relative_path(&f.path, "生成文件路径")?;
@@ -279,32 +268,25 @@ pub async fn write_to_disk(
         if let Some(parent) = full_path.parent() {
             let mut existing_ancestor = parent;
             while !existing_ancestor.exists() {
-                existing_ancestor = existing_ancestor.parent().ok_or_else(|| {
-                    ryframe_common::AppError::Validation("生成文件路径无有效父目录".into())
-                })?;
+                existing_ancestor = existing_ancestor
+                    .parent()
+                    .ok_or_else(|| AppError::Validation("生成文件路径无有效父目录".into()))?;
             }
-            let canonical_ancestor =
-                tokio::fs::canonicalize(existing_ancestor)
-                    .await
-                    .map_err(|e| {
-                        ryframe_common::AppError::Internal(format!("解析输出目录失败: {}", e))
-                    })?;
+            let canonical_ancestor = tokio::fs::canonicalize(existing_ancestor)
+                .await
+                .map_err(|e| AppError::Internal(format!("解析输出目录失败: {}", e)))?;
             if !canonical_ancestor.starts_with(&canonical_workspace) {
-                return Err(ryframe_common::AppError::Validation(
-                    "生成文件路径超出工作区".into(),
-                ));
+                return Err(AppError::Validation("生成文件路径超出工作区".into()));
             }
 
             tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|e| ryframe_common::AppError::Internal(format!("创建目录失败: {}", e)))?;
-            let canonical_parent = tokio::fs::canonicalize(parent).await.map_err(|e| {
-                ryframe_common::AppError::Internal(format!("解析输出目录失败: {}", e))
-            })?;
+                .map_err(|e| AppError::Internal(format!("创建目录失败: {}", e)))?;
+            let canonical_parent = tokio::fs::canonicalize(parent)
+                .await
+                .map_err(|e| AppError::Internal(format!("解析输出目录失败: {}", e)))?;
             if !canonical_parent.starts_with(&canonical_workspace) {
-                return Err(ryframe_common::AppError::Validation(
-                    "生成文件路径超出工作区".into(),
-                ));
+                return Err(AppError::Validation("生成文件路径超出工作区".into()));
             }
         }
 
@@ -313,7 +295,7 @@ pub async fn write_to_disk(
         } else {
             tokio::fs::write(&full_path, &f.content)
                 .await
-                .map_err(|e| ryframe_common::AppError::Internal(format!("写文件失败: {}", e)))?;
+                .map_err(|e| AppError::Internal(format!("写文件失败: {}", e)))?;
             written.push(relative_path);
         }
     }

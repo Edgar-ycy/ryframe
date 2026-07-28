@@ -14,8 +14,7 @@
 /// assert!(!has_permission(&perms, "system:role:list"));
 /// ```
 pub fn has_permission(user_perms: &[String], required: &str) -> bool {
-    // Public routes must omit the permission middleware. Failing closed here
-    // prevents a blank route annotation from silently disabling authorization.
+    // 公开路由必须不挂载权限中间件。此处默认拒绝，避免空路由注解悄然关闭授权校验。
     if required.trim().is_empty() {
         return false;
     }

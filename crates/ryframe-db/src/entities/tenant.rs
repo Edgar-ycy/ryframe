@@ -16,7 +16,7 @@ pub struct Model {
     pub max_roles: i32,
     pub max_storage_mb: i64,
     pub max_requests_per_min: i32,
-    /// Increased whenever tenant sessions must be invalidated.
+    /// 每当必须使租户会话失效时递增。
     pub session_version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

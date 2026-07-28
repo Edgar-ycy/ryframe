@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -10,8 +10,8 @@ use axum::{
     routing::{get, post},
 };
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
-use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_config::RedisMode;
+use ryframe_http::{ApiResponse, AppError, AppResult};
 use ryframe_macro::{get, route};
 use ryframe_middleware::{
     idempotency::{IdempotencyState, idempotency_middleware},
@@ -26,11 +26,12 @@ use utoipa::ToSchema;
 use crate::{
     handlers::{
         auth_handler, captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
-        generator_handler, login_log_handler, menu_handler, notice_handler, online_user_handler,
-        oper_log_handler, permission_handler, post_handler, profile_handler, role_handler,
-        user_handler,
+        export_handler, generator_handler, job_handler, login_log_handler, menu_handler,
+        message_handler, notice_handler, online_user_handler, oper_log_handler, permission_handler,
+        post_handler, profile_handler, role_handler, user_handler,
     },
     oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware},
+    request_locale::request_locale_middleware,
     state::AppState,
 };
 
@@ -80,6 +81,7 @@ where
     S: Clone + Send + Sync + 'static,
 {
     router
+        .layer(middleware::from_fn(request_locale_middleware))
         .layer(from_fn_with_state(
             AuthenticatedTenantRateLimitState {
                 limiter: state.rate_limiter.clone(),
@@ -126,20 +128,20 @@ async fn online_user_tracking(
 /// 认证路由
 ///
 /// 路由结构：
-/// - public (no auth): /login, /refresh
-/// - protected (auth → oper_log): /logout, /me
-/// - captcha (no auth): /captcha/generate, /captcha/verify
-/// - profile (auth → oper_log): /profile, /profile/password, /profile/avatar
+/// - 公开路由（无需认证）：/login、/refresh
+/// - 受保护路由（auth → oper_log）：/logout、/me
+/// - 验证码路由（无需认证）：/captcha/generate、/captcha/verify
+/// - 个人资料路由（auth → oper_log）：/profile、/profile/password、/profile/avatar
 ///
 /// 中间件执行顺序（从外到内，先注册的最内层、后注册的最外层先执行）：
-///   public:  oper_log → handler
-///   protected: auth → oper_log → handler
-///   profile:  auth → oper_log → handler
+///   `public`：操作日志 → 处理器
+///   `protected`：认证 → 操作日志 → 处理器
+///   `profile`：认证 → 操作日志 → 处理器
 pub fn auth_router(state: AppState) -> Router {
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.oper_log.clone());
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.job_queue.clone());
 
-    // Authentication endpoints can carry cookies, CSRF challenges or token data,
-    // so they never enter the generic operation-log middleware.
+    // 认证端点可能携带 Cookie、CSRF challenge 或令牌数据，因此绝不进入通用的
+    // 操作日志中间件。
     let public = Router::new()
         .route("/csrf", get(auth_handler::csrf))
         .route("/login", post(auth_handler::login))
@@ -155,6 +157,7 @@ pub fn auth_router(state: AppState) -> Router {
     let protected = protect(
         Router::new()
             .route("/me", get(auth_handler::me))
+            .route("/ws-ticket", post(auth_handler::websocket_ticket))
             .layer(from_fn_with_state(
                 oper_log_state.clone(),
                 oper_log_middleware,
@@ -162,7 +165,7 @@ pub fn auth_router(state: AppState) -> Router {
         &state,
     );
 
-    // Profile 路由（认证 + 操作日志，中间件在此统一注册）
+    // 个人资料路由（认证 + 操作日志，中间件在此统一注册）
     // profile_router 不再内嵌 .with_state()
     let profile = protect(
         Router::new()
@@ -186,7 +189,7 @@ async fn api_version() -> Json<serde_json::Value> {
         "name": env!("CARGO_PKG_NAME"),
         "version": env!("CARGO_PKG_VERSION"),
         "source_commit": env!("RYFRAME_BUILD_COMMIT"),
-        "api_prefix": "/api/v1",
+        "api_prefix": crate::API_V1_PREFIX,
         "endpoints": {
             "auth": "/api/v1/auth",
             "system": "/api/v1/system",
@@ -206,14 +209,21 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let idempotency_state = IdempotencyState::new(state.redis.clone(), 300);
     idempotency_state.spawn_gc();
     let platform = protect(
-        crate::handlers::tenant_handler::tenant_router(state.clone()).layer(from_fn_with_state(
-            idempotency_state.clone(),
-            idempotency_middleware,
-        )),
+        crate::handlers::tenant_handler::tenant_router(state.clone())
+            .layer(from_fn_with_state(
+                OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
+                oper_log_middleware,
+            ))
+            .layer(from_fn_with_state(
+                idempotency_state.clone(),
+                idempotency_middleware,
+            )),
         &state,
     );
 
     let mut router = Router::new()
+        .route("/ws", get(crate::message_socket::upgrade))
+        .with_state(state.clone())
         .nest("/auth", auth_router(state.clone()))
         .nest("/platform/tenants", platform)
         .nest(
@@ -237,13 +247,18 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
             .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
             .route("/swagger-ui", get(swagger_ui));
     }
-    router
+    router.layer(middleware::from_fn(request_locale_middleware))
 }
 
 fn monitor_router(state: AppState, monitor_state: ryframe_monitor::MonitorState) -> Router {
     let public = ryframe_monitor::public_monitor_router(monitor_state.clone());
     let protected = ryframe_monitor::protected_monitor_router(monitor_state)
-        .merge(route!(runtime_status).with_state(state.clone()));
+        .merge(route!(runtime_status).with_state(state.clone()))
+        .merge(job_handler::job_router(state.clone()))
+        .layer(from_fn_with_state(
+            OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
+            oper_log_middleware,
+        ));
 
     public.merge(protect(protected, &state))
 }
@@ -261,6 +276,11 @@ async fn runtime_status(
         .replicas
         .iter()
         .all(|replica| replica.healthy);
+    let healthy_replica_count = database_health
+        .replicas
+        .iter()
+        .filter(|replica| replica.healthy)
+        .count();
     let replicas = database_health
         .replicas
         .into_iter()
@@ -278,10 +298,10 @@ async fn runtime_status(
             connected: source.healthy,
         })
         .collect::<Vec<_>>();
-    let read_policy = if replicas.is_empty() {
-        "primary"
-    } else {
-        "round_robin"
+    let read_policy = match (replicas.len(), healthy_replica_count) {
+        (0, _) => "primary",
+        (_, 0) => "primary_fallback",
+        _ => "round_robin",
     };
     let storage_connected = state.services.file.check_storage().await.is_ok();
     let storage_config = &state.config.object_storage;
@@ -373,9 +393,9 @@ struct RuntimeCircuitBreakerStatus {
 /// 执行顺序（从外到内）：
 ///   1. auth_middleware（一次注入 RequestPrincipal）
 ///   2. authenticated_tenant_rate_limit（使用已认证租户）
-///   3. user_rate_limit_middleware
-///   4. online_user_tracking
-///   5. oper_log_middleware
+///   3. 用户限流中间件（`user_rate_limit_middleware`）
+///   4. 在线用户跟踪（`online_user_tracking`）
+///   5. 操作日志中间件（`oper_log_middleware`）
 fn system_router(
     state: AppState,
     rate_limit_state: RateLimitState,
@@ -394,6 +414,7 @@ fn system_router(
         .nest("/configs", config_handler::config_router(state.clone()))
         .nest("/dict", dict_handler::dict_router(state.clone()))
         .nest("/notices", notice_handler::notice_router(state.clone()))
+        .nest("/messages", message_handler::message_router(state.clone()))
         .nest(
             "/operlogs",
             oper_log_handler::oper_log_router(state.clone()),
@@ -408,7 +429,7 @@ fn system_router(
         )
         // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.oper_log.clone()),
+            OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
@@ -434,7 +455,7 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let router = Router::new()
         .nest("/gen", generator_handler::generator_router(state.clone()))
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.oper_log.clone()),
+            OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
@@ -448,7 +469,7 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 /// 通用功能路由（文件上传等）
 /// 上传和下载都要求认证主体，并记录操作日志。
 fn common_router(state: AppState) -> Router {
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.oper_log.clone());
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.job_queue.clone());
 
     let upload = protect(
         common_handler::upload_router(state.clone()).layer(from_fn_with_state(
@@ -463,10 +484,12 @@ fn common_router(state: AppState) -> Router {
             .layer(from_fn_with_state(oper_log_state, oper_log_middleware)),
         &state,
     );
+    let exports = protect(export_handler::export_router(state.clone()), &state);
 
     Router::new()
         .nest("/upload", upload)
         .nest("/file", download)
+        .nest("/exports", exports)
 }
 
 /// Swagger UI 交互文档页面

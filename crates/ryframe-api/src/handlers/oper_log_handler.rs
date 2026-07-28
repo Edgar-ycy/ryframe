@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::{Query, State},
 };
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{get, route};
 use ryframe_service::system::OperLogVo;
 use serde::Serialize;
@@ -34,9 +34,22 @@ async fn list(
     state
         .services
         .oper_log
-        .find_by_page(&current_user, query.into_service_query())
+        .find_by_page(
+            &current_user,
+            query.into_service_query(&state.config.pagination)?,
+        )
         .await
-        .map(|p| Json(p.to_page_response("查询成功")))
+        .map_err(AppError::from)
+        .map(|p| {
+            Json(ApiPageResponse::new(
+                p.records,
+                p.total,
+                p.page,
+                p.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 /// 操作日志不分页查询（返回全部数据）
@@ -55,7 +68,9 @@ async fn list_no_page(
         .oper_log
         .find_all(
             &current_user,
-            query.into_service_query(ryframe_core::PageQuery::all_records()),
+            query.into_service_query(ryframe_core::PageQuery::bounded_unpaged(
+                &state.config.pagination,
+            )?),
         )
         .await?;
     Ok(Json(ApiResponse::success(logs)))
@@ -100,14 +115,16 @@ async fn export_oper_logs(
     current_user: RequestPrincipal,
     Query(query): Query<OperLogFilterQuery>,
 ) -> AppResult<axum::response::Response> {
-    use ryframe_common::utils::ExcelExporter;
+    use ryframe_excel::ExcelExporter;
 
     let logs = state
         .services
         .oper_log
         .find_all(
             &current_user,
-            query.into_service_query(ryframe_core::PageQuery::all_records()),
+            query.into_service_query(ryframe_core::PageQuery::bounded_unpaged(
+                &state.config.pagination,
+            )?),
         )
         .await?;
 

@@ -2,7 +2,7 @@ mod spec;
 mod table;
 mod value;
 
-use ryframe_common::AppResult;
+use ryframe_kernel::AppResult;
 
 use self::spec::ENV_OVERRIDES;
 

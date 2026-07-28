@@ -6,6 +6,56 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 use crate::m20260522_000000_mysql_baseline::REQUIRED_TABLES;
 use crate::m20260522_000000_mysql_baseline::ddl_statements;
 
+const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
+    `id` BIGINT NOT NULL,
+    `tenant_id` VARCHAR(64) DEFAULT NULL,
+    `event_type` VARCHAR(96) NOT NULL,
+    `aggregate_type` VARCHAR(64) NOT NULL,
+    `aggregate_id` VARCHAR(128) NOT NULL,
+    `payload` JSON NOT NULL,
+    `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+    `available_at` DATETIME NOT NULL,
+    `attempts` INT NOT NULL DEFAULT 0,
+    `max_attempts` INT NOT NULL DEFAULT 5,
+    `lease_owner` VARCHAR(128) DEFAULT NULL,
+    `lease_until` DATETIME DEFAULT NULL,
+    `dedupe_key` VARCHAR(191) DEFAULT NULL,
+    `traceparent` VARCHAR(255) DEFAULT NULL,
+    `last_error` TEXT DEFAULT NULL,
+    `published_at` DATETIME DEFAULT NULL,
+    `created_at` DATETIME NOT NULL,
+    `updated_at` DATETIME NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_outbox_event_dedupe` (`event_type`, `dedupe_key`),
+    KEY `idx_outbox_event_claim` (`status`, `available_at`, `id`),
+    KEY `idx_outbox_event_lease` (`status`, `lease_until`),
+    KEY `idx_outbox_event_aggregate` (`aggregate_type`, `aggregate_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
+
+const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_export_job` (
+    `id` BIGINT NOT NULL,
+    `tenant_id` VARCHAR(64) NOT NULL,
+    `requester_id` BIGINT NOT NULL,
+    `resource` VARCHAR(64) NOT NULL,
+    `background_job_id` BIGINT NOT NULL,
+    `request_params` JSON NOT NULL,
+    `permission_code` VARCHAR(128) NOT NULL,
+    `status` VARCHAR(16) NOT NULL DEFAULT 'queued',
+    `result_file_id` BIGINT DEFAULT NULL,
+    `result_file_name` VARCHAR(255) DEFAULT NULL,
+    `content_type` VARCHAR(128) DEFAULT NULL,
+    `file_size` BIGINT DEFAULT NULL,
+    `expires_at` DATETIME DEFAULT NULL,
+    `error_message` TEXT DEFAULT NULL,
+    `created_at` DATETIME NOT NULL,
+    `updated_at` DATETIME NOT NULL,
+    `completed_at` DATETIME DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_export_job_background` (`background_job_id`),
+    KEY `idx_export_job_requester` (`tenant_id`, `requester_id`, `created_at`),
+    KEY `idx_export_job_expiry` (`status`, `expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
+
 #[derive(Debug, PartialEq, Eq)]
 struct ExpectedTable {
     engine: String,
@@ -109,12 +159,11 @@ where
     verify_schema(db, true).await
 }
 
-/// Verify the complete canonical MySQL fingerprint.
+/// 校验完整的规范 MySQL 指纹。
 ///
-/// The fingerprint deliberately covers table engine/charset/collation, column
-/// type/nullability/default/EXTRA/charset/collation/generation expression,
-/// ordered indexes, and named foreign-key actions.
-/// Extra application tables and extra objects on canonical tables are rejected.
+/// 该指纹有意覆盖表引擎、字符集、排序规则，列的类型、可空性、默认值、EXTRA、
+/// 字符集、排序规则、生成表达式，以及有序索引和具名外键操作。
+/// 额外的应用表和规范表上的额外对象均会被拒绝。
 pub async fn verify_current_schema<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -147,6 +196,9 @@ where
 
     for (table, expected_table) in &expected.tables {
         let Some(actual) = actual_tables.get(table) else {
+            if legacy && is_upgrade_table(table) {
+                continue;
+            }
             problems.push(format!("missing table {table}"));
             continue;
         };
@@ -176,7 +228,9 @@ where
     }
 
     for ((table, column), expected_column) in &expected.columns {
-        if !actual_tables.contains_key(table) || (legacy && is_upgrade_column(table, column)) {
+        if !actual_tables.contains_key(table)
+            || (legacy && (is_upgrade_table(table) || is_upgrade_column(table, column)))
+        {
             continue;
         }
         let Some(actual) = actual_columns.get(&(table.clone(), column.clone())) else {
@@ -240,10 +294,11 @@ where
     for ((table, name), expected_index) in &expected.indexes {
         if !actual_tables.contains_key(table)
             || (legacy
-                && (expected_index
-                    .columns
-                    .iter()
-                    .any(|column| is_upgrade_column(table, column))
+                && (is_upgrade_table(table)
+                    || expected_index
+                        .columns
+                        .iter()
+                        .any(|column| is_upgrade_column(table, column))
                     || is_upgrade_index(table, name)))
         {
             continue;
@@ -277,10 +332,11 @@ where
     for ((table, name), expected_foreign_key) in &expected.foreign_keys {
         if !actual_tables.contains_key(table)
             || (legacy
-                && (expected_foreign_key
-                    .columns
-                    .iter()
-                    .any(|column| is_upgrade_column(table, column))
+                && (is_upgrade_table(table)
+                    || expected_foreign_key
+                        .columns
+                        .iter()
+                        .any(|column| is_upgrade_column(table, column))
                     || is_upgrade_foreign_key(table, name)))
         {
             continue;
@@ -485,7 +541,7 @@ where
 
 fn expected_schema() -> Result<ExpectedSchema, DbErr> {
     let mut schema = ExpectedSchema::default();
-    for statement in ddl_statements() {
+    for statement in ddl_statements().chain([OUTBOX_EVENT_DDL, EXPORT_JOB_DDL]) {
         let table = extract_table_name(statement).ok_or_else(|| {
             DbErr::Custom("canonical baseline contains an invalid CREATE TABLE statement".into())
         })?;
@@ -608,7 +664,22 @@ fn expected_schema() -> Result<ExpectedSchema, DbErr> {
             index += 1;
         }
     }
+    add_post_baseline_constraints(&mut schema);
     Ok(schema)
+}
+
+/// 补充必须在基线表创建完成后才能添加的跨表约束。
+fn add_post_baseline_constraints(schema: &mut ExpectedSchema) {
+    schema.foreign_keys.insert(
+        ("sys_user".into(), "fk_user_avatar_file".into()),
+        ExpectedForeignKey {
+            columns: vec!["avatar_file_id".into()],
+            referenced_table: "sys_file".into(),
+            referenced_columns: vec!["id".into()],
+            update_rule: "cascade".into(),
+            delete_rule: "restrict".into(),
+        },
+    );
 }
 
 fn extract_table_name(statement: &str) -> Option<String> {
@@ -828,18 +899,31 @@ fn nullable_label(nullable: bool) -> &'static str {
     if nullable { "NULL" } else { "NOT NULL" }
 }
 
-// These are the only canonical v0.5 objects that a pre-v0.5 RyFrame schema may
-// omit. Any other drift is treated as a partial or incompatible initialization.
+fn is_upgrade_table(table: &str) -> bool {
+    matches!(
+        table,
+        "sys_background_job"
+            | "sys_outbox_event"
+            | "sys_export_job"
+            | "sys_message"
+            | "sys_message_audience"
+            | "sys_message_recipient"
+    )
+}
+
+// 这些是 v0.5 前的 RyFrame schema 可能缺失的唯一规范 v0.5 对象。其他任何差异
+// 都会被视为不完整或不兼容的初始化。
 fn is_upgrade_column(table: &str, column: &str) -> bool {
     matches!(
         (table, column),
         ("sys_tenant", "session_version")
             | ("sys_user", "auth_version")
+            | ("sys_user", "preferred_locale" | "avatar_file_id")
             | ("sys_role", "is_super")
             | ("sys_menu", "perm_id" | "route_key")
             | (
                 "sys_file",
-                "upload_status" | "reservation_token" | "reservation_expires_at"
+                "upload_status" | "reservation_token" | "reservation_expires_at" | "file_sha256"
             )
             | (
                 "sys_login_info" | "sys_oper_log" | "password_reset_requests",
@@ -854,11 +938,12 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
         (
             "sys_menu",
             "idx_perm_id" | "idx_menu_tenant_perm" | "idx_menu_tenant_route"
-        ) | ("sys_login_info" | "sys_oper_log", "idx_tenant_id")
+        ) | ("sys_user", "idx_user_avatar_file")
+            | ("sys_login_info" | "sys_oper_log", "idx_tenant_id")
             | ("password_reset_requests", "idx_password_reset_tenant")
             | (
                 "sys_file",
-                "idx_file_upload_reservation" | "idx_file_reservation_expiry"
+                "idx_file_upload_reservation" | "idx_file_reservation_expiry" | "idx_file_sha256"
             )
     )
 }
@@ -866,7 +951,8 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
 fn is_upgrade_foreign_key(table: &str, name: &str) -> bool {
     matches!(
         (table, name),
-        ("sys_menu", "fk_sys_menu_permission")
+        ("sys_user", "fk_user_avatar_file")
+            | ("sys_menu", "fk_sys_menu_permission")
             | ("sys_login_info", "fk_sys_login_info_tenant")
             | ("sys_oper_log", "fk_sys_oper_log_tenant")
             | ("password_reset_requests", "fk_password_reset_tenant")
@@ -1011,8 +1097,16 @@ mod tests {
         assert!(is_upgrade_column("sys_file", "upload_status"));
         assert!(is_upgrade_column("sys_file", "reservation_token"));
         assert!(is_upgrade_column("sys_file", "reservation_expires_at"));
+        assert!(is_upgrade_column("sys_file", "file_sha256"));
+        assert!(is_upgrade_table("sys_background_job"));
+        assert!(is_upgrade_table("sys_message"));
+        assert!(is_upgrade_column("sys_user", "preferred_locale"));
+        assert!(is_upgrade_column("sys_user", "avatar_file_id"));
+        assert!(is_upgrade_index("sys_user", "idx_user_avatar_file"));
+        assert!(is_upgrade_foreign_key("sys_user", "fk_user_avatar_file"));
         assert!(is_upgrade_index("sys_file", "idx_file_upload_reservation"));
         assert!(is_upgrade_index("sys_file", "idx_file_reservation_expiry"));
+        assert!(is_upgrade_index("sys_file", "idx_file_sha256"));
         assert!(!is_upgrade_column("sys_menu", "name"));
         assert!(!is_upgrade_column("sys_file", "file_size"));
         assert!(!is_upgrade_index("sys_file", "idx_file_md5"));

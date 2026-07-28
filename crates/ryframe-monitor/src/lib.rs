@@ -9,8 +9,8 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
-use ryframe_common::{ApiResponse, AppResult};
 use ryframe_core::{DatabaseMonitor, RedisClient};
+use ryframe_http::{ApiResponse, AppResult};
 use ryframe_macro::{get, route};
 use serde::Serialize;
 pub use server_info::ServerInfo;
@@ -25,7 +25,7 @@ pub struct DbPoolInfo {
     pub timestamp: String,
 }
 
-/// Monitor route state.
+/// 监控路由状态。
 #[derive(Clone)]
 pub struct MonitorState {
     pub database: Arc<dyn DatabaseMonitor>,
@@ -33,8 +33,8 @@ pub struct MonitorState {
     pub metrics_bearer_token: Arc<str>,
 }
 
-/// Public metrics route. Process and dependency probes live at `/livez` and
-/// `/readyz` on the root application router.
+/// 公开指标路由。进程和依赖探针位于根应用路由的 `/livez` 与
+/// `/readyz`。
 pub fn public_monitor_router(state: MonitorState) -> axum::Router {
     use axum::routing::get as axum_get;
 
@@ -43,7 +43,7 @@ pub fn public_monitor_router(state: MonitorState) -> axum::Router {
         .with_state(state)
 }
 
-/// Sensitive monitor routes. Authentication is applied by the API composition layer.
+/// 敏感监控路由。认证由 API 组合层施加。
 pub fn protected_monitor_router(state: MonitorState) -> axum::Router {
     axum::Router::new()
         .merge(route!(server_info_handler))

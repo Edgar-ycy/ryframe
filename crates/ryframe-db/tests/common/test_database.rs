@@ -1,10 +1,9 @@
-//! Shared MySQL integration-test database fixture.
+//! 共享的 MySQL 集成测试数据库夹具。
 //!
-//! Every database created here has a fixed, validated prefix. `Drop` releases
-//! the pool handle and removes the database on a dedicated runtime, so cleanup
-//! also runs while a test is unwinding after a panic. CI additionally tears down
-//! the Compose MySQL tmpfs volume with `if: always()` as the hard-abort
-//! fallback, where Rust destructors cannot run.
+//! 此处创建的每个数据库都有固定且已校验的前缀。`Drop` 会释放连接池句柄，并在专用
+//! runtime 中删除数据库，因此测试在 panic 后展开时也会执行清理。CI 还会通过
+//! `if: always()` 拆除 Compose MySQL tmpfs 卷，作为 Rust 析构函数无法运行时的
+//! 强制中止回退方案。
 
 use std::{
     ops::Deref,
@@ -24,11 +23,10 @@ const MYSQL_IDENTIFIER_LIMIT: usize = 64;
 
 static DATABASE_SEQUENCE: AtomicU32 = AtomicU32::new(1);
 
-/// Owns an isolated MySQL database for the lifetime of one test context.
+/// 在一个测试上下文的整个生命周期内持有隔离的 MySQL 数据库。
 ///
-/// The type deliberately does not implement `Clone`: calling `db.clone()`
-/// uses `Deref` and clones only the underlying `DatabaseConnection`, while the
-/// original fixture remains responsible for cleanup.
+/// 此类型刻意不实现 `Clone`：调用 `db.clone()` 会借助 `Deref`，仅克隆底层
+/// `DatabaseConnection`，原夹具仍负责清理。
 pub struct TestDatabase {
     connection: Option<DatabaseConnection>,
     admin_url: String,
@@ -93,8 +91,8 @@ impl Deref for TestDatabase {
     }
 }
 
-// SeaORM's query helpers are generic over ConnectionTrait, so Deref alone is
-// not sufficient for calls such as `Entity::find().one(&db)`.
+// SeaORM 的查询辅助方法泛型约束为 `ConnectionTrait`，因此仅靠 `Deref` 不足以
+// 支持 `Entity::find().one(&db)` 之类的调用。
 #[async_trait::async_trait]
 impl ConnectionTrait for TestDatabase {
     fn get_database_backend(&self) -> DbBackend {
@@ -126,8 +124,7 @@ impl Drop for TestDatabase {
         };
         let admin_url = self.admin_url.clone();
 
-        // Refuse to execute identifier SQL if memory corruption or a future
-        // refactor ever bypasses creation-time validation.
+        // 若内存损坏或未来重构绕过创建时校验，则拒绝执行标识符 SQL。
         if let Err(message) = validate_test_database_name(&database_name) {
             eprintln!("refusing unsafe MySQL test database cleanup: {message}");
             return;
@@ -148,13 +145,10 @@ impl Drop for TestDatabase {
                 };
 
                 runtime.block_on(async move {
-                    // The pool was created on the test runtime. Awaiting
-                    // `close()` here can wait on connection tasks that cannot
-                    // run while the test thread is joining this cleanup
-                    // thread. Releasing the handle is sufficient: MySQL can
-                    // drop an isolated database while idle sessions still
-                    // reference it, and those sessions are closed when their
-                    // original runtime resumes.
+                    // 连接池创建于测试 runtime。在此等待 `close()` 可能会等待连接
+                    // 任务，但测试线程正在等待此清理线程结束，连接任务无法运行。释放
+                    // 句柄已足够：即使空闲会话仍引用隔离数据库，MySQL 也可以删除它；
+                    // 这些会话会在其原始 runtime 恢复时关闭。
                     drop(connection);
                     let Ok(admin) = Database::connect(&admin_url).await else {
                         eprintln!("failed to connect for MySQL test database cleanup");

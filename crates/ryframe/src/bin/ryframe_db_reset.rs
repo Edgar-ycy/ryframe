@@ -1,6 +1,6 @@
-//! Explicit, non-production MySQL reset utility.
+//! 显式运行的非生产 MySQL 重置工具。
 //!
-//! Example:
+//! 示例：
 //! `cargo run -p ryframe --bin ryframe-db-reset -- --database ryframe_config --confirm-reset RESET-RYFRAME-DATABASE`
 
 use ryframe_config::DbConnection;
@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let args = parse_args()?;
-    let config = ryframe_config::AppConfig::load("config")?;
+    let config = ryframe_config::AppConfig::load_from_env()?;
     if config.database.primary.database != args.expected_database {
         return Err(format!(
             "configured database does not match --database (configured: {}, expected: {})",
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_database_name(&args.expected_database)
         .map_err(|error| format!("refusing reset: {error}"))?;
 
-    // Do all fallible password work before the first destructive operation.
+    // 在第一次破坏性操作前完成所有可能失败的密码处理。
     let admin_hash = ryframe_auth::password::hash(ADMIN_PASSWORD)?;
     let user_hash = ryframe_auth::password::hash(USER_PASSWORD)?;
 
@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database = ryframe_db::connection::connect(&config.database.primary).await?;
     verify_connected_database(&database, &args.expected_database).await?;
     let initialize_result: Result<(), Box<dyn std::error::Error>> = async {
-        ryframe_db_migration::run(&database).await?;
+        ryframe_db_migration::up(&database).await?;
         update_password(&database, "admin", admin_hash).await?;
         update_password(&database, "user", user_hash).await?;
         Ok(())
@@ -73,9 +73,8 @@ async fn recreate_database(
     let [drop_statement, create_statement] = recreate_database_statements(expected_database)
         .map_err(|error| format!("refusing reset: {error}"))?;
 
-    // Connect through MySQL's administration schema so the target database
-    // can be dropped even when it is missing or contains an incompatible
-    // legacy schema. This connection never includes the target database.
+    // 通过 MySQL 管理库连接，使目标数据库即使不存在或包含不兼容的旧结构也能被删除。
+    // 该连接始终不包含目标数据库。
     let mut admin_config = connection.clone();
     admin_config.database = "mysql".to_owned();
     admin_config.max_connections = 1;

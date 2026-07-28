@@ -112,8 +112,7 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
-        // The migration backfills production data; rolling it back must not
-        // silently discard tenant ownership information.
+        // 此迁移会回填生产数据；回滚时不得静默丢弃租户归属信息。
         Ok(())
     }
 }

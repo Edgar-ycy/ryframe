@@ -3,15 +3,15 @@
 //! 自动为所有响应添加安全相关的 HTTP 头，提升应用安全性。
 //!
 //! 支持的安全头：
-//! - `Content-Security-Policy` (CSP)
-//! - `Strict-Transport-Security` (HSTS)
-//! - `X-Content-Type-Options`
-//! - `X-Frame-Options`
-//! - `X-XSS-Protection`
-//! - `Referrer-Policy`
-//! - `Permissions-Policy`
-//! - `Cross-Origin-Opener-Policy`
-//! - `Cross-Origin-Resource-Policy`
+//! - `Content-Security-Policy` 内容安全策略（CSP）
+//! - `Strict-Transport-Security` 严格传输安全策略（HSTS）
+//! - `X-Content-Type-Options` 响应头
+//! - `X-Frame-Options` 响应头
+//! - `X-XSS-Protection` 响应头
+//! - `Referrer-Policy` 响应头
+//! - `Permissions-Policy` 响应头
+//! - `Cross-Origin-Opener-Policy` 响应头
+//! - `Cross-Origin-Resource-Policy` 响应头
 
 use std::collections::HashMap;
 
@@ -37,11 +37,11 @@ pub struct SecurityHeadersConfig {
     /// 是否在 HSTS 中包含子域名
     pub hsts_include_subdomains: bool,
 
-    /// X-Frame-Options
+    /// X-Frame-Options 响应头。
     /// 默认：`DENY`
     pub x_frame_options: Option<String>,
 
-    /// Referrer-Policy
+    /// Referrer-Policy 响应头。
     /// 默认：`strict-origin-when-cross-origin`
     pub referrer_policy: Option<String>,
 
@@ -152,35 +152,35 @@ pub async fn security_headers_middleware(
 ) -> Response {
     let mut response = next.run(request).await;
 
-    // ========== X-Content-Type-Options ==========
+    // ========== X-Content-Type-Options 响应头 ==========
     HeaderWriter::insert_static(
         response.headers_mut(),
         header::X_CONTENT_TYPE_OPTIONS,
         "nosniff",
     );
 
-    // ========== X-XSS-Protection ==========
+    // ========== X-XSS-Protection 响应头 ==========
     HeaderWriter::insert_static(
         response.headers_mut(),
         HeaderName::from_static("x-xss-protection"),
         "1; mode=block",
     );
 
-    // ========== X-Frame-Options ==========
+    // ========== X-Frame-Options 响应头 ==========
     HeaderWriter::insert_optional(
         response.headers_mut(),
         header::X_FRAME_OPTIONS,
         config.x_frame_options.as_deref(),
     );
 
-    // ========== X-DNS-Prefetch-Control ==========
+    // ========== X-DNS-Prefetch-Control 响应头 ==========
     HeaderWriter::insert_static(
         response.headers_mut(),
         HeaderName::from_static("x-dns-prefetch-control"),
         "off",
     );
 
-    // ========== HSTS ==========
+    // ========== HSTS 传输安全策略 ==========
     if let Some(max_age) = config.hsts_max_age {
         let hsts = if config.hsts_include_subdomains {
             format!("max-age={}; includeSubDomains", max_age)
@@ -194,28 +194,28 @@ pub async fn security_headers_middleware(
         );
     }
 
-    // ========== Content-Security-Policy ==========
+    // ========== Content-Security-Policy 响应头 ==========
     HeaderWriter::insert_optional(
         response.headers_mut(),
         header::CONTENT_SECURITY_POLICY,
         config.content_security_policy.as_deref(),
     );
 
-    // ========== Referrer-Policy ==========
+    // ========== Referrer-Policy 响应头 ==========
     HeaderWriter::insert_optional(
         response.headers_mut(),
         header::REFERRER_POLICY,
         config.referrer_policy.as_deref(),
     );
 
-    // ========== Permissions-Policy ==========
+    // ========== Permissions-Policy 响应头 ==========
     HeaderWriter::insert_optional(
         response.headers_mut(),
         HeaderName::from_static("permissions-policy"),
         config.permissions_policy.as_deref(),
     );
 
-    // ========== Cross-Origin-* ==========
+    // ========== Cross-Origin 跨源隔离响应头 ==========
     HeaderWriter::insert_static(
         response.headers_mut(),
         HeaderName::from_static("cross-origin-opener-policy"),

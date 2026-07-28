@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement, TryGetable};
-use sea_orm_migration::MigratorTrait;
+use sea_orm_migration::{MigratorTrait, SchemaManager};
 
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const TEST_DATABASE_PREFIX: &str = "ryframe_migration_test_";
@@ -23,6 +23,46 @@ async fn empty_mysql_schema_is_initialized_and_idempotent() {
         .unwrap()
         .unwrap();
     assert_eq!(i64::try_get_by_index(&row, 0).unwrap(), 6);
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.tables \
+             WHERE table_schema = DATABASE() AND table_name = 'sys_outbox_event'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.statistics \
+             WHERE table_schema = DATABASE() AND table_name = 'sys_outbox_event' \
+             AND INDEX_NAME IN ('uq_outbox_event_dedupe', 'idx_outbox_event_claim', \
+                                'idx_outbox_event_lease', 'idx_outbox_event_aggregate')",
+        )
+        .await,
+        4
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.tables \
+             WHERE table_schema = DATABASE() AND table_name = 'sys_export_job'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.statistics \
+             WHERE table_schema = DATABASE() AND table_name = 'sys_export_job' \
+             AND INDEX_NAME IN ('uq_export_job_background', 'idx_export_job_requester', \
+                                'idx_export_job_expiry')",
+        )
+        .await,
+        3
+    );
     let row = database
         .query_one_raw(Statement::from_string(
             DbBackend::MySql,
@@ -108,7 +148,8 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
             &database,
             "SELECT COUNT(*) FROM sys_file \
              WHERE id = 9002 AND upload_status = 'ready' \
-             AND reservation_token IS NULL AND reservation_expires_at IS NULL",
+             AND reservation_token IS NULL AND reservation_expires_at IS NULL \
+             AND file_sha256 IS NULL",
         )
         .await,
         1
@@ -118,20 +159,114 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
             &database,
             "SELECT COUNT(*) FROM information_schema.COLUMNS \
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
-             AND COLUMN_NAME IN ('upload_status', 'reservation_token', 'reservation_expires_at')",
+             AND COLUMN_NAME IN ('upload_status', 'reservation_token', 'reservation_expires_at', 'file_sha256')",
         )
         .await,
-        3
+        4
     );
     assert_eq!(
         scalar_count(
             &database,
             "SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS \
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
-             AND INDEX_NAME IN ('idx_file_upload_reservation', 'idx_file_reservation_expiry')",
+             AND INDEX_NAME IN ('idx_file_upload_reservation', 'idx_file_reservation_expiry', 'idx_file_sha256')",
         )
         .await,
-        2
+        3
+    );
+
+    cleanup_database(admin, database, &name).await;
+}
+
+#[tokio::test]
+async fn platform_message_permission_repair_removes_only_non_system_grants() {
+    let (admin, database, name) = isolated_database().await;
+    ryframe_db_migration::run(&database).await.unwrap();
+    database
+        .execute_unprepared(
+            "INSERT INTO sys_tenant (id, tenant_id, name, status) \
+             VALUES (700000001, 'tenant-platform-leak', '历史权限租户', '1')",
+        )
+        .await
+        .unwrap();
+    database
+        .execute_unprepared(
+            "INSERT INTO sys_role \
+             (id, tenant_id, name, code, is_super, data_scope, status, sort) \
+             VALUES (700000002, 'tenant-platform-leak', '历史管理员', 'legacy-admin', 1, '1', '1', 1)",
+        )
+        .await
+        .unwrap();
+    database
+        .execute_unprepared(
+            "INSERT INTO sys_permission \
+             (id, tenant_id, name, code, parent_id, perm_type, sort, status) \
+             VALUES (700000003, 'tenant-platform-leak', '跨租户发布消息', \
+                     'platform:message:publish', NULL, 'api', 1, '1')",
+        )
+        .await
+        .unwrap();
+    database
+        .execute_unprepared(
+            "INSERT INTO sys_role_permission (tenant_id, role_id, perm_id) \
+             VALUES ('tenant-platform-leak', 700000002, 700000003)",
+        )
+        .await
+        .unwrap();
+    database
+        .execute_unprepared(
+            "INSERT INTO sys_menu \
+             (id, tenant_id, name, menu_type, perm_id, sort, visible, status, del_flag) \
+             VALUES (700000004, 'tenant-platform-leak', '历史跨租户发布', 'F', 700000003, 1, 1, '1', '0')",
+        )
+        .await
+        .unwrap();
+
+    let migration = ryframe_db_migration::Migrator::migrations()
+        .into_iter()
+        .find(|migration| migration.name() == "m20260726_000011_platform_message_permission_scope")
+        .expect("platform permission repair migration");
+    migration
+        .up(&SchemaManager::new(&database))
+        .await
+        .expect("repair historical platform permission");
+
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_permission \
+             WHERE tenant_id = 'tenant-platform-leak' \
+               AND code = 'platform:message:publish'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_role_permission \
+             WHERE tenant_id = 'tenant-platform-leak' AND perm_id = 700000003",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_menu \
+             WHERE id = 700000004 AND perm_id IS NULL",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_permission \
+             WHERE tenant_id = 'system' AND code = 'platform:message:publish'",
+        )
+        .await,
+        1
     );
 
     cleanup_database(admin, database, &name).await;

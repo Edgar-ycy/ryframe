@@ -3,8 +3,8 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{PostListParams, PostVo};
 use serde::Serialize;
@@ -55,13 +55,23 @@ async fn list(
     current_user: RequestPrincipal,
     Query(query): Query<PostListQuery>,
 ) -> AppResult<Json<ApiPageResponse<PostVo>>> {
-    let (page, filter) = query.into_parts();
+    let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
         .post
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map(|p| Json(p.to_page_response("查询成功")))
+        .map_err(AppError::from)
+        .map(|p| {
+            Json(ApiPageResponse::new(
+                p.records,
+                p.total,
+                p.page,
+                p.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 /// 岗位列表不分页查询（返回全部数据）
@@ -81,9 +91,10 @@ async fn list_no_page(
         .post
         .find_by_page(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await
+        .map_err(AppError::from)
         .map(|page| Json(ApiResponse::success(page.records)))
 }
 
@@ -118,6 +129,7 @@ async fn create(
         .post
         .create(&current_user, &dto.name, &dto.code, dto.sort.unwrap_or(0))
         .await
+        .map_err(AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -145,6 +157,7 @@ async fn update(
             dto.status,
         )
         .await
+        .map_err(AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -152,7 +165,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:post:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -198,14 +211,14 @@ async fn export_posts(
     current_user: RequestPrincipal,
     Query(query): Query<PostFilterQuery>,
 ) -> AppResult<axum::response::Response> {
-    use ryframe_common::utils::ExcelExporter;
+    use ryframe_excel::ExcelExporter;
 
     let all_posts = state
         .services
         .post
         .find_by_page(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await?
         .records;

@@ -1,4 +1,4 @@
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 use super::spec::EnvValueType;
 
@@ -9,6 +9,10 @@ pub(super) fn parse(name: &str, value: &str, value_type: EnvValueType) -> AppRes
             .parse::<i64>()
             .map(toml::Value::Integer)
             .map_err(|e| AppError::Config(format!("环境变量 {} 不是有效整数: {}", name, e))),
+        EnvValueType::Float => value
+            .parse::<f64>()
+            .map(toml::Value::Float)
+            .map_err(|e| AppError::Config(format!("环境变量 {} 不是有效小数: {}", name, e))),
         EnvValueType::Bool => value
             .parse::<bool>()
             .map(toml::Value::Boolean)

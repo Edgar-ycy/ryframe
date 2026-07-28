@@ -1,8 +1,8 @@
 use std::{collections::HashSet, time::Duration};
 
 use log::LevelFilter;
-use ryframe_common::{AppError, AppResult};
 use ryframe_config::{DbConnection, SqlLogLevel};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Statement};
 
 /// 根据数据库配置创建连接池
@@ -56,7 +56,7 @@ pub async fn ping(db: &DatabaseConnection) -> AppResult<()> {
         .map_err(|e| AppError::Database(format!("数据库健康检查失败: {}", e)))
 }
 
-/// 所有必需的业务表（对应 ryframe_config.sql 中的 17 张表）
+/// 所有必需的业务表（与初始化 SQL 和迁移保持同步）。
 const REQUIRED_TABLES: &[&str] = &[
     "sys_tenant",
     "sys_dept",
@@ -76,6 +76,10 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_role_dept",
     "sys_user_role",
     "sys_role_permission",
+    "sys_background_job",
+    "sys_message",
+    "sys_message_audience",
+    "sys_message_recipient",
 ];
 
 #[derive(Debug, FromQueryResult)]

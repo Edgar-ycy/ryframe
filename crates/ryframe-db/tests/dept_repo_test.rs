@@ -1,15 +1,15 @@
-//! DeptRepository integration tests.
+//! `DeptRepository` 集成测试。
 
 mod common;
 
 use chrono::Utc;
 use common::setup_test_db;
-use ryframe_common::utils::snowflake;
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::{
     DeptRepository,
     entities::{dept, role, role_dept},
 };
+use ryframe_utils::snowflake;
 use sea_orm::{DatabaseConnection, EntityTrait};
 
 const TENANT: &str = "system";

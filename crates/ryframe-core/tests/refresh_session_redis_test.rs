@@ -44,8 +44,7 @@ async fn redis_store() -> (RedisClient, RefreshSessionStore) {
     (redis, store)
 }
 
-/// Covers the production Lua CAS against the Compose Redis service, including
-/// the exact grace-window boundaries and idempotent attempt recovery.
+/// 覆盖针对 Compose Redis 服务的生产 Lua CAS，包括精确的宽限窗口边界和幂等尝试恢复。
 #[tokio::test]
 #[ignore = "requires the Docker Compose Redis service on port 16379"]
 async fn redis_refresh_rotation_cas_semantics() {
@@ -213,9 +212,8 @@ async fn redis_refresh_rotation_cas_semantics() {
     assert!(store.is_active(&second_device_sid).await.unwrap());
 }
 
-/// Fault injection for the ambiguous-response path. The local tests assert
-/// exact recovered metadata; this real Redis test ensures a timed-out CAS can
-/// be retried with the same signed-attempt identity without revoking family.
+/// 对响应不明确路径进行故障注入。本地测试会断言精确恢复的元数据；此真实 Redis 测试确保
+/// 超时的 CAS 可使用相同已签名尝试身份重试，且不会撤销令牌族。
 #[tokio::test]
 #[ignore = "requires the Docker Compose Redis service on port 16379"]
 async fn redis_refresh_rotation_recovers_after_transient_response_loss() {
@@ -241,7 +239,7 @@ async fn redis_refresh_rotation_recovers_after_transient_response_loss() {
         .await;
     assert!(matches!(
         first,
-        Err(ryframe_common::AppError::ServiceUnavailable(_))
+        Err(ryframe_kernel::AppError::ServiceUnavailable(_))
     ));
 
     tokio::time::sleep(std::time::Duration::from_millis(1_750)).await;
@@ -255,10 +253,8 @@ async fn redis_refresh_rotation_recovers_after_transient_response_loss() {
         )
         .await
         .unwrap();
-    // Depending on whether the connection manager cancelled before Redis
-    // consumed the queued command, the retry either recovers the committed
-    // first proposal or becomes the one CAS winner. Both are safe. A second
-    // retry of the same attempt must converge on that exact committed value.
+    // 连接管理器可能在 Redis 消费排队命令前取消连接；重试要么恢复已提交的首个提案，
+    // 要么成为唯一的 CAS 获胜者。两种情况均安全。同一尝试再次重试必须收敛到该确切提交值。
     let committed_jti = match retry {
         RefreshRotation::Rotated { current_jti, .. }
         | RefreshRotation::Recovered { current_jti, .. } => current_jti,

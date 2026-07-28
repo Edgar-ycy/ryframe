@@ -1,7 +1,7 @@
 use ryframe_auth::{jwt, password};
-use ryframe_common::{ActorContext, AppError, AppResult};
 use ryframe_core::{RefreshFamily, RefreshRotation, Repository};
 use ryframe_db::{TenantRepository, entities::user};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use super::{AuthService, LoginResult, UserInfo};
 
@@ -25,10 +25,18 @@ impl AuthService {
         let user = self
             .user_repo
             .find_by_username(self.db.write(), tenant_id, username)
-            .await?
-            .ok_or_else(|| AppError::Authentication("用户名或密码错误".into()))?;
+            .await?;
 
-        if !password::verify(password, &user.password_hash)? {
+        // 始终执行 Argon2 校验（包括未知账户），避免更快的数据库未命中泄露用户名
+        // 是否存在。
+        let password_matches = password::verify_or_dummy(
+            password,
+            user.as_ref().map(|user| user.password_hash.as_str()),
+        )?;
+        let Some(user) = user else {
+            return Err(AppError::Authentication("用户名或密码错误".into()));
+        };
+        if !password_matches {
             return Err(AppError::Authentication("用户名或密码错误".into()));
         }
         if !user.is_enabled() {

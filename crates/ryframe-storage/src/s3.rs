@@ -5,12 +5,14 @@ use chrono::Utc;
 use reqwest::{Method, RequestBuilder, Response, Url};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tracing::Instrument;
 
 use super::{
-    ObjectStorage, StorageError, StorageResult, key_segments, signing::SigV4Signer, validate_bucket,
+    ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
+    signing::SigV4Signer, storage_operation_span, trace_storage_operation, validate_bucket,
 };
 
-/// Connection and signing settings for a path-style S3-compatible endpoint.
+/// 路径风格 S3 兼容端点的连接与签名配置。
 #[derive(Clone, Debug)]
 pub struct S3Config {
     pub endpoint: String,
@@ -20,7 +22,7 @@ pub struct S3Config {
     pub region: String,
 }
 
-/// S3-compatible HTTP backend suitable for AWS S3 and MinIO.
+/// 适用于 AWS S3 与 MinIO 的 S3 兼容 HTTP 后端。
 pub struct S3ObjectStorage {
     endpoint: Url,
     access_key: String,
@@ -68,8 +70,10 @@ impl S3ObjectStorage {
         let url = self.bucket_url(bucket)?;
         let payload_hash = empty_payload_hash();
         let response = self
-            .signed_request(Method::HEAD, url, &payload_hash)?
-            .send()
+            .send_request(
+                StorageOperation::BucketHead,
+                self.signed_request(Method::HEAD, url, &payload_hash)?,
+            )
             .await?;
         match response.status().as_u16() {
             200..=299 => Ok(true),
@@ -93,7 +97,9 @@ impl S3ObjectStorage {
         if !body.is_empty() {
             request = request.header("Content-Type", "application/xml").body(body);
         }
-        let response = request.send().await?;
+        let response = self
+            .send_request(StorageOperation::BucketCreate, request)
+            .await?;
         if response.status().is_success() {
             return Ok(());
         }
@@ -107,9 +113,11 @@ impl S3ObjectStorage {
         let mut acl_url = self.bucket_url(bucket)?;
         acl_url.set_query(Some("acl"));
         let response = self
-            .signed_request(Method::PUT, acl_url, empty_payload_hash().as_str())?
-            .header("x-amz-acl", "private")
-            .send()
+            .send_request(
+                StorageOperation::BucketSetAcl,
+                self.signed_request(Method::PUT, acl_url, empty_payload_hash().as_str())?
+                    .header("x-amz-acl", "private"),
+            )
             .await?;
         if !response.status().is_success() {
             return Err(service_error("set private S3 bucket ACL", response).await);
@@ -118,8 +126,10 @@ impl S3ObjectStorage {
         let mut policy_url = self.bucket_url(bucket)?;
         policy_url.set_query(Some("policy"));
         let response = self
-            .signed_request(Method::GET, policy_url, "UNSIGNED-PAYLOAD")?
-            .send()
+            .send_request(
+                StorageOperation::BucketGetPolicy,
+                self.signed_request(Method::GET, policy_url, "UNSIGNED-PAYLOAD")?,
+            )
             .await?;
         if response.status().as_u16() == 404 {
             return Ok(());
@@ -183,6 +193,17 @@ impl S3ObjectStorage {
             .header("x-amz-date", amz_date)
             .header("Authorization", authorization))
     }
+
+    async fn send_request(
+        &self,
+        operation: StorageOperation,
+        request: RequestBuilder,
+    ) -> StorageResult<Response> {
+        let span = storage_operation_span("s3", operation);
+        let result = request.send().instrument(span.clone()).await;
+        span.record("storage.result", s3_request_result_label(&result));
+        result.map_err(StorageError::from)
+    }
 }
 
 #[async_trait]
@@ -197,10 +218,12 @@ impl ObjectStorage for S3ObjectStorage {
         let url = self.object_url(bucket, key)?;
         let payload_hash = hex::encode(Sha256::digest(data));
         let response = self
-            .signed_request(Method::PUT, url, &payload_hash)?
-            .header("Content-Type", content_type)
-            .body(data.to_vec())
-            .send()
+            .send_request(
+                StorageOperation::Put,
+                self.signed_request(Method::PUT, url, &payload_hash)?
+                    .header("Content-Type", content_type)
+                    .body(data.to_vec()),
+            )
             .await?;
         if response.status().is_success() {
             Ok(())
@@ -212,8 +235,10 @@ impl ObjectStorage for S3ObjectStorage {
     async fn get(&self, bucket: &str, key: &str) -> StorageResult<Vec<u8>> {
         let url = self.object_url(bucket, key)?;
         let response = self
-            .signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?
-            .send()
+            .send_request(
+                StorageOperation::Get,
+                self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?,
+            )
             .await?;
         if !response.status().is_success() {
             return Err(service_error("download S3 object", response).await);
@@ -229,8 +254,10 @@ impl ObjectStorage for S3ObjectStorage {
         let url = self.object_url(bucket, key)?;
         let payload_hash = empty_payload_hash();
         let response = self
-            .signed_request(Method::DELETE, url, &payload_hash)?
-            .send()
+            .send_request(
+                StorageOperation::Delete,
+                self.signed_request(Method::DELETE, url, &payload_hash)?,
+            )
             .await?;
         if response.status().is_success() || response.status().as_u16() == 404 {
             Ok(())
@@ -243,8 +270,10 @@ impl ObjectStorage for S3ObjectStorage {
         let url = self.object_url(bucket, key)?;
         let payload_hash = empty_payload_hash();
         let response = self
-            .signed_request(Method::HEAD, url, &payload_hash)?
-            .send()
+            .send_request(
+                StorageOperation::ObjectHead,
+                self.signed_request(Method::HEAD, url, &payload_hash)?,
+            )
             .await?;
         match response.status().as_u16() {
             200..=299 => Ok(true),
@@ -253,22 +282,36 @@ impl ObjectStorage for S3ObjectStorage {
         }
     }
 
+    async fn readiness_check(&self, bucket: &str) -> StorageResult<()> {
+        trace_storage_operation("s3", StorageOperation::Readiness, async {
+            if self.bucket_exists(bucket).await? {
+                Ok(())
+            } else {
+                Err(StorageError::Readiness(format!(
+                    "required bucket '{bucket}' does not exist"
+                )))
+            }
+        })
+        .await
+    }
+
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
-        if !self.bucket_exists(bucket).await? {
-            self.create_bucket(bucket).await?;
-        }
-        self.enforce_private_bucket(bucket).await
+        trace_storage_operation("s3", StorageOperation::EnsureBucket, async {
+            if !self.bucket_exists(bucket).await? {
+                self.create_bucket(bucket).await?;
+            }
+            self.enforce_private_bucket(bucket).await
+        })
+        .await
     }
 }
 
-/// Conservatively rejects anonymous/public grants in a bucket policy.
+/// 保守地拒绝存储桶策略中的匿名或公开授权。
 ///
-/// S3 policies can express public access through more than
-/// `Principal: "*" + Action: "s3:GetObject"`. In particular, an `Allow`
-/// statement with `NotPrincipal` grants everyone except the listed principal,
-/// and `NotAction` can grant reads indirectly. RyFrame's private-file contract
-/// does not need either shape, so fail closed instead of trying to reproduce
-/// the full IAM policy evaluator here.
+/// S3 策略可通过不止 `Principal: "*" + Action: "s3:GetObject"` 一种形式表达公开访问。
+/// 尤其是，带有 `NotPrincipal` 的 `Allow` 语句会向除列出主体外的所有人授权，而 `NotAction`
+/// 也可能间接授予读取权限。RyFrame 的私有文件约定不需要这两种形式，因此采取失败即拒绝策略，
+/// 而不在此复刻完整的 IAM 策略求值器。
 fn policy_allows_public_access(policy: &Value) -> bool {
     let statements = match policy.get("Statement") {
         Some(Value::Array(statements)) => statements.iter().collect::<Vec<_>>(),
@@ -330,6 +373,16 @@ fn normalize_endpoint(endpoint: &str, use_ssl: bool) -> StorageResult<Url> {
 
 fn empty_payload_hash() -> String {
     hex::encode(Sha256::digest([]))
+}
+
+fn s3_request_result_label(result: &Result<Response, reqwest::Error>) -> &'static str {
+    match result {
+        Ok(response) if response.status().is_success() => "success",
+        Ok(response) if response.status().is_client_error() => "client_error",
+        Ok(response) if response.status().is_server_error() => "server_error",
+        Ok(_) => "other_http",
+        Err(_) => "transport_error",
+    }
 }
 
 async fn service_error(operation: &'static str, response: Response) -> StorageError {

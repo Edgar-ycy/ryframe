@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail CI when workspace or source-level architecture boundaries drift."""
+"""当工作区或源码级架构边界发生偏移时使 CI 失败。"""
 
 from __future__ import annotations
 
@@ -16,58 +16,122 @@ EXPECTED_DEPENDENCIES = {
     "ryframe": {
         "ryframe-api",
         "ryframe-auth",
-        "ryframe-common",
         "ryframe-config",
         "ryframe-core",
         "ryframe-db",
         "ryframe-db-migration",
+        "ryframe-http",
+        "ryframe-i18n",
+        "ryframe-kernel",
         "ryframe-middleware",
         "ryframe-monitor",
         "ryframe-service",
         "ryframe-storage",
+        "ryframe-utils",
     },
     "ryframe-api": {
         "ryframe-auth",
-        "ryframe-common",
+        "ryframe-captcha",
         "ryframe-config",
         "ryframe-core",
+        "ryframe-excel",
+        "ryframe-http",
+        "ryframe-i18n",
+        "ryframe-kernel",
         "ryframe-macro",
         "ryframe-middleware",
         "ryframe-monitor",
         "ryframe-service",
+        "ryframe-utils",
     },
-    "ryframe-auth": {"ryframe-common", "ryframe-config", "ryframe-core"},
-    "ryframe-common": set(),
-    "ryframe-config": {"ryframe-common"},
-    "ryframe-core": {"ryframe-common", "ryframe-config"},
-    "ryframe-db": {"ryframe-common", "ryframe-config", "ryframe-core", "ryframe-macro"},
-    "ryframe-db-migration": {"ryframe-common"},
-    "ryframe-generator": {"ryframe-common"},
-    "ryframe-macro": {"ryframe-core"},
-    "ryframe-middleware": {
-        "ryframe-auth",
-        "ryframe-common",
+    "ryframe-auth": {"ryframe-config", "ryframe-core", "ryframe-http", "ryframe-kernel"},
+    "ryframe-captcha": {"ryframe-kernel"},
+    "ryframe-common": {
+        "ryframe-captcha",
+        "ryframe-excel",
+        "ryframe-http",
+        "ryframe-i18n",
+        "ryframe-kernel",
+        "ryframe-mail",
+        "ryframe-utils",
+    },
+    "ryframe-config": {"ryframe-kernel", "ryframe-utils"},
+    "ryframe-core": {"ryframe-config", "ryframe-kernel"},
+    "ryframe-db": {
         "ryframe-config",
         "ryframe-core",
+        "ryframe-kernel",
+        "ryframe-macro",
+        "ryframe-utils",
+    },
+    "ryframe-db-migration": {"ryframe-utils"},
+    "ryframe-excel": {"ryframe-kernel"},
+    "ryframe-generator": {"ryframe-kernel"},
+    "ryframe-http": {"ryframe-kernel"},
+    "ryframe-i18n": set(),
+    "ryframe-kernel": set(),
+    "ryframe-macro": {"ryframe-core"},
+    "ryframe-mail": set(),
+    "ryframe-middleware": {
+        "ryframe-auth",
+        "ryframe-config",
+        "ryframe-core",
+        "ryframe-kernel",
+        "ryframe-utils",
     },
     "ryframe-monitor": {
         "ryframe-auth",
-        "ryframe-common",
         "ryframe-core",
+        "ryframe-http",
+        "ryframe-kernel",
         "ryframe-macro",
         "ryframe-middleware",
     },
     "ryframe-service": {
         "ryframe-auth",
-        "ryframe-common",
         "ryframe-config",
         "ryframe-core",
         "ryframe-db",
         "ryframe-generator",
+        "ryframe-kernel",
         "ryframe-storage",
+        "ryframe-utils",
     },
     "ryframe-storage": set(),
+    "ryframe-utils": {"ryframe-kernel"},
+    "xtask": set(),
 }
+
+KERNEL_FORBIDDEN_DEPENDENCIES = (
+    "axum",
+    "axum-extra",
+    "sea-orm",
+    "sea-orm-migration",
+    "redis",
+    "image",
+    "calamine",
+    "rust_xlsxwriter",
+    "lettre",
+    "reqwest",
+    "tokio",
+    "ryframe-common",
+    "ryframe-http",
+    "ryframe-utils",
+    "ryframe-captcha",
+    "ryframe-excel",
+    "ryframe-mail",
+    "ryframe-api",
+    "ryframe-auth",
+    "ryframe-config",
+    "ryframe-core",
+    "ryframe-db",
+    "ryframe-db-migration",
+    "ryframe-generator",
+    "ryframe-middleware",
+    "ryframe-monitor",
+    "ryframe-service",
+    "ryframe-storage",
+)
 
 
 def workspace_dependencies() -> dict[str, set[str]]:
@@ -111,6 +175,40 @@ def check_dependency_graph(errors: list[str]) -> None:
             )
 
 
+def check_common_compatibility(errors: list[str]) -> None:
+    """确保旧 common crate 只作为外部兼容入口，不再被工作区内部代码使用。"""
+    for crate, dependencies in workspace_dependencies().items():
+        if crate != "ryframe-common" and "ryframe-common" in dependencies:
+            errors.append(
+                f"workspace crate must not depend on deprecated ryframe-common: {crate}"
+            )
+
+    for path in production_rust_sources():
+        if path.is_relative_to(ROOT / "crates/ryframe-common"):
+            continue
+        if re.search(r"\bryframe_common\b", path.read_text(encoding="utf-8")):
+            errors.append(
+                "production code imports deprecated ryframe-common: "
+                f"{path.relative_to(ROOT)}"
+            )
+
+
+def check_kernel_manifest(errors: list[str]) -> None:
+    """确保领域核心 crate 不倒灌传输、存储或运行时依赖。"""
+    relative_path = "crates/ryframe-kernel/Cargo.toml"
+    manifest_path = ROOT / relative_path
+    if not manifest_path.is_file():
+        errors.append(f"kernel crate manifest is missing: {relative_path}")
+        return
+
+    manifest = manifest_path.read_text(encoding="utf-8")
+    for dependency in KERNEL_FORBIDDEN_DEPENDENCIES:
+        if re.search(rf"(?m)^\s*{re.escape(dependency)}\s*=", manifest):
+            errors.append(
+                f"kernel crate must not depend on {dependency}: {relative_path}"
+            )
+
+
 def rust_sources(relative_dir: str) -> list[Path]:
     return sorted((ROOT / relative_dir).rglob("*.rs"))
 
@@ -127,11 +225,10 @@ def exposes_unsigned_replay_contract(source: str) -> bool:
 
 
 def check_unsigned_replay_contract(errors: list[str]) -> None:
-    """Reject the retired, unsigned X-Nonce/X-Timestamp pseudo-protocol.
+    """拒绝已废弃且未签名的 X-Nonce/X-Timestamp 伪协议。
 
-    A client-controlled nonce and timestamp are not authenticated request
-    components. Machine-to-machine proof-of-possession must use a separately
-    reviewed message-signature contract instead of reviving these headers.
+    客户端控制的 nonce 和时间戳不是已认证请求组成部分。机器间持有者证明必须采用
+    单独评审过的消息签名契约，不得重新启用这些请求头。
     """
     for path in production_rust_sources():
         if exposes_unsigned_replay_contract(path.read_text(encoding="utf-8")):
@@ -493,7 +590,7 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
             '"/livez"',
             '"/readyz"',
             ".merge(probes)",
-            'never pass through authentication',
+            '绝不会经过认证',
         ),
     }
     for relative_path, fragments in required_fragments.items():
@@ -657,16 +754,19 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
         "crates/ryframe-db/src/cluster.rs": (
             "AtomicUsize",
             "pub fn write(&self) -> &DatabaseConnection",
-            "pub fn read(&self) -> &DatabaseConnection",
+            "pub fn read(&self) -> DatabaseConnection",
             "pub fn source(&self, name: &str) -> Option<&DatabaseConnection>",
+            "pub fn with_sources_and_replica_slots(",
+            "pub fn record_replica_probe(",
             "fetch_add(1, Ordering::Relaxed)",
         ),
         "crates/ryframe/src/boot/datasource.rs": (
             "config.database.primary",
             "config.database.replicas",
             "config.database.sources",
-            "DatabaseCluster::with_sources(primary, replicas, sources)",
+            "DatabaseCluster::with_sources_and_replica_slots(",
             "verify_schema",
+            "spawn_replica_health_monitor",
         ),
         "crates/ryframe-config/src/object_storage_config.rs": (
             "Rustfs",
@@ -719,25 +819,35 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
             )
 
 
-def check_source_only_release(errors: list[str]) -> None:
+def check_release_artifacts(errors: list[str]) -> None:
     workflow_path = ".github/workflows/release.yml"
     workflow = (ROOT / workflow_path).read_text(encoding="utf-8")
     publishing_workflows = {ROOT / workflow_path}
     publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yml"))
     publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yaml"))
     required_fragments = (
-        "name: Publish source-only GitHub release",
+        "name: Publish source and release-manifest GitHub release",
+        "name: Build deterministic release manifest",
+        "release-manifest.json",
+        "--backend-repository",
+        "--backend-commit",
+        "--frontend-repository",
+        "--frontend-commit",
+        "ref: ${{ needs.validate-release.outputs.backend_commit }}",
+        "ref: ${{ needs.validate-release.outputs.frontend_commit }}",
         "name: Purge custom assets from target release",
         "releases/assets/${asset_id}",
         "softprops/action-gh-release@v3",
         "python scripts/validate_release.py",
         "frontend/CHANGELOG.md",
         "body_path: release_body.md",
-        "name: Verify published notes and zero custom assets",
-        "'.assets | length == 0'",
+        "files: release-manifest.json",
+        "name: Verify published notes and release manifest",
+        "(.assets | length == 1)",
+        '.assets[0].name == "release-manifest.json"',
         "backend_tag_oid:",
         "frontend_tag_oid:",
-        "name: Revalidate coordinated tag objects",
+        "name: Revalidate tag objects",
         "name: Confirm tag refs immediately before publishing",
     )
     nightly_required_fragments = (
@@ -765,7 +875,6 @@ def check_source_only_release(errors: list[str]) -> None:
         "SHA256SUMS",
         ".cdx.json",
         "type=oci",
-        "\n          files:",
         "\n          body:",
         "generate_release_notes:",
         "git tag -f nightly",
@@ -774,7 +883,7 @@ def check_source_only_release(errors: list[str]) -> None:
     for fragment in required_fragments:
         if fragment not in workflow:
             errors.append(
-                f"source-only release contract is missing in {workflow_path}: {fragment}"
+                f"release artifact contract is missing in {workflow_path}: {fragment}"
             )
     for path in sorted(
         path for path in publishing_workflows if "nightly" in path.name.lower()
@@ -793,7 +902,7 @@ def check_source_only_release(errors: list[str]) -> None:
         for fragment in forbidden_fragments:
             if fragment in source:
                 errors.append(
-                    f"source-only release contract forbids in {relative_path}: {fragment}"
+                    f"release artifact contract forbids in {relative_path}: {fragment}"
                 )
 
     dockerfile_path = "deploy/Dockerfile"
@@ -813,29 +922,56 @@ def check_source_only_release(errors: list[str]) -> None:
         )
 
 
-def check_github_action_runtimes(errors: list[str]) -> None:
-    workflow_paths = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
-    pnpm_action_pattern = re.compile(r"pnpm/action-setup@([^\s#]+)")
+def check_release_governance(errors: list[str]) -> None:
+    release_path = ROOT / ".github/workflows/release.yml"
+    release = release_path.read_text(encoding="utf-8")
+    for fragment in (
+        "Existing coordinated stable tag to validate and publish",
+        "prerelease: false",
+        "environment:\n      name: stable-release",
+        "FRONTEND_REPOSITORY:",
+        "${{ vars.RYFRAME_FRONTEND_REPOSITORY",
+    ):
+        if fragment not in release:
+            errors.append(
+                f"stable release governance is missing in .github/workflows/release.yml: {fragment}"
+            )
+    forbidden_patterns = (
+        r"\bRC\b",
+        r"release-candidate",
+        r"minimum-rc-hours",
+        r"prerelease:\s*true",
+    )
+    for pattern in forbidden_patterns:
+        if re.search(pattern, release):
+            errors.append(
+                f"stable release workflow must not contain prerelease policy: {pattern}"
+            )
 
-    for path in workflow_paths:
+    ci_path = ROOT / ".github/workflows/ci.yml"
+    ci = ci_path.read_text(encoding="utf-8")
+    if "docker://rhysd/actionlint:1.7.7" not in ci:
+        errors.append(
+            "CI must run the pinned actionlint workflow validator"
+        )
+    for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
         source = path.read_text(encoding="utf-8")
-        relative_path = path.relative_to(ROOT)
-        for match in pnpm_action_pattern.finditer(source):
-            if match.group(1) != "v6":
-                errors.append(
-                    f"{relative_path} must use pnpm/action-setup@v6 for the "
-                    f"Node.js 24 action runtime; found @{match.group(1)}"
-                )
+        if "auto-promote.yml" in source:
+            errors.append(
+                f"workflow references removed auto-promotion flow: {path.relative_to(ROOT)}"
+            )
 
 
 def main() -> int:
     errors: list[str] = []
     check_dependency_graph(errors)
+    check_common_compatibility(errors)
+    check_kernel_manifest(errors)
     check_unsigned_replay_contract(errors)
     check_source_boundaries(errors)
     check_database_and_storage_topology(errors)
-    check_source_only_release(errors)
-    check_github_action_runtimes(errors)
+    check_release_artifacts(errors)
+    check_release_governance(errors)
     check_openapi_registration(errors)
     check_openapi_contract_pipeline(errors)
     check_compiled_permission_catalog(errors)

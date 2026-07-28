@@ -1,15 +1,15 @@
-//! RoleRepository integration tests.
+//! `RoleRepository` 集成测试。
 
 mod common;
 
 use chrono::Utc;
 use common::setup_test_db;
-use ryframe_common::utils::snowflake;
 use ryframe_core::repository::{PageQuery, Repository};
 use ryframe_db::{
     DeptRepository, RoleRepository,
     entities::{dept, role, user},
 };
+use ryframe_utils::snowflake;
 use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseConnection, TransactionTrait};
 
 const TENANT: &str = "system";
@@ -53,6 +53,8 @@ async fn insert_user(db: &DatabaseConnection, username: &str) -> i64 {
         email: sea_orm::ActiveValue::Set(format!("{username}@test.local")),
         phone: sea_orm::ActiveValue::Set(String::new()),
         avatar: sea_orm::ActiveValue::Set(None),
+        avatar_file_id: sea_orm::ActiveValue::Set(None),
+        preferred_locale: sea_orm::ActiveValue::Set(None),
         status: sea_orm::ActiveValue::Set(user::Model::STATUS_NORMAL.into()),
         auth_version: sea_orm::ActiveValue::Set(0),
         dept_id: sea_orm::ActiveValue::Set(None),

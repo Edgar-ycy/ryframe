@@ -1,11 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::Repository;
 use ryframe_db::{DatabaseCluster, FileRepository, entities::sys_file};
+use ryframe_kernel::{AppError, AppResult};
 use ryframe_storage::{ObjectStorage, StorageError};
 use sea_orm::TransactionTrait;
+use sha2::{Digest, Sha256};
 
 use super::{
     FileService, UploadResponse, map_storage_read_error, map_storage_write_error, run_blocking_task,
@@ -38,11 +39,11 @@ pub(super) enum ReservationOutcome {
     Reserved(sys_file::Model),
 }
 
-/// Owns a durable upload reservation until it becomes `ready`.
+/// 在上传预留变为 `ready` 前持有其持久化所有权。
 ///
-/// `Drop` only schedules a best-effort fast cleanup. Correct cancellation and
-/// crash recovery rely on the persisted `pending`/`cleanup` row and its TTL,
-/// which the global janitor reconciles even when this process never runs `Drop`.
+/// `Drop` 仅安排尽力而为的快速清理。正确的取消与崩溃恢复依赖持久化的
+/// `pending`/`cleanup` 记录及其 TTL；即使本进程从未运行 `Drop`，全局清理器
+/// 也会协调处理这些记录。
 pub(super) struct UploadReservationGuard {
     db: DatabaseCluster,
     storage: Arc<dyn ObjectStorage>,
@@ -115,9 +116,8 @@ impl FileService {
             .as_deref()
             .ok_or_else(|| AppError::Internal("文件上传预留缺少所有权令牌".into()))?;
 
-        // The model timestamp was prepared before waiting for the tenant lock.
-        // Renew once from the primary database clock immediately before PUT so
-        // a long lock wait cannot make a new reservation stale.
+        // 模型时间戳在等待租户锁之前准备。紧接 PUT 前从主数据库时钟续期一次，
+        // 避免过长的锁等待使新预留过期。
         let database_now = FileRepository.database_utc_now(self.db.write()).await?;
         if !FileRepository
             .renew_pending_reservation(
@@ -134,8 +134,7 @@ impl FileService {
 
         let mut heartbeat = tokio::time::interval(Duration::from_secs(LEASE_HEARTBEAT_SECONDS));
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // `interval` ticks immediately once; consume it so renewal happens only
-        // after the first heartbeat interval.
+        // `interval` 会立即触发一次；消耗该触发，以便仅在第一个心跳间隔后续期。
         heartbeat.tick().await;
         let put = self.storage.put(
             &reservation.bucket,
@@ -171,9 +170,8 @@ impl FileService {
                         )
                         .await?;
                     if !renewed {
-                        // Dropping the PUT future cancels the client operation.
-                        // The durable tombstone still covers a late backend
-                        // completion before cleanup is finalized.
+                        // 丢弃 PUT future 会取消客户端操作。持久化墓碑仍会覆盖清理
+                        // 完成前的后端延迟完成情况。
                         return Err(AppError::Conflict("文件上传预留已失效".into()));
                     }
                 }
@@ -185,6 +183,7 @@ impl FileService {
         &self,
         tenant_id: &str,
         mut model: sys_file::Model,
+        legacy_md5: &str,
     ) -> AppResult<ReservationOutcome> {
         let transaction = self
             .db
@@ -200,12 +199,18 @@ impl FileService {
             model.reservation_expires_at = Some(reservation_expires_at(database_now));
             model.updated_at = database_now;
 
-            let file_md5 = model
-                .file_md5
+            let file_sha256 = model
+                .file_sha256
                 .as_deref()
                 .ok_or_else(|| AppError::Internal("上传预留缺少内容摘要".into()))?;
             if let Some(existing) = FileRepository
-                .find_by_md5_any_status_in_txn(&transaction, tenant_id, &model.bucket, file_md5)
+                .find_by_digests_any_status_in_txn(
+                    &transaction,
+                    tenant_id,
+                    &model.bucket,
+                    file_sha256,
+                    legacy_md5,
+                )
                 .await?
             {
                 return if existing.upload_status == sys_file::Model::UPLOAD_STATUS_READY {
@@ -245,9 +250,7 @@ impl FileService {
         match outcome {
             ReservationOutcome::Ready(existing) => {
                 if let Err(error) = transaction.commit().await {
-                    // This branch is read-only. The existing committed row is
-                    // still authoritative even when releasing the lock loses
-                    // its response.
+                    // 此分支只读。即使释放锁时丢失响应，已有的已提交记录仍是权威状态。
                     tracing::warn!(
                         file_id = existing.id,
                         %error,
@@ -269,8 +272,8 @@ impl FileService {
             ReservationOutcome::Reserved(saved) => match transaction.commit().await {
                 Ok(()) => Ok(ReservationOutcome::Reserved(saved)),
                 Err(commit_error) => {
-                    // A lost COMMIT response is ambiguous. No object has been
-                    // written yet, so verify durable ownership before PUT.
+                    // 丢失 COMMIT 响应时结果不明确。尚未写入对象，因此需在 PUT 前
+                    // 校验持久化所有权。
                     match FileRepository
                         .find_by_id_any_status(self.db.write(), tenant_id, saved.id)
                         .await
@@ -315,7 +318,8 @@ impl FileService {
     pub(super) async fn recover_in_progress_upload(
         &self,
         mut existing: sys_file::Model,
-        expected_md5: &str,
+        expected_sha256: &str,
+        expected_legacy_md5: &str,
     ) -> AppResult<UploadResponse> {
         if existing.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP {
             return Err(AppError::Conflict(
@@ -342,11 +346,22 @@ impl FileService {
             Err(error) => return Err(map_storage_read_error(error)),
         };
         let object_len = object.len();
-        let actual_md5 = run_blocking_task("pending upload verification", move || {
-            format!("{:x}", md5::compute(object))
-        })
-        .await?;
-        if actual_md5 != expected_md5
+        let (actual_sha256, actual_md5) =
+            run_blocking_task("pending upload verification", move || {
+                (
+                    hex::encode(Sha256::digest(&object)),
+                    format!("{:x}", md5::compute(object)),
+                )
+            })
+            .await?;
+        let stored_digest_matches = match (&existing.file_sha256, &existing.file_md5) {
+            (Some(stored_sha256), _) => stored_sha256 == &actual_sha256,
+            (None, Some(stored_md5)) => stored_md5 == &actual_md5,
+            (None, None) => false,
+        };
+        if actual_sha256 != expected_sha256
+            || actual_md5 != expected_legacy_md5
+            || !stored_digest_matches
             || u64::try_from(existing.file_size).unwrap_or_default()
                 != u64::try_from(object_len).unwrap_or_default()
         {
@@ -451,7 +466,7 @@ impl FileService {
         }
     }
 
-    /// Start the process-wide, bounded upload reconciliation loop.
+    /// 启动进程级、有界的上传协调循环。
     pub fn spawn_upload_janitor(self: &Arc<Self>) {
         let service = Arc::clone(self);
         std::mem::drop(tokio::spawn(async move {
@@ -483,9 +498,8 @@ impl FileService {
         }));
     }
 
-    /// Reconcile one globally bounded batch. This is public for bootstrapping,
-    /// operational repair commands, and integration tests; normal uploads do
-    /// not execute object deletions on their latency-sensitive path.
+    /// 协调一个全局有界批次。该接口为启动引导、运维修复命令和集成测试公开；
+    /// 常规上传不会在对延迟敏感的路径上执行对象删除。
     pub async fn reconcile_upload_reservations(&self) -> AppResult<u64> {
         let now = FileRepository.database_utc_now(self.db.write()).await?;
         let reservations = FileRepository
@@ -494,9 +508,8 @@ impl FileService {
         let mut processed = 0_u64;
         for reservation in reservations {
             if reservation.upload_status == sys_file::Model::UPLOAD_STATUS_PENDING {
-                // First pass only creates a tombstone with a fresh grace
-                // window. A late PUT can still complete after its client task
-                // was cancelled, so deletion is deliberately deferred.
+                // 首次处理仅创建带有新宽限期的墓碑。客户端任务取消后，延迟的 PUT
+                // 仍可能完成，因此有意延后删除。
                 if FileRepository
                     .begin_expired_cleanup(
                         self.db.write(),
@@ -602,16 +615,15 @@ async fn compensate_upload_reservation(
             }
         }
         Ok(false) => {
-            // A successful finalization wins the compare-and-set race. Never
-            // delete an object unless this reservation still owns the row.
+            // 成功完成的一方赢得比较并设置竞争。除非此预留仍拥有该记录，
+            // 否则绝不删除对象。
             tracing::debug!(
                 file_id = reservation.id,
                 "upload reservation no longer owns the metadata row; compensation skipped"
             );
         }
         Err(error) => {
-            // The durable pending record intentionally remains. The global
-            // janitor retries reconciliation after the TTL.
+            // 有意保留持久化 pending 记录。全局清理器会在 TTL 之后重试协调。
             tracing::error!(
                 file_id = reservation.id,
                 %error,

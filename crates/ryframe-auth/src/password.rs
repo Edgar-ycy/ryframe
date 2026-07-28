@@ -2,7 +2,14 @@ use argon2::{
     Argon2, PasswordHash, PasswordVerifier,
     password_hash::{PasswordHasher, SaltString, rand_core::OsRng},
 };
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
+
+lazy_static::lazy_static! {
+    /// 用户查询未命中时使用的进程内 Argon2 哈希。保留有效哈希可使未知用户和
+    /// 密码错误两种尝试执行相同的高开销验证，避免账户是否存在成为时序预言机。
+    static ref DUMMY_PASSWORD_HASH: String = hash("ryframe-invalid-login-secret")
+        .expect("the built-in dummy password must satisfy the Argon2 limits");
+}
 
 /// 新密码最小长度。
 pub const MIN_PASSWORD_LENGTH: usize = 8;
@@ -14,7 +21,7 @@ pub const COMPLEXITY_PATTERN: &str =
 
 /// 对密码进行 argon2 哈希
 ///
-/// # Errors
+/// # 错误
 /// 密码为空或超出 argon2 长度限制时返回验证失败错误
 pub fn hash(password: &str) -> AppResult<String> {
     if password.is_empty() || password.len() > MAX_PASSWORD_LENGTH {
@@ -39,6 +46,16 @@ pub fn verify(password: &str, hash: &str) -> AppResult<bool> {
         .is_ok())
 }
 
+/// 使用持久化哈希验证给定密码；账户不存在时改用进程内虚拟哈希。
+pub fn verify_or_dummy(password: &str, hash: Option<&str>) -> AppResult<bool> {
+    verify(password, hash.unwrap_or(DUMMY_PASSWORD_HASH.as_str()))
+}
+
+/// 在服务启动时初始化虚拟哈希，避免首个未知账户请求具有可区分的冷路径开销。
+pub fn warm_dummy_hash() {
+    let _ = DUMMY_PASSWORD_HASH.as_str();
+}
+
 /// 密码复杂度校验
 ///
 /// 要求：
@@ -49,7 +66,7 @@ pub fn verify(password: &str, hash: &str) -> AppResult<bool> {
 /// - 至少包含一个特殊字符
 /// - 仅包含可见 ASCII 字符且不包含空格
 ///
-/// # Errors
+/// # 错误
 /// 不满足任一要求时返回 AppError::Validation
 pub fn validate_complexity(password: &str) -> AppResult<()> {
     if password.len() < MIN_PASSWORD_LENGTH {

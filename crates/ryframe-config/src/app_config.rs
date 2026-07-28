@@ -1,12 +1,12 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
-use ryframe_common::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 use serde::Deserialize;
 
 use crate::{
-    ApiDocsConfig, AuthConfig, CorsConfig, DatabaseConfig, GeneratorConfig, LoggerConfig,
-    MonitorConfig, ObjectStorageConfig, ProxyConfig, RateLimitConfig, RedisConfig, RedisMode,
-    UploadLimitsConfig,
+    ApiDocsConfig, AuthConfig, CorsConfig, DatabaseConfig, GeneratorConfig, JobConfig,
+    LoggerConfig, MigrationMode, MonitorConfig, ObjectStorageConfig, PaginationConfig, ProxyConfig,
+    RateLimitConfig, RedisConfig, RedisMode, TelemetryConfig, UploadLimitsConfig,
 };
 
 mod environment_overrides;
@@ -57,6 +57,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
     #[serde(default)]
+    pub pagination: PaginationConfig,
+    #[serde(default)]
     pub cors: CorsConfig,
     #[serde(default)]
     pub object_storage: ObjectStorageConfig,
@@ -68,6 +70,10 @@ pub struct AppConfig {
     pub api_docs: ApiDocsConfig,
     #[serde(default)]
     pub monitor: MonitorConfig,
+    #[serde(default)]
+    pub jobs: JobConfig,
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 impl AppConfig {
@@ -75,11 +81,21 @@ impl AppConfig {
     ///
     /// `config_dir` 为配置文件所在目录的路径（如 `"config"` 或 `"/app/config"`）。
     /// 环境配置文件仅需包含要覆盖的字段，不要求完整。
-    pub fn load(config_dir: &str) -> AppResult<Self> {
+    pub fn load(config_dir: impl AsRef<Path>) -> AppResult<Self> {
         let env =
             normalize_environment(&std::env::var("APP_ENV").unwrap_or_else(|_| "dev".to_string()))?;
-        let mut table = load_merged_table(config_dir, &env)?;
+        let mut table = load_merged_table(config_dir.as_ref(), &env)?;
         apply_env_overrides(&mut table)?;
+        let migration_mode_was_explicit = table
+            .get("database")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|database| database.contains_key("migration_mode"));
+        let job_mode_was_explicit = table
+            .get("jobs")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|jobs| jobs.contains_key("mode"));
+        apply_migration_mode_default(&mut table, &env);
+        apply_job_mode_default(&mut table, &env);
         reject_removed_database_fields(&table)?;
 
         let mut config: AppConfig = table
@@ -89,8 +105,42 @@ impl AppConfig {
         // 敏感字段必须先解密，再对最终运行值做安全校验。
         crate::config_crypto::decrypt_config(&mut config)?;
         config.validate(&env)?;
+        if env == "prod"
+            && migration_mode_was_explicit
+            && config.database.migration_mode != MigrationMode::Verify
+        {
+            return Err(AppError::Config(
+                "production requires database.migration_mode = \"verify\"; run ryframe-migrate up before starting the API".into(),
+            ));
+        }
+        if env == "prod"
+            && job_mode_was_explicit
+            && config.jobs.mode != crate::JobWorkerMode::External
+        {
+            return Err(AppError::Config(
+                "生产环境 jobs.mode 必须为 \"external\"；请使用独立的 ryframe-worker 进程消费任务"
+                    .into(),
+            ));
+        }
 
         Ok(config)
+    }
+
+    /// 从 `APP_CONFIG_DIR` 加载配置，未设置时默认使用 `config`。
+    ///
+    /// 相对路径仍以进程工作目录为基准，既保留 `load("config")` 的既有行为，
+    /// 也允许容器显式挂载配置目录。
+    pub fn load_from_env() -> AppResult<Self> {
+        match std::env::var("APP_CONFIG_DIR") {
+            Ok(config_dir) if config_dir.trim().is_empty() => Err(AppError::Config(
+                "APP_CONFIG_DIR must not be empty when it is set".into(),
+            )),
+            Ok(config_dir) => Self::load(config_dir),
+            Err(std::env::VarError::NotPresent) => Self::load("config"),
+            Err(std::env::VarError::NotUnicode(_)) => Err(AppError::Config(
+                "APP_CONFIG_DIR must contain valid Unicode".into(),
+            )),
+        }
     }
 
     /// 校验必填配置项
@@ -98,8 +148,7 @@ impl AppConfig {
         let env = normalize_environment(env)?;
         // 生产部署中的每个实例必须使用独立 worker ID，避免跨实例生成重复主键。
         // 开发/测试环境允许使用默认值，但显式配置时同样校验格式和范围。
-        ryframe_common::utils::snowflake::worker_id_from_environment(&env)
-            .map_err(AppError::Config)?;
+        ryframe_utils::snowflake::worker_id_from_environment(&env).map_err(AppError::Config)?;
         if self.app.name.is_empty() {
             return Err(AppError::Config("app.name 不能为空".into()));
         }
@@ -110,6 +159,11 @@ impl AppConfig {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
         validate_database_connection("database.primary", &self.database.primary, env == "prod")?;
+        if env != "test" && self.database.migration_mode == MigrationMode::Off {
+            return Err(AppError::Config(
+                "database.migration_mode = \"off\" is allowed only when APP_ENV=test".into(),
+            ));
+        }
 
         let mut replica_names = HashSet::with_capacity(self.database.replicas.len());
         for (index, replica) in self.database.replicas.iter().enumerate() {
@@ -189,6 +243,9 @@ impl AppConfig {
                 "auth.max_login_attempts 和 auth.lockout_duration_minutes 必须大于 0".into(),
             ));
         }
+        self.pagination.validate().map_err(AppError::Config)?;
+        self.jobs.validate(&env).map_err(AppError::Config)?;
+        self.telemetry.validate().map_err(AppError::Config)?;
         let access_ttl =
             parse_duration_seconds("auth.access_token_expire", &self.auth.access_token_expire)?;
         let refresh_ttl =
@@ -234,7 +291,7 @@ impl AppConfig {
         for origin in &self.cors.allow_origins {
             validate_origin(origin, env == "prod")?;
         }
-        ryframe_common::utils::ip::TrustedProxySet::new(&self.proxy.trusted_cidrs)
+        ryframe_utils::ip::TrustedProxySet::new(&self.proxy.trusted_cidrs)
             .map_err(AppError::Config)?;
         if self.upload.avatar_max_bytes == 0
             || self.upload.file_max_bytes == 0
@@ -274,6 +331,23 @@ impl AppConfig {
                         "RustFS/MinIO/S3 需要 endpoint、access_key、secret_key 和 region".into(),
                     ));
                 }
+                if env == "prod" && !self.object_storage.use_ssl {
+                    return Err(AppError::Config(
+                        "生产环境的 RustFS/MinIO/S3 必须设置 object_storage.use_ssl = true".into(),
+                    ));
+                }
+                if env == "prod"
+                    && self
+                        .object_storage
+                        .endpoint
+                        .trim()
+                        .to_ascii_lowercase()
+                        .starts_with("http://")
+                {
+                    return Err(AppError::Config(
+                        "生产环境的 RustFS/MinIO/S3 端点必须使用 HTTPS".into(),
+                    ));
+                }
             }
         }
         Ok(())
@@ -308,6 +382,34 @@ fn reject_removed_database_fields(table: &toml::Table) -> AppResult<()> {
         ));
     }
     Ok(())
+}
+
+fn apply_migration_mode_default(table: &mut toml::Table, env: &str) {
+    let Some(toml::Value::Table(database)) = table.get_mut("database") else {
+        return;
+    };
+    database.entry("migration_mode").or_insert_with(|| {
+        toml::Value::String(if env == "prod" { "verify" } else { "auto" }.into())
+    });
+}
+
+fn apply_job_mode_default(table: &mut toml::Table, env: &str) {
+    let jobs = table
+        .entry("jobs")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let toml::Value::Table(jobs) = jobs else {
+        return;
+    };
+    jobs.entry("mode").or_insert_with(|| {
+        toml::Value::String(
+            if env == "prod" {
+                "external"
+            } else {
+                "embedded"
+            }
+            .into(),
+        )
+    });
 }
 
 fn contains_key(value: &toml::Value, rejected: &str) -> bool {
@@ -450,27 +552,29 @@ fn normalize_environment(value: &str) -> AppResult<String> {
     Ok(normalized.to_string())
 }
 
-fn load_merged_table(config_dir: &str, env: &str) -> AppResult<toml::Table> {
-    // 第一层：加载默认配置为 TOML Table
-    let base_path = format!("{}/app.toml", config_dir);
+fn load_merged_table(config_dir: &Path, env: &str) -> AppResult<toml::Table> {
+    // 第一层：将默认配置加载为 TOML 表。
+    let base_path = config_dir.join("app.toml");
     let base_toml = std::fs::read_to_string(&base_path)
-        .map_err(|e| AppError::Config(format!("无法读取 {}: {}", base_path, e)))?;
+        .map_err(|e| AppError::Config(format!("无法读取 {}: {}", base_path.display(), e)))?;
     let mut table: toml::Table = toml::from_str(&base_toml)
-        .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", base_path, e)))?;
+        .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", base_path.display(), e)))?;
 
-    // 第二层：加载环境配置文件，merge 到 base table
-    let env_path = format!("{}/app.{}.toml", config_dir, env);
+    // 第二层：加载环境配置文件并合并到基础表。
+    let env_path = config_dir.join(format!("app.{env}.toml"));
     match std::fs::read_to_string(&env_path) {
         Ok(env_toml) => {
-            let env_table: toml::Table = toml::from_str(&env_toml)
-                .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", env_path, e)))?;
+            let env_table: toml::Table = toml::from_str(&env_toml).map_err(|e| {
+                AppError::Config(format!("解析 {} 失败: {}", env_path.display(), e))
+            })?;
             merge_tables(&mut table, &env_table);
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && env != "prod" => {}
         Err(error) => {
             return Err(AppError::Config(format!(
                 "无法读取环境配置 {}: {}",
-                env_path, error
+                env_path.display(),
+                error
             )));
         }
     }
@@ -478,18 +582,18 @@ fn load_merged_table(config_dir: &str, env: &str) -> AppResult<toml::Table> {
     Ok(table)
 }
 
-/// 递归合并两个 TOML Table，env 的值覆盖 base 对应位置的值
+/// 递归合并两个 TOML 表，环境配置的值覆盖基础配置中对应位置的值。
 ///
-/// - Table → 递归合并子键
-/// - 其他 → env 直接覆盖 base
+/// - 表 → 递归合并子键。
+/// - 其他值 → 环境配置直接覆盖基础配置。
 fn merge_tables(base: &mut toml::Table, env: &toml::Table) {
     for (key, value) in env {
         match (base.get_mut(key), value) {
-            // 两地都是 Table → 递归合并
+            // 两端均为表时递归合并。
             (Some(toml::Value::Table(base_table)), toml::Value::Table(env_table)) => {
                 merge_tables(base_table, env_table);
             }
-            // env 覆盖 base
+            // 环境配置覆盖基础配置。
             _ => {
                 base.insert(key.clone(), value.clone());
             }

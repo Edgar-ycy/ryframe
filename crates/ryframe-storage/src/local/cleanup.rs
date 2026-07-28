@@ -204,8 +204,7 @@ impl ActiveStagingRegistry {
         self: &Arc<Self>,
         staging_directory: &Path,
     ) -> StorageResult<ActiveStagingFile> {
-        // Hold the registry lock across create+register so cleanup can never
-        // observe an active staging file in an unregistered window.
+        // 在创建和登记期间持有注册表锁，避免清理任务在未登记窗口观察到活跃的暂存文件。
         let mut paths = self.paths();
         let file = Builder::new()
             .prefix(STAGING_FILE_PREFIX)
@@ -261,8 +260,7 @@ impl ActiveStagingFile {
     }
 
     pub(super) fn persist(mut self, final_path: &Path) -> StorageResult<()> {
-        // Persist is synchronous and the registry lock makes publication and
-        // deregistration one indivisible operation from cleanup's perspective.
+        // persist 是同步操作；注册表锁使发布和注销在清理任务看来成为不可分割的一次操作。
         let mut paths = self.registry.paths();
         let Some(file) = self.file.take() else {
             paths.remove(&self.path);
@@ -299,8 +297,7 @@ impl ActiveStagingFile {
 impl Drop for ActiveStagingFile {
     fn drop(&mut self) {
         let mut paths = self.registry.paths();
-        // NamedTempFile performs best-effort deletion. Keep the path registered
-        // until its handle has closed and cleanup has been attempted.
+        // NamedTempFile 会尽力删除文件。应在其句柄关闭且尝试清理后，才取消该路径的登记。
         drop(self.file.take());
         paths.remove(&self.path);
     }

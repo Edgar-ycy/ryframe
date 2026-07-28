@@ -1,6 +1,6 @@
 use ryframe_config::AppConfig;
 use ryframe_db::{DbSpanLayer, SqlLogLayer};
-use ryframe_middleware::telemetry::{TelemetryConfig, init_tracer_provider};
+use ryframe_middleware::telemetry::init_tracer_provider;
 use tracing_subscriber::{
     EnvFilter, Layer, filter::FilterFn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -32,17 +32,7 @@ pub fn init(
     let sqlx_filter = FilterFn::new(|meta| meta.target() != "sqlx::query");
 
     // 初始化链路追踪（在 subscriber 构建之前）
-    let telemetry_config = TelemetryConfig {
-        enabled: std::env::var("OTEL_ENABLED").unwrap_or_else(|_| "false".into()) == "true",
-        endpoint: std::env::var("OTEL_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:4318/v1/traces".into()),
-        service_name: std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "ryframe".into()),
-        sample_rate: std::env::var("OTEL_SAMPLE_RATE")
-            .unwrap_or_else(|_| "1.0".into())
-            .parse()
-            .unwrap_or(1.0),
-    };
-    let telemetry_guard = init_tracer_provider(&telemetry_config);
+    let telemetry_guard = init_tracer_provider(&config.telemetry);
     let otel_layer = telemetry_guard.tracing_layer();
 
     // 构建 subscriber 的顺序很关键：

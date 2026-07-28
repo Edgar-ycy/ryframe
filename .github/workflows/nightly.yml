@@ -1,126 +1,126 @@
-﻿name: Nightly Source Release
-
-on:
-  workflow_run:
-    workflows: [ CI ]
-    types: [ completed ]
-
-concurrency:
-  group: nightly-source-release
-  cancel-in-progress: false
-
-permissions:
-  contents: read
-
-jobs:
-  nightly:
-    name: Publish source-only Nightly
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha }}
-
-      - name: Extract non-empty Changelog notes
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(awk '
-            $0 == "[workspace.package]" { in_package=1; next }
-            in_package && /^\[/ { exit }
-            in_package && /^[[:space:]]*version[[:space:]]*=/ {
-              value=$0
-              sub(/^[^"]*"/, "", value)
-              sub(/".*$/, "", value)
-              print value
-              exit
-            }
-          ' Cargo.toml)"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "Cannot determine the workspace release version." >&2
-            exit 1
-          }
-          stable_tag="v${version}"
-          notes="$RUNNER_TEMP/nightly-release-notes.md"
-          awk -v version="$stable_tag" '
-            BEGIN { heading = "## [" version "]" }
-            !found && ($0 == heading || index($0, heading " ") == 1 || index($0, heading "\t") == 1) {
-              found=1
-            }
-            found && emitted && /^## \[/ { exit }
-            found { print; emitted=1 }
-            END { if (!found) exit 2 }
-          ' CHANGELOG.md > "$notes"
-          if ! grep --extended-regexp --quiet '^-[[:space:]]+[^[:space:]]' "$notes"; then
-            echo "$stable_tag CHANGELOG section has no update items." >&2
-            exit 1
-          fi
-
-      - name: Force update annotated nightly tag
-        shell: bash
-        env:
-          NIGHTLY_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a -f --cleanup=verbatim -F "$RUNNER_TEMP/nightly-release-notes.md" nightly "${NIGHTLY_SHA}"
-          [[ "$(git cat-file -t refs/tags/nightly)" == tag ]]
-          git push -f origin refs/tags/nightly
-
-      - name: Purge custom assets from Nightly release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          release_json="$RUNNER_TEMP/nightly-release.json"
-          release_error="$RUNNER_TEMP/nightly-release-error.log"
-          if gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" \
-            > "$release_json" 2> "$release_error"; then
-            release_id="$(jq -r '.id' "$release_json")"
-            gh api --paginate \
-              "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
-              --jq '.[].id' > "$RUNNER_TEMP/nightly-release-asset-ids.txt"
-            while IFS= read -r asset_id; do
-              [[ -n "$asset_id" ]] || continue
-              gh api --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
-            done < "$RUNNER_TEMP/nightly-release-asset-ids.txt"
-          elif grep --quiet 'HTTP 404' "$release_error"; then
-            echo "No existing Nightly release assets to remove."
-          else
-            cat "$release_error" >&2
-            exit 1
-          fi
-
-      - name: Create source-only Nightly release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: nightly
-          name: Nightly
-          body_path: ${{ runner.temp }}/nightly-release-notes.md
-          prerelease: true
-          make_latest: false
-
-      - name: Verify Nightly notes and zero custom assets
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          release_json="$RUNNER_TEMP/nightly-published-release.json"
-          published_body="$RUNNER_TEMP/nightly-published-body.md"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" > "$release_json"
-          jq --exit-status '.assets | length == 0' "$release_json" > /dev/null
-          jq --join-output '.body // ""' "$release_json" > "$published_body"
-          test -s "$published_body"
-          diff --unified "$RUNNER_TEMP/nightly-release-notes.md" "$published_body"
+name: Nightly Source Release
+
+on:
+  workflow_run:
+    workflows: [ CI ]
+    types: [ completed ]
+
+concurrency:
+  group: nightly-source-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    name: Publish source-only Nightly
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Extract non-empty Changelog notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '
+            $0 == "[workspace.package]" { in_package=1; next }
+            in_package && /^\[/ { exit }
+            in_package && /^[[:space:]]*version[[:space:]]*=/ {
+              value=$0
+              sub(/^[^"]*"/, "", value)
+              sub(/".*$/, "", value)
+              print value
+              exit
+            }
+          ' Cargo.toml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Cannot determine the workspace release version." >&2
+            exit 1
+          }
+          stable_tag="v${version}"
+          notes="$RUNNER_TEMP/nightly-release-notes.md"
+          awk -v version="$stable_tag" '
+            BEGIN { heading = "## [" version "]" }
+            !found && ($0 == heading || index($0, heading " ") == 1 || index($0, heading "\t") == 1) {
+              found=1
+            }
+            found && emitted && /^## \[/ { exit }
+            found { print; emitted=1 }
+            END { if (!found) exit 2 }
+          ' CHANGELOG.md > "$notes"
+          if ! grep --extended-regexp --quiet '^-[[:space:]]+[^[:space:]]' "$notes"; then
+            echo "$stable_tag CHANGELOG section has no update items." >&2
+            exit 1
+          fi
+
+      - name: Force update annotated nightly tag
+        shell: bash
+        env:
+          NIGHTLY_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a -f --cleanup=verbatim -F "$RUNNER_TEMP/nightly-release-notes.md" nightly "${NIGHTLY_SHA}"
+          [[ "$(git cat-file -t refs/tags/nightly)" == tag ]]
+          git push -f origin refs/tags/nightly
+
+      - name: Purge custom assets from Nightly release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/nightly-release.json"
+          release_error="$RUNNER_TEMP/nightly-release-error.log"
+          if gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" \
+            > "$release_json" 2> "$release_error"; then
+            release_id="$(jq -r '.id' "$release_json")"
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+              --jq '.[].id' > "$RUNNER_TEMP/nightly-release-asset-ids.txt"
+            while IFS= read -r asset_id; do
+              [[ -n "$asset_id" ]] || continue
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            done < "$RUNNER_TEMP/nightly-release-asset-ids.txt"
+          elif grep --quiet 'HTTP 404' "$release_error"; then
+            echo "No existing Nightly release assets to remove."
+          else
+            cat "$release_error" >&2
+            exit 1
+          fi
+
+      - name: Create source-only Nightly release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: Nightly
+          body_path: ${{ runner.temp }}/nightly-release-notes.md
+          prerelease: true
+          make_latest: false
+
+      - name: Verify Nightly notes and zero custom assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/nightly-published-release.json"
+          published_body="$RUNNER_TEMP/nightly-published-body.md"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" > "$release_json"
+          jq --exit-status '.assets | length == 0' "$release_json" > /dev/null
+          jq --join-output '.body // ""' "$release_json" > "$published_body"
+          test -s "$published_body"
+          diff --unified "$RUNNER_TEMP/nightly-release-notes.md" "$published_body"

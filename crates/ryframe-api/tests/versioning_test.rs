@@ -1,6 +1,12 @@
-use axum::{Json, Router, routing::get};
+use axum::{
+    Json, Router,
+    body::Body,
+    http::{Request, StatusCode},
+    routing::get,
+};
 use ryframe_api::versioning::{ApiVersion, VersionedRouter};
 use serde_json::json;
+use tower::ServiceExt;
 
 #[test]
 fn test_api_version_display() {
@@ -72,4 +78,38 @@ fn test_versioned_router_latest() {
     assert!(router.has_version(&ApiVersion::v2()));
     assert!(!router.has_version(&ApiVersion::v3()));
     assert_eq!(router.registered_versions().len(), 2);
+}
+
+#[tokio::test]
+async fn test_versioned_router_only_v1_rejects_v2_without_fallback() {
+    async fn v1_handler() -> &'static str {
+        "v1"
+    }
+
+    let router = VersionedRouter::new()
+        .with_v1(Router::<()>::new().route("/version-check", get(v1_handler)))
+        .into_router();
+
+    let v1_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/version-check")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(v1_response.status(), StatusCode::OK);
+
+    let v2_response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/version-check")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(v2_response.status(), StatusCode::NOT_FOUND);
 }

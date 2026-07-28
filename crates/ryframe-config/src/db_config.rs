@@ -35,6 +35,19 @@ pub enum SqlLogLevel {
     Full,
 }
 
+/// 控制应用进程是否可以执行数据库结构迁移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MigrationMode {
+    /// 执行待处理迁移、写入幂等系统数据并校验数据库结构。
+    #[default]
+    Auto,
+    /// 仅校验迁移记录和数据库结构，绝不执行 DDL。
+    Verify,
+    /// 禁用迁移检查；该模式仅限测试环境使用。
+    Off,
+}
+
 /// 数据库拓扑配置。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +55,9 @@ pub struct DatabaseConfig {
     /// SQL 日志级别（默认 off）。
     #[serde(default)]
     pub sql_log_level: SqlLogLevel,
+    /// 启动时的迁移行为；省略时开发/测试环境默认 `auto`，生产环境默认 `verify`。
+    #[serde(default)]
+    pub migration_mode: MigrationMode,
     /// 唯一写库，也是无从库时的读库。
     pub primary: DbConnection,
     /// 可选只读副本；读取按配置顺序轮询。
@@ -110,16 +126,16 @@ pub struct DbConnection {
     /// 连接建立超时（秒），默认 10
     #[serde(default = "default_connect_timeout")]
     pub connect_timeout_secs: u64,
-    /// TLS policy. Remote production databases must use `verify_identity`.
+    /// TLS 策略；远程生产数据库必须使用 `verify_identity`。
     #[serde(default)]
     pub tls_mode: DbTlsMode,
-    /// PEM CA certificate used for server verification.
+    /// 用于验证服务端的 PEM CA 证书。
     #[serde(default)]
     pub tls_ca: Option<String>,
-    /// Optional mTLS client certificate.
+    /// 可选的 mTLS 客户端证书。
     #[serde(default)]
     pub tls_client_cert: Option<String>,
-    /// Optional mTLS client private key.
+    /// 可选的 mTLS 客户端私钥。
     #[serde(default)]
     pub tls_client_key: Option<String>,
 }

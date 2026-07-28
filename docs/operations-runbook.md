@@ -29,6 +29,17 @@ scrape_configs:
       credentials_file: /run/secrets/ryframe_metrics_token
     static_configs:
       - targets: [api.example.com]
+
+  # `jobs.mode=external` 时，队列深度、死信和任务耗时只由独立 Worker 进程采集。
+  # 此端点只能经内网直连，不能通过公网 Nginx 暴露。
+  - job_name: ryframe-worker
+    scheme: http
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/ryframe_metrics_token
+    static_configs:
+      - targets: [ryframe-worker.internal:9091]
 ```
 
 轮换 Token 时按实例分批：Prometheus 临时建立两个使用不同 secret、且分别直连新旧
@@ -41,6 +52,7 @@ job。不能让两个 Token 经同一个随机负载均衡目标抓取，否则�
 | 能力 | 数据源 |
 | --- | --- |
 | HTTP 错误率、P95/P99、Redis 降级、refresh 重放、限流 | RyFrame `/api/v1/monitor/metrics` |
+| 后台任务队列深度、最老等待时间、死信、任务耗时与消息保留清理 | 外置 `ryframe-worker` 的内网 `/metrics`（默认 `9091`） |
 | MySQL 连接容量 | `prometheus/mysqld_exporter` |
 | 主机与存储卷磁盘 | `prometheus/node_exporter` |
 | TLS 到期 | `prometheus/blackbox_exporter` HTTPS probe |
@@ -56,6 +68,11 @@ ryframe_backup_last_success_timestamp_seconds 1784937600
 
 如果未部署上述 exporter，对应告警不是“已覆盖”。上线清单必须记录每条规则的
 Prometheus 查询结果和 Alertmanager 测试通知。
+
+生产使用 `jobs.mode=external` 时，API 实例不会采集后台任务队列指标；必须为每个
+`ryframe-worker` 建立上述独立 scrape target，并在网络策略中仅允许 Prometheus/VPN
+访问 `jobs.health_port`。`/livez` 和 `/readyz` 同样通过该内网端口探测，禁止将其经
+公网 Nginx 转发。
 
 规则模板中的 `runbook` annotation 使用仓库内相对路径。部署时如果已将本文档发布到
 内部文档站，可将其转换为 Alertmanager 支持点击的绝对 `runbook_url`。
@@ -105,6 +122,33 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 问题要求指数退避并遵守 `Retry-After`。只有证明正常峰值确实超过基线且下游有余量后，
 才能调整限流参数。
 
+### 数据库副本与读回退
+
+先核对 `ryframe_db_node_up` 的副本名称、数据库连接日志和复制延迟，再从应用网络执行
+只读探针。副本监督器每 5 秒运行一次，单次连接/PING/结构校验总超时为 2 秒；网络失败
+连续三次才摘除，结构指纹不一致会立即摘除，并按 5–60 秒退避重试。不要绕过健康阈值
+强制恢复副本；在副本恢复前应确认主库连接容量能够承受回退流量。读回退比例升高时，同时
+检查副本摘除、连接池耗尽和最近的网络或数据库变更。
+
+### 后台任务
+
+先按 `type` 确认最早可执行任务的等待时长、Worker 存活状态和租约是否持续推进。死信
+任务必须检查 `last_error`、关联业务数据和幂等性后才能人工重试；不要通过直接修改任务
+状态或确认时间来清除告警。
+
+### 消息中心投递
+
+区分慢消费者与已关闭连接：前者检查客户端消费、网络和连接数，后者确认是否为正常断线
+重连。持久化收件箱会补拉未确认消息，排障期间不得手工写入 `acked_at`，以免掩盖未送达
+消息。
+
+### OpenTelemetry 导出器
+
+检查 OTLP endpoint 的 DNS、TLS、认证和网络出口策略，并确认服务配置中的采样与超时值。
+初始化失败会触发 `ryframe_otel_exporter_degraded`；运行或关闭期间的失败会累计在
+`ryframe_otel_exporter_runtime_failures_total`。两类告警均不应阻断就绪探针；恢复后验证
+新的 trace 能抵达后端，再关闭告警。
+
 ### 磁盘容量
 
 检查应用本地卷、MySQL、Redis、对象存储和日志节点。优先清理有保留策略且可重建的
@@ -123,6 +167,6 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 
 ## 5. 发布观察面板
 
-每次 RC/stable 至少展示：请求率、5xx 比例、P50/P95/P99、in-flight、进程 CPU/内存、
+每次稳定版发布至少展示：请求率、5xx 比例、P50/P95/P99、in-flight、进程 CPU/内存、
 MySQL 连接比例、Redis 降级、限流拒绝、refresh 重放、磁盘余量、最近备份成功时间和
 证书剩余天数。发布记录应链接长期保留的面板时间窗，并标注版本 SHA。

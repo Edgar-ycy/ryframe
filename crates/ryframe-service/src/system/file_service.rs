@@ -2,17 +2,16 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use ryframe_common::{
-    ActorContext, AppError, AppResult,
-    utils::file_upload::{
-        UploadConfig, UploadFileInfo, compress_image, generate_storage_filename, get_content_type,
-        validate_extension, validate_file_signature,
-    },
-};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{FileRepository, entities::sys_file};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_storage::{ObjectStorage, StorageError};
+use ryframe_utils::file_upload::{
+    UploadConfig, UploadFileInfo, compress_image, generate_storage_filename, get_content_type,
+    validate_extension, validate_file_signature,
+};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
 mod upload_reservation;
@@ -46,7 +45,8 @@ struct PreparedUpload {
     final_data: Vec<u8>,
     final_name: String,
     content_type: String,
-    file_md5: String,
+    file_sha256: String,
+    legacy_md5: String,
 }
 
 async fn prepare_upload_data(
@@ -92,14 +92,18 @@ fn prepare_upload_data_blocking(
     };
 
     let content_type = get_content_type(&final_name);
-    let file_md5 = format!("{:x}", md5::compute(&final_data));
+    let file_sha256 = hex::encode(Sha256::digest(&final_data));
+    // 仅在单向迁移期间保留，用于定位和校验历史记录。新上传文件只将 SHA-256
+    // 作为其唯一摘要。
+    let legacy_md5 = format!("{:x}", md5::compute(&final_data));
 
     Ok(PreparedUpload {
         original_name,
         final_data,
         final_name,
         content_type,
-        file_md5,
+        file_sha256,
+        legacy_md5,
     })
 }
 
@@ -124,7 +128,7 @@ impl FileService {
         Self { db, storage }
     }
 
-    /// Validate that the storage backend is reachable with the configured credentials.
+    /// 校验是否可使用已配置的凭据连接存储后端。
     pub async fn check_storage(&self) -> AppResult<()> {
         for bucket in [UPLOAD_BUCKET, AVATAR_BUCKET] {
             self.storage
@@ -171,11 +175,18 @@ impl FileService {
             final_data,
             final_name,
             content_type,
-            file_md5,
+            file_sha256,
+            legacy_md5,
         } = prepare_upload_data(original_name, data, compress).await?;
 
         if let Some(existing) = FileRepository
-            .find_by_md5(self.db.write(), tenant_id, bucket, &file_md5)
+            .find_by_digests(
+                self.db.write(),
+                tenant_id,
+                bucket,
+                &file_sha256,
+                &legacy_md5,
+            )
             .await?
         {
             return self.upload_response_for_existing(existing);
@@ -187,7 +198,7 @@ impl FileService {
         let file_url = self.build_file_url(bucket, &object_key)?;
         let now = Utc::now();
         let reservation_token = uuid::Uuid::new_v4().to_string();
-        let file_id = ryframe_common::utils::snowflake::try_next_snowflake_id()?;
+        let file_id = ryframe_utils::snowflake::try_next_snowflake_id()?;
         let model = sys_file::Model {
             id: file_id,
             tenant_id: tenant_id.to_owned(),
@@ -199,24 +210,26 @@ impl FileService {
             file_size: i64::try_from(final_data.len())
                 .map_err(|_| AppError::PayloadTooLarge("文件大小超出数据库范围".into()))?,
             content_type: content_type.clone(),
-            file_md5: Some(file_md5.clone()),
+            file_md5: None,
+            file_sha256: Some(file_sha256.clone()),
             upload_by: Some(actor.username.clone()),
             upload_status: sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
             reservation_token: Some(reservation_token),
-            // Set from the primary database clock inside the reservation
-            // transaction, after any tenant-row lock wait.
+            // 在预留事务内、等待租户行锁结束后，使用主数据库时钟设置。
             reservation_expires_at: None,
             del_flag: sys_file::Model::DEL_FLAG_UPLOAD_RESERVED.to_owned(),
             created_at: now,
             updated_at: now,
         };
 
-        let reservation = match self.reserve_upload(tenant_id, model).await? {
+        let reservation = match self.reserve_upload(tenant_id, model, &legacy_md5).await? {
             ReservationOutcome::Ready(existing) => {
                 return self.upload_response_for_existing(existing);
             }
             ReservationOutcome::InProgress(existing) => {
-                return self.recover_in_progress_upload(existing, &file_md5).await;
+                return self
+                    .recover_in_progress_upload(existing, &file_sha256, &legacy_md5)
+                    .await;
             }
             ReservationOutcome::Reserved(reservation) => reservation,
         };
@@ -262,7 +275,7 @@ impl FileService {
         }
 
         // 文件元数据紧跟对象上传写入主库；下载必须从主库读取，避免从库延迟导致刚上传文件返回 404。
-        FileRepository
+        let file = FileRepository
             .find_by_storage_path(self.db.write(), tenant_id, bucket, path)
             .await?
             .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
@@ -272,7 +285,9 @@ impl FileService {
             map_storage_read_error(error)
         })?;
 
-        let filename = path.rsplit('/').next().unwrap_or("download").to_string();
+        // 下载名称属于持久化元数据。为保证存储安全而生成的不透明对象键，绝不能
+        // 作为面向用户的文件名泄露。
+        let filename = file.original_name;
 
         Ok((data, filename))
     }
@@ -304,14 +319,14 @@ impl FileService {
     /// 上传头像（Avatar 专用便捷方法）
     ///
     /// 固定使用 `avatar` bucket、图片类型、5MB 限制、自动压缩。
-    /// 返回稳定访问地址（用于更新 sys_user.avatar）。
+    /// 返回上传元数据，调用方需同时保存稳定文件 ID 和访问地址。
     pub async fn upload_avatar(
         &self,
         actor: &ActorContext,
         original_name: String,
         data: Vec<u8>,
         max_file_size: u64,
-    ) -> AppResult<String> {
+    ) -> AppResult<UploadResponse> {
         let config = UploadConfig {
             allowed_extensions: vec![
                 "jpg".to_string(),
@@ -338,7 +353,7 @@ impl FileService {
             )
             .await?;
 
-        Ok(result.file_url)
+        Ok(result)
     }
 }
 
@@ -383,7 +398,7 @@ mod storage_error_tests {
     use super::{
         map_storage_read_error, map_storage_write_error, prepare_upload_data, run_blocking_task,
     };
-    use ryframe_common::AppError;
+    use ryframe_kernel::AppError;
     use ryframe_storage::StorageError;
 
     #[test]
@@ -473,7 +488,8 @@ mod storage_error_tests {
         assert_eq!(prepared.final_name, "avatar.jpg");
         assert_eq!(prepared.content_type, "image/jpeg");
         assert!(!prepared.final_data.is_empty());
-        assert_eq!(prepared.file_md5.len(), 32);
+        assert_eq!(prepared.file_sha256.len(), 64);
+        assert_eq!(prepared.legacy_md5.len(), 32);
     }
 
     fn one_pixel_bmp() -> Vec<u8> {

@@ -3,8 +3,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyConfig {
-    /// Forwarding headers are parsed only when the socket peer belongs to one
-    /// of these exact IP/CIDR ranges.
+    /// 仅当套接字对端属于这些精确的 IP/CIDR 范围之一时，才解析转发请求头。
     #[serde(default)]
     pub trusted_cidrs: Vec<String>,
 }

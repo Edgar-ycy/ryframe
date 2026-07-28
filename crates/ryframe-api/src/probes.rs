@@ -40,9 +40,8 @@ pub async fn livez() -> (StatusCode, Json<LivenessResponse>) {
 pub async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<ReadinessResponse>) {
     let dependency_timeout = std::time::Duration::from_secs(2);
     let mysql = tokio::time::timeout(dependency_timeout, state.monitor.database.ping());
-    // Detaching the storage task on timeout lets its readiness canary reach the
-    // delete step instead of cancelling between put/get/delete and leaking an
-    // object under `.ryframe-readiness/`.
+    // 超时时分离存储任务，使就绪探针能够执行到删除步骤；避免在写入、读取和删除
+    // 之间被取消，从而在 `.ryframe-readiness/` 下遗留对象。
     let file_service = state.services.file.clone();
     let storage_task = tokio::spawn(async move { file_service.check_storage().await });
     let storage = tokio::time::timeout(dependency_timeout, storage_task);

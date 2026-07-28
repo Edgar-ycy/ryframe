@@ -1,7 +1,7 @@
-//! ryframe-core 性能基准测试
+//! `ryframe-core` 性能基准测试
 //!
 //! 测量核心模块的吞吐量和延迟基线：
-//! - Snowflake ID 生成
+//! - 雪花 ID 生成
 //! - 分页查询构造
 //! - 缓存读写与防护
 
@@ -11,13 +11,13 @@ use ryframe_core::{
     repository::PageQuery,
 };
 
-// ============ Snowflake ID ============
+// ============ 雪花 ID ============
 
 fn bench_snowflake_next_id(c: &mut Criterion) {
     c.bench_function("snowflake_next_id", |b| {
         b.iter(|| {
-            let id = ryframe_common::utils::snowflake::try_next_snowflake_id()
-                .expect("generate benchmark ID");
+            let id =
+                ryframe_utils::snowflake::try_next_snowflake_id().expect("generate benchmark ID");
             std::hint::black_box(id);
         });
     });
@@ -29,7 +29,7 @@ fn bench_snowflake_batch_1000(c: &mut Criterion) {
             let mut ids = Vec::with_capacity(1000);
             for _ in 0..1000 {
                 ids.push(
-                    ryframe_common::utils::snowflake::try_next_snowflake_id()
+                    ryframe_utils::snowflake::try_next_snowflake_id()
                         .expect("generate benchmark ID"),
                 );
             }

@@ -89,8 +89,10 @@ APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads
 ```
 
 该开关只是风险确认，不会自动创建共享卷或备份。容器重建、滚动部署和跨节点读取都必须
-看到同一对象集合；无法证明时使用 RustFS/MinIO/S3。远程对象存储必须启用 HTTPS
-（`APP_OBJECT_STORAGE_USE_SSL=true`），并让容器信任服务端证书链。
+看到同一对象集合；无法证明时使用 RustFS/MinIO/S3。生产远程对象存储必须同时设置
+`APP_OBJECT_STORAGE_USE_SSL=true` 和 `APP_OBJECT_STORAGE_ENDPOINT=https://...`；显式
+`http://` endpoint 即使 `use_ssl` 为 true 也会在启动时被拒绝。容器还必须信任服务端
+证书链。
 
 ## 4. 运行时检查
 
@@ -117,6 +119,8 @@ APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads
 过期回收分两阶段进行：第一轮只把 `pending` 改成带新截止时间的 `cleanup` tombstone；grace 到期后，第二轮再次删除对象并硬删除 tombstone。这样即使被取消的远端 `PUT` 延迟完成，也会被第二次删除覆盖。初始预留、续期、过期判断和 grace 起点都使用同一主数据库 UTC 时钟，避免租户锁等待或多应用节点时钟偏差误删活跃上传。janitor 每批最多处理 32 条，任务失败从 5 秒开始指数退避到 5 分钟；单个对象删除失败会把该 tombstone 延后 60 秒，让后续记录能进入下一批，避免固定失败项饿死队列。对象删除不进入正常上传请求链路。
 
 cleanup grace 至少为 5 分钟，并且不小于存储实现声明的“取消后最晚提交时间”两倍。生产 S3 客户端单请求超时为 30 秒；新增对象存储实现必须通过 `late_put_completion_bound` 声明更大的上界。下载会同时校验租户文件元数据，不能仅凭对象路径跨租户读取。
+
+头像上传完成后，`sys_user.avatar_file_id` 会保存稳定的 `sys_file` 关联；历史仅保存 URL 的头像保留空关联，下一次更新后才进入可计数回收链路。替换头像时，旧文件只有在没有任何有效用户引用时才会变为 5 分钟的 `cleanup` 墓碑。宽限期内的并发去重复用会恢复该文件，因此不会因并发头像更新误删对象。
 
 普通文件上限为 10 MiB，头像上限为 5 MiB，上传超时为 120 秒。Nginx、Axum 请求体、multipart 和业务校验使用同一配置，固定长度或 chunked 超限都返回 `413`。
 

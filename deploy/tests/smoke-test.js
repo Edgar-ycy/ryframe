@@ -1,5 +1,5 @@
-// RyFrame smoke test.
-// Usage: node deploy/tests/smoke-test.js [base_url]
+// RyFrame 冒烟测试。
+// 用法：node deploy/tests/smoke-test.js [base_url]
 
 const BASE_URL = process.argv[2] || "http://localhost:8080";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";

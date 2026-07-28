@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiResponse, AppResult};
+use ryframe_http::{ApiResponse, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{
     CreatePermissionCommand, PermissionSyncReport, PermissionTreeNode, PermissionType,
@@ -69,7 +69,7 @@ pub async fn detail(
         .await?;
     match item {
         Some(item) => Ok(Json(ApiResponse::success(item))),
-        None => Err(ryframe_common::AppError::NotFound("权限不存在".into())),
+        None => Err(ryframe_http::AppError::NotFound("权限不存在".into())),
     }
 }
 
@@ -145,7 +145,7 @@ pub async fn update(
 #[delete("/{id}")]
 #[perm("system:perm:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/perms/{id}", tag = "权限管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)),
+    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub async fn remove(
     State(state): State<AppState>,

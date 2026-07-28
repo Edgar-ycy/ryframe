@@ -1,4 +1,4 @@
-/// data_diff 模块测试
+/// 数据差异模块测试。
 /// 从 crates/ryframe-common/src/utils/data_diff.rs 内联测试迁移
 use ryframe_common::utils::data_diff::{DataDiff, DataDiffBuilder};
 use serde_json::json;

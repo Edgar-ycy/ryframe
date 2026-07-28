@@ -16,9 +16,9 @@ use axum::{
     routing::post,
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ActorContext, annotations::data_scope::DataScope};
 use ryframe_config::{RedisConfig, RedisMode};
 use ryframe_core::RedisClient;
+use ryframe_kernel::{ActorContext, DataScope};
 use ryframe_middleware::idempotency::{IdempotencyState, idempotency_middleware};
 use tower::util::ServiceExt;
 
@@ -69,6 +69,7 @@ fn principal(tenant_id: &str, user_id: i64) -> RequestPrincipal {
             include_self: false,
             is_super_admin: false,
         },
+        preferred_locale: None,
         roles: vec![],
         role_ids: vec![],
         permissions: vec![],
@@ -243,7 +244,7 @@ async fn different_route_templates_are_part_of_the_scope() {
 }
 
 #[tokio::test]
-async fn matched_route_template_uses_key_and_body_to_isolate_concrete_ids() {
+async fn concrete_path_and_query_are_part_of_the_idempotency_scope() {
     let state = IdempotencyState::new(None, 60);
     let calls = Arc::new(AtomicUsize::new(0));
     let principal = principal("tenant-a", 1);
@@ -258,26 +259,50 @@ async fn matched_route_template_uses_key_and_body_to_isolate_concrete_ids() {
         .unwrap();
     assert_eq!(first.status(), 200);
 
-    let different_key = test_router(state.clone(), principal.clone(), calls.clone())
+    let different_resource = test_router(state.clone(), principal.clone(), calls.clone())
         .oneshot(request_at(
             "/resources/2",
-            Some("resource-operation-b"),
+            Some("resource-operation-a"),
             "payload-a",
         ))
         .await
         .unwrap();
-    assert_eq!(different_key.status(), 200);
+    assert_eq!(different_resource.status(), 200);
 
-    let different_body = test_router(state, principal, calls.clone())
+    let first_query = test_router(state.clone(), principal.clone(), calls.clone())
         .oneshot(request_at(
-            "/resources/3",
+            "/resources/3?dry_run=true&tag=a",
             Some("resource-operation-a"),
-            "payload-b",
+            "payload-a",
         ))
         .await
         .unwrap();
-    assert_eq!(different_body.status(), StatusCode::CONFLICT);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(first_query.status(), 200);
+
+    let different_query = test_router(state.clone(), principal.clone(), calls.clone())
+        .oneshot(request_at(
+            "/resources/3?dry_run=false&tag=a",
+            Some("resource-operation-a"),
+            "payload-a",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(different_query.status(), 200);
+
+    let reordered_equivalent_query = test_router(state, principal, calls.clone())
+        .oneshot(request_at(
+            "/resources/3?tag=a&dry_run=true",
+            Some("resource-operation-a"),
+            "payload-a",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(reordered_equivalent_query.status(), 200);
+    assert_eq!(
+        reordered_equivalent_query.headers()["X-Idempotency-Replay"],
+        "true"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
 }
 
 #[tokio::test]

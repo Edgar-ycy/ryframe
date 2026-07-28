@@ -8,6 +8,8 @@ ARG RYFRAME_BUILD_COMMIT
 
 WORKDIR /workspace
 COPY . .
+RUN test -n "${RYFRAME_BUILD_COMMIT}" \
+    && printf '%s\n' "${RYFRAME_BUILD_COMMIT}" | grep -Eq '^[0-9a-f]{40}$'
 RUN --mount=type=cache,id=ryframe-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=ryframe-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=ryframe-target,target=/workspace/target,sharing=locked \
@@ -33,6 +35,7 @@ COPY --chown=ryframe:ryframe config ./config
 COPY --chown=ryframe:ryframe locales ./locales
 
 ENV APP_ENV=prod \
+    APP_CONFIG_DIR=/opt/ryframe/config \
     APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads
 EXPOSE 8080
 VOLUME ["/var/lib/ryframe/uploads"]

@@ -1,12 +1,12 @@
-//! UserRepository tenant-boundary tests.
+//! `UserRepository` 租户边界测试。
 
 mod common;
 
 use chrono::Utc;
 use common::setup_test_db;
-use ryframe_common::utils::snowflake;
 use ryframe_core::repository::Repository;
 use ryframe_db::{UserRepository, entities::user};
+use ryframe_utils::snowflake;
 
 fn make_user(tenant_id: &str, username: &str) -> user::Model {
     user::Model {
@@ -18,6 +18,8 @@ fn make_user(tenant_id: &str, username: &str) -> user::Model {
         email: format!("{username}@test.local"),
         phone: String::new(),
         avatar: None,
+        avatar_file_id: None,
+        preferred_locale: None,
         status: user::Model::STATUS_NORMAL.into(),
         auth_version: 0,
         dept_id: None,

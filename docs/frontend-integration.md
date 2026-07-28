@@ -8,10 +8,14 @@
 
 ```powershell
 Set-Location ryframe-vue3
+$env:RYFRAME_BACKEND_REPOSITORY='Edgar-ycy/ryframe'
+$env:RYFRAME_BACKEND_COMMIT=(git -C .. rev-parse HEAD)
 $env:RYFRAME_OPENAPI_SOURCE='..\openapi\openapi.json'
 pnpm api:sync
 pnpm api:check
 ```
+
+`RYFRAME_BACKEND_COMMIT` 必须是后端仓库的完整 40 位提交 SHA；上例适用于前端目录位于后端工作区内的标准开发布局。若两个仓库分别克隆，请改为填入要固定的后端提交 SHA，避免把浮动分支误写入前端契约元数据。
 
 `src/api/generated/schema.ts` 由 `openapi-typescript` 生成，`src/shared/security/passwordPolicy.generated.json` 由同步脚本从 `x-ryframe-password-policy` 生成，两者都禁止手工修改。业务 API 模块通过 `src/api/contract.ts` 使用 `ApiSchema`、`OperationQuery`、`OperationJsonBody` 和 `OperationData`，只保留请求函数与必要的语义窄类型。
 
@@ -42,18 +46,20 @@ Authorization: Bearer <access_token>
 ```ts
 export interface ApiResponse<T = unknown> {
   code: number
-  msg: string
+  message: string
   data?: T
-  rows?: T[]
-  total?: number
+  request_id: string
+  error_key?: string | null
+  details?: unknown
 }
 ```
 
 约定：
 
-- `code === 200` 表示成功。
-- 错误提示统一读取 `msg`。
-- 普通接口返回 `{ code, msg, data }`；分页接口返回 `{ code, msg, rows, total }`。
+- `code` 与 HTTP 状态码一致，2xx 表示成功。
+- 错误提示优先按 `error_key` 映射本地化文案，未命中时回退到 `message`。
+- `request_id` 与 `X-Request-Id` 响应头一致；普通接口返回 `{ code, message, data, request_id, error_key, details }`。
+- 分页数据统一置于 `data`，不再使用顶层 `rows/total`。
 
 - 下载接口统一调用 `requestBlob` 并返回 `Promise<Blob>`；文本监控接口调用 `requestText`。二者不伪装成 JSON 包络。
 
@@ -61,8 +67,12 @@ export interface ApiResponse<T = unknown> {
 
 ```ts
 export interface PageResponse<T> {
-  rows: T[]
+  items: T[]
+  page: number
+  page_size: number
   total: number
+  total_pages: number
+  max_page_size: number
 }
 
 export interface PageQuery {
@@ -317,8 +327,8 @@ Content-Disposition: attachment; filename="users.xlsx"
 
 - 新增菜单页面时，同步维护 `ryframe-vue3/src/router/pageRegistry.ts`。
 - 页面按钮权限统一使用后端返回的 `perms`，不要在页面硬编码角色名。
-- 表格接口统一读取 `rows` 和 `total`，新增模块不要自定义分页字段。
-- 错误提示统一读取 `msg`。
+- 表格接口统一读取 `data.items` 和 `data.total`，新增模块不要自定义分页字段。
+- 错误提示优先读取 `error_key` 的本地化映射，再回退到 `message`。
 - 下载接口设置 `responseType: 'blob'`，不要按统一 JSON 解析。
 - 后端 64 位 ID 在前端按字符串处理。
 - access token、refresh token 和 CSRF challenge 不得写入 localStorage；refresh token 不得出现在 JavaScript 类型中。

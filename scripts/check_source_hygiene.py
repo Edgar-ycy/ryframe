@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject corrupted or accidentally collapsed text sources."""
+"""拒绝损坏或意外折叠的文本源码。"""
 
 from __future__ import annotations
 
@@ -12,8 +12,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_DIRS = {".git", ".pnpm-store", "target", "ryframe-vue3"}
 TEXT_SUFFIXES = {
+    ".cjs",
+    ".conf",
+    ".js",
     ".json",
     ".md",
+    ".mjs",
     ".ps1",
     ".py",
     ".rs",
@@ -23,7 +27,7 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
-TEXT_NAMES = {".editorconfig", ".gitattributes", ".gitignore"}
+TEXT_NAMES = {".editorconfig", ".gitattributes", ".gitignore", "Dockerfile"}
 MOJIBAKE_MARKERS = ("\ufffd", "\u951b", "\u9286", "\u922b")
 ALLOWED_IGNORED_TESTS = {
     ("crates/ryframe-storage/tests/object_storage_test.rs", "test_s3_integration_put_get_delete"),
@@ -65,6 +69,8 @@ LEGACY_ACTION_PATHS = (
 )
 LEGACY_API_TERM_ALLOWLIST = {
     "crates/ryframe-core/src/repository.rs",
+    # 该模块的测试必须保留历史字段名，以验证公开接口会明确拒绝旧写法。
+    "crates/ryframe-api/src/macros.rs",
     "scripts/check_source_hygiene.py",
 }
 VENDORED_SOURCE_PREFIX = "vendor/"
@@ -84,6 +90,36 @@ HEALTH_CONTRACT_PREFIXES = (
     "crates/ryframe-monitor/src/",
     "openapi/",
 )
+GOVERNANCE_TEXT_PREFIXES = (".github/", "docs/", "scripts/")
+WORKFLOW_PREFIX = ".github/workflows/"
+COMMENT_LANGUAGE_SUFFIXES = {
+    ".cjs",
+    ".conf",
+    ".dockerfile",
+    ".js",
+    ".mjs",
+    ".ps1",
+    ".py",
+    ".rs",
+    ".sh",
+    ".sql",
+    ".toml",
+    ".yaml",
+    ".yml",
+}
+COMMENT_LANGUAGE_EXCLUDED_PREFIXES: tuple[str, ...] = ()
+HAN_CHARACTER_PATTERN = re.compile(r"[\u4e00-\u9fff]")
+COMMENT_DIRECTIVE_PATTERN = re.compile(
+    r"^(?:!|/?\s*<reference\b|(?:cargo|clippy|fmt|noqa|pragma|rustfmt|shellcheck|type)"
+    r"(?:[-:\s]|$)|(?:syntax|escape)=|SPDX-License-Identifier:|Copyright\b)",
+    re.IGNORECASE,
+)
+COMMENT_SEPARATOR_PATTERN = re.compile(r"^[\s|=*#_\-─—]+$")
+TECHNICAL_COMMENT_PATTERN = re.compile(
+    r"^(?:`[^`]+`(?:\s*\([A-Z0-9-]+\))?|"
+    r"(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+\S+|"
+    r"`?/[A-Za-z0-9_./{}?=&:-]+`?[。.]?)$"
+)
 
 
 def source_files() -> list[Path]:
@@ -97,6 +133,181 @@ def source_files() -> list[Path]:
             if (path := base / name).suffix.lower() in TEXT_SUFFIXES or name in TEXT_NAMES
         )
     return sorted(files)
+
+
+def comment_language_suffix(path: Path) -> str:
+    if path.name == "Dockerfile":
+        return ".dockerfile"
+    return path.suffix.lower()
+
+
+def collect_comments(text: str, suffix: str) -> list[tuple[int, str, bool]]:
+    """以轻量词法扫描提取注释，避免把字符串中的注释标记误判为注释。"""
+    comments: list[tuple[int, str, bool]] = []
+    index = 0
+    line_number = 1
+    length = len(text)
+    supports_slash_comments = suffix in {".cjs", ".js", ".mjs", ".rs"}
+    supports_hash_comments = suffix in {
+        ".conf",
+        ".dockerfile",
+        ".ps1",
+        ".py",
+        ".sh",
+        ".toml",
+        ".yaml",
+        ".yml",
+    }
+    supports_sql_comments = suffix == ".sql"
+    supports_single_quote = suffix in {
+        ".cjs",
+        ".conf",
+        ".js",
+        ".mjs",
+        ".ps1",
+        ".py",
+        ".sh",
+        ".toml",
+        ".yaml",
+        ".yml",
+    }
+    supports_backtick = suffix in {".cjs", ".js", ".mjs"}
+
+    def skip_quoted(start: int, quote: str) -> int:
+        cursor = start + len(quote)
+        while cursor < length:
+            if text.startswith(quote, cursor):
+                return cursor + len(quote)
+            if text[cursor] == "\\":
+                cursor += 2
+            else:
+                cursor += 1
+        return cursor
+
+    while index < length:
+        current = text[index]
+        next_character = text[index + 1] if index + 1 < length else ""
+
+        if (
+            suffix == ".rs"
+            and current == "r"
+            and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_"))
+        ):
+            raw_start = re.match(r'r(#+)?"', text[index:])
+            if raw_start:
+                hashes = raw_start.group(1) or ""
+                closing = '"' + hashes
+                end = text.find(closing, index + len(raw_start.group(0)))
+                if end == -1:
+                    line_number += text[index:].count("\n")
+                    break
+                end += len(closing)
+                line_number += text[index:end].count("\n")
+                index = end
+                continue
+
+        if suffix == ".py" and text.startswith(current * 3, index) and current in {"'", '"'}:
+            end = skip_quoted(index, current * 3)
+            line_number += text[index:end].count("\n")
+            index = end
+            continue
+        if suffix == ".rs" and current == "'":
+            # Rust 生命周期不带闭合引号；仅跳过可确认的字符字面量，避免把 b'"'
+            # 中的双引号误当成字符串起点。
+            character_end = index + (3 if index + 1 < length and text[index + 1] == "\\" else 2)
+            if character_end < length and text[character_end] == "'":
+                index = character_end + 1
+                continue
+        if current == '"' or (current == "'" and supports_single_quote) or (
+            current == "`" and supports_backtick
+        ):
+            end = skip_quoted(index, current)
+            line_number += text[index:end].count("\n")
+            index = end
+            continue
+
+        if supports_slash_comments and current == "/" and next_character == "/":
+            end = text.find("\n", index + 2)
+            if end == -1:
+                end = length
+            is_doc = text.startswith("///", index) or text.startswith("//!", index)
+            comments.append(
+                (line_number, text[index + (3 if is_doc else 2) : end], is_doc)
+            )
+            index = end
+            continue
+        if supports_slash_comments and current == "/" and next_character == "*":
+            end = text.find("*/", index + 2)
+            content_end = length if end == -1 else end
+            comments.append(
+                (
+                    line_number,
+                    text[index + 2 : content_end],
+                    text.startswith("/**", index) or text.startswith("/*!", index),
+                )
+            )
+            index = length if end == -1 else end + 2
+            continue
+        if supports_hash_comments and current == "#" and (
+            index == 0 or text[index - 1].isspace()
+        ):
+            end = text.find("\n", index + 1)
+            if end == -1:
+                end = length
+            comments.append((line_number, text[index + 1 : end], False))
+            index = end
+            continue
+        if supports_sql_comments and current == "-" and next_character == "-":
+            end = text.find("\n", index + 2)
+            if end == -1:
+                end = length
+            comments.append((line_number, text[index + 2 : end], False))
+            index = end
+            continue
+
+        if current == "\n":
+            line_number += 1
+        index += 1
+
+    return comments
+
+
+def comment_language_violations(relative: str, text: str, suffix: str) -> list[str]:
+    """返回不含中文说明的项目自有源码注释。"""
+    if relative.startswith(COMMENT_LANGUAGE_EXCLUDED_PREFIXES):
+        return []
+
+    violations: list[str] = []
+    in_doc_code_block = False
+    previous_doc_line: int | None = None
+
+    for line_number, comment, is_doc in collect_comments(text, suffix):
+        if not is_doc or previous_doc_line is None or line_number > previous_doc_line + 1:
+            in_doc_code_block = False
+        for offset, raw_line in enumerate(comment.splitlines() or [comment]):
+            raw_comment = raw_line.strip().lstrip("*").strip()
+            if not raw_comment:
+                continue
+
+            if is_doc and raw_comment.startswith("```"):
+                in_doc_code_block = not in_doc_code_block
+                continue
+            if in_doc_code_block:
+                continue
+            if COMMENT_SEPARATOR_PATTERN.fullmatch(raw_comment):
+                continue
+            if COMMENT_DIRECTIVE_PATTERN.match(raw_comment):
+                continue
+            technical_comment = raw_comment.removeprefix("- ").strip("= ")
+            if TECHNICAL_COMMENT_PATTERN.fullmatch(technical_comment):
+                continue
+            if not HAN_CHARACTER_PATTERN.search(raw_comment):
+                violations.append(
+                    f"{relative}:{line_number + offset}: explanatory comment must contain Chinese text"
+                )
+        previous_doc_line = line_number if is_doc else None
+
+    return violations
 
 
 def main() -> int:
@@ -120,6 +331,13 @@ def main() -> int:
             errors.append(f"{relative}: invalid UTF-8 ({error})")
             continue
 
+        is_governance_text = relative.startswith(GOVERNANCE_TEXT_PREFIXES)
+        if is_governance_text and data.startswith(b"\xef\xbb\xbf"):
+            errors.append(f"{relative}: must use UTF-8 without a BOM")
+        if relative.startswith(WORKFLOW_PREFIX) and b"\r" in data:
+            errors.append(f"{relative}: workflow files must use LF line endings")
+        if data and not data.endswith(b"\n"):
+            errors.append(f"{relative}: text file must end with a newline")
         if "\0" in text:
             errors.append(f"{relative}: contains a NUL byte")
         if any(marker in text for marker in MOJIBAKE_MARKERS):
@@ -128,6 +346,9 @@ def main() -> int:
             errors.append(f"{relative}: contains a Unicode private-use character")
         if len(data) > 1_000 and text.count("\n") < 2:
             errors.append(f"{relative}: suspiciously collapsed into fewer than three lines")
+        suffix = comment_language_suffix(path)
+        if is_first_party and suffix in COMMENT_LANGUAGE_SUFFIXES:
+            errors.extend(comment_language_violations(relative, text, suffix))
         if (
             is_first_party
             and path.suffix == ".rs"

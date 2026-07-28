@@ -5,10 +5,9 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use ryframe_common::utils::ip::{ClientIp, TrustedProxySet};
+use ryframe_utils::ip::{ClientIp, TrustedProxySet};
 
-/// Resolve a single trusted client address early and make it available to
-/// logging, rate limiting, authentication, and audit middleware.
+/// 尽早解析唯一可信的客户端地址，并使其可供日志、限流、认证和审计中间件使用。
 pub async fn trusted_client_ip_middleware(
     State(trusted_proxies): State<TrustedProxySet>,
     mut request: Request,

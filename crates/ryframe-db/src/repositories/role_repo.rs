@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
@@ -24,7 +24,7 @@ impl Repository<role::Model, i64> for RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
     }
 
     async fn find_by_page(
@@ -121,7 +121,7 @@ impl RoleRepository {
         Ok(result.rows_affected)
     }
 
-    /// Read and lock one live role inside a role-mutation transaction.
+    /// 在角色变更事务中读取并锁定一个有效角色。
     pub async fn find_by_id_for_update(
         &self,
         txn: &DatabaseTransaction,
@@ -137,11 +137,10 @@ impl RoleRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
-    /// Count usable super roles with a current locking read.
+    /// 通过当前锁定读统计可用的超级角色。
     ///
-    /// Role mutations first lock the tenant row, then call this method. That
-    /// shared serialization point prevents two concurrent removals from each
-    /// observing the other super role and deleting the last usable role.
+    /// 角色变更会先锁定租户行，再调用此方法。这个共享串行化点可防止两个并发删除
+    /// 分别观察到对方的超级角色并删除最后一个可用角色。
     pub async fn count_available_super_roles_for_update(
         &self,
         txn: &DatabaseTransaction,
@@ -172,7 +171,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
             .into_iter()
             .map(|ur| ur.role_id)
             .collect();
@@ -188,7 +187,7 @@ impl RoleRepository {
             .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
     }
 
     /// 查询用户拥有的角色列表（包含停用角色，用于危险操作保护）
@@ -206,7 +205,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
             .into_iter()
             .map(|ur| ur.role_id)
             .collect();
@@ -221,14 +220,13 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
     }
 
-    /// Check super-admin membership with a locking/current read.
+    /// 通过锁定的当前读检查超级管理员归属。
     ///
-    /// Callers must already hold the target `sys_user` row lock. All role
-    /// replacement paths acquire that user lock before touching `sys_user_role`,
-    /// which gives user mutations and role changes one deterministic order.
+    /// 调用方必须已持有目标 `sys_user` 行锁。所有角色替换路径都会在操作
+    /// `sys_user_role` 前获取该用户锁，从而使用户变更和角色变更共享确定的顺序。
     pub async fn user_has_super_role_in_txn(
         &self,
         txn: &DatabaseTransaction,
@@ -270,7 +268,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
             .into_iter()
             .map(|ur| ur.user_id)
             .collect();
@@ -288,8 +286,7 @@ impl RoleRepository {
         user_id: i64,
         role_ids: &[i64],
     ) -> AppResult<()> {
-        // Role replacement and security-sensitive user updates share this row
-        // lock, giving their concurrent execution a deterministic order.
+        // 角色替换和安全敏感的用户更新共享此行锁，使其并发执行具备确定的顺序。
         let user_exists = user::Entity::find_by_id(user_id)
             .filter(user::Column::TenantId.eq(tenant_id))
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
@@ -307,7 +304,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .exec(txn)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
 
         if !role_ids.is_empty() {
             let models: Vec<user_role::ActiveModel> = role_ids
@@ -322,7 +319,7 @@ impl RoleRepository {
             user_role::Entity::insert_many(models)
                 .exec(txn)
                 .await
-                .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
         }
         Ok(())
     }
@@ -360,7 +357,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
     }
 
     pub async fn find_super_role(
@@ -374,7 +371,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
     }
 
     pub async fn find_by_ids(
@@ -393,7 +390,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
     }
 
     /// 查询角色关联的自定义数据权限部门ID列表
@@ -410,7 +407,7 @@ impl RoleRepository {
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
             .into_iter()
             .map(|rd| rd.dept_id)
             .collect();
@@ -435,7 +432,7 @@ impl RoleRepository {
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
             .into_iter()
             .map(|rd| rd.dept_id)
             .collect::<Vec<i64>>();
@@ -445,7 +442,7 @@ impl RoleRepository {
         Ok(unique)
     }
 
-    /// Atomically replace the data-scope mode and custom department relations.
+    /// 原子替换数据范围模式和自定义部门关系。
     pub async fn replace_data_scope(
         &self,
         db: &DatabaseConnection,
@@ -461,7 +458,7 @@ impl RoleRepository {
         let txn = db
             .begin()
             .await
-            .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
 
         let operation: AppResult<()> = async {
             let updated = role::Entity::update_many()
@@ -478,7 +475,7 @@ impl RoleRepository {
                 .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
                 .exec(&txn)
                 .await
-                .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
             if updated.rows_affected != 1 {
                 return Err(AppError::NotFound("角色不存在".into()));
             }
@@ -488,7 +485,7 @@ impl RoleRepository {
                 .filter(role_dept::Column::TenantId.eq(tenant_id))
                 .exec(&txn)
                 .await
-                .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
 
             if !dept_ids.is_empty() {
                 let relations = dept_ids.iter().map(|dept_id| role_dept::ActiveModel {
@@ -499,7 +496,7 @@ impl RoleRepository {
                 role_dept::Entity::insert_many(relations)
                     .exec(&txn)
                     .await
-                    .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+                    .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
             }
             Ok(())
         }
@@ -509,11 +506,11 @@ impl RoleRepository {
             Ok(()) => txn
                 .commit()
                 .await
-                .map_err(|e| ryframe_common::AppError::Database(e.to_string())),
+                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string())),
             Err(error) => {
                 txn.rollback()
                     .await
-                    .map_err(|e| ryframe_common::AppError::Database(e.to_string()))?;
+                    .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
                 Err(error)
             }
         }

@@ -14,6 +14,10 @@ impl EnvOverride {
         Self::new(name, path, EnvValueType::Integer)
     }
 
+    const fn float(name: &'static str, path: &'static [&'static str]) -> Self {
+        Self::new(name, path, EnvValueType::Float)
+    }
+
     const fn boolean(name: &'static str, path: &'static [&'static str]) -> Self {
         Self::new(name, path, EnvValueType::Bool)
     }
@@ -43,6 +47,7 @@ impl EnvOverride {
 pub(super) enum EnvValueType {
     String,
     Integer,
+    Float,
     Bool,
     StringArray,
     Json,
@@ -59,6 +64,27 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         &["monitor", "metrics_bearer_token"],
     ),
     EnvOverride::string("APP_DATABASE_SQL_LOG_LEVEL", &["database", "sql_log_level"]),
+    EnvOverride::string(
+        "APP_DATABASE_MIGRATION_MODE",
+        &["database", "migration_mode"],
+    ),
+    EnvOverride::string("APP_JOBS_MODE", &["jobs", "mode"]),
+    EnvOverride::integer("APP_JOBS_POLL_INTERVAL_MS", &["jobs", "poll_interval_ms"]),
+    EnvOverride::integer("APP_JOBS_LEASE_SECONDS", &["jobs", "lease_seconds"]),
+    EnvOverride::integer("APP_JOBS_CONCURRENCY", &["jobs", "concurrency"]),
+    EnvOverride::string("APP_JOBS_WORKER_ID", &["jobs", "worker_id"]),
+    EnvOverride::boolean("APP_TELEMETRY_ENABLED", &["telemetry", "enabled"]),
+    EnvOverride::string("APP_TELEMETRY_ENDPOINT", &["telemetry", "endpoint"]),
+    EnvOverride::string("APP_TELEMETRY_SERVICE_NAME", &["telemetry", "service_name"]),
+    EnvOverride::float("APP_TELEMETRY_SAMPLE_RATIO", &["telemetry", "sample_ratio"]),
+    EnvOverride::integer(
+        "APP_TELEMETRY_EXPORT_TIMEOUT_SECS",
+        &["telemetry", "export_timeout_secs"],
+    ),
+    EnvOverride::integer(
+        "APP_TELEMETRY_MAX_QUEUE_SIZE",
+        &["telemetry", "max_queue_size"],
+    ),
     EnvOverride::string("APP_DATABASE_HOST", &["database", "primary", "host"]),
     EnvOverride::integer("APP_DATABASE_PORT", &["database", "primary", "port"]),
     EnvOverride::string("APP_DATABASE_NAME", &["database", "primary", "database"]),
@@ -182,6 +208,18 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::integer(
         "APP_RATE_LIMIT_API_WINDOW_SECS",
         &["rate_limit", "api_window_secs"],
+    ),
+    EnvOverride::integer(
+        "APP_PAGINATION_DEFAULT_PAGE_SIZE",
+        &["pagination", "default_page_size"],
+    ),
+    EnvOverride::integer(
+        "APP_PAGINATION_MAX_PAGE_SIZE",
+        &["pagination", "max_page_size"],
+    ),
+    EnvOverride::integer(
+        "APP_PAGINATION_UNPAGED_MAX_RECORDS",
+        &["pagination", "unpaged_max_records"],
     ),
     EnvOverride::string("APP_OBJECT_STORAGE_BACKEND", &["object_storage", "backend"]),
     EnvOverride::string(

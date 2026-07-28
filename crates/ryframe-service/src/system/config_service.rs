@@ -1,4 +1,3 @@
-use ryframe_common::{ActorContext, AppError, AppResult};
 use ryframe_core::{
     LoggedRepo, Repository,
     auto_fill::{AutoFill, FillContext},
@@ -6,6 +5,7 @@ use ryframe_core::{
 };
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{ConfigFilter, ConfigRepository, entities::config};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -77,7 +77,7 @@ impl ConfigService {
         };
         let page = self
             .config_repo
-            .find_by_page_filtered(db, tenant_id, &params.page, &filter)
+            .find_by_page_filtered(&db, tenant_id, &params.page, &filter)
             .await?;
         let records = page.records.into_iter().map(ConfigVo::from).collect();
         Ok(PageResult::new(records, page.total, &params.page))
@@ -88,7 +88,7 @@ impl ConfigService {
         let db = self.db.read();
         Ok(self
             .config_repo
-            .find_by_id(db, tenant_id, id)
+            .find_by_id(&db, tenant_id, id)
             .await?
             .map(ConfigVo::from))
     }
@@ -102,7 +102,7 @@ impl ConfigService {
         self.find_by_key_in_tenant(tenant_id, key).await
     }
 
-    /// Read one tenant configuration required before authentication completes.
+    /// 读取认证完成前所需的一项租户配置。
     pub async fn find_public_value(&self, tenant_id: &str, key: &str) -> AppResult<Option<String>> {
         ryframe_core::validate_explicit_tenant(tenant_id)?;
         Ok(self
@@ -127,7 +127,7 @@ impl ConfigService {
 
         let result = self
             .config_repo
-            .find_by_key(db, tenant_id, key)
+            .find_by_key(&db, tenant_id, key)
             .await?
             .map(ConfigVo::from);
 
@@ -166,7 +166,7 @@ impl ConfigService {
         }
 
         let mut new_config = config::Model {
-            id: ryframe_common::utils::snowflake::try_next_snowflake_id()?,
+            id: ryframe_utils::snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             key: key.to_string(),
@@ -226,9 +226,8 @@ impl ConfigService {
     pub async fn find_all(
         &self,
         actor: &ActorContext,
-        mut params: ConfigListParams,
+        params: ConfigListParams,
     ) -> AppResult<Vec<ConfigVo>> {
-        params.page = PageQuery::all_records();
         Ok(self.find_by_page(actor, params).await?.records)
     }
 

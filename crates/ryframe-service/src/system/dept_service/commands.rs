@@ -1,9 +1,10 @@
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     Repository,
     auto_fill::{AutoFill, FillContext},
 };
 use ryframe_db::entities::dept;
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 
 use super::{CreateDeptCommand, DeptService, DeptVo, UpdateDeptCommand};

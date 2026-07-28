@@ -1,5 +1,5 @@
--- FIXTURE PROVENANCE: v0.4.2 MySQL DDL with comments removed; fixed legacy data follows.
--- Source tag: v0.4.2:sql/ryframe_config.sql. Keep immutable as the v0.4 boundary.
+-- 固件来源：v0.4.2 MySQL DDL 已移除注释，随后为固定的旧版数据。
+-- 来源标签：v0.4.2:sql/ryframe_config.sql；请保持不变，作为 v0.4 升级边界。
 CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `id`                     BIGINT       NOT NULL,
     `tenant_id`              VARCHAR(64)  NOT NULL,

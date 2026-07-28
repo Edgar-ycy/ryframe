@@ -555,7 +555,7 @@ async fn test_notice_repo_filtered_pagination() {
     repo.insert(&db, "system", make_notice("公告C", Some("2")))
         .await
         .unwrap();
-    let scope = ryframe_common::DataScopeContext::super_admin(1);
+    let scope = ryframe_kernel::DataScopeContext::super_admin(1);
 
     let page = repo
         .find_by_page_filtered(
@@ -594,7 +594,7 @@ async fn test_notice_repo_filtered_pagination() {
 async fn test_login_info_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = LoginInfoRepository;
-    let scope = ryframe_common::DataScopeContext::super_admin(1);
+    let scope = ryframe_kernel::DataScopeContext::super_admin(1);
 
     repo.insert(
         &db,
@@ -697,7 +697,7 @@ async fn test_login_info_repo_clean_all() {
 async fn test_oper_log_repo_insert_and_query() {
     let db = setup_test_db().await;
     let repo = OperLogRepository;
-    let scope = ryframe_common::DataScopeContext::super_admin(1);
+    let scope = ryframe_kernel::DataScopeContext::super_admin(1);
 
     repo.insert(
         &db,

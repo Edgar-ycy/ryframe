@@ -1,4 +1,4 @@
-use ryframe_common::{ActorContext, DataScope};
+use ryframe_kernel::{ActorContext, DataScope};
 use ryframe_service::system::online_user_service::{OnlineUserService, UserSession};
 
 fn actor(tenant_id: &str) -> ActorContext {
@@ -69,7 +69,7 @@ async fn test_online_user_lifecycle() {
     assert_eq!(svc.count(&actor("system")).await.unwrap(), 1);
 
     svc.remove_user("system", "tok-2").await;
-    // Secondary-index deletion is deliberately idempotent.
+    // 二级索引删除有意保持幂等。
     svc.remove_user("system", "nonexistent").await;
     assert_eq!(svc.count(&actor("system")).await.unwrap(), 0);
 }

@@ -3,12 +3,16 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::{Multipart, Query, State},
+    http::StatusCode,
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiResponse, AppError, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiResponse, AppError, AppResult};
+use ryframe_kernel::AppError as KernelAppError;
 use ryframe_macro::{get, post};
-use ryframe_service::system::CreateUserParams;
+use ryframe_service::system::{
+    CreateUserParams, ExportJobVo, RequestExportCommand, UserExportFilters,
+};
 use validator::Validate;
 
 use super::UserFilterQuery;
@@ -21,6 +25,49 @@ use crate::{
     state::AppState,
 };
 
+/// 创建用户异步导出任务，实际文件由 Worker 生成并保存到对象存储。
+#[post("/exports")]
+#[perm("system:user:export")]
+#[utoipa::path(post, path = "/api/v1/system/users/exports", tag = "用户管理",
+    params(UserFilterQuery),
+    responses((status = 202, description = "用户导出任务已创建", body = ApiResponse<ExportJobVo>)),
+    security(("bearer" = [])))]
+pub(crate) async fn request_user_export(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    Query(query): Query<UserFilterQuery>,
+) -> AppResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+    let params = query.into_service_params(PageQuery {
+        page: 1,
+        page_size: 1,
+    })?;
+    let export = state
+        .services
+        .export
+        .request(
+            &current_user,
+            RequestExportCommand {
+                resource: "users".into(),
+                permission_code: "system:user:export".into(),
+                request_params: serde_json::to_value(UserExportFilters {
+                    username: params.username,
+                    phone: params.phone,
+                    status: params.status,
+                    dept_id: params.dept_id,
+                })
+                .map_err(|error| {
+                    AppError::Internal(format!("用户导出筛选条件序列化失败: {error}"))
+                })?,
+            },
+        )
+        .await
+        .map_err(AppError::from)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::success_msg("导出任务已创建", export)),
+    ))
+}
+
 #[get("/export")]
 #[perm("system:user:export")]
 #[utoipa::path(get, path = "/api/v1/system/users/export", tag = "用户管理",
@@ -31,9 +78,10 @@ pub(crate) async fn export_users(
     current_user: RequestPrincipal,
     Query(query): Query<UserFilterQuery>,
 ) -> AppResult<axum::response::Response> {
-    use ryframe_common::utils::ExcelExporter;
+    use ryframe_excel::ExcelExporter;
 
-    let params = query.into_service_params(PageQuery::all_records())?;
+    let params =
+        query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?)?;
     let page = state
         .services
         .user
@@ -69,7 +117,7 @@ pub(crate) async fn import_users(
     current_user: RequestPrincipal,
     mut multipart: Multipart,
 ) -> AppResult<Json<ApiResponse<UserImportResult>>> {
-    use ryframe_common::utils::ExcelImporter;
+    use ryframe_excel::ExcelImporter;
 
     let lock_key = format!("tenant:{}:system:user:import", current_user.tenant_id);
     let _guard = state
@@ -78,7 +126,7 @@ pub(crate) async fn import_users(
         .try_acquire(&lock_key, Duration::from_secs(300))
         .await
         .map_err(|error| {
-            if matches!(error, AppError::ServiceUnavailable(_)) {
+            if matches!(error, KernelAppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("distributed_lock");
             }
             error
@@ -156,7 +204,7 @@ pub(crate) async fn download_import_template(
     State(_state): State<AppState>,
     _current_user: RequestPrincipal,
 ) -> AppResult<axum::response::Response> {
-    use ryframe_common::utils::ExcelExporter;
+    use ryframe_excel::ExcelExporter;
 
     let bytes = ExcelExporter::export_template("用户数据", UserImportData::excel_headers())?;
     excel_response(bytes, "user_template.xlsx")

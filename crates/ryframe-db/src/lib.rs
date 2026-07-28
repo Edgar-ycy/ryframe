@@ -6,20 +6,30 @@ pub mod entities;
 pub mod pagination;
 pub mod repositories;
 pub mod sql_logger;
-pub use cluster::DatabaseCluster;
+pub use cluster::{
+    CallbackDatabaseMetricsObserver, DatabaseCluster, DatabaseMetricsObserver, DatabaseNodeKind,
+    DatabaseReadSelectionReason, ReadConsistency, SelectedDatabase,
+};
 pub use database_monitor::SeaOrmDatabaseMonitor;
 pub use sql_logger::{DbSpanLayer, SqlLogLayer};
 pub mod transaction;
 
 // 便捷导出
 pub use entities::{
-    config, dept, dict_data, dict_type, login_info, menu, notice, oper_log, password_reset_request,
+    background_job, config, dept, dict_data, dict_type, export_job, login_info, menu, message,
+    message_audience, message_recipient, notice, oper_log, outbox_event, password_reset_request,
     permission, post, role, role_dept, role_permission, sys_file, tenant, user, user_role,
 };
 pub use repositories::{
-    ConfigFilter, ConfigRepository, DeptRepository, DictDataRepository, DictTypeFilter,
-    DictTypeRepository, FileRepository, LoginInfoFilter, LoginInfoRepository, MenuFilter,
-    MenuRepository, NoticeFilter, NoticeRepository, OperLogFilter, OperLogRepository,
+    BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ConfigFilter,
+    ConfigRepository, CreateExportJob, DeptRepository, DictDataRepository, DictTypeFilter,
+    DictTypeRepository, EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExpiredLeaseRecovery,
+    ExportJobRepository, FileRepository, JobFailureDisposition, LoginInfoFilter,
+    LoginInfoRepository, MenuFilter, MenuRepository, MessageAudienceKind, MessageAudienceSelector,
+    MessageInboxQuery, MessageRepository, NoticeFilter, NoticeRepository, OperLogFilter,
+    OperLogRepository, OutboxEventRepository, OutboxFailureDisposition,
     PasswordResetRequestRepository, PermissionRepository, PostRepository, ProvisionTenantCommand,
-    RoleRepository, TenantProvisioningRepository, TenantRepository, UserFilter, UserRepository,
+    PublishMessageCommand, PublishedMessage, RecipientMessage, RecipientMessagePage,
+    RecordOutboxEvent, RoleRepository, TenantProvisioningRepository, TenantRepository, UserFilter,
+    UserRepository,
 };

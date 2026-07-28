@@ -11,10 +11,11 @@ use std::{
 };
 
 use async_trait::async_trait;
-use ryframe_common::{ActorContext, DataScope, utils::file_upload::UploadConfig};
 use ryframe_db::DatabaseCluster;
+use ryframe_kernel::{ActorContext, AppError, DataScope};
 use ryframe_service::system::{FileService, UploadCommand};
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, StorageError, StorageResult};
+use ryframe_utils::file_upload::UploadConfig;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, Set,
     TransactionTrait,
@@ -160,8 +161,7 @@ impl Drop for CommitAfterCancellation {
         let location = self.location.clone();
         let data = std::mem::take(&mut self.data);
         std::mem::drop(tokio::spawn(async move {
-            // Model a remote server committing only after the cancelled
-            // client's first compensation DELETE has already completed.
+            // 模拟远程服务器仅在已取消客户端的首次补偿 DELETE 完成后才提交。
             let Ok(permit) = delete_observed.acquire().await else {
                 return;
             };
@@ -313,6 +313,7 @@ fn pending_file(
         file_size: 1,
         content_type: "text/plain".to_owned(),
         file_md5: Some(format!("{id:032x}")),
+        file_sha256: None,
         upload_by: Some("admin".to_owned()),
         upload_status: ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
         reservation_token: Some(token.to_owned()),
@@ -353,12 +354,20 @@ async fn upload_persists_metadata_and_can_be_downloaded() {
             .starts_with("/api/v1/common/file/download?")
     );
     assert_eq!(count_files(directory.path()), 1);
+    let file_id = uploaded.file_id.parse::<i64>().unwrap();
+    let metadata = ryframe_db::entities::sys_file::Entity::find_by_id(file_id)
+        .one(db.connection())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(metadata.file_md5.is_none());
+    assert_eq!(metadata.file_sha256.as_deref().map(str::len), Some(64));
     let (data, filename) = service
         .download(&actor(), "uploads", &uploaded.file_info.file_path)
         .await
         .unwrap();
     assert_eq!(data, b"hello storage");
-    assert_eq!(filename, uploaded.file_info.storage_name);
+    assert_eq!(filename, "example.txt");
 }
 
 #[tokio::test]
@@ -441,7 +450,7 @@ async fn concurrent_uploads_cannot_exceed_tenant_storage_quota() {
     let results = [result_a, result_b];
     assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
     assert!(results.iter().any(|result| {
-        matches!(result, Err(ryframe_common::AppError::Validation(message)) if message.contains("存储容量"))
+        matches!(result, Err(AppError::Validation(message)) if message.contains("存储容量"))
     }));
 
     let metadata_count = ryframe_db::entities::sys_file::Entity::find()
@@ -482,8 +491,7 @@ async fn object_put_does_not_hold_the_tenant_row_lock() {
         .await
         .expect("upload never reached object storage");
 
-    // A previous-version reader only knows `del_flag = '0'`; rolling
-    // deployments must never expose a pending reservation as a normal file.
+    // 旧版本读取器只识别 `del_flag = '0'`；滚动部署绝不能将待处理预留暴露为普通文件。
     let legacy_visible = ryframe_db::entities::sys_file::Entity::find()
         .filter(
             ryframe_db::entities::sys_file::Column::DelFlag
@@ -581,9 +589,7 @@ async fn pending_upload_reservation_counts_against_tenant_quota() {
     )
     .await
     .expect("quota check blocked behind object PUT");
-    assert!(
-        matches!(second, Err(ryframe_common::AppError::Validation(message)) if message.contains("存储容量"))
-    );
+    assert!(matches!(second, Err(AppError::Validation(message)) if message.contains("存储容量")));
 
     storage.release_one_put();
     first.await.unwrap().unwrap();
@@ -693,7 +699,7 @@ async fn object_committed_before_put_error_is_compensated() {
 
     assert!(matches!(
         upload.await.unwrap(),
-        Err(ryframe_common::AppError::ServiceUnavailable(_))
+        Err(AppError::ServiceUnavailable(_))
     ));
     assert_eq!(storage.object_count().await, 0);
     let row = ryframe_db::entities::sys_file::Entity::find()
@@ -802,7 +808,7 @@ async fn ready_state_write_failure_is_compensated() {
         )
         .await;
 
-    assert!(matches!(result, Err(ryframe_common::AppError::Database(_))));
+    assert!(matches!(result, Err(AppError::Database(_))));
     assert_eq!(count_files(directory.path()), 0);
     let row = ryframe_db::entities::sys_file::Entity::find()
         .one(db.connection())
@@ -885,8 +891,7 @@ async fn expired_pending_upload_uses_a_cleanup_grace_before_hard_delete() {
     let db = common::setup_test_db().await;
     let directory = TempDir::new().unwrap();
     let storage = Arc::new(LocalObjectStorage::new(directory.path()));
-    let stale_id =
-        ryframe_common::utils::snowflake::try_next_snowflake_id().expect("generate test ID");
+    let stale_id = ryframe_utils::snowflake::try_next_snowflake_id().expect("generate test ID");
     let stale_path = "system/stale-upload.txt";
     let stale_body = b"late object";
     storage
@@ -905,6 +910,7 @@ async fn expired_pending_upload_uses_a_cleanup_grace_before_hard_delete() {
         file_size: stale_body.len() as i64,
         content_type: "text/plain".to_owned(),
         file_md5: Some(format!("{:x}", md5::compute(stale_body))),
+        file_sha256: None,
         upload_by: Some("admin".to_owned()),
         upload_status: ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
         reservation_token: Some("stale-token".to_owned()),
@@ -959,8 +965,7 @@ async fn upload_state_compare_and_set_races_have_exactly_one_winner() {
         .await
         .unwrap();
 
-    let finalize_id =
-        ryframe_common::utils::snowflake::try_next_snowflake_id().expect("generate test ID");
+    let finalize_id = ryframe_utils::snowflake::try_next_snowflake_id().expect("generate test ID");
     let finalize = pending_file(
         finalize_id,
         "finalize-race.txt",
@@ -992,8 +997,7 @@ async fn upload_state_compare_and_set_races_have_exactly_one_winner() {
     );
     assert_ne!(marked_ready.unwrap(), began_cleanup.unwrap());
 
-    let lease_id =
-        ryframe_common::utils::snowflake::try_next_snowflake_id().expect("generate test ID");
+    let lease_id = ryframe_utils::snowflake::try_next_snowflake_id().expect("generate test ID");
     let lease = pending_file(
         lease_id,
         "lease-race.txt",
@@ -1025,8 +1029,7 @@ async fn upload_state_compare_and_set_races_have_exactly_one_winner() {
     );
     assert_ne!(renewed.unwrap(), expired_cleanup.unwrap());
 
-    let cleanup_id =
-        ryframe_common::utils::snowflake::try_next_snowflake_id().expect("generate test ID");
+    let cleanup_id = ryframe_utils::snowflake::try_next_snowflake_id().expect("generate test ID");
     let mut cleanup = pending_file(
         cleanup_id,
         "cleanup-extension.txt",
@@ -1070,8 +1073,7 @@ async fn failed_cleanup_batch_is_deferred_so_later_rows_are_not_starved() {
         .await
         .unwrap();
     for index in 0..33 {
-        let id =
-            ryframe_common::utils::snowflake::try_next_snowflake_id().expect("generate test ID");
+        let id = ryframe_utils::snowflake::try_next_snowflake_id().expect("generate test ID");
         let mut cleanup = pending_file(
             id,
             &format!("failed-cleanup-{index}.txt"),
@@ -1095,8 +1097,8 @@ async fn failed_cleanup_batch_is_deferred_so_later_rows_are_not_starved() {
     assert_eq!(service.reconcile_upload_reservations().await.unwrap(), 0);
     assert_eq!(storage.delete_attempts.load(Ordering::Relaxed), 32);
 
-    // The first 32 failures were moved into the future, so the next bounded
-    // scan reaches the 33rd row instead of retrying the same hot set forever.
+    // 前 32 次失败已被推迟到未来，因此下一次有界扫描会处理第 33 行，而不会永远
+    // 重试同一批热点记录。
     assert_eq!(service.reconcile_upload_reservations().await.unwrap(), 0);
     assert_eq!(storage.delete_attempts.load(Ordering::Relaxed), 33);
     let current_database_time = ryframe_db::FileRepository

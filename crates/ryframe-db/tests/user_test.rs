@@ -12,6 +12,8 @@ fn make_user(status: &str) -> user::Model {
         email: "test@example.com".to_string(),
         phone: "13800000000".to_string(),
         avatar: None,
+        avatar_file_id: None,
+        preferred_locale: None,
         status: status.to_string(),
         auth_version: 1,
         dept_id: None,

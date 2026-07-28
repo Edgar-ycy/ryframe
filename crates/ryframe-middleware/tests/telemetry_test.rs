@@ -7,7 +7,7 @@ fn test_config_default() {
     let config = TelemetryConfig::default();
     assert!(!config.enabled);
     assert_eq!(config.service_name, "ryframe");
-    assert!((config.sample_rate - 1.0).abs() < f64::EPSILON);
+    assert!((config.sample_ratio - 0.1).abs() < f64::EPSILON);
 }
 
 #[test]

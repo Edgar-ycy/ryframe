@@ -39,9 +39,11 @@ use utoipa::OpenApi;
         (name = "字典管理", description = "字典类型 + 字典数据 CRUD，前端可据此渲染下拉选项。"),
         (name = "参数配置", description = "系统参数键值对 CRUD，支持按 key 精确查询。"),
         (name = "通知公告", description = "通知公告 CRUD，支持草稿/发布/关闭状态。"),
+        (name = "消息中心", description = "持久化收件箱、确认、已读状态和按租户固化的受众快照。"),
         (name = "操作日志", description = "POST/PUT/DELETE 请求自动记录，支持分页查询、详情和导出；业务管理端不提供清空入口。"),
         (name = "登录日志", description = "登录成功/失败记录，含 IP、浏览器、操作系统信息。"),
         (name = "在线用户", description = "查看当前在线设备会话，使用稳定 sid 精确强制下线。"),
+        (name = "后台任务", description = "查看当前租户的持久化任务队列状态，并人工重试死信任务。"),
         (name = "服务器监控", description = "/metrics(Prometheus) 公开；进程与依赖探针分别使用根路径 /livez、/readyz；/server、/cache、/db-pool、/runtime 需认证。"),
         (name = "运行探针", description = "/livez 只报告进程存活；/readyz 检查 MySQL、required Redis 与对象存储。"),
         (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
@@ -57,6 +59,7 @@ use utoipa::OpenApi;
         crate::handlers::auth_handler::refresh,
         crate::handlers::auth_handler::complete_password_reset,
         crate::handlers::auth_handler::me,
+        crate::handlers::auth_handler::websocket_ticket,
         crate::handlers::captcha_handler::generate_captcha_handler,
         crate::handlers::captcha_handler::captcha_image_handler,
         crate::handlers::captcha_handler::verify_captcha_handler,
@@ -72,6 +75,7 @@ use utoipa::OpenApi;
         crate::handlers::user_handler::request_password_reset,
         crate::handlers::user_handler::update_status,
         crate::handlers::user_handler::replace_roles,
+        crate::handlers::user_handler::request_user_export,
         crate::handlers::user_handler::export_users,
         crate::handlers::user_handler::import_users,
         crate::handlers::user_handler::download_import_template,
@@ -140,7 +144,15 @@ use utoipa::OpenApi;
         crate::handlers::notice_handler::detail,
         crate::handlers::notice_handler::create,
         crate::handlers::notice_handler::update,
+        crate::handlers::notice_handler::publish_to_message_center,
         crate::handlers::notice_handler::remove,
+        // 消息中心
+        crate::handlers::message_handler::inbox,
+        crate::handlers::message_handler::unread_count,
+        crate::handlers::message_handler::publish,
+        crate::handlers::message_handler::acknowledge,
+        crate::handlers::message_handler::mark_read,
+        crate::handlers::message_handler::mark_all_read,
         // 操作日志
         crate::handlers::oper_log_handler::list,
         crate::handlers::oper_log_handler::list_no_page,
@@ -153,6 +165,13 @@ use utoipa::OpenApi;
         crate::handlers::online_user_handler::list_online_users,
         crate::handlers::online_user_handler::list_online_users_page,
         crate::handlers::online_user_handler::force_logout,
+        // 后台任务
+        crate::handlers::job_handler::list,
+        crate::handlers::job_handler::stats,
+        crate::handlers::job_handler::retry_dead,
+        crate::handlers::export_handler::detail,
+        crate::handlers::export_handler::cancel,
+        crate::handlers::export_handler::download,
         // 监控、生成器、通用上传下载和导出导入
         crate::probes::livez,
         crate::probes::readyz,
@@ -194,6 +213,7 @@ use utoipa::OpenApi;
         crate::dto::auth_dto::CompletePasswordResetRequest,
         crate::dto::auth_dto::LoginResponse,
         crate::dto::auth_dto::CsrfResponse,
+        crate::message_socket::WebSocketTicketResponse,
         crate::handlers::captcha_handler::CaptchaQuery,
         crate::handlers::captcha_handler::CaptchaResponse,
         crate::handlers::captcha_handler::CaptchaVerifyRequest,
@@ -254,6 +274,17 @@ use utoipa::OpenApi;
         crate::dto::notice_dto::CreateNoticeDto,
         crate::dto::notice_dto::UpdateNoticeDto,
         ryframe_service::system::NoticeVo,
+        // 消息中心 DTO
+        crate::dto::message_dto::MessageAudienceDto,
+        crate::dto::message_dto::PublishMessageDto,
+        crate::dto::message_dto::AcknowledgeMessagesDto,
+        crate::message_presenter::MessageVo,
+        crate::message_presenter::MessageInboxPage,
+        crate::message_presenter::PublishedMessageVo,
+        // 后台任务 DTO
+        crate::dto::job_dto::BackgroundJobPageQuery,
+        ryframe_service::BackgroundJobVo,
+        ryframe_service::BackgroundJobQueueStats,
         // 日志 DTO
         crate::dto::oper_log_dto::OperLogPageQuery,
         crate::dto::login_log_dto::LoginLogPageQuery,
@@ -289,10 +320,10 @@ use utoipa::OpenApi;
 )]
 pub struct ApiDoc;
 
-/// Render the OpenAPI document with deterministic object-key ordering.
+/// 以确定性的对象键排序渲染 OpenAPI 文档。
 ///
-/// Utoipa stores extensions in a hash map, so serializing `OpenApi` directly
-/// can produce byte-wise differences between otherwise identical processes.
+/// Utoipa 将扩展字段存入哈希映射，直接序列化 `OpenApi` 可能使原本相同的进程
+/// 产生字节级差异。
 pub fn render_openapi_json(
     document: &utoipa::openapi::OpenApi,
 ) -> Result<String, serde_json::Error> {
@@ -547,7 +578,14 @@ mod tests {
                     (method, path.as_str()),
                     ("post", "/api/v1/auth/logout")
                         | ("post", "/api/v1/auth/refresh")
+                        | ("post", "/api/v1/auth/ws-ticket")
                         | ("post", "/api/v1/system/perms/sync")
+                        | ("post", "/api/v1/system/notices/{id}/publish-message")
+                        | ("post", "/api/v1/monitor/jobs/{id}/retry")
+                        // 该操作以当前认证用户为唯一作用域，没有请求负载。
+                        | ("put", "/api/v1/system/messages/read-all")
+                        // 消息 ID 位于路径中，当前认证用户决定收件箱作用域。
+                        | ("put", "/api/v1/system/messages/{id}/read")
                 );
                 if matches!(method, "post" | "put" | "patch") && !allows_empty_request {
                     assert!(

@@ -77,35 +77,33 @@ pub fn derive_auto_fill(input: TokenStream) -> TokenStream {
     auto_fill::expand_auto_fill(input)
 }
 
-/// Declare a GET route. Place `#[perm("code")]` immediately below this
-/// attribute to bind the generated route to a permission.
+/// 声明 GET 路由。将 `#[perm("code")]` 紧接放在该属性下方，以为生成的路由绑定权限。
 #[proc_macro_attribute]
 pub fn get(args: TokenStream, input: TokenStream) -> TokenStream {
     route::expand_route(route::HttpMethod::Get, args, input)
 }
 
-/// Declare a POST route.
+/// 声明 POST 路由。
 #[proc_macro_attribute]
 pub fn post(args: TokenStream, input: TokenStream) -> TokenStream {
     route::expand_route(route::HttpMethod::Post, args, input)
 }
 
-/// Declare a PUT route.
+/// 声明 PUT 路由。
 #[proc_macro_attribute]
 pub fn put(args: TokenStream, input: TokenStream) -> TokenStream {
     route::expand_route(route::HttpMethod::Put, args, input)
 }
 
-/// Declare a DELETE route.
+/// 声明 DELETE 路由。
 #[proc_macro_attribute]
 pub fn delete(args: TokenStream, input: TokenStream) -> TokenStream {
     route::expand_route(route::HttpMethod::Delete, args, input)
 }
 
-/// Permission marker consumed by the route attribute above it.
+/// 由上方路由属性消费的权限标记。
 ///
-/// `#[perm]` reaching expansion means the attributes were placed in the
-/// wrong order, which would otherwise create an unprotected route.
+/// 若 `#[perm]` 进入展开阶段，说明属性顺序错误；否则会生成未受保护的路由。
 #[proc_macro_attribute]
 pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
     "compile_error!(\"#[perm] must be placed immediately below #[get], #[post], #[put], or #[delete]\");"
@@ -113,8 +111,7 @@ pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
         .expect("valid compile_error output")
 }
 
-/// Build the router generated for a route handler while keeping the generated
-/// helper name out of application code.
+/// 为路由处理函数构建生成的路由器，并将生成的辅助函数名隔离在应用代码之外。
 ///
 /// ```
 /// use axum::{Router, extract::State};

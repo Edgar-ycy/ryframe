@@ -9,7 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     #[auto_fill(snowflake)]
     pub id: i64,
-    /// Tenant bound in the authenticated request context.
+    /// 已认证请求上下文中绑定的租户。
     pub tenant_id: String,
     /// 模块标题
     pub title: String,

@@ -10,7 +10,10 @@ description.workspace = true
 default-run = "ryframe"
 
 [dependencies]
-ryframe-common = { path = "../ryframe-common" }
+ryframe-http = { path = "../ryframe-http" }
+ryframe-kernel = { path = "../ryframe-kernel" }
+ryframe-utils = { path = "../ryframe-utils" }
+ryframe-i18n = { path = "../ryframe-i18n" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-db-migration = { path = "../ryframe-db-migration" }
@@ -36,3 +39,11 @@ path = "src/main.rs"
 [[bin]]
 name = "ryframe-db-reset"
 path = "src/bin/ryframe_db_reset.rs"
+
+[[bin]]
+name = "ryframe-migrate"
+path = "src/bin/ryframe_migrate.rs"
+
+[[bin]]
+name = "ryframe-worker"
+path = "src/bin/ryframe_worker.rs"

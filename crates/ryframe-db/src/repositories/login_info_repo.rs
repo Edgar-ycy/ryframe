@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_common::{AppError, AppResult, DataScopeContext};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_kernel::{AppError, AppResult, DataScopeContext};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
 };

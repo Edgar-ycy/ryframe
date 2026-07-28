@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use ryframe_common::{AppError, AppResult, utils::snowflake};
+use ryframe_kernel::{AppError, AppResult};
+use ryframe_utils::snowflake;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
     QueryOrder, TransactionTrait,
@@ -13,6 +14,7 @@ use crate::entities::{
 };
 
 const TEMPLATE_TENANT_ID: &str = "system";
+const PLATFORM_PERMISSION_PREFIX: &str = "platform:";
 
 #[derive(Debug, Clone)]
 pub struct ProvisionTenantCommand {
@@ -101,6 +103,8 @@ impl TenantProvisioningRepository {
             .filter(permission::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(permission::Column::Code.ne("*:*:*"))
             .filter(permission::Column::Code.not_like("tenant:%"))
+            // 平台权限只能保留在 system 租户，绝不能随租户模板授予新租户管理员。
+            .filter(permission::Column::Code.not_like(format!("{PLATFORM_PERMISSION_PREFIX}%")))
             .order_by_asc(permission::Column::Id)
             .all(&transaction)
             .await
@@ -174,6 +178,8 @@ impl TenantProvisioningRepository {
             email: ActiveValue::Set(String::new()),
             phone: ActiveValue::Set(String::new()),
             avatar: ActiveValue::Set(None),
+            avatar_file_id: ActiveValue::Set(None),
+            preferred_locale: ActiveValue::Set(None),
             status: ActiveValue::Set(user::Model::STATUS_NORMAL.into()),
             auth_version: ActiveValue::Set(0),
             dept_id: ActiveValue::Set(None),
@@ -413,8 +419,8 @@ impl TenantProvisioningRepository {
     }
 }
 
-/// A soft-deleted dictionary type must not make provisioning fail through its
-/// composite foreign key, nor leave data reachable without a copied type.
+/// 已软删除的字典类型不得因其复合外键使初始化失败，也不得使数据在未复制类型的
+/// 情况下仍可访问。
 fn retain_data_for_active_dict_types(
     dictionary_types: &[dict_type::Model],
     dictionary_data: &mut Vec<dict_data::Model>,

@@ -1,5 +1,5 @@
-# cargo-deny configuration for RyFrame
-# Run: cargo deny check
+# RyFrame 的 cargo-deny 配置
+# 执行命令：cargo deny check
 
 [graph]
 all-features = false
@@ -30,14 +30,13 @@ allow = [
 ]
 
 [[licenses.clarify]]
-# ring is used by rustls / jsonwebtoken and has a non-standard license
+# ring 由 rustls / jsonwebtoken 使用，且其许可证并非标准 SPDX 表达式。
 crate = "ring"
 expression = "MIT AND ISC AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
-# Keep duplicate versions visible during dependency reviews without blocking
-# security upgrades that currently depend on upstream convergence.
+# 在依赖审查中保留重复版本的可见性，同时不阻断当前依赖上游收敛的安全升级。
 multiple-versions = "warn"
 deny = []
 skip = []

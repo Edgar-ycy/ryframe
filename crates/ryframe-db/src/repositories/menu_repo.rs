@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
-use ryframe_common::{AppError, AppResult};
 use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
 };
@@ -11,7 +11,7 @@ use crate::entities::{menu, permission};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MenuTreeNode {
-    /// String avoids precision loss for Snowflake IDs in JavaScript.
+    /// 使用字符串可避免 Snowflake ID 在 JavaScript 中丢失精度。
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
@@ -169,9 +169,8 @@ impl MenuRepository {
         let menu_permission_codes = self.permission_code_map(db, tenant_id, &all).await?;
         let mut visible_ids = HashSet::new();
 
-        // Only a page menu's own permission may grant access to that page.
-        // Button permissions control actions inside an already accessible page;
-        // they must never promote the parent page into the navigation tree.
+        // 只有页面菜单自身的权限可以授予访问该页面的权限。按钮权限控制已可访问页面
+        // 内的操作，绝不能将父页面提升到导航树中。
         for item in all
             .iter()
             .filter(|item| item.menu_type == menu::Model::MENU_TYPE_MENU)

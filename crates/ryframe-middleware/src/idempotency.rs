@@ -5,7 +5,7 @@ use std::{
 
 use axum::{
     body::{Body, to_bytes},
-    extract::{MatchedPath, Request, State},
+    extract::{Request, State},
     http::{
         HeaderMap, HeaderName, HeaderValue, Method, StatusCode,
         header::{self, RETRY_AFTER},
@@ -365,8 +365,7 @@ pub async fn idempotency_middleware(
                 .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("multipart/form-data"))
         })
     {
-        // Upload/import bodies are streamed and intentionally never cached or
-        // replayed by the generic idempotency facility.
+        // 上传/导入请求体以流方式传输，通用幂等设施有意不对其缓存或重放。
         return next.run(request).await;
     }
 
@@ -388,7 +387,7 @@ pub async fn idempotency_middleware(
         return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
     };
     let method = request.method().clone();
-    let path = normalized_request_path(&request);
+    let request_target = normalized_request_target(&request);
 
     let (parts, body) = request.into_parts();
     let body = match to_bytes(body, MAX_REQUEST_BYTES).await {
@@ -402,7 +401,7 @@ pub async fn idempotency_middleware(
         &principal.tenant_id,
         principal.user_id,
         &method,
-        &path,
+        &request_target,
         &raw_key,
     );
 
@@ -433,10 +432,8 @@ pub async fn idempotency_middleware(
     }
 
     if let Err(error) = state.begin_execution(&scoped_key, &request_hash).await {
-        // The Lua command may have installed the execution guard even when the
-        // client did not receive its reply. Keeping any guard is fail-closed:
-        // no business handler has run yet, and a later request can safely retry
-        // after the processing/guard TTL instead of risking an ambiguous unlock.
+        // 即使客户端未收到 Lua 命令的响应，它也可能已经设置执行保护。保留任何保护符合失败即拒绝原则：
+        // 业务处理器尚未运行，后续请求可在处理/保护 TTL 到期后安全重试，避免产生含义不明的解锁。
         return unavailable_response(error);
     }
 
@@ -450,10 +447,8 @@ pub async fn idempotency_middleware(
     let body = match to_bytes(body, usize::MAX).await {
         Ok(body) => body,
         Err(error) => {
-            // The handler has already returned success, so its side effect may
-            // be committed. Never release the distributed guard on a response
-            // collection failure; mark the outcome non-replayable when Redis is
-            // available and otherwise leave the execution guard to expire.
+            // 处理器已返回成功，其副作用可能已经提交。收集响应失败时绝不能释放分布式保护；
+            // Redis 可用时将结果标记为不可重放，否则让执行保护自行过期。
             if let Err(mark_error) = state.mark_non_replayable(&scoped_key, &request_hash).await {
                 record_redis_degraded("idempotency");
                 tracing::error!(error = %mark_error, "failed to protect ambiguous idempotent result");
@@ -494,18 +489,21 @@ fn is_mutating(method: &Method) -> bool {
     )
 }
 
-fn normalized_request_path(request: &Request) -> String {
-    request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(|matched| matched.as_str().to_owned())
-        .unwrap_or_else(|| normalize_unmatched_path(request.uri().path()))
+/// 为幂等命名空间构建具体且规范化的请求目标。
+///
+/// 有意不使用路由模板（如 `/resources/{id}`）：同一客户端键绝不能将某个具体资源的变更
+/// 重放到另一资源。查询参数对会排序，因为其顺序不改变请求语义；重复参数对仍会保留。
+fn normalized_request_target(request: &Request) -> String {
+    let path = normalize_request_path(request.uri().path());
+    match request.uri().query() {
+        Some(query) if !query.is_empty() => format!("{path}?{}", normalize_query(query)),
+        _ => path,
+    }
 }
 
-/// Preserve the routing semantics of an unmatched path while canonicalizing
-/// percent-escape casing. In particular, this intentionally does not collapse
-/// slashes, remove trailing slashes, or decode reserved characters.
-fn normalize_unmatched_path(path: &str) -> String {
+/// 在规范化百分号转义大小写的同时保留具体路径的路由语义。尤其是，此处有意不合并
+/// 斜杠、不移除尾随斜杠，也不解码保留字符。
+fn normalize_request_path(path: &str) -> String {
     if path.is_empty() {
         return "/".to_string();
     }
@@ -526,6 +524,36 @@ fn normalize_unmatched_path(path: &str) -> String {
         }
     }
     String::from_utf8(normalized).unwrap_or_else(|_| path.to_owned())
+}
+
+/// 在不解码值的情况下规范化查询参数对顺序。这样可保持 `+`、百分号编码的保留字符、
+/// 重复键和空值的语义不变，同时让等价的参数顺序共享同一重放记录。
+fn normalize_query(query: &str) -> String {
+    let mut pairs = query
+        .split('&')
+        .map(normalize_percent_escape_casing)
+        .collect::<Vec<_>>();
+    pairs.sort_unstable();
+    pairs.join("&")
+}
+
+fn normalize_percent_escape_casing(value: &str) -> String {
+    let mut normalized = value.as_bytes().to_vec();
+    let mut index = 0;
+    while index < normalized.len() {
+        if normalized[index] == b'%'
+            && index + 2 < normalized.len()
+            && normalized[index + 1].is_ascii_hexdigit()
+            && normalized[index + 2].is_ascii_hexdigit()
+        {
+            normalized[index + 1] = normalized[index + 1].to_ascii_uppercase();
+            normalized[index + 2] = normalized[index + 2].to_ascii_uppercase();
+            index += 3;
+        } else {
+            index += 1;
+        }
+    }
+    String::from_utf8(normalized).unwrap_or_else(|_| value.to_owned())
 }
 
 fn is_replayable_response_header(name: &HeaderName) -> bool {
@@ -612,21 +640,18 @@ mod tests {
     use axum::http::{HeaderMap, header};
 
     use super::{
-        CachedResponse, cacheable_response_headers, normalize_unmatched_path, rebuild_response,
+        CachedResponse, cacheable_response_headers, normalize_request_path, rebuild_response,
     };
 
     #[test]
     fn unmatched_path_normalization_is_stable_and_semantics_preserving() {
-        assert_eq!(normalize_unmatched_path(""), "/");
+        assert_eq!(normalize_request_path(""), "/");
         assert_eq!(
-            normalize_unmatched_path("/files//%7e/%2f/"),
+            normalize_request_path("/files//%7e/%2f/"),
             "/files//%7E/%2F/"
         );
-        assert_eq!(normalize_unmatched_path("/files/%zz"), "/files/%zz");
-        assert_eq!(
-            normalize_unmatched_path("/文件/%e4%b8%ad"),
-            "/文件/%E4%B8%AD"
-        );
+        assert_eq!(normalize_request_path("/files/%zz"), "/files/%zz");
+        assert_eq!(normalize_request_path("/文件/%e4%b8%ad"), "/文件/%E4%B8%AD");
     }
 
     #[test]

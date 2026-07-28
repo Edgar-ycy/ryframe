@@ -41,7 +41,7 @@ fn bench_db_insert(c: &mut Criterion) {
                 rt.block_on(async {
                     let user = ryframe_db::entities::user::Model {
                         id: std::hint::black_box(
-                            ryframe_common::utils::snowflake::try_next_snowflake_id()
+                            ryframe_utils::snowflake::try_next_snowflake_id()
                                 .expect("generate benchmark ID"),
                         ),
                         tenant_id: "system".into(),
@@ -51,6 +51,8 @@ fn bench_db_insert(c: &mut Criterion) {
                         email: "bench@test.com".into(),
                         phone: "13800000000".into(),
                         avatar: None,
+                        avatar_file_id: None,
+                        preferred_locale: None,
                         status: "1".into(),
                         auth_version: 1,
                         dept_id: Some(1),
@@ -103,6 +105,8 @@ fn bench_db_select_by_id(c: &mut Criterion) {
                 email: "bench@test.com".into(),
                 phone: "13800000000".into(),
                 avatar: None,
+                avatar_file_id: None,
+                preferred_locale: None,
                 status: "1".into(),
                 auth_version: 1,
                 dept_id: Some(1),
@@ -144,6 +148,8 @@ fn bench_db_pagination(c: &mut Criterion) {
                     email: format!("user{}@test.com", i),
                     phone: "13800000000".into(),
                     avatar: None,
+                    avatar_file_id: None,
+                    preferred_locale: None,
                     status: "1".into(),
                     auth_version: 1,
                     dept_id: None,
@@ -194,6 +200,8 @@ fn bench_db_update(c: &mut Criterion) {
                         email: "old@test.com".into(),
                         phone: "13800000000".into(),
                         avatar: None,
+                        avatar_file_id: None,
+                        preferred_locale: None,
                         status: "1".into(),
                         auth_version: 1,
                         dept_id: None,

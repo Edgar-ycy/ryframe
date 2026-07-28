@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
-use ryframe_common::{ActorContext, AppError, AppResult};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
     ProvisionTenantCommand, TenantProvisioningRepository, TenantRepository, entities::tenant,
 };
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -83,8 +83,9 @@ impl TenantService {
 
     pub async fn list(&self, actor: &ActorContext) -> AppResult<Vec<TenantVo>> {
         ensure_platform_admin(actor)?;
+        let db = self.db.read();
         self.tenant_repo
-            .list_all(self.db.read())
+            .list_all(&db)
             .await
             .map(|tenants| tenants.into_iter().map(TenantVo::from).collect())
     }
@@ -249,7 +250,7 @@ fn validate_tenant_limits(
 
 #[cfg(test)]
 mod tests {
-    use ryframe_common::AppError;
+    use ryframe_kernel::AppError;
 
     use super::validate_tenant_limits;
 

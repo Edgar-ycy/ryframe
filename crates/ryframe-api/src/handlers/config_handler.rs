@@ -3,8 +3,8 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_common::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_core::PageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::ConfigVo;
 use serde::Serialize;
@@ -40,13 +40,26 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<ConfigListQuery>,
-) -> AppResult<Json<ryframe_common::ApiPageResponse<ConfigVo>>> {
+) -> AppResult<Json<ryframe_http::ApiPageResponse<ConfigVo>>> {
     state
         .services
         .config
-        .find_by_page(&current_user, query.into_service_params())
+        .find_by_page(
+            &current_user,
+            query.into_service_params(&state.config.pagination)?,
+        )
         .await
-        .map(|p| Json(p.to_page_response("查询成功")))
+        .map_err(ryframe_http::AppError::from)
+        .map(|p| {
+            Json(ApiPageResponse::new(
+                p.records,
+                p.total,
+                p.page,
+                p.page_size,
+                state.config.pagination.max_page_size,
+                "查询成功",
+            ))
+        })
 }
 
 /// 参数配置列表不分页查询（返回全部数据）
@@ -66,9 +79,10 @@ async fn list_no_page(
         .config
         .find_all(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -86,7 +100,7 @@ async fn detail(
 ) -> AppResult<Json<ApiResponse<ConfigVo>>> {
     match state.services.config.find_by_id(&current_user, id).await? {
         Some(cfg) => Ok(Json(ApiResponse::success(cfg))),
-        None => Err(ryframe_common::AppError::NotFound("参数配置不存在".into())),
+        None => Err(ryframe_http::AppError::NotFound("参数配置不存在".into())),
     }
 }
 
@@ -112,6 +126,7 @@ async fn create(
             dto.remark.as_deref(),
         )
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -133,6 +148,7 @@ async fn update(
         .config
         .update(&current_user, id, &dto.value)
         .await
+        .map_err(ryframe_http::AppError::from)
         .map(|v| Json(ApiResponse::success(v)))
 }
 
@@ -140,7 +156,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:config:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/{id}", tag = "参数配置",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -167,7 +183,7 @@ async fn get_by_key(
         .await?
     {
         Some(cfg) => Ok(Json(ApiResponse::success(cfg.value))),
-        None => Err(ryframe_common::AppError::NotFound(format!(
+        None => Err(ryframe_http::AppError::NotFound(format!(
             "参数 '{}' 不存在",
             key
         ))),
@@ -180,7 +196,7 @@ async fn get_by_key(
 #[delete("/cache")]
 #[perm("system:config:edit")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/cache", tag = "参数配置",
-    responses((status = 200, description = "缓存刷新成功", body = ryframe_common::ApiEmptyResponse)), security(("bearer" = [])))]
+    responses((status = 200, description = "缓存刷新成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn refresh_cache(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -224,14 +240,14 @@ async fn export_configs(
     current_user: RequestPrincipal,
     Query(query): Query<ConfigFilterQuery>,
 ) -> AppResult<axum::response::Response> {
-    use ryframe_common::utils::ExcelExporter;
+    use ryframe_excel::ExcelExporter;
 
     let configs = state
         .services
         .config
         .find_all(
             &current_user,
-            query.into_service_params(PageQuery::all_records()),
+            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
         )
         .await?;
     let export_data: Vec<ConfigExportData> = configs

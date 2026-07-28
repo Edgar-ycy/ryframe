@@ -227,7 +227,7 @@ async fn test_operator_permission_and_menu_revocation_flow() {
 
     let (status, body) = auth_get(&db, "/system/users?page=1&page_size=10", operator_token).await;
     assert_eq!(status, StatusCode::OK);
-    let records = body["rows"].as_array().unwrap();
+    let records = body["data"]["items"].as_array().unwrap();
     assert!(records.iter().any(|item| item["username"] == "operator01"));
     assert!(
         !records
@@ -591,8 +591,8 @@ async fn test_user_crud_flow() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some());
-    let rows = b["rows"].as_array().unwrap();
+    assert!(b["data"].get("items").is_some());
+    let rows = b["data"]["items"].as_array().unwrap();
     assert!(!rows.is_empty(), "搜索 newuser 应有结果");
 
     // 4. 更新用户信息
@@ -792,9 +792,9 @@ async fn test_user_list_pagination() {
     // 分页查询：page_size=2
     let (s, b) = auth_get(&db, "/system/users?page=1&page_size=2", &token).await;
     assert_eq!(s, StatusCode::OK);
-    let rows = b["rows"].as_array().unwrap();
+    let rows = b["data"]["items"].as_array().unwrap();
     assert!(rows.len() <= 2, "page_size=2 应返回最多 2 条");
-    assert!(b["total"].as_i64().unwrap() >= 4, "总数至少 4");
+    assert!(b["data"]["total"].as_i64().unwrap() >= 4, "总数至少 4");
 }
 
 // ==================== 角色权限测试 ====================
@@ -856,11 +856,11 @@ async fn test_role_list_with_pagination() {
 
     let (s, b) = auth_get(&db, "/system/roles?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert!(b.get("rows").is_some());
-    assert!(b.get("total").is_some());
+    assert!(b["data"].get("items").is_some());
+    assert!(b["data"].get("total").is_some());
 
     // 列表应包含 seed 中创建的 admin 和 user 角色
-    let rows = b["rows"].as_array().unwrap();
+    let rows = b["data"]["items"].as_array().unwrap();
     let codes: Vec<&str> = rows.iter().filter_map(|r| r["code"].as_str()).collect();
     assert!(codes.contains(&"admin"), "列表应包含 admin 角色");
     assert!(codes.contains(&"user"), "列表应包含 user 角色");

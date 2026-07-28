@@ -38,6 +38,7 @@ pub struct UserInfo {
     pub email: String,
     pub phone: String,
     pub avatar: Option<String>,
+    pub preferred_locale: Option<String>,
     pub roles: Vec<String>,
     pub perms: Vec<String>,
 }
@@ -54,6 +55,7 @@ impl From<&user::Model> for UserInfo {
             email: user.email.clone(),
             phone: user.phone.clone(),
             avatar: user.avatar.clone(),
+            preferred_locale: user.preferred_locale.clone(),
             roles: Vec::new(),
             perms: Vec::new(),
         }
@@ -75,6 +77,7 @@ pub struct AuthService {
 
 impl AuthService {
     pub fn new(db: DatabaseCluster, config: Arc<AppConfig>, redis: Option<RedisClient>) -> Self {
+        ryframe_auth::password::warm_dummy_hash();
         let refresh_sessions = RefreshSessionStore::new(redis.clone());
         Self {
             db,

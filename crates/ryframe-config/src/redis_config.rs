@@ -42,16 +42,16 @@ pub struct RedisConfig {
     /// 连接超时（秒）
     #[serde(default = "default_redis_timeout")]
     pub timeout_secs: u64,
-    /// Enable certificate-verified TLS (`rediss://`).
+    /// 启用证书校验的 TLS（`rediss://`）。
     #[serde(default)]
     pub tls: bool,
-    /// Optional PEM CA certificate when the server CA is not in the system trust store.
+    /// 当服务端 CA 不在系统信任库中时使用的可选 PEM CA 证书。
     #[serde(default)]
     pub tls_ca: Option<String>,
-    /// Optional mTLS client certificate in PEM format.
+    /// 可选的 PEM 格式 mTLS 客户端证书。
     #[serde(default)]
     pub tls_client_cert: Option<String>,
-    /// Optional mTLS client key in PEM format.
+    /// 可选的 PEM 格式 mTLS 客户端私钥。
     #[serde(default)]
     pub tls_client_key: Option<String>,
 }

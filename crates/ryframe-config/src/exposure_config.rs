@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-/// Controls whether interactive API documentation is exposed.
+/// 控制是否暴露交互式 API 文档。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApiDocsConfig {
@@ -20,14 +20,13 @@ const fn default_api_docs_enabled() -> bool {
     true
 }
 
-/// Controls access to operational endpoints that are scraped by monitoring systems.
+/// 控制监控系统抓取的运维端点访问权限。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MonitorConfig {
-    /// Static bearer token required by `/api/v1/monitor/metrics`.
+    /// `/api/v1/monitor/metrics` 所需的静态 Bearer 令牌。
     ///
-    /// Development may leave this empty. Production validation requires at least
-    /// 32 bytes so the endpoint is never accidentally exposed without authentication.
+    /// 开发环境可以留空；生产环境校验要求至少 32 字节，避免端点意外在未认证状态下暴露。
     #[serde(default)]
     pub metrics_bearer_token: String,
 }

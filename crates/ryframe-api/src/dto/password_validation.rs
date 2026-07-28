@@ -1,4 +1,4 @@
-use ryframe_common::AppError;
+use ryframe_kernel::AppError;
 use validator::ValidationError;
 
 pub(super) fn validate_password_complexity(value: &str) -> Result<(), ValidationError> {

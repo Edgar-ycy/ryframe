@@ -18,6 +18,9 @@ pub struct Model {
     pub email: String,
     pub phone: String,
     pub avatar: Option<String>,
+    /// 头像文件元数据的稳定关联；旧头像在迁移前保持为空。
+    pub avatar_file_id: Option<i64>,
+    pub preferred_locale: Option<String>,
     pub status: String,
     pub auth_version: i32,
     pub dept_id: Option<i64>,
@@ -55,6 +58,12 @@ pub enum Relation {
         to = "super::dept::Column::Id"
     )]
     Dept,
+    #[sea_orm(
+        belongs_to = "super::sys_file::Entity",
+        from = "Column::AvatarFileId",
+        to = "super::sys_file::Column::Id"
+    )]
+    AvatarFile,
 }
 
 impl Related<super::user_role::Entity> for Entity {

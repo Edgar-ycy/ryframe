@@ -9,7 +9,12 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-ryframe-common = { path = "../ryframe-common" }
+ryframe-http = { path = "../ryframe-http" }
+ryframe-kernel = { path = "../ryframe-kernel" }
+ryframe-utils = { path = "../ryframe-utils" }
+ryframe-captcha = { path = "../ryframe-captcha" }
+ryframe-excel = { path = "../ryframe-excel" }
+ryframe-i18n = { path = "../ryframe-i18n" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-service = { path = "../ryframe-service" }
 ryframe-config = { path = "../ryframe-config" }
@@ -23,7 +28,7 @@ cookie = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 validator = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v7"] }
 base64 = { workspace = true }
@@ -31,6 +36,10 @@ regex = { workspace = true }
 utoipa = { workspace = true }
 tracing = { workspace = true }
 http-body-util = { workspace = true }
+percent-encoding = { workspace = true }
+dashmap = { workspace = true }
+futures-util = { workspace = true }
+sha2 = { workspace = true }
 
 [build-dependencies]
 syn = { workspace = true }

@@ -3,12 +3,12 @@ mod common;
 use std::time::Duration;
 
 use common::setup_test_db;
-use ryframe_common::{ActorContext, AppError, DataScope};
 use ryframe_core::Repository;
 use ryframe_db::{
     DatabaseCluster, RoleRepository, UserRepository,
     entities::{role, user},
 };
+use ryframe_kernel::{ActorContext, AppError, DataScope};
 use ryframe_service::system::{UpdateUserParams, UserService};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, TransactionTrait};
 
@@ -43,6 +43,8 @@ async fn seed_user(db: &DatabaseConnection, id: i64, username: &str) {
         email: format!("{username}@example.test"),
         phone: String::new(),
         avatar: None,
+        avatar_file_id: None,
+        preferred_locale: None,
         status: user::Model::STATUS_NORMAL.into(),
         auth_version: 1,
         dept_id: None,
@@ -90,9 +92,8 @@ async fn concurrent_super_promotion_blocks_every_user_mutation_after_lock_wait()
     seed_user(db.connection(), batch_normal_id, "batch_normal").await;
     let super_role_id = seed_super_role(db.connection()).await;
 
-    // Stage promotions while retaining each target user's FOR UPDATE lock.
-    // Every service operation below must wait, then re-read the committed role
-    // membership instead of proceeding with its earlier non-super observation.
+    // 暂存晋升操作，同时保留每个目标用户的 FOR UPDATE 锁。下方每个服务操作都必须
+    // 等待，并重新读取已提交的角色归属，而非依据之前观察到的非超级管理员状态继续执行。
     let promotion = db.begin().await.expect("begin promotion transaction");
     for id in target_ids {
         RoleRepository

@@ -8,13 +8,13 @@ use ryframe_service::system::MenuType;
 pub struct CreateMenuDto {
     #[validate(length(min = 1, message = "菜单名称不能为空"))]
     pub name: String,
-    /// Parent menu Snowflake ID, transported as a string.
+    /// 父菜单 Snowflake ID，以字符串传输。
     pub parent_id: Option<String>,
-    /// Menu type: M directory, C page, F action.
+    /// 菜单类型：M 为目录，C 为页面，F 为操作。
     pub menu_type: MenuType,
-    /// Permission ID. Buttons require it; directories/pages may also bind one.
+    /// 权限 ID。按钮必须设置，目录和页面也可以绑定。
     pub perm_id: Option<String>,
-    /// Stable key used by the frontend page registry.
+    /// 前端页面注册表使用的稳定键。
     #[validate(length(max = 100, message = "页面标识长度不能超过100"))]
     pub route_key: Option<String>,
     pub icon: Option<String>,
@@ -27,9 +27,9 @@ pub struct CreateMenuDto {
 pub struct UpdateMenuDto {
     #[validate(length(min = 1, message = "菜单名称不能为空"))]
     pub name: String,
-    /// Parent menu Snowflake ID, transported as a string.
+    /// 父菜单 Snowflake ID，以字符串传输。
     pub parent_id: Option<String>,
-    /// Menu type: M directory, C page, F action.
+    /// 菜单类型：M 为目录，C 为页面，F 为操作。
     pub menu_type: MenuType,
     pub perm_id: Option<String>,
     #[validate(length(max = 100, message = "页面标识长度不能超过100"))]

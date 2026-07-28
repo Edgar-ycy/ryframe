@@ -1,4 +1,3 @@
-use ryframe_common::{ActorContext, AppError, AppResult, utils::snowflake};
 use ryframe_core::{
     LoggedRepo, RedisClient, Repository,
     auto_fill::{AutoFill, FillContext},
@@ -8,6 +7,8 @@ use ryframe_db::DatabaseCluster;
 use ryframe_db::{
     DeptRepository, PermissionRepository, RoleRepository, TenantRepository, entities::role,
 };
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_utils::snowflake;
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -138,7 +139,7 @@ impl RoleService {
         let page = self
             .role_repo
             .find_by_page_filtered(
-                db,
+                &db,
                 tenant_id,
                 params.page.clone(),
                 params.name.as_deref(),
@@ -165,8 +166,7 @@ impl RoleService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        // Every role create/update/delete uses the tenant row as its first
-        // lock. Batch target locks are then acquired in ascending ID order.
+        // 每次创建、更新或删除角色时，先锁定租户行；随后按 ID 升序获取批量目标锁。
         let operation: AppResult<u64> = async {
             TenantRepository
                 .lock_tenant_in_txn(&transaction, tenant_id)
@@ -225,12 +225,15 @@ impl RoleService {
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<RoleVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.read();
-        match self.role_repo.find_by_id(db, tenant_id, id).await? {
+        match self.role_repo.find_by_id(&db, tenant_id, id).await? {
             Some(r) => {
                 let mut vo = RoleVo::from(r);
                 // 如果是自定义数据权限，查出关联的部门ID列表
                 if vo.data_scope == "2" {
-                    let dept_ids = self.role_repo.find_role_dept_ids(db, tenant_id, id).await?;
+                    let dept_ids = self
+                        .role_repo
+                        .find_role_dept_ids(&db, tenant_id, id)
+                        .await?;
                     vo.dept_ids = Some(dept_ids.iter().map(|d| d.to_string()).collect());
                 }
                 Ok(Some(vo))
@@ -420,7 +423,7 @@ impl RoleService {
         Ok(())
     }
 
-    /// Return all enabled API permission codes assigned to one role.
+    /// 返回分配给一个角色的全部已启用 API 权限码。
     pub async fn get_role_perm_codes(
         &self,
         actor: &ActorContext,
@@ -429,12 +432,12 @@ impl RoleService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.read();
         self.role_repo
-            .find_by_id(db, tenant_id, role_id)
+            .find_by_id(&db, tenant_id, role_id)
             .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
         let mut codes: Vec<String> = self
             .perm_repo
-            .find_role_perms(db, tenant_id, &[role_id])
+            .find_role_perms(&db, tenant_id, &[role_id])
             .await?
             .into_iter()
             .map(|permission| permission.code)
@@ -444,7 +447,7 @@ impl RoleService {
         Ok(codes)
     }
 
-    /// Atomically replace a role's data-scope mode and custom departments.
+    /// 原子替换一个角色的数据范围模式和自定义部门。
     pub async fn replace_data_scope(
         &self,
         actor: &ActorContext,

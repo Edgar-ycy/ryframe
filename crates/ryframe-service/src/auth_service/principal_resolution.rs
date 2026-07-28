@@ -1,11 +1,8 @@
 use async_trait::async_trait;
 use ryframe_auth::{PrincipalResolver, RequestPrincipal, jwt::Claims};
-use ryframe_common::{
-    ActorContext, AppResult,
-    annotations::data_scope::{DataScope, DataScopeContext},
-};
 use ryframe_core::Repository;
 use ryframe_db::entities::{role, user};
+use ryframe_kernel::{ActorContext, AppResult, DataScope, DataScopeContext};
 
 use super::{AuthService, identity::AuthorizationProfile};
 
@@ -133,6 +130,7 @@ fn build_request_principal(
             include_self: data_scope.include_self,
             is_super_admin,
         },
+        preferred_locale: user.preferred_locale.clone(),
         roles,
         role_ids,
         permissions: authorization.permissions,
