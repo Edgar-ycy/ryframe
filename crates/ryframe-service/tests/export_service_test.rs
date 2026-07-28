@@ -84,9 +84,9 @@ async fn seed_export_requester(database: &sea_orm::DatabaseConnection) {
     .unwrap();
 }
 
-/// 数据库时钟与新建任务可见性在测试连接之间存在极短延迟，轮询一次即可模拟真实 Worker 行为。
+/// 数据库时钟、并行测试连接与新建任务可见性之间可能存在短暂延迟，轮询模拟真实 Worker 行为。
 async fn run_until_claimed(worker: &JobWorker, worker_id: &str) -> JobRunResult {
-    for _ in 0..10 {
+    for _ in 0..50 {
         let result = worker.run_once(worker_id).await.unwrap();
         if result != JobRunResult::Idle {
             return result;

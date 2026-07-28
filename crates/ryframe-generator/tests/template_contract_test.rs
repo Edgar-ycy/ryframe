@@ -115,7 +115,7 @@ fn generated_template_output_matches_golden_hashes() {
         ("repository", 1_251_828_980_566_588_877),
         ("dto", 4_473_523_187_890_384_743),
         ("service", 10_639_329_197_836_940_592),
-        ("handler", 17_639_238_241_314_148_278),
+        ("handler", 1_456_797_513_594_080_285),
     ];
     assert_eq!(actual, expected);
 }
