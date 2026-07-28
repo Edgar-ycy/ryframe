@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_core::repository::Repository;
 use ryframe_db::{
     BackgroundJobRepository, CreateExportJob, DatabaseCluster, EnqueueBackgroundJob,
-    ExportJobRepository, FileRepository,
+    ExportJobRepository, FileRepository, MarkExportJobSucceeded,
     entities::{export_job, sys_file},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -448,13 +448,15 @@ impl ExportService {
             .exports
             .mark_succeeded(
                 self.db.write(),
-                export.id,
-                file.id,
-                &file_name,
-                &file.content_type,
-                file.file_size,
-                completed_at + Duration::hours(24),
-                completed_at,
+                MarkExportJobSucceeded {
+                    id: export.id,
+                    file_id: file.id,
+                    file_name,
+                    content_type: file.content_type,
+                    file_size: file.file_size,
+                    expires_at: completed_at + Duration::hours(24),
+                    completed_at,
+                },
             )
             .await?
         {

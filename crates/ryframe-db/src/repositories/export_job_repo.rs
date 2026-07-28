@@ -20,6 +20,18 @@ pub struct CreateExportJob {
     pub permission_code: String,
 }
 
+/// 将导出任务标记为成功时写入的结果元数据。
+#[derive(Clone, Debug)]
+pub struct MarkExportJobSucceeded {
+    pub id: i64,
+    pub file_id: i64,
+    pub file_name: String,
+    pub content_type: String,
+    pub file_size: i64,
+    pub expires_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+}
+
 /// 异步导出任务仓储。
 pub struct ExportJobRepository;
 
@@ -110,33 +122,39 @@ impl ExportJobRepository {
     pub async fn mark_succeeded(
         &self,
         db: &DatabaseConnection,
-        id: i64,
-        file_id: i64,
-        file_name: &str,
-        content_type: &str,
-        file_size: i64,
-        expires_at: DateTime<Utc>,
-        now: DateTime<Utc>,
+        command: MarkExportJobSucceeded,
     ) -> AppResult<bool> {
         let result = export_job::Entity::update_many()
             .col_expr(
                 export_job::Column::Status,
                 Expr::value(export_job::Model::STATUS_SUCCEEDED),
             )
-            .col_expr(export_job::Column::ResultFileId, Expr::value(file_id))
+            .col_expr(
+                export_job::Column::ResultFileId,
+                Expr::value(command.file_id),
+            )
             .col_expr(
                 export_job::Column::ResultFileName,
-                Expr::value(Some(file_name.to_owned())),
+                Expr::value(Some(command.file_name)),
             )
             .col_expr(
                 export_job::Column::ContentType,
-                Expr::value(Some(content_type.to_owned())),
+                Expr::value(Some(command.content_type)),
             )
-            .col_expr(export_job::Column::FileSize, Expr::value(file_size))
-            .col_expr(export_job::Column::ExpiresAt, Expr::value(expires_at))
-            .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
-            .col_expr(export_job::Column::CompletedAt, Expr::value(now))
-            .filter(export_job::Column::Id.eq(id))
+            .col_expr(export_job::Column::FileSize, Expr::value(command.file_size))
+            .col_expr(
+                export_job::Column::ExpiresAt,
+                Expr::value(command.expires_at),
+            )
+            .col_expr(
+                export_job::Column::UpdatedAt,
+                Expr::value(command.completed_at),
+            )
+            .col_expr(
+                export_job::Column::CompletedAt,
+                Expr::value(command.completed_at),
+            )
+            .filter(export_job::Column::Id.eq(command.id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
             .exec(db)
             .await

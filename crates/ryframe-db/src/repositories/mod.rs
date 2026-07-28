@@ -28,7 +28,7 @@ pub use background_job_repo::{
 pub use config_repo::{ConfigFilter, ConfigRepository};
 pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeFilter, DictTypeRepository};
-pub use export_job_repo::{CreateExportJob, ExportJobRepository};
+pub use export_job_repo::{CreateExportJob, ExportJobRepository, MarkExportJobSucceeded};
 pub use file_repo::FileRepository;
 pub use login_info_repo::{LoginInfoFilter, LoginInfoRepository};
 pub use menu_repo::{MenuFilter, MenuRepository};
