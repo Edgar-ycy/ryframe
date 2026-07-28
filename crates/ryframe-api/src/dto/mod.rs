@@ -2,6 +2,7 @@ pub mod auth_dto;
 pub mod config_dto;
 pub mod dept_dto;
 pub mod dict_dto;
+pub mod export_dto;
 pub mod generator_dto;
 pub mod job_dto;
 pub mod login_log_dto;

@@ -19,6 +19,7 @@ use super::UserFilterQuery;
 use crate::{
     dto::{
         multipart_dto::FileUploadForm,
+        user_dto::UserExportRequestDto,
         user_import_dto::{UserExportData, UserImportData, UserImportResult},
     },
     handler_utils::{excel_response, parse_optional_i64_str},
@@ -29,18 +30,24 @@ use crate::{
 #[post("/exports")]
 #[perm("system:user:export")]
 #[utoipa::path(post, path = "/api/v1/system/users/exports", tag = "用户管理",
-    params(UserFilterQuery),
+    request_body = UserExportRequestDto,
     responses((status = 202, description = "用户导出任务已创建", body = ApiResponse<ExportJobVo>)),
     security(("bearer" = [])))]
 pub(crate) async fn request_user_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Query(query): Query<UserFilterQuery>,
+    Json(request): Json<UserExportRequestDto>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
-    let params = query.into_service_params(PageQuery {
-        page: 1,
-        page_size: 1,
-    })?;
+    let dept_id = request
+        .dept_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(|id| {
+            id.parse::<i64>()
+                .map_err(|_| AppError::Validation(format!("无效的部门ID: {id}")))
+        })
+        .transpose()?;
     let export = state
         .services
         .export
@@ -50,10 +57,10 @@ pub(crate) async fn request_user_export(
                 resource: "users".into(),
                 permission_code: "system:user:export".into(),
                 request_params: serde_json::to_value(UserExportFilters {
-                    username: params.username,
-                    phone: params.phone,
-                    status: params.status,
-                    dept_id: params.dept_id,
+                    username: request.username,
+                    phone: request.phone,
+                    status: request.status,
+                    dept_id,
                 })
                 .map_err(|error| {
                     AppError::Internal(format!("用户导出筛选条件序列化失败: {error}"))

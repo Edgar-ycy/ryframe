@@ -59,6 +59,17 @@ pub struct UpdateUserStatusDto {
     pub status: String,
 }
 
+/// 创建异步用户导出任务的筛选条件。
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UserExportRequestDto {
+    pub username: Option<String>,
+    pub phone: Option<String>,
+    pub status: Option<String>,
+    /// Snowflake ID 统一使用字符串传输，避免 JavaScript 精度丢失。
+    pub dept_id: Option<String>,
+}
+
 fn validate_user_status(value: &str) -> Result<(), validator::ValidationError> {
     if matches!(value, "0" | "1") {
         Ok(())

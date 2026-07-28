@@ -4989,6 +4989,11 @@
         ],
         "type": "object"
       },
+      "CancelExportJobDto": {
+        "additionalProperties": false,
+        "description": "取消导出任务的显式命令体。\n\n保留空对象而不是省略请求体，使写操作契约保持一致，并为后续增加取消原因等字段预留空间。",
+        "type": "object"
+      },
       "CaptchaConfigResponse": {
         "properties": {
           "captcha_enabled": {
@@ -9120,6 +9125,38 @@
           }
         ]
       },
+      "UserExportRequestDto": {
+        "additionalProperties": false,
+        "description": "创建异步用户导出任务的筛选条件。",
+        "properties": {
+          "dept_id": {
+            "description": "Snowflake ID 统一使用字符串传输，避免 JavaScript 精度丢失。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UserImportResult": {
         "properties": {
           "errors": {
@@ -10027,6 +10064,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelExportJobDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -14551,40 +14598,16 @@
     "/api/v1/system/users/exports": {
       "post": {
         "operationId": "post_system_users_exports",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "username",
-            "required": false,
-            "schema": {
-              "type": "string"
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserExportRequestDto"
+              }
             }
           },
-          {
-            "in": "query",
-            "name": "phone",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "dept_id",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+          "required": true
+        },
         "responses": {
           "202": {
             "content": {

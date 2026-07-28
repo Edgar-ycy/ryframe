@@ -7,7 +7,7 @@ use ryframe_http::{ApiResponse, AppError, AppResult};
 use ryframe_macro::{get, post, route};
 use ryframe_service::system::ExportJobVo;
 
-use crate::{handler_utils::excel_response, state::AppState};
+use crate::{dto::export_dto::CancelExportJobDto, handler_utils::excel_response, state::AppState};
 
 /// 导出任务查询、取消与下载路由。
 pub fn export_router(state: AppState) -> Router {
@@ -45,12 +45,14 @@ async fn detail(
 #[perm("system:user:export")]
 #[utoipa::path(post, path = "/api/v1/common/exports/{id}/cancel", tag = "导出任务",
     params(("id" = String, Path, description = "导出任务 ID")),
+    request_body = CancelExportJobDto,
     responses((status = 200, description = "导出任务已取消", body = ApiResponse<ExportJobVo>)),
     security(("bearer" = [])))]
 async fn cancel(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<String>,
+    Json(_request): Json<CancelExportJobDto>,
 ) -> AppResult<Json<ApiResponse<ExportJobVo>>> {
     state
         .services
