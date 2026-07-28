@@ -50,8 +50,16 @@ function assertPage(json, label) {
   if (json.code !== 200) {
     throw new Error(`${label}: business code is ${json.code}`);
   }
-  if (!Array.isArray(json.rows) || typeof json.total !== "number") {
-    throw new Error(`${label}: expected top-level rows/total page response`);
+  const page = json.data;
+  if (
+    !page
+    || !Array.isArray(page.items)
+    || typeof page.total !== "number"
+    || !Number.isInteger(page.page)
+    || !Number.isInteger(page.page_size)
+    || !Number.isInteger(page.total_pages)
+  ) {
+    throw new Error(`${label}: expected data.items unified page response`);
   }
 }
 
@@ -304,23 +312,15 @@ async function runSmokeTests() {
   });
 
   await test("logout invalidates token", async () => {
-    const logoutCookies = new Map();
-    const loginCsrf = await csrfChallenge(logoutCookies);
-    const { json } = await jsonRequest(`${BASE_URL}/api/v1/auth/login`, {
-      method: "POST",
-      headers: loginHeaders(loginCsrf),
-      body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS }),
-    }, logoutCookies);
-    const token = json?.data?.access_token;
-    if (!token) throw new Error("login response missing token");
-
-    const logoutCsrf = await csrfChallenge(logoutCookies);
+    const token = accessToken;
+    if (!token) throw new Error("current session is missing access token");
+    const logoutCsrf = await csrfChallenge();
     const logoutRes = await fetchWithCookies(`${BASE_URL}/api/v1/auth/logout`, {
       method: "POST",
       headers: { ...authHeaders(token), "X-CSRF-Token": logoutCsrf },
-    }, logoutCookies);
+    });
     await assertOk(logoutRes, "Logout");
-    if (logoutCookies.has("ryframe_refresh_token")) {
+    if (sessionCookies.has("ryframe_refresh_token")) {
       throw new Error("logout did not clear the refresh cookie");
     }
 

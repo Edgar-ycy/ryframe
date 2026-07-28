@@ -6,7 +6,7 @@ services:
       MYSQL_DATABASE: ryframe_test
       MYSQL_INITDB_SKIP_TZINFO: "1"
     ports:
-      - "13306:3306"
+      - "${RYFRAME_TEST_MYSQL_PORT:-13306}:3306"
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_general_ci
@@ -22,7 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "16379:6379"
+      - "${RYFRAME_TEST_REDIS_PORT:-16379}:6379"
     command:
       - redis-server
       - /usr/local/etc/redis/redis.conf
@@ -45,7 +45,7 @@ services:
       RUSTFS_ACCESS_KEY: ryframe-test-access
       RUSTFS_SECRET_KEY: ryframe-test-secret-2026
     ports:
-      - "19000:9000"
+      - "${RYFRAME_TEST_RUSTFS_PORT:-19000}:9000"
     tmpfs:
       - /data:uid=10001,gid=10001,mode=0750
     healthcheck:
