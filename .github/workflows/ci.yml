@@ -139,6 +139,7 @@ jobs:
   # ============================================================
   test:
     name: Test (Linux)
+    if: ${{ false }}
     runs-on: ubuntu-latest
     needs: check
     steps:
@@ -246,6 +247,16 @@ jobs:
           restore-keys: |
             v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
             v2-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: nextest
+
+      - name: Run Linux workspace tests and doctests
+        run: |
+          cargo nextest run --locked --workspace --no-fail-fast
+          cargo test --locked --workspace --doc
 
       - name: Test authoritative force logout and Redis recovery
         run: >-
