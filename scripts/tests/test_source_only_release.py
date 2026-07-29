@@ -28,7 +28,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "platforms: linux/amd64,linux/arm64",
             "packages: write",
             "id-token: write",
-            "anchore/sbom-action@e22c389",
+            "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
             "format: spdx-json",
             "sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62",
             "cosign attest --yes --type spdxjson",

@@ -557,7 +557,7 @@ jobs:
             ${{ steps.image.outputs.repository }}:stable
 
       - name: Generate SPDX SBOM for the immutable OCI digest
-        uses: anchore/sbom-action@e22c389
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
           image: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
           registry-username: ${{ github.actor }}
