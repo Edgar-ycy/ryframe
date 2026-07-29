@@ -144,8 +144,10 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_ci_uses_read_only_token_and_runs_windows_library_tests(self) -> None:
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", source)
+        self.assertIn("Check, Lint & Test (Linux)", source)
+        self.assertIn("Run Linux library tests", source)
         self.assertIn("Run library tests without external services", source)
-        self.assertIn("cargo test --locked --workspace --lib", source)
+        self.assertEqual(source.count("cargo test --locked --workspace --lib"), 2)
 
     def test_release_governance_files_are_utf8_lf_without_bom(self) -> None:
         paths = (

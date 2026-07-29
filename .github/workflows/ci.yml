@@ -30,7 +30,7 @@ jobs:
   # 代码质量门禁
   # ============================================================
   check:
-    name: Check & Lint
+    name: Check, Lint & Test (Linux)
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-Dwarnings"
@@ -109,6 +109,9 @@ jobs:
       # 对每类触发事件执行相同的全目标质量门禁。
       - name: Clippy (all targets)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Run Linux library tests
+        run: cargo test --locked --workspace --lib
 
   # ============================================================
   # 安全检查
