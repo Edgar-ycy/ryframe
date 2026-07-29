@@ -534,7 +534,7 @@ jobs:
 
       - name: Build and push OCI index with provenance
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
