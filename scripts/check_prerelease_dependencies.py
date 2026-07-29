@@ -71,6 +71,17 @@ def is_unresolved_deployment_reference(reference: str) -> bool:
     )
 
 
+def is_verified_release_oci_digest_reference(reference: str, relative: str) -> bool:
+    """仅允许发布工作流引用同一任务刚产出的镜像仓库和摘要。"""
+    return relative == ".github/workflows/release.yml" and bool(
+        re.fullmatch(
+            r"\$\{\{\s*steps\.image\.outputs\.repository\s*\}\}"
+            r"@\$\{\{\s*steps\.build\.outputs\.digest\s*\}\}",
+            reference.strip(),
+        )
+    )
+
+
 def yaml_scalar(value: str) -> str:
     """返回去除引号和未加引号注释的简单 YAML 标量。"""
     value = value.strip()
@@ -175,6 +186,8 @@ def deployment_source_findings(source: str, relative: str) -> set[Finding]:
 
         if image:
             image = resolve_deployment_reference(image, variables)
+            if is_verified_release_oci_digest_reference(image, relative):
+                continue
             if is_unresolved_deployment_reference(image):
                 add_structured(Finding("container", image, "unresolved", relative))
             elif container := split_container_reference(image):

@@ -63,9 +63,9 @@ v0.4 会话没有 `sid`，切换后会主动失效，用户需要重新登录。
 - `Source code (zip)`。
 - `Source code (tar.gz)`。
 
-唯一允许的自定义附件是 `release-manifest.json`。它是前后端兼容关系的机器可读证据，包含 tag、版本、后端和前端的仓库/commit/tag object，以及共享 OpenAPI SHA-256。重跑同一 tag 时，工作流会先删除该 tag 上的旧附件，再重新生成并验证该清单；发布后 Release 必须恰好只有这一项自定义附件。
+唯一允许的 GitHub Release 自定义附件仍是 `release-manifest.json`。它是前后端兼容关系和供应链交付的机器可读证据，包含 tag、版本、后端和前端的仓库/commit/tag object、共享 OpenAPI SHA-256，以及不可变 OCI 镜像摘要、双架构平台和签名/SBOM 证明类型。重跑同一 tag 时，工作流会先删除该 tag 上的旧附件，再重新生成并验证该清单；发布后 Release 必须恰好只有这一项自定义附件。
 
-工作流不上传后端可执行文件、前端 dist、OCI 镜像、GHCR 标签、SBOM 或校验和。Nightly 仅在对应仓库的 `main` CI 成功后更新，并继续只保留 GitHub 自动源码快照。部署方必须以已验证的稳定 tag 和 `release-manifest.json` 为输入，在自己的交付链中生成可执行文件、镜像、SBOM 与校验和。
+稳定发布会推送 `linux/amd64` 与 `linux/arm64` 的 GHCR OCI 索引，并以 GitHub OIDC 进行 Cosign 无密钥镜像签名和 SPDX JSON SBOM 证明签名。部署只能使用清单中记录的 `repository@sha256:...`，不得使用可变 tag。Nightly 仅在对应仓库的 `main` CI 成功后更新，并继续只保留 GitHub 自动源码快照，不推送 OCI、SBOM 或签名。
 
 ## 5. 切换与回滚
 

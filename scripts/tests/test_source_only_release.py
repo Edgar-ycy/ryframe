@@ -16,25 +16,30 @@ class ReleaseWorkflowTest(unittest.TestCase):
         paths.update(WORKFLOWS.glob("*nightly*.yaml"))
         return sorted(paths)
 
-    def test_release_only_publishes_the_deterministic_manifest_asset(self) -> None:
+    def test_release_publishes_signed_multi_arch_oci_delivery(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         self.assertIn("files: release-manifest.json", source)
         self.assertIn("release-manifest.json", source)
         for fragment in (
-            "actions/upload-artifact",
-            "actions/download-artifact",
+            "publish-oci:",
             "docker/build-push-action",
             "docker/login-action",
-            "docker buildx imagetools",
-            "git archive",
-            "gh release upload",
-            "ghcr.io/",
+            "docker/setup-qemu-action",
+            "platforms: linux/amd64,linux/arm64",
             "packages: write",
-            "SHA256SUMS",
-            ".cdx.json",
-            "type=oci",
-            "generate_release_notes:",
+            "id-token: write",
+            "anchore/sbom-action@v0",
+            "format: spdx-json",
+            "sigstore/cosign-installer@v3",
+            "cosign attest --yes --type spdxjson",
+            "cosign verify-attestation --type spdxjson",
+            "--oci-image-repository",
+            "--oci-digest",
+            ".schema_version == 2",
         ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, source)
+        for fragment in ("git archive", "gh release upload", "generate_release_notes:"):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
 
@@ -100,6 +105,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "Build deterministic release manifest",
             "files: release-manifest.json",
             "Verify published notes and release manifest",
+            "--oci-image-repository",
+            "--oci-digest",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, source)

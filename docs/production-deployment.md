@@ -33,8 +33,9 @@ docker build \
   --file deploy/Dockerfile .
 ```
 
-构建产物应生成 SBOM、镜像签名和漏洞扫描记录。升级 Rust 或 Debian 后必须重新运行
-全量测试、迁移/恢复演练和容量基准。
+稳定发布工作流会生成 `linux/amd64` 与 `linux/arm64` OCI 索引、SPDX JSON SBOM 证明和 Cosign 无密钥签名；部署前必须从 `release-manifest.json` 读取不可变镜像摘要，并验证签名与 SBOM 证明。升级 Rust 或 Debian 后必须重新运行全量测试、迁移/恢复演练和容量基准。
+
+`deploy/compose.prod.yml` 仅编排 API、独立迁移进程和独立 Worker，MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。复制 `deploy/.env.production.example` 到部署平台的秘密注入配置，替换所有示例值，并将 TLS 证书文件以 Docker secret 形式挂载；不得把真实密码、令牌、私钥或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，且镜像必须采用 `release-manifest.json` 中的 digest 引用。
 
 ## 2. 网络与入口
 

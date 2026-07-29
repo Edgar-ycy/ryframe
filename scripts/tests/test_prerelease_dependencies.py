@@ -121,6 +121,26 @@ steps:
             },
         )
 
+    def test_release_workflow_allows_only_its_verified_build_digest_expression(self) -> None:
+        source = """
+  image: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
+"""
+        self.assertEqual(
+            check.deployment_source_findings(source, ".github/workflows/release.yml"),
+            set(),
+        )
+        self.assertEqual(
+            check.deployment_source_findings(source, "compose.yml"),
+            {
+                check.Finding(
+                    "container",
+                    "${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}",
+                    "unresolved",
+                    "compose.yml",
+                )
+            },
+        )
+
     def test_yaml_aliases_and_shadowed_variables_fail_closed(self) -> None:
         source = """
 x-image: &bad repo/anchored:7.0.0-rc.1

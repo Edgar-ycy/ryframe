@@ -14,9 +14,12 @@ RUN --mount=type=cache,id=ryframe-cargo-registry,target=/usr/local/cargo/registr
     --mount=type=cache,id=ryframe-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=ryframe-target,target=/workspace/target,sharing=locked \
     RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
-    cargo build --locked --release -p ryframe --bin ryframe \
+    cargo build --locked --release -p ryframe \
+    --bin ryframe --bin ryframe-migrate --bin ryframe-worker \
     && install --directory /workspace/out \
-    && install --mode=0755 /workspace/target/release/ryframe /workspace/out/ryframe
+    && install --mode=0755 /workspace/target/release/ryframe /workspace/out/ryframe \
+    && install --mode=0755 /workspace/target/release/ryframe-migrate /workspace/out/ryframe-migrate \
+    && install --mode=0755 /workspace/target/release/ryframe-worker /workspace/out/ryframe-worker
 
 FROM ${DEBIAN_IMAGE} AS runtime
 ARG RYFRAME_BUILD_COMMIT
@@ -31,6 +34,8 @@ RUN apt-get update \
 
 WORKDIR /opt/ryframe
 COPY --from=builder /workspace/out/ryframe /usr/local/bin/ryframe
+COPY --from=builder /workspace/out/ryframe-migrate /usr/local/bin/ryframe-migrate
+COPY --from=builder /workspace/out/ryframe-worker /usr/local/bin/ryframe-worker
 COPY --chown=ryframe:ryframe config ./config
 COPY --chown=ryframe:ryframe locales ./locales
 

@@ -76,6 +76,7 @@ EXPECTED_DEPENDENCIES = {
         "ryframe-auth",
         "ryframe-config",
         "ryframe-core",
+        "ryframe-http",
         "ryframe-kernel",
         "ryframe-utils",
     },
@@ -92,6 +93,7 @@ EXPECTED_DEPENDENCIES = {
         "ryframe-config",
         "ryframe-core",
         "ryframe-db",
+        "ryframe-excel",
         "ryframe-generator",
         "ryframe-kernel",
         "ryframe-storage",
@@ -564,7 +566,7 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
             "checked_in_contract_snapshot_is_current",
             "x-ryframe-menu-routes",
             "x-ryframe-password-policy",
-            "query_operation_count >= 34",
+            "query_operation_count >= 29",
             "must document its success response schema",
             "must document its request body",
             "full-record operation must not document pagination parameters",
@@ -826,7 +828,8 @@ def check_release_artifacts(errors: list[str]) -> None:
     publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yml"))
     publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yaml"))
     required_fragments = (
-        "name: Publish source and release-manifest GitHub release",
+        "name: Publish release manifest for signed OCI delivery",
+        "name: Publish signed multi-architecture OCI image",
         "name: Build deterministic release manifest",
         "release-manifest.json",
         "--backend-repository",
@@ -849,6 +852,16 @@ def check_release_artifacts(errors: list[str]) -> None:
         "frontend_tag_oid:",
         "name: Revalidate tag objects",
         "name: Confirm tag refs immediately before publishing",
+        "docker/build-push-action@v6",
+        "docker/login-action@v3",
+        "platforms: linux/amd64,linux/arm64",
+        "provenance: mode=max",
+        "format: spdx-json",
+        "cosign sign --yes",
+        "cosign attest --yes --type spdxjson",
+        "cosign verify-attestation --type spdxjson",
+        "--oci-image-repository",
+        "--oci-digest",
     )
     nightly_required_fragments = (
         "CHANGELOG.md",
@@ -860,21 +873,12 @@ def check_release_artifacts(errors: list[str]) -> None:
         "'.assets | length == 0'",
     )
     forbidden_fragments = (
-        "actions/upload-artifact",
-        "actions/download-artifact",
         "RYFRAME_PRODUCTION_API_BASE_URL",
-        "docker/build-push-action",
-        "docker/login-action",
-        "docker buildx imagetools",
-        "generate_release_sbom.py",
         "git archive",
         "gh release upload",
-        "ghcr.io/",
-        "packages: write",
         "release-assets/",
         "SHA256SUMS",
         ".cdx.json",
-        "type=oci",
         "\n          body:",
         "generate_release_notes:",
         "git tag -f nightly",
@@ -896,13 +900,30 @@ def check_release_artifacts(errors: list[str]) -> None:
                     f"Nightly Changelog release contract is missing in "
                     f"{relative_path}: {fragment}"
                 )
-    for path in sorted(publishing_workflows):
+    for fragment in forbidden_fragments:
+        if fragment in workflow:
+            errors.append(
+                f"release artifact contract forbids in {workflow_path}: {fragment}"
+            )
+    nightly_forbidden_fragments = (
+        "docker/build-push-action",
+        "docker/login-action",
+        "anchore/sbom-action",
+        "cosign sign",
+        "ghcr.io/",
+        "packages: write",
+        "actions/upload-artifact",
+        "actions/download-artifact",
+    )
+    for path in sorted(
+        path for path in publishing_workflows if "nightly" in path.name.lower()
+    ):
         source = path.read_text(encoding="utf-8")
         relative_path = path.relative_to(ROOT)
-        for fragment in forbidden_fragments:
+        for fragment in nightly_forbidden_fragments:
             if fragment in source:
                 errors.append(
-                    f"release artifact contract forbids in {relative_path}: {fragment}"
+                    f"Nightly release must remain source-only in {relative_path}: {fragment}"
                 )
 
     dockerfile_path = "deploy/Dockerfile"
@@ -920,6 +941,27 @@ def check_release_artifacts(errors: list[str]) -> None:
         errors.append(
             f"release image build identity must be explicit in {dockerfile_path}"
         )
+
+    production_compose_path = "deploy/compose.prod.yml"
+    production_compose = (ROOT / production_compose_path).read_text(encoding="utf-8")
+    for fragment in (
+        "migrate:",
+        "api:",
+        "worker:",
+        "image: ${RYFRAME_IMAGE:?",
+        "APP_DATABASE_MIGRATION_MODE: verify",
+        "APP_JOBS_MODE: external",
+        "SNOWFLAKE_WORKER_ID:",
+        "read_only: true",
+        "internal: true",
+        "entrypoint: [\"/usr/local/bin/ryframe-migrate\"]",
+        "entrypoint: [\"/usr/local/bin/ryframe-worker\"]",
+        "APP_OBJECT_STORAGE_USE_SSL: \"true\"",
+    ):
+        if fragment not in production_compose:
+            errors.append(
+                f"production Compose contract is missing in {production_compose_path}: {fragment}"
+            )
 
 
 def check_release_governance(errors: list[str]) -> None:

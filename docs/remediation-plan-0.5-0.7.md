@@ -36,7 +36,7 @@
 | Crate 边界与最小依赖 | 部分完成 | `kernel`、`i18n`、`excel`、`mail` 等拆分已存在；需完成剩余依赖方向和最小特性矩阵验收。 |
 | i18n、OTel、URL 版本与读副本 | 部分完成 | 双语、语言协商、OTel、`/api/v1` 与读一致性选择已实现；需完成计划要求的端到端和故障验收。 |
 | 通用消息中心 | 部分完成 | 消息表、票据、收件箱、ack/read 与前端连接已具备；需改为 Query 保存服务端消息数据，并完成双 API 实例真实链路验证。 |
-| OCI、SBOM、签名与生产 Compose | 未开始 | 当前发布流程明确不交付 OCI、SBOM 或签名；需实现双架构镜像、Cosign、SPDX、manifest v2 与生产 Compose。 |
+| OCI、SBOM、签名与生产 Compose | 部分完成 | 发布工作流已定义 GHCR `linux/amd64`/`linux/arm64` OCI 索引、Buildx provenance、SPDX JSON SBOM、Cosign OIDC 无密钥签名和签名验证；`release-manifest.json` 已升级为 v2 并记录不可变镜像摘要与证明类型，生产 Compose 已将 API、迁移和独立 Worker 与外部托管依赖分离。仍需在托管发布环境完成真实镜像推送、签名和升级演练。 |
 | 0.7 发布验收 | 未完成 | 尚未完成双实例消息、读副本故障、供应链签名与升级演练。 |
 
 ## 执行顺序
@@ -45,4 +45,4 @@
 2. 完成 0.6 统一响应契约，再实施 Outbox、导出任务和 Worker 验收。
 3. 完成 0.6 前端与生产切换验收。
 4. 收口 0.7 架构、i18n、OTel、读副本与消息中心的运行验收。
-5. 实施 0.7 OCI、SBOM、Cosign 和生产交付，完成稳定版联合发布演练。
+5. 验证 0.7 OCI、SBOM、Cosign 和生产交付，完成稳定版联合发布演练。

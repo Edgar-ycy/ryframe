@@ -1,0 +1,114 @@
+name: ryframe
+
+x-ryframe-environment: &ryframe-environment
+  APP_ENV: prod
+  APP_JOBS_MODE: external
+  APP_DATABASE_HOST: ${APP_DATABASE_HOST:?必须设置 APP_DATABASE_HOST}
+  APP_DATABASE_PORT: ${APP_DATABASE_PORT:-3306}
+  APP_DATABASE_NAME: ${APP_DATABASE_NAME:?必须设置 APP_DATABASE_NAME}
+  APP_DATABASE_USERNAME: ${APP_DATABASE_USERNAME:?必须设置 APP_DATABASE_USERNAME}
+  APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?必须设置 APP_DATABASE_PASSWORD}
+  APP_DATABASE_TLS_MODE: verify_identity
+  APP_DATABASE_TLS_CA: /run/secrets/mysql-ca.pem
+  APP_DATABASE_TLS_CLIENT_CERT: /run/secrets/mysql-client-cert.pem
+  APP_DATABASE_TLS_CLIENT_KEY: /run/secrets/mysql-client-key.pem
+  APP_REDIS_MODE: required
+  APP_REDIS_HOST: ${APP_REDIS_HOST:?必须设置 APP_REDIS_HOST}
+  APP_REDIS_PORT: ${APP_REDIS_PORT:-6380}
+  APP_REDIS_TLS: "true"
+  APP_REDIS_TLS_CA: /run/secrets/redis-ca.pem
+  APP_REDIS_TLS_CLIENT_CERT: /run/secrets/redis-client-cert.pem
+  APP_REDIS_TLS_CLIENT_KEY: /run/secrets/redis-client-key.pem
+  APP_OBJECT_STORAGE_BACKEND: s3
+  APP_OBJECT_STORAGE_ENDPOINT: ${APP_OBJECT_STORAGE_ENDPOINT:?必须设置 APP_OBJECT_STORAGE_ENDPOINT}
+  APP_OBJECT_STORAGE_ACCESS_KEY: ${APP_OBJECT_STORAGE_ACCESS_KEY:?必须设置 APP_OBJECT_STORAGE_ACCESS_KEY}
+  APP_OBJECT_STORAGE_SECRET_KEY: ${APP_OBJECT_STORAGE_SECRET_KEY:?必须设置 APP_OBJECT_STORAGE_SECRET_KEY}
+  APP_OBJECT_STORAGE_REGION: ${APP_OBJECT_STORAGE_REGION:-us-east-1}
+  APP_OBJECT_STORAGE_USE_SSL: "true"
+  APP_AUTH_JWT_SECRET: ${APP_AUTH_JWT_SECRET:?必须设置 APP_AUTH_JWT_SECRET}
+  APP_MONITOR_METRICS_BEARER_TOKEN: ${APP_MONITOR_METRICS_BEARER_TOKEN:?必须设置 APP_MONITOR_METRICS_BEARER_TOKEN}
+  APP_PROXY_TRUSTED_CIDRS: ${APP_PROXY_TRUSTED_CIDRS:?必须设置受信任代理 CIDR}
+
+x-ryframe-service: &ryframe-service
+  image: ${RYFRAME_IMAGE:?必须设置不可变的 RYFRAME_IMAGE 镜像摘要}
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777,noexec,nosuid,size=64m
+  environment: *ryframe-environment
+  secrets:
+    - mysql-ca.pem
+    - mysql-client-cert.pem
+    - mysql-client-key.pem
+    - redis-ca.pem
+    - redis-client-cert.pem
+    - redis-client-key.pem
+  networks:
+    - backend
+
+services:
+  migrate:
+    <<: *ryframe-service
+    restart: "no"
+    entrypoint: ["/usr/local/bin/ryframe-migrate"]
+    command: ["up"]
+    environment:
+      <<: *ryframe-environment
+      APP_DATABASE_MIGRATION_MODE: off
+
+  api:
+    <<: *ryframe-service
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *ryframe-environment
+      APP_DATABASE_MIGRATION_MODE: verify
+      SNOWFLAKE_WORKER_ID: ${RYFRAME_API_SNOWFLAKE_WORKER_ID:?必须设置唯一 API Snowflake 节点号}
+    ports:
+      - "127.0.0.1:${RYFRAME_API_PORT:-8080}:8080"
+    networks:
+      - edge
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/readyz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    <<: *ryframe-service
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["/usr/local/bin/ryframe-worker"]
+    environment:
+      <<: *ryframe-environment
+      APP_DATABASE_MIGRATION_MODE: verify
+      SNOWFLAKE_WORKER_ID: ${RYFRAME_WORKER_SNOWFLAKE_WORKER_ID:?必须设置唯一 Worker Snowflake 节点号}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9091/readyz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+networks:
+  edge:
+  backend:
+    internal: true
+
+secrets:
+  mysql-ca.pem:
+    file: ${RYFRAME_MYSQL_CA_FILE:?必须设置 MySQL CA 证书文件}
+  mysql-client-cert.pem:
+    file: ${RYFRAME_MYSQL_CLIENT_CERT_FILE:?必须设置 MySQL 客户端证书文件}
+  mysql-client-key.pem:
+    file: ${RYFRAME_MYSQL_CLIENT_KEY_FILE:?必须设置 MySQL 客户端私钥文件}
+  redis-ca.pem:
+    file: ${RYFRAME_REDIS_CA_FILE:?必须设置 Redis CA 证书文件}
+  redis-client-cert.pem:
+    file: ${RYFRAME_REDIS_CLIENT_CERT_FILE:?必须设置 Redis 客户端证书文件}
+  redis-client-key.pem:
+    file: ${RYFRAME_REDIS_CLIENT_KEY_FILE:?必须设置 Redis 客户端私钥文件}
