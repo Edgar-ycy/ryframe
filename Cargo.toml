@@ -66,7 +66,7 @@ image = { version = "0.25", default-features = false, features = [
     "webp",
 ] }
 calamine = { version = "0.36" }
-rust_xlsxwriter = { version = "0.94" }
+rust_xlsxwriter = { version = "0.96" }
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 redis = { version = "0.27", features = ["tokio-rustls-comp", "connection-manager"] }
 
