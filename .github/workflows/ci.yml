@@ -49,10 +49,10 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -160,10 +160,10 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
@@ -210,10 +210,10 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf

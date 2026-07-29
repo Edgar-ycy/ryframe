@@ -228,9 +228,9 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: release-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          key: release-v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
           restore-keys: |
-            release-rust-${{ runner.os }}-${{ runner.arch }}-
+            release-v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Start pinned test services
         run: docker compose -f docker-compose.test.yml up --detach --wait
