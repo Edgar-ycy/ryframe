@@ -460,8 +460,7 @@ async fn partial_schema_is_rejected() {
 }
 
 async fn isolated_database() -> (DatabaseConnection, DatabaseConnection, String) {
-    let admin_url = std::env::var("RYFRAME_TEST_MYSQL_ADMIN_URL")
-        .unwrap_or_else(|_| "mysql://root:ryframe_test_password@127.0.0.1:13306/mysql".into());
+    let admin_url = mysql_test_admin_url();
     let admin = Database::connect(&admin_url).await.expect(
         "connect MySQL test service; run `docker compose -f docker-compose.test.yml up -d --wait`",
     );
@@ -481,6 +480,22 @@ async fn isolated_database() -> (DatabaseConnection, DatabaseConnection, String)
         .await
         .unwrap();
     (admin, database, name)
+}
+
+fn mysql_test_admin_url() -> String {
+    if let Ok(admin_url) = std::env::var("RYFRAME_TEST_MYSQL_ADMIN_URL") {
+        return admin_url;
+    }
+    let port = std::env::var("RYFRAME_TEST_MYSQL_PORT")
+        .ok()
+        .map_or(13306, |value| {
+            value
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .unwrap_or_else(|| panic!("RYFRAME_TEST_MYSQL_PORT 必须是 1 到 65535 之间的端口号"))
+        });
+    format!("mysql://root:ryframe_test_password@127.0.0.1:{port}/mysql")
 }
 
 async fn cleanup_database(admin: DatabaseConnection, database: DatabaseConnection, name: &str) {

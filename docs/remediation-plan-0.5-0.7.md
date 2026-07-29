@@ -45,7 +45,7 @@
 
 - 后端执行 `cargo xtask verify --scope backend`，通过源码卫生、依赖与权限路由策略、架构检查、全工作区测试、集成测试和 doctest。
 - 前端执行 `pnpm check`，通过 OpenAPI 契约、静态检查、类型检查、231 项单元测试、生产构建、包体预算和 14 项 Playwright 端到端测试。
-- 本机若有其他项目占用默认测试端口，应使用 `RYFRAME_TEST_MYSQL_ADMIN_URL`、`RYFRAME_TEST_REDIS_PORT` 和 Compose 端口覆盖启动独立的 RyFrame 测试服务，禁止复用或改动其他项目容器。
+- 本机若有其他项目占用默认测试端口，应使用 `RYFRAME_TEST_MYSQL_PORT`、`RYFRAME_TEST_REDIS_PORT` 和 Compose 端口覆盖启动独立的 RyFrame 测试服务；完整 `RYFRAME_TEST_MYSQL_ADMIN_URL` 仍可用于远程或自定义 MySQL，禁止复用或改动其他项目容器。
 
 以下验收必须在已授权的托管或生产环境执行，不能由本地代码提交替代：托管 CI 完整运行证据、稳定标签联合发布、GHCR 镜像推送与 Cosign 签名、托管 OTel 导出器故障演练，以及生产迁移切换和回滚演练。
 

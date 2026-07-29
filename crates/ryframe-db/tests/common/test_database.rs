@@ -177,7 +177,29 @@ impl Drop for TestDatabase {
 }
 
 pub fn mysql_test_admin_url() -> String {
-    std::env::var("RYFRAME_TEST_MYSQL_ADMIN_URL").unwrap_or_else(|_| DEFAULT_ADMIN_URL.to_owned())
+    mysql_test_admin_url_with(
+        std::env::var("RYFRAME_TEST_MYSQL_ADMIN_URL").ok(),
+        std::env::var("RYFRAME_TEST_MYSQL_PORT").ok(),
+    )
+}
+
+fn mysql_test_admin_url_with(admin_url: Option<String>, port: Option<String>) -> String {
+    if let Some(admin_url) = admin_url {
+        return admin_url;
+    }
+
+    let port = port.map_or(13306, |value| {
+        value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port > 0)
+            .unwrap_or_else(|| panic!("RYFRAME_TEST_MYSQL_PORT 必须是 1 到 65535 之间的端口号"))
+    });
+    if port == 13306 {
+        DEFAULT_ADMIN_URL.to_owned()
+    } else {
+        format!("mysql://root:ryframe_test_password@127.0.0.1:{port}/mysql")
+    }
 }
 
 pub fn validate_test_database_purpose(purpose: &str) -> Result<(), String> {
@@ -268,5 +290,26 @@ mod tests {
             super::database_url("mysql://root@localhost/mysql", "ryframe_it_safe"),
             "mysql://root@localhost/ryframe_it_safe?collation=utf8mb4_general_ci"
         );
+    }
+
+    #[test]
+    fn test_mysql_port_override_builds_an_isolated_admin_url() {
+        assert_eq!(
+            super::mysql_test_admin_url_with(None, Some("13307".into())),
+            "mysql://root:ryframe_test_password@127.0.0.1:13307/mysql"
+        );
+        assert_eq!(
+            super::mysql_test_admin_url_with(
+                Some("mysql://custom:secret@db.example/mysql".into()),
+                Some("13307".into()),
+            ),
+            "mysql://custom:secret@db.example/mysql"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "RYFRAME_TEST_MYSQL_PORT")]
+    fn test_mysql_port_override_rejects_invalid_values() {
+        super::mysql_test_admin_url_with(None, Some("invalid".into()));
     }
 }
