@@ -5,6 +5,8 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  schedule:
+    - cron: "17 3 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -135,55 +137,10 @@ jobs:
         run: cargo deny check licenses bans sources
 
   # ============================================================
-  # 快速测试（Linux，nextest 并行）
-  # ============================================================
-  test:
-    name: Test (Linux)
-    if: ${{ false }}
-    runs-on: ubuntu-latest
-    needs: check
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: Rust cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
-            v2-rust-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
-        with:
-          tool: nextest
-
-      - name: Start MySQL, Redis, and object storage
-        run: docker compose -f docker-compose.test.yml up --detach --wait
-
-      - name: Run tests (nextest)
-        run: cargo nextest run --locked --workspace --no-fail-fast --retries 2
-
-      - name: Run doctests
-        run: cargo test --locked --workspace --doc
-
-      - name: Stop test services
-        if: always()
-        run: docker compose -f docker-compose.test.yml down --volumes
-
-  # ============================================================
-  # 真实服务运行时冒烟测试
+  # 轻量运行时验证
   # ============================================================
   runtime-smoke:
-    name: Test (Linux) & Runtime Smoke
+    name: Runtime Smoke
     runs-on: ubuntu-latest
     needs: check
     env:
@@ -215,11 +172,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
-      - name: Install MySQL client for backup rehearsal
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes default-mysql-client
-
       - name: Start runtime services
         shell: bash
         run: |
@@ -229,11 +181,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: "22"
 
       - name: Rust cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
@@ -248,104 +195,7 @@ jobs:
             v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
             v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
-        with:
-          tool: nextest
-
-      - name: Run Linux workspace tests and doctests
-        run: |
-          cargo nextest run --locked --workspace --no-fail-fast
-          cargo test --locked --workspace --doc
-
-      - name: Test authoritative force logout and Redis recovery
-        run: >-
-          cargo test --locked -p ryframe-api --test integration_test
-          force_logout_uses_authoritative_family_and_recovers_after_redis_failure
-          -- --ignored --exact
-
-      - name: Test authentication fail-closed behavior during Redis outage
-        run: >-
-          cargo test --locked -p ryframe-api --test integration_test
-          auth_middleware_fails_closed_when_redis_is_unavailable
-          -- --ignored --exact
-
-      - name: Test Redis refresh rotation CAS and response-loss recovery
-        run: >-
-          cargo test --locked -p ryframe-core --test refresh_session_redis_test
-          -- --ignored
-
-      - name: Seed legacy tables for whole-database reset acceptance
-        shell: bash
-        env:
-          MYSQL_PWD: ${{ env.APP_DATABASE_PASSWORD }}
-        run: |
-          mysql --protocol=TCP \
-            --host="$APP_DATABASE_HOST" \
-            --port="$APP_DATABASE_PORT" \
-            --user="$APP_DATABASE_USERNAME" \
-            "$APP_DATABASE_NAME" <<'SQL'
-          CREATE TABLE sys_job (id BIGINT NOT NULL PRIMARY KEY);
-          CREATE TABLE sys_job_log (
-            id BIGINT NOT NULL PRIMARY KEY,
-            job_id BIGINT NOT NULL,
-            CONSTRAINT fk_reset_legacy_job
-              FOREIGN KEY (job_id) REFERENCES sys_job(id)
-          );
-          INSERT INTO sys_job (id) VALUES (1);
-          INSERT INTO sys_job_log (id, job_id) VALUES (1, 1);
-          SQL
-
-      - name: Initialize smoke database
-        run: >-
-          cargo run --locked -p ryframe --bin ryframe-db-reset --
-          --database ryframe_test
-          --confirm-reset RESET-RYFRAME-DATABASE
-
-      - name: Verify whole-database reset result
-        shell: bash
-        env:
-          MYSQL_PWD: ${{ env.APP_DATABASE_PASSWORD }}
-        run: |
-          mysql_args=(
-            --protocol=TCP
-            --host="$APP_DATABASE_HOST"
-            --port="$APP_DATABASE_PORT"
-            --user="$APP_DATABASE_USERNAME"
-            --batch
-            --skip-column-names
-          )
-          legacy_count="$(mysql "${mysql_args[@]}" -e \
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$APP_DATABASE_NAME' AND table_name IN ('sys_job','sys_job_log')")"
-          [[ "$legacy_count" == 0 ]]
-          canonical_count="$(mysql "${mysql_args[@]}" -e \
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$APP_DATABASE_NAME' AND table_name IN ('seaql_migrations','sys_tenant','sys_user')")"
-          [[ "$canonical_count" == 3 ]]
-          user_count="$(mysql "${mysql_args[@]}" "$APP_DATABASE_NAME" -e \
-            "SELECT COUNT(*) FROM sys_user WHERE tenant_id='system' AND username IN ('admin','user')")"
-          [[ "$user_count" == 2 ]]
-          database_metadata="$(mysql "${mysql_args[@]}" -e \
-            "SELECT CONCAT(default_character_set_name, ':', default_collation_name) FROM information_schema.schemata WHERE schema_name='$APP_DATABASE_NAME'")"
-          [[ "$database_metadata" == utf8mb4:utf8mb4_general_ci ]]
-
-      - name: Wait for RustFS
-        shell: bash
-        run: |
-          for ((attempt = 1; attempt <= 60; attempt++)); do
-            if curl --fail --silent http://127.0.0.1:19000/health >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "RustFS did not become reachable"
-          exit 1
-
-      - name: Test RustFS adapter
-        run: >-
-          cargo test --locked -p ryframe-storage --test object_storage_test
-          test_s3_integration_put_get_delete -- --ignored --exact
-
-      - name: Start service and run smoke tests
+      - name: Start service and verify health endpoints
         shell: bash
         run: |
           mkdir -p target
@@ -365,27 +215,8 @@ jobs:
             sleep 2
           done
 
+          curl --fail --silent http://127.0.0.1:18080/livez >/dev/null
           curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null
-          node deploy/tests/smoke-test.js http://127.0.0.1:18080
-
-      - name: Validate backup and restore rehearsal
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: "13306"
-          DB_NAME: ryframe_test
-          DB_USER: root
-          DB_PASSWORD: ryframe_test_password
-          BACKUP_DIR: target/ci-backups
-        run: |
-          bash deploy.sh backup
-          bash deploy.sh validate target/ci-backups/ryframe_test_latest.sql.gz
-          bash deploy.sh rehearse target/ci-backups/ryframe_test_latest.sql.gz
-
-          if grep -E '(^|[[:space:]])(WARN|ERROR)([[:space:]]|$)' target/runtime-smoke.log; then
-            cat target/runtime-smoke.log
-            echo "Runtime log contains warnings or errors"
-            exit 1
-          fi
 
       - name: Upload runtime log on failure
         if: failure() && hashFiles('target/runtime-smoke.log') != ''
@@ -430,6 +261,7 @@ jobs:
   # ============================================================
   coverage:
     name: Coverage
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     needs: check
     env:

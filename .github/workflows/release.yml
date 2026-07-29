@@ -211,7 +211,7 @@ jobs:
           tool: cargo-deny
 
       - name: Set up Node.js for runtime smoke
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: "24.11.0"
 
@@ -478,7 +478,7 @@ jobs:
           version: 10.28.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: "24.11.0"
 
