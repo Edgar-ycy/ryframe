@@ -45,7 +45,7 @@ jobs:
       frontend_repository: ${{ steps.release.outputs.frontend_repository }}
     steps:
       - name: Check out backend tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref_name }}
@@ -66,7 +66,7 @@ jobs:
           [[ "$(git rev-parse "$RELEASE_TAG^{commit}")" == "$(git rev-parse HEAD)" ]]
 
       - name: Check out matching frontend tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ inputs.tag || github.ref_name }}
@@ -158,7 +158,7 @@ jobs:
       DB_PASSWORD: ryframe_test_password
       BACKUP_DIR: target/release-gate-backups
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
@@ -429,12 +429,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out backend contract
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
       - name: Check out matching frontend tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ needs.validate-release.outputs.frontend_repository }}
           ref: ${{ needs.validate-release.outputs.frontend_commit }}
@@ -507,7 +507,7 @@ jobs:
       id-token: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
@@ -615,13 +615,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
       - name: Check out matching frontend Changelog
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ needs.validate-release.outputs.frontend_repository }}
           ref: ${{ needs.validate-release.outputs.frontend_commit }}
