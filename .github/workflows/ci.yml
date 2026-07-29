@@ -86,17 +86,20 @@ jobs:
           python -m unittest discover -s scripts/tests -p 'test_*.py'
 
       - name: Check OpenAPI contract snapshot
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
           git diff --exit-code -- openapi/openapi.json
 
       - name: Check generated MySQL schema snapshot
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
           git diff --exit-code -- sql/ryframe_config.sql
           test ! -d sql/migrations || test -z "$(find sql/migrations -type f -print -quit)"
 
       - name: Upload OpenAPI contract
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: ryframe-openapi

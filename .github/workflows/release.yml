@@ -143,6 +143,39 @@ jobs:
           verify_successful_ci "${{ steps.release.outputs.frontend_repository }}" \
             "${{ steps.release.outputs.frontend_commit }}"
 
+  contract-snapshots:
+    name: Verify generated API and MySQL schema snapshots
+    needs: validate-release
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-Dwarnings"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.validate-release.outputs.backend_commit }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: Restore Cargo dependency cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: release-contract-v1-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            release-contract-v1-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Verify generated snapshots
+        run: |
+          cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
+          git diff --exit-code -- openapi/openapi.json
+          cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
+          git diff --exit-code -- sql/ryframe_config.sql
+          test ! -d sql/migrations || test -z "$(find sql/migrations -type f -print -quit)"
+
   backend-gate:
     name: Backend, MySQL, Redis, storage, and recovery gate
     if: ${{ false }}
@@ -504,6 +537,7 @@ jobs:
     name: Approve stable release
     needs:
       - validate-release
+      - contract-snapshots
     runs-on: ubuntu-latest
     environment:
       name: stable-release

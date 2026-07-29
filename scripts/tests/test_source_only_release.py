@@ -77,6 +77,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         for job in (
             "validate-release:",
+            "contract-snapshots:",
             "backend-gate:",
             "frontend-gate:",
             "stable-approval:",
@@ -89,6 +90,26 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIsNone(re.search(r"\bRC\b", source))
         self.assertNotIn("release-candidate", source)
         self.assertNotIn("minimum-rc-hours", source)
+
+    def test_contract_snapshots_run_only_manually_or_during_release(self) -> None:
+        ci_source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        release_source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+        manual_condition = "if: ${{ github.event_name == 'workflow_dispatch' }}"
+
+        for step_name in (
+            "Check OpenAPI contract snapshot",
+            "Check generated MySQL schema snapshot",
+            "Upload OpenAPI contract",
+        ):
+            with self.subTest(step_name=step_name):
+                step_start = ci_source.index(f"- name: {step_name}")
+                step_source = ci_source[step_start : step_start + 240]
+                self.assertIn(manual_condition, step_source)
+
+        approval_start = release_source.index("  stable-approval:")
+        approval_source = release_source[approval_start : approval_start + 220]
+        self.assertIn("- contract-snapshots", approval_source)
+        self.assertIn("Verify generated snapshots", release_source)
 
     def test_release_uses_fixed_frontend_source_and_manifest(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
