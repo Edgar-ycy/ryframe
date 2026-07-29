@@ -23,9 +23,9 @@ use std::time::Instant;
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[cfg(windows)]
-const PNPM_EXECUTABLE: &str = "pnpm.cmd";
+const COREPACK_EXECUTABLE: &str = "corepack.cmd";
 #[cfg(not(windows))]
-const PNPM_EXECUTABLE: &str = "pnpm";
+const COREPACK_EXECUTABLE: &str = "corepack";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ToolVersion {
@@ -144,7 +144,7 @@ fn doctor(frontend_dir: &Path) -> Result<()> {
         )
         .into());
     }
-    let pnpm_version = command_version(&root, PNPM_EXECUTABLE)?;
+    let pnpm_version = corepack_pnpm_version(&root)?;
     if pnpm_version != toolchain.pnpm_version {
         return Err(format!(
             "pnpm {pnpm_version} 与前端 packageManager=pnpm@{} 不一致；请通过 corepack 使用固定版本",
@@ -233,7 +233,7 @@ fn frontend_check(frontend_dir: &Path) -> Result<()> {
         "typecheck",
         "test",
     ] {
-        run(frontend_dir, PNPM_EXECUTABLE, &[script])?;
+        run_pnpm(frontend_dir, &[script])?;
     }
     Ok(())
 }
@@ -241,15 +241,15 @@ fn frontend_check(frontend_dir: &Path) -> Result<()> {
 fn frontend_verify(frontend_dir: &Path) -> Result<()> {
     frontend_check(frontend_dir)?;
     for script in ["test:coverage", "build", "check:bundle", "test:e2e"] {
-        run(frontend_dir, PNPM_EXECUTABLE, &[script])?;
+        run_pnpm(frontend_dir, &[script])?;
     }
     Ok(())
 }
 
 fn contract(args: &[String], frontend_dir: &Path) -> Result<()> {
     match args.first().map(String::as_str) {
-        Some("check") => run(frontend_dir, PNPM_EXECUTABLE, &["api:check"]),
-        Some("sync") => run(frontend_dir, PNPM_EXECUTABLE, &["api:sync"]),
+        Some("check") => run_pnpm(frontend_dir, &["api:check"]),
+        Some("sync") => run_pnpm(frontend_dir, &["api:sync"]),
         _ => Err("usage: cargo xtask contract <check|sync> [--frontend-dir PATH]".into()),
     }
 }
@@ -293,7 +293,7 @@ fn dev(frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
     println!("Starting backend and frontend. Press Ctrl+C to stop both processes.");
     let mut backend = spawn(&root, "cargo", &["run"])?;
-    let mut frontend = match spawn(frontend_dir, PNPM_EXECUTABLE, &["dev"]) {
+    let mut frontend = match spawn_pnpm(frontend_dir, &["dev"]) {
         Ok(child) => child,
         Err(error) => {
             let _ = stop_child(&mut backend);
@@ -355,9 +355,84 @@ fn run(dir: &Path, executable: &str, args: &[&str]) -> Result<()> {
     }
 }
 
+fn run_pnpm(dir: &Path, args: &[&str]) -> Result<()> {
+    let status = pnpm_command(dir)?
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("command failed: pnpm {}", args.join(" ")).into())
+    }
+}
+
 fn command_version(dir: &Path, executable: &str) -> Result<ToolVersion> {
     let output = command_version_output(dir, executable)?;
     ToolVersion::parse(&output, &format!("{executable} --version"))
+}
+
+fn corepack_pnpm_version(dir: &Path) -> Result<ToolVersion> {
+    let output = pnpm_command(dir)?.arg("--version").output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!("无法通过项目级 Corepack shim 获取 pnpm 版本: {stderr}").into());
+    }
+    let output = String::from_utf8(output.stdout)
+        .map_err(|error| format!("pnpm --version 输出不是 UTF-8: {error}"))?;
+    ToolVersion::parse(&output, "项目级 pnpm --version")
+}
+
+fn pnpm_command(dir: &Path) -> Result<Command> {
+    let executable = pnpm_executable(dir)?;
+    let shim_dir = executable
+        .parent()
+        .expect("pnpm Corepack shim must have a parent directory");
+    let inherited_path = env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![shim_dir.to_path_buf()];
+    paths.extend(env::split_paths(&inherited_path));
+    let path = env::join_paths(paths)
+        .map_err(|error| format!("无法构造 pnpm 的 PATH 环境变量: {error}"))?;
+
+    let mut command = Command::new(executable);
+    command.current_dir(dir).env("PATH", path);
+    Ok(command)
+}
+
+fn pnpm_executable(dir: &Path) -> Result<PathBuf> {
+    let shim_dir = root_dir().join("target").join("corepack-bin");
+    fs::create_dir_all(&shim_dir).map_err(|error| {
+        format!(
+            "无法创建 Corepack shim 目录 {}: {error}",
+            shim_dir.display()
+        )
+    })?;
+
+    #[cfg(windows)]
+    let executable = shim_dir.join("pnpm.cmd");
+    #[cfg(not(windows))]
+    let executable = shim_dir.join("pnpm");
+
+    if !executable.is_file() {
+        let status = Command::new(COREPACK_EXECUTABLE)
+            .args(["enable", "--install-directory"])
+            .arg(&shim_dir)
+            .current_dir(dir)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        if !status.success() {
+            return Err("无法创建项目级 Corepack pnpm shim".into());
+        }
+    }
+
+    if !executable.is_file() {
+        return Err(format!("Corepack 未创建 pnpm shim: {}", executable.display()).into());
+    }
+    Ok(executable)
 }
 
 fn python_version(dir: &Path) -> Result<ToolVersion> {
@@ -583,6 +658,23 @@ fn spawn(dir: &Path, executable: &str, args: &[&str]) -> Result<std::process::Ch
     command
         .args(args)
         .current_dir(dir)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // 为每个开发服务建立独立进程组，停止时能同时回收其派生子进程。
+        command.process_group(0);
+    }
+    Ok(command.spawn()?)
+}
+
+fn spawn_pnpm(dir: &Path, args: &[&str]) -> Result<std::process::Child> {
+    let mut command = pnpm_command(dir)?;
+    command
+        .args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
