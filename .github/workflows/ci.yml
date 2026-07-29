@@ -183,7 +183,7 @@ jobs:
   # 真实服务运行时冒烟测试
   # ============================================================
   runtime-smoke:
-    name: Runtime Smoke
+    name: Test (Linux) & Runtime Smoke
     runs-on: ubuntu-latest
     needs: check
     env:
