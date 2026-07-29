@@ -139,7 +139,7 @@ class FixedSourceTests(unittest.TestCase):
                 )
 
     def test_frontend_version_and_contract_are_validated(self) -> None:
-        frontend = MODULE_PATH.parents[1] / "ryframe-vue3"
+        frontend = MODULE_PATH.parent
         with mock.patch.object(
             validate_release, "validate_package_version"
         ) as package_version, mock.patch.object(
