@@ -840,7 +840,6 @@ def check_release_artifacts(errors: list[str]) -> None:
         "ref: ${{ needs.validate-release.outputs.frontend_commit }}",
         "name: Purge custom assets from target release",
         "releases/assets/${asset_id}",
-        "softprops/action-gh-release@v3",
         "python scripts/validate_release.py",
         "frontend/CHANGELOG.md",
         "body_path: release_body.md",
@@ -852,8 +851,6 @@ def check_release_artifacts(errors: list[str]) -> None:
         "frontend_tag_oid:",
         "name: Revalidate tag objects",
         "name: Confirm tag refs immediately before publishing",
-        "docker/build-push-action@v6",
-        "docker/login-action@v3",
         "platforms: linux/amd64,linux/arm64",
         "provenance: mode=max",
         "format: spdx-json",
@@ -888,6 +885,16 @@ def check_release_artifacts(errors: list[str]) -> None:
         if fragment not in workflow:
             errors.append(
                 f"release artifact contract is missing in {workflow_path}: {fragment}"
+            )
+    for action in (
+        "softprops/action-gh-release",
+        "docker/build-push-action",
+        "docker/login-action",
+    ):
+        if not has_pinned_action(workflow, action):
+            errors.append(
+                f"release artifact contract is missing a pinned action in "
+                f"{workflow_path}: {action}"
             )
     for path in sorted(
         path for path in publishing_workflows if "nightly" in path.name.lower()
@@ -992,7 +999,9 @@ def check_release_governance(errors: list[str]) -> None:
 
     ci_path = ROOT / ".github/workflows/ci.yml"
     ci = ci_path.read_text(encoding="utf-8")
-    if "docker://rhysd/actionlint:1.7.7" not in ci:
+    if not re.search(
+        r"docker://rhysd/actionlint@sha256:[0-9a-f]{64}\b", ci
+    ):
         errors.append(
             "CI must run the pinned actionlint workflow validator"
         )
@@ -1002,6 +1011,47 @@ def check_release_governance(errors: list[str]) -> None:
             errors.append(
                 f"workflow references removed auto-promotion flow: {path.relative_to(ROOT)}"
             )
+
+
+def has_pinned_action(source: str, action: str) -> bool:
+    """检查指定的远程 Action 是否使用不可变提交引用。"""
+    return re.search(
+        rf"{re.escape(action)}@[0-9a-f]{{7,40}}\b", source
+    ) is not None
+
+
+def check_pinned_workflow_actions(errors: list[str]) -> None:
+    """禁止工作流重新引入可变的第三方 Action 或容器镜像标签。"""
+    uses_pattern = re.compile(r"^\s*(?:-\s+)?uses:\s+([^\s#]+)")
+    commit_pattern = re.compile(r"^[0-9a-f]{7,40}$")
+    image_digest_pattern = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+    for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            match = uses_pattern.match(line)
+            if not match:
+                continue
+            reference = match.group(1)
+            if reference.startswith("./"):
+                continue
+            if "@" not in reference:
+                errors.append(
+                    f"workflow Action is missing an immutable reference: "
+                    f"{path.relative_to(ROOT)}:{line_number}"
+                )
+                continue
+            action, revision = reference.rsplit("@", 1)
+            if action.startswith("docker://"):
+                if not image_digest_pattern.fullmatch(revision):
+                    errors.append(
+                        f"workflow container Action must use a sha256 digest: "
+                        f"{path.relative_to(ROOT)}:{line_number}"
+                    )
+            elif not commit_pattern.fullmatch(revision):
+                errors.append(
+                    f"workflow Action must use a commit SHA: "
+                    f"{path.relative_to(ROOT)}:{line_number}"
+                )
 
 
 def main() -> int:
@@ -1014,6 +1064,7 @@ def main() -> int:
     check_database_and_storage_topology(errors)
     check_release_artifacts(errors)
     check_release_governance(errors)
+    check_pinned_workflow_actions(errors)
     check_openapi_registration(errors)
     check_openapi_contract_pipeline(errors)
     check_compiled_permission_catalog(errors)

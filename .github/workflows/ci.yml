@@ -33,15 +33,15 @@ jobs:
     env:
       RUSTFLAGS: "-Dwarnings"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cargo/registry/index/
@@ -60,7 +60,7 @@ jobs:
         run: python scripts/check_source_hygiene.py
 
       - name: Lint GitHub Actions workflows
-        uses: docker://rhysd/actionlint:1.7.7
+        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
 
       - name: Reject unreviewed prerelease dependencies
         run: python scripts/check_prerelease_dependencies.py
@@ -96,7 +96,7 @@ jobs:
           test ! -d sql/migrations || test -z "$(find sql/migrations -type f -print -quit)"
 
       - name: Upload OpenAPI contract
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ryframe-openapi
           path: openapi/openapi.json
@@ -116,13 +116,13 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
           tool: cargo-audit
 
@@ -130,7 +130,7 @@ jobs:
         run: cargo audit --deny warnings
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
           tool: cargo-deny
 
@@ -148,13 +148,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Rust cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cargo/registry/index/
@@ -167,7 +167,7 @@ jobs:
             v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
           tool: nextest
 
@@ -218,7 +218,7 @@ jobs:
       ADMIN_PASS: "123456"
       TENANT_ID: system
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install MySQL client for backup rehearsal
         run: |
@@ -233,15 +233,15 @@ jobs:
           docker compose -f docker-compose.test.yml up --detach --wait
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
 
       - name: Rust cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cargo/registry/index/
@@ -384,7 +384,7 @@ jobs:
 
       - name: Upload runtime log on failure
         if: failure() && hashFiles('target/runtime-smoke.log') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: runtime-smoke-log
           path: target/runtime-smoke.log
@@ -430,15 +430,15 @@ jobs:
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           components: llvm-tools-preview
 
       - name: Rust cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cargo/registry/index/
@@ -451,7 +451,7 @@ jobs:
             v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
           tool: cargo-llvm-cov
 
@@ -469,7 +469,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
         with:
           files: lcov.info
           fail_ci_if_error: true
@@ -483,13 +483,13 @@ jobs:
     runs-on: windows-latest
     needs: check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Rust cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cargo/registry/index/
@@ -502,7 +502,7 @@ jobs:
             v2-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
           tool: nextest
 

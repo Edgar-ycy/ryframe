@@ -45,13 +45,13 @@ jobs:
       frontend_repository: ${{ steps.release.outputs.frontend_repository }}
     steps:
       - name: Check out backend tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Install Rust toolchain for release metadata
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Verify backend tag belongs to main
         shell: bash
@@ -66,7 +66,7 @@ jobs:
           [[ "$(git rev-parse "$RELEASE_TAG^{commit}")" == "$(git rev-parse HEAD)" ]]
 
       - name: Check out matching frontend tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ inputs.tag || github.ref_name }}
@@ -158,29 +158,35 @@ jobs:
       DB_PASSWORD: ryframe_test_password
       BACKUP_DIR: target/release-gate-backups
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
       - name: Lint GitHub Actions workflows
-        uses: docker://rhysd/actionlint:1.7.7
+        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           components: rustfmt, clippy
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: nextest
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: cargo-audit
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@cargo-deny
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: cargo-deny
 
       - name: Set up Node.js for runtime smoke
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24.11.0"
 
@@ -190,7 +196,7 @@ jobs:
           sudo apt-get install --yes shellcheck default-mysql-client
 
       - name: Rust cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cargo/registry/index/
@@ -429,24 +435,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out backend contract
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
       - name: Check out matching frontend tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: ${{ needs.validate-release.outputs.frontend_repository }}
           ref: ${{ needs.validate-release.outputs.frontend_commit }}
           path: frontend
 
       - name: Set up pinned pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
           version: 10.28.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24.11.0"
           cache: pnpm
@@ -507,7 +513,7 @@ jobs:
       id-token: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
@@ -520,13 +526,13 @@ jobs:
           echo "repository=$repository" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU for target architectures
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
 
       - name: Authenticate to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c83e9320c8beb50b77dd007c46d5c8161f0cac4a
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -534,7 +540,7 @@ jobs:
 
       - name: Build and push OCI index with provenance
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
         with:
           context: .
           file: deploy/Dockerfile
@@ -553,7 +559,7 @@ jobs:
             ${{ steps.image.outputs.repository }}:stable
 
       - name: Generate SPDX SBOM for the immutable OCI digest
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389
         with:
           image: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
           registry-username: ${{ github.actor }}
@@ -564,7 +570,7 @@ jobs:
           upload-release-assets: false
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
 
       - name: Sign image and SPDX attestation with GitHub OIDC
         shell: bash
@@ -615,13 +621,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
       - name: Check out matching frontend Changelog
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: ${{ needs.validate-release.outputs.frontend_repository }}
           ref: ${{ needs.validate-release.outputs.frontend_commit }}
@@ -652,7 +658,7 @@ jobs:
           [[ "$(git -C frontend rev-parse HEAD)" == "$FRONTEND_COMMIT" ]]
 
       - name: Install Rust toolchain for manifest verification
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Build deterministic release manifest
         shell: bash
@@ -758,7 +764,7 @@ jobs:
           [[ -n "$frontend_remote_oid" && "$frontend_remote_oid" == "$FRONTEND_TAG_OID" ]]
 
       - name: Create source and release-manifest GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
           tag_name: ${{ needs.validate-release.outputs.tag }}
           name: RyFrame ${{ needs.validate-release.outputs.tag }}
