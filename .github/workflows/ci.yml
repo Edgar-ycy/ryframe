@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -106,9 +106,6 @@ jobs:
       - name: Clippy (all targets)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-      - name: Check build (all targets)
-        run: cargo check --locked --workspace --all-targets
-
   # ============================================================
   # 安全检查
   # ============================================================
@@ -134,11 +131,8 @@ jobs:
         with:
           tool: cargo-deny
 
-      - name: License check
-        run: cargo deny check licenses
-
-      - name: Bans & Sources check
-        run: cargo deny check bans sources
+      - name: Check licenses, bans, and sources
+        run: cargo deny check licenses bans sources
 
   # ============================================================
   # 快速测试（Linux，nextest 并行）
