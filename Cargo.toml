@@ -93,7 +93,7 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "r
 # gRPC 传输支持
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
