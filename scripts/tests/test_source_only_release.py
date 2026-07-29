@@ -28,9 +28,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "platforms: linux/amd64,linux/arm64",
             "packages: write",
             "id-token: write",
-            "anchore/sbom-action@v0",
+            "anchore/sbom-action@e22c389",
             "format: spdx-json",
-            "sigstore/cosign-installer@v3",
+            "sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62",
             "cosign attest --yes --type spdxjson",
             "cosign verify-attestation --type spdxjson",
             "--oci-image-repository",
@@ -67,7 +67,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         lookup = "releases/tags/${RELEASE_TAG}"
         deletion = "releases/assets/${asset_id}"
-        publisher = "softprops/action-gh-release@v3"
+        publisher = "softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda"
         self.assertIn(lookup, source)
         self.assertIn(deletion, source)
         self.assertLess(source.index(lookup), source.index(deletion))
@@ -114,7 +114,10 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
     def test_ci_runs_pinned_actionlint(self) -> None:
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn("docker://rhysd/actionlint:1.7.7", source)
+        self.assertIn(
+            "docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9",
+            source,
+        )
         self.assertNotIn("auto-promote.yml", source)
 
     def test_ci_uses_read_only_token_and_runs_windows_library_tests(self) -> None:
