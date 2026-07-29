@@ -220,7 +220,7 @@ jobs:
           "${redis_cli[@]}" SET ryframe:release:persistence survived >/dev/null
           sleep 2
           "${redis_compose[@]}" restart redis
-          for attempt in $(seq 1 30); do
+          for ((attempt = 1; attempt <= 30; attempt++)); do
             if [[ "$("${redis_cli[@]}" PING 2>/dev/null || true)" == PONG ]]; then
               break
             fi
@@ -363,7 +363,7 @@ jobs:
           cleanup_server() { kill "$server_pid" 2>/dev/null || true; }
           trap cleanup_server EXIT
 
-          for attempt in $(seq 1 90); do
+          for ((attempt = 1; attempt <= 90; attempt++)); do
             if curl --fail --silent --max-time 3 http://127.0.0.1:18080/readyz >/dev/null; then
               break
             fi
@@ -385,7 +385,7 @@ jobs:
           fi
 
           docker compose -f docker-compose.test.yml stop redis
-          for attempt in $(seq 1 30); do
+          for ((attempt = 1; attempt <= 30; attempt++)); do
             live_status="$(curl --silent --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/livez || true)"
             ready_status="$(curl --silent --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/readyz || true)"
             if [[ "$live_status" == 200 && "$ready_status" == 503 ]]; then
@@ -398,7 +398,7 @@ jobs:
 
           docker compose -f docker-compose.test.yml start redis
           recovered=false
-          for attempt in $(seq 1 60); do
+          for ((attempt = 1; attempt <= 60; attempt++)); do
             if curl --fail --silent --max-time 3 http://127.0.0.1:18080/readyz >/dev/null; then
               recovered=true
               break
