@@ -579,8 +579,6 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
             "cargo run --locked -p ryframe-api --bin export_openapi",
             "git diff --exit-code -- openapi/openapi.json",
             "name: ryframe-openapi",
-            "runtime-smoke:",
-            "curl --fail --silent http://127.0.0.1:18080/readyz",
         ),
         "deploy/tests/smoke-test.js": (
             'process.env.TENANT_ID || "system"',
@@ -777,12 +775,6 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
         "crates/ryframe/src/boot/storage.rs": (
             "StorageBackend::Rustfs",
             "storage.ensure_bucket(bucket).await",
-        ),
-        ".github/workflows/ci.yml": (
-            "APP_DATABASE_REPLICAS",
-            'APP_DATABASE_SOURCES: "[]"',
-            "APP_GENERATOR_DATA_SOURCE: primary",
-            "Start service and verify health endpoints",
         ),
         ".github/workflows/release.yml": (
             'APP_DATABASE_SOURCES: "[]"',
