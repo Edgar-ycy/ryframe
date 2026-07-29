@@ -144,8 +144,8 @@ impl RedisClient {
             // 带超时的连接。
             let timeout = Duration::from_secs(config.timeout_secs.max(1));
             let manager_config = ConnectionManagerConfig::new()
-                .set_connection_timeout(timeout)
-                .set_response_timeout(timeout);
+                .set_connection_timeout(Some(timeout))
+                .set_response_timeout(Some(timeout));
             let conn = tokio::time::timeout(
                 timeout,
                 ConnectionManager::new_with_config(client.clone(), manager_config),
@@ -464,7 +464,13 @@ impl RedisClient {
         args: &[V],
     ) -> Result<i64, redis::RedisError> {
         let value = self.eval_script(script, keys, args).await?;
-        redis::from_redis_value(&value)
+        redis::from_redis_value(value).map_err(|error| {
+            redis::RedisError::from((
+                redis::ErrorKind::Parse,
+                "unable to parse Redis script response",
+                error.to_string(),
+            ))
+        })
     }
 }
 
@@ -531,6 +537,7 @@ mod tests {
                     .filter_map(|arg| match arg {
                         Arg::Simple(value) => Some(value.to_vec()),
                         Arg::Cursor => None,
+                        _ => None,
                     })
                     .collect(),
             );
@@ -583,6 +590,7 @@ mod tests {
             .filter_map(|arg| match arg {
                 Arg::Simple(value) => Some(value.to_vec()),
                 Arg::Cursor => None,
+                _ => None,
             })
             .collect::<Vec<_>>();
 
@@ -606,7 +614,7 @@ mod tests {
         );
 
         let result = Err::<(), _>(redis::RedisError::from((
-            redis::ErrorKind::IoError,
+            redis::ErrorKind::Io,
             "sensitive redis payload",
         )));
         assert_eq!(redis_result_label(&result), "error");

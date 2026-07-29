@@ -181,7 +181,7 @@ impl RefreshSessionStore {
                 .await
                 .map_err(redis_unavailable)?;
             let (code, current_jti, issued_at): (i64, String, i64) =
-                redis::from_redis_value(&result).map_err(redis_unavailable)?;
+                redis::from_redis_value(result).map_err(redis_parse_unavailable)?;
             return Ok(match code {
                 1 => RefreshRotation::Rotated {
                     current_jti,
@@ -238,7 +238,7 @@ impl RefreshSessionStore {
                 .eval_script(script, &[key.as_str()], &[] as &[&str])
                 .await
                 .map_err(redis_unavailable)?;
-            return redis::from_redis_value(&result).map_err(redis_unavailable);
+            return redis::from_redis_value(result).map_err(redis_parse_unavailable);
         }
         if let Some(mut family) = self.local.get_mut(sid) {
             family.revoked = true;
@@ -262,7 +262,7 @@ impl RefreshSessionStore {
                 .eval_script(REVOKE_FOR_TENANT_SCRIPT, &[key.as_str()], &[tenant_id])
                 .await
                 .map_err(redis_unavailable)?;
-            let code: i64 = redis::from_redis_value(&result).map_err(redis_unavailable)?;
+            let code: i64 = redis::from_redis_value(result).map_err(redis_parse_unavailable)?;
             return Ok(code == 1);
         }
 
@@ -293,7 +293,7 @@ impl RefreshSessionStore {
                 .eval_script(script, &[key.as_str()], &[] as &[&str])
                 .await
                 .map_err(redis_unavailable)?;
-            return redis::from_redis_value(&result).map_err(redis_unavailable);
+            return redis::from_redis_value(result).map_err(redis_parse_unavailable);
         }
         let now = chrono::Utc::now().timestamp();
         Ok(self
@@ -317,6 +317,11 @@ fn remaining_ttl(absolute_exp: i64) -> AppResult<u64> {
 
 fn redis_unavailable(error: redis::RedisError) -> AppError {
     tracing::error!(%error, "refresh session Redis operation failed");
+    AppError::ServiceUnavailable("session service unavailable".into())
+}
+
+fn redis_parse_unavailable(error: redis::ParsingError) -> AppError {
+    tracing::error!(%error, "refresh session Redis response parsing failed");
     AppError::ServiceUnavailable("session service unavailable".into())
 }
 
