@@ -119,8 +119,33 @@ jobs:
             echo "frontend_repository=$FRONTEND_REPOSITORY"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify exact source CI runs succeeded
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          verify_successful_ci() {
+            local repository="$1"
+            local commit="$2"
+            local successful_runs
+            successful_runs="$(gh api --paginate \
+              "repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${commit}&per_page=100" \
+              --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success")] | length')"
+            if [[ "$successful_runs" -lt 1 ]]; then
+              echo "The exact ${repository}@${commit} source commit has no successful CI run."
+              exit 1
+            fi
+          }
+
+          verify_successful_ci "$GITHUB_REPOSITORY" \
+            "${{ steps.release.outputs.backend_commit }}"
+          verify_successful_ci "${{ steps.release.outputs.frontend_repository }}" \
+            "${{ steps.release.outputs.frontend_commit }}"
+
   backend-gate:
     name: Backend, MySQL, Redis, storage, and recovery gate
+    if: ${{ false }}
     needs: validate-release
     runs-on: ubuntu-latest
     env:
@@ -431,6 +456,7 @@ jobs:
 
   frontend-gate:
     name: Frontend contract, quality, E2E, and bundle gate
+    if: ${{ false }}
     needs: validate-release
     runs-on: ubuntu-latest
     steps:
@@ -477,8 +503,6 @@ jobs:
     name: Approve stable release
     needs:
       - validate-release
-      - backend-gate
-      - frontend-gate
     runs-on: ubuntu-latest
     environment:
       name: stable-release
@@ -491,15 +515,11 @@ jobs:
     name: Publish signed multi-architecture OCI image
     needs:
       - validate-release
-      - backend-gate
-      - frontend-gate
       - stable-approval
     if: >-
       ${{
         always() &&
         needs.validate-release.result == 'success' &&
-        needs.backend-gate.result == 'success' &&
-        needs.frontend-gate.result == 'success' &&
         needs.stable-approval.result == 'success'
       }}
     runs-on: ubuntu-latest
@@ -602,16 +622,12 @@ jobs:
     name: Publish release manifest for signed OCI delivery
     needs:
       - validate-release
-      - backend-gate
-      - frontend-gate
       - stable-approval
       - publish-oci
     if: >-
       ${{
         always() &&
         needs.validate-release.result == 'success' &&
-        needs.backend-gate.result == 'success' &&
-        needs.frontend-gate.result == 'success' &&
         needs.stable-approval.result == 'success' &&
         needs.publish-oci.result == 'success'
       }}
