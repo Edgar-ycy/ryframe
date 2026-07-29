@@ -214,6 +214,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: "24.11.0"
+          package-manager-cache: false
 
       - name: Install shell and MySQL clients
         run: |
@@ -481,6 +482,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: "24.11.0"
+          package-manager-cache: false
 
       - name: Install locked dependencies
         working-directory: frontend
