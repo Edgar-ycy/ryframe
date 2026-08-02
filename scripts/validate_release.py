@@ -22,10 +22,6 @@ REPOSITORY_SLUG = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$"
 )
 COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
-OCI_IMAGE_REPOSITORY = re.compile(
-    r"^ghcr\.io/[a-z0-9](?:[a-z0-9._-]*/)*[a-z0-9][a-z0-9._-]*$"
-)
-OCI_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -80,21 +76,6 @@ def repository_slug(value: str, label: str) -> str:
 def commit_sha(value: str, label: str) -> str:
     if COMMIT_SHA.fullmatch(value) is None:
         fail(f"{label} commit must be a lowercase 40-character SHA, got {value!r}")
-    return value
-
-
-def oci_image_repository(value: str) -> str:
-    if OCI_IMAGE_REPOSITORY.fullmatch(value) is None:
-        fail(
-            "OCI image repository must be a lowercase GHCR repository, "
-            f"got {value!r}"
-        )
-    return value
-
-
-def oci_digest(value: str) -> str:
-    if OCI_DIGEST.fullmatch(value) is None:
-        fail(f"OCI image digest must be a sha256 digest, got {value!r}")
     return value
 
 
@@ -290,30 +271,13 @@ def release_manifest(
     frontend: RepositoryRef,
     backend_openapi_hash: str,
     frontend_openapi_hash: str,
-    oci_image_repository_value: str | None = None,
-    oci_digest_value: str | None = None,
 ) -> dict[str, object]:
     if backend_openapi_hash != frontend_openapi_hash:
         fail(
             "backend and frontend OpenAPI hashes differ: "
             f"{backend_openapi_hash} != {frontend_openapi_hash}"
         )
-    if (oci_image_repository_value is None) != (oci_digest_value is None):
-        fail("OCI image repository and digest must be supplied together")
-    artifacts: dict[str, object] = {}
-    if oci_image_repository_value is not None and oci_digest_value is not None:
-        image_repository = oci_image_repository(oci_image_repository_value)
-        image_digest = oci_digest(oci_digest_value)
-        artifacts["oci"] = {
-            "digest": image_digest,
-            "platforms": ["linux/amd64", "linux/arm64"],
-            "reference": f"{image_repository}@{image_digest}",
-            "repository": image_repository,
-            "sbom": {"format": "spdx-json", "transport": "cosign-attestation"},
-            "signature": {"issuer": "sigstore", "type": "cosign-keyless"},
-        }
     return {
-        "artifacts": artifacts,
         "backend": {
             "commit": backend.commit,
             "openapi_sha256": backend_openapi_hash,
@@ -330,7 +294,7 @@ def release_manifest(
             "version": identity.version,
         },
         "release": {"tag": identity.tag, "version": identity.version},
-        "schema_version": 2,
+        "schema_version": 1,
     }
 
 
@@ -352,8 +316,6 @@ def main() -> int:
     parser.add_argument("--frontend-repository", required=True)
     parser.add_argument("--frontend-commit", required=True)
     parser.add_argument("--manifest-path", type=Path, required=True)
-    parser.add_argument("--oci-image-repository")
-    parser.add_argument("--oci-digest")
     args = parser.parse_args()
 
     try:
@@ -407,8 +369,6 @@ def main() -> int:
             frontend_ref,
             backend_openapi_hash,
             frontend_openapi_hash,
-            args.oci_image_repository,
-            args.oci_digest,
         )
         write_manifest(args.manifest_path, manifest)
     except subprocess.CalledProcessError as error:

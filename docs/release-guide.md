@@ -1,6 +1,6 @@
 # v0.5 发布与回滚指南
 
-> 最后核对：2026-07-26
+> 最后核对：2026-08-03
 
 RyFrame 后端与 `ryframe-vue3` 位于独立仓库，但从 v0.5 起仅使用同名稳定版 SemVer tag 协同发布。后端 API、前端生成类型和部署配置不提供跨版本兼容，禁止单独切换其中一端。
 
@@ -48,24 +48,20 @@ v0.4 会话没有 `sid`，切换后会主动失效，用户需要重新登录。
 
 1. 验证稳定 tag 位于 `main`，且后端与前端均为同名 annotated tag；版本与全部 workspace crate、后端 OpenAPI、前端 `package.json`、前端 OpenAPI 一致。
 2. 根据仓库变量 `RYFRAME_FRONTEND_REPOSITORY` 检出前端；未设置时默认使用 `${owner}/ryframe-vue3`。工作流始终使用 tag 解析出的完整 40 位 commit，不读取浮动分支。
-3. 将后端仓库、前端仓库、两仓 tag object、两仓 commit、版本和相同的 OpenAPI SHA-256 写入确定性的 `release-manifest.json`。同一对输入重复生成的文件字节必须完全一致。
-4. 在 Docker MySQL、AOF Redis 和 RustFS 上执行源码卫生、格式、Clippy、全量测试、迁移、Seeder、生成 schema 快照校验、应用 smoke、Redis 故障恢复、对象存储、备份恢复以及依赖审计。
-5. 执行前端 contract、类型检查、lint、单元测试、覆盖率、E2E 和 bundle budget。
-6. 自动门禁全部通过后进入受保护的 `stable-release` Environment，required reviewer 批准后才允许发布。不得配置自动晋级绕过人工审批。
-7. 发布 job 按 validate 阶段记录的 tag object ID 和 commit 再次复核远端 tag，然后创建 Release。
+3. 校验两仓 tag annotation、tag object、commit、版本和 OpenAPI SHA-256，并确认两个精确提交各自至少有一次成功的 `ci.yml` 运行。
+4. 发布 job 按 validate 阶段记录的 tag object ID 和 commit 再次复核远端 tag，删除目标 Release 可能残留的自定义附件，并合并两仓非空 CHANGELOG 章节。
+5. 创建只包含 GitHub 自动源码快照的稳定 Release，并验证自定义附件数量为零、发布说明完整且源码 ZIP/TAR 地址存在。
 
 前端门禁阈值固定为：session/auth/HTTP client 的 lines/functions/statements 不低于 90%、branches 不低于 80%；全部手写 TS/Vue 的前三项不低于 60%、branches 不低于 50%。生成文件和声明文件不计入覆盖率。首屏 gzip JS 不超过 350 KiB、CSS 不超过 100 KiB，单个异步原始 JS chunk 不超过 500 KiB。
 
 ## 4. 发布物与可复现性
 
-稳定版 Release 始终包含 GitHub 自动生成的两项源码快照：
+稳定版 Release 只包含 GitHub 自动生成的两项源码快照：
 
 - `Source code (zip)`。
 - `Source code (tar.gz)`。
 
-唯一允许的 GitHub Release 自定义附件仍是 `release-manifest.json`。它是前后端兼容关系和供应链交付的机器可读证据，包含 tag、版本、后端和前端的仓库/commit/tag object、共享 OpenAPI SHA-256，以及不可变 OCI 镜像摘要、双架构平台和签名/SBOM 证明类型。重跑同一 tag 时，工作流会先删除该 tag 上的旧附件，再重新生成并验证该清单；发布后 Release 必须恰好只有这一项自定义附件。
-
-稳定发布会推送 `linux/amd64` 与 `linux/arm64` 的 GHCR OCI 索引，并以 GitHub OIDC 进行 Cosign 无密钥镜像签名和 SPDX JSON SBOM 证明签名。部署只能使用清单中记录的 `repository@sha256:...`，不得使用可变 tag。Nightly 仅在对应仓库的 `main` CI 成功后更新，并继续只保留 GitHub 自动源码快照，不推送 OCI、SBOM 或签名。
+稳定版和 Nightly Release 的自定义附件数量都必须为零。工作流不构建或上传可执行文件、前端构建产物、容器镜像、SBOM、签名或发布清单；重跑同一标签时会先删除历史自定义附件，再验证 Release 仍为纯源码。需要容器部署时，由部署环境从稳定标签源码独立构建、扫描并保存不可变摘要，不得依赖 GitHub Release 分发平台产物。
 
 ## 5. 切换与回滚
 

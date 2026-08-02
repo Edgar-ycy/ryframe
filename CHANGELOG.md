@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 稳定发布收敛为双仓不可变身份校验与纯源码 GitHub Release，删除停用的后端/前端门禁、重复快照作业和 `stable-release` 人工环境审批。
+- 删除多架构容器构建、GHCR 推送、SBOM、Cosign 签名、OCI 发布清单和全部自定义 Release 附件；稳定版与 Nightly 均只保留 GitHub 自动生成的源码 ZIP/TAR。
+
 ## [v0.5.1] - 2026-08-02
 
 ### Changed

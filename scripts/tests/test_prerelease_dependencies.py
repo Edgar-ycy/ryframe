@@ -121,26 +121,6 @@ steps:
             },
         )
 
-    def test_release_workflow_allows_only_its_verified_build_digest_expression(self) -> None:
-        source = """
-  image: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
-"""
-        self.assertEqual(
-            check.deployment_source_findings(source, ".github/workflows/release.yml"),
-            set(),
-        )
-        self.assertEqual(
-            check.deployment_source_findings(source, "compose.yml"),
-            {
-                check.Finding(
-                    "container",
-                    "${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}",
-                    "unresolved",
-                    "compose.yml",
-                )
-            },
-        )
-
     def test_yaml_aliases_and_shadowed_variables_fail_closed(self) -> None:
         source = """
 x-image: &bad repo/anchored:7.0.0-rc.1
@@ -271,11 +251,14 @@ services:
         self.assertEqual(check.evaluate(findings, allowed, date(2026, 8, 22))[2], [])
         self.assertEqual(check.evaluate(findings, allowed, date(2026, 8, 23))[2], [key])
 
-    def test_ci_and_release_run_the_dependency_gate(self) -> None:
+    def test_ci_runs_dependency_gate_and_release_reuses_successful_ci(self) -> None:
         command = "python scripts/check_prerelease_dependencies.py"
-        for relative in (".github/workflows/ci.yml", ".github/workflows/release.yml"):
-            source = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn(command, source, relative)
+        ci_source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        release_source = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+        self.assertIn(command, ci_source)
+        self.assertNotIn(command, release_source)
+        self.assertIn("Verify exact source CI runs succeeded", release_source)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ RyFrame 采用前后端独立 Git 和独立 CI，但稳定版使用同一版本�
 
 | 仓库 | 职责 | 主要产物 |
 | --- | --- | --- |
-| `ryframe` | Rust 服务、数据库迁移、OpenAPI、部署配置和联合发布门禁 | 稳定版标签、项目级源码快照、签名的多架构 OCI 镜像与 `release-manifest.json`、Nightly 源码快照 |
+| `ryframe` | Rust 服务、数据库迁移、OpenAPI、部署配置和联合发布门禁 | 稳定版标签与 GitHub 源码快照、Nightly 源码快照 |
 | `ryframe-vue3` | Vue 3 管理端 | 同名稳定版标签与 Nightly 源码快照 |
 
 本地开发工作区固定将独立前端仓库检出到后端的 `ryframe-vue3/` 目录，后端通过 `/ryframe-vue3/` 忽略该嵌套仓库：
@@ -167,7 +167,7 @@ flowchart LR
 49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过 Lua CAS 轮换和检测重放。
 50. 根路径 `/livez` 只检查进程，`/readyz` 检查 MySQL、required Redis 和必要对象存储；探针绕过租户、认证、幂等和业务限流。
 51. 幂等只应用于认证后的 system/platform 写请求，键绑定租户、用户、方法、规范路径和 body；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
-52. 稳定发布只接受位于 `main` 的 `vMAJOR.MINOR.PATCH` annotated tag，前后端必须同标签同版本，且 annotation 与各自 CHANGELOG 完整版本章节一致；发布前再次锁定两仓 tag object ID 与完整 commit SHA。后端是联合发布主控：它校验前端仓库和精确 commit、两份 OpenAPI 的 SHA-256，构建并签名 `linux/amd64`/`linux/arm64` OCI 索引，再发布记录不可变镜像摘要的 `release-manifest.json` v2。全部自动门禁通过后必须经过启用防止自审的 `stable-release` required-reviewer 审批，管理员绕过必须在仓库设置中关闭并由审计日志复核。稳定版 Release 保留 GitHub 自动生成的 zip、tar.gz 源码快照和唯一的 `release-manifest.json`；Nightly 仅在对应仓库的 `main` CI 成功后更新，并只保留源码快照。
+52. 稳定发布只接受位于 `main` 的 `vMAJOR.MINOR.PATCH` annotated tag，前后端必须同标签同版本，且 annotation 与各自 CHANGELOG 完整版本章节一致；发布前再次锁定两仓 tag object ID 与完整 commit SHA。后端是联合发布主控：它校验前端仓库和精确 commit、两份 OpenAPI 的 SHA-256，以及两仓精确提交均已有成功 CI，然后生成合并发布说明。稳定版 Release 不构建容器、不上传自定义附件，只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照；Nightly 同样只保留源码快照。
 53. 未签名的 `X-Nonce` / `X-Timestamp` 防重放抽象已移除：它从未进入路由或配置，且客户端自报双头不能验证请求主体或内容。浏览器写请求继续使用 HTTPS、Bearer/权限、签名 CSRF、refresh CAS 与主体/方法/规范路径/body hash 幂等绑定；架构门禁禁止旧裸头契约回流，机器客户端持有者证明必须另行采用可验证消息签名。
 54. 领域类型、HTTP 响应适配、国际化、通用工具、验证码、Excel 和邮件能力已拆分为独立 crate；业务层返回 `ryframe-kernel::AppError`，API 边界才映射为 `ryframe-http::AppError`，避免 HTTP 类型反向进入 Service。
 55. `ryframe-common` 已从全部工作区依赖与生产源码中移除，架构门禁会阻止回流；它暂时只保留外部旧调用的兼容入口，旧 i18n API 的最终兼容方式仍需单独决策。

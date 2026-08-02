@@ -776,10 +776,6 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
             "StorageBackend::Rustfs",
             "storage.ensure_bucket(bucket).await",
         ),
-        ".github/workflows/release.yml": (
-            'APP_DATABASE_SOURCES: "[]"',
-            "APP_GENERATOR_DATA_SOURCE: primary",
-        ),
         "docker-compose.test.yml": (
             "mysql:8.4",
             "redis:7-alpine",
@@ -820,10 +816,7 @@ def check_release_artifacts(errors: list[str]) -> None:
     publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yml"))
     publishing_workflows.update((ROOT / ".github/workflows").glob("*nightly*.yaml"))
     required_fragments = (
-        "name: Publish release manifest for signed OCI delivery",
-        "name: Publish signed multi-architecture OCI image",
-        "name: Build deterministic release manifest",
-        "release-manifest.json",
+        "name: Publish source-only GitHub release",
         "--backend-repository",
         "--backend-commit",
         "--frontend-repository",
@@ -835,22 +828,14 @@ def check_release_artifacts(errors: list[str]) -> None:
         "python scripts/validate_release.py",
         "frontend/CHANGELOG.md",
         "body_path: release_body.md",
-        "files: release-manifest.json",
-        "name: Verify published notes and release manifest",
-        "(.assets | length == 1)",
-        '.assets[0].name == "release-manifest.json"',
+        "name: Verify published notes and zero custom assets",
+        "(.assets | length == 0)",
+        ".zipball_url",
+        ".tarball_url",
         "backend_tag_oid:",
         "frontend_tag_oid:",
         "name: Revalidate tag objects",
         "name: Confirm tag refs immediately before publishing",
-        "platforms: linux/amd64,linux/arm64",
-        "provenance: mode=max",
-        "format: spdx-json",
-        "cosign sign --yes",
-        "cosign attest --yes --type spdxjson",
-        "cosign verify-attestation --type spdxjson",
-        "--oci-image-repository",
-        "--oci-digest",
     )
     nightly_required_fragments = (
         "CHANGELOG.md",
@@ -871,6 +856,23 @@ def check_release_artifacts(errors: list[str]) -> None:
         "\n          body:",
         "generate_release_notes:",
         "git tag -f nightly",
+        "release-manifest.json",
+        "publish-oci:",
+        "stable-approval:",
+        "environment:\n      name: stable-release",
+        "docker/build-push-action",
+        "docker/login-action",
+        "docker/setup-qemu-action",
+        "docker/setup-buildx-action",
+        "anchore/sbom-action",
+        "sigstore/cosign-installer",
+        "cosign sign",
+        "cosign attest",
+        "ghcr.io/",
+        "packages: write",
+        "id-token: write",
+        "actions/upload-artifact",
+        "actions/download-artifact",
     )
 
     for fragment in required_fragments:
@@ -878,11 +880,7 @@ def check_release_artifacts(errors: list[str]) -> None:
             errors.append(
                 f"release artifact contract is missing in {workflow_path}: {fragment}"
             )
-    for action in (
-        "softprops/action-gh-release",
-        "docker/build-push-action",
-        "docker/login-action",
-    ):
+    for action in ("softprops/action-gh-release",):
         if not has_pinned_action(workflow, action):
             errors.append(
                 f"release artifact contract is missing a pinned action in "
@@ -969,7 +967,8 @@ def check_release_governance(errors: list[str]) -> None:
     for fragment in (
         "Existing coordinated stable tag to validate and publish",
         "prerelease: false",
-        "environment:\n      name: stable-release",
+        "name: Publish source-only GitHub release",
+        "name: Verify published notes and zero custom assets",
         "FRONTEND_REPOSITORY:",
         "${{ vars.RYFRAME_FRONTEND_REPOSITORY",
     ):
@@ -982,6 +981,10 @@ def check_release_governance(errors: list[str]) -> None:
         r"release-candidate",
         r"minimum-rc-hours",
         r"prerelease:\s*true",
+        r"stable-approval:",
+        r"publish-oci:",
+        r"packages:\s*write",
+        r"id-token:\s*write",
     )
     for pattern in forbidden_patterns:
         if re.search(pattern, release):

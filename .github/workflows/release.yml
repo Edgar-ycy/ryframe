@@ -18,13 +18,9 @@ concurrency:
 
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-  CARGO_TERM_COLOR: always
-  CARGO_HTTP_TIMEOUT: "600"
-  CARGO_NET_RETRY: "5"
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
-  RUSTDOCFLAGS: "-Dwarnings"
   FRONTEND_REPOSITORY: ${{ vars.RYFRAME_FRONTEND_REPOSITORY || format('{0}/ryframe-vue3', github.repository_owner) }}
 
 permissions:
@@ -33,11 +29,10 @@ permissions:
 
 jobs:
   validate-release:
-    name: Validate release tag and identity
+    name: Validate coordinated source release
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
-      stable_tag: ${{ steps.release.outputs.stable_tag }}
       backend_tag_oid: ${{ steps.release.outputs.backend_tag_oid }}
       backend_commit: ${{ steps.release.outputs.backend_commit }}
       frontend_tag_oid: ${{ steps.release.outputs.frontend_tag_oid }}
@@ -49,9 +44,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref_name }}
-
-      - name: Install Rust toolchain for release metadata
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Verify backend tag belongs to main
         shell: bash
@@ -84,8 +76,6 @@ jobs:
             exit 1
           }
 
-
-
       - name: Validate release inputs
         shell: bash
         env:
@@ -101,17 +91,15 @@ jobs:
             --backend-commit "$backend_commit" \
             --frontend-repository "$FRONTEND_REPOSITORY" \
             --frontend-commit "$frontend_commit" \
-            --manifest-path "$RUNNER_TEMP/release-manifest.json"
+            --manifest-path "$RUNNER_TEMP/release-validation.json"
 
-      - name: Export release identity
+      - name: Export immutable release identity
         id: release
         shell: bash
         run: |
           set -euo pipefail
-          version="${RELEASE_TAG#v}"
           {
             echo "tag=$RELEASE_TAG"
-            echo "stable_tag=v$version"
             echo "backend_tag_oid=$(git rev-parse "refs/tags/$RELEASE_TAG")"
             echo "backend_commit=$(git rev-parse "$RELEASE_TAG^{commit}")"
             echo "frontend_tag_oid=$(git -C frontend rev-parse "refs/tags/$RELEASE_TAG")"
@@ -129,7 +117,7 @@ jobs:
             local repository="$1"
             local commit="$2"
             local successful_runs
-            successful_runs="$(gh api --paginate \
+            successful_runs="$(gh api \
               "repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${commit}&per_page=100" \
               --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success")] | length')"
             if [[ "$successful_runs" -lt 1 ]]; then
@@ -143,539 +131,20 @@ jobs:
           verify_successful_ci "${{ steps.release.outputs.frontend_repository }}" \
             "${{ steps.release.outputs.frontend_commit }}"
 
-  contract-snapshots:
-    name: Verify generated API and MySQL schema snapshots
-    needs: validate-release
-    runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "-Dwarnings"
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: ${{ needs.validate-release.outputs.backend_commit }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: Restore Cargo dependency cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: release-contract-v1-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            release-contract-v1-rust-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Verify generated snapshots
-        run: |
-          cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
-          git diff --exit-code -- openapi/openapi.json
-          cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
-          git diff --exit-code -- sql/ryframe_config.sql
-          test ! -d sql/migrations || test -z "$(find sql/migrations -type f -print -quit)"
-
-  backend-gate:
-    name: Backend, MySQL, Redis, storage, and recovery gate
-    if: ${{ false }}
-    needs: validate-release
-    runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "-Dwarnings"
-      APP_ENV: test
-      APP_APP_PORT: "18080"
-      APP_AUTH_JWT_SECRET: release-gate-jwt-secret-not-for-production
-      APP_AUTH_REFRESH_TOKEN_EXPIRE: 168h
-      APP_DATABASE_HOST: 127.0.0.1
-      APP_DATABASE_PORT: "13306"
-      APP_DATABASE_NAME: ryframe_test
-      APP_DATABASE_USERNAME: root
-      APP_DATABASE_PASSWORD: ryframe_test_password
-      APP_DATABASE_REPLICAS: "[]"
-      APP_DATABASE_SOURCES: "[]"
-      APP_GENERATOR_DATA_SOURCE: primary
-      APP_REDIS_MODE: required
-      APP_REDIS_HOST: 127.0.0.1
-      APP_REDIS_PORT: "16379"
-      RYFRAME_TEST_REDIS_PORT: "16379"
-      APP_OBJECT_STORAGE_BACKEND: rustfs
-      APP_OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:19000
-      APP_OBJECT_STORAGE_ACCESS_KEY: ryframe-test-access
-      APP_OBJECT_STORAGE_SECRET_KEY: ryframe-test-secret-2026
-      APP_OBJECT_STORAGE_REGION: us-east-1
-      RYFRAME_TEST_MYSQL_ADMIN_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/mysql
-      RYFRAME_PRIMARY_DATABASE_URL: mysql://root:ryframe_test_password@127.0.0.1:13306/ryframe_test
-      ADMIN_USER: admin
-      ADMIN_PASS: "123456"
-      TENANT_ID: system
-      DB_HOST: 127.0.0.1
-      DB_PORT: "13306"
-      DB_NAME: ryframe_test
-      DB_USER: root
-      DB_PASSWORD: ryframe_test_password
-      BACKUP_DIR: target/release-gate-backups
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: ${{ needs.validate-release.outputs.backend_commit }}
-
-      - name: Lint GitHub Actions workflows
-        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-        with:
-          components: rustfmt, clippy
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
-        with:
-          tool: nextest
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
-        with:
-          tool: cargo-audit
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
-        with:
-          tool: cargo-deny
-
-      - name: Set up Node.js for runtime smoke
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: "24.11.0"
-          package-manager-cache: false
-
-      - name: Install shell and MySQL clients
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes shellcheck default-mysql-client
-
-      - name: Rust cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: release-v2-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            release-v2-rust-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Start pinned test services
-        run: docker compose -f docker-compose.test.yml up --detach --wait
-
-      - name: Verify production Redis persistence and no-eviction policy
-        shell: bash
-        run: |
-          set -euo pipefail
-          redis_compose=(docker compose -f docker-compose.test.yml)
-          redis_cli=("${redis_compose[@]}" exec -T redis redis-cli --raw)
-
-          [[ "$("${redis_cli[@]}" CONFIG GET appendonly | tail -n 1)" == yes ]]
-          [[ "$("${redis_cli[@]}" CONFIG GET appendfsync | tail -n 1)" == everysec ]]
-          [[ "$("${redis_cli[@]}" CONFIG GET maxmemory-policy | tail -n 1)" == noeviction ]]
-          grep -Eq '^appendonly[[:space:]]+yes$' deploy/redis/redis.conf
-          grep -Eq '^maxmemory-policy[[:space:]]+noeviction$' deploy/redis/redis.conf
-
-          "${redis_cli[@]}" SET ryframe:release:persistence survived >/dev/null
-          sleep 2
-          "${redis_compose[@]}" restart redis
-          for ((attempt = 1; attempt <= 30; attempt++)); do
-            if [[ "$("${redis_cli[@]}" PING 2>/dev/null || true)" == PONG ]]; then
-              break
-            fi
-            sleep 1
-          done
-          [[ "$("${redis_cli[@]}" GET ryframe:release:persistence)" == survived ]]
-          "${redis_cli[@]}" DEL ryframe:release:persistence >/dev/null
-
-      - name: Source, format, architecture, and deployment checks
-        run: |
-          python scripts/check_source_hygiene.py
-          python scripts/check_prerelease_dependencies.py
-          python scripts/check_permission_routes.py
-          python scripts/check_architecture.py
-          python -m compileall -q scripts
-          python -m unittest discover -s scripts/tests -p 'test_*.py'
-          docker compose -f docker-compose.test.yml config --quiet
-          cargo fmt --all -- --check
-          mapfile -t shell_scripts < <(find deploy -type f -name '*.sh' -print)
-          bash -n deploy.sh "${shell_scripts[@]}"
-          shellcheck deploy.sh "${shell_scripts[@]}"
-          bash deploy/tests/validate-nginx.sh
-
-      - name: Build production container and verify build identity
-        shell: bash
-        env:
-          RYFRAME_BUILD_COMMIT: ${{ needs.validate-release.outputs.backend_commit }}
-        run: |
-          set -euo pipefail
-          DOCKER_BUILDKIT=1 docker build \
-            --file deploy/Dockerfile \
-            --build-arg RYFRAME_BUILD_COMMIT="$RYFRAME_BUILD_COMMIT" \
-            --tag ryframe:release-gate .
-          revision="$(docker image inspect \
-            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-            ryframe:release-gate)"
-          [[ "$revision" == "$RYFRAME_BUILD_COMMIT" ]]
-
-      - name: Verify generated API and MySQL schema snapshots
-        run: |
-          cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
-          git diff --exit-code -- openapi/openapi.json
-          cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
-          git diff --exit-code -- sql/ryframe_config.sql
-          test ! -d sql/migrations || test -z "$(find sql/migrations -type f -print -quit)"
-
-      - name: Clippy and all-target build
-        run: |
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo check --locked --workspace --all-targets
-
-      - name: Run the full MySQL test suite
-        run: cargo nextest run --locked --workspace --no-fail-fast
-
-      - name: Test authoritative force logout and Redis recovery
-        run: >-
-          cargo nextest run --locked -p ryframe-api --test integration_test
-          --run-ignored only --
-          force_logout_uses_authoritative_family_and_recovers_after_redis_failure
-          --exact
-
-      - name: Test authentication fail-closed behavior during Redis outage
-        run: >-
-          cargo nextest run --locked -p ryframe-api --test integration_test
-          --run-ignored only --
-          auth_middleware_fails_closed_when_redis_is_unavailable
-          --exact
-
-      - name: Test Redis refresh rotation CAS and response-loss recovery
-        run: >-
-          cargo nextest run --locked -p ryframe-core
-          --test refresh_session_redis_test --run-ignored only
-
-      - name: Run object-storage smoke test
-        run: >-
-          cargo nextest run --locked -p ryframe-storage
-          --test object_storage_test --run-ignored only --
-          test_s3_integration_put_get_delete --exact
-
-      - name: Seed legacy tables for whole-database reset acceptance
-        shell: bash
-        env:
-          MYSQL_PWD: ${{ env.APP_DATABASE_PASSWORD }}
-        run: |
-          mysql --protocol=TCP \
-            --host="$APP_DATABASE_HOST" \
-            --port="$APP_DATABASE_PORT" \
-            --user="$APP_DATABASE_USERNAME" \
-            "$APP_DATABASE_NAME" <<'SQL'
-          CREATE TABLE sys_job (id BIGINT NOT NULL PRIMARY KEY);
-          CREATE TABLE sys_job_log (
-            id BIGINT NOT NULL PRIMARY KEY,
-            job_id BIGINT NOT NULL,
-            CONSTRAINT fk_reset_legacy_job
-              FOREIGN KEY (job_id) REFERENCES sys_job(id)
-          );
-          INSERT INTO sys_job (id) VALUES (1);
-          INSERT INTO sys_job_log (id, job_id) VALUES (1, 1);
-          SQL
-
-      - name: Initialize through Migrator and Seeder
-        run: >-
-          cargo run --locked -p ryframe --bin ryframe-db-reset --
-          --database ryframe_test
-          --confirm-reset RESET-RYFRAME-DATABASE
-
-      - name: Verify whole-database reset result
-        shell: bash
-        env:
-          MYSQL_PWD: ${{ env.APP_DATABASE_PASSWORD }}
-        run: |
-          mysql_args=(
-            --protocol=TCP
-            --host="$APP_DATABASE_HOST"
-            --port="$APP_DATABASE_PORT"
-            --user="$APP_DATABASE_USERNAME"
-            --batch
-            --skip-column-names
-          )
-          legacy_count="$(mysql "${mysql_args[@]}" -e \
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$APP_DATABASE_NAME' AND table_name IN ('sys_job','sys_job_log')")"
-          [[ "$legacy_count" == 0 ]]
-          canonical_count="$(mysql "${mysql_args[@]}" -e \
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$APP_DATABASE_NAME' AND table_name IN ('seaql_migrations','sys_tenant','sys_user')")"
-          [[ "$canonical_count" == 3 ]]
-          user_count="$(mysql "${mysql_args[@]}" "$APP_DATABASE_NAME" -e \
-            "SELECT COUNT(*) FROM sys_user WHERE tenant_id='system' AND username IN ('admin','user')")"
-          [[ "$user_count" == 2 ]]
-          database_metadata="$(mysql "${mysql_args[@]}" -e \
-            "SELECT CONCAT(default_character_set_name, ':', default_collation_name) FROM information_schema.schemata WHERE schema_name='$APP_DATABASE_NAME'")"
-          [[ "$database_metadata" == utf8mb4:utf8mb4_general_ci ]]
-
-      - name: Run application and dependency-failure smoke suite
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p target
-          cargo run --locked -p ryframe --bin ryframe > target/release-runtime.log 2>&1 &
-          server_pid=$!
-          cleanup_server() { kill "$server_pid" 2>/dev/null || true; }
-          trap cleanup_server EXIT
-
-          for ((attempt = 1; attempt <= 90; attempt++)); do
-            if curl --fail --silent --max-time 3 http://127.0.0.1:18080/readyz >/dev/null; then
-              break
-            fi
-            if ! kill -0 "$server_pid" 2>/dev/null; then
-              cat target/release-runtime.log
-              exit 1
-            fi
-            sleep 2
-          done
-
-          curl --fail --silent --max-time 3 http://127.0.0.1:18080/livez >/dev/null
-          curl --fail --silent --max-time 3 http://127.0.0.1:18080/readyz >/dev/null
-          [[ "$(curl --silent --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/health)" == 404 ]]
-          node deploy/tests/smoke-test.js http://127.0.0.1:18080
-
-          if grep --extended-regexp '(^|[[:space:]])(WARN|ERROR)([[:space:]]|$)' target/release-runtime.log; then
-            cat target/release-runtime.log
-            exit 1
-          fi
-
-          docker compose -f docker-compose.test.yml stop redis
-          for ((attempt = 1; attempt <= 30; attempt++)); do
-            live_status="$(curl --silent --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/livez || true)"
-            ready_status="$(curl --silent --max-time 3 --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/readyz || true)"
-            if [[ "$live_status" == 200 && "$ready_status" == 503 ]]; then
-              break
-            fi
-            sleep 1
-          done
-          [[ "$live_status" == 200 ]]
-          [[ "$ready_status" == 503 ]]
-
-          docker compose -f docker-compose.test.yml start redis
-          recovered=false
-          for ((attempt = 1; attempt <= 60; attempt++)); do
-            if curl --fail --silent --max-time 3 http://127.0.0.1:18080/readyz >/dev/null; then
-              recovered=true
-              break
-            fi
-            sleep 1
-          done
-          [[ "$recovered" == true ]]
-
-      - name: Validate backup and temporary-database restore
-        run: |
-          bash deploy.sh backup
-          bash deploy.sh validate "$BACKUP_DIR/ryframe_test_latest.sql.gz"
-          bash deploy.sh rehearse "$BACKUP_DIR/ryframe_test_latest.sql.gz"
-
-      - name: Audit dependencies and licenses
-        run: |
-          cargo audit --deny warnings
-          cargo deny check licenses
-          cargo deny check bans sources
-
-      - name: Stop test services
-        if: always()
-        run: docker compose -f docker-compose.test.yml down --volumes
-
-  frontend-gate:
-    name: Frontend contract, quality, E2E, and bundle gate
-    if: ${{ false }}
-    needs: validate-release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out backend contract
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: ${{ needs.validate-release.outputs.backend_commit }}
-
-      - name: Check out matching frontend tag
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: ${{ needs.validate-release.outputs.frontend_repository }}
-          ref: ${{ needs.validate-release.outputs.frontend_commit }}
-          path: frontend
-
-      - name: Set up pinned pnpm
-        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
-        with:
-          version: 10.28.2
-
-      - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: "24.11.0"
-          package-manager-cache: false
-
-      - name: Install locked dependencies
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        working-directory: frontend
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Verify the cross-repository contract
-        run: cmp openapi/openapi.json frontend/openapi/openapi.json
-
-      - name: Run complete frontend release gate
-        working-directory: frontend
-        env:
-          VITE_APP_BASE_API: /api/v1
-        run: pnpm check
-
-  stable-approval:
-    name: Approve stable release
-    needs:
-      - validate-release
-      - contract-snapshots
-    runs-on: ubuntu-latest
-    environment:
-      name: stable-release
-    steps:
-      - name: Record protected environment approval
-        run: |
-          echo "stable-release required-reviewer approval granted for $RELEASE_TAG"
-
-  publish-oci:
-    name: Publish signed multi-architecture OCI image
-    needs:
-      - validate-release
-      - stable-approval
-    if: >-
-      ${{
-        always() &&
-        needs.validate-release.result == 'success' &&
-        needs.stable-approval.result == 'success'
-      }}
-    runs-on: ubuntu-latest
-    outputs:
-      image_repository: ${{ steps.image.outputs.repository }}
-      image_digest: ${{ steps.build.outputs.digest }}
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: ${{ needs.validate-release.outputs.backend_commit }}
-
-      - name: Derive immutable OCI repository name
-        id: image
-        shell: bash
-        run: |
-          set -euo pipefail
-          repository="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
-          echo "repository=$repository" >> "$GITHUB_OUTPUT"
-
-      - name: Set up QEMU for target architectures
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
-
-      - name: Authenticate to GHCR
-        uses: docker/login-action@c83e9320c8beb50b77dd007c46d5c8161f0cac4a
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Build and push OCI index with provenance
-        id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
-        with:
-          context: .
-          file: deploy/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: mode=max
-          sbom: true
-          build-args: |
-            RYFRAME_BUILD_COMMIT=${{ needs.validate-release.outputs.backend_commit }}
-          labels: |
-            org.opencontainers.image.revision=${{ needs.validate-release.outputs.backend_commit }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.version=${{ needs.validate-release.outputs.tag }}
-          tags: |
-            ${{ steps.image.outputs.repository }}:${{ needs.validate-release.outputs.tag }}
-            ${{ steps.image.outputs.repository }}:stable
-
-      - name: Generate SPDX SBOM for the immutable OCI digest
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
-        with:
-          image: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ github.token }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/ryframe.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
-
-      - name: Sign image and SPDX attestation with GitHub OIDC
-        shell: bash
-        env:
-          IMAGE: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
-          SBOM: ${{ runner.temp }}/ryframe.spdx.json
-        run: |
-          set -euo pipefail
-          test -s "$SBOM"
-          cosign sign --yes "$IMAGE"
-          cosign attest --yes --type spdxjson --predicate "$SBOM" "$IMAGE"
-
-      - name: Verify keyless image signature and SPDX attestation
-        shell: bash
-        env:
-          IMAGE: ${{ steps.image.outputs.repository }}@${{ steps.build.outputs.digest }}
-          CERTIFICATE_IDENTITY: ^https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/
-          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
-        run: |
-          set -euo pipefail
-          cosign verify \
-            --certificate-identity-regexp "$CERTIFICATE_IDENTITY" \
-            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
-            "$IMAGE" > /dev/null
-          cosign verify-attestation --type spdxjson \
-            --certificate-identity-regexp "$CERTIFICATE_IDENTITY" \
-            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
-            "$IMAGE" > /dev/null
-
   publish-release:
-    name: Publish release manifest for signed OCI delivery
-    needs:
-      - validate-release
-      - stable-approval
-      - publish-oci
-    if: >-
-      ${{
-        always() &&
-        needs.validate-release.result == 'success' &&
-        needs.stable-approval.result == 'success' &&
-        needs.publish-oci.result == 'success'
-      }}
+    name: Publish source-only GitHub release
+    needs: validate-release
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Check out fixed backend source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
-      - name: Check out matching frontend Changelog
+      - name: Check out fixed frontend Changelog
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ${{ needs.validate-release.outputs.frontend_repository }}
@@ -705,31 +174,6 @@ jobs:
           [[ "$(git -C frontend rev-parse "refs/tags/${RELEASE_TAG}")" == "$FRONTEND_TAG_OID" ]]
           [[ "$(git -C frontend rev-parse "${RELEASE_TAG}^{commit}")" == "$FRONTEND_COMMIT" ]]
           [[ "$(git -C frontend rev-parse HEAD)" == "$FRONTEND_COMMIT" ]]
-
-      - name: Install Rust toolchain for manifest verification
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: Build deterministic release manifest
-        shell: bash
-        env:
-          BACKEND_COMMIT: ${{ needs.validate-release.outputs.backend_commit }}
-          FRONTEND_COMMIT: ${{ needs.validate-release.outputs.frontend_commit }}
-          FRONTEND_REPOSITORY: ${{ needs.validate-release.outputs.frontend_repository }}
-          OCI_IMAGE_REPOSITORY: ${{ needs.publish-oci.outputs.image_repository }}
-          OCI_DIGEST: ${{ needs.publish-oci.outputs.image_digest }}
-        run: |
-          set -euo pipefail
-          python scripts/validate_release.py \
-            --tag "$RELEASE_TAG" \
-            --frontend-dir frontend \
-            --backend-repository "$GITHUB_REPOSITORY" \
-            --backend-commit "$BACKEND_COMMIT" \
-            --frontend-repository "$FRONTEND_REPOSITORY" \
-            --frontend-commit "$FRONTEND_COMMIT" \
-            --oci-image-repository "$OCI_IMAGE_REPOSITORY" \
-            --oci-digest "$OCI_DIGEST" \
-            --manifest-path release-manifest.json
-          sha256sum release-manifest.json
 
       - name: Purge custom assets from target release
         shell: bash
@@ -761,7 +205,6 @@ jobs:
       - name: Build non-empty release notes from both Changelogs
         shell: bash
         env:
-          STABLE_TAG: ${{ needs.validate-release.outputs.stable_tag }}
           RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
         run: |
           set -euo pipefail
@@ -769,7 +212,7 @@ jobs:
             local changelog="$1"
             local label="$2"
             local output="$3"
-            awk -v version="$STABLE_TAG" '
+            awk -v version="$RELEASE_TAG" '
               BEGIN { heading = "## [" version "]" }
               !found && ($0 == heading || index($0, heading " ") == 1 || index($0, heading "\t") == 1) {
                 found=1
@@ -779,7 +222,7 @@ jobs:
               END { if (!found) exit 2 }
             ' "$changelog" > "$output"
             if ! grep --extended-regexp --quiet '^-[[:space:]]+[^[:space:]]' "$output"; then
-              echo "$label $STABLE_TAG CHANGELOG section has no update items." >&2
+              echo "$label $RELEASE_TAG CHANGELOG section has no update items." >&2
               exit 1
             fi
           }
@@ -812,17 +255,16 @@ jobs:
           [[ -n "$backend_remote_oid" && "$backend_remote_oid" == "$BACKEND_TAG_OID" ]]
           [[ -n "$frontend_remote_oid" && "$frontend_remote_oid" == "$FRONTEND_TAG_OID" ]]
 
-      - name: Create source and release-manifest GitHub release
+      - name: Create source-only GitHub release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
           tag_name: ${{ needs.validate-release.outputs.tag }}
           name: RyFrame ${{ needs.validate-release.outputs.tag }}
           body_path: release_body.md
-          files: release-manifest.json
           prerelease: false
           make_latest: true
 
-      - name: Verify published notes and release manifest
+      - name: Verify published notes and zero custom assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -834,16 +276,12 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
             > "$release_json"
           jq --exit-status \
-            '(.assets | length == 1) and (.assets[0].name == "release-manifest.json")' \
+            --arg tag "$RELEASE_TAG" \
+            '(.tag_name == $tag) and (.draft == false) and (.prerelease == false) and
+             (.assets | length == 0) and
+             ((.zipball_url // "") | length > 0) and
+             ((.tarball_url // "") | length > 0)' \
             "$release_json" > /dev/null
           jq --join-output '.body // ""' "$release_json" > "$published_body"
           test -s "$published_body"
           diff --unified release_body.md "$published_body"
-          gh release download "$RELEASE_TAG" \
-            --pattern release-manifest.json \
-            --dir "$RUNNER_TEMP"
-          cmp --silent release-manifest.json "$RUNNER_TEMP/release-manifest.json"
-          jq --exit-status \
-            --arg image "${{ needs.publish-oci.outputs.image_repository }}@${{ needs.publish-oci.outputs.image_digest }}" \
-            '.schema_version == 2 and .artifacts.oci.reference == $image and .artifacts.oci.sbom.format == "spdx-json" and .artifacts.oci.signature.type == "cosign-keyless"' \
-            release-manifest.json > /dev/null

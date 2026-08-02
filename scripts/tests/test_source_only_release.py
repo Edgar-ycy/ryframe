@@ -16,10 +16,13 @@ class ReleaseWorkflowTest(unittest.TestCase):
         paths.update(WORKFLOWS.glob("*nightly*.yaml"))
         return sorted(paths)
 
-    def test_release_publishes_signed_multi_arch_oci_delivery(self) -> None:
+    def test_release_publishes_only_github_source_archives(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-        self.assertIn("files: release-manifest.json", source)
-        self.assertIn("release-manifest.json", source)
+        self.assertIn("Create source-only GitHub release", source)
+        self.assertIn("Verify published notes and zero custom assets", source)
+        self.assertIn("(.assets | length == 0)", source)
+        self.assertIn(".zipball_url", source)
+        self.assertIn(".tarball_url", source)
         for fragment in (
             "publish-oci:",
             "docker/build-push-action",
@@ -35,10 +38,15 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "cosign verify-attestation --type spdxjson",
             "--oci-image-repository",
             "--oci-digest",
-            ".schema_version == 2",
+            "release-manifest.json",
+            "stable-approval:",
+            "environment:\n      name: stable-release",
+            "contract-snapshots:",
+            "backend-gate:",
+            "frontend-gate:",
         ):
             with self.subTest(fragment=fragment):
-                self.assertIn(fragment, source)
+                self.assertNotIn(fragment, source)
         for fragment in ("git archive", "gh release upload", "generate_release_notes:"):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
@@ -73,25 +81,23 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertLess(source.index(lookup), source.index(deletion))
         self.assertLess(source.index(deletion), source.index(publisher))
 
-    def test_release_is_stable_only_and_keeps_quality_gates(self) -> None:
+    def test_release_is_stable_only_and_keeps_only_required_jobs(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-        for job in (
-            "validate-release:",
-            "contract-snapshots:",
-            "backend-gate:",
-            "frontend-gate:",
-            "stable-approval:",
-            "publish-release:",
-        ):
+        for job in ("validate-release:", "publish-release:"):
             with self.subTest(job=job):
                 self.assertIn(job, source)
+        jobs_source = source.split("\njobs:\n", maxsplit=1)[1]
+        self.assertEqual(
+            re.findall(r"^  ([a-z][a-z0-9-]+):$", jobs_source, re.MULTILINE),
+            ["validate-release", "publish-release"],
+        )
         self.assertIn("Existing coordinated stable tag to validate and publish", source)
         self.assertIn("prerelease: false", source)
         self.assertIsNone(re.search(r"\bRC\b", source))
         self.assertNotIn("release-candidate", source)
         self.assertNotIn("minimum-rc-hours", source)
 
-    def test_contract_snapshots_run_only_manually_or_during_release(self) -> None:
+    def test_contract_snapshots_run_only_from_manual_ci(self) -> None:
         ci_source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         release_source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         manual_condition = "if: ${{ github.event_name == 'workflow_dispatch' }}"
@@ -105,13 +111,10 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 step_start = ci_source.index(f"- name: {step_name}")
                 step_source = ci_source[step_start : step_start + 240]
                 self.assertIn(manual_condition, step_source)
+        self.assertNotIn("contract-snapshots:", release_source)
+        self.assertNotIn("Verify generated snapshots", release_source)
 
-        approval_start = release_source.index("  stable-approval:")
-        approval_source = release_source[approval_start : approval_start + 220]
-        self.assertIn("- contract-snapshots", approval_source)
-        self.assertIn("Verify generated snapshots", release_source)
-
-    def test_release_uses_fixed_frontend_source_and_manifest(self) -> None:
+    def test_release_uses_fixed_frontend_source_without_custom_artifacts(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         for fragment in (
             "FRONTEND_REPOSITORY:",
@@ -123,11 +126,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "--manifest-path",
             "ref: ${{ needs.validate-release.outputs.backend_commit }}",
             "ref: ${{ needs.validate-release.outputs.frontend_commit }}",
-            "Build deterministic release manifest",
-            "files: release-manifest.json",
-            "Verify published notes and release manifest",
-            "--oci-image-repository",
-            "--oci-digest",
+            "Verify published notes and zero custom assets",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, source)
@@ -182,29 +181,16 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertIn(fragment, source)
         self.assertNotIn("ARG RYFRAME_BUILD_COMMIT=", source)
 
-    def test_release_builds_production_container_with_verified_identity(self) -> None:
-        source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-        for fragment in (
-            "Build production container and verify build identity",
-            "DOCKER_BUILDKIT=1 docker build",
-            "--file deploy/Dockerfile",
-            "--build-arg RYFRAME_BUILD_COMMIT=\"$RYFRAME_BUILD_COMMIT\"",
-            "org.opencontainers.image.revision",
-            "ryframe:release-gate",
-        ):
-            with self.subTest(fragment=fragment):
-                self.assertIn(fragment, source)
-
     def test_release_uses_both_non_empty_changelogs(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         for fragment in (
-            "Check out matching frontend Changelog",
+            "Check out fixed frontend Changelog",
             "frontend/CHANGELOG.md",
             "backend-release-notes.md",
             "frontend-release-notes.md",
             "CHANGELOG section has no update items",
             "body_path: release_body.md",
-            "Verify published notes and release manifest",
+            "Verify published notes and zero custom assets",
             'diff --unified release_body.md "$published_body"',
         ):
             with self.subTest(fragment=fragment):

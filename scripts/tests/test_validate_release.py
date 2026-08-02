@@ -192,57 +192,8 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(written["frontend"]["commit"], COMMIT_B)
         self.assertEqual(written["frontend"]["version"], "0.5.0")
         self.assertEqual(written["contract"]["openapi_sha256"], contract_hash)
-        self.assertEqual(written["schema_version"], 2)
-        self.assertEqual(written["artifacts"], {})
-
-    def test_manifest_records_immutable_multi_arch_oci_artifact(self) -> None:
-        identity = validate_release.release_identity("v0.5.0")
-        backend = validate_release.RepositoryRef("example/ryframe", COMMIT_A, COMMIT_A)
-        frontend = validate_release.RepositoryRef(
-            "example/ryframe-vue3", COMMIT_B, COMMIT_B
-        )
-        digest = "sha256:" + "d" * 64
-        manifest = validate_release.release_manifest(
-            identity,
-            backend,
-            frontend,
-            "c" * 64,
-            "c" * 64,
-            "ghcr.io/example/ryframe",
-            digest,
-        )
-
-        oci = manifest["artifacts"]["oci"]
-        self.assertEqual(oci["reference"], f"ghcr.io/example/ryframe@{digest}")
-        self.assertEqual(oci["platforms"], ["linux/amd64", "linux/arm64"])
-        self.assertEqual(oci["sbom"]["format"], "spdx-json")
-        self.assertEqual(oci["signature"]["type"], "cosign-keyless")
-
-    def test_manifest_rejects_partial_or_invalid_oci_identity(self) -> None:
-        identity = validate_release.release_identity("v0.5.0")
-        backend = validate_release.RepositoryRef("example/ryframe", COMMIT_A, COMMIT_A)
-        frontend = validate_release.RepositoryRef(
-            "example/ryframe-vue3", COMMIT_B, COMMIT_B
-        )
-        with self.assertRaisesRegex(ValueError, "supplied together"):
-            validate_release.release_manifest(
-                identity,
-                backend,
-                frontend,
-                "c" * 64,
-                "c" * 64,
-                "ghcr.io/example/ryframe",
-            )
-        with self.assertRaisesRegex(ValueError, "lowercase GHCR"):
-            validate_release.release_manifest(
-                identity,
-                backend,
-                frontend,
-                "c" * 64,
-                "c" * 64,
-                "registry.example.com/ryframe",
-                "sha256:" + "d" * 64,
-            )
+        self.assertEqual(written["schema_version"], 1)
+        self.assertNotIn("artifacts", written)
 
     def test_manifest_rejects_different_contract_hashes(self) -> None:
         identity = validate_release.release_identity("v0.5.0")
