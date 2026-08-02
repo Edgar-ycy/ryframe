@@ -341,28 +341,28 @@ jobs:
 
       - name: Test authoritative force logout and Redis recovery
         run: >-
-          cargo test --locked -p ryframe-api --test integration_test
+          cargo nextest run --locked -p ryframe-api --test integration_test
+          --run-ignored only --
           force_logout_uses_authoritative_family_and_recovers_after_redis_failure
-          -- --ignored --exact
+          --exact
 
       - name: Test authentication fail-closed behavior during Redis outage
         run: >-
-          cargo test --locked -p ryframe-api --test integration_test
+          cargo nextest run --locked -p ryframe-api --test integration_test
+          --run-ignored only --
           auth_middleware_fails_closed_when_redis_is_unavailable
-          -- --ignored --exact
+          --exact
 
       - name: Test Redis refresh rotation CAS and response-loss recovery
         run: >-
-          cargo test --locked -p ryframe-core --test refresh_session_redis_test
-          -- --ignored
-
-      - name: Run documentation tests
-        run: cargo test --locked --workspace --doc
+          cargo nextest run --locked -p ryframe-core
+          --test refresh_session_redis_test --run-ignored only
 
       - name: Run object-storage smoke test
         run: >-
-          cargo test --locked -p ryframe-storage --test object_storage_test
-          test_s3_integration_put_get_delete -- --ignored --exact
+          cargo nextest run --locked -p ryframe-storage
+          --test object_storage_test --run-ignored only --
+          test_s3_integration_put_get_delete --exact
 
       - name: Seed legacy tables for whole-database reset acceptance
         shell: bash

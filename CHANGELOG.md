@@ -7,7 +7,7 @@
 ### Changed
 
 - GitHub Actions 统一升级到兼容 Node.js 24 的版本，消除托管运行器上的 Node.js 20 弃用警告。
-- Linux 检查任务在完成 Clippy 后直接复用编译结果运行单元测试，Windows 继续保留全量测试，减少重复编译但不降低跨平台覆盖。
+- GitHub Actions 不再调用 `cargo test`；Linux 负责格式、架构与 Clippy，Windows 使用 `cargo nextest` 执行一次库测试，doctest 改为仅在本地执行。
 - 精简 Cargo 缓存键并移除低收益的 `target` 缓存，避免上传大体积构建产物拖慢常规 CI。
 - OpenAPI 与 MySQL 快照生成从每次推送迁移到手动检查和稳定发布门禁，日常提交只执行必要的一致性校验。
 - 删除常规 CI 中低收益的运行时与雪花算法冒烟检查，缩短后端反馈时间。
@@ -16,10 +16,11 @@
 
 - 修复 Release 中 `setup-node` 自动缓存、SBOM Action 固定版本和双仓门禁复用问题，避免发布流程因无效缓存配置或 Action 引用失败。
 - 修复 CI 工作流中重复作业、Linux 测试任务缺失以及 Action 运行时过期问题。
+- 将存在并发内存安全缺陷的 `event-listener 5.4.1` 升级到已修复的 `5.4.2`，消除 `RUSTSEC-2026-0221` 审计告警。
 
 ### Validation
 
-- 常规后端门禁覆盖格式、Clippy、Linux 单元测试、Windows 全量测试与依赖安全审计。
+- 常规后端门禁覆盖格式、架构、Clippy、Windows `nextest` 库测试与依赖安全审计；`cargo test` 仅作为本地开发命令。
 - 稳定发布继续执行双仓版本、固定提交、OpenAPI 契约、MySQL 快照和精确 CHANGELOG 标签说明校验。
 
 ## [v0.5.0] - 2026-07-18

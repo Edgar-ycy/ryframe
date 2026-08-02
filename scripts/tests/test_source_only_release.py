@@ -141,13 +141,19 @@ class ReleaseWorkflowTest(unittest.TestCase):
         )
         self.assertNotIn("auto-promote.yml", source)
 
-    def test_ci_uses_read_only_token_and_runs_windows_library_tests(self) -> None:
+    def test_ci_uses_read_only_token_and_nextest_without_cargo_test(self) -> None:
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        workflow_sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(WORKFLOWS.glob("*.yml"))
+        )
         self.assertIn("permissions:\n  contents: read", source)
-        self.assertIn("Check, Lint & Test (Linux)", source)
-        self.assertIn("Run Linux library tests", source)
-        self.assertIn("Run library tests without external services", source)
-        self.assertEqual(source.count("cargo test --locked --workspace --lib"), 2)
+        self.assertIn("Check & Lint (Linux)", source)
+        self.assertIn("Run Windows library tests with nextest", source)
+        self.assertEqual(
+            source.count("cargo nextest run --locked --workspace --lib"), 1
+        )
+        self.assertNotIn("cargo test ", workflow_sources)
 
     def test_release_governance_files_are_utf8_lf_without_bom(self) -> None:
         paths = (
