@@ -1,8 +1,15 @@
 mod common;
 
+fn page_query(page: u64, page_size: u64) -> ryframe_core::ValidatedPageQuery {
+    ryframe_core::ValidatedPageQuery::new(
+        page,
+        page_size,
+        &ryframe_config::PaginationConfig::default(),
+    )
+    .expect("测试分页参数必须有效")
+}
+
 use chrono::Utc;
-use ryframe_config::PaginationConfig;
-use ryframe_core::PageQuery;
 use ryframe_db::{
     UserRepository,
     entities::{dept, user},
@@ -52,7 +59,7 @@ async fn insert_user(
         avatar_file_id: ActiveValue::Set(None),
         preferred_locale: ActiveValue::Set(None),
         status: ActiveValue::Set("1".into()),
-        auth_version: ActiveValue::Set(1),
+        authorization_version: ActiveValue::Set(1),
         dept_id: ActiveValue::Set(dept_id),
         remark: ActiveValue::Set(None),
         login_ip: ActiveValue::Set(None),
@@ -89,15 +96,26 @@ async fn visible_ids(
     ctx: &DataScopeContext,
 ) -> Vec<i64> {
     let mut ids = UserRepository
-        .find_by_page_with_data_scope(
-            db,
-            tenant_id,
-            PageQuery::bounded_unpaged(&PaginationConfig::default()).unwrap(),
-            ctx,
-        )
+        .find_by_page_with_data_scope(db, tenant_id, page_query(1, 100), ctx)
         .await
         .unwrap()
         .records
+        .into_iter()
+        .map(|item| item.id)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids
+}
+
+async fn visible_option_ids(
+    db: &sea_orm::DatabaseConnection,
+    tenant_id: &str,
+    ctx: &DataScopeContext,
+) -> Vec<i64> {
+    let mut ids = UserRepository
+        .find_options_with_data_scope(db, tenant_id, None, ctx, 100)
+        .await
+        .unwrap()
         .into_iter()
         .map(|item| item.id)
         .collect::<Vec<_>>();
@@ -164,4 +182,33 @@ async fn user_repository_enforces_every_data_scope_and_mixed_role_union() {
     );
     let tenant_b_ids = visible_ids(&db, "tenant-b", &DataScopeContext::super_admin(14)).await;
     assert_eq!(tenant_b_ids, vec![14]);
+
+    // 候选接口复用分页用户列表的数据范围与租户边界，不能扩大可见集合。
+    let option_scope = context(DataScope::DeptAndChildren, 10, Some(1), vec![], false);
+    assert_eq!(
+        visible_option_ids(&db, "system", &option_scope).await,
+        visible_ids(&db, "system", &option_scope).await
+    );
+    assert_eq!(
+        visible_option_ids(&db, "tenant-b", &DataScopeContext::super_admin(14)).await,
+        vec![14]
+    );
+
+    let prefixed = UserRepository
+        .find_options_with_data_scope(
+            &db,
+            "system",
+            Some("user1"),
+            &DataScopeContext::super_admin(10),
+            2,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        prefixed
+            .into_iter()
+            .map(|item| item.username)
+            .collect::<Vec<_>>(),
+        vec!["user10", "user11"]
+    );
 }

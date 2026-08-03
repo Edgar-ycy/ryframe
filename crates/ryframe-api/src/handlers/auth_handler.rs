@@ -8,18 +8,17 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
+use ryframe_config::Environment;
 use ryframe_core::TenantContext;
-use ryframe_http::{ApiResponse, AppError, AppResult};
-use ryframe_kernel::AppError as KernelAppError;
-use ryframe_service::{
-    UserInfo,
-    system::{LoginStatus, RecordLoginCommand},
-};
+use ryframe_http::{ApiResponse, HttpAppError, HttpResult, api_path};
+use ryframe_kernel::AppError;
+use ryframe_service::system::{LoginStatus, RecordLoginCommand};
 use validator::Validate;
 
 use crate::dto::auth_dto::{
     CompletePasswordResetRequest, CsrfResponse, LoginRequest, LoginResponse,
 };
+use crate::dto::public_dto::UserInfo;
 use crate::{
     handler_utils::tenant_id_from_headers, message_socket::WebSocketTicketResponse,
     request_locale::RequestLocale, state::AppState,
@@ -48,51 +47,27 @@ const CSRF_COOKIE: &str = "ryframe_csrf";
 const CSRF_HEADER: &str = "x-csrf-token";
 const CSRF_TTL_SECONDS: usize = 300;
 
-fn secure_cookies() -> bool {
-    let environment = std::env::var("APP_ENV").ok();
-    secure_cookies_for_environment(environment.as_deref())
-}
-
-fn secure_cookies_for_environment(environment: Option<&str>) -> bool {
-    environment.is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "prod" | "production"
-        )
-    })
-}
-
-fn auth_cookie_for_environment(
+fn auth_cookie(
     name: &'static str,
     value: String,
     max_age_seconds: i64,
-    environment: Option<&str>,
+    environment: Environment,
 ) -> Cookie<'static> {
     let max_age = cookie::time::Duration::seconds(max_age_seconds);
     Cookie::build((name, value))
-        .path("/api/v1/auth")
+        .path(api_path("auth"))
         .http_only(true)
-        .secure(secure_cookies_for_environment(environment))
+        .secure(environment.is_production())
         .same_site(SameSite::Lax)
         .max_age(max_age)
         .expires(cookie::time::OffsetDateTime::now_utc().saturating_add(max_age))
         .build()
 }
 
-fn refresh_cookie(token: &str, absolute_exp: usize) -> Cookie<'static> {
-    let environment = std::env::var("APP_ENV").ok();
-    refresh_cookie_for_environment(token, absolute_exp, environment.as_deref())
-}
-
-fn refresh_cookie_for_environment(
-    token: &str,
-    absolute_exp: usize,
-    environment: Option<&str>,
-) -> Cookie<'static> {
+fn refresh_cookie(token: &str, absolute_exp: usize, environment: Environment) -> Cookie<'static> {
     let now = chrono::Utc::now().timestamp().max(0) as usize;
     let max_age = absolute_exp.saturating_sub(now).min(7 * 24 * 60 * 60) as i64;
-    let mut cookie =
-        auth_cookie_for_environment(REFRESH_COOKIE, token.to_owned(), max_age, environment);
+    let mut cookie = auth_cookie(REFRESH_COOKIE, token.to_owned(), max_age, environment);
     if let Ok(timestamp) = i64::try_from(absolute_exp)
         && let Ok(expires) = cookie::time::OffsetDateTime::from_unix_timestamp(timestamp)
     {
@@ -103,13 +78,8 @@ fn refresh_cookie_for_environment(
     cookie
 }
 
-fn csrf_cookie(token: &str) -> Cookie<'static> {
-    let environment = std::env::var("APP_ENV").ok();
-    csrf_cookie_for_environment(token, environment.as_deref())
-}
-
-fn csrf_cookie_for_environment(token: &str, environment: Option<&str>) -> Cookie<'static> {
-    auth_cookie_for_environment(
+fn csrf_cookie(token: &str, environment: Environment) -> Cookie<'static> {
+    auth_cookie(
         CSRF_COOKIE,
         token.to_owned(),
         CSRF_TTL_SECONDS as i64,
@@ -117,19 +87,19 @@ fn csrf_cookie_for_environment(token: &str, environment: Option<&str>) -> Cookie
     )
 }
 
-fn removal_cookie(name: &'static str) -> Cookie<'static> {
+fn removal_cookie(name: &'static str, environment: Environment) -> Cookie<'static> {
     Cookie::build((name, ""))
-        .path("/api/v1/auth")
+        .path(api_path("auth"))
         .http_only(true)
-        .secure(secure_cookies())
+        .secure(environment.is_production())
         .same_site(SameSite::Lax)
         .removal()
         .build()
 }
 
-fn clear_auth_cookies(jar: CookieJar) -> CookieJar {
-    jar.add(removal_cookie(REFRESH_COOKIE))
-        .add(removal_cookie(CSRF_COOKIE))
+fn clear_auth_cookies(jar: CookieJar, environment: Environment) -> CookieJar {
+    jar.add(removal_cookie(REFRESH_COOKIE, environment))
+        .add(removal_cookie(CSRF_COOKIE, environment))
 }
 
 fn verify_csrf(
@@ -137,7 +107,7 @@ fn verify_csrf(
     headers: &HeaderMap,
     secret: &str,
     expected_sid: Option<&str>,
-) -> AppResult<String> {
+) -> HttpResult<String> {
     let header_token = headers
         .get(CSRF_HEADER)
         .and_then(|value| value.to_str().ok())
@@ -151,33 +121,33 @@ fn verify_csrf(
     })?;
     if header_token != cookie_token {
         ryframe_middleware::metrics::record_csrf_rejection();
-        return Err(AppError::Authorization("CSRF challenge mismatch".into()));
+        return Err(AppError::Authorization("CSRF challenge mismatch".into()).into());
     }
     let claims = ryframe_auth::jwt::decode_csrf(header_token, secret).inspect_err(|_| {
         ryframe_middleware::metrics::record_csrf_rejection();
     })?;
     if claims.sid.as_deref() != expected_sid {
         ryframe_middleware::metrics::record_csrf_rejection();
-        return Err(AppError::Authorization(
-            "CSRF challenge is not bound to this session".into(),
-        ));
+        return Err(
+            AppError::Authorization("CSRF challenge is not bound to this session".into()).into(),
+        );
     }
     Ok(claims.jti)
 }
 
-fn decode_refresh_cookie(jar: &CookieJar, secret: &str) -> AppResult<ryframe_auth::jwt::Claims> {
+fn decode_refresh_cookie(jar: &CookieJar, secret: &str) -> HttpResult<ryframe_auth::jwt::Claims> {
     let token = jar
         .get(REFRESH_COOKIE)
         .map(Cookie::value)
         .ok_or_else(|| AppError::Authentication("missing refresh cookie".into()))?;
     let claims = ryframe_auth::jwt::decode_token(token, secret)?;
     if claims.token_type != "refresh" || claims.sid.is_empty() {
-        return Err(AppError::Authentication("invalid refresh cookie".into()));
+        return Err(AppError::Authentication("invalid refresh cookie".into()).into());
     }
     Ok(claims)
 }
 
-fn validate_auth_origin(state: &AppState, headers: &HeaderMap) -> AppResult<()> {
+fn validate_auth_origin(state: &AppState, headers: &HeaderMap) -> HttpResult<()> {
     match headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
@@ -194,15 +164,11 @@ fn validate_auth_origin(state: &AppState, headers: &HeaderMap) -> AppResult<()> 
         }
         Some(_) => {
             ryframe_middleware::metrics::record_csrf_rejection();
-            Err(AppError::Authorization(
-                "request origin is not allowed".into(),
-            ))
+            Err(AppError::Authorization("request origin is not allowed".into()).into())
         }
-        None if secure_cookies() => {
+        None if state.config.environment.is_production() => {
             ryframe_middleware::metrics::record_csrf_rejection();
-            Err(AppError::Authorization(
-                "Origin header is required in production".into(),
-            ))
+            Err(AppError::Authorization("Origin header is required in production".into()).into())
         }
         None => Ok(()),
     }
@@ -213,15 +179,16 @@ async fn enforce_login_rate_limit(
     tenant_id: &str,
     username: &str,
     client_ip: &str,
-) -> AppResult<Option<Response>> {
+) -> HttpResult<Option<Response>> {
     if !state.config.rate_limit.enabled {
         return Ok(None);
     }
+    let login_rate_limit_rule = format!("POST {}", api_path("auth/login"));
     let limit = state
         .config
         .rate_limit
         .api_limits
-        .get("POST /api/v1/auth/login")
+        .get(&login_rate_limit_rule)
         .copied()
         .unwrap_or(5);
     let window = state.config.rate_limit.api_window_secs.max(1);
@@ -270,7 +237,7 @@ async fn verify_captcha_if_enabled(
     state: &AppState,
     tenant_id: &str,
     req: &LoginRequest,
-) -> AppResult<()> {
+) -> HttpResult<()> {
     let captcha_enabled = state
         .services
         .config
@@ -301,7 +268,7 @@ async fn verify_captcha_if_enabled(
             ryframe_middleware::metrics::record_redis_degraded("captcha_store");
         })?;
     if !valid {
-        return Err(AppError::Validation("验证码错误或已过期".into()));
+        return Err(AppError::Validation("验证码错误或已过期".into()).into());
     }
     Ok(())
 }
@@ -341,7 +308,7 @@ async fn record_login_failure_log(
     username: &str,
     ip: &str,
     ua: &str,
-    err: &KernelAppError,
+    err: &AppError,
 ) {
     if let Err(e) = state
         .services
@@ -408,7 +375,7 @@ pub async fn csrf(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> AppResult<Response> {
+) -> HttpResult<Response> {
     validate_auth_origin(&state, &headers)?;
     let sid = jar
         .get(REFRESH_COOKIE)
@@ -424,7 +391,7 @@ pub async fn csrf(
         CSRF_TTL_SECONDS,
     )?;
     let mut response = (
-        jar.add(csrf_cookie(&token)),
+        jar.add(csrf_cookie(&token, state.config.environment)),
         Json(ApiResponse::success(CsrfResponse {
             csrf_token: token,
             expires_in: CSRF_TTL_SECONDS,
@@ -456,7 +423,7 @@ pub async fn login(
     jar: CookieJar,
     tenant_context: Option<Extension<TenantContext>>,
     Json(req): Json<LoginRequest>,
-) -> AppResult<Response> {
+) -> HttpResult<Response> {
     req.validate()?;
     validate_auth_origin(&state, &headers)?;
     let csrf_sid = jar
@@ -521,17 +488,18 @@ pub async fn login(
                 jar.add(refresh_cookie(
                     &result.refresh_token,
                     result.refresh_expires_at,
+                    state.config.environment,
                 )),
                 Json(ApiResponse::success(LoginResponse::from(result))),
             )
                 .into_response())
         }
         Err(e) => {
-            if matches!(&e, KernelAppError::ServiceUnavailable(_)) {
+            if matches!(&e, AppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("login_session");
             }
             // 登录失败：记录失败次数 + 记录失败日志
-            if matches!(&e, KernelAppError::Authentication(_))
+            if matches!(&e, AppError::Authentication(_))
                 && let Err(error) = state
                     .services
                     .auth
@@ -566,7 +534,7 @@ pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> AppResult<Response> {
+) -> HttpResult<Response> {
     validate_auth_origin(&state, &headers)?;
     let has_refresh_cookie = jar.get(REFRESH_COOKIE).is_some();
     let decoded_refresh = decode_refresh_cookie(&jar, &state.config.auth.jwt_secret);
@@ -581,9 +549,9 @@ pub async fn logout(
     )?;
     let refresh_claims = match decoded_refresh {
         Ok(claims) => Some(claims),
-        Err(AppError::Authentication(_)) if !has_refresh_cookie => None,
+        Err(HttpAppError(AppError::Authentication(_))) if !has_refresh_cookie => None,
         Err(error) => {
-            return Ok((clear_auth_cookies(jar), error).into_response());
+            return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
         }
     };
     if let Some(value) = headers
@@ -624,7 +592,7 @@ pub async fn logout(
             .await;
     }
     Ok((
-        clear_auth_cookies(jar),
+        clear_auth_cookies(jar, state.config.environment),
         Json(ApiResponse::<()>::success_no_data()),
     )
         .into_response())
@@ -652,13 +620,13 @@ pub async fn refresh(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     jar: CookieJar,
-) -> AppResult<Response> {
+) -> HttpResult<Response> {
     validate_auth_origin(&state, &headers)?;
     // 检查强退
     let claims = match decode_refresh_cookie(&jar, &state.config.auth.jwt_secret) {
         Ok(claims) => claims,
         Err(error) => {
-            return Ok((clear_auth_cookies(jar), error).into_response());
+            return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
         }
     };
     let rotation_attempt_id = verify_csrf(
@@ -695,25 +663,26 @@ pub async fn refresh(
                 jar.add(refresh_cookie(
                     &result.refresh_token,
                     result.refresh_expires_at,
+                    state.config.environment,
                 )),
                 Json(ApiResponse::success(LoginResponse::from(result))),
             )
                 .into_response())
         }
         Err(e) => {
-            if matches!(&e, KernelAppError::ServiceUnavailable(_)) {
+            if matches!(&e, AppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("refresh_session");
             }
             record_login_failure_log(&state, &claims.tenant_id, "unknown", &ip, ua, &e).await;
-            let clear_cookie = matches!(&e, KernelAppError::Authentication(_));
-            let concurrent = matches!(&e, KernelAppError::Conflict(message) if message == "refresh already in progress");
-            if matches!(&e, KernelAppError::Authentication(message) if message.contains("replay detected"))
+            let clear_cookie = matches!(&e, AppError::Authentication(_));
+            let concurrent = matches!(&e, AppError::Conflict(message) if message == "refresh already in progress");
+            if matches!(&e, AppError::Authentication(message) if message.contains("replay detected"))
             {
                 ryframe_middleware::metrics::record_refresh_replay();
             }
-            let error: AppError = e.into();
+            let error = HttpAppError::from(e);
             let mut response = if clear_cookie {
-                (clear_auth_cookies(jar), error).into_response()
+                (clear_auth_cookies(jar, state.config.environment), error).into_response()
             } else {
                 error.into_response()
             };
@@ -741,7 +710,7 @@ pub async fn refresh(
 pub async fn complete_password_reset(
     State(state): State<AppState>,
     Json(req): Json<CompletePasswordResetRequest>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     req.validate()?;
     let request_id = req
         .request_id
@@ -773,10 +742,10 @@ pub async fn complete_password_reset(
 pub async fn me(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<UserInfo>>> {
+) -> HttpResult<Json<ApiResponse<UserInfo>>> {
     let user_info = state.services.auth.get_current_user(&current_user).await?;
 
-    Ok(Json(ApiResponse::success(user_info)))
+    Ok(Json(ApiResponse::success(user_info.into())))
 }
 
 /// 申请仅可用于一次 WebSocket 握手的短期票据。
@@ -798,7 +767,7 @@ pub async fn websocket_ticket(
     current_user: RequestPrincipal,
     Extension(claims): Extension<Claims>,
     Extension(request_locale): Extension<RequestLocale>,
-) -> AppResult<Json<ApiResponse<WebSocketTicketResponse>>> {
+) -> HttpResult<Json<ApiResponse<WebSocketTicketResponse>>> {
     let grant = state
         .services
         .websocket_ticket
@@ -819,7 +788,7 @@ mod tests {
 
     fn csrf_request(sid: Option<&str>) -> (CookieJar, HeaderMap) {
         let token = ryframe_auth::jwt::encode_csrf(TEST_SECRET, sid, CSRF_TTL_SECONDS).unwrap();
-        let jar = CookieJar::new().add(csrf_cookie(&token));
+        let jar = CookieJar::new().add(csrf_cookie(&token, Environment::Test));
         let mut headers = HeaderMap::new();
         headers.insert(CSRF_HEADER, token.parse().unwrap());
         (jar, headers)
@@ -829,7 +798,7 @@ mod tests {
     fn csrf_is_required_even_without_a_refresh_session() {
         let error = verify_csrf(&CookieJar::new(), &HeaderMap::new(), TEST_SECRET, None)
             .expect_err("logout without a challenge must fail");
-        assert!(matches!(error, AppError::Authorization(_)));
+        assert!(matches!(error, HttpAppError(AppError::Authorization(_))));
     }
 
     #[test]
@@ -846,21 +815,18 @@ mod tests {
         let (jar, headers) = csrf_request(Some("sid-a"));
         let error = verify_csrf(&jar, &headers, TEST_SECRET, Some("sid-b"))
             .expect_err("a challenge must be bound to the current refresh family");
-        assert!(matches!(error, AppError::Authorization(_)));
+        assert!(matches!(error, HttpAppError(AppError::Authorization(_))));
     }
 
     #[test]
     fn production_refresh_and_csrf_cookies_are_secure() {
         let absolute_exp = chrono::Utc::now().timestamp() as usize + 600;
-        let refresh = refresh_cookie_for_environment("signed-refresh", absolute_exp, Some("prod"));
+        let refresh = refresh_cookie("signed-refresh", absolute_exp, Environment::Prod);
         assert_eq!(
             refresh.expires_datetime().unwrap().unix_timestamp(),
             absolute_exp as i64
         );
-        let cookies = [
-            refresh,
-            csrf_cookie_for_environment("signed-csrf", Some("prod")),
-        ];
+        let cookies = [refresh, csrf_cookie("signed-csrf", Environment::Prod)];
         for cookie in cookies {
             assert_eq!(
                 cookie.secure(),
@@ -871,8 +837,10 @@ mod tests {
             assert_eq!(cookie.http_only(), Some(true));
         }
 
-        assert!(secure_cookies_for_environment(Some("production")));
-        assert!(!secure_cookies_for_environment(Some("dev")));
-        assert!(!secure_cookies_for_environment(None));
+        assert!(
+            !csrf_cookie("signed-csrf", Environment::Dev)
+                .secure()
+                .unwrap_or(false)
+        );
     }
 }

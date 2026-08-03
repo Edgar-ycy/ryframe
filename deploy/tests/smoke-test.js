@@ -63,6 +63,47 @@ function assertPage(json, label) {
   }
 }
 
+function parseUploadedFile(json, expectedFileName, baseUrl = BASE_URL) {
+  if (json?.code !== 200 || !Array.isArray(json.data) || json.data.length !== 1) {
+    throw new Error(`upload response must contain exactly one file: ${JSON.stringify(json)}`);
+  }
+
+  const file = json.data[0];
+  const actualFields = Object.keys(file || {}).sort();
+  const expectedFields = ["file_id", "file_name", "file_path", "file_url"].sort();
+  if (JSON.stringify(actualFields) !== JSON.stringify(expectedFields)) {
+    throw new Error(`upload response fields do not match the current contract: ${JSON.stringify(json)}`);
+  }
+  if (typeof file.file_id !== "string" || !/^\d+$/.test(file.file_id)) {
+    throw new Error(`upload response has an invalid file id: ${JSON.stringify(json)}`);
+  }
+  if (file.file_name !== expectedFileName) {
+    throw new Error(`upload response has an unexpected file name: ${JSON.stringify(json)}`);
+  }
+  if (typeof file.file_path !== "string" || file.file_path.length === 0) {
+    throw new Error(`upload response has an invalid file path: ${JSON.stringify(json)}`);
+  }
+  if (typeof file.file_url !== "string" || file.file_url.length === 0) {
+    throw new Error(`upload response has an invalid file URL: ${JSON.stringify(json)}`);
+  }
+
+  const expectedOrigin = new URL(baseUrl).origin;
+  const downloadUrl = new URL(file.file_url, baseUrl);
+  const queryNames = [...downloadUrl.searchParams.keys()].sort();
+  if (
+    downloadUrl.origin !== expectedOrigin
+    || downloadUrl.pathname !== "/api/v1/common/file/download"
+    || JSON.stringify(queryNames) !== JSON.stringify(["bucket", "path"])
+    || downloadUrl.searchParams.get("bucket") !== "uploads"
+    || downloadUrl.searchParams.get("path") !== file.file_path
+    || downloadUrl.hash !== ""
+  ) {
+    throw new Error(`upload response has an invalid download URL: ${JSON.stringify(json)}`);
+  }
+
+  return { file, downloadUrl: downloadUrl.href };
+}
+
 function sleep(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
@@ -141,7 +182,9 @@ async function runSmokeTests() {
   await test("version endpoint", async () => {
     const { res, json } = await jsonRequest(`${BASE_URL}/api/v1/version`);
     await assertOk(res, "Version");
-    if (!json?.name || !json?.version) throw new Error("version response missing name/version");
+    if (!json?.data?.name || !json?.data?.version) {
+      throw new Error("version response missing data.name/data.version");
+    }
   });
 
   let accessToken = null;
@@ -257,11 +300,8 @@ async function runSmokeTests() {
       body: form,
     });
     await assertOk(res, "RustFS Upload");
-    const filePath = json?.data?.[0]?.file_info?.file_path;
-    if (!filePath) throw new Error(`upload response missing file path: ${JSON.stringify(json)}`);
-
-    const query = new URLSearchParams({ bucket: "uploads", path: filePath });
-    const download = await fetch(`${BASE_URL}/api/v1/common/file/download?${query}`, {
+    const uploaded = parseUploadedFile(json, "rustfs-smoke.txt");
+    const download = await fetch(uploaded.downloadUrl, {
       headers: authHeaders(accessToken),
     });
     await assertOk(download, "RustFS Download");
@@ -394,7 +434,11 @@ async function main() {
   process.exit(failed > 0 ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error("Smoke test crashed:", err);
-  process.exit(1);
-});
+module.exports = { parseUploadedFile };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Smoke test crashed:", err);
+    process.exit(1);
+  });
+}

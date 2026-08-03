@@ -20,6 +20,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, Set,
     TransactionTrait,
 };
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::sync::{Mutex, Semaphore};
 
@@ -312,13 +313,12 @@ fn pending_file(
         file_url: format!("uploads/{storage_path}"),
         file_size: 1,
         content_type: "text/plain".to_owned(),
-        file_md5: Some(format!("{id:032x}")),
-        file_sha256: None,
+        file_sha256: format!("{id:064x}"),
         upload_by: Some("admin".to_owned()),
         upload_status: ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
         reservation_token: Some(token.to_owned()),
         reservation_expires_at: Some(expires_at),
-        del_flag: ryframe_db::entities::sys_file::Model::DEL_FLAG_UPLOAD_RESERVED.to_owned(),
+        del_flag: ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL.to_owned(),
         created_at: now,
         updated_at: now,
     }
@@ -348,11 +348,8 @@ async fn upload_persists_metadata_and_can_be_downloaded() {
         .await
         .unwrap();
 
-    assert!(
-        uploaded
-            .file_url
-            .starts_with("/api/v1/common/file/download?")
-    );
+    assert_eq!(uploaded.bucket, "uploads");
+    assert_eq!(uploaded.file_name, "example.txt");
     assert_eq!(count_files(directory.path()), 1);
     let file_id = uploaded.file_id.parse::<i64>().unwrap();
     let metadata = ryframe_db::entities::sys_file::Entity::find_by_id(file_id)
@@ -360,14 +357,21 @@ async fn upload_persists_metadata_and_can_be_downloaded() {
         .await
         .unwrap()
         .unwrap();
-    assert!(metadata.file_md5.is_none());
-    assert_eq!(metadata.file_sha256.as_deref().map(str::len), Some(64));
-    let (data, filename) = service
-        .download(&actor(), "uploads", &uploaded.file_info.file_path)
+    assert_eq!(metadata.file_sha256.len(), 64);
+    let mut metadata: ryframe_db::entities::sys_file::ActiveModel = metadata.into();
+    metadata.content_type = Set("application/pdf".to_owned());
+    metadata.update(db.connection()).await.unwrap();
+
+    let downloaded = service
+        .download(&actor(), "uploads", &uploaded.file_path)
         .await
         .unwrap();
-    assert_eq!(data, b"hello storage");
-    assert_eq!(filename, "example.txt");
+    assert_eq!(downloaded.data, b"hello storage");
+    assert_eq!(downloaded.original_name, "example.txt");
+    assert_eq!(
+        downloaded.content_type, "application/pdf",
+        "文件名扩展名与持久化类型不一致时必须以数据库元数据为准"
+    );
 }
 
 #[tokio::test]
@@ -491,25 +495,29 @@ async fn object_put_does_not_hold_the_tenant_row_lock() {
         .await
         .expect("upload never reached object storage");
 
-    // 旧版本读取器只识别 `del_flag = '0'`；滚动部署绝不能将待处理预留暴露为普通文件。
-    let legacy_visible = ryframe_db::entities::sys_file::Entity::find()
+    // 待处理预留与普通文件共享正常删除标记，但只允许 `ready` 状态进入读取链路。
+    let ready_visible = ryframe_db::entities::sys_file::Entity::find()
         .filter(
             ryframe_db::entities::sys_file::Column::DelFlag
                 .eq(ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL),
         )
-        .count(db.connection())
-        .await
-        .unwrap();
-    assert_eq!(legacy_visible, 0);
-    let reserved = ryframe_db::entities::sys_file::Entity::find()
         .filter(
-            ryframe_db::entities::sys_file::Column::DelFlag
-                .eq(ryframe_db::entities::sys_file::Model::DEL_FLAG_UPLOAD_RESERVED),
+            ryframe_db::entities::sys_file::Column::UploadStatus
+                .eq(ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_READY),
         )
         .count(db.connection())
         .await
         .unwrap();
-    assert_eq!(reserved, 1);
+    assert_eq!(ready_visible, 0);
+    let pending = ryframe_db::entities::sys_file::Entity::find()
+        .filter(
+            ryframe_db::entities::sys_file::Column::UploadStatus
+                .eq(ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_PENDING),
+        )
+        .count(db.connection())
+        .await
+        .unwrap();
+    assert_eq!(pending, 1);
 
     let transaction = db.connection().begin().await.unwrap();
     let lock_result = tokio::time::timeout(
@@ -524,15 +532,19 @@ async fn object_put_does_not_hold_the_tenant_row_lock() {
     );
     transaction.rollback().await.unwrap();
     upload.await.unwrap().unwrap();
-    let legacy_visible = ryframe_db::entities::sys_file::Entity::find()
+    let ready_visible = ryframe_db::entities::sys_file::Entity::find()
         .filter(
             ryframe_db::entities::sys_file::Column::DelFlag
                 .eq(ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL),
         )
+        .filter(
+            ryframe_db::entities::sys_file::Column::UploadStatus
+                .eq(ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_READY),
+        )
         .count(db.connection())
         .await
         .unwrap();
-    assert_eq!(legacy_visible, 1);
+    assert_eq!(ready_visible, 1);
 }
 
 #[tokio::test]
@@ -654,17 +666,21 @@ async fn cancelling_put_persists_cleanup_state_and_deletes_the_object() {
     );
     assert_eq!(
         cleanup.del_flag,
-        ryframe_db::entities::sys_file::Model::DEL_FLAG_UPLOAD_RESERVED
+        ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL
     );
-    let legacy_visible = ryframe_db::entities::sys_file::Entity::find()
+    let ready_visible = ryframe_db::entities::sys_file::Entity::find()
         .filter(
             ryframe_db::entities::sys_file::Column::DelFlag
                 .eq(ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL),
         )
+        .filter(
+            ryframe_db::entities::sys_file::Column::UploadStatus
+                .eq(ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_READY),
+        )
         .count(db.connection())
         .await
         .unwrap();
-    assert_eq!(legacy_visible, 0);
+    assert_eq!(ready_visible, 0);
 }
 
 #[tokio::test]
@@ -909,13 +925,12 @@ async fn expired_pending_upload_uses_a_cleanup_grace_before_hard_delete() {
         file_url: format!("uploads/{stale_path}"),
         file_size: stale_body.len() as i64,
         content_type: "text/plain".to_owned(),
-        file_md5: Some(format!("{:x}", md5::compute(stale_body))),
-        file_sha256: None,
+        file_sha256: hex::encode(Sha256::digest(stale_body)),
         upload_by: Some("admin".to_owned()),
         upload_status: ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
         reservation_token: Some("stale-token".to_owned()),
         reservation_expires_at: Some(now - chrono::Duration::minutes(1)),
-        del_flag: ryframe_db::entities::sys_file::Model::DEL_FLAG_UPLOAD_RESERVED.to_owned(),
+        del_flag: ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL.to_owned(),
         created_at: now,
         updated_at: now,
     };

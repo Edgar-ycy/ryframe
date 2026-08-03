@@ -3,13 +3,16 @@ use axum::{
     extract::{Path, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiResponse, AppResult};
+use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, post, put, route};
-use ryframe_service::system::{CreateTenantParams, TenantVo, UpdateTenantParams};
+use ryframe_service::system::{CreateTenantParams, UpdateTenantParams};
 use validator::Validate;
 
 use crate::{
-    dto::tenant_dto::{CreateTenantDto, UpdateTenantDto, UpdateTenantStatusDto},
+    dto::{
+        public_dto::TenantVo,
+        tenant_dto::{CreateTenantDto, UpdateTenantDto, UpdateTenantStatusDto},
+    },
     state::AppState,
 };
 
@@ -29,9 +32,11 @@ pub fn tenant_router(state: AppState) -> Router {
 async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<Vec<TenantVo>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<TenantVo>>>> {
     let tenants = state.services.tenant.list(&current_user).await?;
-    Ok(Json(ApiResponse::success(tenants)))
+    Ok(Json(ApiResponse::success(
+        tenants.into_iter().map(TenantVo::from).collect(),
+    )))
 }
 
 #[post("/")]
@@ -42,7 +47,7 @@ async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreateTenantDto>,
-) -> AppResult<Json<ApiResponse<TenantVo>>> {
+) -> HttpResult<Json<ApiResponse<TenantVo>>> {
     dto.validate()?;
     let model = state
         .services
@@ -63,7 +68,7 @@ async fn create(
             },
         )
         .await?;
-    Ok(Json(ApiResponse::success(model)))
+    Ok(Json(ApiResponse::success(model.into())))
 }
 
 #[put("/{tenant_id}")]
@@ -76,7 +81,7 @@ async fn update(
     current_user: RequestPrincipal,
     Path(tenant_id): Path<String>,
     Json(dto): Json<UpdateTenantDto>,
-) -> AppResult<Json<ApiResponse<TenantVo>>> {
+) -> HttpResult<Json<ApiResponse<TenantVo>>> {
     dto.validate()?;
     let updated = state
         .services
@@ -95,7 +100,7 @@ async fn update(
             },
         )
         .await?;
-    Ok(Json(ApiResponse::success(updated)))
+    Ok(Json(ApiResponse::success(updated.into())))
 }
 
 #[put("/{tenant_id}/status")]
@@ -108,7 +113,7 @@ async fn update_status(
     current_user: RequestPrincipal,
     Path(tenant_id): Path<String>,
     Json(dto): Json<UpdateTenantStatusDto>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     state
         .services
         .tenant

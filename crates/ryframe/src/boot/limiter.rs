@@ -12,23 +12,18 @@ pub struct LimiterState {
     pub rate_limit_state: RateLimitState,
 }
 
-/// 初始化限流器（Redis 固定窗口 / 内存令牌桶 双模式）
+/// 初始化固定窗口限流器。
 pub fn init(config: &AppConfig, redis_client: &Option<RedisClient>) -> AppResult<LimiterState> {
     let limiter = if let Some(redis) = redis_client {
-        let window = if config.rate_limit.window_secs > 0 {
-            config.rate_limit.window_secs
-        } else {
-            60 // 默认 60 秒固定窗口
-        };
         Arc::new(RateLimiter::new_redis(
             redis.clone(),
             config.rate_limit.capacity,
-            window,
+            config.rate_limit.window_secs,
         ))
     } else {
         let l = Arc::new(RateLimiter::new_in_memory(
             config.rate_limit.capacity,
-            config.rate_limit.refill_per_sec,
+            config.rate_limit.window_secs,
         ));
         l.spawn_gc();
         l

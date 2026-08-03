@@ -28,12 +28,13 @@ impl UserService {
         self.role_repo
             .replace_roles_in_txn(&transaction, tenant_id, user_id, &role_ids)
             .await?;
-        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[user_id])
+        let versions = self
+            .invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[user_id])
             .await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_user_versions(tenant_id, &versions)
+            .await?;
         Ok(())
     }
 
@@ -63,6 +64,12 @@ impl UserService {
                 .await?;
             if roles.len() != role_ids.len() {
                 return Err(AppError::Validation("角色不存在或不属于当前租户".into()));
+            }
+            if roles
+                .iter()
+                .any(|role| role.status != ryframe_db::entities::role::Model::STATUS_NORMAL)
+            {
+                return Err(AppError::Validation("不能分配已停用的角色".into()));
             }
             if !actor.is_super_admin && roles.iter().any(|role| role.is_super == 1) {
                 return Err(AppError::Authorization("无权限分配超级管理员角色".into()));

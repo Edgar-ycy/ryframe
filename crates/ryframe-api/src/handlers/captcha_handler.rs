@@ -8,7 +8,8 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ryframe_captcha::{CaptchaType, generate_captcha};
-use ryframe_http::{ApiResponse, AppError, AppResult};
+use ryframe_http::{ApiResponse, HttpResult};
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 use ryframe_utils::ip::ClientIp;
 use serde::{Deserialize, Serialize};
@@ -96,7 +97,7 @@ pub async fn generate_captcha_handler(
     client_ip: Option<axum::Extension<ClientIp>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(query): Query<CaptchaQuery>,
-) -> AppResult<Json<ApiResponse<CaptchaResponse>>> {
+) -> HttpResult<Json<ApiResponse<CaptchaResponse>>> {
     let ip = client_ip.map_or_else(|| addr.ip(), |axum::Extension(ip)| ip.0);
     enforce_captcha_limit(&state, &format!("captcha:gen:{ip}"), 10).await?;
 
@@ -124,7 +125,7 @@ pub async fn verify_captcha_handler(
     client_ip: Option<axum::Extension<ClientIp>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<CaptchaVerifyRequest>,
-) -> AppResult<Json<ApiResponse<CaptchaVerifyResponse>>> {
+) -> HttpResult<Json<ApiResponse<CaptchaVerifyResponse>>> {
     let ip = client_ip.map_or_else(|| addr.ip(), |axum::Extension(ip)| ip.0);
     enforce_captcha_limit(&state, &format!("captcha:verify:{ip}"), 5).await?;
 
@@ -142,7 +143,7 @@ pub async fn verify_captcha_handler(
             valid: true,
         })))
     } else {
-        Err(AppError::Validation("验证码错误或已过期".into()))
+        Err(AppError::Validation("验证码错误或已过期".into()).into())
     }
 }
 
@@ -156,7 +157,7 @@ pub async fn verify_captcha_handler(
 pub async fn get_captcha_config_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> AppResult<Json<ApiResponse<CaptchaConfigResponse>>> {
+) -> HttpResult<Json<ApiResponse<CaptchaConfigResponse>>> {
     let tenant_id = tenant_id_from_headers(&headers)?;
     let enabled = state
         .services
@@ -183,7 +184,7 @@ pub async fn captcha_image_handler(
     client_ip: Option<axum::Extension<ClientIp>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(query): Query<CaptchaQuery>,
-) -> AppResult<impl IntoResponse> {
+) -> HttpResult<impl IntoResponse> {
     let ip = client_ip.map_or_else(|| addr.ip(), |axum::Extension(ip)| ip.0);
     enforce_captcha_limit(&state, &format!("captcha:gen:{ip}"), 10).await?;
 
@@ -211,7 +212,7 @@ pub async fn captcha_image_handler(
 async fn issue_captcha(
     state: &AppState,
     captcha_kind: CaptchaKind,
-) -> AppResult<(String, Vec<u8>)> {
+) -> HttpResult<(String, Vec<u8>)> {
     let (answer, image_data) = generate_captcha(captcha_kind.into())?.into_parts();
     let captcha_id = Uuid::now_v7().to_string();
     state
@@ -225,7 +226,7 @@ async fn issue_captcha(
     Ok((captcha_id, image_data))
 }
 
-async fn enforce_captcha_limit(state: &AppState, key: &str, limit: u32) -> AppResult<()> {
+async fn enforce_captcha_limit(state: &AppState, key: &str, limit: u32) -> HttpResult<()> {
     if !state.config.rate_limit.enabled {
         return Ok(());
     }
@@ -245,7 +246,8 @@ async fn enforce_captcha_limit(state: &AppState, key: &str, limit: u32) -> AppRe
     Err(AppError::RateLimited(
         "验证码请求过于频繁，请稍后再试".into(),
         decision.retry_after_secs,
-    ))
+    )
+    .into())
 }
 
 #[cfg(test)]

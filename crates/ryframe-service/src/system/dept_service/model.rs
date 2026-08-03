@@ -1,8 +1,7 @@
 use ryframe_db::{entities::dept, repositories::dept_repo::DeptTreeNode as RepoDeptTreeNode};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct DeptVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -30,14 +29,13 @@ impl From<dept::Model> for DeptVo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DeptTreeNode {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
     pub sort: i32,
     pub status: String,
-    #[schema(no_recursion)]
     pub children: Vec<DeptTreeNode>,
 }
 

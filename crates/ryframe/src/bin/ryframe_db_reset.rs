@@ -3,7 +3,7 @@
 //! 示例：
 //! `cargo run -p ryframe --bin ryframe-db-reset -- --database ryframe_config --confirm-reset RESET-RYFRAME-DATABASE`
 
-use ryframe_config::DbConnection;
+use ryframe_config::{DbConnection, Environment};
 use sea_orm::{ConnectionTrait, DbBackend, Statement, TryGetable};
 
 const CONFIRMATION: &str = "RESET-RYFRAME-DATABASE";
@@ -12,19 +12,17 @@ const USER_PASSWORD: &str = "123456";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let environment = std::env::var("APP_ENV")
-        .map_err(|_| "refusing reset: APP_ENV must be explicitly set to dev or test")?;
-    let normalized_environment = match environment.trim().to_ascii_lowercase().as_str() {
-        "dev" | "development" => "dev",
-        "test" | "testing" => "test",
-        "prod" | "production" => {
+    let environment = Environment::from_required_env()?;
+    match environment {
+        Environment::Dev | Environment::Test => {}
+        Environment::Prod => {
             return Err("database reset is permanently disabled in production".into());
         }
-        _ => return Err("refusing reset: APP_ENV must be explicitly set to dev or test".into()),
-    };
+    }
 
     let args = parse_args()?;
-    let config = ryframe_config::AppConfig::load_from_env()?;
+    let config = ryframe_config::AppConfig::load_from_env(environment)?;
+    ryframe_utils::snowflake::initialize(config.snowflake_worker_id)?;
     if config.database.primary.database != args.expected_database {
         return Err(format!(
             "configured database does not match --database (configured: {}, expected: {})",
@@ -44,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.expected_database,
         config.database.primary.host,
         config.database.primary.port,
-        normalized_environment
+        environment
     );
 
     recreate_database(&config.database.primary, &args.expected_database).await?;
@@ -175,7 +173,7 @@ async fn update_password(
     let result = database
         .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
-            "UPDATE `sys_user` SET `password_hash` = ?, `status` = '1', `auth_version` = `auth_version` + 1 WHERE `tenant_id` = 'system' AND `username` = ?",
+            "UPDATE `sys_user` SET `password_hash` = ?, `status` = '1', `authorization_version` = `authorization_version` + 1 WHERE `tenant_id` = 'system' AND `username` = ?",
             [password_hash.into(), username.into()],
         ))
         .await?;

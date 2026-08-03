@@ -4,10 +4,19 @@
 
 mod common;
 
+fn page_query(page: u64, page_size: u64) -> ryframe_core::ValidatedPageQuery {
+    ryframe_core::ValidatedPageQuery::new(
+        page,
+        page_size,
+        &ryframe_config::PaginationConfig::default(),
+    )
+    .expect("测试分页参数必须有效")
+}
+
 use chrono::Utc;
 use common::setup_test_db;
 use ryframe_core::auto_fill::{AutoFill, FillContext};
-use ryframe_core::repository::{PageQuery, Repository};
+use ryframe_core::repository::Repository;
 use ryframe_db::{
     ConfigFilter, ConfigRepository, DictDataRepository, DictTypeFilter, DictTypeRepository,
     LoginInfoFilter, LoginInfoRepository, NoticeFilter, NoticeRepository, OperLogFilter,
@@ -16,6 +25,7 @@ use ryframe_db::{
         config, dict_data, dict_type, login_info, notice, oper_log, permission, post, role,
     },
 };
+use sea_orm::TransactionTrait;
 
 fn now() -> chrono::DateTime<Utc> {
     Utc::now()
@@ -164,6 +174,8 @@ fn make_oper_log(oper_name: &str, status: &str) -> oper_log::Model {
     let mut m = oper_log::Model {
         id: 0,
         tenant_id: "system".into(),
+        event_id: None,
+        request_id: None,
         title: format!("{}操作", oper_name),
         business_type: "INSERT".into(),
         method: "UserService.create".into(),
@@ -235,20 +247,24 @@ async fn test_permission_repo_assign_and_find_role_perms() {
         .await
         .unwrap();
 
+    let transaction = db.begin().await.unwrap();
     perm_repo
-        .assign_perms(&db, "system", r.id, &[p1.id, p2.id])
+        .assign_perms(&transaction, "system", r.id, &[p1.id, p2.id])
         .await
         .unwrap();
+    transaction.commit().await.unwrap();
     let perms = perm_repo
         .find_role_perms(&db, "system", &[r.id])
         .await
         .unwrap();
     assert_eq!(perms.len(), 2);
 
+    let transaction = db.begin().await.unwrap();
     perm_repo
-        .assign_perms(&db, "system", r.id, &[p1.id])
+        .assign_perms(&transaction, "system", r.id, &[p1.id])
         .await
         .unwrap();
+    transaction.commit().await.unwrap();
     let perms = perm_repo
         .find_role_perms(&db, "system", &[r.id])
         .await
@@ -350,14 +366,7 @@ async fn test_post_repo_filtered_pagination() {
     .unwrap();
 
     let page = repo
-        .find_by_page_filtered(
-            &db,
-            "system",
-            PageQuery::default(),
-            Some("经理"),
-            None,
-            None,
-        )
+        .find_by_page_filtered(&db, "system", page_query(1, 10), Some("经理"), None, None)
         .await
         .unwrap();
     assert_eq!(page.records.len(), 1);
@@ -406,33 +415,19 @@ async fn test_config_repo_pagination_boundary() {
     }
 
     let p1 = repo
-        .find_by_page(
-            &db,
-            "system",
-            PageQuery {
-                page: 1,
-                page_size: 10,
-            },
-        )
+        .find_by_page(&db, "system", page_query(1, 10))
         .await
         .unwrap();
     assert_eq!(p1.records.len(), 10);
     assert_eq!(p1.total, 25);
 
     let p3 = repo
-        .find_by_page(
-            &db,
-            "system",
-            PageQuery {
-                page: 3,
-                page_size: 10,
-            },
-        )
+        .find_by_page(&db, "system", page_query(3, 10))
         .await
         .unwrap();
     assert_eq!(p3.records.len(), 5);
 
-    let query = PageQuery::default();
+    let query = page_query(1, 10);
     let filtered = repo
         .find_by_page_filtered(
             &db,
@@ -465,7 +460,7 @@ async fn test_dict_type_repo_crud() {
         .find_by_page_filtered(
             &db,
             "system",
-            &PageQuery::default(),
+            &page_query(1, 10),
             &DictTypeFilter {
                 name: Some("系统"),
                 code: Some("normal"),
@@ -561,7 +556,7 @@ async fn test_notice_repo_filtered_pagination() {
         .find_by_page_filtered(
             &db,
             "system",
-            &PageQuery::default(),
+            &page_query(1, 10),
             &NoticeFilter {
                 title: None,
                 notice_type: Some("2"),
@@ -577,7 +572,7 @@ async fn test_notice_repo_filtered_pagination() {
         .find_by_page_filtered(
             &db,
             "system",
-            &PageQuery::default(),
+            &page_query(1, 10),
             &NoticeFilter {
                 title: Some("通知"),
                 notice_type: None,
@@ -619,12 +614,12 @@ async fn test_login_info_repo_insert_and_query() {
     .unwrap();
 
     let page = repo
-        .find_by_page(&db, "system", PageQuery::default())
+        .find_by_page(&db, "system", page_query(1, 10))
         .await
         .unwrap();
     assert_eq!(page.total, 3);
 
-    let query = PageQuery::default();
+    let query = page_query(1, 10);
     let page = repo
         .find_by_page_filtered(
             &db,
@@ -642,7 +637,7 @@ async fn test_login_info_repo_insert_and_query() {
         .unwrap();
     assert_eq!(page.records.len(), 1);
 
-    let query = PageQuery::default();
+    let query = page_query(1, 10);
     let page = repo
         .find_by_page_filtered(
             &db,
@@ -687,7 +682,7 @@ async fn test_login_info_repo_clean_all() {
     assert_eq!(deleted, 3);
 
     let page = repo
-        .find_by_page(&db, "system", PageQuery::default())
+        .find_by_page(&db, "system", page_query(1, 10))
         .await
         .unwrap();
     assert_eq!(page.total, 0);
@@ -722,12 +717,12 @@ async fn test_oper_log_repo_insert_and_query() {
     .unwrap();
 
     let page = repo
-        .find_by_page(&db, "system", PageQuery::default())
+        .find_by_page(&db, "system", page_query(1, 10))
         .await
         .unwrap();
     assert_eq!(page.total, 3);
 
-    let query = PageQuery::default();
+    let query = page_query(1, 10);
     let page = repo
         .find_by_page_filtered(
             &db,
@@ -745,7 +740,7 @@ async fn test_oper_log_repo_insert_and_query() {
         .unwrap();
     assert_eq!(page.records.len(), 1);
 
-    let query = PageQuery::default();
+    let query = page_query(1, 10);
     let page = repo
         .find_by_page_filtered(
             &db,
@@ -773,6 +768,8 @@ async fn test_oper_log_repo_clean_all() {
         let mut m = oper_log::Model {
             id: 0,
             tenant_id: "system".into(),
+            event_id: None,
+            request_id: None,
             title: format!("操作{}", i),
             business_type: "QUERY".into(),
             method: "UserService.find".into(),

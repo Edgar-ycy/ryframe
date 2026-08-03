@@ -14,7 +14,8 @@
 - `APP_MONITOR_METRICS_BEARER_TOKEN` 必须由密钥管理系统注入，至少 32 字节，独立于
   用户 JWT 密钥并定期轮换。Nginx 仅允许 Prometheus/VPN 网段访问 metrics 路径，应用
   再校验 Bearer Token。
-- `/livez` 可用于进程存活探测；`/readyz` 会检查关键依赖。公网负载均衡器仅需访问
+- `/livez` 可用于进程存活探测；后台任务会检查关键依赖，`/readyz` 只读取内存快照，
+  不会在请求路径执行 SQL、Redis 或对象存储网络调用。公网负载均衡器仅需访问
   探针，不应访问 metrics、监控详情接口或 API 文档。
 
 Prometheus 推荐使用文件型 secret，避免 Token 出现在命令行和配置仓库：
@@ -58,7 +59,7 @@ job。不能让两个 Token 经同一个随机负载均衡目标抓取，否则�
 | TLS 到期 | `prometheus/blackbox_exporter` HTTPS probe |
 | 备份成功时间 | 备份任务通过 node exporter textfile collector 或 Pushgateway 发布 |
 
-备份指标必须只在 `deploy.sh validate` 和恢复演练成功后更新：
+备份指标必须只在备份摘要校验和隔离环境恢复演练成功后更新；仓库不提供 `deploy.sh`：
 
 ```text
 # HELP ryframe_backup_last_success_timestamp_seconds Last validated backup Unix timestamp.
@@ -72,7 +73,8 @@ Prometheus 查询结果和 Alertmanager 测试通知。
 生产使用 `jobs.mode=external` 时，API 实例不会采集后台任务队列指标；必须为每个
 `ryframe-worker` 建立上述独立 scrape target，并在网络策略中仅允许 Prometheus/VPN
 访问 `jobs.health_port`。`/livez` 和 `/readyz` 同样通过该内网端口探测，禁止将其经
-公网 Nginx 转发。
+公网 Nginx 转发。独立 Worker 的后台快照只要求 MySQL 与 required Redis，对象存储
+标记为 `not_required`；对象存储仍在 Worker 启动时完成导出 bucket 校验。
 
 规则模板中的 `runbook` annotation 使用仓库内相对路径。部署时如果已将本文档发布到
 内部文档站，可将其转换为 Alertmanager 支持点击的绝对 `runbook_url`。
@@ -140,7 +142,16 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 
 区分慢消费者与已关闭连接：前者检查客户端消费、网络和连接数，后者确认是否为正常断线
 重连。持久化收件箱会补拉未确认消息，排障期间不得手工写入 `acked_at`，以免掩盖未送达
-消息。
+消息。消息中心运行边界统一来自 `[messaging]`；可使用 `APP_MESSAGING_ENABLED`、
+`APP_MESSAGING_TICKET_TTL_SECONDS`、`APP_MESSAGING_RETENTION_DAYS`、
+`APP_MESSAGING_MAX_CONNECTIONS_PER_USER`、`APP_MESSAGING_OUTBOUND_BUFFER` 和
+`APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE` 覆盖，修改后必须重启 API 与 Worker。
+
+达到每用户连接上限时先排查客户端重复建连和退避策略，不要直接放大容量；慢消费者会以
+WebSocket `1013` 关闭，连接数超限使用策略关闭。发布被收件人数上限拒绝时，事务不会留下
+消息或部分收件箱快照；应缩小受众、拆分业务消息或在完成容量评估后调整上限。生产启用
+消息中心时 Redis 必须为 `required`，关闭消息中心会同时停止票据、实时订阅和消息任务，
+不能把它当作仅关闭 WebSocket 的开关。
 
 ### OpenTelemetry 导出器
 
@@ -148,6 +159,24 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 初始化失败会触发 `ryframe_otel_exporter_degraded`；运行或关闭期间的失败会累计在
 `ryframe_otel_exporter_runtime_failures_total`。两类告警均不应阻断就绪探针；恢复后验证
 新的 trace 能抵达后端，再关闭告警。
+
+OTel 故障日志只使用固定的 `failure_stage=initialization|export|shutdown`，指标不携带 endpoint、
+租户、用户或请求标识等动态标签，避免泄露连接信息并控制基数。退出时 flush 的总等待上限固定
+为 5 秒；本地可运行 `cargo test -p ryframe-middleware telemetry`，使用不响应的回环地址验证导出
+失败前后业务与 `/readyz` 均保持可用、运行期计数递增且关闭不会越过时限。
+
+### 应用日志输出与保留
+
+API 与独立 Worker 使用相同的日志配置。生产容器默认
+`APP_LOGGER_LEVEL=info`、`APP_LOGGER_FORMAT=json`、`APP_LOGGER_OUTPUT=stdout`，本地不创建
+`logs/`；日志轮转、保留和容量告警由容器平台统一负责。先检查平台采集器、实例标签和
+保留策略，再排查应用日志级别，避免把采集故障误判为应用未记录日志。
+
+非容器部署需要本地文件时，可显式设置 `APP_LOGGER_OUTPUT=file`。应用会在工作目录的
+`logs/` 中按日滚动 `ryframe.log.*`，并按 `APP_LOGGER_RETENTION_DAYS` 保留 1–3650 个最近
+文件；API 和 Worker 都必须拥有目录写权限。容器内启用文件模式前必须挂载可写持久卷，
+否则只读根文件系统会使进程拒绝启动。修改任一 `APP_LOGGER_*` 配置后需重启对应进程；
+排障时不得手工删除仍在保留窗口内的日志。
 
 ### 磁盘容量
 
@@ -157,8 +186,7 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 
 ### 备份失败或过期
 
-检查备份任务、目标容量、凭据和网络。立即补跑 `backup`、`validate` 和隔离库
-`rehearse`；只有三步全部成功才更新成功时间指标。不得用未经恢复验证的文件解除告警。
+检查备份任务、目标容量、凭据和网络。立即使用部署环境自有工具补做备份、摘要校验和隔离库恢复演练；只有三步全部成功才更新成功时间指标。不得用未经恢复验证的文件解除告警。
 
 ### TLS 证书
 

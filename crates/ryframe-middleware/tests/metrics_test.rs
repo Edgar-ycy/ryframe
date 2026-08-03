@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use ryframe_middleware::metrics::{
-    metrics_text, normalize_path, observe_job_duration, observe_message_ack_latency,
-    record_database_read_fallback, record_database_read_selection, record_otel_exporter_failure,
-    set_database_node_health, set_job_oldest_ready_age, set_job_queue_depth,
-    set_otel_exporter_degraded,
+    database_read_fallback_total, database_read_selection_totals, metrics_text, normalize_path,
+    observe_job_duration, observe_message_ack_latency, record_database_read_fallback,
+    record_database_read_selection, record_otel_exporter_failure, set_database_node_health,
+    set_job_oldest_ready_age, set_job_queue_depth, set_otel_exporter_degraded,
 };
 
 #[test]
@@ -53,6 +53,7 @@ fn test_metrics_text_format() {
 
 #[test]
 fn operational_metrics_use_bounded_labels() {
+    let fallback_before = database_read_fallback_total();
     set_database_node_health("replica-a", "replica", false);
     record_database_read_selection("primary", "fallback");
     record_database_read_fallback();
@@ -77,4 +78,12 @@ fn operational_metrics_use_bounded_labels() {
     assert!(text.contains("ryframe_message_ack_latency_seconds"));
     assert!(text.contains("ryframe_otel_exporter_failures_total"));
     assert!(text.contains("ryframe_otel_exporter_degraded"));
+    assert_eq!(database_read_fallback_total(), fallback_before + 1);
+    assert!(
+        database_read_selection_totals()
+            .iter()
+            .any(|(target, reason, count)| *target == "primary"
+                && *reason == "fallback"
+                && *count >= 1)
+    );
 }

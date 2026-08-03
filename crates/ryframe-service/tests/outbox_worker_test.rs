@@ -22,10 +22,6 @@ async fn outbox_worker_publishes_message_event_as_idempotent_background_job() {
         .execute(&schema.create_table_from_entity(background_job::Entity))
         .await
         .unwrap();
-    database
-        .execute(&schema.create_table_from_entity(outbox_event::Entity))
-        .await
-        .unwrap();
 
     let cluster = DatabaseCluster::single(database.connection().clone());
     let queue = Arc::new(JobQueue::new(cluster));

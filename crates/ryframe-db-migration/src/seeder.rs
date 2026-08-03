@@ -200,6 +200,7 @@ where
 fn seed_identity_columns(table: &str) -> Option<&'static [&'static str]> {
     match table {
         "sys_tenant" => Some(&["id", "tenant_id"]),
+        "sys_cache_namespace_version" => Some(&["tenant_id", "namespace"]),
         "sys_dept" => Some(&["id", "parent_id"]),
         "sys_role" => Some(&["id", "code"]),
         "sys_user" => Some(&["id", "username"]),

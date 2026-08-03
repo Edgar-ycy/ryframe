@@ -4,11 +4,16 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiResponse, AppError, AppResult};
+use ryframe_http::{ApiResponse, HttpResult};
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
-use ryframe_service::system::{ExportJobVo, RequestExportCommand};
+use ryframe_service::system::RequestExportCommand;
 
-use crate::{dto::export_dto::CancelExportJobDto, handler_utils::excel_response, state::AppState};
+use crate::{
+    dto::{export_dto::CancelExportJobDto, public_dto::ExportJobVo},
+    handler_utils::excel_response,
+    state::AppState,
+};
 
 /// 导出任务查询、取消与下载路由。
 pub fn export_router(state: AppState) -> Router {
@@ -28,13 +33,14 @@ pub fn export_router(state: AppState) -> Router {
 async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<Vec<ExportJobVo>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<ExportJobVo>>>> {
     state
         .services
         .export
         .list_for_requester(&current_user)
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|jobs| jobs.into_iter().map(ExportJobVo::from).collect())
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -49,13 +55,14 @@ async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<String>,
-) -> AppResult<Json<ApiResponse<ExportJobVo>>> {
+) -> HttpResult<Json<ApiResponse<ExportJobVo>>> {
     state
         .services
         .export
         .find_for_requester(&current_user, parse_export_id(&id)?)
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(ExportJobVo::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -72,14 +79,14 @@ async fn cancel(
     current_user: RequestPrincipal,
     Path(id): Path<String>,
     Json(_request): Json<CancelExportJobDto>,
-) -> AppResult<Json<ApiResponse<ExportJobVo>>> {
+) -> HttpResult<Json<ApiResponse<ExportJobVo>>> {
     state
         .services
         .export
         .cancel_for_requester(&current_user, parse_export_id(&id)?)
         .await
-        .map_err(AppError::from)
-        .map(|job| ApiResponse::success_msg("导出任务已取消", job))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|job| ApiResponse::success_msg("导出任务已取消", job.into()))
         .map(Json)
 }
 
@@ -93,28 +100,29 @@ async fn download(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<String>,
-) -> AppResult<axum::response::Response> {
+) -> HttpResult<axum::response::Response> {
     let location = state
         .services
         .export
         .download_location_for_requester(&current_user, parse_export_id(&id)?)
         .await
-        .map_err(AppError::from)?;
-    let (bytes, filename) = state
+        .map_err(ryframe_http::HttpAppError::from)?;
+    let file = state
         .services
         .file
         .download(&current_user, &location.bucket, &location.path)
         .await
-        .map_err(AppError::from)?;
-    excel_response(bytes, &filename)
+        .map_err(ryframe_http::HttpAppError::from)?;
+    // 导出结果只允许以受控的 Excel 类型返回，不信任通用文件元数据覆盖响应类型。
+    excel_response(file.data, &file.original_name)
 }
 
-fn parse_export_id(value: &str) -> AppResult<i64> {
-    value
+fn parse_export_id(value: &str) -> HttpResult<i64> {
+    Ok(value
         .parse::<i64>()
         .ok()
         .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation("导出任务 ID 必须是正整数".into()))
+        .ok_or_else(|| AppError::Validation("导出任务 ID 必须是正整数".into()))?)
 }
 
 /// 创建导出任务前必须显式给出幂等键，实际重放语义由系统路由的幂等中间件统一处理。
@@ -125,7 +133,7 @@ pub(crate) async fn request_export(
     resource: &str,
     permission_code: &str,
     request_params: serde_json::Value,
-) -> AppResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     require_idempotency_key(&headers)?;
     let export = state
         .services
@@ -139,19 +147,19 @@ pub(crate) async fn request_export(
             },
         )
         .await
-        .map_err(AppError::from)?;
+        .map_err(ryframe_http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(ApiResponse::success_msg("导出任务已创建", export)),
+        Json(ApiResponse::success_msg("导出任务已创建", export.into())),
     ))
 }
 
-fn require_idempotency_key(headers: &HeaderMap) -> AppResult<()> {
+fn require_idempotency_key(headers: &HeaderMap) -> HttpResult<()> {
     let valid = headers
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| !value.trim().is_empty());
-    valid
+    Ok(valid
         .then_some(())
-        .ok_or_else(|| AppError::Validation("导出任务必须提供 Idempotency-Key 请求头".into()))
+        .ok_or_else(|| AppError::Validation("导出任务必须提供 Idempotency-Key 请求头".into()))?)
 }

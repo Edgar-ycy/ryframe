@@ -1,15 +1,14 @@
+use crate::dto::public_dto::OnlineUserVo;
+use crate::list_query;
+use crate::state::AppState;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
-use ryframe_kernel::AppError as KernelAppError;
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
+use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, route};
-use ryframe_service::system::online_user_service::OnlineUserVo;
-
-use crate::list_query;
-use crate::state::AppState;
 
 list_query!(pub OnlineUserQuery, OnlineUserFilterQuery {
     username: String,
@@ -19,35 +18,9 @@ list_query!(pub OnlineUserQuery, OnlineUserFilterQuery {
 /// 在线用户路由
 pub fn online_user_router(state: AppState) -> Router {
     Router::new()
-        .merge(route!(list_online_users))
         .merge(route!(list_online_users_page))
         .merge(route!(force_logout))
         .with_state(state)
-}
-
-/// 获取在线用户列表
-#[get("/all")]
-#[perm("monitor:online:list")]
-/// 获取在线用户列表
-#[utoipa::path(get, path = "/api/v1/system/online/all", tag = "在线用户",
-    params(OnlineUserFilterQuery),
-    responses((status = 200, description = "在线用户列表", body = ApiResponse<Vec<OnlineUserVo>>)), security(("bearer" = [])))]
-pub async fn list_online_users(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<OnlineUserFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<OnlineUserVo>>>> {
-    let filtered = state
-        .services
-        .online_user
-        .list_filtered(
-            &current_user,
-            query.username.as_deref(),
-            query.ipaddr.as_deref(),
-        )
-        .await?;
-
-    Ok(Json(ApiResponse::success(filtered)))
 }
 
 /// 获取在线用户列表（分页）
@@ -61,8 +34,10 @@ pub async fn list_online_users_page(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<OnlineUserQuery>,
-) -> AppResult<Json<ApiPageResponse<OnlineUserVo>>> {
+) -> HttpResult<Json<ApiPageResponse<OnlineUserVo>>> {
     let (page, filter) = query.into_parts(&state.config.pagination)?;
+    let response_page = page.page();
+    let response_page_size = page.page_size();
     let (rows, total) = state
         .services
         .online_user
@@ -70,15 +45,14 @@ pub async fn list_online_users_page(
             &current_user,
             filter.username.as_deref(),
             filter.ipaddr.as_deref(),
-            page.page,
-            page.page_size,
+            page,
         )
         .await?;
     Ok(Json(ApiPageResponse::new(
-        rows,
+        rows.into_iter().map(OnlineUserVo::from).collect(),
         total,
-        page.page,
-        page.page_size,
+        response_page,
+        response_page_size,
         state.config.pagination.max_page_size,
         "查询成功",
     )))
@@ -100,7 +74,7 @@ pub async fn force_logout(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(sid): Path<String>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     // 刷新令牌族是权威状态。先撤销它，同时原子校验 tenant + sid。若 Redis
     // 失败则返回 503 而不删除展示索引，同一请求可以安全重试。
     let revoked = state
@@ -110,12 +84,12 @@ pub async fn force_logout(
         .revoke_for_tenant(&current_user.tenant_id, &sid)
         .await
         .inspect_err(|error| {
-            if matches!(error, KernelAppError::ServiceUnavailable(_)) {
+            if matches!(error, AppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("force_logout_session");
             }
         })?;
     if !revoked {
-        return Err(AppError::NotFound("在线会话不存在".into()));
+        return Err(AppError::NotFound("在线会话不存在".into()).into());
     }
 
     // 这是尽力而为的二级索引清理。已撤销的令牌族会使该 sid 的所有访问/刷新

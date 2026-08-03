@@ -2,16 +2,18 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Request, State},
+    body::Body,
+    extract::{Path, Request, State},
     http::{HeaderValue, StatusCode, header, header::RETRY_AFTER},
     middleware,
     middleware::{Next, from_fn_with_state},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_config::RedisMode;
-use ryframe_http::{ApiResponse, AppError, AppResult};
+use ryframe_http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
 use ryframe_middleware::{
     idempotency::{IdempotencyState, idempotency_middleware},
@@ -20,8 +22,8 @@ use ryframe_middleware::{
 };
 use ryframe_service::system::OnlineUserService;
 use serde::Serialize;
-use serde_json::json;
 use utoipa::ToSchema;
+use utoipa_swagger_ui::{Config as SwaggerUiConfig, serve as serve_swagger_ui};
 
 use crate::{
     handlers::{
@@ -53,7 +55,9 @@ async fn authenticated_tenant_rate_limit(
     let principal = request
         .extensions()
         .get::<RequestPrincipal>()
-        .ok_or_else(|| AppError::Authentication("未认证，请先登录".into()).into_response())?;
+        .ok_or_else(|| {
+            HttpAppError::from(AppError::Authentication("未认证，请先登录".into())).into_response()
+        })?;
     let key = format!("tenant:{}", principal.tenant_id);
     let limit = principal.tenant_request_limit_per_minute.max(1);
 
@@ -138,7 +142,7 @@ async fn online_user_tracking(
 ///   `protected`：认证 → 操作日志 → 处理器
 ///   `profile`：认证 → 操作日志 → 处理器
 pub fn auth_router(state: AppState) -> Router {
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.job_queue.clone());
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone());
 
     // 认证端点可能携带 Cookie、CSRF challenge 或令牌数据，因此绝不进入通用的
     // 操作日志中间件。
@@ -183,22 +187,50 @@ pub fn auth_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// API 版本信息
-async fn api_version() -> Json<serde_json::Value> {
-    Json(json!({
-        "name": env!("CARGO_PKG_NAME"),
-        "version": env!("CARGO_PKG_VERSION"),
-        "source_commit": env!("RYFRAME_BUILD_COMMIT"),
-        "api_prefix": crate::API_V1_PREFIX,
-        "endpoints": {
-            "auth": "/api/v1/auth",
-            "system": "/api/v1/system",
-            "monitor": "/api/v1/monitor",
-            "tools": "/api/v1/tools",
-            "common": "/api/v1/common",
-            "openapi": "/api/v1/api-docs/openapi.json",
-            "swagger": "/api/v1/swagger-ui"
-        }
+/// API 主要入口。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApiVersionEndpoints {
+    pub auth: String,
+    pub system: String,
+    pub monitor: String,
+    pub tools: String,
+    pub common: String,
+    pub openapi: String,
+    pub swagger: String,
+}
+
+/// API 版本与构建信息。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApiVersionInfo {
+    pub name: String,
+    pub version: String,
+    pub source_commit: String,
+    pub api_prefix: String,
+    pub endpoints: ApiVersionEndpoints,
+}
+
+/// 返回 API 版本与主要入口。
+#[utoipa::path(
+    get,
+    path = "/api/v1/version",
+    tag = "通用",
+    responses((status = 200, description = "API 版本与构建信息", body = ApiResponse<ApiVersionInfo>))
+)]
+pub async fn api_version() -> Json<ApiResponse<ApiVersionInfo>> {
+    Json(ApiResponse::success(ApiVersionInfo {
+        name: env!("CARGO_PKG_NAME").to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        source_commit: env!("RYFRAME_BUILD_COMMIT").to_owned(),
+        api_prefix: API_PREFIX.to_owned(),
+        endpoints: ApiVersionEndpoints {
+            auth: api_path("auth"),
+            system: api_path("system"),
+            monitor: api_path("monitor"),
+            tools: api_path("tools"),
+            common: api_path("common"),
+            openapi: api_path("api-docs/openapi.json"),
+            swagger: api_path("swagger-ui"),
+        },
     }))
 }
 
@@ -211,7 +243,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let platform = protect(
         crate::handlers::tenant_handler::tenant_router(state.clone())
             .layer(from_fn_with_state(
-                OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
+                OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
                 oper_log_middleware,
             ))
             .layer(from_fn_with_state(
@@ -245,7 +277,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     if state.config.api_docs.enabled {
         router = router
             .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
-            .route("/swagger-ui", get(swagger_ui));
+            .merge(swagger_ui_router());
     }
     router.layer(middleware::from_fn(request_locale_middleware))
 }
@@ -256,7 +288,7 @@ fn monitor_router(state: AppState, monitor_state: ryframe_monitor::MonitorState)
         .merge(route!(runtime_status).with_state(state.clone()))
         .merge(job_handler::job_router(state.clone()))
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
+            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
             oper_log_middleware,
         ));
 
@@ -270,7 +302,7 @@ fn monitor_router(state: AppState, monitor_state: ryframe_monitor::MonitorState)
     security(("bearer" = [])))]
 async fn runtime_status(
     State(state): State<AppState>,
-) -> AppResult<Json<ApiResponse<RuntimeStatus>>> {
+) -> HttpResult<Json<ApiResponse<RuntimeStatus>>> {
     let database_health = state.monitor.database.topology_health().await;
     let replicas_connected = database_health
         .replicas
@@ -305,6 +337,14 @@ async fn runtime_status(
     };
     let storage_connected = state.services.file.check_storage().await.is_ok();
     let storage_config = &state.config.object_storage;
+    let read_selections = ryframe_middleware::metrics::database_read_selection_totals()
+        .into_iter()
+        .map(|(target, reason, count)| RuntimeDatabaseReadSelection {
+            target: target.into(),
+            reason: reason.into(),
+            count,
+        })
+        .collect();
 
     Ok(Json(ApiResponse::success(RuntimeStatus {
         database: RuntimeDatabaseStatus {
@@ -316,6 +356,8 @@ async fn runtime_status(
             source_count: sources.len(),
             sources,
             read_policy: read_policy.into(),
+            read_fallback_total: ryframe_middleware::metrics::database_read_fallback_total(),
+            read_selections,
         },
         redis: RuntimeRedisStatus {
             configured: state
@@ -355,6 +397,15 @@ struct RuntimeDatabaseStatus {
     source_count: usize,
     sources: Vec<RuntimeDatabaseSourceStatus>,
     read_policy: String,
+    read_fallback_total: u64,
+    read_selections: Vec<RuntimeDatabaseReadSelection>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeDatabaseReadSelection {
+    target: String,
+    reason: String,
+    count: u64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -429,7 +480,7 @@ fn system_router(
         )
         // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
+            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
@@ -455,7 +506,7 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let router = Router::new()
         .nest("/gen", generator_handler::generator_router(state.clone()))
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.job_queue.clone()),
+            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
@@ -469,7 +520,7 @@ fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 /// 通用功能路由（文件上传等）
 /// 上传和下载都要求认证主体，并记录操作日志。
 fn common_router(state: AppState) -> Router {
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.job_queue.clone());
+    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone());
 
     let upload = protect(
         common_handler::upload_router(state.clone()).layer(from_fn_with_state(
@@ -492,48 +543,245 @@ fn common_router(state: AppState) -> Router {
         .nest("/jobs", exports)
 }
 
-/// Swagger UI 交互文档页面
-///
-/// 利用 CDN 加载 Swagger UI，指向本服务的 OpenAPI JSON。
-async fn swagger_ui() -> Html<&'static str> {
-    Html(
-        r##"<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RyFrame API 文档</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
-    <style>
-        html { box-sizing: border-box; overflow-y: scroll; }
-        *, *:before, *:after { box-sizing: inherit; }
-        body { margin: 0; background: #fafafa; }
-        .topbar { display: none; }
-        .swagger-ui .info .title { font-size: 2em; }
-    </style>
-</head>
-<body>
-    <div id="swagger-ui"></div>
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js" crossorigin></script>
-    <script>
-        window.onload = () => {
-            window.ui = SwaggerUIBundle({
-                url: "/api/v1/api-docs/openapi.json",
-                dom_id: "#swagger-ui",
-                deepLinking: true,
-                presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
-                layout: "StandaloneLayout",
-                defaultModelsExpandDepth: 1,
-                defaultModelExpandDepth: 1,
-                docExpansion: "list",
-                filter: true,
-                showExtensions: true,
-                showCommonExtensions: true,
-            });
-        };
-    </script>
-</body>
-</html>"##,
-    )
+const SWAGGER_UI_NO_CACHE: &str = "no-store";
+const SWAGGER_UI_STATIC_CACHE: &str = "public, max-age=86400";
+
+fn swagger_ui_base_element() -> String {
+    format!("<base href=\"{}/swagger-ui/\">", API_PREFIX)
+}
+
+fn swagger_ui_router() -> Router {
+    Router::new()
+        .route("/swagger-ui", get(swagger_ui_index))
+        .route("/swagger-ui/{*asset}", get(swagger_ui_asset))
+}
+
+/// 返回唯一的 Swagger UI 文档入口，不提供尾斜杠兼容路由或重定向。
+async fn swagger_ui_index() -> Response {
+    swagger_ui_response("")
+}
+
+/// 返回编译进二进制的 Swagger UI 静态资源。
+async fn swagger_ui_asset(Path(asset): Path<String>) -> Response {
+    let asset = asset.trim_start_matches('/');
+    if asset.is_empty() || asset == "index.html" || asset.contains('/') || asset.contains("..") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    swagger_ui_response(asset)
+}
+
+fn swagger_ui_response(asset: &str) -> Response {
+    let config = Arc::new(
+        SwaggerUiConfig::from(api_path("api-docs/openapi.json"))
+            .deep_linking(true)
+            .default_models_expand_depth(1)
+            .default_model_expand_depth(1)
+            .doc_expansion("list")
+            .filter(true)
+            .show_extensions(true)
+            .show_common_extensions(true)
+            .validator_url("none"),
+    );
+
+    match serve_swagger_ui(asset, config) {
+        Ok(Some(file)) => {
+            let bytes = if asset.is_empty() {
+                match localize_swagger_index(file.bytes.into_owned()) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        tracing::error!(%error, "无法解析内嵌 Swagger UI 首页");
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                }
+            } else {
+                file.bytes.into_owned()
+            };
+            let cache_control = if asset.is_empty() || asset == "swagger-initializer.js" {
+                SWAGGER_UI_NO_CACHE
+            } else {
+                SWAGGER_UI_STATIC_CACHE
+            };
+
+            match Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, file.content_type)
+                .header(header::CACHE_CONTROL, cache_control)
+                .body(Body::from(bytes))
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::error!(%error, "无法构造内嵌 Swagger UI 响应");
+                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                }
+            }
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            tracing::error!(%error, "无法读取内嵌 Swagger UI 资源");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+fn localize_swagger_index(bytes: Vec<u8>) -> Result<Vec<u8>, std::string::FromUtf8Error> {
+    let html = String::from_utf8(bytes)?
+        .replacen("<html lang=\"en\">", "<html lang=\"zh-CN\">", 1)
+        .replacen(
+            "<head>",
+            &format!("<head>\n    {}", swagger_ui_base_element()),
+            1,
+        )
+        .replacen(
+            "<title>Swagger UI</title>",
+            "<title>RyFrame API 文档</title>",
+            1,
+        );
+    Ok(html.into_bytes())
+}
+
+#[cfg(test)]
+mod swagger_ui_tests {
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    async fn body_text(response: Response) -> String {
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("应能读取 Swagger UI 响应体")
+            .to_bytes();
+        String::from_utf8(bytes.to_vec()).expect("Swagger UI 文本资源必须是 UTF-8")
+    }
+
+    async fn get(path: &str) -> Response {
+        swagger_ui_router()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("应能构造 Swagger UI 请求"),
+            )
+            .await
+            .expect("Swagger UI 路由应返回响应")
+    }
+
+    #[tokio::test]
+    async fn 文档入口只引用同源外部脚本和样式() {
+        let response = get("/swagger-ui").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            SWAGGER_UI_NO_CACHE
+        );
+        assert!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("text/html")
+        );
+
+        let html = body_text(response).await;
+        assert!(html.contains(&swagger_ui_base_element()));
+        assert!(html.contains("id=\"swagger-ui\""));
+        assert!(!html.contains("http://"));
+        assert!(!html.contains("https://"));
+
+        let mut remaining = html.as_str();
+        while let Some(start) = remaining.find("<script") {
+            let script = &remaining[start..];
+            let end = script.find('>').expect("script 标签必须闭合");
+            assert!(
+                script[..=end].contains(" src="),
+                "Swagger UI 不应包含内联初始化脚本"
+            );
+            remaining = &script[end + 1..];
+        }
+
+        for asset in [
+            "swagger-ui.css",
+            "index.css",
+            "favicon-32x32.png",
+            "favicon-16x16.png",
+            "swagger-ui-bundle.js",
+            "swagger-ui-standalone-preset.js",
+            "swagger-initializer.js",
+        ] {
+            assert!(html.contains(asset), "文档入口未引用内嵌资源：{asset}");
+            assert_eq!(
+                get(&format!("/swagger-ui/{asset}")).await.status(),
+                StatusCode::OK,
+                "浏览器无法加载文档资源：{asset}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn 内嵌静态资源具有正确类型和缓存策略() {
+        for (asset, expected_content_type) in [
+            ("swagger-ui.css", "text/css"),
+            ("index.css", "text/css"),
+            ("favicon-32x32.png", "image/png"),
+            ("favicon-16x16.png", "image/png"),
+            ("swagger-ui-bundle.js", "javascript"),
+            ("swagger-ui-standalone-preset.js", "javascript"),
+        ] {
+            let response = get(&format!("/swagger-ui/{asset}")).await;
+            assert_eq!(response.status(), StatusCode::OK, "资源不存在：{asset}");
+            assert!(
+                response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .contains(expected_content_type),
+                "资源 Content-Type 错误：{asset}"
+            );
+            assert_eq!(
+                response.headers().get(header::CACHE_CONTROL).unwrap(),
+                SWAGGER_UI_STATIC_CACHE
+            );
+        }
+
+        let initializer = get("/swagger-ui/swagger-initializer.js").await;
+        assert_eq!(initializer.status(), StatusCode::OK);
+        assert!(
+            initializer
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("javascript")
+        );
+        assert_eq!(
+            initializer.headers().get(header::CACHE_CONTROL).unwrap(),
+            SWAGGER_UI_NO_CACHE
+        );
+        let initializer = body_text(initializer).await;
+        assert!(initializer.contains("/api/v1/api-docs/openapi.json"));
+        assert!(initializer.contains("\"validatorUrl\": \"none\""));
+        assert!(!initializer.contains("http://"));
+        assert!(!initializer.contains("https://"));
+    }
+
+    #[tokio::test]
+    async fn 文档入口没有兼容重定向或重复首页() {
+        assert_eq!(get("/swagger-ui/").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            get("/swagger-ui/index.html").await.status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get("/swagger-ui/not-found.js").await.status(),
+            StatusCode::NOT_FOUND
+        );
+    }
 }

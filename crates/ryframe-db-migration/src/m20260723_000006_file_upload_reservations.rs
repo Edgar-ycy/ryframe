@@ -58,23 +58,6 @@ impl MigrationTrait for Migration {
         }
 
         if !manager
-            .has_index("sys_file", "idx_file_upload_reservation")
-            .await?
-        {
-            manager
-                .create_index(
-                    Index::create()
-                        .name("idx_file_upload_reservation")
-                        .table(Alias::new("sys_file"))
-                        .col(Alias::new("tenant_id"))
-                        .col(Alias::new("bucket"))
-                        .col(Alias::new("file_md5"))
-                        .col(Alias::new("upload_status"))
-                        .to_owned(),
-                )
-                .await?;
-        }
-        if !manager
             .has_index("sys_file", "idx_file_reservation_expiry")
             .await?
         {
@@ -97,17 +80,18 @@ impl MigrationTrait for Migration {
             return Ok(());
         }
 
-        for index_name in ["idx_file_reservation_expiry", "idx_file_upload_reservation"] {
-            if manager.has_index("sys_file", index_name).await? {
-                manager
-                    .drop_index(
-                        Index::drop()
-                            .name(index_name)
-                            .table(Alias::new("sys_file"))
-                            .to_owned(),
-                    )
-                    .await?;
-            }
+        if manager
+            .has_index("sys_file", "idx_file_reservation_expiry")
+            .await?
+        {
+            manager
+                .drop_index(
+                    Index::drop()
+                        .name("idx_file_reservation_expiry")
+                        .table(Alias::new("sys_file"))
+                        .to_owned(),
+                )
+                .await?;
         }
 
         for column_name in [

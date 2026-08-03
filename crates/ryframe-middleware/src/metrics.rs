@@ -116,6 +116,14 @@ lazy_static! {
         &["dependency"],
     )
     .expect("create readiness_failures_total");
+    static ref AUDIT_FAILURES_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "audit_failures_total",
+            "Operation-audit failures by bounded processing stage"
+        ),
+        &["stage"],
+    )
+    .expect("create audit_failures_total");
     static ref WS_CONNECTIONS: IntGauge = IntGauge::new(
         "ws_connections",
         "Current authenticated message WebSocket connections",
@@ -234,6 +242,7 @@ fn ensure_registered() {
             Box::new(IDEMPOTENCY_CONFLICTS_TOTAL.clone()),
             Box::new(RATE_LIMIT_REJECTIONS_TOTAL.clone()),
             Box::new(READINESS_FAILURES_TOTAL.clone()),
+            Box::new(AUDIT_FAILURES_TOTAL.clone()),
             Box::new(WS_CONNECTIONS.clone()),
             Box::new(WS_TICKETS_TOTAL.clone()),
             Box::new(MESSAGE_DELIVERY_TOTAL.clone()),
@@ -343,6 +352,12 @@ pub fn record_readiness_failure(dependency: &str) {
         .inc();
 }
 
+/// 记录一次操作审计失败；阶段值必须由调用方使用固定常量。
+pub fn record_audit_failure(stage: &'static str) {
+    ensure_registered();
+    AUDIT_FAILURES_TOTAL.with_label_values(&[stage]).inc();
+}
+
 /// 记录一次 WebSocket 票据申请、消费或拒绝结果。
 pub fn record_ws_ticket(result: &str) {
     ensure_registered();
@@ -387,6 +402,30 @@ pub fn record_database_read_selection(target: &'static str, reason: &'static str
 pub fn record_database_read_fallback() {
     ensure_registered();
     DB_READ_FALLBACK_TOTAL.inc();
+}
+
+/// 返回当前进程累计的最终一致性读取回退次数。
+pub fn database_read_fallback_total() -> u64 {
+    ensure_registered();
+    DB_READ_FALLBACK_TOTAL.get()
+}
+
+/// 返回当前进程按固定目标与原因统计的数据库读路由次数。
+pub fn database_read_selection_totals() -> Vec<(&'static str, &'static str, u64)> {
+    ensure_registered();
+    [
+        ("primary", "strong"),
+        ("replica", "replica"),
+        ("primary", "fallback"),
+    ]
+    .into_iter()
+    .map(|(target, reason)| {
+        let count = DB_READ_SELECTION_TOTAL
+            .with_label_values(&[target, reason])
+            .get();
+        (target, reason, count)
+    })
+    .collect()
 }
 
 /// 设置已注册任务类型在指定状态下的队列深度。

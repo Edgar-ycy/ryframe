@@ -9,6 +9,7 @@ pub mod menu_service;
 pub mod message_service;
 pub mod notice_service;
 pub mod oper_log_service;
+mod option;
 pub mod permission_service;
 pub mod post_service;
 pub mod role_service;
@@ -40,6 +41,7 @@ pub use notice_service::{NoticeListParams, NoticeService, NoticeVo};
 pub use oper_log_service::{
     OperLogQuery, OperLogService, OperLogStatus, OperLogVo, RecordOperLogCommand,
 };
+pub use option::{OptionItem, OptionList};
 pub use permission_service::{
     CreatePermissionCommand, PermissionService, PermissionSyncReport, PermissionTreeNode,
     PermissionType, PermissionVo, UpdatePermissionCommand,
@@ -57,6 +59,8 @@ pub use generator_service::{GeneratorService, TableListParams};
 pub mod profile_service;
 pub use profile_service::ProfileService;
 pub mod file_service;
-pub use file_service::{AVATAR_BUCKET, FileService, UPLOAD_BUCKET, UploadCommand, UploadResponse};
+pub use file_service::{
+    AVATAR_BUCKET, DownloadedFile, FileService, UPLOAD_BUCKET, UploadCommand, UploadResponse,
+};
 pub mod online_user_service;
 pub use online_user_service::{OnlineUserService, OnlineUserVo, UserSession};

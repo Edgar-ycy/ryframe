@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::{DateTime, Duration, Utc};
+use ryframe_config::MessagingConfig;
 use ryframe_db::{
     DatabaseCluster, MessageInboxQuery, MessageRepository, OutboxEventRepository,
     PublishMessageCommand, RecipientMessage, RecordOutboxEvent,
@@ -17,7 +18,6 @@ pub const MESSAGE_DISPATCH_JOB_TYPE: &str = "system.message.dispatch";
 pub const MESSAGE_DISPATCH_REDIS_CHANNEL: &str = "ryframe:message:dispatch";
 /// 每日清理过期消息的稳定任务类型标识。
 pub const MESSAGE_RETENTION_JOB_TYPE: &str = "system.message.retention";
-const DEFAULT_RETENTION_DAYS: i64 = 90;
 const RETENTION_BATCH_SIZE: u64 = 500;
 
 /// 创建消息的业务参数。
@@ -113,16 +113,18 @@ pub struct MessageService {
     repository: MessageRepository,
     outbox: OutboxEventRepository,
     queue: Arc<JobQueue>,
+    config: MessagingConfig,
 }
 
 impl MessageService {
     /// 使用主库和持久化任务队列构造服务。
-    pub fn new(db: DatabaseCluster, queue: Arc<JobQueue>) -> Self {
+    pub fn new(db: DatabaseCluster, queue: Arc<JobQueue>, config: MessagingConfig) -> Self {
         Self {
             db,
             repository: MessageRepository,
             outbox: OutboxEventRepository,
             queue,
+            config,
         }
     }
 
@@ -132,6 +134,7 @@ impl MessageService {
         actor: &ActorContext,
         params: PublishMessageParams,
     ) -> AppResult<PublishedMessage> {
+        self.ensure_enabled()?;
         let PublishMessageParams {
             tenant_id: requested_tenant_id,
             topic,
@@ -153,11 +156,12 @@ impl MessageService {
             None => actor_tenant_id.to_owned(),
         };
         let now = self.queue.database_now().await?;
-        let maximum_expiry = now + Duration::days(DEFAULT_RETENTION_DAYS);
+        let maximum_expiry = now + Duration::days(i64::from(self.config.retention_days));
         let expires_at = expires_at.unwrap_or(maximum_expiry);
         if expires_at > maximum_expiry {
             return Err(AppError::Validation(format!(
-                "消息有效期不能超过 {DEFAULT_RETENTION_DAYS} 天"
+                "消息有效期不能超过 {} 天",
+                self.config.retention_days
             )));
         }
         let content = self.prepare_content(&title, &content)?;
@@ -195,6 +199,7 @@ impl MessageService {
                     expires_at,
                     audiences,
                 },
+                self.config.max_recipients_per_message,
             )
             .await?;
         if published.inserted {
@@ -217,7 +222,7 @@ impl MessageService {
                 )
                 .await?;
         }
-        transaction.commit().await.map_err(database_error)?;
+        crate::commit_current_audit(transaction).await?;
 
         Ok(PublishedMessage {
             message: MessageTemplate::from_published(&published.message),
@@ -234,6 +239,7 @@ impl MessageService {
         limit: u64,
         unread_only: bool,
     ) -> AppResult<MessageInbox> {
+        self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
         let now = self.queue.database_now().await?;
         let page = self
@@ -263,6 +269,7 @@ impl MessageService {
         user_id: i64,
         limit: u64,
     ) -> AppResult<MessageInbox> {
+        self.ensure_enabled()?;
         ryframe_core::validate_explicit_tenant(tenant_id)?;
         let page = self
             .repository
@@ -289,16 +296,16 @@ impl MessageService {
         user_id: i64,
         message_ids: &[i64],
     ) -> AppResult<u64> {
+        self.ensure_enabled()?;
         ryframe_core::validate_explicit_tenant(tenant_id)?;
-        self.repository
-            .acknowledge(
-                self.db.write(),
-                tenant_id,
-                user_id,
-                message_ids,
-                self.queue.database_now().await?,
-            )
-            .await
+        let now = self.queue.database_now().await?;
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let updated = self
+            .repository
+            .acknowledge(&transaction, tenant_id, user_id, message_ids, now)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(updated)
     }
 
     /// 返回仍需要向在线连接唤醒的收件人快照。
@@ -306,6 +313,7 @@ impl MessageService {
         &self,
         message_id: i64,
     ) -> AppResult<Vec<MessageDelivery>> {
+        self.ensure_enabled()?;
         self.repository
             .unacknowledged_recipients_for_message(
                 self.db.write(),
@@ -330,6 +338,7 @@ impl MessageService {
         message_id: i64,
         user_ids: &[i64],
     ) -> AppResult<Vec<MessageDelivery>> {
+        self.ensure_enabled()?;
         self.repository
             .unacknowledged_recipients_for_message_for_online_users(
                 self.db.write(),
@@ -348,6 +357,7 @@ impl MessageService {
 
     /// 统计当前用户的未读消息数量。
     pub async fn unread_count(&self, actor: &ActorContext) -> AppResult<u64> {
+        self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.repository
             .unread_count(
@@ -361,53 +371,54 @@ impl MessageService {
 
     /// 确认客户端已接收的消息。
     pub async fn acknowledge(&self, actor: &ActorContext, message_ids: &[i64]) -> AppResult<u64> {
+        self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.repository
-            .acknowledge(
-                self.db.write(),
-                tenant_id,
-                actor.user_id,
-                message_ids,
-                self.queue.database_now().await?,
-            )
-            .await
+        let now = self.queue.database_now().await?;
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let updated = self
+            .repository
+            .acknowledge(&transaction, tenant_id, actor.user_id, message_ids, now)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(updated)
     }
 
     /// 将单条消息标记为已读。
     pub async fn mark_read(&self, actor: &ActorContext, message_id: i64) -> AppResult<()> {
+        self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
+        let now = self.queue.database_now().await?;
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
         let updated = self
             .repository
-            .mark_read(
-                self.db.write(),
-                tenant_id,
-                actor.user_id,
-                message_id,
-                self.queue.database_now().await?,
-            )
+            .mark_read(&transaction, tenant_id, actor.user_id, message_id, now)
             .await?;
         if updated {
+            crate::commit_current_audit(transaction).await?;
             Ok(())
         } else {
+            let _ = transaction.rollback().await;
             Err(AppError::NotFound("消息不存在或不属于当前用户".into()))
         }
     }
 
     /// 将当前用户全部未读消息标记为已读。
     pub async fn mark_all_read(&self, actor: &ActorContext) -> AppResult<u64> {
+        self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.repository
-            .mark_all_read(
-                self.db.write(),
-                tenant_id,
-                actor.user_id,
-                self.queue.database_now().await?,
-            )
-            .await
+        let now = self.queue.database_now().await?;
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let updated = self
+            .repository
+            .mark_all_read(&transaction, tenant_id, actor.user_id, now)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(updated)
     }
 
     /// 完成投递任务的持久化阶段。API 实例可据此拉取收件箱并即时发送。
     pub async fn dispatch(&self, message_id: i64) -> AppResult<()> {
+        self.ensure_enabled()?;
         let now = self.queue.database_now().await?;
         let message = ryframe_db::message::Entity::find_by_id(message_id)
             .one(self.db.write())
@@ -420,22 +431,27 @@ impl MessageService {
         {
             return Ok(());
         }
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
         self.repository
-            .mark_enqueued(self.db.write(), message_id, now)
+            .mark_enqueued(&transaction, message_id, now)
             .await?;
+        crate::commit_current_audit(transaction).await?;
         // 当前实现以持久化收件箱为准；WebSocket 或 Redis 唤醒失败后，客户端仍可轮询补拉。
         Ok(())
     }
 
     /// 删除已到期的消息及其级联收件箱记录。
     pub async fn delete_expired(&self) -> AppResult<u64> {
+        self.ensure_enabled()?;
         let now = self.queue.database_now().await?;
         let mut deleted = 0_u64;
         loop {
+            let transaction = self.db.write().begin().await.map_err(database_error)?;
             let batch = self
                 .repository
-                .delete_expired_batch(self.db.write(), now, RETENTION_BATCH_SIZE)
+                .delete_expired_batch(&transaction, now, RETENTION_BATCH_SIZE)
                 .await?;
+            crate::commit_current_audit(transaction).await?;
             deleted = deleted.saturating_add(batch);
             if batch < RETENTION_BATCH_SIZE {
                 return Ok(deleted);
@@ -489,6 +505,14 @@ impl MessageService {
             _ => Err(AppError::Validation(
                 "消息标题和正文必须同时使用纯文本或本地化键".into(),
             )),
+        }
+    }
+
+    fn ensure_enabled(&self) -> AppResult<()> {
+        if self.config.enabled {
+            Ok(())
+        } else {
+            Err(AppError::ServiceUnavailable("消息中心已关闭".into()))
         }
     }
 }

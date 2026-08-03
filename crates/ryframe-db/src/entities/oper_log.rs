@@ -11,6 +11,10 @@ pub struct Model {
     pub id: i64,
     /// 已认证请求上下文中绑定的租户。
     pub tenant_id: String,
+    /// 用于保证至少一次投递幂等性的审计事件 UUID v7；旧数据允许为空。
+    pub event_id: Option<String>,
+    /// 与业务响应 `X-Request-Id` 一致的请求 UUID v7；旧数据允许为空。
+    pub request_id: Option<String>,
     /// 模块标题
     pub title: String,
     /// 业务类型（INSERT/UPDATE/DELETE/EXPORT/IMPORT/GRANT 等）

@@ -11,8 +11,8 @@ const V0_4_2_FIXTURE: &str = include_str!("fixtures/v0_4_2_mysql.sql");
 async fn empty_mysql_schema_is_initialized_and_idempotent() {
     let (admin, database, name) = isolated_database().await;
 
-    ryframe_db_migration::run(&database).await.unwrap();
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
 
     let row = database
         .query_one_raw(Statement::from_string(
@@ -63,6 +63,15 @@ async fn empty_mysql_schema_is_initialized_and_idempotent() {
         .await,
         3
     );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_cache_namespace_version \
+             WHERE tenant_id = 'system' AND namespace = 'config' AND version = 0",
+        )
+        .await,
+        1
+    );
     let row = database
         .query_one_raw(Statement::from_string(
             DbBackend::MySql,
@@ -79,13 +88,13 @@ async fn empty_mysql_schema_is_initialized_and_idempotent() {
 #[tokio::test]
 async fn complete_schema_without_migration_ledger_is_verified_and_registered() {
     let (admin, database, name) = isolated_database().await;
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     database
         .execute_unprepared("DROP TABLE `seaql_migrations`")
         .await
         .unwrap();
 
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
 
     cleanup_database(admin, database, &name).await;
 }
@@ -107,8 +116,22 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
         .await
         .unwrap();
 
-    ryframe_db_migration::run(&database).await.unwrap();
-    ryframe_db_migration::run(&database).await.unwrap();
+    let error = ryframe_db_migration::up(&database).await.unwrap_err();
+    assert!(
+        error.to_string().contains("backfill-sha256"),
+        "迁移必须在摘要维护未完成时闭锁失败，实际错误: {error}"
+    );
+    database
+        .execute_unprepared(
+            "UPDATE sys_file \
+             SET file_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+             WHERE id = 9002",
+        )
+        .await
+        .unwrap();
+
+    ryframe_db_migration::up(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     ryframe_db_migration::verify_current_schema(&database)
         .await
         .unwrap();
@@ -125,6 +148,15 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
         scalar_count(
             &database,
             "SELECT COUNT(*) FROM sys_config WHERE id = 9001 AND tenant_id = 'legacy-fixture' AND `key` = 'legacy.custom' AND value = 'keep-me'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_cache_namespace_version \
+             WHERE tenant_id = 'legacy-fixture' AND namespace = 'config' AND version = 0",
         )
         .await,
         1
@@ -149,7 +181,7 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
             "SELECT COUNT(*) FROM sys_file \
              WHERE id = 9002 AND upload_status = 'ready' \
              AND reservation_token IS NULL AND reservation_expires_at IS NULL \
-             AND file_sha256 IS NULL",
+             AND file_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
         )
         .await,
         1
@@ -169,10 +201,79 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
             &database,
             "SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS \
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
-             AND INDEX_NAME IN ('idx_file_upload_reservation', 'idx_file_reservation_expiry', 'idx_file_sha256')",
+             AND INDEX_NAME IN ('idx_file_reservation_expiry', 'idx_file_sha256')",
         )
         .await,
-        3
+        2
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
+             AND COLUMN_NAME = 'file_sha256' AND IS_NULLABLE = 'NO'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
+             AND COLUMN_NAME = 'file_md5'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.STATISTICS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_file' \
+             AND INDEX_NAME = 'idx_file_upload_reservation'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' \
+               AND COLUMN_NAME = 'authorization_version'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' \
+               AND COLUMN_NAME = 'auth_version'",
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_user \
+             WHERE tenant_id = 'legacy-fixture' AND username = 'legacy-user' \
+               AND authorization_version = 7",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM sys_tenant \
+             WHERE tenant_id = 'legacy-fixture' AND authorization_epoch = 1",
+        )
+        .await,
+        1
     );
 
     cleanup_database(admin, database, &name).await;
@@ -181,7 +282,7 @@ async fn tagged_v0_4_schema_and_data_upgrade_is_lossless_idempotent_and_canonica
 #[tokio::test]
 async fn platform_message_permission_repair_removes_only_non_system_grants() {
     let (admin, database, name) = isolated_database().await;
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     database
         .execute_unprepared(
             "INSERT INTO sys_tenant (id, tenant_id, name, status) \
@@ -275,7 +376,7 @@ async fn platform_message_permission_repair_removes_only_non_system_grants() {
 #[tokio::test]
 async fn complete_but_incompatible_schema_is_rejected() {
     let (admin, database, name) = isolated_database().await;
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     database
         .execute_unprepared("DROP TABLE `seaql_migrations`")
         .await
@@ -285,7 +386,7 @@ async fn complete_but_incompatible_schema_is_rejected() {
         .await
         .unwrap();
 
-    let error = ryframe_db_migration::run(&database).await.unwrap_err();
+    let error = ryframe_db_migration::up(&database).await.unwrap_err();
     assert!(
         error
             .to_string()
@@ -298,7 +399,7 @@ async fn complete_but_incompatible_schema_is_rejected() {
 #[tokio::test]
 async fn missing_seed_row_is_restored_idempotently() {
     let (admin, database, name) = isolated_database().await;
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     database
         .execute_unprepared(
             "DELETE FROM sys_config WHERE tenant_id = 'system' AND `key` = 'sys.index.skinName'",
@@ -306,7 +407,7 @@ async fn missing_seed_row_is_restored_idempotently() {
         .await
         .unwrap();
 
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     let row = database
         .query_one_raw(Statement::from_string(
             DbBackend::MySql,
@@ -323,13 +424,13 @@ async fn missing_seed_row_is_restored_idempotently() {
 #[tokio::test]
 async fn conflicting_seed_identity_is_rejected_instead_of_silently_ignored() {
     let (admin, database, name) = isolated_database().await;
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     database
         .execute_unprepared("UPDATE sys_config SET `key` = 'conflicting.key' WHERE id = 1")
         .await
         .unwrap();
 
-    let error = ryframe_db_migration::run(&database).await.unwrap_err();
+    let error = ryframe_db_migration::up(&database).await.unwrap_err();
     assert!(
         error
             .to_string()
@@ -342,7 +443,7 @@ async fn conflicting_seed_identity_is_rejected_instead_of_silently_ignored() {
 #[tokio::test]
 async fn canonical_fingerprint_rejects_extra_application_objects() {
     let (admin, database, name) = isolated_database().await;
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     database
         .execute_unprepared("CREATE TABLE unexpected_app_table (id BIGINT PRIMARY KEY)")
         .await
@@ -377,9 +478,11 @@ async fn canonical_fingerprint_rejects_extra_application_objects() {
 #[tokio::test]
 async fn canonical_fingerprint_rejects_engine_column_table_collation_and_fk_action_drift() {
     let (admin, database, name) = isolated_database().await;
-    ryframe_db_migration::run(&database).await.unwrap();
+    ryframe_db_migration::up(&database).await.unwrap();
     database
-        .execute_unprepared("ALTER TABLE sys_user MODIFY auth_version INT NOT NULL DEFAULT 2")
+        .execute_unprepared(
+            "ALTER TABLE sys_user MODIFY authorization_version INT NOT NULL DEFAULT 2",
+        )
         .await
         .unwrap();
     database
@@ -418,7 +521,7 @@ async fn canonical_fingerprint_rejects_engine_column_table_collation_and_fk_acti
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("column sys_user.auth_version has default"));
+    assert!(error.contains("column sys_user.authorization_version has default"));
     assert!(error.contains("table sys_config uses engine myisam"));
     assert!(error.contains("table sys_config has collation utf8mb4_bin"));
     assert!(error.contains("column sys_user.username has collation"));
@@ -435,7 +538,7 @@ async fn non_empty_unrelated_database_is_rejected() {
         .await
         .unwrap();
 
-    let error = ryframe_db_migration::run(&database).await.unwrap_err();
+    let error = ryframe_db_migration::up(&database).await.unwrap_err();
     assert!(
         error
             .to_string()
@@ -453,13 +556,14 @@ async fn partial_schema_is_rejected() {
         .await
         .unwrap();
 
-    let error = ryframe_db_migration::run(&database).await.unwrap_err();
+    let error = ryframe_db_migration::up(&database).await.unwrap_err();
     assert!(error.to_string().contains("partial RyFrame schema"));
 
     cleanup_database(admin, database, &name).await;
 }
 
 async fn isolated_database() -> (DatabaseConnection, DatabaseConnection, String) {
+    ryframe_utils::snowflake::initialize(1).expect("初始化测试 Snowflake");
     let admin_url = mysql_test_admin_url();
     let admin = Database::connect(&admin_url).await.expect(
         "connect MySQL test service; run `docker compose -f docker-compose.test.yml up -d --wait`",

@@ -91,9 +91,9 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
         r#"// 此文件由 ryframe-generator v{generator_version} 自动生成。
 {chrono_import}{common_import}
 use ryframe_core::{{
-    LoggedRepo, Repository,
+    Repository,
     auto_fill::{{AutoFill, FillContext}},
-    repository::{{PageQuery, PageResult}},
+    repository::{{ValidatedPageQuery, PageResult}},
 }};
 use ryframe_db::{{{struct_name}Repository, entities::{snake}}};
 use sea_orm::DatabaseConnection;
@@ -114,21 +114,21 @@ pub struct Update{struct_name}Command {{
 
 pub struct {struct_name}Service {{
     db: DatabaseConnection,
-    {repository_field}: LoggedRepo<{struct_name}Repository>,
+    {repository_field}: {struct_name}Repository,
 }}
 
 impl {struct_name}Service {{
     pub fn new(db: DatabaseConnection) -> Self {{
         Self {{
             db,
-            {repository_field}: LoggedRepo::new({struct_name}Repository),
+            {repository_field}: {struct_name}Repository,
         }}
     }}
 
     pub async fn find_by_page(
         &self,
         actor: &ActorContext,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<{struct_name}Vo>> {{
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = &self.db;

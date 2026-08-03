@@ -286,6 +286,7 @@ where
             && !expected
                 .columns
                 .contains_key(&(table.clone(), column.clone()))
+            && !(legacy && is_legacy_extra_column(table, column))
         {
             problems.push(format!("unexpected column {table}.{column}"));
         }
@@ -903,6 +904,7 @@ fn is_upgrade_table(table: &str) -> bool {
     matches!(
         table,
         "sys_background_job"
+            | "sys_cache_namespace_version"
             | "sys_outbox_event"
             | "sys_export_job"
             | "sys_message"
@@ -916,8 +918,8 @@ fn is_upgrade_table(table: &str) -> bool {
 fn is_upgrade_column(table: &str, column: &str) -> bool {
     matches!(
         (table, column),
-        ("sys_tenant", "session_version")
-            | ("sys_user", "auth_version")
+        ("sys_tenant", "session_version" | "authorization_epoch")
+            | ("sys_user", "authorization_version")
             | ("sys_user", "preferred_locale" | "avatar_file_id")
             | ("sys_role", "is_super")
             | ("sys_menu", "perm_id" | "route_key")
@@ -929,6 +931,7 @@ fn is_upgrade_column(table: &str, column: &str) -> bool {
                 "sys_login_info" | "sys_oper_log" | "password_reset_requests",
                 "tenant_id"
             )
+            | ("sys_oper_log", "event_id" | "request_id")
     )
 }
 
@@ -940,10 +943,11 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
             "idx_perm_id" | "idx_menu_tenant_perm" | "idx_menu_tenant_route"
         ) | ("sys_user", "idx_user_avatar_file")
             | ("sys_login_info" | "sys_oper_log", "idx_tenant_id")
+            | ("sys_oper_log", "uq_oper_log_event_id")
             | ("password_reset_requests", "idx_password_reset_tenant")
             | (
                 "sys_file",
-                "idx_file_upload_reservation" | "idx_file_reservation_expiry" | "idx_file_sha256"
+                "idx_file_reservation_expiry" | "idx_file_sha256"
             )
     )
 }
@@ -967,8 +971,15 @@ fn is_upgrade_foreign_key(table: &str, name: &str) -> bool {
     )
 }
 
-fn is_legacy_extra_index(_table: &str, _name: &str) -> bool {
-    false
+fn is_legacy_extra_index(table: &str, name: &str) -> bool {
+    matches!((table, name), ("sys_file", "idx_file_upload_reservation"))
+}
+
+fn is_legacy_extra_column(table: &str, column: &str) -> bool {
+    matches!(
+        (table, column),
+        ("sys_user", "auth_version") | ("sys_file", "file_md5")
+    )
 }
 
 fn is_legacy_extra_foreign_key(_table: &str, _name: &str) -> bool {
@@ -1099,14 +1110,23 @@ mod tests {
         assert!(is_upgrade_column("sys_file", "reservation_expires_at"));
         assert!(is_upgrade_column("sys_file", "file_sha256"));
         assert!(is_upgrade_table("sys_background_job"));
+        assert!(is_upgrade_table("sys_cache_namespace_version"));
         assert!(is_upgrade_table("sys_message"));
+        assert!(is_upgrade_column("sys_tenant", "authorization_epoch"));
+        assert!(is_upgrade_column("sys_user", "authorization_version"));
+        assert!(is_legacy_extra_column("sys_user", "auth_version"));
         assert!(is_upgrade_column("sys_user", "preferred_locale"));
         assert!(is_upgrade_column("sys_user", "avatar_file_id"));
         assert!(is_upgrade_index("sys_user", "idx_user_avatar_file"));
         assert!(is_upgrade_foreign_key("sys_user", "fk_user_avatar_file"));
-        assert!(is_upgrade_index("sys_file", "idx_file_upload_reservation"));
+        assert!(!is_upgrade_index("sys_file", "idx_file_upload_reservation"));
         assert!(is_upgrade_index("sys_file", "idx_file_reservation_expiry"));
         assert!(is_upgrade_index("sys_file", "idx_file_sha256"));
+        assert!(is_legacy_extra_column("sys_file", "file_md5"));
+        assert!(is_legacy_extra_index(
+            "sys_file",
+            "idx_file_upload_reservation"
+        ));
         assert!(!is_upgrade_column("sys_menu", "name"));
         assert!(!is_upgrade_column("sys_file", "file_size"));
         assert!(!is_upgrade_index("sys_file", "idx_file_md5"));
@@ -1118,6 +1138,28 @@ mod tests {
             "sys_role_permission",
             "unexpected"
         ));
+    }
+
+    #[test]
+    fn canonical_file_schema_uses_only_required_sha256() {
+        let schema = expected_schema().unwrap();
+        let sha256 = schema
+            .columns
+            .get(&("sys_file".into(), "file_sha256".into()))
+            .unwrap();
+
+        assert!(!sha256.nullable);
+        assert_eq!(sha256.column_type, "char(64)");
+        assert!(
+            !schema
+                .columns
+                .contains_key(&("sys_file".into(), "file_md5".into()))
+        );
+        assert!(
+            !schema
+                .indexes
+                .contains_key(&("sys_file".into(), "idx_file_upload_reservation".into()))
+        );
     }
 
     #[test]

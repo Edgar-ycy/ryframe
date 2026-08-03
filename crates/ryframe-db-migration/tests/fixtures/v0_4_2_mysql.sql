@@ -398,5 +398,10 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
 INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
 VALUES (9000, 'legacy-fixture', 'Legacy fixture tenant', '1');
 
+INSERT INTO `sys_user`
+    (`id`, `tenant_id`, `username`, `password_hash`, `nickname`, `status`, `auth_version`)
+VALUES
+    (9003, 'legacy-fixture', 'legacy-user', 'legacy-password-hash', 'Legacy user', '1', 7);
+
 INSERT INTO `sys_config` (`id`, `tenant_id`, `name`, `key`, `value`, `remark`)
 VALUES (9001, 'legacy-fixture', 'Legacy custom config', 'legacy.custom', 'keep-me', 'v0.4 fixture');

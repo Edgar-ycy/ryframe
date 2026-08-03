@@ -3,15 +3,15 @@ use axum::{
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiResponse, AppResult};
+use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{
-    CreatePermissionCommand, PermissionSyncReport, PermissionTreeNode, PermissionType,
-    PermissionVo, UpdatePermissionCommand,
-};
+use ryframe_service::system::{CreatePermissionCommand, UpdatePermissionCommand};
 use validator::Validate;
 
 use crate::dto::permission_dto::{CreatePermissionDto, UpdatePermissionDto};
+use crate::dto::public_dto::{
+    PermissionSyncReport, PermissionTreeNode, PermissionType, PermissionVo,
+};
 use crate::handler_utils::parse_optional_i64;
 use crate::state::AppState;
 
@@ -42,14 +42,16 @@ pub async fn tree(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<PermissionListQuery>,
-) -> AppResult<Json<ApiResponse<Vec<PermissionTreeNode>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<PermissionTreeNode>>>> {
     let perm_type = query.perm_type.map(PermissionType::as_str);
     let tree = state
         .services
         .permission
         .list_all_perms(&current_user, perm_type)
         .await?;
-    Ok(Json(ApiResponse::success(tree)))
+    Ok(Json(ApiResponse::success(
+        tree.into_iter().map(PermissionTreeNode::from).collect(),
+    )))
 }
 
 #[get("/{id}")]
@@ -61,15 +63,15 @@ pub async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<PermissionVo>>> {
+) -> HttpResult<Json<ApiResponse<PermissionVo>>> {
     let item = state
         .services
         .permission
         .find_by_id(&current_user, id)
         .await?;
     match item {
-        Some(item) => Ok(Json(ApiResponse::success(item))),
-        None => Err(ryframe_http::AppError::NotFound("权限不存在".into())),
+        Some(item) => Ok(Json(ApiResponse::success(item.into()))),
+        None => Err(ryframe_kernel::AppError::NotFound("权限不存在".into()).into()),
     }
 }
 
@@ -82,7 +84,7 @@ pub async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreatePermissionDto>,
-) -> AppResult<Json<ApiResponse<PermissionVo>>> {
+) -> HttpResult<Json<ApiResponse<PermissionVo>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let item = state
@@ -94,14 +96,14 @@ pub async fn create(
                 name: dto.name,
                 code: dto.code,
                 parent_id,
-                perm_type: dto.perm_type,
+                perm_type: dto.perm_type.into(),
                 icon: dto.icon,
                 sort: dto.sort.unwrap_or(0),
                 status: dto.status.unwrap_or_else(|| "1".into()),
             },
         )
         .await?;
-    Ok(Json(ApiResponse::success(item)))
+    Ok(Json(ApiResponse::success(item.into())))
 }
 
 #[put("/{id}")]
@@ -114,7 +116,7 @@ pub async fn update(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdatePermissionDto>,
-) -> AppResult<Json<ApiResponse<PermissionVo>>> {
+) -> HttpResult<Json<ApiResponse<PermissionVo>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let item = state
@@ -127,19 +129,14 @@ pub async fn update(
                 name: dto.name,
                 code: dto.code,
                 parent_id,
-                perm_type: dto.perm_type,
+                perm_type: dto.perm_type.into(),
                 icon: dto.icon,
                 sort: dto.sort.unwrap_or(0),
                 status: dto.status.unwrap_or_else(|| "1".into()),
             },
         )
         .await?;
-    state
-        .services
-        .menu
-        .invalidate_menu_cache(&current_user.tenant_id)
-        .await;
-    Ok(Json(ApiResponse::success(item)))
+    Ok(Json(ApiResponse::success(item.into())))
 }
 
 #[delete("/{id}")]
@@ -151,7 +148,7 @@ pub async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.permission.delete(&current_user, id).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
@@ -163,7 +160,7 @@ pub async fn remove(
 pub async fn sync_perm_from_route(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<PermissionSyncReport>>> {
+) -> HttpResult<Json<ApiResponse<PermissionSyncReport>>> {
     let report = state
         .services
         .permission
@@ -172,5 +169,5 @@ pub async fn sync_perm_from_route(
             crate::permission_catalog::route_permission_codes(),
         )
         .await?;
-    Ok(Json(ApiResponse::success(report)))
+    Ok(Json(ApiResponse::success(report.into())))
 }

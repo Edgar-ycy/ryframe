@@ -69,7 +69,7 @@ fn refresh_token_can_be_reconstructed_from_committed_rotation_metadata() {
         user_id: 42,
         tenant_id: "tenant-a",
         tenant_session_version: 3,
-        user_auth_version: 7,
+        user_authorization_version: 7,
         username: "alice",
     };
     let issued_at = chrono::Utc::now().timestamp() as usize;
@@ -110,7 +110,7 @@ fn test_encode_decode_roundtrip() {
         user_id,
         tenant_id: "tenant-a",
         tenant_session_version: 1,
-        user_auth_version: 1,
+        user_authorization_version: 1,
         username: "admin",
     };
     let (token, jti) = encode_access(&identity, &config).unwrap();
@@ -119,7 +119,7 @@ fn test_encode_decode_roundtrip() {
     assert_eq!(claims.sub, user_id.to_string());
     assert_eq!(claims.tenant_id, "tenant-a");
     assert_eq!(claims.tenant_session_version, 1);
-    assert_eq!(claims.user_auth_version, 1);
+    assert_eq!(claims.user_authorization_version, 1);
     assert_eq!(claims.username, "admin");
     assert_eq!(claims.token_type, "access");
     assert!(!claims.jti.is_empty());
@@ -136,7 +136,7 @@ fn access_refresh_and_csrf_share_the_stable_session_id() {
         user_id: 42,
         tenant_id: "tenant-a",
         tenant_session_version: 3,
-        user_auth_version: 7,
+        user_authorization_version: 7,
         username: "alice",
     };
     let sid = new_sid();
@@ -158,4 +158,59 @@ fn access_refresh_and_csrf_share_the_stable_session_id() {
     assert_eq!(refresh_claims.jti, refresh_jti);
     assert_ne!(access_claims.jti, refresh_claims.jti);
     assert_eq!(refresh_claims.exp, absolute_exp);
+}
+
+#[derive(serde::Serialize)]
+struct ClaimsWithoutSid {
+    sub: String,
+    tenant_id: String,
+    tenant_session_version: i32,
+    user_authorization_version: i32,
+    username: String,
+    token_type: String,
+    jti: String,
+    iat: usize,
+    exp: usize,
+}
+
+#[test]
+fn tokens_without_a_non_empty_sid_are_rejected_during_decode() {
+    let secret = "test-secret";
+    let now = chrono::Utc::now().timestamp() as usize;
+    let without_sid = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &ClaimsWithoutSid {
+            sub: "42".into(),
+            tenant_id: "tenant-a".into(),
+            tenant_session_version: 1,
+            user_authorization_version: 1,
+            username: "alice".into(),
+            token_type: "access".into(),
+            jti: "jti-without-sid".into(),
+            iat: now,
+            exp: now + 300,
+        },
+        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .unwrap();
+    assert!(decode_token(&without_sid, secret).is_err());
+
+    let identity = TokenIdentity {
+        user_id: 42,
+        tenant_id: "tenant-a",
+        tenant_session_version: 1,
+        user_authorization_version: 1,
+        username: "alice",
+    };
+    let empty_sid = encode_access_for_session(
+        &identity,
+        "",
+        &AuthConfig {
+            jwt_secret: secret.into(),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .0;
+    assert!(decode_token(&empty_sid, secret).is_err());
 }

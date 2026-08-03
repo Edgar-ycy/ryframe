@@ -3,20 +3,21 @@ mod password_reset;
 mod queries;
 mod roles;
 
-use ryframe_core::{LoggedRepo, RedisClient, repository::PageQuery};
+use ryframe_core::repository::ValidatedPageQuery;
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
     DeptRepository, PermissionRepository, RoleRepository, UserRepository,
     entities::{password_reset_request, role, user},
 };
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
-use utoipa::ToSchema;
+
+use crate::AuthorizationCache;
 
 pub const USER_STATUS_NORMAL: &str = user::Model::STATUS_NORMAL;
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UserVo {
     pub id: String,
     pub username: String,
@@ -55,14 +56,14 @@ pub struct PasswordResetRequestOutcome {
     pub token: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct UserDetailVo {
     #[serde(flatten)]
     pub user: UserVo,
     pub roles: Vec<RoleBriefVo>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct RoleBriefVo {
     pub id: String,
     pub name: String,
@@ -83,10 +84,11 @@ impl From<role::Model> for RoleBriefVo {
 
 pub struct UserService {
     db: DatabaseCluster,
-    user_repo: LoggedRepo<UserRepository>,
-    role_repo: LoggedRepo<RoleRepository>,
-    perm_repo: LoggedRepo<PermissionRepository>,
-    dept_repo: LoggedRepo<DeptRepository>,
+    user_repo: UserRepository,
+    role_repo: RoleRepository,
+    perm_repo: PermissionRepository,
+    dept_repo: DeptRepository,
+    authorization_cache: AuthorizationCache,
 }
 
 pub struct CreateUserParams<'a> {
@@ -108,7 +110,7 @@ pub struct UpdateUserParams<'a> {
 
 #[derive(Debug)]
 pub struct UserListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub username: Option<String>,
     pub phone: Option<String>,
     pub status: Option<String>,
@@ -116,7 +118,7 @@ pub struct UserListParams {
 }
 
 impl UserListParams {
-    pub fn page_only(page: PageQuery) -> Self {
+    pub fn page_only(page: ValidatedPageQuery) -> Self {
         Self {
             page,
             username: None,
@@ -128,13 +130,14 @@ impl UserListParams {
 }
 
 impl UserService {
-    pub fn new(db: DatabaseCluster, _redis: Option<RedisClient>) -> Self {
+    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            dept_repo: LoggedRepo::new(DeptRepository),
+            user_repo: UserRepository,
+            role_repo: RoleRepository,
+            perm_repo: PermissionRepository,
+            dept_repo: DeptRepository,
+            authorization_cache,
         }
     }
 
@@ -143,21 +146,9 @@ impl UserService {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         user_ids: &[i64],
-    ) -> AppResult<()> {
-        let mut user_ids = user_ids.to_vec();
-        user_ids.sort_unstable();
-        user_ids.dedup();
-        if user_ids.is_empty() {
-            return Ok(());
-        }
-
-        let affected = self
-            .user_repo
-            .increment_auth_versions(txn, tenant_id, &user_ids)
-            .await?;
-        if affected != user_ids.len() as u64 {
-            return Err(AppError::NotFound("用户不存在".into()));
-        }
-        Ok(())
+    ) -> AppResult<Vec<(i64, i32)>> {
+        self.authorization_cache
+            .increment_user_versions_in_transaction(txn, tenant_id, user_ids)
+            .await
     }
 }

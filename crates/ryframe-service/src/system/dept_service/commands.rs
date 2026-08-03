@@ -36,8 +36,22 @@ impl DeptService {
             updated_at: Default::default(),
         };
         new_dept.fill_on_insert(&FillContext::new())?;
-        let saved = self.dept_repo.insert(db, tenant_id, new_dept).await?;
-        self.invalidate_dept_cache(tenant_id).await;
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let saved = self
+            .dept_repo
+            .insert_in_transaction(&transaction, tenant_id, new_dept)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(DeptVo::from(saved))
     }
 
@@ -86,8 +100,26 @@ impl DeptService {
         dept.fill_on_update(&FillContext::new())?;
 
         if !parent_changed {
-            let saved = self.dept_repo.update(db, tenant_id, dept).await?;
-            self.invalidate_dept_cache(tenant_id).await;
+            let transaction = db
+                .begin()
+                .await
+                .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+            self.dept_repo
+                .find_by_id_for_update(&transaction, tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
+            let saved = self
+                .dept_repo
+                .update_in_transaction(&transaction, tenant_id, dept)
+                .await?;
+            let authorization_epoch = self
+                .authorization_cache
+                .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .await?;
+            crate::commit_current_audit(transaction).await?;
+            self.authorization_cache
+                .sync_tenant_epoch(tenant_id, authorization_epoch)
+                .await?;
             return Ok(DeptVo::from(saved));
         }
 
@@ -98,6 +130,10 @@ impl DeptService {
             .begin()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
+        self.dept_repo
+            .find_by_id_for_update(&transaction, tenant_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
         let saved = dept::ActiveModel::from(dept)
             .update(&transaction)
             .await
@@ -114,11 +150,14 @@ impl DeptService {
                 .await
                 .map_err(|error| AppError::Database(error.to_string()))?;
         }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        self.invalidate_dept_cache(tenant_id).await;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(DeptVo::from(saved))
     }
 
@@ -139,8 +178,25 @@ impl DeptService {
             ));
         }
 
-        self.dept_repo.delete(db, tenant_id, id).await?;
-        self.invalidate_dept_cache(tenant_id).await;
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.dept_repo
+            .find_by_id_for_update(&transaction, tenant_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
+        self.dept_repo
+            .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(())
     }
 }

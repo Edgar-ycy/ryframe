@@ -1,9 +1,10 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, LockType},
 };
 
 use crate::entities::config;
@@ -36,7 +37,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<config::Model>> {
         crate::pagination::paginate(
             db,
@@ -93,6 +94,93 @@ impl Repository<config::Model, i64> for ConfigRepository {
 }
 
 impl ConfigRepository {
+    pub async fn find_by_id_for_update(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<config::Model>> {
+        config::Entity::find_by_id(id)
+            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+            .filter(config::Column::TenantId.eq(tenant_id))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: config::Model,
+    ) -> AppResult<config::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("参数配置租户不匹配".into()));
+        }
+        config::ActiveModel::from(entity)
+            .insert(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: config::Model,
+    ) -> AppResult<config::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("参数配置租户不匹配".into()));
+        }
+        let id = entity.id;
+        let result = config::Entity::update_many()
+            .col_expr(config::Column::Name, Expr::value(entity.name))
+            .col_expr(config::Column::Key, Expr::value(entity.key))
+            .col_expr(config::Column::Value, Expr::value(entity.value))
+            .col_expr(config::Column::Remark, Expr::value(entity.remark))
+            .col_expr(config::Column::UpdatedAt, Expr::value(entity.updated_at))
+            .filter(config::Column::Id.eq(id))
+            .filter(config::Column::TenantId.eq(tenant_id))
+            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+            .exec(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("参数配置不存在".into()));
+        }
+        config::Entity::find_by_id(id)
+            .filter(config::Column::TenantId.eq(tenant_id))
+            .one(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        let result = config::Entity::update_many()
+            .col_expr(
+                config::Column::DelFlag,
+                Expr::value(config::Model::DEL_FLAG_DELETED),
+            )
+            .col_expr(config::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .filter(config::Column::Id.eq(id))
+            .filter(config::Column::TenantId.eq(tenant_id))
+            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+            .exec(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("参数配置不存在".into()));
+        }
+        Ok(())
+    }
+
     /// 按主键递增游标读取参数配置导出批次。
     pub async fn find_for_export_after_id(
         &self,
@@ -126,7 +214,7 @@ impl ConfigRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: &PageQuery,
+        query: &ValidatedPageQuery,
         filter: &ConfigFilter<'_>,
     ) -> AppResult<PageResult<config::Model>> {
         let mut select = config::Entity::find()

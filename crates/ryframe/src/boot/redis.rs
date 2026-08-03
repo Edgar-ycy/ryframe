@@ -1,4 +1,4 @@
-use ryframe_config::{RedisConfig, RedisMode};
+use ryframe_config::{Environment, RedisConfig, RedisMode};
 use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_kernel::{AppError, AppResult};
 
@@ -7,7 +7,7 @@ pub struct RedisState {
     pub token_blacklist: TokenBlacklist,
 }
 
-pub async fn init(config: &Option<RedisConfig>) -> AppResult<RedisState> {
+pub async fn init(config: &Option<RedisConfig>, environment: Environment) -> AppResult<RedisState> {
     let mode = config
         .as_ref()
         .map_or(RedisMode::Disabled, |config| config.mode);
@@ -31,7 +31,7 @@ pub async fn init(config: &Option<RedisConfig>) -> AppResult<RedisState> {
     };
 
     if let Some(redis) = &client
-        && is_production()
+        && environment.is_production()
     {
         verify_production_policy(redis).await?;
     }
@@ -90,13 +90,4 @@ async fn verify_production_policy(redis: &RedisClient) -> AppResult<()> {
 
 fn redis_policy_error(error: redis::RedisError) -> AppError {
     AppError::Config(format!("unable to verify production Redis policy: {error}"))
-}
-
-fn is_production() -> bool {
-    std::env::var("APP_ENV").is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "prod" | "production"
-        )
-    })
 }

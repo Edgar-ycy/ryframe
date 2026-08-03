@@ -3,11 +3,11 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_utils::snowflake;
-use sea_orm::sea_query::SelectStatement;
+use sea_orm::sea_query::{Expr, Order, Query, SelectStatement};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    QueryTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
+    DatabaseConnection, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, QueryTrait,
 };
 use serde_json::Value;
 
@@ -96,13 +96,19 @@ pub struct MessageInboxQuery<'a> {
 pub struct MessageRepository;
 
 impl MessageRepository {
-    /// 在调用方事务中插入消息、受众快照和收件箱快照。
+    /// 在调用方事务中插入消息和受众，并通过数据库侧 `INSERT … SELECT` 固化收件箱快照。
     pub async fn publish_in_transaction(
         &self,
         transaction: &DatabaseTransaction,
         command: PublishMessageCommand,
+        max_recipients: u64,
     ) -> AppResult<PublishedMessage> {
         validate_publish_command(&command)?;
+        if max_recipients == 0 {
+            return Err(AppError::Config(
+                "messaging.max_recipients_per_message 必须大于 0".into(),
+            ));
+        }
         let audiences = command.audiences.iter().cloned().collect::<BTreeSet<_>>();
         let model = message::Model {
             id: snowflake::try_next_snowflake_id()?,
@@ -148,6 +154,11 @@ impl MessageRepository {
                     .count(transaction)
                     .await
                     .map_err(database_error)? as usize;
+                if recipient_count as u64 > max_recipients {
+                    return Err(AppError::Validation(format!(
+                        "消息收件人数不能超过 {max_recipients}"
+                    )));
+                }
                 return Ok(PublishedMessage {
                     message: existing,
                     recipient_count,
@@ -171,34 +182,26 @@ impl MessageRepository {
             .await
             .map_err(database_error)?;
 
-        let recipients = self
-            .resolve_recipients(transaction, &inserted.tenant_id, &audiences)
-            .await?;
-        if recipients.is_empty() {
+        let selector_sets =
+            validate_audience_targets(transaction, &inserted.tenant_id, &audiences).await?;
+        let recipient_count =
+            insert_recipient_snapshot(transaction, &inserted, &selector_sets, max_recipients)
+                .await?;
+        if recipient_count == 0 {
             return Err(AppError::Validation(
                 "消息受众中没有可投递的启用用户".into(),
             ));
         }
-        let recipient_models = recipients
-            .iter()
-            .map(|user_id| message_recipient::ActiveModel {
-                message_id: Set(inserted.id),
-                user_id: Set(*user_id),
-                tenant_id: Set(inserted.tenant_id.clone()),
-                created_at: Set(inserted.published_at),
-                enqueued_at: Set(None),
-                acked_at: Set(None),
-                read_at: Set(None),
-            })
-            .collect::<Vec<_>>();
-        message_recipient::Entity::insert_many(recipient_models)
-            .exec(transaction)
-            .await
-            .map_err(database_error)?;
+        if recipient_count > max_recipients {
+            return Err(AppError::Validation(format!(
+                "消息收件人数不能超过 {max_recipients}"
+            )));
+        }
 
         Ok(PublishedMessage {
             message: inserted,
-            recipient_count: recipients.len(),
+            recipient_count: usize::try_from(recipient_count)
+                .map_err(|_| AppError::Internal("消息收件人数超出平台整数范围".into()))?,
             inserted: true,
         })
     }
@@ -355,14 +358,17 @@ impl MessageRepository {
     }
 
     /// 批量确认用户已收到指定消息。
-    pub async fn acknowledge(
+    pub async fn acknowledge<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         user_id: i64,
         message_ids: &[i64],
         now: DateTime<Utc>,
-    ) -> AppResult<u64> {
+    ) -> AppResult<u64>
+    where
+        C: ConnectionTrait,
+    {
         if message_ids.is_empty() {
             return Ok(0);
         }
@@ -386,12 +392,15 @@ impl MessageRepository {
     }
 
     /// 记录消息首次进入实时投递阶段的时间，不覆盖已有值，便于审计投递延迟。
-    pub async fn mark_enqueued(
+    pub async fn mark_enqueued<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         message_id: i64,
         now: DateTime<Utc>,
-    ) -> AppResult<u64> {
+    ) -> AppResult<u64>
+    where
+        C: ConnectionTrait,
+    {
         let result = message_recipient::Entity::update_many()
             .col_expr(
                 message_recipient::Column::EnqueuedAt,
@@ -406,14 +415,17 @@ impl MessageRepository {
     }
 
     /// 标记单条消息为已读，同时确认已投递。
-    pub async fn mark_read(
+    pub async fn mark_read<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         user_id: i64,
         message_id: i64,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let result = message_recipient::Entity::update_many()
             .col_expr(
                 message_recipient::Column::ReadAt,
@@ -437,13 +449,16 @@ impl MessageRepository {
     }
 
     /// 将当前用户的全部未读消息标记为已读。
-    pub async fn mark_all_read(
+    pub async fn mark_all_read<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         user_id: i64,
         now: DateTime<Utc>,
-    ) -> AppResult<u64> {
+    ) -> AppResult<u64>
+    where
+        C: ConnectionTrait,
+    {
         let result = message_recipient::Entity::update_many()
             .col_expr(
                 message_recipient::Column::ReadAt,
@@ -467,12 +482,15 @@ impl MessageRepository {
     }
 
     /// 删除一批到期消息；关联的受众和收件箱记录由外键级联删除。
-    pub async fn delete_expired_batch(
+    pub async fn delete_expired_batch<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         now: DateTime<Utc>,
         batch_size: u64,
-    ) -> AppResult<u64> {
+    ) -> AppResult<u64>
+    where
+        C: ConnectionTrait,
+    {
         let ids = message::Entity::find()
             .filter(message::Column::ExpiresAt.lte(now))
             .order_by_asc(message::Column::Id)
@@ -493,81 +511,129 @@ impl MessageRepository {
             .map_err(database_error)?;
         Ok(result.rows_affected)
     }
-
-    async fn resolve_recipients(
-        &self,
-        transaction: &DatabaseTransaction,
-        tenant_id: &str,
-        audiences: &BTreeSet<MessageAudienceSelector>,
-    ) -> AppResult<BTreeSet<i64>> {
-        let mut recipients = BTreeSet::new();
-        for selector in audiences {
-            match selector.kind {
-                MessageAudienceKind::Tenant => {
-                    if selector.target_id != 0 {
-                        return Err(AppError::Validation("租户受众的 target_id 必须为 0".into()));
-                    }
-                    let users = enabled_users(transaction, tenant_id, None).await?;
-                    recipients.extend(users);
-                }
-                MessageAudienceKind::Role => {
-                    let role_exists = role::Entity::find_by_id(selector.target_id)
-                        .filter(role::Column::TenantId.eq(tenant_id))
-                        .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
-                        .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-                        .one(transaction)
-                        .await
-                        .map_err(database_error)?
-                        .is_some();
-                    if !role_exists {
-                        return Err(AppError::Validation("消息目标角色不存在或不可用".into()));
-                    }
-                    let ids = user_role::Entity::find()
-                        .filter(user_role::Column::TenantId.eq(tenant_id))
-                        .filter(user_role::Column::RoleId.eq(selector.target_id))
-                        .all(transaction)
-                        .await
-                        .map_err(database_error)?
-                        .into_iter()
-                        .map(|binding| binding.user_id)
-                        .collect::<Vec<_>>();
-                    recipients.extend(enabled_users(transaction, tenant_id, Some(ids)).await?);
-                }
-                MessageAudienceKind::User => {
-                    let users =
-                        enabled_users(transaction, tenant_id, Some(vec![selector.target_id]))
-                            .await?;
-                    if users.is_empty() {
-                        return Err(AppError::Validation("消息目标用户不存在或不可用".into()));
-                    }
-                    recipients.extend(users);
-                }
-            }
-        }
-        Ok(recipients)
-    }
 }
 
-async fn enabled_users(
+struct AudienceSelectorSets {
+    includes_tenant: bool,
+    role_ids: Vec<i64>,
+    user_ids: Vec<i64>,
+}
+
+async fn validate_audience_targets(
     transaction: &DatabaseTransaction,
     tenant_id: &str,
-    ids: Option<Vec<i64>>,
-) -> AppResult<Vec<i64>> {
-    let mut query = user::Entity::find()
-        .filter(user::Column::TenantId.eq(tenant_id))
-        .filter(user::Column::Status.eq(user::Model::STATUS_NORMAL))
-        .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL));
-    if let Some(ids) = ids {
-        if ids.is_empty() {
-            return Ok(Vec::new());
+    audiences: &BTreeSet<MessageAudienceSelector>,
+) -> AppResult<AudienceSelectorSets> {
+    let mut includes_tenant = false;
+    let mut role_ids = Vec::new();
+    let mut user_ids = Vec::new();
+    for selector in audiences {
+        match selector.kind {
+            MessageAudienceKind::Tenant => {
+                if selector.target_id != 0 {
+                    return Err(AppError::Validation("租户受众的 target_id 必须为 0".into()));
+                }
+                includes_tenant = true;
+            }
+            MessageAudienceKind::Role => role_ids.push(selector.target_id),
+            MessageAudienceKind::User => user_ids.push(selector.target_id),
         }
-        query = query.filter(user::Column::Id.is_in(ids));
     }
-    query
-        .all(transaction)
+
+    if !role_ids.is_empty() {
+        let valid_role_count = role::Entity::find()
+            .filter(role::Column::TenantId.eq(tenant_id))
+            .filter(role::Column::Id.is_in(role_ids.clone()))
+            .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .count(transaction)
+            .await
+            .map_err(database_error)?;
+        if valid_role_count != role_ids.len() as u64 {
+            return Err(AppError::Validation("消息目标角色不存在或不可用".into()));
+        }
+    }
+    if !user_ids.is_empty() {
+        let valid_user_count = user::Entity::find()
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::Id.is_in(user_ids.clone()))
+            .filter(user::Column::Status.eq(user::Model::STATUS_NORMAL))
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .count(transaction)
+            .await
+            .map_err(database_error)?;
+        if valid_user_count != user_ids.len() as u64 {
+            return Err(AppError::Validation("消息目标用户不存在或不可用".into()));
+        }
+    }
+
+    Ok(AudienceSelectorSets {
+        includes_tenant,
+        role_ids,
+        user_ids,
+    })
+}
+
+async fn insert_recipient_snapshot(
+    transaction: &DatabaseTransaction,
+    message: &message::Model,
+    selectors: &AudienceSelectorSets,
+    max_recipients: u64,
+) -> AppResult<u64> {
+    let mut audience_condition = Condition::any();
+    if selectors.includes_tenant {
+        audience_condition = audience_condition.add(Expr::value(true));
+    }
+    if !selectors.user_ids.is_empty() {
+        audience_condition =
+            audience_condition.add(user::Column::Id.is_in(selectors.user_ids.clone()));
+    }
+    if !selectors.role_ids.is_empty() {
+        let role_user_ids = user_role::Entity::find()
+            .select_only()
+            .column(user_role::Column::UserId)
+            .filter(user_role::Column::TenantId.eq(&message.tenant_id))
+            .filter(user_role::Column::RoleId.is_in(selectors.role_ids.clone()))
+            .into_query();
+        audience_condition = audience_condition.add(user::Column::Id.in_subquery(role_user_ids));
+    }
+
+    let mut recipient_select = Query::select();
+    recipient_select
+        .expr(Expr::value(message.id))
+        .column(user::Column::Id)
+        .expr(Expr::value(message.tenant_id.clone()))
+        .expr(Expr::value(message.published_at))
+        .expr(Expr::value(Option::<DateTime<Utc>>::None))
+        .expr(Expr::value(Option::<DateTime<Utc>>::None))
+        .expr(Expr::value(Option::<DateTime<Utc>>::None))
+        .from(user::Entity)
+        .and_where(user::Column::TenantId.eq(&message.tenant_id))
+        .and_where(user::Column::Status.eq(user::Model::STATUS_NORMAL))
+        .and_where(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+        .cond_where(audience_condition)
+        .order_by(user::Column::Id, Order::Asc)
+        .limit(max_recipients.saturating_add(1));
+
+    let insert = Query::insert()
+        .into_table(message_recipient::Entity)
+        .columns([
+            message_recipient::Column::MessageId,
+            message_recipient::Column::UserId,
+            message_recipient::Column::TenantId,
+            message_recipient::Column::CreatedAt,
+            message_recipient::Column::EnqueuedAt,
+            message_recipient::Column::AckedAt,
+            message_recipient::Column::ReadAt,
+        ])
+        .select_from(recipient_select)
+        .map_err(|error| AppError::Internal(format!("构造消息收件人快照失败: {error}")))?
+        .to_owned();
+    transaction
+        .execute(&insert)
         .await
         .map_err(database_error)
-        .map(|users| users.into_iter().map(|model| model.id).collect())
+        .map(|result| result.rows_affected())
 }
 
 fn active_message_id_subquery(tenant_id: &str, now: DateTime<Utc>) -> SelectStatement {

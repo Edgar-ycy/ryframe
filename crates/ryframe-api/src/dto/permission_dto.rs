@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use ryframe_service::system::PermissionType;
+use super::public_dto::PermissionType;
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 #[serde(deny_unknown_fields)]

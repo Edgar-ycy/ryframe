@@ -169,12 +169,12 @@ impl Localizer {
 
     /// 从 `APP_LOCALES_DIR` 或默认 `locales` 目录加载资源。
     ///
-    /// 生产环境缺失资源时直接失败；开发与测试环境可回退到内嵌资源，保证本地启动体验。
-    pub fn load_from_environment() -> Result<Self, I18nError> {
+    /// 严格模式下缺失资源会直接失败；非严格模式可回退到内嵌资源，保证本地启动体验。
+    pub fn load_from_environment(strict_resource_loading: bool) -> Result<Self, I18nError> {
         let locale_dir = env::var("APP_LOCALES_DIR").unwrap_or_else(|_| "locales".to_owned());
         match Self::load(&locale_dir) {
             Ok(localizer) => Ok(localizer),
-            Err(error) if !is_production() => Self::embedded().or(Err(error)),
+            Err(error) if !strict_resource_loading => Self::embedded().or(Err(error)),
             Err(error) => Err(error),
         }
     }
@@ -353,15 +353,6 @@ fn placeholders(text: &str) -> BTreeSet<String> {
         remaining = &remaining[end + 1..];
     }
     placeholders
-}
-
-fn is_production() -> bool {
-    env::var("APP_ENV").is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "prod" | "production"
-        )
-    })
 }
 
 #[cfg(test)]

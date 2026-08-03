@@ -1,29 +1,35 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{FileRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_storage::{ObjectStorage, StorageError};
 use ryframe_utils::file_upload::{
-    UploadConfig, UploadFileInfo, compress_image, generate_storage_filename, get_content_type,
-    validate_extension, validate_file_signature,
+    UploadConfig, compress_image, generate_storage_filename, get_content_type, validate_extension,
+    validate_file_signature,
 };
-use serde::Serialize;
 use sha2::{Digest, Sha256};
-use utoipa::ToSchema;
 
 mod upload_reservation;
 
 use upload_reservation::{ReservationOutcome, UploadReservationGuard};
 
 /// 文件上传响应
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct UploadResponse {
     pub file_id: String,
-    pub file_url: String,
-    pub file_info: UploadFileInfo,
+    pub bucket: String,
+    pub file_name: String,
+    pub file_path: String,
+}
+
+/// 下载文件及其持久化元数据。
+#[derive(Debug, PartialEq, Eq)]
+pub struct DownloadedFile {
+    pub data: Vec<u8>,
+    pub original_name: String,
+    pub content_type: String,
 }
 
 /// 默认上传 bucket 名称
@@ -46,7 +52,6 @@ struct PreparedUpload {
     final_name: String,
     content_type: String,
     file_sha256: String,
-    legacy_md5: String,
 }
 
 async fn prepare_upload_data(
@@ -93,9 +98,6 @@ fn prepare_upload_data_blocking(
 
     let content_type = get_content_type(&final_name);
     let file_sha256 = hex::encode(Sha256::digest(&final_data));
-    // 仅在单向迁移期间保留，用于定位和校验历史记录。新上传文件只将 SHA-256
-    // 作为其唯一摘要。
-    let legacy_md5 = format!("{:x}", md5::compute(&final_data));
 
     Ok(PreparedUpload {
         original_name,
@@ -103,7 +105,6 @@ fn prepare_upload_data_blocking(
         final_name,
         content_type,
         file_sha256,
-        legacy_md5,
     })
 }
 
@@ -176,26 +177,18 @@ impl FileService {
             final_name,
             content_type,
             file_sha256,
-            legacy_md5,
         } = prepare_upload_data(original_name, data, compress).await?;
 
         if let Some(existing) = FileRepository
-            .find_by_digests(
-                self.db.write(),
-                tenant_id,
-                bucket,
-                &file_sha256,
-                &legacy_md5,
-            )
+            .find_by_sha256(self.db.write(), tenant_id, bucket, &file_sha256)
             .await?
         {
-            return self.upload_response_for_existing(existing);
+            return Ok(Self::upload_response_for_existing(existing));
         }
 
         let storage_name = generate_storage_filename(&final_name);
         let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
         let object_key = format!("{tenant_id}/{date_prefix}/{storage_name}");
-        let file_url = self.build_file_url(bucket, &object_key)?;
         let now = Utc::now();
         let reservation_token = uuid::Uuid::new_v4().to_string();
         let file_id = ryframe_utils::snowflake::try_next_snowflake_id()?;
@@ -210,25 +203,24 @@ impl FileService {
             file_size: i64::try_from(final_data.len())
                 .map_err(|_| AppError::PayloadTooLarge("文件大小超出数据库范围".into()))?,
             content_type: content_type.clone(),
-            file_md5: None,
-            file_sha256: Some(file_sha256.clone()),
+            file_sha256: file_sha256.clone(),
             upload_by: Some(actor.username.clone()),
             upload_status: sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
             reservation_token: Some(reservation_token),
             // 在预留事务内、等待租户行锁结束后，使用主数据库时钟设置。
             reservation_expires_at: None,
-            del_flag: sys_file::Model::DEL_FLAG_UPLOAD_RESERVED.to_owned(),
+            del_flag: sys_file::Model::DEL_FLAG_NORMAL.to_owned(),
             created_at: now,
             updated_at: now,
         };
 
-        let reservation = match self.reserve_upload(tenant_id, model, &legacy_md5).await? {
+        let reservation = match self.reserve_upload(tenant_id, model).await? {
             ReservationOutcome::Ready(existing) => {
-                return self.upload_response_for_existing(existing);
+                return Ok(Self::upload_response_for_existing(existing));
             }
             ReservationOutcome::InProgress(existing) => {
                 return self
-                    .recover_in_progress_upload(existing, &file_sha256, &legacy_md5)
+                    .recover_in_progress_upload(existing, &file_sha256)
                     .await;
             }
             ReservationOutcome::Reserved(reservation) => reservation,
@@ -249,34 +241,29 @@ impl FileService {
 
         Ok(UploadResponse {
             file_id: file_id.to_string(),
-            file_url,
-            file_info: UploadFileInfo {
-                original_name,
-                storage_name,
-                file_path: object_key.clone(),
-                file_size: final_data.len() as u64,
-                content_type,
-                upload_time: Utc::now().to_rfc3339(),
-            },
+            bucket: bucket.to_owned(),
+            file_name: original_name,
+            file_path: object_key,
         })
     }
 
-    /// 下载文件：从对象存储读取数据，返回 (data, filename)
+    /// 下载文件：从对象存储读取数据，并返回数据库持久化的原始文件名与内容类型。
     pub async fn download(
         &self,
         actor: &ActorContext,
         bucket: &str,
         path: &str,
-    ) -> AppResult<(Vec<u8>, String)> {
+    ) -> AppResult<DownloadedFile> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         // 安全检查：防止路径穿越
         if path.contains("..") {
             return Err(AppError::Validation("非法的文件路径".into()));
         }
 
-        // 文件元数据紧跟对象上传写入主库；下载必须从主库读取，避免从库延迟导致刚上传文件返回 404。
+        // 文件元数据紧跟对象上传写入主库；下载必须强一致读取，避免副本延迟导致刚上传文件返回 404。
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let file = FileRepository
-            .find_by_storage_path(self.db.write(), tenant_id, bucket, path)
+            .find_by_storage_path(&db, tenant_id, bucket, path)
             .await?
             .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
 
@@ -287,33 +274,20 @@ impl FileService {
 
         // 下载名称属于持久化元数据。为保证存储安全而生成的不透明对象键，绝不能
         // 作为面向用户的文件名泄露。
-        let filename = file.original_name;
-
-        Ok((data, filename))
-    }
-
-    /// 构建只能通过认证后端访问的私有文件地址。
-    pub fn build_file_url(&self, bucket: &str, key: &str) -> AppResult<String> {
-        Ok(format!(
-            "/api/v1/common/file/download?bucket={}&path={}",
-            utf8_percent_encode(bucket, NON_ALPHANUMERIC),
-            utf8_percent_encode(key, NON_ALPHANUMERIC),
-        ))
-    }
-
-    fn upload_response_for_existing(&self, existing: sys_file::Model) -> AppResult<UploadResponse> {
-        Ok(UploadResponse {
-            file_id: existing.id.to_string(),
-            file_url: self.build_file_url(&existing.bucket, &existing.storage_path)?,
-            file_info: UploadFileInfo {
-                original_name: existing.original_name,
-                storage_name: existing.storage_name,
-                file_path: existing.storage_path,
-                file_size: existing.file_size.max(0) as u64,
-                content_type: existing.content_type,
-                upload_time: existing.created_at.to_rfc3339(),
-            },
+        Ok(DownloadedFile {
+            data,
+            original_name: file.original_name,
+            content_type: file.content_type,
         })
+    }
+
+    fn upload_response_for_existing(existing: sys_file::Model) -> UploadResponse {
+        UploadResponse {
+            file_id: existing.id.to_string(),
+            bucket: existing.bucket,
+            file_name: existing.original_name,
+            file_path: existing.storage_path,
+        }
     }
 
     /// 上传头像（Avatar 专用便捷方法）
@@ -489,7 +463,6 @@ mod storage_error_tests {
         assert_eq!(prepared.content_type, "image/jpeg");
         assert!(!prepared.final_data.is_empty());
         assert_eq!(prepared.file_sha256.len(), 64);
-        assert_eq!(prepared.legacy_md5.len(), 32);
     }
 
     fn one_pixel_bmp() -> Vec<u8> {

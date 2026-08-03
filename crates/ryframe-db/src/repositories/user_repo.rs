@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult, DataScope, DataScopeContext};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
@@ -39,7 +39,7 @@ impl Repository<user::Model, i64> for UserRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<user::Model>> {
         crate::pagination::paginate(
             db,
@@ -165,6 +165,36 @@ impl UserRepository {
         Some(select)
     }
 
+    /// 按当前数据范围读取租户内用户选择器结果，额外一条记录由调用方判断是否还有更多。
+    pub async fn find_options_with_data_scope(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        query: Option<&str>,
+        scope_ctx: &DataScopeContext,
+        limit: u64,
+    ) -> AppResult<Vec<user::Model>> {
+        let Some(mut select) =
+            Self::apply_data_scope(Self::base_select(tenant_id), tenant_id, scope_ctx)
+        else {
+            return Ok(Vec::new());
+        };
+        if let Some(query) = query {
+            select = select.filter(
+                Condition::any()
+                    .add(user::Column::Username.like(super::prefix_like(query)))
+                    .add(user::Column::Nickname.like(super::prefix_like(query))),
+            );
+        }
+        select
+            .order_by_asc(user::Column::Username)
+            .order_by_asc(user::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn find_by_username(
         &self,
         db: &DatabaseConnection,
@@ -182,7 +212,7 @@ impl UserRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: &PageQuery,
+        query: &ValidatedPageQuery,
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<user::Model>> {
@@ -223,7 +253,7 @@ impl UserRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<user::Model>> {
         self.find_by_page_filtered_with_data_scope(
@@ -389,7 +419,7 @@ impl UserRepository {
         Ok(())
     }
 
-    pub async fn increment_auth_versions<C>(
+    pub async fn increment_authorization_versions<C>(
         &self,
         db: &C,
         tenant_id: &str,
@@ -403,8 +433,8 @@ impl UserRepository {
         }
         user::Entity::update_many()
             .col_expr(
-                user::Column::AuthVersion,
-                Expr::col(user::Column::AuthVersion).add(1),
+                user::Column::AuthorizationVersion,
+                Expr::col(user::Column::AuthorizationVersion).add(1),
             )
             .filter(user::Column::Id.is_in(user_ids.iter().copied()))
             .filter(user::Column::TenantId.eq(tenant_id))
@@ -412,5 +442,31 @@ impl UserRepository {
             .await
             .map(|result| result.rows_affected)
             .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 在同一连接上读取指定用户的授权版本，供事务提交前生成镜像修复事件。
+    pub async fn find_authorization_versions<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        user_ids: &[i64],
+    ) -> AppResult<Vec<(i64, i32)>>
+    where
+        C: ConnectionTrait,
+    {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut versions = user::Entity::find()
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::Id.is_in(user_ids.iter().copied()))
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .into_iter()
+            .map(|user| (user.id, user.authorization_version))
+            .collect::<Vec<_>>();
+        versions.sort_unstable_by_key(|(user_id, _)| *user_id);
+        Ok(versions)
     }
 }

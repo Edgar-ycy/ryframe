@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
     sea_query::{LockType, Query},
 };
 
@@ -38,7 +38,7 @@ impl Repository<role::Model, i64> for RoleRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<role::Model>> {
         crate::pagination::paginate(
             db,
@@ -74,6 +74,38 @@ impl Repository<role::Model, i64> for RoleRepository {
 }
 
 impl RoleRepository {
+    /// 读取租户内可用于选择器的角色，额外一条记录由调用方判断是否还有更多结果。
+    pub async fn find_options(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        query: Option<&str>,
+        include_super: bool,
+        limit: u64,
+    ) -> AppResult<Vec<role::Model>> {
+        let mut select = role::Entity::find()
+            .filter(role::Column::TenantId.eq(tenant_id))
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL));
+        if !include_super {
+            select = select.filter(role::Column::IsSuper.eq(0));
+        }
+        if let Some(query) = query {
+            select = select.filter(
+                Condition::any()
+                    .add(role::Column::Name.like(super::prefix_like(query)))
+                    .add(role::Column::Code.like(super::prefix_like(query))),
+            );
+        }
+        select
+            .order_by_asc(role::Column::Sort)
+            .order_by_asc(role::Column::Name)
+            .order_by_asc(role::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     /// 按主键递增游标读取角色导出批次，避免大偏移分页造成重复或遗漏。
     pub async fn find_for_export_after_id(
         &self,
@@ -111,7 +143,7 @@ impl RoleRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
         name: Option<&str>,
         code: Option<&str>,
         status: Option<&str>,
@@ -484,74 +516,53 @@ impl RoleRepository {
     /// 原子替换数据范围模式和自定义部门关系。
     pub async fn replace_data_scope(
         &self,
-        db: &DatabaseConnection,
+        transaction: &DatabaseTransaction,
         tenant_id: &str,
         role_id: i64,
         data_scope: &str,
         dept_ids: &[i64],
     ) -> AppResult<()> {
-        use sea_orm::{ActiveValue, TransactionTrait};
+        use sea_orm::ActiveValue;
 
         use crate::entities::role_dept;
 
-        let txn = db
-            .begin()
+        let updated = role::Entity::update_many()
+            .col_expr(
+                role::Column::DataScope,
+                sea_orm::sea_query::Expr::value(data_scope),
+            )
+            .col_expr(
+                role::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+            )
+            .filter(role::Column::Id.eq(role_id))
+            .filter(role::Column::TenantId.eq(tenant_id))
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .exec(transaction)
+            .await
+            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+        if updated.rows_affected != 1 {
+            return Err(AppError::NotFound("角色不存在".into()));
+        }
+
+        role_dept::Entity::delete_many()
+            .filter(role_dept::Column::RoleId.eq(role_id))
+            .filter(role_dept::Column::TenantId.eq(tenant_id))
+            .exec(transaction)
             .await
             .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
 
-        let operation: AppResult<()> = async {
-            let updated = role::Entity::update_many()
-                .col_expr(
-                    role::Column::DataScope,
-                    sea_orm::sea_query::Expr::value(data_scope),
-                )
-                .col_expr(
-                    role::Column::UpdatedAt,
-                    sea_orm::sea_query::Expr::value(chrono::Utc::now()),
-                )
-                .filter(role::Column::Id.eq(role_id))
-                .filter(role::Column::TenantId.eq(tenant_id))
-                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-                .exec(&txn)
+        if !dept_ids.is_empty() {
+            let relations = dept_ids.iter().map(|dept_id| role_dept::ActiveModel {
+                tenant_id: ActiveValue::Set(tenant_id.to_owned()),
+                role_id: ActiveValue::Set(role_id),
+                dept_id: ActiveValue::Set(*dept_id),
+            });
+            role_dept::Entity::insert_many(relations)
+                .exec(transaction)
                 .await
                 .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
-            if updated.rows_affected != 1 {
-                return Err(AppError::NotFound("角色不存在".into()));
-            }
-
-            role_dept::Entity::delete_many()
-                .filter(role_dept::Column::RoleId.eq(role_id))
-                .filter(role_dept::Column::TenantId.eq(tenant_id))
-                .exec(&txn)
-                .await
-                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
-
-            if !dept_ids.is_empty() {
-                let relations = dept_ids.iter().map(|dept_id| role_dept::ActiveModel {
-                    tenant_id: ActiveValue::Set(tenant_id.to_owned()),
-                    role_id: ActiveValue::Set(role_id),
-                    dept_id: ActiveValue::Set(*dept_id),
-                });
-                role_dept::Entity::insert_many(relations)
-                    .exec(&txn)
-                    .await
-                    .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
-            }
-            Ok(())
         }
-        .await;
-
-        match operation {
-            Ok(()) => txn
-                .commit()
-                .await
-                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string())),
-            Err(error) => {
-                txn.rollback()
-                    .await
-                    .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
-                Err(error)
-            }
-        }
+        Ok(())
     }
 }

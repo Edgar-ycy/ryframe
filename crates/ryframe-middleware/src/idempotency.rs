@@ -5,7 +5,7 @@ use std::{
 
 use axum::{
     body::{Body, to_bytes},
-    extract::{Request, State},
+    extract::{OriginalUri, Request, State},
     http::{
         HeaderMap, HeaderName, HeaderValue, Method, StatusCode,
         header::{self, RETRY_AFTER},
@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 
 use crate::metrics::{record_idempotency_conflict, record_redis_degraded};
 
-const KEY_PREFIX: &str = "ryframe:v0.5:idempotency:";
+const KEY_PREFIX: &str = "ryframe:v0.6:idempotency:";
 const DEFAULT_PROCESSING_TTL_SECS: u64 = 30;
 const MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
 const MAX_CACHED_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -36,7 +36,7 @@ pub struct IdempotencyState {
 
 #[derive(Clone)]
 struct LocalRecord {
-    request_hash: String,
+    fingerprint: String,
     state: LocalState,
     expires_at: Instant,
 }
@@ -84,24 +84,24 @@ impl IdempotencyState {
         self
     }
 
-    async fn reserve(&self, key: &str, request_hash: &str) -> Result<Reservation, String> {
+    async fn reserve(&self, key: &str, fingerprint: &str) -> Result<Reservation, String> {
         if let Some(redis) = &self.redis {
-            if let Some(reservation) = self.local_terminal(key, request_hash) {
+            if let Some(reservation) = self.local_terminal(key, fingerprint) {
                 return Ok(reservation);
             }
-            return self.reserve_redis(redis, key, request_hash).await;
+            return self.reserve_redis(redis, key, fingerprint).await;
         }
-        Ok(self.reserve_local(key, request_hash))
+        Ok(self.reserve_local(key, fingerprint))
     }
 
-    fn local_terminal(&self, key: &str, request_hash: &str) -> Option<Reservation> {
+    fn local_terminal(&self, key: &str, fingerprint: &str) -> Option<Reservation> {
         let record = self.local.get(key)?;
         if record.expires_at <= Instant::now() {
             drop(record);
             self.local.remove(key);
             return None;
         }
-        if record.request_hash != request_hash {
+        if record.fingerprint != fingerprint {
             return Some(Reservation::Conflict);
         }
         match &record.state {
@@ -115,14 +115,14 @@ impl IdempotencyState {
         &self,
         redis: &RedisClient,
         key: &str,
-        request_hash: &str,
+        fingerprint: &str,
     ) -> Result<Reservation, String> {
         let meta_key = meta_key(key);
         let guard_key = guard_key(key);
         let script = r#"
             if redis.call('EXISTS', KEYS[1]) ~= 0 then
-                local existing_hash = redis.call('HGET', KEYS[1], 'request_hash')
-                if existing_hash ~= ARGV[1] then return 2 end
+                local existing_fingerprint = redis.call('HGET', KEYS[1], 'fingerprint')
+                if existing_fingerprint ~= ARGV[1] then return 2 end
                 local state = redis.call('HGET', KEYS[1], 'state')
                 if state == 'processing' then return 3 end
                 if state == 'non_replayable' then return 4 end
@@ -133,7 +133,7 @@ impl IdempotencyState {
                 if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 2 end
                 return 4
             end
-            redis.call('HSET', KEYS[1], 'state', 'processing', 'request_hash', ARGV[1])
+            redis.call('HSET', KEYS[1], 'state', 'processing', 'fingerprint', ARGV[1])
             redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
             return 1
         "#;
@@ -142,7 +142,7 @@ impl IdempotencyState {
             .eval_script(
                 script,
                 &[meta_key.as_str(), guard_key.as_str()],
-                &[request_hash, processing_ttl.as_str()],
+                &[fingerprint, processing_ttl.as_str()],
             )
             .await
             .map_err(|error| format!("Redis idempotency reservation failed: {error}"))?;
@@ -166,12 +166,12 @@ impl IdempotencyState {
         }
     }
 
-    fn reserve_local(&self, key: &str, request_hash: &str) -> Reservation {
+    fn reserve_local(&self, key: &str, fingerprint: &str) -> Reservation {
         let now = Instant::now();
         match self.local.entry(key.to_string()) {
             Entry::Vacant(entry) => {
                 entry.insert(LocalRecord {
-                    request_hash: request_hash.to_string(),
+                    fingerprint: fingerprint.to_string(),
                     state: LocalState::Processing,
                     expires_at: now + Duration::from_secs(self.processing_ttl_secs),
                 });
@@ -180,13 +180,13 @@ impl IdempotencyState {
             Entry::Occupied(mut entry) => {
                 if entry.get().expires_at <= now {
                     entry.insert(LocalRecord {
-                        request_hash: request_hash.to_string(),
+                        fingerprint: fingerprint.to_string(),
                         state: LocalState::Processing,
                         expires_at: now + Duration::from_secs(self.processing_ttl_secs),
                     });
                     return Reservation::Acquired;
                 }
-                if entry.get().request_hash != request_hash {
+                if entry.get().fingerprint != fingerprint {
                     return Reservation::Conflict;
                 }
                 match &entry.get().state {
@@ -198,14 +198,14 @@ impl IdempotencyState {
         }
     }
 
-    async fn begin_execution(&self, key: &str, request_hash: &str) -> Result<(), String> {
+    async fn begin_execution(&self, key: &str, fingerprint: &str) -> Result<(), String> {
         let Some(redis) = &self.redis else {
             return Ok(());
         };
         let meta_key = meta_key(key);
         let guard_key = guard_key(key);
         let script = r#"
-            if redis.call('HGET', KEYS[1], 'request_hash') ~= ARGV[1] then return 0 end
+            if redis.call('HGET', KEYS[1], 'fingerprint') ~= ARGV[1] then return 0 end
             if redis.call('HGET', KEYS[1], 'state') ~= 'processing' then return 0 end
             redis.call('SETEX', KEYS[2], tonumber(ARGV[2]), ARGV[1])
             return 1
@@ -215,7 +215,7 @@ impl IdempotencyState {
             .eval_script(
                 script,
                 &[meta_key.as_str(), guard_key.as_str()],
-                &[request_hash, ttl.as_str()],
+                &[fingerprint, ttl.as_str()],
             )
             .await
         {
@@ -230,7 +230,7 @@ impl IdempotencyState {
     async fn complete(
         &self,
         key: &str,
-        request_hash: &str,
+        fingerprint: &str,
         response: CachedResponse,
     ) -> Result<(), String> {
         if let Some(redis) = &self.redis {
@@ -240,7 +240,7 @@ impl IdempotencyState {
             let response_key = response_key(key);
             let guard_key = guard_key(key);
             let script = r#"
-                if redis.call('HGET', KEYS[1], 'request_hash') ~= ARGV[1] then return 0 end
+                if redis.call('HGET', KEYS[1], 'fingerprint') ~= ARGV[1] then return 0 end
                 redis.call('SETEX', KEYS[2], tonumber(ARGV[2]), ARGV[3])
                 redis.call('HSET', KEYS[1], 'state', 'completed')
                 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
@@ -252,7 +252,7 @@ impl IdempotencyState {
                 .eval_script(
                     script,
                     &[meta_key.as_str(), response_key.as_str(), guard_key.as_str()],
-                    &[request_hash, ttl.as_str(), serialized.as_str()],
+                    &[fingerprint, ttl.as_str(), serialized.as_str()],
                 )
                 .await
             {
@@ -261,7 +261,7 @@ impl IdempotencyState {
                 Err(error) => Err(format!("Redis idempotency completion failed: {error}")),
             };
             if result.is_err() {
-                self.store_local_terminal(key, request_hash, LocalState::Completed(response));
+                self.store_local_terminal(key, fingerprint, LocalState::Completed(response));
             }
             return result;
         }
@@ -269,7 +269,7 @@ impl IdempotencyState {
         self.local.insert(
             key.to_string(),
             LocalRecord {
-                request_hash: request_hash.to_string(),
+                fingerprint: fingerprint.to_string(),
                 state: LocalState::Completed(response),
                 expires_at: Instant::now() + Duration::from_secs(self.completed_ttl_secs),
             },
@@ -277,18 +277,18 @@ impl IdempotencyState {
         Ok(())
     }
 
-    async fn mark_non_replayable(&self, key: &str, request_hash: &str) -> Result<(), String> {
+    async fn mark_non_replayable(&self, key: &str, fingerprint: &str) -> Result<(), String> {
         if let Some(redis) = &self.redis {
             let meta_key = meta_key(key);
             let script = r#"
-                if redis.call('HGET', KEYS[1], 'request_hash') ~= ARGV[1] then return 0 end
+                if redis.call('HGET', KEYS[1], 'fingerprint') ~= ARGV[1] then return 0 end
                 redis.call('HSET', KEYS[1], 'state', 'non_replayable')
                 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
                 return 1
             "#;
             let ttl = self.completed_ttl_secs.to_string();
             let result = match redis
-                .eval_script(script, &[meta_key.as_str()], &[request_hash, ttl.as_str()])
+                .eval_script(script, &[meta_key.as_str()], &[fingerprint, ttl.as_str()])
                 .await
             {
                 Ok(redis::Value::Int(1)) => Ok(()),
@@ -296,7 +296,7 @@ impl IdempotencyState {
                 Err(error) => Err(format!("Redis idempotency marker failed: {error}")),
             };
             if result.is_err() {
-                self.store_local_terminal(key, request_hash, LocalState::NonReplayable);
+                self.store_local_terminal(key, fingerprint, LocalState::NonReplayable);
             }
             return result;
         }
@@ -304,7 +304,7 @@ impl IdempotencyState {
         self.local.insert(
             key.to_string(),
             LocalRecord {
-                request_hash: request_hash.to_string(),
+                fingerprint: fingerprint.to_string(),
                 state: LocalState::NonReplayable,
                 expires_at: Instant::now() + Duration::from_secs(self.completed_ttl_secs),
             },
@@ -312,11 +312,11 @@ impl IdempotencyState {
         Ok(())
     }
 
-    fn store_local_terminal(&self, key: &str, request_hash: &str, state: LocalState) {
+    fn store_local_terminal(&self, key: &str, fingerprint: &str, state: LocalState) {
         self.local.insert(
             key.to_string(),
             LocalRecord {
-                request_hash: request_hash.to_string(),
+                fingerprint: fingerprint.to_string(),
                 state,
                 expires_at: Instant::now() + Duration::from_secs(self.completed_ttl_secs),
             },
@@ -373,7 +373,6 @@ pub async fn idempotency_middleware(
         .headers()
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
-        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
     else {
@@ -396,23 +395,23 @@ pub async fn idempotency_middleware(
             return (StatusCode::PAYLOAD_TOO_LARGE, "request body is too large").into_response();
         }
     };
-    let request_hash = hex_sha256(&body);
-    let scoped_key = scoped_key(
+    let fingerprint = request_fingerprint(
         &principal.tenant_id,
         principal.user_id,
         &method,
         &request_target,
-        &raw_key,
+        &body,
     );
+    let storage_key = storage_key(&principal.tenant_id, principal.user_id, &raw_key);
 
-    match state.reserve(&scoped_key, &request_hash).await {
+    match state.reserve(&storage_key, &fingerprint).await {
         Ok(Reservation::Completed(response)) => return rebuild_response(&response),
         Ok(Reservation::Processing) => {
             record_idempotency_conflict("processing");
             return conflict_response("an identical request is still processing", 1);
         }
         Ok(Reservation::Conflict) => {
-            record_idempotency_conflict("different_body");
+            record_idempotency_conflict("different_fingerprint");
             return (
                 StatusCode::CONFLICT,
                 "Idempotency-Key was reused with a different request",
@@ -431,7 +430,7 @@ pub async fn idempotency_middleware(
         Err(error) => return unavailable_response(error),
     }
 
-    if let Err(error) = state.begin_execution(&scoped_key, &request_hash).await {
+    if let Err(error) = state.begin_execution(&storage_key, &fingerprint).await {
         // 即使客户端未收到 Lua 命令的响应，它也可能已经设置执行保护。保留任何保护符合失败即拒绝原则：
         // 业务处理器尚未运行，后续请求可在处理/保护 TTL 到期后安全重试，避免产生含义不明的解锁。
         return unavailable_response(error);
@@ -439,7 +438,7 @@ pub async fn idempotency_middleware(
 
     let response = next.run(Request::from_parts(parts, Body::from(body))).await;
     if !response.status().is_success() {
-        state.release(&scoped_key).await;
+        state.release(&storage_key).await;
         return response;
     }
 
@@ -449,7 +448,7 @@ pub async fn idempotency_middleware(
         Err(error) => {
             // 处理器已返回成功，其副作用可能已经提交。收集响应失败时绝不能释放分布式保护；
             // Redis 可用时将结果标记为不可重放，否则让执行保护自行过期。
-            if let Err(mark_error) = state.mark_non_replayable(&scoped_key, &request_hash).await {
+            if let Err(mark_error) = state.mark_non_replayable(&storage_key, &fingerprint).await {
                 record_redis_degraded("idempotency");
                 tracing::error!(error = %mark_error, "failed to protect ambiguous idempotent result");
             }
@@ -463,7 +462,7 @@ pub async fn idempotency_middleware(
     };
 
     if body.len() > MAX_CACHED_RESPONSE_BYTES {
-        if let Err(error) = state.mark_non_replayable(&scoped_key, &request_hash).await {
+        if let Err(error) = state.mark_non_replayable(&storage_key, &fingerprint).await {
             record_redis_degraded("idempotency");
             tracing::error!(error = %error, "failed to mark large idempotent response");
         }
@@ -475,7 +474,7 @@ pub async fn idempotency_middleware(
         body: body.to_vec(),
         headers: cacheable_response_headers(&parts.headers),
     };
-    if let Err(error) = state.complete(&scoped_key, &request_hash, cached).await {
+    if let Err(error) = state.complete(&storage_key, &fingerprint, cached).await {
         record_redis_degraded("idempotency");
         tracing::error!(error = %error, "failed to persist idempotent response");
     }
@@ -494,8 +493,12 @@ fn is_mutating(method: &Method) -> bool {
 /// 有意不使用路由模板（如 `/resources/{id}`）：同一客户端键绝不能将某个具体资源的变更
 /// 重放到另一资源。查询参数对会排序，因为其顺序不改变请求语义；重复参数对仍会保留。
 fn normalized_request_target(request: &Request) -> String {
-    let path = normalize_request_path(request.uri().path());
-    match request.uri().query() {
+    let uri = request
+        .extensions()
+        .get::<OriginalUri>()
+        .map_or(request.uri(), |original| &original.0);
+    let path = normalize_request_path(uri.path());
+    match uri.query() {
         Some(query) if !query.is_empty() => format!("{path}?{}", normalize_query(query)),
         _ => path,
     }
@@ -573,8 +576,30 @@ fn cacheable_response_headers(headers: &HeaderMap) -> Vec<CachedHeader> {
     cached
 }
 
-fn scoped_key(tenant_id: &str, user_id: i64, method: &Method, path: &str, raw_key: &str) -> String {
-    hex_sha256(format!("{tenant_id}\n{user_id}\n{method}\n{path}\n{raw_key}").as_bytes())
+/// 存储键只隔离租户、用户与客户端提供的原始幂等键。
+///
+/// 请求语义不进入存储键；同一主体复用同一个键时必须命中同一记录，再由完整指纹决定
+/// 是回放还是返回冲突。
+fn storage_key(tenant_id: &str, user_id: i64, raw_key: &str) -> String {
+    hex_sha256(format!("{tenant_id}\n{user_id}\n{raw_key}").as_bytes())
+}
+
+/// 将租户、用户、方法、具体规范路径、排序后的查询参数与正文 SHA-256 绑定为请求指纹。
+fn request_fingerprint(
+    tenant_id: &str,
+    user_id: i64,
+    method: &Method,
+    request_target: &str,
+    body: &[u8],
+) -> String {
+    let body_sha256 = hex_sha256(body);
+    hex_sha256(
+        format!(
+            "{tenant_id}\n{user_id}\n{}\n{request_target}\n{body_sha256}",
+            method.as_str()
+        )
+        .as_bytes(),
+    )
 }
 
 fn hex_sha256(value: &[u8]) -> String {
@@ -637,10 +662,15 @@ fn unavailable_response(error: String) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use axum::http::{HeaderMap, header};
+    use axum::{
+        body::Body,
+        extract::{OriginalUri, Request},
+        http::{HeaderMap, Method, Uri, header},
+    };
 
     use super::{
-        CachedResponse, cacheable_response_headers, normalize_request_path, rebuild_response,
+        CachedResponse, cacheable_response_headers, hex_sha256, normalize_request_path,
+        normalized_request_target, rebuild_response, request_fingerprint,
     };
 
     #[test]
@@ -652,6 +682,74 @@ mod tests {
         );
         assert_eq!(normalize_request_path("/files/%zz"), "/files/%zz");
         assert_eq!(normalize_request_path("/文件/%e4%b8%ad"), "/文件/%E4%B8%AD");
+    }
+
+    #[test]
+    fn original_concrete_uri_is_used_and_query_pairs_are_sorted() {
+        let mut request = Request::builder()
+            .uri("/resources/7?ignored=true")
+            .body(Body::empty())
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(OriginalUri(Uri::from_static(
+                "/api/v1/system/resources/7?tag=b&dry_run=true&tag=a",
+            )));
+
+        assert_eq!(
+            normalized_request_target(&request),
+            "/api/v1/system/resources/7?dry_run=true&tag=a&tag=b"
+        );
+    }
+
+    #[test]
+    fn request_fingerprint_binds_identity_and_body_sha256() {
+        let body_sha256 = hex_sha256(b"payload");
+        assert_eq!(
+            body_sha256,
+            "239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5"
+        );
+
+        let expected =
+            hex_sha256(format!("tenant-a\n42\nPOST\n/resources/7?a=1\n{body_sha256}").as_bytes());
+        let fingerprint = request_fingerprint(
+            "tenant-a",
+            42,
+            &Method::POST,
+            "/resources/7?a=1",
+            b"payload",
+        );
+        assert_eq!(fingerprint, expected);
+        assert_ne!(
+            fingerprint,
+            request_fingerprint(
+                "tenant-b",
+                42,
+                &Method::POST,
+                "/resources/7?a=1",
+                b"payload"
+            )
+        );
+        assert_ne!(
+            fingerprint,
+            request_fingerprint(
+                "tenant-a",
+                43,
+                &Method::POST,
+                "/resources/7?a=1",
+                b"payload"
+            )
+        );
+        assert_ne!(
+            fingerprint,
+            request_fingerprint(
+                "tenant-a",
+                42,
+                &Method::POST,
+                "/resources/7?a=1",
+                b"payload-changed"
+            )
+        );
     }
 
     #[test]

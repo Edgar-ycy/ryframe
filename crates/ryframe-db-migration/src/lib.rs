@@ -24,6 +24,10 @@ mod m20260726_000011_platform_message_permission_scope;
 mod m20260727_000012_avatar_file_relation;
 mod m20260728_000013_outbox_events;
 mod m20260728_000014_export_jobs;
+mod m20260803_000015_authorization_snapshot;
+mod m20260803_000016_cache_namespace_versions;
+mod m20260803_000017_file_digest_finalization;
+mod m20260803_000018_audit_operation_outbox;
 mod schema;
 mod seeder;
 
@@ -66,13 +70,12 @@ impl MigratorTrait for Migrator {
             Box::new(m20260727_000012_avatar_file_relation::Migration),
             Box::new(m20260728_000013_outbox_events::Migration),
             Box::new(m20260728_000014_export_jobs::Migration),
+            Box::new(m20260803_000015_authorization_snapshot::Migration),
+            Box::new(m20260803_000016_cache_namespace_versions::Migration),
+            Box::new(m20260803_000017_file_digest_finalization::Migration),
+            Box::new(m20260803_000018_audit_operation_outbox::Migration),
         ]
     }
-}
-
-/// 完整迁移操作的向后兼容别名。
-pub async fn run(db: &DatabaseConnection) -> Result<(), DbErr> {
-    up(db).await
 }
 
 /// 应用待执行迁移，幂等地初始化系统数据，并校验 schema。
@@ -203,4 +206,65 @@ where
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm_migration::MigratorTrait;
+
+    use super::Migrator;
+
+    #[test]
+    fn audit_operation_outbox_migration_is_the_latest_registry_entry() {
+        let names = Migrator::migrations()
+            .into_iter()
+            .map(|migration| migration.name().to_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names.last().map(String::as_str),
+            Some("m20260803_000018_audit_operation_outbox")
+        );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.as_str() == "m20260803_000018_audit_operation_outbox")
+                .count(),
+            1
+        );
+        let digest_index = names
+            .iter()
+            .position(|name| name == "m20260803_000017_file_digest_finalization")
+            .unwrap();
+        let audit_index = names
+            .iter()
+            .position(|name| name == "m20260803_000018_audit_operation_outbox")
+            .unwrap();
+        assert_eq!(audit_index, digest_index + 1);
+    }
+
+    #[test]
+    fn cache_namespace_version_migration_follows_authorization_snapshot_once() {
+        let names = Migrator::migrations()
+            .into_iter()
+            .map(|migration| migration.name().to_owned())
+            .collect::<Vec<_>>();
+        let authorization_index = names
+            .iter()
+            .position(|name| name == "m20260803_000015_authorization_snapshot")
+            .unwrap();
+        let cache_index = names
+            .iter()
+            .position(|name| name == "m20260803_000016_cache_namespace_versions")
+            .unwrap();
+
+        assert_eq!(cache_index, authorization_index + 1);
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.as_str() == "m20260803_000016_cache_namespace_versions")
+                .count(),
+            1
+        );
+    }
 }

@@ -2,6 +2,7 @@
 mod macros;
 
 pub mod background_job_repo;
+pub mod cache_namespace_version_repo;
 pub mod config_repo;
 pub mod dept_repo;
 pub mod dict_repo;
@@ -25,6 +26,9 @@ pub use background_job_repo::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, EnqueueBackgroundJob,
     EnqueueBackgroundJobResult, ExpiredLeaseRecovery, JobFailureDisposition,
 };
+pub use cache_namespace_version_repo::{
+    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, validate_cache_namespace,
+};
 pub use config_repo::{ConfigFilter, ConfigRepository};
 pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeFilter, DictTypeRepository};
@@ -46,3 +50,12 @@ pub use role_repo::{RoleFilter, RoleRepository};
 pub use tenant_provisioning_repo::{ProvisionTenantCommand, TenantProvisioningRepository};
 pub use tenant_repo::TenantRepository;
 pub use user_repo::{UserFilter, UserRepository};
+
+/// 构造把 `%`、`_` 和转义符视为普通字符的 SQL 前缀匹配表达式。
+pub(crate) fn prefix_like(value: &str) -> sea_orm::sea_query::LikeExpr {
+    let escaped = value
+        .replace('!', "!!")
+        .replace('%', "!%")
+        .replace('_', "!_");
+    sea_orm::sea_query::LikeExpr::new(format!("{escaped}%")).escape('!')
+}

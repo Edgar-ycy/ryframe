@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `max_storage_mb`         BIGINT       NOT NULL DEFAULT 1024 COMMENT '最大存储容量(MB)',
     `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
     `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
+    `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
     `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -22,6 +23,18 @@ CREATE TABLE IF NOT EXISTS `sys_tenant` (
     UNIQUE KEY `uk_tenant_domain` (`domain`),
     KEY `idx_tenant_status` (`status`, `expire_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户表';
+
+CREATE TABLE IF NOT EXISTS `sys_cache_namespace_version` (
+    `tenant_id` VARCHAR(64) NOT NULL COMMENT '租户标识',
+    `namespace` VARCHAR(64) NOT NULL COMMENT '缓存命名空间',
+    `version` BIGINT NOT NULL DEFAULT 0 COMMENT '单调递增权威版本',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`tenant_id`, `namespace`),
+    CONSTRAINT `fk_cache_namespace_version_tenant`
+        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户缓存命名空间权威版本';
 
 CREATE TABLE IF NOT EXISTS `sys_dept` (
     `id`          BIGINT       NOT NULL                    COMMENT '部门ID',
@@ -57,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `avatar`         VARCHAR(255)          DEFAULT NULL     COMMENT '头像URL',
     `avatar_file_id` BIGINT                DEFAULT NULL     COMMENT '头像文件ID',
     `status`         VARCHAR(32)  NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定 pending_activation待激活 must_reset_password需改密',
-    `auth_version`   INT          NOT NULL DEFAULT 1        COMMENT '用户认证版本，权限变更时递增',
+    `authorization_version` INT          NOT NULL DEFAULT 1 COMMENT '用户授权版本，权限或凭据变更时递增',
     `preferred_locale` VARCHAR(16)         DEFAULT NULL      COMMENT '用户偏好语言',
     `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID(软删除场景由代码校验合法性)',
     `remark`         VARCHAR(512)          DEFAULT NULL     COMMENT '备注',
@@ -287,6 +300,8 @@ CREATE TABLE IF NOT EXISTS `sys_notice` (
 CREATE TABLE IF NOT EXISTS `sys_oper_log` (
     `id`              BIGINT       NOT NULL                COMMENT '日志ID',
     `tenant_id`       VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
+    `event_id`        CHAR(36)              DEFAULT NULL   COMMENT '审计事件UUID v7',
+    `request_id`      CHAR(36)              DEFAULT NULL   COMMENT 'HTTP请求UUID v7',
     `title`           VARCHAR(64)  NOT NULL                COMMENT '模块标题',
     `business_type`   VARCHAR(32)  NOT NULL                COMMENT '业务类型(INSERT/UPDATE/DELETE等)',
     `method`          VARCHAR(255) NOT NULL                COMMENT '操作方法(类名.方法名)',
@@ -302,6 +317,7 @@ CREATE TABLE IF NOT EXISTS `sys_oper_log` (
     `oper_time`       DATETIME     NOT NULL                COMMENT '操作时间',
     `cost_time`       BIGINT       NOT NULL DEFAULT 0      COMMENT '耗时(毫秒)',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_oper_log_event_id` (`event_id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_oper_time` (`oper_time`),
     KEY `idx_business_type` (`business_type`),
@@ -387,13 +403,12 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     `file_url`      VARCHAR(1000)NOT NULL                    COMMENT '相对路径(bucket/date/uuid.ext)',
     `file_size`     BIGINT       NOT NULL DEFAULT 0          COMMENT '字节数',
     `content_type`  VARCHAR(100) NOT NULL                    COMMENT 'MIME类型',
-    `file_md5`      CHAR(32)              DEFAULT NULL       COMMENT 'MD5去重校验',
-    `file_sha256`   CHAR(64)              DEFAULT NULL       COMMENT 'SHA-256内容摘要',
+    `file_sha256`   CHAR(64)     NOT NULL                    COMMENT 'SHA-256内容摘要',
     `upload_by`     VARCHAR(64)           DEFAULT NULL       COMMENT '上传者',
     `upload_status` VARCHAR(16)  NOT NULL DEFAULT 'ready'    COMMENT '上传状态: pending/ready/cleanup',
     `reservation_token` VARCHAR(64)       DEFAULT NULL       COMMENT '上传预留所有权令牌',
     `reservation_expires_at` DATETIME     DEFAULT NULL       COMMENT '上传预留过期时间',
-    `del_flag`      CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '文件可见性: 0正常 2删除 3上传预留/清理',
+    `del_flag`      CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '文件状态: 0正常 2删除',
     `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -401,7 +416,6 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     KEY `idx_bucket` (`bucket`),
     KEY `idx_upload_by` (`upload_by`),
     KEY `idx_del_flag` (`del_flag`),
-    KEY `idx_file_upload_reservation` (`tenant_id`, `bucket`, `file_md5`, `upload_status`),
     KEY `idx_file_sha256` (`tenant_id`, `bucket`, `file_sha256`, `upload_status`),
     KEY `idx_file_reservation_expiry` (`upload_status`, `reservation_expires_at`),
     CONSTRAINT `fk_sys_file_tenant`
@@ -490,6 +504,9 @@ CREATE TABLE IF NOT EXISTS `sys_message_recipient` (
 
 INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
 VALUES (1, 'system', '系统租户', '1') ON DUPLICATE KEY UPDATE `id` = `id`;
+
+INSERT INTO `sys_cache_namespace_version` (`tenant_id`, `namespace`, `version`)
+VALUES ('system', 'config', 0) ON DUPLICATE KEY UPDATE `tenant_id` = `tenant_id`;
 
 INSERT INTO `sys_dept` (`id`, `name`, `parent_id`, `ancestors`, `sort`, `status`) VALUES
     (1, 'RyFrame 科技',  NULL, '0',        1, '1'),

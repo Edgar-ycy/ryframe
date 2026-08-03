@@ -1,8 +1,7 @@
 use ryframe_db::{entities::menu, repositories::menu_repo::MenuTreeNode as RepoMenuTreeNode};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuType {
     #[serde(rename = "M")]
     Directory,
@@ -22,7 +21,7 @@ impl MenuType {
     }
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct MenuVo {
     pub id: String,
     pub name: String,
@@ -57,7 +56,7 @@ impl From<menu::Model> for MenuVo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MenuTreeNode {
     pub id: String,
     pub name: String,
@@ -70,7 +69,6 @@ pub struct MenuTreeNode {
     pub sort: i32,
     pub visible: bool,
     pub status: String,
-    #[schema(no_recursion)]
     pub children: Vec<MenuTreeNode>,
 }
 

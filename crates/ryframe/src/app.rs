@@ -5,7 +5,7 @@ use axum::{
 };
 use ryframe_api::request_locale::request_locale_middleware;
 use ryframe_config::CorsConfig;
-use ryframe_http::AppResult;
+use ryframe_kernel::AppResult;
 use ryframe_middleware::{SecurityHeadersConfig, rate_limit::RateLimitState};
 
 /// 将公开探针与业务路由分开构建，确保存活/就绪检查绝不会经过认证、租户提取、
@@ -19,7 +19,7 @@ pub fn build_app(
     let upload_limits = state.config.upload.clone();
     let telemetry_enabled = state.config.telemetry.enabled;
     let rate_limit_state_for_api = rate_limit_state.clone();
-    let security_headers = if is_production() {
+    let security_headers = if state.config.environment.is_production() {
         SecurityHeadersConfig::strict()
     } else {
         SecurityHeadersConfig::default()
@@ -79,13 +79,4 @@ pub fn build_app(
     } else {
         Ok(app)
     }
-}
-
-fn is_production() -> bool {
-    std::env::var("APP_ENV").is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "prod" | "production"
-        )
-    })
 }

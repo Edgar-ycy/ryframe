@@ -7,7 +7,6 @@ use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
 use ryframe_kernel::{AppError, AppResult};
-use serde::{Deserialize, Serialize};
 
 use crate::RedisClient;
 
@@ -74,14 +73,13 @@ redis.call('HSET', KEYS[1], 'revoked', '1')
 return 1
 "#;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RefreshFamily {
     pub sid: String,
     pub tenant_id: String,
     pub user_id: i64,
     pub current_jti: String,
     pub previous_jti: Option<String>,
-    #[serde(default)]
     pub last_attempt_id: Option<String>,
     pub rotated_at: i64,
     pub absolute_exp: i64,

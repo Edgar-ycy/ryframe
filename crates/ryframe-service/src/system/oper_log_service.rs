@@ -1,16 +1,16 @@
 use chrono::Utc;
-use ryframe_core::{LoggedRepo, PageQuery, PageResult, Repository};
-use ryframe_db::DatabaseCluster;
+use ryframe_core::{PageResult, Repository, ValidatedPageQuery};
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{OperLogFilter, OperLogRepository, entities::oper_log};
-use ryframe_kernel::{ActorContext, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
+use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 use super::log_time_range::parse_log_time_range;
 
 /// 操作日志视图对象
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OperLogVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -54,7 +54,7 @@ impl From<oper_log::Model> for OperLogVo {
 
 #[derive(Debug)]
 pub struct OperLogQuery {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub oper_name: Option<String>,
     pub status: Option<String>,
     pub begin_time: Option<String>,
@@ -95,14 +95,14 @@ pub struct RecordOperLogCommand {
 
 pub struct OperLogService {
     db: DatabaseCluster,
-    oper_log_repo: LoggedRepo<OperLogRepository>,
+    oper_log_repo: OperLogRepository,
 }
 
 impl OperLogService {
     pub fn new(db: DatabaseCluster) -> Self {
         Self {
             db,
-            oper_log_repo: LoggedRepo::new(OperLogRepository),
+            oper_log_repo: OperLogRepository,
         }
     }
 
@@ -125,6 +125,8 @@ impl OperLogService {
         let log = oper_log::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
+            event_id: None,
+            request_id: None,
             title: command.title,
             business_type: command.business_type,
             method: command.method,
@@ -146,6 +148,51 @@ impl OperLogService {
         Ok(())
     }
 
+    /// 在 Outbox 消费事务内按审计事件标识幂等写入操作日志。
+    pub async fn record_event_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        event_id: &str,
+        request_id: &str,
+        tenant_id: &str,
+        command: RecordOperLogCommand,
+    ) -> AppResult<bool> {
+        ryframe_core::validate_explicit_tenant(tenant_id)?;
+        if event_id.is_empty() || event_id.len() > 36 {
+            return Err(ryframe_kernel::AppError::Validation(
+                "审计事件标识长度必须介于 1 和 36 之间".into(),
+            ));
+        }
+        if request_id.is_empty() || request_id.len() > 36 {
+            return Err(ryframe_kernel::AppError::Validation(
+                "请求标识长度必须介于 1 和 36 之间".into(),
+            ));
+        }
+        let log = oper_log::Model {
+            id: snowflake::try_next_snowflake_id()?,
+            tenant_id: tenant_id.to_owned(),
+            event_id: Some(event_id.to_owned()),
+            request_id: Some(request_id.to_owned()),
+            title: command.title,
+            business_type: command.business_type,
+            method: command.method,
+            request_method: command.request_method,
+            oper_name: command.oper_name,
+            oper_url: command.oper_url,
+            oper_ip: command.oper_ip,
+            oper_location: None,
+            oper_param: command.oper_param,
+            json_result: command.json_result,
+            status: command.status.as_str().to_string(),
+            error_msg: command.error_msg,
+            oper_time: Utc::now(),
+            cost_time: command.cost_time,
+        };
+        self.oper_log_repo
+            .insert_event_in_transaction(transaction, tenant_id, log)
+            .await
+    }
+
     pub async fn find_by_page(
         &self,
         actor: &ActorContext,
@@ -153,7 +200,7 @@ impl OperLogService {
     ) -> AppResult<PageResult<OperLogVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let (begin_time, end_time) =
             parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref());
         let filter = OperLogFilter {
@@ -179,22 +226,24 @@ impl OperLogService {
     pub async fn find_for_export(
         &self,
         actor: &ActorContext,
-        query: &OperLogQuery,
+        oper_name: Option<&str>,
+        status: Option<&str>,
+        begin_time: Option<&str>,
+        end_time: Option<&str>,
         maximum_records: usize,
     ) -> AppResult<Vec<OperLogVo>> {
         const BATCH_SIZE: u64 = 1_000;
 
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
-        let db = self.db.read();
-        let (begin_time, end_time) =
-            parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref());
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let (begin_time, end_time) = parse_log_time_range(begin_time, end_time);
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
             let filter = OperLogFilter {
-                oper_name: query.oper_name.as_deref(),
-                status: query.status.as_deref(),
+                oper_name,
+                status,
                 begin_time,
                 end_time,
             };
@@ -218,17 +267,16 @@ impl OperLogService {
 
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        self.oper_log_repo.clean_all(db, tenant_id).await
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let rows_affected = self
+            .oper_log_repo
+            .clean_all_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(rows_affected)
     }
+}
 
-    /// 导出操作日志（带过滤条件，返回全部匹配结果）
-    pub async fn find_all(
-        &self,
-        actor: &ActorContext,
-        query: OperLogQuery,
-    ) -> AppResult<Vec<OperLogVo>> {
-        let result = self.find_by_page(actor, query).await?;
-        Ok(result.records)
-    }
+fn database_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Database(error.to_string())
 }

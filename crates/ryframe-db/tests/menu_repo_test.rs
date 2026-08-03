@@ -1,7 +1,16 @@
 mod common;
 
+fn page_query(page: u64, page_size: u64) -> ryframe_core::ValidatedPageQuery {
+    ryframe_core::ValidatedPageQuery::new(
+        page,
+        page_size,
+        &ryframe_config::PaginationConfig::default(),
+    )
+    .expect("测试分页参数必须有效")
+}
+
 use chrono::Utc;
-use ryframe_core::repository::{PageQuery, Repository};
+use ryframe_core::repository::Repository;
 use ryframe_db::{
     MenuFilter, MenuRepository, PermissionRepository,
     entities::{menu, permission},
@@ -67,10 +76,7 @@ async fn filtered_menu_query_is_paginated_in_the_repository() {
         .find_by_page_filtered(
             &db,
             "system",
-            &PageQuery {
-                page: 2,
-                page_size: 1,
-            },
+            &page_query(2, 1),
             &MenuFilter {
                 name: Some("系统"),
                 status: Some("1"),

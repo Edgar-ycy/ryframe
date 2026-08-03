@@ -12,6 +12,8 @@ allow_origins = [
 [logger]
 level = "info"
 format = "json"
+output = "stdout"
+retention_days = 7
 
 [redis]
 mode = "required"

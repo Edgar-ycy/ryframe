@@ -5,6 +5,7 @@ use ryframe_db::{
     entities::{role, tenant, user},
 };
 use ryframe_kernel::{AppError, AppResult};
+use sea_orm::DatabaseConnection;
 
 use super::{AuthService, UserInfo};
 
@@ -28,7 +29,7 @@ impl AuthService {
         tenant_id: &str,
         user_id: i64,
         session_id: &str,
-        user_auth_version: i32,
+        user_authorization_version: i32,
         tenant_session_version: i32,
     ) -> AppResult<()> {
         ryframe_core::validate_explicit_tenant(tenant_id)?;
@@ -48,7 +49,7 @@ impl AuthService {
             .find_by_id(self.db.write(), tenant_id, user_id)
             .await?
             .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
-        if !user.is_enabled() || user.auth_version != user_auth_version {
+        if !user.is_enabled() || user.authorization_version != user_authorization_version {
             return Err(AppError::Authentication(
                 "用户会话已失效，请重新登录".into(),
             ));
@@ -65,9 +66,18 @@ impl AuthService {
         &self,
         claims: &Claims,
     ) -> AppResult<ValidatedIdentity> {
+        self.validate_token_identity_on(self.db.write(), claims)
+            .await
+    }
+
+    pub(super) async fn validate_token_identity_on(
+        &self,
+        db: &DatabaseConnection,
+        claims: &Claims,
+    ) -> AppResult<ValidatedIdentity> {
         ryframe_core::validate_explicit_tenant(&claims.tenant_id)?;
         let tenant = TenantRepository
-            .ensure_available(self.db.write(), &claims.tenant_id)
+            .ensure_available(db, &claims.tenant_id)
             .await?;
         if claims.tenant_session_version != tenant.session_version {
             return Err(AppError::Authentication(
@@ -81,13 +91,13 @@ impl AuthService {
             .map_err(|_| AppError::Authentication("令牌中的用户ID无效".into()))?;
         let user = self
             .user_repo
-            .find_by_id(self.db.write(), &claims.tenant_id, user_id)
+            .find_by_id(db, &claims.tenant_id, user_id)
             .await?
             .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
         if !user.is_enabled() {
             return Err(AppError::Authentication("账号已停用或锁定".into()));
         }
-        if claims.user_auth_version != user.auth_version {
+        if claims.user_authorization_version != user.authorization_version {
             return Err(AppError::Authentication(
                 "用户权限已变更，请重新登录".into(),
             ));
@@ -101,15 +111,25 @@ impl AuthService {
         tenant_id: &str,
         user_id: i64,
     ) -> AppResult<AuthorizationProfile> {
+        self.load_authorization_profile_on(self.db.write(), tenant_id, user_id)
+            .await
+    }
+
+    pub(super) async fn load_authorization_profile_on(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        user_id: i64,
+    ) -> AppResult<AuthorizationProfile> {
         let roles = self
             .role_repo
-            .find_user_roles(self.db.write(), tenant_id, user_id)
+            .find_user_roles(db, tenant_id, user_id)
             .await?;
         let is_super_admin = roles.iter().any(|role| role.is_super == 1);
         let permissions = if is_super_admin {
             vec!["*:*:*".to_owned()]
         } else {
-            self.load_permission_codes(tenant_id, &roles).await?
+            self.load_permission_codes_on(db, tenant_id, &roles).await?
         };
 
         Ok(AuthorizationProfile { roles, permissions })
@@ -140,15 +160,16 @@ impl AuthService {
         Ok(user_info)
     }
 
-    async fn load_permission_codes(
+    async fn load_permission_codes_on(
         &self,
+        db: &DatabaseConnection,
         tenant_id: &str,
         roles: &[role::Model],
     ) -> AppResult<Vec<String>> {
         let role_ids = roles.iter().map(|role| role.id).collect::<Vec<_>>();
         let mut codes = self
             .perm_repo
-            .find_role_perms(self.db.write(), tenant_id, &role_ids)
+            .find_role_perms(db, tenant_id, &role_ids)
             .await?
             .into_iter()
             .map(|permission| permission.code)

@@ -1,7 +1,8 @@
 mod common;
 
 use ryframe_db::{
-    DatabaseCluster, RoleRepository, TenantRepository, UserRepository, entities::permission,
+    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, DatabaseCluster, RoleRepository,
+    TenantRepository, UserRepository, entities::permission,
 };
 use ryframe_kernel::{ActorContext, AppError, DataScope};
 use ryframe_service::system::{
@@ -27,7 +28,10 @@ fn actor(tenant_id: &str, is_super_admin: bool) -> ActorContext {
 #[tokio::test]
 async fn only_system_super_admin_can_manage_tenants() {
     let db = common::setup_test_db().await;
-    let service = TenantService::new(DatabaseCluster::single(db.connection().clone()));
+    let service = TenantService::new(
+        DatabaseCluster::single(db.connection().clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
 
     assert!(service.list(&actor("tenant-b", true)).await.is_err());
     assert!(service.list(&actor("system", false)).await.is_err());
@@ -37,7 +41,10 @@ async fn only_system_super_admin_can_manage_tenants() {
 #[tokio::test]
 async fn tenant_creation_rejects_weak_admin_password() {
     let db = common::setup_test_db().await;
-    let service = TenantService::new(DatabaseCluster::single(db.clone()));
+    let service = TenantService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     let error = service
         .create(
             &actor("system", true),
@@ -70,7 +77,10 @@ async fn tenant_creation_rejects_weak_admin_password() {
 #[tokio::test]
 async fn tenant_creation_rejects_redis_glob_identifiers() {
     let db = common::setup_test_db().await;
-    let service = TenantService::new(DatabaseCluster::single(db.clone()));
+    let service = TenantService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     for tenant_id in ["**", "a?", "a[b]", "a:b", "a\\b"] {
         let error = service
             .create(
@@ -97,7 +107,10 @@ async fn tenant_creation_rejects_redis_glob_identifiers() {
 #[tokio::test]
 async fn tenant_creation_rejects_limits_below_provisioned_resources() {
     let db = common::setup_test_db().await;
-    let service = TenantService::new(DatabaseCluster::single(db.clone()));
+    let service = TenantService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     let error = service
         .create(
             &actor("system", true),
@@ -132,7 +145,10 @@ async fn concurrent_user_creation_cannot_exceed_tenant_quota() {
     let db = common::setup_test_db().await;
     let platform_admin = actor("system", true);
     let cluster = DatabaseCluster::single(db.clone());
-    let tenant_service = TenantService::new(cluster.clone());
+    let tenant_service = TenantService::new(
+        cluster.clone(),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     tenant_service
         .update(
             &platform_admin,
@@ -150,7 +166,7 @@ async fn concurrent_user_creation_cannot_exceed_tenant_quota() {
         .await
         .expect("set one-user quota");
 
-    let user_service = UserService::new(cluster, None);
+    let user_service = UserService::new(cluster, ryframe_service::AuthorizationCache::disabled());
     let (first, second) = tokio::join!(
         user_service.create(
             &platform_admin,
@@ -195,11 +211,17 @@ async fn concurrent_role_creation_cannot_exceed_tenant_quota() {
     let db = common::setup_test_db().await;
     let platform_admin = actor("system", true);
     let cluster = DatabaseCluster::single(db.clone());
-    RoleService::new(cluster.clone(), None)
-        .create(&platform_admin, "Existing Role", "quota-existing", 0, None)
-        .await
-        .expect("seed existing role");
-    let tenant_service = TenantService::new(cluster.clone());
+    RoleService::new(
+        cluster.clone(),
+        ryframe_service::AuthorizationCache::disabled(),
+    )
+    .create(&platform_admin, "Existing Role", "quota-existing", 0, None)
+    .await
+    .expect("seed existing role");
+    let tenant_service = TenantService::new(
+        cluster.clone(),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     tenant_service
         .update(
             &platform_admin,
@@ -217,7 +239,7 @@ async fn concurrent_role_creation_cannot_exceed_tenant_quota() {
         .await
         .expect("leave one role slot");
 
-    let role_service = RoleService::new(cluster, None);
+    let role_service = RoleService::new(cluster, ryframe_service::AuthorizationCache::disabled());
     let (first, second) = tokio::join!(
         role_service.create(&platform_admin, "Quota First", "quota-first", 1, None),
         role_service.create(&platform_admin, "Quota Second", "quota-second", 2, None),
@@ -242,7 +264,10 @@ async fn tenant_limits_cannot_be_lowered_below_current_usage() {
     let db = common::setup_test_db().await;
     let platform_admin = actor("system", true);
     let cluster = DatabaseCluster::single(db.clone());
-    let user_service = UserService::new(cluster.clone(), None);
+    let user_service = UserService::new(
+        cluster.clone(),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     for (username, phone) in [("usage-first", "20001"), ("usage-second", "20002")] {
         user_service
             .create(
@@ -260,7 +285,7 @@ async fn tenant_limits_cannot_be_lowered_below_current_usage() {
             .expect("seed current user usage");
     }
 
-    let error = TenantService::new(cluster)
+    let error = TenantService::new(cluster, ryframe_service::AuthorizationCache::disabled())
         .update(
             &platform_admin,
             "system",
@@ -289,7 +314,10 @@ async fn tenant_limits_cannot_be_lowered_below_current_usage() {
 #[tokio::test]
 async fn tenant_lifecycle_initializes_admin_and_invalidates_sessions() {
     let db = common::setup_test_db().await;
-    let service = TenantService::new(DatabaseCluster::single(db.clone()));
+    let service = TenantService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     let platform_admin = actor("system", true);
 
     let created = service
@@ -389,24 +417,35 @@ async fn tenant_provisioning_does_not_copy_platform_permissions() {
         .expect("seed system permission");
     }
 
-    TenantService::new(DatabaseCluster::single(db.clone()))
-        .create(
-            &actor("system", true),
-            CreateTenantParams {
-                tenant_id: "tenant-no-platform-permission".into(),
-                name: "权限隔离租户".into(),
-                domain: None,
-                expire_at: None,
-                max_users: None,
-                max_roles: None,
-                max_storage_mb: None,
-                max_requests_per_min: None,
-                admin_username: "tenant-admin".into(),
-                admin_password: "StrongPassword123!".into(),
-            },
-        )
-        .await
-        .expect("provision tenant");
+    TenantService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    )
+    .create(
+        &actor("system", true),
+        CreateTenantParams {
+            tenant_id: "tenant-no-platform-permission".into(),
+            name: "权限隔离租户".into(),
+            domain: None,
+            expire_at: None,
+            max_users: None,
+            max_roles: None,
+            max_storage_mb: None,
+            max_requests_per_min: None,
+            admin_username: "tenant-admin".into(),
+            admin_password: "StrongPassword123!".into(),
+        },
+    )
+    .await
+    .expect("provision tenant");
+
+    assert_eq!(
+        CacheNamespaceVersionRepository
+            .find_version(&db, "tenant-no-platform-permission", CONFIG_CACHE_NAMESPACE,)
+            .await
+            .expect("查询新租户缓存命名空间版本"),
+        0
+    );
 
     let copied_codes = permission::Entity::find()
         .filter(permission::Column::TenantId.eq("tenant-no-platform-permission"))

@@ -4,13 +4,16 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, TransactionTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder,
 };
 
 use crate::entities::{
     config, dept, dict_data, dict_type, menu, permission, post, role, role_permission, tenant,
     user, user_role,
+};
+use crate::repositories::cache_namespace_version_repo::{
+    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository,
 };
 
 const TEMPLATE_TENANT_ID: &str = "system";
@@ -48,53 +51,50 @@ impl TenantProvisioningRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
-    pub async fn provision(
+    /// 在调用方事务内初始化租户、管理员、角色及模板数据。
+    pub async fn provision_in_transaction(
         &self,
-        db: &DatabaseConnection,
+        transaction: &DatabaseTransaction,
         command: ProvisionTenantCommand,
     ) -> AppResult<tenant::Model> {
-        let transaction = db
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
         let now = Utc::now();
 
         let system_menus = menu::Entity::find()
             .filter(menu::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .order_by_asc(menu::Column::Id)
-            .all(&transaction)
+            .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_posts = post::Entity::find()
             .filter(post::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
-            .all(&transaction)
+            .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_configs = config::Entity::find()
             .filter(config::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
-            .all(&transaction)
+            .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_dict_types = dict_type::Entity::find()
             .filter(dict_type::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
-            .all(&transaction)
+            .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let mut system_dict_data = dict_data::Entity::find()
             .filter(dict_data::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
-            .all(&transaction)
+            .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let system_depts = dept::Entity::find()
             .filter(dept::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .order_by_asc(dept::Column::Id)
-            .all(&transaction)
+            .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
 
@@ -106,7 +106,7 @@ impl TenantProvisioningRepository {
             // 平台权限只能保留在 system 租户，绝不能随租户模板授予新租户管理员。
             .filter(permission::Column::Code.not_like(format!("{PLATFORM_PERMISSION_PREFIX}%")))
             .order_by_asc(permission::Column::Id)
-            .all(&transaction)
+            .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
 
@@ -123,12 +123,17 @@ impl TenantProvisioningRepository {
             max_storage_mb: ActiveValue::Set(command.max_storage_mb),
             max_requests_per_min: ActiveValue::Set(command.max_requests_per_minute),
             session_version: ActiveValue::Set(1),
+            authorization_epoch: ActiveValue::Set(1),
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(now),
         }
-        .insert(&transaction)
+        .insert(transaction)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
+
+        CacheNamespaceVersionRepository
+            .insert_initial_in_transaction(transaction, &tenant_id, CONFIG_CACHE_NAMESPACE, now)
+            .await?;
 
         let admin_role_id = snowflake::try_next_snowflake_id()?;
         let user_role_id = snowflake::try_next_snowflake_id()?;
@@ -148,7 +153,7 @@ impl TenantProvisioningRepository {
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(now),
         }
-        .insert(&transaction)
+        .insert(transaction)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
         role::ActiveModel {
@@ -165,7 +170,7 @@ impl TenantProvisioningRepository {
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(now),
         }
-        .insert(&transaction)
+        .insert(transaction)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
 
@@ -181,7 +186,7 @@ impl TenantProvisioningRepository {
             avatar_file_id: ActiveValue::Set(None),
             preferred_locale: ActiveValue::Set(None),
             status: ActiveValue::Set(user::Model::STATUS_NORMAL.into()),
-            auth_version: ActiveValue::Set(0),
+            authorization_version: ActiveValue::Set(1),
             dept_id: ActiveValue::Set(None),
             remark: ActiveValue::Set(None),
             login_ip: ActiveValue::Set(None),
@@ -190,7 +195,7 @@ impl TenantProvisioningRepository {
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(now),
         }
-        .insert(&transaction)
+        .insert(transaction)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
         user_role::ActiveModel {
@@ -198,7 +203,7 @@ impl TenantProvisioningRepository {
             user_id: ActiveValue::Set(user_id),
             role_id: ActiveValue::Set(admin_role_id),
         }
-        .insert(&transaction)
+        .insert(transaction)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
 
@@ -222,7 +227,7 @@ impl TenantProvisioningRepository {
                 created_at: ActiveValue::Set(now),
                 updated_at: ActiveValue::Set(now),
             }
-            .insert(&transaction)
+            .insert(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
 
@@ -245,7 +250,7 @@ impl TenantProvisioningRepository {
         }
         if !role_permissions.is_empty() {
             role_permission::Entity::insert_many(role_permissions)
-                .exec(&transaction)
+                .exec(transaction)
                 .await
                 .map_err(|error| AppError::Database(error.to_string()))?;
         }
@@ -276,7 +281,7 @@ impl TenantProvisioningRepository {
                 created_at: ActiveValue::Set(now),
                 updated_at: ActiveValue::Set(now),
             }
-            .insert(&transaction)
+            .insert(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
             menu_ids.insert(source.id, id);
@@ -301,7 +306,7 @@ impl TenantProvisioningRepository {
             .collect::<AppResult<Vec<_>>>()?;
         if !posts.is_empty() {
             post::Entity::insert_many(posts)
-                .exec(&transaction)
+                .exec(transaction)
                 .await
                 .map_err(|error| AppError::Database(error.to_string()))?;
         }
@@ -324,7 +329,7 @@ impl TenantProvisioningRepository {
             .collect::<AppResult<Vec<_>>>()?;
         if !configs.is_empty() {
             config::Entity::insert_many(configs)
-                .exec(&transaction)
+                .exec(transaction)
                 .await
                 .map_err(|error| AppError::Database(error.to_string()))?;
         }
@@ -347,7 +352,7 @@ impl TenantProvisioningRepository {
             .collect::<AppResult<Vec<_>>>()?;
         if !dict_types.is_empty() {
             dict_type::Entity::insert_many(dict_types)
-                .exec(&transaction)
+                .exec(transaction)
                 .await
                 .map_err(|error| AppError::Database(error.to_string()))?;
         }
@@ -373,7 +378,7 @@ impl TenantProvisioningRepository {
             .collect::<AppResult<Vec<_>>>()?;
         if !dict_data_models.is_empty() {
             dict_data::Entity::insert_many(dict_data_models)
-                .exec(&transaction)
+                .exec(transaction)
                 .await
                 .map_err(|error| AppError::Database(error.to_string()))?;
         }
@@ -405,16 +410,12 @@ impl TenantProvisioningRepository {
                 created_at: ActiveValue::Set(now),
                 updated_at: ActiveValue::Set(now),
             }
-            .insert(&transaction)
+            .insert(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
             dept_ids.insert(source.id, id);
         }
 
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
         Ok(tenant)
     }
 }

@@ -9,6 +9,7 @@ pub use test_database::TestDatabase;
 
 /// 创建独立 MySQL 数据库并建表。
 pub async fn setup_test_db() -> TestDatabase {
+    ryframe_utils::snowflake::initialize(1).expect("初始化测试 Snowflake");
     let db = connect_isolated_mysql().await;
     create_all_tables(&db).await;
     db
@@ -31,6 +32,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
     }
 
     create!(ryframe_db::entities::tenant::Entity);
+    create!(ryframe_db::entities::cache_namespace_version::Entity);
     create!(ryframe_db::entities::config::Entity);
     create!(ryframe_db::entities::dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);
@@ -49,6 +51,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::background_job::Entity);
+    create!(ryframe_db::entities::outbox_event::Entity);
     create!(ryframe_db::entities::message::Entity);
     create!(ryframe_db::entities::message_audience::Entity);
     create!(ryframe_db::entities::message_recipient::Entity);

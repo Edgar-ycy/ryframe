@@ -2,16 +2,18 @@ use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
 };
-use ryframe_core::PageQuery;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_i18n::LocalizedText;
+use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
 use ryframe_service::system::{
-    MessageAudienceKind, MessageAudienceSelector, NoticeListParams, NoticeVo, PublishMessageParams,
+    MessageAudienceKind, MessageAudienceSelector, NoticeListParams, PublishMessageParams,
 };
 use validator::Validate;
 
 use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};
+use crate::dto::public_dto::NoticeVo;
 use crate::message_presenter::{PublishedMessageVo, into_message_text, render_published};
 use crate::request_locale::RequestLocale;
 use crate::state::AppState;
@@ -25,7 +27,7 @@ list_query!(pub NoticeListQuery, NoticeFilterQuery {
 });
 
 impl NoticeFilterQuery {
-    fn into_service_params(self, page: PageQuery) -> NoticeListParams {
+    fn into_service_params(self, page: ValidatedPageQuery) -> NoticeListParams {
         NoticeListParams {
             page,
             title: self.title,
@@ -38,7 +40,6 @@ impl NoticeFilterQuery {
 pub fn notice_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
-        .merge(route!(list_no_page))
         .merge(route!(detail))
         .merge(route!(create))
         .merge(route!(update))
@@ -57,17 +58,17 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<NoticeListQuery>,
-) -> AppResult<Json<ApiPageResponse<NoticeVo>>> {
+) -> HttpResult<Json<ApiPageResponse<NoticeVo>>> {
     let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
         .notice
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::new(
-                p.records,
+                p.records.into_iter().map(NoticeVo::from).collect(),
                 p.total,
                 p.page,
                 p.page_size,
@@ -75,30 +76,6 @@ async fn list(
                 "查询成功",
             ))
         })
-}
-
-/// 通知公告列表不分页查询（返回全部数据）
-#[get("/all")]
-#[perm("system:notice:list")]
-#[utoipa::path(get, path = "/api/v1/system/notices/all", tag = "通知公告",
-    params(NoticeFilterQuery),
-    responses((status = 200, description = "公告列表", body = ApiResponse<Vec<NoticeVo>>)),
-    security(("bearer" = [])))]
-async fn list_no_page(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<NoticeFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<NoticeVo>>>> {
-    state
-        .services
-        .notice
-        .find_by_page(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await
-        .map_err(AppError::from)
-        .map(|p| Json(ApiResponse::success(p.records)))
 }
 
 /// 通知公告详情
@@ -112,7 +89,7 @@ async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<NoticeVo>>> {
+) -> HttpResult<Json<ApiResponse<NoticeVo>>> {
     detail_body!(state, current_user, id, notice, NoticeVo, "通知公告")
 }
 
@@ -125,7 +102,7 @@ async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreateNoticeDto>,
-) -> AppResult<Json<ApiResponse<NoticeVo>>> {
+) -> HttpResult<Json<ApiResponse<NoticeVo>>> {
     dto.validate()?;
     state
         .services
@@ -133,12 +110,12 @@ async fn create(
         .create(
             &current_user,
             &dto.title,
-            &dto.content,
+            &dto.content_markdown,
             dto.notice_type.as_deref(),
         )
         .await
-        .map_err(AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 更新通知公告
@@ -154,7 +131,7 @@ async fn update(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateNoticeDto>,
-) -> AppResult<Json<ApiResponse<NoticeVo>>> {
+) -> HttpResult<Json<ApiResponse<NoticeVo>>> {
     dto.validate()?;
     state
         .services
@@ -163,13 +140,13 @@ async fn update(
             &current_user,
             id,
             &dto.title,
-            &dto.content,
+            &dto.content_markdown,
             dto.notice_type.as_deref(),
             dto.status,
         )
         .await
-        .map_err(AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 将已发布公告显式投递到当前租户的消息中心。
@@ -186,7 +163,7 @@ async fn publish_to_message_center(
     current_user: RequestPrincipal,
     Extension(RequestLocale(locale)): Extension<RequestLocale>,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<PublishedMessageVo>>> {
+) -> HttpResult<Json<ApiResponse<PublishedMessageVo>>> {
     let notice = state
         .services
         .notice
@@ -194,9 +171,7 @@ async fn publish_to_message_center(
         .await?
         .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
     if notice.status != "1" {
-        return Err(AppError::Validation(
-            "仅已发布的通知公告可以投递到消息中心".into(),
-        ));
+        return Err(AppError::Validation("仅已发布的通知公告可以投递到消息中心".into()).into());
     }
 
     state
@@ -215,7 +190,7 @@ async fn publish_to_message_center(
                 )?,
                 content: into_message_text(
                     LocalizedText::Literal {
-                        value: notice.content,
+                        value: notice.content_markdown,
                     },
                     &state.localizer,
                 )?,
@@ -231,7 +206,7 @@ async fn publish_to_message_center(
             },
         )
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|published| render_published(published, &state.localizer, locale))
         .map(ApiResponse::success)
         .map(Json)
@@ -246,6 +221,6 @@ async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     remove_body!(state, current_user, id, notice)
 }

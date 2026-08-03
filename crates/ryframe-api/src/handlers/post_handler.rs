@@ -4,13 +4,14 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_core::PageQuery;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{PostListParams, PostVo};
+use ryframe_service::system::PostListParams;
 use validator::Validate;
 
 use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
+use crate::dto::public_dto::{ExportJobVo, PostVo};
 use crate::state::AppState;
 use crate::{detail_body, list_query, remove_body};
 use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
@@ -22,7 +23,7 @@ list_query!(pub PostListQuery, PostFilterQuery {
 });
 
 impl PostFilterQuery {
-    fn into_service_params(self, page: PageQuery) -> PostListParams {
+    fn into_service_params(self, page: ValidatedPageQuery) -> PostListParams {
         PostListParams {
             page,
             name: self.name,
@@ -35,7 +36,6 @@ impl PostFilterQuery {
 pub fn post_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
-        .merge(route!(list_no_page))
         .merge(route!(request_post_export))
         .merge(route!(detail))
         .merge(route!(create))
@@ -54,17 +54,17 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<PostListQuery>,
-) -> AppResult<Json<ApiPageResponse<PostVo>>> {
+) -> HttpResult<Json<ApiPageResponse<PostVo>>> {
     let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
         .post
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::new(
-                p.records,
+                p.records.into_iter().map(PostVo::from).collect(),
                 p.total,
                 p.page,
                 p.page_size,
@@ -72,30 +72,6 @@ async fn list(
                 "查询成功",
             ))
         })
-}
-
-/// 岗位列表不分页查询（返回全部数据）
-#[get("/all")]
-#[perm("system:post:list")]
-#[utoipa::path(get, path = "/api/v1/system/posts/all", tag = "岗位管理",
-    params(PostFilterQuery),
-    responses((status = 200, description = "岗位列表", body = ApiResponse<Vec<PostVo>>)),
-    security(("bearer" = [])))]
-async fn list_no_page(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<PostFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<PostVo>>>> {
-    state
-        .services
-        .post
-        .find_by_page(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await
-        .map_err(AppError::from)
-        .map(|page| Json(ApiResponse::success(page.records)))
 }
 
 /// 岗位详情
@@ -109,7 +85,7 @@ async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<PostVo>>> {
+) -> HttpResult<Json<ApiResponse<PostVo>>> {
     detail_body!(state, current_user, id, post, PostVo, "岗位")
 }
 
@@ -122,15 +98,15 @@ async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreatePostDto>,
-) -> AppResult<Json<ApiResponse<PostVo>>> {
+) -> HttpResult<Json<ApiResponse<PostVo>>> {
     dto.validate()?;
     state
         .services
         .post
         .create(&current_user, &dto.name, &dto.code, dto.sort.unwrap_or(0))
         .await
-        .map_err(AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 更新岗位
@@ -144,7 +120,7 @@ async fn update(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdatePostDto>,
-) -> AppResult<Json<ApiResponse<PostVo>>> {
+) -> HttpResult<Json<ApiResponse<PostVo>>> {
     dto.validate()?;
     state
         .services
@@ -157,8 +133,8 @@ async fn update(
             dto.status,
         )
         .await
-        .map_err(AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 删除岗位
@@ -170,7 +146,7 @@ async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     remove_body!(state, current_user, id, post)
 }
 
@@ -179,16 +155,13 @@ async fn remove(
 #[perm("system:post:export")]
 #[utoipa::path(post, path = "/api/v1/system/posts/exports", tag = "岗位管理",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
-    responses((status = 202, description = "岗位导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+    responses((status = 202, description = "岗位导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_post_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
     Json(request): Json<ExportRequestDto>,
-) -> AppResult<(
-    StatusCode,
-    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
-)> {
+) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     request_export(
         state,
         current_user,

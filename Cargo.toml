@@ -3,14 +3,14 @@ default-members = ["crates/ryframe"]
 
 members = [
     "crates/ryframe",
-    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-common", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-http", "crates/ryframe-i18n", "crates/ryframe-kernel", "crates/ryframe-middleware", "crates/ryframe-service",
+    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-http", "crates/ryframe-i18n", "crates/ryframe-kernel", "crates/ryframe-middleware", "crates/ryframe-service",
     "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro", "crates/ryframe-storage",
     "crates/ryframe-utils", "crates/ryframe-captcha", "crates/ryframe-excel", "crates/ryframe-mail",
     "xtask",
 ]
 resolver = "3"
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.97"
 authors = ["edgar_ye <edgar@example.com>"]
@@ -41,9 +41,9 @@ serde = "1"
 serde_json = "1"
 jsonwebtoken = { version = "10.4", default-features = false }
 #密码哈希
-md5 = "0.8"
 base64 = "0.22"
 argon2 = "0.5"
+password-hash = { version = "0.5", features = ["getrandom"] }
 toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3" }
@@ -68,6 +68,7 @@ image = { version = "0.25", default-features = false, features = [
 calamine = { version = "0.36" }
 rust_xlsxwriter = { version = "0.94" }
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "9.0.2", default-features = false, features = ["vendored"] }
 redis = { version = "1.4", features = ["tokio-rustls-comp", "connection-manager"] }
 
 regex = "1"
@@ -93,7 +94,6 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "r
 # gRPC 传输支持
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
-aes-gcm = "0.10"
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"

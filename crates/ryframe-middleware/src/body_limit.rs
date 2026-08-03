@@ -1,6 +1,7 @@
 //! 流式请求体安全大小限制。
 
 use axum::{
+    Json,
     body::{Body, to_bytes},
     extract::{Request, State},
     http::StatusCode,
@@ -8,6 +9,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use ryframe_config::UploadLimitsConfig;
+use ryframe_http::{API_PREFIX, ApiResponse};
+use ryframe_kernel::ErrorCode;
 
 pub const FILE_UPLOAD_LIMIT_BYTES: usize = 10 * 1024 * 1024;
 pub const AVATAR_UPLOAD_LIMIT_BYTES: usize = 5 * 1024 * 1024;
@@ -26,16 +29,15 @@ pub async fn body_limit_middleware(
         Ok(bytes) => bytes,
         Err(error) => {
             tracing::warn!(%error, limit_bytes = limit, "request body exceeded its limit");
-            let mut response = (
+            return (
                 StatusCode::PAYLOAD_TOO_LARGE,
-                r#"{"code":413,"msg":"request body is too large"}"#,
+                Json(ApiResponse::<()>::fail(
+                    StatusCode::PAYLOAD_TOO_LARGE.as_u16(),
+                    "请求体过大",
+                    ErrorCode::PayloadTooLarge.as_str(),
+                )),
             )
                 .into_response();
-            response.headers_mut().insert(
-                axum::http::header::CONTENT_TYPE,
-                axum::http::HeaderValue::from_static("application/json"),
-            );
-            return response;
         }
     };
 
@@ -53,8 +55,8 @@ pub fn request_body_limit(config: &UploadLimitsConfig, path: &str) -> usize {
 
 fn is_avatar_upload(path: &str) -> bool {
     matches!(
-        path,
-        "/api/v1/auth/profile/avatar" | "/api/v1/common/upload/avatar"
+        path.strip_prefix(API_PREFIX),
+        Some("/auth/profile/avatar" | "/common/upload/avatar")
     )
 }
 

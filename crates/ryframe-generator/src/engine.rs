@@ -2,7 +2,6 @@ use std::{collections::HashSet, path::Path};
 
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 fn default_true() -> bool {
     true
@@ -88,13 +87,13 @@ impl Default for GenerateOptions {
 }
 
 /// 生成的文件
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneratedFile {
     pub path: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WriteReport {
     pub written: Vec<String>,
     pub skipped: Vec<String>,

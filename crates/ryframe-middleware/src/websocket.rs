@@ -109,7 +109,6 @@ impl WsMessage {
 #[serde(deny_unknown_fields)]
 pub struct WsQuery {
     /// 要加入的房间（逗号分隔）
-    #[serde(default)]
     pub rooms: Option<String>,
 }
 

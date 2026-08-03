@@ -20,7 +20,8 @@ use ryframe_api::{
     runtime::RuntimeComponents,
 };
 use ryframe_config::{
-    AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
+    AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, Environment, LoggerConfig,
+    RateLimitConfig,
 };
 use ryframe_db::{
     DatabaseCluster,
@@ -28,7 +29,7 @@ use ryframe_db::{
 };
 use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
-    AuthService,
+    AuthService, AuthorizationCache,
     system::{
         CaptchaStore, ConfigService, DeptService, DictService, FileService, GeneratorService,
         LoginInfoService, MenuService, NoticeService, OnlineUserService, OperLogService,
@@ -44,6 +45,7 @@ use tower::ServiceExt;
 
 /// 创建隔离的 MySQL 8.4 测试数据库。
 async fn setup_test_db() -> TestDatabase {
+    ryframe_utils::snowflake::initialize(1).expect("初始化测试 Snowflake");
     TestDatabase::create("api_full").await
 }
 
@@ -60,6 +62,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
     }
 
     create!(ryframe_db::entities::tenant::Entity);
+    create!(ryframe_db::entities::cache_namespace_version::Entity);
     create!(ryframe_db::entities::config::Entity);
     create!(ryframe_db::entities::dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);
@@ -78,6 +81,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::background_job::Entity);
+    create!(ryframe_db::entities::outbox_event::Entity);
     create!(ryframe_db::entities::message::Entity);
     create!(ryframe_db::entities::message_audience::Entity);
     create!(ryframe_db::entities::message_recipient::Entity);
@@ -98,6 +102,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
         max_storage_mb: 1024,
         max_requests_per_min: 1000,
         session_version: 1,
+        authorization_epoch: 1,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -105,6 +110,18 @@ async fn seed_test_data(db: &DatabaseConnection) {
         .exec(db)
         .await
         .unwrap();
+    ryframe_db::entities::cache_namespace_version::Entity::insert(
+        ryframe_db::entities::cache_namespace_version::ActiveModel {
+            tenant_id: sea_orm::ActiveValue::Set("system".into()),
+            namespace: sea_orm::ActiveValue::Set(ryframe_db::CONFIG_CACHE_NAMESPACE.into()),
+            version: sea_orm::ActiveValue::Set(0),
+            created_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+            updated_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+        },
+    )
+    .exec(db)
+    .await
+    .unwrap();
 
     // 创建根部门
     let dept_model = dept::Model {
@@ -137,7 +154,7 @@ async fn seed_test_data(db: &DatabaseConnection) {
         avatar_file_id: None,
         preferred_locale: None,
         status: user::Model::STATUS_NORMAL.to_string(),
-        auth_version: 1,
+        authorization_version: 1,
         dept_id: Some(1),
         remark: None,
         login_ip: None,
@@ -224,6 +241,8 @@ async fn seed_test_data(db: &DatabaseConnection) {
 
 fn test_config() -> AppConfig {
     AppConfig {
+        environment: Environment::Test,
+        snowflake_worker_id: 1,
         app: AppSettings {
             name: "test".into(),
             port: 0,
@@ -244,7 +263,7 @@ fn test_config() -> AppConfig {
         },
         redis: None,
         logger: LoggerConfig {
-            level: "warn".into(),
+            level: ryframe_config::LoggerLevel::Warn,
             ..Default::default()
         },
         rate_limit: RateLimitConfig::default(),
@@ -257,6 +276,7 @@ fn test_config() -> AppConfig {
         monitor: Default::default(),
         jobs: Default::default(),
         telemetry: Default::default(),
+        messaging: Default::default(),
     }
 }
 
@@ -284,6 +304,7 @@ async fn build_test_app_with_redis(
         database.clone(),
         config_arc.clone(),
         redis.clone(),
+        AuthorizationCache::disabled(),
     ));
     let online_user = redis
         .as_ref()
@@ -300,35 +321,75 @@ async fn build_test_app_with_redis(
         monitor: ryframe_monitor::MonitorState {
             database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database.clone())),
             redis: redis.clone(),
+            readiness: {
+                let cache = ryframe_monitor::DependencyHealthCache::new(
+                    false,
+                    true,
+                    std::time::Duration::from_secs(15),
+                );
+                cache.update(true, redis.is_some(), true);
+                cache
+            },
             metrics_bearer_token: Arc::from(""),
         },
         config: config_arc,
         localizer: localizer.clone(),
         services: Arc::new(AppServices {
             auth: auth_service,
-            user: Arc::new(UserService::new(database.clone(), None)),
-            role: Arc::new(RoleService::new(database.clone(), None)),
-            tenant: Arc::new(TenantService::new(database.clone())),
-            permission: Arc::new(PermissionService::new(database.clone(), None)),
-            menu: Arc::new(MenuService::new(database.clone(), None)),
-            dept: Arc::new(DeptService::new(database.clone(), None)),
+            user: Arc::new(UserService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            role: Arc::new(RoleService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            tenant: Arc::new(TenantService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            permission: Arc::new(PermissionService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            menu: Arc::new(MenuService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            dept: Arc::new(DeptService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
             post: Arc::new(PostService::new(database.clone())),
-            config: Arc::new(ConfigService::new(database.clone(), None)),
+            config: Arc::new(ConfigService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
             dict: Arc::new(DictService::new(database.clone(), None)),
             export: Arc::new(ryframe_service::system::ExportService::new(
                 database.clone(),
-                Arc::new(UserService::new(database.clone(), None)),
+                Arc::new(UserService::new(
+                    database.clone(),
+                    AuthorizationCache::disabled(),
+                )),
                 Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
+                &config.jobs,
             )),
             notice: Arc::new(NoticeService::new(database.clone())),
             message: Arc::new(ryframe_service::system::MessageService::new(
                 database.clone(),
                 Arc::new(ryframe_service::JobQueue::new(database.clone())),
+                config.messaging.clone(),
             )),
             websocket_ticket: Arc::new(ryframe_service::system::WebSocketTicketService::new(
                 redis.clone(),
+                config.messaging.clone(),
             )),
             oper_log: Arc::new(OperLogService::new(database.clone())),
+            audit_outbox: Arc::new(ryframe_service::AuditOutbox::new(
+                database.clone(),
+                config.jobs.default_max_attempts,
+            )),
             job_queue: Arc::new(ryframe_service::JobQueue::new(database.clone())),
             login_info: Arc::new(LoginInfoService::new(database.clone())),
             generator: Arc::new(GeneratorService::new(
@@ -336,7 +397,10 @@ async fn build_test_app_with_redis(
                 "primary".into(),
                 std::env::current_dir().unwrap(),
             )),
-            profile: Arc::new(ProfileService::new(database.clone())),
+            profile: Arc::new(ProfileService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
             file: Arc::new(FileService::new(
                 database,
                 Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
@@ -347,6 +411,7 @@ async fn build_test_app_with_redis(
         redis: redis.clone(),
         message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
             localizer.clone(),
+            config.messaging.clone(),
         )),
         token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),
@@ -891,10 +956,6 @@ async fn test_system_crud_operations() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["total"], 1);
 
-    let (s, b) = auth_get(&db, "/system/posts/all?code=test_post", &token).await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["data"].as_array().unwrap().len(), 1);
-
     // 配置 CRUD
     let (s, b) = auth_post(
         &db,
@@ -917,9 +978,6 @@ async fn test_system_crud_operations() {
     assert_eq!(b["data"]["total"], 1);
     assert_eq!(b["data"]["items"][0]["key"], "test.config.key");
 
-    let (s, _) = auth_get(&db, "/system/configs/all", &token).await;
-    assert_eq!(s, StatusCode::OK);
-
     // 字典 CRUD
     let (s, b) = auth_post(
         &db,
@@ -941,17 +999,13 @@ async fn test_system_crud_operations() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["total"], 1);
 
-    let (s, b) = auth_get(&db, "/system/dict/types/all?code=test_dict", &token).await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["data"].as_array().unwrap().len(), 1);
-
     // 通知 CRUD
     let (s, b) = auth_post(
         &db,
         "/system/notices",
         &token,
         serde_json::json!({
-            "title": "测试公告", "content": "这是一条测试公告"
+            "title": "测试公告", "content_markdown": "这是一条测试公告"
         }),
     )
     .await;
@@ -960,10 +1014,6 @@ async fn test_system_crud_operations() {
     let (s, b) = auth_get(&db, "/system/notices?page=1&page_size=10&status=1", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b["data"]["total"], 1);
-
-    let (s, b) = auth_get(&db, "/system/notices/all?status=1", &token).await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["data"].as_array().unwrap().len(), 1);
 }
 
 /// 系统查询接口：用户/角色/部门/菜单/权限/在线用户
@@ -977,16 +1027,34 @@ async fn test_system_query_endpoints() {
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].get("items").is_some());
 
-    let (s, _) = auth_get(&db, "/system/users/all", &token).await;
+    let (s, b) = auth_get(&db, "/system/users/options?q=adm&limit=1", &token).await;
     assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(b["data"]["items"][0]["description"], "admin");
+    assert_eq!(b["data"]["has_more"], false);
+    assert!(b["data"].get("page").is_none());
+    assert!(b["data"].get("total").is_none());
 
     let (s, b) = auth_get(&db, "/system/roles?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].get("items").is_some());
 
-    let (s, b) = auth_get(&db, "/system/roles/all?code=admin", &token).await;
+    let (s, b) = auth_get(&db, "/system/roles/options?q=adm&limit=1", &token).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(b["data"].as_array().unwrap().len(), 1);
+    assert_eq!(b["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(b["data"]["items"][0]["description"], "admin");
+    assert_eq!(b["data"]["has_more"], false);
+    assert!(b["data"].get("page").is_none());
+    assert!(b["data"].get("total").is_none());
+
+    for uri in [
+        "/system/roles/options?limit=0",
+        "/system/roles/options?limit=101",
+        "/system/roles/options?q=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
+        let (status, _) = auth_get(&db, uri, &token).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri} 应拒绝非法参数");
+    }
 
     let (s, b) = auth_get(&db, "/system/depts/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -996,9 +1064,6 @@ async fn test_system_query_endpoints() {
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].get("items").is_some());
 
-    let (s, _) = auth_get(&db, "/system/depts/all", &token).await;
-    assert_eq!(s, StatusCode::OK);
-
     let (s, b) = auth_get(&db, "/system/menus/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].as_array().is_some());
@@ -1006,9 +1071,6 @@ async fn test_system_query_endpoints() {
     let (s, b) = auth_get(&db, "/system/menus?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].get("items").is_some());
-
-    let (s, _) = auth_get(&db, "/system/menus/all", &token).await;
-    assert_eq!(s, StatusCode::OK);
 
     let (s, b) = auth_get(&db, "/system/perms/tree", &token).await;
     assert_eq!(s, StatusCode::OK);
@@ -1168,7 +1230,7 @@ async fn test_update_and_delete_operations() {
         &db,
         "/system/notices",
         &token,
-        serde_json::json!({"title": "旧标题", "content": "旧内容", "notice_type": "1"}),
+        serde_json::json!({"title": "旧标题", "content_markdown": "旧内容", "notice_type": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1178,7 +1240,7 @@ async fn test_update_and_delete_operations() {
         &db,
         &format!("/system/notices/{}", notice_id),
         &token,
-        serde_json::json!({"title": "新标题", "content": "新内容", "notice_type": "2", "status": "1"}),
+        serde_json::json!({"title": "新标题", "content_markdown": "新内容", "notice_type": "2", "status": "1"}),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -1646,7 +1708,7 @@ async fn test_validation_error_scenarios() {
         &db,
         "/system/notices",
         &token,
-        serde_json::json!({"title": "", "content": "内容内容"}),
+        serde_json::json!({"title": "", "content_markdown": "内容内容"}),
     )
     .await;
     assert!(!s.is_success(), "空标题应返回校验错误");
@@ -1656,7 +1718,7 @@ async fn test_validation_error_scenarios() {
         &db,
         "/system/notices",
         &token,
-        serde_json::json!({"title": "有标题", "content": ""}),
+        serde_json::json!({"title": "有标题", "content_markdown": ""}),
     )
     .await;
     assert!(!s.is_success(), "空内容应返回校验错误");
@@ -1776,10 +1838,6 @@ async fn test_log_endpoints() {
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].get("items").is_some(), "登录日志应返回分页数据");
 
-    // 登录日志不分页
-    let (s, _) = auth_get(&db, "/system/loginlogs/all", &token).await;
-    assert_eq!(s, StatusCode::OK);
-
     // 清空登录日志路由不再对业务管理端开放
     let (s, _) = auth_delete(&db, "/system/loginlogs/clean", &token).await;
     assert!(!s.is_success());
@@ -1788,10 +1846,6 @@ async fn test_log_endpoints() {
     let (s, b) = auth_get(&db, "/system/operlogs?page=1&page_size=10", &token).await;
     assert_eq!(s, StatusCode::OK);
     assert!(b["data"].get("items").is_some(), "操作日志应返回分页数据");
-
-    // 操作日志不分页
-    let (s, _) = auth_get(&db, "/system/operlogs/all", &token).await;
-    assert_eq!(s, StatusCode::OK);
 
     // 清空操作日志路由不再对业务管理端开放
     let (s, _) = auth_delete(&db, "/system/operlogs/clean", &token).await;
@@ -1838,7 +1892,7 @@ async fn test_profile_endpoints() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(saved_user.auth_version, 2);
+    assert_eq!(saved_user.authorization_version, 2);
     assert!(ryframe_auth::password::verify("NewPass456!", &saved_user.password_hash).unwrap());
 }
 
@@ -1934,7 +1988,9 @@ async fn force_logout_uses_authoritative_family_and_recovers_after_redis_failure
     .await;
     assert!(matches!(
         cross_tenant,
-        Err(ryframe_http::AppError::NotFound(_))
+        Err(ryframe_http::HttpAppError(
+            ryframe_kernel::AppError::NotFound(_)
+        ))
     ));
     assert!(refresh_sessions.is_active(&sid).await.unwrap());
     assert_eq!(
@@ -1963,7 +2019,9 @@ async fn force_logout_uses_authoritative_family_and_recovers_after_redis_failure
     .await;
     assert!(matches!(
         unavailable,
-        Err(ryframe_http::AppError::ServiceUnavailable(_))
+        Err(ryframe_http::HttpAppError(
+            ryframe_kernel::AppError::ServiceUnavailable(_)
+        ))
     ));
 
     tokio::time::sleep(std::time::Duration::from_millis(1_750)).await;
@@ -2058,7 +2116,7 @@ async fn auth_middleware_fails_closed_when_redis_is_unavailable() {
         .await
         .unwrap();
     let request = Request::builder()
-        .uri("/system/configs/all")
+        .uri("/system/configs?page=1&page_size=1")
         .method("GET")
         .header("authorization", format!("Bearer {}", login.access_token))
         .body(Body::empty())
@@ -2289,15 +2347,16 @@ async fn test_version_endpoint() {
         .unwrap();
     let (status, body) = send_request(router, req).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"], "ryframe-api");
-    assert!(body["version"].is_string());
+    assert_eq!(body["code"], 200);
+    assert_eq!(body["data"]["name"], "ryframe-api");
+    assert!(body["data"]["version"].is_string());
     assert!(
-        body["source_commit"]
+        body["data"]["source_commit"]
             .as_str()
             .is_some_and(|value| !value.is_empty())
     );
-    assert_eq!(body["api_prefix"], "/api/v1");
-    assert!(body["endpoints"].is_object());
+    assert_eq!(body["data"]["api_prefix"], "/api/v1");
+    assert!(body["data"]["endpoints"].is_object());
 }
 
 /// Swagger UI 文档页面
@@ -2329,7 +2388,12 @@ async fn api_documentation_routes_can_be_disabled() {
     Arc::make_mut(&mut state.config).api_docs.enabled = false;
     let router = api_router(state, test_rate_limit_state());
 
-    for uri in ["/swagger-ui", "/api-docs/openapi.json"] {
+    for uri in [
+        "/swagger-ui",
+        "/swagger-ui/swagger-ui.css",
+        "/swagger-ui/swagger-ui-bundle.js",
+        "/api-docs/openapi.json",
+    ] {
         let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
         assert_eq!(
             router.clone().oneshot(request).await.unwrap().status(),
@@ -2464,7 +2528,7 @@ async fn test_authenticated_system_access() {
         "/system/menus/tree",
         "/system/perms/tree",
         "/system/online",
-        "/system/posts/all",
+        "/system/posts?page=1&page_size=5",
     ];
     for uri in endpoints {
         let (s, _) = auth_get(&db, uri, &token).await;

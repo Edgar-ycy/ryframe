@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use utoipa::ToSchema;
 
-use ryframe_service::system::MenuType;
+use super::public_dto::MenuType;
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 #[serde(deny_unknown_fields)]

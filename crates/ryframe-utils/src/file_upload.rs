@@ -44,23 +44,6 @@ impl Default for UploadConfig {
     }
 }
 
-/// 上传文件信息
-#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
-pub struct UploadFileInfo {
-    /// 原始文件名
-    pub original_name: String,
-    /// 存储文件名（UUID + 扩展名）
-    pub storage_name: String,
-    /// 文件路径（相对路径）
-    pub file_path: String,
-    /// 文件大小（字节）
-    pub file_size: u64,
-    /// 文件 MIME 类型
-    pub content_type: String,
-    /// 上传时间
-    pub upload_time: String,
-}
-
 /// 验证文件扩展名
 pub fn validate_extension(filename: &str, allowed: &[String]) -> AppResult<()> {
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();

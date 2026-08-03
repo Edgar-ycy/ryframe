@@ -48,7 +48,7 @@ fn bench_jwt_encode(c: &mut Criterion) {
         user_id: 1,
         tenant_id: "system",
         tenant_session_version: 1,
-        user_auth_version: 1,
+        user_authorization_version: 1,
         username: "admin",
     };
 
@@ -75,7 +75,7 @@ fn bench_jwt_decode(c: &mut Criterion) {
         user_id: 1,
         tenant_id: "system",
         tenant_session_version: 1,
-        user_auth_version: 1,
+        user_authorization_version: 1,
         username: "admin",
     };
     let (token, _) = ryframe_auth::jwt::encode_access(&identity, &config).unwrap();

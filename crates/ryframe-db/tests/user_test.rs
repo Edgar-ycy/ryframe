@@ -15,7 +15,7 @@ fn make_user(status: &str) -> user::Model {
         avatar_file_id: None,
         preferred_locale: None,
         status: status.to_string(),
-        auth_version: 1,
+        authorization_version: 1,
         dept_id: None,
         remark: None,
         login_ip: None,

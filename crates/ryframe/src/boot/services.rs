@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use ryframe_api::AppServices;
-use ryframe_config::AppConfig;
+use ryframe_config::{AppConfig, RedisMode};
 use ryframe_core::RedisClient;
 use ryframe_db::DatabaseCluster;
 use ryframe_kernel::AppError;
 use ryframe_service::{
-    AuthService, JobQueue,
+    AuditOutbox, AuthService, AuthorizationCache, JobQueue,
     system::{
         CaptchaStore, ConfigService, DeptService, DictService, ExportService, FileService,
         GeneratorService, LoginInfoService, MenuService, MessageService, NoticeService,
@@ -25,30 +25,68 @@ pub async fn build_all(
     redis_client: &Option<RedisClient>,
     object_storage: Arc<dyn ObjectStorage>,
 ) -> Result<AppServices, AppError> {
-    let user = Arc::new(UserService::new(database.clone(), redis_client.clone()));
-    let role = Arc::new(RoleService::new(database.clone(), redis_client.clone()));
-    let tenant = Arc::new(TenantService::new(database.clone()));
+    let authorization_cache = AuthorizationCache::new(
+        redis_client.clone(),
+        config
+            .redis
+            .as_ref()
+            .map(|redis| redis.mode)
+            .unwrap_or(RedisMode::Disabled),
+    );
+    let user = Arc::new(UserService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
+    let role = Arc::new(RoleService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
+    let tenant = Arc::new(TenantService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
     let permission = Arc::new(PermissionService::new(
         database.clone(),
-        redis_client.clone(),
+        authorization_cache.clone(),
     ));
     let auth = Arc::new(AuthService::new(
         database.clone(),
         Arc::new(config.clone()),
         redis_client.clone(),
+        authorization_cache.clone(),
     ));
-    let menu = Arc::new(MenuService::new(database.clone(), redis_client.clone()));
+    let menu = Arc::new(MenuService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
 
-    let dept = Arc::new(DeptService::new(database.clone(), redis_client.clone()));
+    let dept = Arc::new(DeptService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
     let post = Arc::new(PostService::new(database.clone()));
-    let config_service = Arc::new(ConfigService::new(database.clone(), redis_client.clone()));
+    let config_service = Arc::new(ConfigService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
 
     let dict = Arc::new(DictService::new(database.clone(), redis_client.clone()));
     let notice = Arc::new(NoticeService::new(database.clone()));
     let oper_log = Arc::new(OperLogService::new(database.clone()));
+    let audit_outbox = Arc::new(AuditOutbox::new(
+        database.clone(),
+        config.jobs.default_max_attempts,
+    ));
     let job_queue = Arc::new(JobQueue::new(database.clone()));
-    let message = Arc::new(MessageService::new(database.clone(), job_queue.clone()));
-    let websocket_ticket = Arc::new(WebSocketTicketService::new(redis_client.clone()));
+    let message = Arc::new(MessageService::new(
+        database.clone(),
+        job_queue.clone(),
+        config.messaging.clone(),
+    ));
+    let websocket_ticket = Arc::new(WebSocketTicketService::new(
+        redis_client.clone(),
+        config.messaging.clone(),
+    ));
     let login_info = Arc::new(LoginInfoService::new(database.clone()));
 
     let project_root = std::env::current_dir()
@@ -69,13 +107,14 @@ pub async fn build_all(
         project_root,
     ));
 
-    let profile = Arc::new(ProfileService::new(database.clone()));
+    let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
     let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
     file.spawn_upload_janitor();
     let export = Arc::new(ExportService::new(
         database.clone(),
         user.clone(),
         object_storage,
+        &config.jobs,
     ));
 
     let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
@@ -107,6 +146,7 @@ pub async fn build_all(
         message,
         websocket_ticket,
         oper_log,
+        audit_outbox,
         job_queue,
         login_info,
         generator,

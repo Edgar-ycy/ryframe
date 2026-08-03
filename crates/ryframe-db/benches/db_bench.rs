@@ -1,5 +1,6 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use ryframe_core::repository::PageQuery;
+use ryframe_config::PaginationConfig;
+use ryframe_core::repository::ValidatedPageQuery;
 use sea_orm::{ActiveModelTrait, EntityTrait};
 
 #[path = "../tests/common/mod.rs"]
@@ -54,7 +55,7 @@ fn bench_db_insert(c: &mut Criterion) {
                         avatar_file_id: None,
                         preferred_locale: None,
                         status: "1".into(),
-                        auth_version: 1,
+                        authorization_version: 1,
                         dept_id: Some(1),
                         remark: None,
                         login_ip: None,
@@ -108,7 +109,7 @@ fn bench_db_select_by_id(c: &mut Criterion) {
                 avatar_file_id: None,
                 preferred_locale: None,
                 status: "1".into(),
-                auth_version: 1,
+                authorization_version: 1,
                 dept_id: Some(1),
                 remark: None,
                 login_ip: None,
@@ -151,7 +152,7 @@ fn bench_db_pagination(c: &mut Criterion) {
                     avatar_file_id: None,
                     preferred_locale: None,
                     status: "1".into(),
-                    auth_version: 1,
+                    authorization_version: 1,
                     dept_id: None,
                     remark: None,
                     login_ip: None,
@@ -168,10 +169,7 @@ fn bench_db_pagination(c: &mut Criterion) {
 
         b.iter(|| {
             rt.block_on(async {
-                let query = PageQuery {
-                    page: 1,
-                    page_size: 10,
-                };
+                let query = ValidatedPageQuery::new(1, 10, &PaginationConfig::default()).unwrap();
                 let _ = ryframe_db::pagination::paginate(
                     &db,
                     ryframe_db::entities::user::Entity::find(),
@@ -203,7 +201,7 @@ fn bench_db_update(c: &mut Criterion) {
                         avatar_file_id: None,
                         preferred_locale: None,
                         status: "1".into(),
-                        auth_version: 1,
+                        authorization_version: 1,
                         dept_id: None,
                         remark: None,
                         login_ip: None,

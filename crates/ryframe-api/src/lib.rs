@@ -20,4 +20,4 @@ pub use probes::{livez, readyz};
 pub use request_locale::RequestLocale;
 pub use router::{api_router, auth_router};
 pub use state::{AppServices, AppState};
-pub use versioning::{API_V1_PREFIX, ApiVersion, VersionedRouter};
+pub use versioning::{ApiVersion, VersionedRouter};

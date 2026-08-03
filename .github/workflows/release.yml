@@ -119,7 +119,7 @@ jobs:
             local successful_runs
             successful_runs="$(gh api \
               "repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${commit}&per_page=100" \
-              --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success")] | length')"
+              --jq '[.workflow_runs[] | select(.event == "push" and .status == "completed" and .conclusion == "success")] | length')"
             if [[ "$successful_runs" -lt 1 ]]; then
               echo "The exact ${repository}@${commit} source commit has no successful CI run."
               exit 1

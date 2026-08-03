@@ -3,13 +3,13 @@ mod boot;
 
 use std::{net::SocketAddr, sync::Arc};
 
-use ryframe_config::{AppConfig, JobWorkerMode, MigrationMode};
+use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode};
 use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
-use ryframe_http::AppError;
 use ryframe_i18n::Localizer;
+use ryframe_kernel::AppError;
 use ryframe_service::{
-    CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue, JobWorker,
-    MessageDispatchJobHandler, MessageRetentionJobHandler, OperLogJobHandler, OutboxWorker,
+    AuthorizationCache, CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler,
+    JobQueue, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, OutboxWorker,
     spawn_message_retention_scheduler,
 };
 use tokio::sync::watch;
@@ -19,15 +19,19 @@ async fn main() -> Result<(), AppError> {
     ryframe_auth::middleware::set_backend_failure_hook(
         ryframe_middleware::metrics::record_redis_degraded,
     );
+    ryframe_service::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
 
-    let config = AppConfig::load_from_env()?;
+    let environment = Environment::from_env()?;
+    let config = AppConfig::load_from_env(environment)?;
+    ryframe_utils::snowflake::initialize(config.snowflake_worker_id)
+        .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     let localizer = Arc::new(
-        Localizer::load_from_environment()
+        Localizer::load_from_environment(config.environment.is_production())
             .map_err(|error| AppError::Config(format!("国际化资源加载失败: {error}")))?,
     );
-    let (_logger_guard, _telemetry_guard) = boot::logging::init(&config);
+    let (_logger_guard, _telemetry_guard) = boot::logging::init(&config)?;
     tracing::info!(
-        environment = %std::env::var("APP_ENV").unwrap_or_else(|_| "dev".into()),
+        environment = %config.environment,
         "configuration loaded"
     );
     ryframe_middleware::metrics::spawn_process_metrics_updater();
@@ -55,7 +59,7 @@ async fn main() -> Result<(), AppError> {
     );
 
     let config_arc = Arc::new(config.clone());
-    let redis = boot::redis::init(&config.redis).await?;
+    let redis = boot::redis::init(&config.redis, config.environment).await?;
     let object_storage = boot::storage::init(&config).await?;
     let services =
         boot::services::build_all(&database, &config, &redis.client, object_storage).await?;
@@ -71,6 +75,10 @@ async fn main() -> Result<(), AppError> {
         services.clone(),
         limit.limiter.clone(),
     );
+    let readiness_database = state.monitor.database.clone();
+    let readiness_redis = state.monitor.redis.clone();
+    let readiness_file_service = state.services.file.clone();
+    let readiness_cache = state.monitor.readiness.clone();
     let message_listener = state
         .message_hub
         .spawn_redis_listener(redis.client.clone(), services.message.clone());
@@ -83,37 +91,66 @@ async fn main() -> Result<(), AppError> {
     tracing::info!(address = %addr, "HTTP server started");
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let mut retention_scheduler =
-        spawn_message_retention_scheduler(services.job_queue.clone(), shutdown_receiver.clone());
+    let mut readiness_monitor = boot::readiness::spawn(
+        readiness_database,
+        readiness_redis,
+        Some(readiness_file_service),
+        readiness_cache,
+        shutdown_receiver.clone(),
+    );
+    let mut retention_scheduler = spawn_message_retention_scheduler(
+        services.job_queue.clone(),
+        config.messaging.enabled,
+        shutdown_receiver.clone(),
+    );
     let mut worker_tasks = match config.jobs.mode {
         JobWorkerMode::Embedded => {
             let worker = JobWorker::new(services.job_queue.clone(), &config.jobs)?
-                .with_handler(Arc::new(OperLogJobHandler::new(services.oper_log.clone())))?
                 .with_handler(Arc::new(ExportJobHandler::new(services.export.clone())))?
                 .with_handler(Arc::new(ExportCleanupJobHandler::new(
                     services.export.clone(),
-                )))?
-                .with_handler(Arc::new(
-                    MessageDispatchJobHandler::new(services.message.clone(), redis.client.clone())
-                        .with_redis_wakeup_failure_observer(Arc::new(|| {
-                            ryframe_middleware::metrics::record_redis_degraded(
-                                "message_dispatch_wakeup",
-                            );
-                        })),
-                ))?
-                .with_handler(Arc::new(
-                    MessageRetentionJobHandler::new(services.message.clone())
-                        .with_deleted_observer(Arc::new(
-                            ryframe_middleware::metrics::record_message_retention_deleted,
+                )))?;
+            let worker = if config.messaging.enabled {
+                worker
+                    .with_handler(Arc::new(
+                        MessageDispatchJobHandler::new(
+                            services.message.clone(),
+                            redis.client.clone(),
+                        )
+                        .with_redis_wakeup_failure_observer(Arc::new(
+                            || {
+                                ryframe_middleware::metrics::record_redis_degraded(
+                                    "message_dispatch_wakeup",
+                                );
+                            },
                         )),
-                ))?;
+                    ))?
+                    .with_handler(Arc::new(
+                        MessageRetentionJobHandler::new(services.message.clone())
+                            .with_deleted_observer(Arc::new(
+                                ryframe_middleware::metrics::record_message_retention_deleted,
+                            )),
+                    ))?
+            } else {
+                worker
+            };
             tracing::info!(
                 concurrency = config.jobs.concurrency,
                 "已启动内置后台任务 Worker"
             );
             let mut tasks = worker.spawn(shutdown_receiver.clone());
+            let authorization_cache = AuthorizationCache::new(
+                redis.client.clone(),
+                config
+                    .redis
+                    .as_ref()
+                    .map(|redis| redis.mode)
+                    .unwrap_or(RedisMode::Disabled),
+            );
             tasks.extend(
                 OutboxWorker::new(services.job_queue.clone(), &config.jobs)?
+                    .with_authorization_cache(authorization_cache)
+                    .with_audit_service(services.oper_log.clone())
                     .spawn(shutdown_receiver),
             );
             tasks
@@ -153,6 +190,13 @@ async fn main() -> Result<(), AppError> {
     {
         tracing::warn!("消息保留调度器未在宽限期内停止");
         retention_scheduler.abort();
+    }
+    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut readiness_monitor)
+        .await
+        .is_err()
+    {
+        tracing::warn!("后台就绪探测未在宽限期内停止");
+        readiness_monitor.abort();
     }
     replica_health_monitor.abort();
     if let Some(listener) = message_listener {

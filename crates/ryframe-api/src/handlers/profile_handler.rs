@@ -3,15 +3,16 @@ use axum::{
     extract::{Multipart, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiResponse, AppError, AppResult};
+use ryframe_http::{ApiResponse, HttpResult};
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, put, route};
-use ryframe_service::system::profile_service::UserProfileResponse;
 use validator::Validate;
 
 use crate::{
     dto::{
         multipart_dto::FileUploadForm,
         profile_dto::{AvatarResponse, ChangePasswordRequest, UpdateProfileRequest},
+        public_dto::{UploadResponse, UserProfileResponse},
     },
     state::AppState,
 };
@@ -35,10 +36,10 @@ pub fn profile_router() -> Router<AppState> {
 pub async fn get_profile(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<UserProfileResponse>>> {
+) -> HttpResult<Json<ApiResponse<UserProfileResponse>>> {
     let profile = state.services.profile.get_profile(&current_user).await?;
 
-    Ok(Json(ApiResponse::success(profile)))
+    Ok(Json(ApiResponse::success(profile.into())))
 }
 
 /// 更新个人信息
@@ -49,7 +50,7 @@ pub async fn update_profile(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(req): Json<UpdateProfileRequest>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     req.validate()?;
     state
         .services
@@ -76,7 +77,7 @@ pub async fn change_password(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(req): Json<ChangePasswordRequest>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     req.validate()?;
 
     state
@@ -105,7 +106,7 @@ pub async fn update_avatar(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     mut multipart: Multipart,
-) -> AppResult<Json<ApiResponse<AvatarResponse>>> {
+) -> HttpResult<Json<ApiResponse<AvatarResponse>>> {
     let mut avatar_upload = None;
 
     while let Some(field) = multipart
@@ -141,6 +142,7 @@ pub async fn update_avatar(
 
     let avatar_upload =
         avatar_upload.ok_or_else(|| AppError::Validation("未找到上传的头像文件".into()))?;
+    let avatar_upload = UploadResponse::from(avatar_upload);
     let avatar_file_id = avatar_upload
         .file_id
         .parse::<i64>()

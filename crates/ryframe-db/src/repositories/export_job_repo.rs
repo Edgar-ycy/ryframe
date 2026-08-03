@@ -2,8 +2,11 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::Expr,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, LockType},
 };
 use serde_json::Value;
 
@@ -28,6 +31,7 @@ pub struct MarkExportJobSucceeded {
     pub file_name: String,
     pub content_type: String,
     pub file_size: i64,
+    pub request_params: Value,
     pub expires_at: DateTime<Utc>,
     pub completed_at: DateTime<Utc>,
 }
@@ -36,6 +40,18 @@ pub struct MarkExportJobSucceeded {
 pub struct ExportJobRepository;
 
 impl ExportJobRepository {
+    /// 按公开任务 ID 强一致读取导出状态。
+    pub async fn find_by_id(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+    ) -> AppResult<Option<export_job::Model>> {
+        export_job::Entity::find_by_id(id)
+            .one(db)
+            .await
+            .map_err(database_error)
+    }
+
     /// 在任务入队的同一事务内记录导出请求。
     pub async fn create_in_transaction(
         &self,
@@ -116,13 +132,24 @@ impl ExportJobRepository {
             .map_err(database_error)
     }
 
-    /// 将排队任务切换为执行中；若已取消或被其他 Worker 接管则返回 false。
-    pub async fn mark_running(
+    /// 在结果落库事务内锁定导出任务，串行化对象写入和最终状态提交。
+    pub async fn find_by_id_for_update_in_transaction(
         &self,
-        db: &DatabaseConnection,
+        transaction: &DatabaseTransaction,
         id: i64,
-        now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<Option<export_job::Model>> {
+        export_job::Entity::find_by_id(id)
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(database_error)
+    }
+
+    /// 将排队任务切换为执行中；若已取消或被其他 Worker 接管则返回 false。
+    pub async fn mark_running<C>(&self, db: &C, id: i64, now: DateTime<Utc>) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let result = export_job::Entity::update_many()
             .col_expr(
                 export_job::Column::Status,
@@ -138,9 +165,9 @@ impl ExportJobRepository {
     }
 
     /// 将 Worker 成功生成的文件元数据固化为可下载结果。
-    pub async fn mark_succeeded(
+    pub async fn mark_succeeded_in_transaction(
         &self,
-        db: &DatabaseConnection,
+        transaction: &DatabaseTransaction,
         command: MarkExportJobSucceeded,
     ) -> AppResult<bool> {
         let result = export_job::Entity::update_many()
@@ -162,6 +189,10 @@ impl ExportJobRepository {
             )
             .col_expr(export_job::Column::FileSize, Expr::value(command.file_size))
             .col_expr(
+                export_job::Column::RequestParams,
+                Expr::value(command.request_params),
+            )
+            .col_expr(
                 export_job::Column::ExpiresAt,
                 Expr::value(command.expires_at),
             )
@@ -175,20 +206,23 @@ impl ExportJobRepository {
             )
             .filter(export_job::Column::Id.eq(command.id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
-            .exec(db)
+            .exec(transaction)
             .await
             .map_err(database_error)?;
         Ok(result.rows_affected == 1)
     }
 
     /// 在仍可执行时记录明确失败原因，取消后的任务保持取消状态。
-    pub async fn mark_failed(
+    pub async fn mark_failed<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         id: i64,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let result = export_job::Entity::update_many()
             .col_expr(
                 export_job::Column::Status,
@@ -209,13 +243,16 @@ impl ExportJobRepository {
     }
 
     /// 将一次可重试失败重新置为排队状态，保留错误信息供任务详情查询。
-    pub async fn mark_queued_after_failure(
+    pub async fn mark_queued_after_failure<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         id: i64,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let result = export_job::Entity::update_many()
             .col_expr(
                 export_job::Column::Status,
@@ -235,14 +272,17 @@ impl ExportJobRepository {
     }
 
     /// 取消尚未完成的任务。Worker 会在状态切换前复核，避免取消后继续写入结果。
-    pub async fn cancel_for_requester(
+    pub async fn cancel_for_requester<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         requester_id: i64,
         id: i64,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let result = export_job::Entity::update_many()
             .col_expr(
                 export_job::Column::Status,
@@ -263,31 +303,30 @@ impl ExportJobRepository {
         Ok(result.rows_affected == 1)
     }
 
-    /// 读取一批已到期、但尚未清理结果文件的任务。
-    pub async fn list_expired_succeeded(
+    /// 按稳定主键游标读取一批已到期、但尚未清理结果文件的任务。
+    pub async fn list_expired_succeeded_after_id(
         &self,
         db: &DatabaseConnection,
         now: DateTime<Utc>,
+        after_id: Option<i64>,
         limit: u64,
     ) -> AppResult<Vec<export_job::Model>> {
-        export_job::Entity::find()
+        let mut query = export_job::Entity::find()
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_SUCCEEDED))
             .filter(export_job::Column::ExpiresAt.lte(now))
-            .order_by_asc(export_job::Column::ExpiresAt)
             .order_by_asc(export_job::Column::Id)
-            .limit(limit)
-            .all(db)
-            .await
-            .map_err(database_error)
+            .limit(limit.clamp(1, 1_000));
+        if let Some(after_id) = after_id {
+            query = query.filter(export_job::Column::Id.gt(after_id));
+        }
+        query.all(db).await.map_err(database_error)
     }
 
     /// 在文件对象与元数据均清理完成后标记导出任务过期。
-    pub async fn mark_expired(
-        &self,
-        db: &DatabaseConnection,
-        id: i64,
-        now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    pub async fn mark_expired<C>(&self, db: &C, id: i64, now: DateTime<Utc>) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let result = export_job::Entity::update_many()
             .col_expr(
                 export_job::Column::Status,
@@ -338,4 +377,89 @@ fn truncate_error(error: &str) -> String {
 
 fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+    use sea_orm::{DbBackend, MockDatabase, MockExecResult};
+
+    use crate::entities::export_job;
+
+    use super::ExportJobRepository;
+
+    #[tokio::test]
+    async fn expired_cleanup_query_uses_a_stable_primary_key_cursor() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 26, 8, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let db = MockDatabase::new(DbBackend::MySql)
+            .append_query_results([Vec::<export_job::Model>::new()])
+            .into_connection();
+
+        let rows = ExportJobRepository
+            .list_expired_succeeded_after_id(&db, now, Some(100), 100)
+            .await
+            .unwrap();
+
+        assert!(rows.is_empty());
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        let sql = &log[0].statements()[0].sql;
+        assert!(sql.contains("`status` = ?"));
+        assert!(sql.contains("`expires_at` <= ?"));
+        assert!(sql.contains("`id` > ?"));
+        assert!(sql.contains("ORDER BY `sys_export_job`.`id` ASC"));
+        assert!(sql.contains("LIMIT ?"));
+    }
+
+    #[tokio::test]
+    async fn expired_cleanup_only_transitions_due_succeeded_jobs() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 26, 8, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let db = MockDatabase::new(DbBackend::MySql)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+
+        assert!(
+            ExportJobRepository
+                .mark_expired(&db, 42, now)
+                .await
+                .unwrap()
+        );
+
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        let sql = &log[0].statements()[0].sql;
+        assert!(sql.starts_with("UPDATE `sys_export_job`"));
+        assert!(sql.contains("`status` = ?"));
+        assert!(sql.contains("`expires_at` <= ?"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_does_not_report_a_concurrently_changed_export_as_expired() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 26, 8, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let db = MockDatabase::new(DbBackend::MySql)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 0,
+            }])
+            .into_connection();
+
+        assert!(
+            !ExportJobRepository
+                .mark_expired(&db, 42, now)
+                .await
+                .unwrap()
+        );
+    }
 }

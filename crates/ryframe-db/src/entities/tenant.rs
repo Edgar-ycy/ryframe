@@ -18,6 +18,8 @@ pub struct Model {
     pub max_requests_per_min: i32,
     /// 每当必须使租户会话失效时递增。
     pub session_version: i32,
+    /// 租户级授权规则版本，角色权限、菜单权限或部门层级变化时递增。
+    pub authorization_epoch: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

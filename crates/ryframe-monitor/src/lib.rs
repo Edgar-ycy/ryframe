@@ -1,4 +1,5 @@
 mod cache_monitor;
+mod readiness;
 pub mod server_info;
 
 use std::{collections::BTreeMap, sync::Arc};
@@ -10,13 +11,14 @@ use axum::{
     response::IntoResponse,
 };
 use ryframe_core::{DatabaseMonitor, RedisClient};
-use ryframe_http::{ApiResponse, AppResult};
+use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};
 use serde::Serialize;
 pub use server_info::ServerInfo;
 use utoipa::ToSchema;
 
 pub use cache_monitor::{CacheInfo, CacheKeysInfo, RedisMemoryInfo, RedisServerInfo};
+pub use readiness::{DependencyHealthCache, DependencyHealthSnapshot, DependencyStatus};
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DbPoolInfo {
@@ -30,6 +32,7 @@ pub struct DbPoolInfo {
 pub struct MonitorState {
     pub database: Arc<dyn DatabaseMonitor>,
     pub redis: Option<RedisClient>,
+    pub readiness: DependencyHealthCache,
     pub metrics_bearer_token: Arc<str>,
 }
 
@@ -60,7 +63,7 @@ pub fn protected_monitor_router(state: MonitorState) -> axum::Router {
     security(("bearer" = [])))]
 pub async fn server_info_handler(
     State(_state): State<MonitorState>,
-) -> AppResult<Json<ApiResponse<ServerInfo>>> {
+) -> HttpResult<Json<ApiResponse<ServerInfo>>> {
     Ok(Json(ApiResponse::success(
         ServerInfo::collect_async().await?,
     )))
@@ -73,7 +76,7 @@ pub async fn server_info_handler(
     security(("bearer" = [])))]
 pub async fn cache_info_handler(
     State(state): State<MonitorState>,
-) -> AppResult<Json<ApiResponse<CacheInfo>>> {
+) -> HttpResult<Json<ApiResponse<CacheInfo>>> {
     let info = cache_monitor::get_cache_info(state.redis.as_ref()).await;
     Ok(Json(ApiResponse::success(info)))
 }
@@ -85,7 +88,7 @@ pub async fn cache_info_handler(
     security(("bearer" = [])))]
 pub async fn cache_commands_handler(
     State(state): State<MonitorState>,
-) -> AppResult<Json<ApiResponse<BTreeMap<String, String>>>> {
+) -> HttpResult<Json<ApiResponse<BTreeMap<String, String>>>> {
     let stats = match state.redis.as_ref() {
         Some(redis) => cache_monitor::get_cache_command_stats(redis)
             .await
@@ -141,7 +144,7 @@ fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
     security(("bearer" = [])))]
 pub async fn db_pool_handler(
     State(state): State<MonitorState>,
-) -> AppResult<Json<ApiResponse<DbPoolInfo>>> {
+) -> HttpResult<Json<ApiResponse<DbPoolInfo>>> {
     let ping_ok = state.database.ping().await;
     let active_connections = state.database.active_connections().await;
 

@@ -1,16 +1,16 @@
 use ryframe_core::{
-    LoggedRepo, Repository,
+    Repository,
     auto_fill::{AutoFill, FillContext},
-    repository::{PageQuery, PageResult},
+    repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{PostFilter, PostRepository, entities::post};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
+use sea_orm::TransactionTrait;
 use serde::Serialize;
-use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct PostVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -38,7 +38,7 @@ impl From<post::Model> for PostVo {
 
 #[derive(Debug)]
 pub struct PostListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub name: Option<String>,
     pub code: Option<String>,
     pub status: Option<String>,
@@ -46,20 +46,20 @@ pub struct PostListParams {
 
 pub struct PostService {
     db: DatabaseCluster,
-    post_repo: LoggedRepo<PostRepository>,
+    post_repo: PostRepository,
 }
 
 impl PostService {
     pub fn new(db: DatabaseCluster) -> Self {
         Self {
             db,
-            post_repo: LoggedRepo::new(PostRepository),
+            post_repo: PostRepository,
         }
     }
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<PostVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         Ok(self
             .post_repo
             .find_by_id(&db, tenant_id, id)
@@ -98,7 +98,12 @@ impl PostService {
             updated_at: Default::default(),
         };
         new_post.fill_on_insert(&FillContext::new())?;
-        let saved = self.post_repo.insert(db, tenant_id, new_post).await?;
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .post_repo
+            .insert_in_transaction(&transaction, tenant_id, new_post)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
         Ok(PostVo::from(saved))
     }
 
@@ -123,7 +128,12 @@ impl PostService {
         post.status = status;
         post.fill_on_update(&FillContext::new())?;
 
-        let saved = self.post_repo.update(db, tenant_id, post).await?;
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .post_repo
+            .update_in_transaction(&transaction, tenant_id, post)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
         Ok(PostVo::from(saved))
     }
 
@@ -134,7 +144,11 @@ impl PostService {
             .find_by_id(db, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
-        self.post_repo.delete(db, tenant_id, id).await
+        let transaction = db.begin().await.map_err(database_error)?;
+        self.post_repo
+            .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        crate::commit_current_audit(transaction).await
     }
 
     /// 带搜索条件的分页查询
@@ -144,7 +158,7 @@ impl PostService {
         params: PostListParams,
     ) -> AppResult<PageResult<PostVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let page = self
             .post_repo
             .find_by_page_filtered(
@@ -164,18 +178,16 @@ impl PostService {
     pub async fn find_for_export(
         &self,
         actor: &ActorContext,
-        params: &PostListParams,
+        name: Option<&str>,
+        code: Option<&str>,
+        status: Option<&str>,
         maximum_records: usize,
     ) -> AppResult<Vec<PostVo>> {
         const BATCH_SIZE: u64 = 1_000;
 
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
-        let filter = PostFilter {
-            name: params.name.as_deref(),
-            code: params.code.as_deref(),
-            status: params.status.as_deref(),
-        };
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let filter = PostFilter { name, code, status };
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
@@ -196,4 +208,8 @@ impl PostService {
         }
         Ok(records)
     }
+}
+
+fn database_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Database(error.to_string())
 }

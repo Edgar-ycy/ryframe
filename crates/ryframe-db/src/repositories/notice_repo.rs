@@ -1,8 +1,9 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder,
 };
 
 use crate::entities::notice;
@@ -36,7 +37,7 @@ impl Repository<notice::Model, i64> for NoticeRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<notice::Model>> {
         crate::pagination::paginate(
             db,
@@ -72,12 +73,39 @@ impl Repository<notice::Model, i64> for NoticeRepository {
 }
 
 impl NoticeRepository {
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: notice::Model,
+    ) -> AppResult<notice::Model> {
+        insert_entity!(notice, transaction, tenant_id, entity)
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: notice::Model,
+    ) -> AppResult<notice::Model> {
+        update_entity!(notice, transaction, tenant_id, entity)
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        soft_delete_entity!(notice, transaction, tenant_id, id)
+    }
+
     /// 带搜索条件的分页查询
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: &PageQuery,
+        query: &ValidatedPageQuery,
         filter: &NoticeFilter<'_>,
     ) -> AppResult<PageResult<notice::Model>> {
         let mut select = notice::Entity::find()

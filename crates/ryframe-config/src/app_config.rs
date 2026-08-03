@@ -4,9 +4,10 @@ use ryframe_kernel::{AppError, AppResult};
 use serde::Deserialize;
 
 use crate::{
-    ApiDocsConfig, AuthConfig, CorsConfig, DatabaseConfig, GeneratorConfig, JobConfig,
-    LoggerConfig, MigrationMode, MonitorConfig, ObjectStorageConfig, PaginationConfig, ProxyConfig,
-    RateLimitConfig, RedisConfig, RedisMode, TelemetryConfig, UploadLimitsConfig,
+    ApiDocsConfig, AuthConfig, CorsConfig, DatabaseConfig, Environment, GeneratorConfig, JobConfig,
+    LoggerConfig, MessagingConfig, MigrationMode, MonitorConfig, ObjectStorageConfig,
+    PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig, RedisMode, TelemetryConfig,
+    UploadLimitsConfig,
 };
 
 mod environment_overrides;
@@ -21,8 +22,6 @@ const MIN_PRODUCTION_JWT_SECRET_BYTES: usize = 32;
 pub struct AppSettings {
     /// 应用名称
     pub name: String,
-    /// 版本号
-    pub version: String,
     /// 监听地址
     pub host: String,
     /// 监听端口
@@ -30,12 +29,11 @@ pub struct AppSettings {
 }
 
 // #[derive(Default)] 不能用于 AppSettings，需要提供有意义的应用默认值
-// （名称、版本号等），而非空字符串。
+// （名称、监听地址等），而非空字符串。
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             name: "ryframe".into(),
-            version: "0.1.0".into(),
             host: "0.0.0.0".into(),
             port: 8080,
         }
@@ -46,6 +44,12 @@ impl Default for AppSettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
+    /// 当前进程唯一确定的运行环境，不参与配置文件反序列化。
+    #[serde(skip)]
+    pub environment: Environment,
+    /// 当前进程使用的 Snowflake worker ID，不参与配置文件反序列化。
+    #[serde(skip)]
+    pub snowflake_worker_id: i64,
     pub app: AppSettings,
     pub database: DatabaseConfig,
     #[serde(default)]
@@ -74,6 +78,8 @@ pub struct AppConfig {
     pub jobs: JobConfig,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
+    #[serde(default)]
+    pub messaging: MessagingConfig,
 }
 
 impl AppConfig {
@@ -81,11 +87,13 @@ impl AppConfig {
     ///
     /// `config_dir` 为配置文件所在目录的路径（如 `"config"` 或 `"/app/config"`）。
     /// 环境配置文件仅需包含要覆盖的字段，不要求完整。
-    pub fn load(config_dir: impl AsRef<Path>) -> AppResult<Self> {
-        let env =
-            normalize_environment(&std::env::var("APP_ENV").unwrap_or_else(|_| "dev".to_string()))?;
-        let mut table = load_merged_table(config_dir.as_ref(), &env)?;
+    pub fn load(config_dir: impl AsRef<Path>, environment: Environment) -> AppResult<Self> {
+        let mut table = load_merged_table(config_dir.as_ref(), environment)?;
+        if environment.is_production() {
+            reject_production_file_secrets(&table)?;
+        }
         apply_env_overrides(&mut table)?;
+        reject_removed_secret_encoding(&table)?;
         let migration_mode_was_explicit = table
             .get("database")
             .and_then(toml::Value::as_table)
@@ -94,18 +102,20 @@ impl AppConfig {
             .get("jobs")
             .and_then(toml::Value::as_table)
             .is_some_and(|jobs| jobs.contains_key("mode"));
-        apply_migration_mode_default(&mut table, &env);
-        apply_job_mode_default(&mut table, &env);
+        apply_migration_mode_default(&mut table, environment);
+        apply_job_mode_default(&mut table, environment);
         reject_removed_database_fields(&table)?;
 
         let mut config: AppConfig = table
             .try_into()
             .map_err(|e| AppError::Config(format!("配置反序列化失败: {}", e)))?;
 
-        // 敏感字段必须先解密，再对最终运行值做安全校验。
-        crate::config_crypto::decrypt_config(&mut config)?;
-        config.validate(&env)?;
-        if env == "prod"
+        config.environment = environment;
+        config.snowflake_worker_id = resolve_snowflake_worker_id(environment)?;
+
+        // 生产敏感值只允许由环境变量或外部 secret manager 注入，加载后直接校验最终值。
+        config.validate()?;
+        if environment.is_production()
             && migration_mode_was_explicit
             && config.database.migration_mode != MigrationMode::Verify
         {
@@ -113,7 +123,7 @@ impl AppConfig {
                 "production requires database.migration_mode = \"verify\"; run ryframe-migrate up before starting the API".into(),
             ));
         }
-        if env == "prod"
+        if environment.is_production()
             && job_mode_was_explicit
             && config.jobs.mode != crate::JobWorkerMode::External
         {
@@ -130,13 +140,13 @@ impl AppConfig {
     ///
     /// 相对路径仍以进程工作目录为基准，既保留 `load("config")` 的既有行为，
     /// 也允许容器显式挂载配置目录。
-    pub fn load_from_env() -> AppResult<Self> {
+    pub fn load_from_env(environment: Environment) -> AppResult<Self> {
         match std::env::var("APP_CONFIG_DIR") {
             Ok(config_dir) if config_dir.trim().is_empty() => Err(AppError::Config(
                 "APP_CONFIG_DIR must not be empty when it is set".into(),
             )),
-            Ok(config_dir) => Self::load(config_dir),
-            Err(std::env::VarError::NotPresent) => Self::load("config"),
+            Ok(config_dir) => Self::load(config_dir, environment),
+            Err(std::env::VarError::NotPresent) => Self::load("config", environment),
             Err(std::env::VarError::NotUnicode(_)) => Err(AppError::Config(
                 "APP_CONFIG_DIR must contain valid Unicode".into(),
             )),
@@ -144,11 +154,9 @@ impl AppConfig {
     }
 
     /// 校验必填配置项
-    pub fn validate(&self, env: &str) -> AppResult<()> {
-        let env = normalize_environment(env)?;
-        // 生产部署中的每个实例必须使用独立 worker ID，避免跨实例生成重复主键。
-        // 开发/测试环境允许使用默认值，但显式配置时同样校验格式和范围。
-        ryframe_utils::snowflake::worker_id_from_environment(&env).map_err(AppError::Config)?;
+    pub fn validate(&self) -> AppResult<()> {
+        ryframe_utils::snowflake::validate_worker_id(self.snowflake_worker_id)
+            .map_err(|error| AppError::Config(error.to_string()))?;
         if self.app.name.is_empty() {
             return Err(AppError::Config("app.name 不能为空".into()));
         }
@@ -158,8 +166,12 @@ impl AppConfig {
         if self.app.port == 0 {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
-        validate_database_connection("database.primary", &self.database.primary, env == "prod")?;
-        if env != "test" && self.database.migration_mode == MigrationMode::Off {
+        validate_database_connection(
+            "database.primary",
+            &self.database.primary,
+            self.environment.is_production(),
+        )?;
+        if !self.environment.is_test() && self.database.migration_mode == MigrationMode::Off {
             return Err(AppError::Config(
                 "database.migration_mode = \"off\" is allowed only when APP_ENV=test".into(),
             ));
@@ -181,7 +193,7 @@ impl AppConfig {
             validate_database_connection(
                 &format!("database.replicas[{index}]"),
                 &replica.connection,
-                env == "prod",
+                self.environment.is_production(),
             )?;
         }
         let mut source_names = HashSet::with_capacity(self.database.sources.len());
@@ -210,7 +222,7 @@ impl AppConfig {
             validate_database_connection(
                 &format!("database.sources[{index}]"),
                 &source.connection,
-                env == "prod",
+                self.environment.is_production(),
             )?;
         }
         let generator_source = self.generator.data_source.trim();
@@ -226,7 +238,7 @@ impl AppConfig {
         if jwt_secret.is_empty() {
             return Err(AppError::Config("auth.jwt_secret 不能为空".into()));
         }
-        if env == "prod" {
+        if self.environment.is_production() {
             if jwt_secret == "change-me-in-production" {
                 return Err(AppError::Config(
                     "生产环境必须修改 auth.jwt_secret，不允许使用默认值".into(),
@@ -243,9 +255,14 @@ impl AppConfig {
                 "auth.max_login_attempts 和 auth.lockout_duration_minutes 必须大于 0".into(),
             ));
         }
+        self.rate_limit.validate().map_err(AppError::Config)?;
         self.pagination.validate().map_err(AppError::Config)?;
-        self.jobs.validate(&env).map_err(AppError::Config)?;
+        self.logger.validate().map_err(AppError::Config)?;
+        self.jobs
+            .validate(self.environment)
+            .map_err(AppError::Config)?;
         self.telemetry.validate().map_err(AppError::Config)?;
+        self.messaging.validate().map_err(AppError::Config)?;
         let access_ttl =
             parse_duration_seconds("auth.access_token_expire", &self.auth.access_token_expire)?;
         let refresh_ttl =
@@ -260,7 +277,18 @@ impl AppConfig {
                 "auth.refresh_token_expire cannot exceed the 7-day absolute session limit".into(),
             ));
         }
-        if env == "prod"
+        if self.environment.is_production()
+            && self.messaging.enabled
+            && !self
+                .redis
+                .as_ref()
+                .is_some_and(|redis| redis.mode == RedisMode::Required)
+        {
+            return Err(AppError::Config(
+                "production messaging requires redis.mode = \"required\"".into(),
+            ));
+        }
+        if self.environment.is_production()
             && !self
                 .redis
                 .as_ref()
@@ -271,25 +299,25 @@ impl AppConfig {
             ));
         }
         if let Some(redis) = &self.redis {
-            validate_redis_tls(redis, env == "prod")?;
+            validate_redis_tls(redis, self.environment.is_production())?;
         }
-        if env == "prod" && self.cors.allow_origins.is_empty() {
+        if self.environment.is_production() && self.cors.allow_origins.is_empty() {
             return Err(AppError::Config(
                 "production requires at least one explicit CORS origin".into(),
             ));
         }
-        if env == "prod" && self.api_docs.enabled {
+        if self.environment.is_production() && self.api_docs.enabled {
             return Err(AppError::Config(
                 "production requires api_docs.enabled = false".into(),
             ));
         }
-        if env == "prod" && self.monitor.metrics_bearer_token.trim().len() < 32 {
+        if self.environment.is_production() && self.monitor.metrics_bearer_token.trim().len() < 32 {
             return Err(AppError::Config(
                 "production monitor.metrics_bearer_token must be at least 32 bytes".into(),
             ));
         }
         for origin in &self.cors.allow_origins {
-            validate_origin(origin, env == "prod")?;
+            validate_origin(origin, self.environment.is_production())?;
         }
         ryframe_utils::ip::TrustedProxySet::new(&self.proxy.trusted_cidrs)
             .map_err(AppError::Config)?;
@@ -311,7 +339,9 @@ impl AppConfig {
                         "object_storage.local_base_dir 不能为空".into(),
                     ));
                 }
-                if env == "prod" && !self.object_storage.allow_local_in_production {
+                if self.environment.is_production()
+                    && !self.object_storage.allow_local_in_production
+                {
                     return Err(AppError::Config(
                         "production local object storage requires \
                          object_storage.allow_local_in_production = true"
@@ -331,12 +361,12 @@ impl AppConfig {
                         "RustFS/MinIO/S3 需要 endpoint、access_key、secret_key 和 region".into(),
                     ));
                 }
-                if env == "prod" && !self.object_storage.use_ssl {
+                if self.environment.is_production() && !self.object_storage.use_ssl {
                     return Err(AppError::Config(
                         "生产环境的 RustFS/MinIO/S3 必须设置 object_storage.use_ssl = true".into(),
                     ));
                 }
-                if env == "prod"
+                if self.environment.is_production()
                     && self
                         .object_storage
                         .endpoint
@@ -351,6 +381,80 @@ impl AppConfig {
             }
         }
         Ok(())
+    }
+}
+
+const PRODUCTION_FILE_SECRET_KEYS: &[&str] = &[
+    "password",
+    "jwt_secret",
+    "access_key",
+    "secret_key",
+    "metrics_bearer_token",
+];
+
+fn reject_production_file_secrets(table: &toml::Table) -> AppResult<()> {
+    inspect_production_file_secrets(&toml::Value::Table(table.clone()), "")
+}
+
+fn inspect_production_file_secrets(value: &toml::Value, path: &str) -> AppResult<()> {
+    match value {
+        toml::Value::Table(table) => {
+            for (key, child) in table {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                if PRODUCTION_FILE_SECRET_KEYS.contains(&key.as_str())
+                    && let toml::Value::String(secret) = child
+                    && !secret.is_empty()
+                    && !(key == "jwt_secret" && secret == "change-me-in-production")
+                {
+                    return Err(AppError::Config(format!(
+                        "生产配置文件不得包含敏感值 {child_path}；请使用对应 APP_* 环境变量或外部 secret manager 注入"
+                    )));
+                }
+                inspect_production_file_secrets(child, &child_path)?;
+            }
+        }
+        toml::Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                inspect_production_file_secrets(child, &format!("{path}[{index}]"))?;
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn reject_removed_secret_encoding(table: &toml::Table) -> AppResult<()> {
+    inspect_removed_secret_encoding(&toml::Value::Table(table.clone()), "")
+}
+
+fn inspect_removed_secret_encoding(value: &toml::Value, path: &str) -> AppResult<()> {
+    match value {
+        toml::Value::String(value) if value.starts_with("ENC[") => Err(AppError::Config(format!(
+            "配置 {path} 使用了已删除的 ENC[...] 格式；请通过 APP_* 环境变量或外部 secret manager 注入原始值"
+        ))),
+        toml::Value::Table(table) => {
+            for (key, child) in table {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                inspect_removed_secret_encoding(child, &child_path)?;
+            }
+            Ok(())
+        }
+        toml::Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                inspect_removed_secret_encoding(child, &format!("{path}[{index}]"))?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -384,16 +488,48 @@ fn reject_removed_database_fields(table: &toml::Table) -> AppResult<()> {
     Ok(())
 }
 
-fn apply_migration_mode_default(table: &mut toml::Table, env: &str) {
+fn resolve_snowflake_worker_id(environment: Environment) -> AppResult<i64> {
+    match std::env::var("SNOWFLAKE_WORKER_ID") {
+        Ok(value) => {
+            let worker_id = value.trim().parse::<i64>().map_err(|_| {
+                AppError::Config(format!(
+                    "SNOWFLAKE_WORKER_ID 必须是 0~{} 的整数，当前值: {value}",
+                    ryframe_utils::snowflake::MAX_WORKER_ID
+                ))
+            })?;
+            ryframe_utils::snowflake::validate_worker_id(worker_id)
+                .map_err(|error| AppError::Config(error.to_string()))?;
+            Ok(worker_id)
+        }
+        Err(std::env::VarError::NotPresent) if environment.is_production() => {
+            Err(AppError::Config(
+                "生产环境必须显式设置 SNOWFLAKE_WORKER_ID，且每个应用实例必须使用不同值".into(),
+            ))
+        }
+        Err(std::env::VarError::NotPresent) => Ok(1),
+        Err(std::env::VarError::NotUnicode(_)) => Err(AppError::Config(
+            "SNOWFLAKE_WORKER_ID 必须是有效的 UTF-8 整数".into(),
+        )),
+    }
+}
+
+fn apply_migration_mode_default(table: &mut toml::Table, environment: Environment) {
     let Some(toml::Value::Table(database)) = table.get_mut("database") else {
         return;
     };
     database.entry("migration_mode").or_insert_with(|| {
-        toml::Value::String(if env == "prod" { "verify" } else { "auto" }.into())
+        toml::Value::String(
+            if environment.is_production() {
+                "verify"
+            } else {
+                "auto"
+            }
+            .into(),
+        )
     });
 }
 
-fn apply_job_mode_default(table: &mut toml::Table, env: &str) {
+fn apply_job_mode_default(table: &mut toml::Table, environment: Environment) {
     let jobs = table
         .entry("jobs")
         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
@@ -402,7 +538,7 @@ fn apply_job_mode_default(table: &mut toml::Table, env: &str) {
     };
     jobs.entry("mode").or_insert_with(|| {
         toml::Value::String(
-            if env == "prod" {
+            if environment.is_production() {
                 "external"
             } else {
                 "embedded"
@@ -538,21 +674,7 @@ fn is_loopback_host(host: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-fn normalize_environment(value: &str) -> AppResult<String> {
-    let normalized = match value.trim().to_ascii_lowercase().as_str() {
-        "dev" | "development" => "dev",
-        "test" | "testing" => "test",
-        "prod" | "production" => "prod",
-        other => {
-            return Err(AppError::Config(format!(
-                "APP_ENV 必须是 dev、test 或 prod，当前值: {other}"
-            )));
-        }
-    };
-    Ok(normalized.to_string())
-}
-
-fn load_merged_table(config_dir: &Path, env: &str) -> AppResult<toml::Table> {
+fn load_merged_table(config_dir: &Path, environment: Environment) -> AppResult<toml::Table> {
     // 第一层：将默认配置加载为 TOML 表。
     let base_path = config_dir.join("app.toml");
     let base_toml = std::fs::read_to_string(&base_path)
@@ -561,7 +683,7 @@ fn load_merged_table(config_dir: &Path, env: &str) -> AppResult<toml::Table> {
         .map_err(|e| AppError::Config(format!("解析 {} 失败: {}", base_path.display(), e)))?;
 
     // 第二层：加载环境配置文件并合并到基础表。
-    let env_path = config_dir.join(format!("app.{env}.toml"));
+    let env_path = config_dir.join(format!("app.{}.toml", environment.as_str()));
     match std::fs::read_to_string(&env_path) {
         Ok(env_toml) => {
             let env_table: toml::Table = toml::from_str(&env_toml).map_err(|e| {
@@ -569,7 +691,8 @@ fn load_merged_table(config_dir: &Path, env: &str) -> AppResult<toml::Table> {
             })?;
             merge_tables(&mut table, &env_table);
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && env != "prod" => {}
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && !environment.is_production() => {}
         Err(error) => {
             return Err(AppError::Config(format!(
                 "无法读取环境配置 {}: {}",
@@ -598,5 +721,70 @@ fn merge_tables(base: &mut toml::Table, env: &toml::Table) {
                 base.insert(key.clone(), value.clone());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod secret_policy_tests {
+    use super::*;
+
+    #[test]
+    fn 生产配置文件只允许空敏感值和默认占位符() {
+        let table: toml::Table = toml::from_str(
+            r#"
+[auth]
+jwt_secret = "change-me-in-production"
+[database.primary]
+password = ""
+[redis]
+password = ""
+[object_storage]
+access_key = ""
+secret_key = ""
+[monitor]
+metrics_bearer_token = ""
+"#,
+        )
+        .unwrap();
+
+        assert!(reject_production_file_secrets(&table).is_ok());
+    }
+
+    #[test]
+    fn 生产配置文件拒绝主库和嵌套连接密码() {
+        for source in [
+            r#"[database.primary]
+password = "file-secret"
+"#,
+            r#"[[database.replicas]]
+name = "replica-a"
+[database.replicas.connection]
+password = "replica-secret"
+"#,
+        ] {
+            let table: toml::Table = toml::from_str(source).unwrap();
+            let error = reject_production_file_secrets(&table)
+                .expect_err("生产配置文件中的密码必须被拒绝")
+                .to_string();
+            assert!(
+                error.contains("不得包含敏感值"),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn 旧加密格式在任何环境都被拒绝() {
+        let table: toml::Table = toml::from_str(
+            r#"[auth]
+jwt_secret = "ENC[removed]"
+"#,
+        )
+        .unwrap();
+
+        let error = reject_removed_secret_encoding(&table)
+            .expect_err("旧 ENC 格式必须被拒绝")
+            .to_string();
+        assert!(error.contains("已删除的 ENC"), "unexpected error: {error}");
     }
 }

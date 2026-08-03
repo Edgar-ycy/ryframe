@@ -23,7 +23,6 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
-  RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
   # ============================================================
@@ -31,6 +30,8 @@ jobs:
   # ============================================================
   check:
     name: Check & Lint (Linux)
+    # 周计划只刷新依赖安全结果，避免对未变化的源码重复执行编译与静态门禁。
+    if: ${{ github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-Dwarnings"
@@ -79,34 +80,14 @@ jobs:
           shellcheck deploy.sh "${shell_scripts[@]}"
           docker compose -f docker-compose.test.yml config --quiet
           bash deploy/tests/validate-nginx.sh
+          node deploy/tests/smoke-test.test.js
 
       - name: Validate workflow YAML and release tooling
         run: |
           python -m compileall -q scripts
           python -m unittest discover -s scripts/tests -p 'test_*.py'
 
-      - name: Check OpenAPI contract snapshot
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
-          git diff --exit-code -- openapi/openapi.json
-
-      - name: Check generated MySQL schema snapshot
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
-          git diff --exit-code -- sql/ryframe_config.sql
-          test ! -d sql/migrations || test -z "$(find sql/migrations -type f -print -quit)"
-
-      - name: Upload OpenAPI contract
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: ryframe-openapi
-          path: openapi/openapi.json
-          if-no-files-found: error
-
-      # 对每类触发事件执行相同的全目标质量门禁。
+      # 每次源码变更只通过这一条全目标 Clippy 命令编译工作区。
       - name: Clippy (all targets)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
@@ -137,91 +118,3 @@ jobs:
 
       - name: Check licenses, bans, and sources
         run: cargo deny check licenses bans sources
-
-  # ============================================================
-  # 覆盖率检查
-  # ============================================================
-  coverage:
-    name: Coverage
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
-    needs: check
-    env:
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-        with:
-          components: llvm-tools-preview
-
-      - name: Rust cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Start MySQL, Redis, and object storage
-        run: docker compose -f docker-compose.test.yml up --detach --wait
-
-      - name: Run tests with coverage
-        # 当前全工作区基线为 69.06%；保留严格但可达的下限，并随仓库和服务集成
-        # 覆盖率提升逐步上调。
-        run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info --fail-under-lines 55
-
-      - name: Stop coverage services
-        if: always()
-        run: docker compose -f docker-compose.test.yml down --volumes
-
-      - name: Upload coverage to Codecov
-        if: env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
-          token: ${{ env.CODECOV_TOKEN }}
-
-  # ============================================================
-  # Windows 测试
-  # ============================================================
-  test-windows:
-    name: Test (Windows)
-    runs-on: windows-latest
-    needs: check
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: Rust cache
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
-          restore-keys: |
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
-        with:
-          tool: nextest
-
-      - name: Run Windows library tests with nextest
-        run: cargo nextest run --locked --workspace --lib

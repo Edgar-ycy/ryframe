@@ -467,7 +467,7 @@ async fn test_permission_requires_permission_code() {
 }
 
 #[tokio::test]
-async fn test_auth_version_invalidates_existing_access_and_refresh_tokens() {
+async fn test_authorization_version_invalidates_existing_access_and_refresh_tokens() {
     let db = setup_test_db().await;
     seed_test_data(&db).await;
     common::seed_user(&db, 100, "versioned_user", "版本用户", None).await;
@@ -495,7 +495,7 @@ async fn test_auth_version_invalidates_existing_access_and_refresh_tokens() {
     let refresh_token = common::response_cookie(&headers, "ryframe_refresh_token").unwrap();
 
     ryframe_db::UserRepository
-        .increment_auth_versions(&db, "system", &[100])
+        .increment_authorization_versions(&db, "system", &[100])
         .await
         .unwrap();
 

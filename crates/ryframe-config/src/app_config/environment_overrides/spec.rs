@@ -55,7 +55,6 @@ pub(super) enum EnvValueType {
 
 pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_APP_NAME", &["app", "name"]),
-    EnvOverride::string("APP_APP_VERSION", &["app", "version"]),
     EnvOverride::string("APP_APP_HOST", &["app", "host"]),
     EnvOverride::integer("APP_APP_PORT", &["app", "port"]),
     EnvOverride::boolean("APP_API_DOCS_ENABLED", &["api_docs", "enabled"]),
@@ -71,6 +70,16 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_JOBS_MODE", &["jobs", "mode"]),
     EnvOverride::integer("APP_JOBS_POLL_INTERVAL_MS", &["jobs", "poll_interval_ms"]),
     EnvOverride::integer("APP_JOBS_LEASE_SECONDS", &["jobs", "lease_seconds"]),
+    EnvOverride::integer("APP_JOBS_HEARTBEAT_SECONDS", &["jobs", "heartbeat_seconds"]),
+    EnvOverride::integer(
+        "APP_JOBS_DEFAULT_MAX_ATTEMPTS",
+        &["jobs", "default_max_attempts"],
+    ),
+    EnvOverride::integer("APP_JOBS_EXPORT_MAX_ROWS", &["jobs", "export_max_rows"]),
+    EnvOverride::integer(
+        "APP_JOBS_EXPORT_RETENTION_HOURS",
+        &["jobs", "export_retention_hours"],
+    ),
     EnvOverride::integer("APP_JOBS_CONCURRENCY", &["jobs", "concurrency"]),
     EnvOverride::string("APP_JOBS_WORKER_ID", &["jobs", "worker_id"]),
     EnvOverride::string("APP_JOBS_HEALTH_HOST", &["jobs", "health_host"]),
@@ -86,6 +95,27 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::integer(
         "APP_TELEMETRY_MAX_QUEUE_SIZE",
         &["telemetry", "max_queue_size"],
+    ),
+    EnvOverride::boolean("APP_MESSAGING_ENABLED", &["messaging", "enabled"]),
+    EnvOverride::integer(
+        "APP_MESSAGING_TICKET_TTL_SECONDS",
+        &["messaging", "ticket_ttl_seconds"],
+    ),
+    EnvOverride::integer(
+        "APP_MESSAGING_RETENTION_DAYS",
+        &["messaging", "retention_days"],
+    ),
+    EnvOverride::integer(
+        "APP_MESSAGING_MAX_CONNECTIONS_PER_USER",
+        &["messaging", "max_connections_per_user"],
+    ),
+    EnvOverride::integer(
+        "APP_MESSAGING_OUTBOUND_BUFFER",
+        &["messaging", "outbound_buffer"],
+    ),
+    EnvOverride::integer(
+        "APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE",
+        &["messaging", "max_recipients_per_message"],
     ),
     EnvOverride::string("APP_DATABASE_HOST", &["database", "primary", "host"]),
     EnvOverride::integer("APP_DATABASE_PORT", &["database", "primary", "port"]),
@@ -169,6 +199,7 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_LOGGER_LEVEL", &["logger", "level"]),
     EnvOverride::string("APP_LOGGER_FORMAT", &["logger", "format"]),
     EnvOverride::string("APP_LOGGER_OUTPUT", &["logger", "output"]),
+    EnvOverride::integer("APP_LOGGER_RETENTION_DAYS", &["logger", "retention_days"]),
     EnvOverride::string_array("APP_CORS_ALLOW_ORIGINS", &["cors", "allow_origins"]),
     EnvOverride::string_array("APP_PROXY_TRUSTED_CIDRS", &["proxy", "trusted_cidrs"]),
     EnvOverride::integer("APP_UPLOAD_FILE_MAX_BYTES", &["upload", "file_max_bytes"]),
@@ -190,10 +221,6 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     ),
     EnvOverride::boolean("APP_RATE_LIMIT_ENABLED", &["rate_limit", "enabled"]),
     EnvOverride::integer("APP_RATE_LIMIT_CAPACITY", &["rate_limit", "capacity"]),
-    EnvOverride::integer(
-        "APP_RATE_LIMIT_REFILL_PER_SEC",
-        &["rate_limit", "refill_per_sec"],
-    ),
     EnvOverride::integer("APP_RATE_LIMIT_WINDOW_SECS", &["rate_limit", "window_secs"]),
     EnvOverride::boolean(
         "APP_RATE_LIMIT_ENABLE_USER_RATE_LIMIT",
@@ -218,10 +245,6 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::integer(
         "APP_PAGINATION_MAX_PAGE_SIZE",
         &["pagination", "max_page_size"],
-    ),
-    EnvOverride::integer(
-        "APP_PAGINATION_UNPAGED_MAX_RECORDS",
-        &["pagination", "unpaged_max_records"],
     ),
     EnvOverride::string("APP_OBJECT_STORAGE_BACKEND", &["object_storage", "backend"]),
     EnvOverride::string(

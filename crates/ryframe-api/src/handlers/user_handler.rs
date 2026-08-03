@@ -9,8 +9,9 @@ pub(crate) use password_reset::*;
 use axum::Router;
 use ryframe_auth::{RequestPrincipal, rbac};
 use ryframe_config::PaginationConfig;
-use ryframe_core::PageQuery;
-use ryframe_http::{AppError, AppResult};
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::HttpResult;
+use ryframe_kernel::AppError;
 use ryframe_macro::route;
 use ryframe_service::system::UserListParams;
 
@@ -21,11 +22,11 @@ fn ensure_current_user_permission(
     actor: &RequestPrincipal,
     permission: &str,
     message: &str,
-) -> AppResult<()> {
+) -> HttpResult<()> {
     if actor.is_super_admin || rbac::has_permission(&actor.permissions, permission) {
         Ok(())
     } else {
-        Err(AppError::Authorization(message.into()))
+        Err(AppError::Authorization(message.into()).into())
     }
 }
 
@@ -37,14 +38,14 @@ list_query!(pub UserListQuery, UserFilterQuery {
 });
 
 impl UserListQuery {
-    fn into_service_params(self, policy: &PaginationConfig) -> AppResult<UserListParams> {
+    fn into_service_params(self, policy: &PaginationConfig) -> HttpResult<UserListParams> {
         let (page, filter) = self.into_parts(policy)?;
         filter.into_service_params(page)
     }
 }
 
 impl UserFilterQuery {
-    fn into_service_params(self, page: PageQuery) -> AppResult<UserListParams> {
+    fn into_service_params(self, page: ValidatedPageQuery) -> HttpResult<UserListParams> {
         let dept_id = self
             .dept_id
             .as_deref()
@@ -68,7 +69,7 @@ impl UserFilterQuery {
 pub fn user_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
-        .merge(route!(list_no_page))
+        .merge(route!(options))
         .merge(route!(detail))
         .merge(route!(create))
         .merge(route!(update))

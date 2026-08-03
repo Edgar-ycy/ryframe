@@ -1,9 +1,9 @@
 use ryframe_core::{
-    LoggedRepo, RedisClient, Repository,
+    Repository,
     auto_fill::{AutoFill, FillContext},
-    repository::{PageQuery, PageResult},
+    repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{
     DeptRepository, PermissionRepository, RoleFilter, RoleRepository, TenantRepository,
     entities::role,
@@ -12,7 +12,10 @@ use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
-use utoipa::ToSchema;
+
+use crate::AuthorizationCache;
+
+use super::{OptionItem, OptionList};
 
 fn first_missing_id<T, F>(requested_ids: &[i64], existing: &[T], id: F) -> Option<i64>
 where
@@ -33,7 +36,7 @@ fn normalize_ids(ids: &mut Vec<i64>) {
     ids.dedup();
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct RoleVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -69,7 +72,7 @@ impl From<role::Model> for RoleVo {
 
 #[derive(Debug)]
 pub struct RoleListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub name: Option<String>,
     pub code: Option<String>,
     pub status: Option<String>,
@@ -77,18 +80,20 @@ pub struct RoleListParams {
 
 pub struct RoleService {
     db: DatabaseCluster,
-    role_repo: LoggedRepo<RoleRepository>,
-    perm_repo: LoggedRepo<PermissionRepository>,
-    dept_repo: LoggedRepo<DeptRepository>,
+    role_repo: RoleRepository,
+    perm_repo: PermissionRepository,
+    dept_repo: DeptRepository,
+    authorization_cache: AuthorizationCache,
 }
 
 impl RoleService {
-    pub fn new(db: DatabaseCluster, _redis: Option<RedisClient>) -> Self {
+    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            dept_repo: LoggedRepo::new(DeptRepository),
+            role_repo: RoleRepository,
+            perm_repo: PermissionRepository,
+            dept_repo: DeptRepository,
+            authorization_cache,
         }
     }
 
@@ -136,7 +141,7 @@ impl RoleService {
         params: RoleListParams,
     ) -> AppResult<PageResult<RoleVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let page = self
             .role_repo
             .find_by_page_filtered(
@@ -152,22 +157,52 @@ impl RoleService {
         Ok(PageResult::new(records, page.total, &params.page))
     }
 
+    /// 查询当前操作者实际可以分配的角色候选项。
+    pub async fn find_options(
+        &self,
+        actor: &ActorContext,
+        query: Option<&str>,
+        limit: u64,
+    ) -> AppResult<OptionList> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let fetch_limit = limit
+            .checked_add(1)
+            .ok_or_else(|| AppError::Config("角色选择器 limit 无法执行加一查询".into()))?;
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
+        let mut roles = self
+            .role_repo
+            .find_options(&db, tenant_id, query, actor.is_super_admin, fetch_limit)
+            .await?;
+        let has_more = roles.len() > limit as usize;
+        roles.truncate(limit as usize);
+        Ok(OptionList {
+            items: roles
+                .into_iter()
+                .map(|role| OptionItem {
+                    value: role.id.to_string(),
+                    label: role.name,
+                    description: Some(role.code),
+                    disabled: role.status != role::Model::STATUS_NORMAL,
+                })
+                .collect(),
+            has_more,
+        })
+    }
+
     /// 以稳定主键游标分批读取角色导出数据。
     pub async fn find_for_export(
         &self,
         actor: &ActorContext,
-        params: &RoleListParams,
+        name: Option<&str>,
+        code: Option<&str>,
+        status: Option<&str>,
         maximum_records: usize,
     ) -> AppResult<Vec<RoleVo>> {
         const BATCH_SIZE: u64 = 1_000;
 
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
-        let filter = RoleFilter {
-            name: params.name.as_deref(),
-            code: params.code.as_deref(),
-            status: params.status.as_deref(),
-        };
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let filter = RoleFilter { name, code, status };
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
@@ -205,7 +240,7 @@ impl RoleService {
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         // 每次创建、更新或删除角色时，先锁定租户行；随后按 ID 升序获取批量目标锁。
-        let operation: AppResult<u64> = async {
+        let operation: AppResult<(u64, i32)> = async {
             TenantRepository
                 .lock_tenant_in_txn(&transaction, tenant_id)
                 .await?;
@@ -238,23 +273,26 @@ impl RoleService {
             if affected != ids.len() as u64 {
                 return Err(AppError::NotFound("角色不存在".into()));
             }
-            Ok(affected)
+            let authorization_epoch = self
+                .authorization_cache
+                .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .await?;
+            Ok((affected, authorization_epoch))
         }
         .await;
 
         match operation {
-            Ok(affected) => {
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+            Ok((affected, authorization_epoch)) => {
+                crate::commit_current_audit(transaction).await?;
+                self.authorization_cache
+                    .sync_tenant_epoch(tenant_id, authorization_epoch)
+                    .await?;
                 Ok(affected)
             }
             Err(error) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(|error| AppError::Database(format!("回滚事务失败: {error}")))?;
+                if let Err(rollback_error) = transaction.rollback().await {
+                    tracing::error!(%rollback_error, "批量删除角色事务回滚失败");
+                }
                 Err(error)
             }
         }
@@ -262,7 +300,7 @@ impl RoleService {
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<RoleVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         match self.role_repo.find_by_id(&db, tenant_id, id).await? {
             Some(r) => {
                 let mut vo = RoleVo::from(r);
@@ -330,30 +368,34 @@ impl RoleService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        let operation: AppResult<role::Model> = async {
+        let operation: AppResult<(role::Model, i32)> = async {
             TenantRepository
                 .ensure_role_quota_in_txn(&transaction, tenant_id)
                 .await?;
-            role::ActiveModel::from(new_role)
+            let saved = role::ActiveModel::from(new_role)
                 .insert(&transaction)
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            let authorization_epoch = self
+                .authorization_cache
+                .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .await?;
+            Ok((saved, authorization_epoch))
         }
         .await;
 
         match operation {
-            Ok(saved) => {
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+            Ok((saved, authorization_epoch)) => {
+                crate::commit_current_audit(transaction).await?;
+                self.authorization_cache
+                    .sync_tenant_epoch(tenant_id, authorization_epoch)
+                    .await?;
                 Ok(RoleVo::from(saved))
             }
             Err(error) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(|error| AppError::Database(format!("回滚事务失败: {error}")))?;
+                if let Err(rollback_error) = transaction.rollback().await {
+                    tracing::error!(%rollback_error, "创建角色事务回滚失败");
+                }
                 Err(error)
             }
         }
@@ -380,7 +422,7 @@ impl RoleService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        let operation: AppResult<role::Model> = async {
+        let operation: AppResult<(role::Model, i32)> = async {
             TenantRepository
                 .lock_tenant_in_txn(&transaction, tenant_id)
                 .await?;
@@ -409,27 +451,31 @@ impl RoleService {
             }
             role.fill_on_update(&FillContext::new())?;
 
-            role::ActiveModel::from(role)
+            let saved = role::ActiveModel::from(role)
                 .reset_all()
                 .update(&transaction)
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            let authorization_epoch = self
+                .authorization_cache
+                .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .await?;
+            Ok((saved, authorization_epoch))
         }
         .await;
 
         match operation {
-            Ok(saved) => {
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+            Ok((saved, authorization_epoch)) => {
+                crate::commit_current_audit(transaction).await?;
+                self.authorization_cache
+                    .sync_tenant_epoch(tenant_id, authorization_epoch)
+                    .await?;
                 Ok(RoleVo::from(saved))
             }
             Err(error) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(|error| AppError::Database(format!("回滚事务失败: {error}")))?;
+                if let Err(rollback_error) = transaction.rollback().await {
+                    tracing::error!(%rollback_error, "更新角色事务回滚失败");
+                }
                 Err(error)
             }
         }
@@ -448,15 +494,30 @@ impl RoleService {
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        self.get_role_model(actor, role_id).await?;
         normalize_ids(&mut perm_ids);
         let permissions = self.perm_repo.find_by_ids(db, tenant_id, &perm_ids).await?;
         if let Some(perm_id) = first_missing_id(&perm_ids, &permissions, |permission| permission.id)
         {
             return Err(AppError::NotFound(format!("权限不存在: {}", perm_id)));
         }
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.role_repo
+            .find_by_id_for_update(&transaction, tenant_id, role_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
         self.perm_repo
-            .assign_perms(db, tenant_id, role_id, &perm_ids)
+            .assign_perms(&transaction, tenant_id, role_id, &perm_ids)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await?;
         Ok(())
     }
@@ -468,7 +529,7 @@ impl RoleService {
         role_id: i64,
     ) -> AppResult<Vec<String>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         self.role_repo
             .find_by_id(&db, tenant_id, role_id)
             .await?
@@ -524,8 +585,30 @@ impl RoleService {
             Vec::new()
         };
 
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         self.role_repo
-            .replace_data_scope(db, tenant_id, role_id, data_scope, &unique_dept_ids)
+            .find_by_id_for_update(&transaction, tenant_id, role_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        self.role_repo
+            .replace_data_scope(
+                &transaction,
+                tenant_id,
+                role_id,
+                data_scope,
+                &unique_dept_ids,
+            )
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await?;
         Ok(())
     }

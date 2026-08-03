@@ -1,6 +1,6 @@
 use ryframe_config::PaginationConfig;
-use ryframe_core::PageQuery;
-use ryframe_http::AppResult;
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::HttpResult;
 use ryframe_service::system::LoginInfoQuery;
 
 crate::list_query!(pub LoginLogPageQuery, LoginLogFilterQuery {
@@ -11,14 +11,14 @@ crate::list_query!(pub LoginLogPageQuery, LoginLogFilterQuery {
 });
 
 impl LoginLogPageQuery {
-    pub fn into_service_query(self, policy: &PaginationConfig) -> AppResult<LoginInfoQuery> {
+    pub fn into_service_query(self, policy: &PaginationConfig) -> HttpResult<LoginInfoQuery> {
         let (page, filter) = self.into_parts(policy)?;
         Ok(filter.into_service_query(page))
     }
 }
 
 impl LoginLogFilterQuery {
-    pub fn into_service_query(self, page: PageQuery) -> LoginInfoQuery {
+    pub fn into_service_query(self, page: ValidatedPageQuery) -> LoginInfoQuery {
         LoginInfoQuery {
             page,
             user_name: self.user_name,

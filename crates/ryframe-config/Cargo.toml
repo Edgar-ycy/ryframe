@@ -11,9 +11,6 @@ description.workspace = true
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
-aes-gcm = { workspace = true }
-base64 = { workspace = true }
-rand = { workspace = true }
 percent-encoding = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

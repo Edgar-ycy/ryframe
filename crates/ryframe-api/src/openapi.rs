@@ -16,9 +16,17 @@ use utoipa::OpenApi;
 
 ## 响应格式
 ```json
-{ "code": 200, "msg": "操作成功", "data": { ... } }
+{
+  "code": 200,
+  "message": "操作成功",
+  "data": { ... },
+  "request_id": "01K...",
+  "error_key": null,
+  "details": null
+}
 ```
-分页接口返回 `{ "code": 200, "msg": "查询成功", "rows": [...], "total": 100 }`。
+分页数据统一位于 `data`，字段为 `items/page/page_size/total/total_pages/max_page_size`；
+不再使用旧 `msg`、顶层 `rows` 或顶层 `total`。
 
 ## 菜单类型
 菜单管理使用 `menu_type` 字段区分节点类型：
@@ -45,13 +53,14 @@ use utoipa::OpenApi;
         (name = "在线用户", description = "查看当前在线设备会话，使用稳定 sid 精确强制下线。"),
         (name = "后台任务", description = "查看当前租户的持久化任务队列状态，并人工重试死信任务。"),
         (name = "服务器监控", description = "/metrics(Prometheus) 公开；进程与依赖探针分别使用根路径 /livez、/readyz；/server、/cache、/db-pool、/runtime 需认证。"),
-        (name = "运行探针", description = "/livez 只报告进程存活；/readyz 检查 MySQL、required Redis 与对象存储。"),
+        (name = "运行探针", description = "/livez 只报告进程存活；后台任务检查 MySQL、required Redis 与对象存储，/readyz 只读取有时效上限的内存快照。"),
         (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
         (name = "个人中心", description = "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。"),
         (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重和熔断保护。"),
         (name = "租户管理", description = "系统租户管理租户生命周期、配额和管理员初始化。")
     ),
     paths(
+        crate::router::api_version,
         // 认证接口
         crate::handlers::auth_handler::csrf,
         crate::handlers::auth_handler::login,
@@ -66,7 +75,7 @@ use utoipa::OpenApi;
         crate::handlers::captcha_handler::get_captcha_config_handler,
         // 用户管理
         crate::handlers::user_handler::list,
-        crate::handlers::user_handler::list_no_page,
+        crate::handlers::user_handler::options,
         crate::handlers::user_handler::detail,
         crate::handlers::user_handler::create,
         crate::handlers::user_handler::update,
@@ -80,7 +89,7 @@ use utoipa::OpenApi;
         crate::handlers::user_handler::download_import_template,
         // 角色管理
         crate::handlers::role_handler::list,
-        crate::handlers::role_handler::list_no_page,
+        crate::handlers::role_handler::options,
         crate::handlers::role_handler::detail,
         crate::handlers::role_handler::create,
         crate::handlers::role_handler::update,
@@ -93,14 +102,12 @@ use utoipa::OpenApi;
         // 部门管理
         crate::handlers::dept_handler::tree,
         crate::handlers::dept_handler::list_page,
-        crate::handlers::dept_handler::list_no_page,
         crate::handlers::dept_handler::detail,
         crate::handlers::dept_handler::create,
         crate::handlers::dept_handler::update,
         crate::handlers::dept_handler::remove,
         // 岗位管理
         crate::handlers::post_handler::list,
-        crate::handlers::post_handler::list_no_page,
         crate::handlers::post_handler::detail,
         crate::handlers::post_handler::create,
         crate::handlers::post_handler::update,
@@ -110,14 +117,12 @@ use utoipa::OpenApi;
         crate::handlers::menu_handler::tree,
         crate::handlers::menu_handler::user_tree,
         crate::handlers::menu_handler::list_page,
-        crate::handlers::menu_handler::list_no_page,
         crate::handlers::menu_handler::detail,
         crate::handlers::menu_handler::create,
         crate::handlers::menu_handler::update,
         crate::handlers::menu_handler::remove,
         // 参数配置
         crate::handlers::config_handler::list,
-        crate::handlers::config_handler::list_no_page,
         crate::handlers::config_handler::detail,
         crate::handlers::config_handler::create,
         crate::handlers::config_handler::update,
@@ -127,7 +132,6 @@ use utoipa::OpenApi;
         crate::handlers::config_handler::request_config_export,
         // 字典管理
         crate::handlers::dict_handler::list_types,
-        crate::handlers::dict_handler::list_types_no_page,
         crate::handlers::dict_handler::create_type,
         crate::handlers::dict_handler::update_type,
         crate::handlers::dict_handler::delete_type,
@@ -139,7 +143,6 @@ use utoipa::OpenApi;
         crate::handlers::dict_handler::request_dict_type_export,
         // 通知公告
         crate::handlers::notice_handler::list,
-        crate::handlers::notice_handler::list_no_page,
         crate::handlers::notice_handler::detail,
         crate::handlers::notice_handler::create,
         crate::handlers::notice_handler::update,
@@ -154,14 +157,11 @@ use utoipa::OpenApi;
         crate::handlers::message_handler::mark_all_read,
         // 操作日志
         crate::handlers::oper_log_handler::list,
-        crate::handlers::oper_log_handler::list_no_page,
         crate::handlers::oper_log_handler::request_oper_log_export,
         // 登录日志
         crate::handlers::login_log_handler::list,
-        crate::handlers::login_log_handler::list_no_page,
         crate::handlers::login_log_handler::request_login_log_export,
         // 在线用户
-        crate::handlers::online_user_handler::list_online_users,
         crate::handlers::online_user_handler::list_online_users_page,
         crate::handlers::online_user_handler::force_logout,
         // 后台任务
@@ -219,7 +219,7 @@ use utoipa::OpenApi;
         crate::handlers::captcha_handler::CaptchaVerifyRequest,
         crate::handlers::captcha_handler::CaptchaVerifyResponse,
         crate::handlers::captcha_handler::CaptchaConfigResponse,
-        ryframe_service::UserInfo,
+        crate::dto::public_dto::UserInfo,
         // 用户 DTO
         crate::dto::user_dto::CreateUserDto,
         crate::dto::user_dto::UpdateUserDto,
@@ -229,51 +229,53 @@ use utoipa::OpenApi;
         crate::dto::user_dto::ReplaceUserRolesDto,
         crate::dto::user_import_dto::UserImportResult,
         crate::dto::multipart_dto::FileUploadForm,
-        ryframe_service::system::UserVo,
-        ryframe_service::system::UserDetailVo,
-        ryframe_service::system::RoleBriefVo,
+        crate::dto::public_dto::UserVo,
+        crate::dto::public_dto::UserDetailVo,
+        crate::dto::public_dto::RoleBriefVo,
+        crate::dto::public_dto::OptionItem,
+        crate::dto::public_dto::OptionList,
         // 角色 DTO
         crate::dto::role_dto::CreateRoleDto,
         crate::dto::role_dto::UpdateRoleDto,
         crate::dto::role_dto::ReplaceRolePermissionsDto,
         crate::dto::role_dto::ReplaceRoleDataScopeDto,
-        ryframe_service::system::RoleVo,
-        ryframe_service::system::PermissionType,
+        crate::dto::public_dto::RoleVo,
+        crate::dto::public_dto::PermissionType,
         // 部门 DTO
         crate::dto::dept_dto::CreateDeptDto,
         crate::dto::dept_dto::UpdateDeptDto,
-        ryframe_service::system::DeptVo,
-        ryframe_service::system::DeptTreeNode,
+        crate::dto::public_dto::DeptVo,
+        crate::dto::public_dto::DeptTreeNode,
         // 岗位 DTO
         crate::dto::post_dto::CreatePostDto,
         crate::dto::post_dto::UpdatePostDto,
-        ryframe_service::system::PostVo,
+        crate::dto::public_dto::PostVo,
         // 菜单 DTO
         crate::dto::menu_dto::CreateMenuDto,
         crate::dto::menu_dto::UpdateMenuDto,
         crate::dto::permission_dto::CreatePermissionDto,
         crate::dto::permission_dto::UpdatePermissionDto,
-        ryframe_service::system::MenuVo,
-        ryframe_service::system::MenuTreeNode,
-        ryframe_service::system::PermissionVo,
-        ryframe_service::system::PermissionTreeNode,
-        ryframe_service::system::PermissionSyncReport,
+        crate::dto::public_dto::MenuVo,
+        crate::dto::public_dto::MenuTreeNode,
+        crate::dto::public_dto::PermissionVo,
+        crate::dto::public_dto::PermissionTreeNode,
+        crate::dto::public_dto::PermissionSyncReport,
         // 参数配置 DTO
         crate::dto::config_dto::CreateConfigDto,
         crate::dto::config_dto::UpdateConfigDto,
-        ryframe_service::system::ConfigVo,
+        crate::dto::public_dto::ConfigVo,
         // 字典 DTO
         crate::dto::dict_dto::CreateDictTypeDto,
         crate::dto::dict_dto::UpdateDictTypeDto,
         crate::dto::dict_dto::CreateDictDataDto,
         crate::dto::dict_dto::UpdateDictDataDto,
         crate::dto::dict_dto::DictOptionDto,
-        ryframe_service::system::DictTypeVo,
-        ryframe_service::system::DictDataVo,
+        crate::dto::public_dto::DictTypeVo,
+        crate::dto::public_dto::DictDataVo,
         // 通知 DTO
         crate::dto::notice_dto::CreateNoticeDto,
         crate::dto::notice_dto::UpdateNoticeDto,
-        ryframe_service::system::NoticeVo,
+        crate::dto::public_dto::NoticeVo,
         // 消息中心 DTO
         crate::dto::message_dto::MessageAudienceDto,
         crate::dto::message_dto::PublishMessageDto,
@@ -283,30 +285,32 @@ use utoipa::OpenApi;
         crate::message_presenter::PublishedMessageVo,
         // 后台任务 DTO
         crate::dto::job_dto::BackgroundJobPageQuery,
-        ryframe_service::BackgroundJobVo,
-        ryframe_service::BackgroundJobQueueStats,
+        crate::dto::public_dto::BackgroundJobVo,
+        crate::dto::public_dto::BackgroundJobQueueStats,
         // 日志 DTO
         crate::dto::oper_log_dto::OperLogPageQuery,
         crate::dto::login_log_dto::LoginLogPageQuery,
-        ryframe_service::system::OperLogVo,
-        ryframe_service::system::LoginInfoVo,
-        ryframe_service::system::OnlineUserVo,
+        crate::dto::public_dto::OperLogVo,
+        crate::dto::public_dto::LoginInfoVo,
+        crate::dto::public_dto::OnlineUserVo,
         // 个人中心 DTO
         crate::dto::profile_dto::UpdateProfileRequest,
         crate::dto::profile_dto::ChangePasswordRequest,
         crate::dto::profile_dto::AvatarResponse,
-        ryframe_service::system::profile_service::UserProfileResponse,
+        crate::dto::public_dto::UserProfileResponse,
         crate::dto::generator_dto::GenerateOptionsDto,
         crate::dto::generator_dto::GenerateRequestDto,
-        ryframe_service::system::generator_service::TableInfo,
-        ryframe_service::system::generator_service::ColumnInfo,
-        ryframe_service::system::generator_service::GeneratedFile,
-        ryframe_service::system::generator_service::WriteReport,
+        crate::dto::public_dto::TableInfo,
+        crate::dto::public_dto::ColumnInfo,
+        crate::dto::public_dto::GeneratedFile,
+        crate::dto::public_dto::WriteReport,
         crate::dto::tenant_dto::CreateTenantDto,
         crate::dto::tenant_dto::UpdateTenantDto,
         crate::dto::tenant_dto::UpdateTenantStatusDto,
-        ryframe_service::system::TenantVo,
-        ryframe_service::system::UploadResponse,
+        crate::dto::public_dto::TenantVo,
+        crate::dto::public_dto::UploadResponse,
+        crate::router::ApiVersionInfo,
+        crate::router::ApiVersionEndpoints,
         ryframe_monitor::ServerInfo,
         ryframe_monitor::CacheInfo,
         ryframe_monitor::CacheKeysInfo,
@@ -386,6 +390,23 @@ fn password_policy_contract() -> serde_json::Value {
     })
 }
 
+fn notice_policy_contract() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "content_markdown": {
+            "min_utf8_bytes": crate::dto::notice_dto::NOTICE_MARKDOWN_MIN_UTF8_BYTES,
+            "max_utf8_bytes": crate::dto::notice_dto::NOTICE_MARKDOWN_MAX_UTF8_BYTES,
+        },
+    })
+}
+
+fn api_prefix_contract() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "value": ryframe_http::API_PREFIX,
+    })
+}
+
 impl utoipa::Modify for ApiDocModifier {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -415,6 +436,14 @@ impl utoipa::Modify for ApiDocModifier {
             "x-ryframe-password-policy".into(),
             password_policy_contract(),
         );
+        openapi
+            .extensions
+            .get_or_insert_default()
+            .insert("x-ryframe-notice-policy".into(), notice_policy_contract());
+        openapi
+            .extensions
+            .get_or_insert_default()
+            .insert("x-ryframe-api-prefix".into(), api_prefix_contract());
 
         for (path, item) in &mut openapi.paths.paths {
             set_operation_id(&mut item.get, "get", path);
@@ -439,9 +468,10 @@ fn set_operation_id(
     };
 
     let normalized_path = path
+        .strip_prefix(ryframe_http::API_PREFIX)
+        .unwrap_or(path)
         .trim_start_matches('/')
         .split('/')
-        .skip_while(|segment| matches!(*segment, "api" | "v1"))
         .map(|segment| {
             segment
                 .strip_prefix('{')
@@ -468,6 +498,28 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::*;
+
+    #[test]
+    fn description_only_documents_the_current_response_contract() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let description = document["info"]["description"].as_str().unwrap();
+
+        for required in [
+            "message",
+            "request_id",
+            "error_key",
+            "details",
+            "items/page/page_size/total/total_pages/max_page_size",
+        ] {
+            assert!(
+                description.contains(required),
+                "缺少当前契约字段：{required}"
+            );
+        }
+        for legacy in ["\"msg\":", "\"rows\":"] {
+            assert!(!description.contains(legacy), "仍包含旧契约字段：{legacy}");
+        }
+    }
 
     #[test]
     fn operations_are_unique_and_use_canonical_paths() {
@@ -513,7 +565,9 @@ mod tests {
         }
         for (path, item) in paths {
             assert!(
-                path.starts_with("/api/v1/") || matches!(path.as_str(), "/livez" | "/readyz"),
+                path.strip_prefix(ryframe_http::API_PREFIX)
+                    .is_some_and(|relative| relative.starts_with('/'))
+                    || matches!(path.as_str(), "/livez" | "/readyz"),
                 "unversioned OpenAPI path: {path}"
             );
             assert!(!path.contains("listNoPage"), "legacy OpenAPI path: {path}");
@@ -543,22 +597,6 @@ mod tests {
                 {
                     query_operation_count += 1;
                 }
-                if path.ends_with("/all") || path.ends_with("/export") {
-                    let documents_pagination = operation["parameters"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .any(|parameter| {
-                            parameter["in"] == "query"
-                                && matches!(parameter["name"].as_str(), Some("page" | "page_size"))
-                        });
-                    assert!(
-                        !documents_pagination,
-                        "full-record operation must not document pagination parameters: \
-                         {method} {path}"
-                    );
-                }
-
                 let success_has_schema = operation["responses"]
                     .as_object()
                     .into_iter()
@@ -596,7 +634,7 @@ mod tests {
             }
         }
         assert!(
-            query_operation_count >= 29,
+            query_operation_count >= 21,
             "OpenAPI query parameter coverage unexpectedly shrank: found {query_operation_count}"
         );
     }
@@ -622,6 +660,53 @@ mod tests {
     }
 
     #[test]
+    fn canonical_api_prefix_is_exported_for_clients() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+
+        assert_eq!(&document["x-ryframe-api-prefix"], &api_prefix_contract());
+    }
+
+    #[test]
+    fn json_success_responses_use_unified_envelopes() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let paths = document["paths"].as_object().unwrap();
+
+        for (path, item) in paths {
+            if !path.starts_with(ryframe_http::API_PREFIX) {
+                continue;
+            }
+            for method in ["get", "post", "put", "delete", "patch"] {
+                let Some(operation) = item.get(method) else {
+                    continue;
+                };
+                let Some(responses) = operation["responses"].as_object() else {
+                    continue;
+                };
+                for (status, response) in responses {
+                    if !status.starts_with('2') {
+                        continue;
+                    }
+                    let Some(content) = response["content"].as_object() else {
+                        continue;
+                    };
+                    for (media_type, media) in content {
+                        if media_type != "application/json" && !media_type.ends_with("+json") {
+                            continue;
+                        }
+                        let schema_ref = media["schema"]["$ref"].as_str().unwrap_or_default();
+                        assert!(
+                            schema_ref == "#/components/schemas/ApiEmptyResponse"
+                                || schema_ref.starts_with("#/components/schemas/ApiResponse_")
+                                || schema_ref.starts_with("#/components/schemas/ApiPageResponse_"),
+                            "{method} {path} {status} 的 {media_type} 成功响应未使用统一信封：{schema_ref}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn new_password_inputs_use_the_exported_policy() {
         let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
         assert_eq!(
@@ -643,6 +728,34 @@ mod tests {
                 "{schema}.{field}"
             );
         }
+    }
+
+    #[test]
+    fn notice_markdown_uses_the_exported_utf8_byte_policy() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        assert_eq!(
+            &document["x-ryframe-notice-policy"],
+            &notice_policy_contract()
+        );
+
+        for schema in ["CreateNoticeDto", "UpdateNoticeDto"] {
+            let properties = &document["components"]["schemas"][schema]["properties"];
+            assert!(properties.get("content").is_none(), "{schema}.content");
+            assert_eq!(
+                properties["content_markdown"]["minLength"],
+                crate::dto::notice_dto::NOTICE_MARKDOWN_MIN_UTF8_BYTES,
+                "{schema}.content_markdown"
+            );
+            assert_eq!(
+                properties["content_markdown"]["maxLength"],
+                crate::dto::notice_dto::NOTICE_MARKDOWN_MAX_UTF8_BYTES,
+                "{schema}.content_markdown"
+            );
+        }
+
+        let notice_properties = &document["components"]["schemas"]["NoticeVo"]["properties"];
+        assert!(notice_properties.get("content").is_none());
+        assert!(notice_properties.get("content_markdown").is_some());
     }
 
     #[test]

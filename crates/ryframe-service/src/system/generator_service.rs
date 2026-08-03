@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use ryframe_core::repository::{PageQuery, PageResult};
+use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::DatabaseCluster;
 pub use ryframe_generator::{ColumnInfo, GenerateOptions, GeneratedFile, TableInfo, WriteReport};
 use ryframe_kernel::{AppError, AppResult};
@@ -11,7 +11,7 @@ use sea_orm::DatabaseConnection;
 
 #[derive(Debug)]
 pub struct TableListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub table_name: Option<String>,
     pub table_comment: Option<String>,
 }
@@ -61,7 +61,7 @@ impl GeneratorService {
         let records = filtered
             .into_iter()
             .skip(page.offset() as usize)
-            .take(page.page_size as usize)
+            .take(page.page_size() as usize)
             .collect();
         Ok(PageResult::new(records, total, &page))
     }

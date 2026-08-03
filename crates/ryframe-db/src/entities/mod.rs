@@ -1,4 +1,5 @@
 pub mod background_job;
+pub mod cache_namespace_version;
 pub mod config;
 pub mod dept;
 pub mod dict_data;
@@ -24,6 +25,7 @@ pub mod user;
 pub mod user_role;
 
 pub use background_job::Entity as BackgroundJobEntity;
+pub use cache_namespace_version::Entity as CacheNamespaceVersionEntity;
 pub use config::Entity as ConfigEntity;
 pub use dept::Entity as DeptEntity;
 pub use export_job::Entity as ExportJobEntity;

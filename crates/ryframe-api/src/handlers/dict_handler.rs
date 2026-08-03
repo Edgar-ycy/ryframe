@@ -4,16 +4,17 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_core::PageQuery;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{DictDataVo, DictTypeListParams, DictTypeVo};
+use ryframe_service::system::DictTypeListParams;
 use serde::Deserialize;
 use validator::Validate;
 
 use crate::dto::dict_dto::{
     CreateDictDataDto, CreateDictTypeDto, DictOptionDto, UpdateDictDataDto, UpdateDictTypeDto,
 };
+use crate::dto::public_dto::{DictDataVo, DictTypeVo, ExportJobVo};
 use crate::list_query;
 use crate::state::AppState;
 use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
@@ -25,7 +26,7 @@ list_query!(pub DictTypeListQuery, DictTypeFilterQuery {
 });
 
 impl DictTypeFilterQuery {
-    fn into_service_params(self, page: PageQuery) -> DictTypeListParams {
+    fn into_service_params(self, page: ValidatedPageQuery) -> DictTypeListParams {
         DictTypeListParams {
             page,
             name: self.name,
@@ -38,7 +39,6 @@ impl DictTypeFilterQuery {
 pub fn dict_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list_types))
-        .merge(route!(list_types_no_page))
         .merge(route!(request_dict_type_export))
         .merge(route!(create_type))
         .merge(route!(update_type))
@@ -61,7 +61,7 @@ async fn list_types(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<DictTypeListQuery>,
-) -> AppResult<Json<ApiPageResponse<DictTypeVo>>> {
+) -> HttpResult<Json<ApiPageResponse<DictTypeVo>>> {
     let (page, filter) = query.into_parts(&state.config.pagination)?;
     let page_result = state
         .services
@@ -69,36 +69,17 @@ async fn list_types(
         .find_types_by_page(&current_user, filter.into_service_params(page))
         .await?;
     Ok(Json(ApiPageResponse::new(
-        page_result.records,
+        page_result
+            .records
+            .into_iter()
+            .map(DictTypeVo::from)
+            .collect(),
         page_result.total,
         page_result.page,
         page_result.page_size,
         state.config.pagination.max_page_size,
         "查询成功",
     )))
-}
-
-/// 字典类型不分页查询
-#[get("/types/all")]
-#[perm("system:dict:list")]
-#[utoipa::path(get, path = "/api/v1/system/dict/types/all", tag = "字典管理",
-    params(DictTypeFilterQuery),
-    responses((status = 200, description = "字典类型列表", body = ApiResponse<Vec<DictTypeVo>>)),
-    security(("bearer" = [])))]
-async fn list_types_no_page(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<DictTypeFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<DictTypeVo>>>> {
-    let page_result = state
-        .services
-        .dict
-        .find_types_by_page(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await?;
-    Ok(Json(ApiResponse::success(page_result.records)))
 }
 
 /// 创建字典类型
@@ -110,15 +91,15 @@ async fn create_type(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreateDictTypeDto>,
-) -> AppResult<Json<ApiResponse<DictTypeVo>>> {
+) -> HttpResult<Json<ApiResponse<DictTypeVo>>> {
     dto.validate()?;
     state
         .services
         .dict
         .create_type(&current_user, &dto.name, &dto.code)
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 更新字典类型
@@ -134,15 +115,15 @@ async fn update_type(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDictTypeDto>,
-) -> AppResult<Json<ApiResponse<DictTypeVo>>> {
+) -> HttpResult<Json<ApiResponse<DictTypeVo>>> {
     dto.validate()?;
     state
         .services
         .dict
         .update_type(&current_user, id, &dto.name, dto.status)
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 删除字典类型
@@ -156,7 +137,7 @@ async fn delete_type(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.dict.delete_type(&current_user, id).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
@@ -177,14 +158,18 @@ async fn list_data(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<ListDataQuery>,
-) -> AppResult<Json<ApiResponse<Vec<DictDataVo>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<DictDataVo>>>> {
     state
         .services
         .dict
         .find_data_by_type(&current_user, &query.type_code)
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|values| {
+            Json(ApiResponse::success(
+                values.into_iter().map(DictDataVo::from).collect(),
+            ))
+        })
 }
 
 /// 通过字典类型编码查询字典数据
@@ -197,7 +182,7 @@ async fn list_data_by_type_path(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(dict_type): Path<String>,
-) -> AppResult<Json<ApiResponse<Vec<DictOptionDto>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<DictOptionDto>>>> {
     let data = state
         .services
         .dict
@@ -223,7 +208,7 @@ async fn create_data(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreateDictDataDto>,
-) -> AppResult<Json<ApiResponse<DictDataVo>>> {
+) -> HttpResult<Json<ApiResponse<DictDataVo>>> {
     dto.validate()?;
     state
         .services
@@ -236,8 +221,8 @@ async fn create_data(
             dto.sort.unwrap_or(0),
         )
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 更新字典数据
@@ -253,7 +238,7 @@ async fn update_data(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDictDataDto>,
-) -> AppResult<Json<ApiResponse<DictDataVo>>> {
+) -> HttpResult<Json<ApiResponse<DictDataVo>>> {
     dto.validate()?;
     state
         .services
@@ -267,8 +252,8 @@ async fn update_data(
             dto.status,
         )
         .await
-        .map_err(AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 删除字典数据
@@ -282,7 +267,7 @@ async fn delete_data(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.dict.delete_data(&current_user, id).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
@@ -292,16 +277,13 @@ async fn delete_data(
 #[perm("system:dict:export")]
 #[utoipa::path(post, path = "/api/v1/system/dict/types/exports", tag = "字典管理",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
-    responses((status = 202, description = "字典类型导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+    responses((status = 202, description = "字典类型导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_dict_type_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
     Json(request): Json<ExportRequestDto>,
-) -> AppResult<(
-    StatusCode,
-    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
-)> {
+) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     request_export(
         state,
         current_user,

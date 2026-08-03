@@ -1,7 +1,7 @@
 //! ryframe-middleware 性能基准测试
 //!
 //! 测量中间件核心操作的吞吐量和延迟：
-//! - 令牌桶限流（内存模式）
+//! - 固定窗口限流（内存模式）
 //! - 安全响应头构建
 //! - 请求 ID 生成
 //! - 限流 key 生成
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ryframe_middleware::rate_limit::RateLimiter;
 
-// ============ 令牌桶限流（内存模式） ============
+// ============ 固定窗口限流（内存模式） ============
 
 fn bench_rate_limit_in_memory_acquire(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();

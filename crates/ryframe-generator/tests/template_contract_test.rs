@@ -67,6 +67,10 @@ fn generated_templates_follow_application_boundaries() {
     let handler = source("handler");
     assert!(handler.contains("use crate::state::AppState;"));
     assert!(handler.contains("use ryframe_auth::RequestPrincipal;"));
+    assert!(handler.contains("use ryframe_kernel::AppError;"));
+    assert!(handler.contains("HttpResult<"));
+    assert!(!handler.contains("ryframe_http::AppError"));
+    assert!(!handler.contains("ryframe_http::AppResult"));
     assert!(handler.contains("current_user: RequestPrincipal"));
     assert!(handler.contains("query.into_parts(&state.config.pagination)?"));
     assert!(handler.contains(".find_by_page(&current_user, page_query)"));
@@ -77,7 +81,8 @@ fn generated_templates_follow_application_boundaries() {
 
     let service = source("service");
     assert!(service.contains("pub struct WidgetService"));
-    assert!(service.contains("widget_repo: LoggedRepo<WidgetRepository>"));
+    assert!(service.contains("widget_repo: WidgetRepository"));
+    assert!(!service.contains("LoggedRepo"));
     assert!(service.contains("db: DatabaseConnection"));
     assert!(service.contains("pub fn new(db: DatabaseConnection)"));
     assert!(service.contains("actor: &ActorContext"));
@@ -112,10 +117,10 @@ fn generated_template_output_matches_golden_hashes() {
         .collect::<Vec<_>>();
     let expected = vec![
         ("entity", 15_105_740_694_095_249_589),
-        ("repository", 1_251_828_980_566_588_877),
+        ("repository", 8_747_761_093_218_540_013),
         ("dto", 4_473_523_187_890_384_743),
-        ("service", 10_639_329_197_836_940_592),
-        ("handler", 1_456_797_513_594_080_285),
+        ("service", 15_461_582_683_693_356_993),
+        ("handler", 8_694_351_410_098_486_555),
     ];
     assert_eq!(actual, expected);
 }

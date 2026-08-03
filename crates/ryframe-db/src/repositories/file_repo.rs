@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
@@ -36,7 +36,7 @@ impl Repository<sys_file::Model, i64> for FileRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<sys_file::Model>> {
         let paginator = sys_file::Entity::find()
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
@@ -103,6 +103,40 @@ impl FileRepository {
         insert_entity!(sys_file, txn, tenant_id, entity)
     }
 
+    /// 提交不代表 HTTP 请求成功的上传预留协调事务。
+    ///
+    /// 上传预留必须先持久化，随后才能在数据库事务外写入对象存储；这里故意不绑定
+    /// 成功审计，最终 `ready` 状态会与 `audit.operation` Outbox 原子提交。
+    pub async fn commit_upload_reservation(&self, txn: DatabaseTransaction) -> AppResult<()> {
+        txn.commit()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 在调用方事务内软删除文件元数据。
+    pub async fn delete_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        let result = sys_file::Entity::update_many()
+            .col_expr(
+                sys_file::Column::DelFlag,
+                sea_orm::sea_query::Expr::value(sys_file::Model::DEL_FLAG_DELETED),
+            )
+            .filter(sys_file::Column::Id.eq(id))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .exec(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected == 0 {
+            return Err(AppError::NotFound("文件不存在".into()));
+        }
+        Ok(())
+    }
+
     /// 按 bucket 查询文件列表
     pub async fn find_by_bucket(
         &self,
@@ -121,78 +155,57 @@ impl FileRepository {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    /// 将数据库中存储的相对路径解析为可公开访问的完整 URL
-    ///
-    /// 根据存储后端和数据库中的相对对象路径拼接完整 URL。
-    /// 按权威 SHA-256 值或尚未迁移记录中保留的旧 MD5 值查找文件。
-    pub async fn find_by_digests(
+    /// 按权威 SHA-256 摘要查找已完成上传的文件。
+    pub async fn find_by_sha256(
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
         bucket: &str,
         file_sha256: &str,
-        legacy_md5: &str,
     ) -> AppResult<Option<sys_file::Model>> {
-        Self::find_by_digests_query(tenant_id, bucket, file_sha256, legacy_md5)
+        Self::find_by_sha256_query(tenant_id, bucket, file_sha256)
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    pub async fn find_by_digests_any_status_in_txn(
+    pub async fn find_by_sha256_any_status_in_txn(
         &self,
         txn: &DatabaseTransaction,
         tenant_id: &str,
         bucket: &str,
         file_sha256: &str,
-        legacy_md5: &str,
     ) -> AppResult<Option<sys_file::Model>> {
-        Self::find_by_digests_any_status_query(tenant_id, bucket, file_sha256, legacy_md5)
+        Self::find_by_sha256_any_status_query(tenant_id, bucket, file_sha256)
             .lock(LockType::Update)
             .one(txn)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
-    fn find_by_digests_query(
+    fn find_by_sha256_query(
         tenant_id: &str,
         bucket: &str,
         file_sha256: &str,
-        legacy_md5: &str,
     ) -> Select<sys_file::Entity> {
         sys_file::Entity::find()
             .filter(sys_file::Column::Bucket.eq(bucket))
-            .filter(
-                Condition::any()
-                    .add(sys_file::Column::FileSha256.eq(file_sha256))
-                    .add(sys_file::Column::FileMd5.eq(legacy_md5)),
-            )
+            .filter(sys_file::Column::FileSha256.eq(file_sha256))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_READY))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
     }
 
-    fn find_by_digests_any_status_query(
+    fn find_by_sha256_any_status_query(
         tenant_id: &str,
         bucket: &str,
         file_sha256: &str,
-        legacy_md5: &str,
     ) -> Select<sys_file::Entity> {
         sys_file::Entity::find()
             .filter(sys_file::Column::Bucket.eq(bucket))
-            .filter(
-                Condition::any()
-                    .add(sys_file::Column::FileSha256.eq(file_sha256))
-                    .add(sys_file::Column::FileMd5.eq(legacy_md5)),
-            )
-            .filter(Self::active_or_reserved_condition())
+            .filter(sys_file::Column::FileSha256.eq(file_sha256))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-    }
-
-    fn active_or_reserved_condition() -> Condition {
-        Condition::any()
-            .add(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .add(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
     }
 
     pub async fn find_by_id_any_status(
@@ -202,14 +215,14 @@ impl FileRepository {
         id: i64,
     ) -> AppResult<Option<sys_file::Model>> {
         sys_file::Entity::find_by_id(id)
-            .filter(Self::active_or_reserved_condition())
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
-    /// 在事务中锁定仍可见或处于回收墓碑状态的文件元数据。
+    /// 在事务中锁定尚未软删除的文件元数据；可见性由上传状态决定。
     pub async fn find_by_id_any_status_for_update(
         &self,
         txn: &DatabaseTransaction,
@@ -217,7 +230,7 @@ impl FileRepository {
         id: i64,
     ) -> AppResult<Option<sys_file::Model>> {
         sys_file::Entity::find_by_id(id)
-            .filter(Self::active_or_reserved_condition())
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .lock(LockType::Update)
             .one(txn)
@@ -241,10 +254,6 @@ impl FileRepository {
             .col_expr(
                 sys_file::Column::UploadStatus,
                 sea_orm::sea_query::Expr::value(sys_file::Model::UPLOAD_STATUS_CLEANUP),
-            )
-            .col_expr(
-                sys_file::Column::DelFlag,
-                sea_orm::sea_query::Expr::value(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED),
             )
             .col_expr(
                 sys_file::Column::ReservationToken,
@@ -283,10 +292,6 @@ impl FileRepository {
                 sea_orm::sea_query::Expr::value(sys_file::Model::UPLOAD_STATUS_READY),
             )
             .col_expr(
-                sys_file::Column::DelFlag,
-                sea_orm::sea_query::Expr::value(sys_file::Model::DEL_FLAG_NORMAL),
-            )
-            .col_expr(
                 sys_file::Column::ReservationToken,
                 sea_orm::sea_query::Expr::value(Option::<String>::None),
             )
@@ -301,7 +306,7 @@ impl FileRepository {
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .filter(sys_file::Column::Bucket.eq("avatar"))
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_CLEANUP))
             .filter(sys_file::Column::ReservationExpiresAt.gt(now))
             .exec(txn)
@@ -310,14 +315,17 @@ impl FileRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
-    pub async fn mark_ready(
+    pub async fn mark_ready<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         id: i64,
         reservation_token: &str,
         updated_at: chrono::DateTime<chrono::Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let result = sys_file::Entity::update_many()
             .col_expr(
                 sys_file::Column::UploadStatus,
@@ -332,16 +340,12 @@ impl FileRepository {
                 sea_orm::sea_query::Expr::value(Option::<chrono::DateTime<chrono::Utc>>::None),
             )
             .col_expr(
-                sys_file::Column::DelFlag,
-                sea_orm::sea_query::Expr::value(sys_file::Model::DEL_FLAG_NORMAL),
-            )
-            .col_expr(
                 sys_file::Column::UpdatedAt,
                 sea_orm::sea_query::Expr::value(updated_at),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_PENDING))
             .filter(sys_file::Column::ReservationToken.eq(reservation_token))
             .exec(db)
@@ -370,7 +374,7 @@ impl FileRepository {
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_PENDING))
             .filter(sys_file::Column::ReservationToken.eq(reservation_token))
             .exec(db)
@@ -402,7 +406,7 @@ impl FileRepository {
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(
                 Condition::any()
                     .add(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_PENDING))
@@ -422,7 +426,7 @@ impl FileRepository {
         limit: u64,
     ) -> AppResult<Vec<sys_file::Model>> {
         sys_file::Entity::find()
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(
                 Condition::any()
                     .add(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_PENDING))
@@ -461,7 +465,7 @@ impl FileRepository {
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_PENDING))
             .filter(sys_file::Column::ReservationExpiresAt.lte(now))
             .exec(db)
@@ -480,7 +484,7 @@ impl FileRepository {
         sys_file::Entity::delete_many()
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_CLEANUP))
             .filter(sys_file::Column::ReservationExpiresAt.lte(now))
             .exec(db)
@@ -510,7 +514,7 @@ impl FileRepository {
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_CLEANUP))
             .filter(sys_file::Column::ReservationExpiresAt.lte(due_before))
             .exec(db)
@@ -535,5 +539,51 @@ impl FileRepository {
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{DbBackend, QueryTrait};
+
+    use super::FileRepository;
+
+    #[test]
+    fn ready_digest_lookup_is_sha256_only() {
+        let statement =
+            FileRepository::find_by_sha256_query("tenant-a", "uploads", &"a".repeat(64))
+                .build(DbBackend::MySql);
+
+        assert!(statement.sql.contains("`file_sha256` = ?"));
+        assert!(statement.sql.contains("`upload_status` = ?"));
+        assert!(statement.sql.contains("`del_flag` = ?"));
+        let removed_column = ["file", "md5"].join("_");
+        assert!(
+            !statement
+                .sql
+                .split_once(" WHERE ")
+                .expect("查询必须包含 WHERE")
+                .1
+                .contains(&removed_column)
+        );
+    }
+
+    #[test]
+    fn reservation_digest_lookup_is_sha256_only() {
+        let statement =
+            FileRepository::find_by_sha256_any_status_query("tenant-a", "uploads", &"b".repeat(64))
+                .build(DbBackend::MySql);
+
+        assert!(statement.sql.contains("`file_sha256` = ?"));
+        assert!(statement.sql.contains("`del_flag` = ?"));
+        let removed_column = ["file", "md5"].join("_");
+        assert!(
+            !statement
+                .sql
+                .split_once(" WHERE ")
+                .expect("查询必须包含 WHERE")
+                .1
+                .contains(&removed_column)
+        );
     }
 }

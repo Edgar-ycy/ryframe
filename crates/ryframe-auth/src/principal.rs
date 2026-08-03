@@ -2,13 +2,15 @@ use std::ops::Deref;
 
 use async_trait::async_trait;
 use axum::{extract::FromRequestParts, http::request::Parts};
-use ryframe_http::AppError;
+use ryframe_http::HttpAppError;
+use ryframe_kernel::AppError;
 use ryframe_kernel::{ActorContext, AppResult};
+use serde::{Deserialize, Serialize};
 
 use crate::jwt::Claims;
 
 /// 当前请求中一次解析完成的不可变认证身份。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestPrincipal {
     pub actor: ActorContext,
     /// 用户保存的语言偏好；请求头未指定可用语言时作为回退。
@@ -33,13 +35,13 @@ impl Deref for RequestPrincipal {
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for RequestPrincipal {
-    type Rejection = AppError;
+    type Rejection = HttpAppError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         parts
             .extensions
             .get::<Self>()
             .cloned()
-            .ok_or_else(|| AppError::Authentication("未认证".into()))
+            .ok_or_else(|| AppError::Authentication("未认证".into()).into())
     }
 }

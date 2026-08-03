@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "package": "ryframe",
+      "minimal": [],
+      "maximal": [
+        "default",
+        "file-maintenance"
+      ]
+    },
+    {
+      "package": "ryframe-http",
+      "minimal": [],
+      "maximal": [
+        "default",
+        "openapi"
+      ]
+    }
+  ]
+}

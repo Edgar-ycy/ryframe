@@ -42,9 +42,13 @@ macro_rules! list_query {
             pub fn into_parts(
                 self,
                 policy: &ryframe_config::PaginationConfig,
-            ) -> ryframe_http::AppResult<(ryframe_core::PageQuery, $filter_name)> {
+            ) -> ryframe_http::HttpResult<(ryframe_core::ValidatedPageQuery, $filter_name)> {
                 Ok((
-                    ryframe_core::PageQuery::from_optional(self.page, self.page_size, policy)?,
+                    ryframe_core::ValidatedPageQuery::from_optional(
+                        self.page,
+                        self.page_size,
+                        policy,
+                    )?,
                     $filter_name {
                         $($field: self.$field),*
                     },
@@ -59,7 +63,7 @@ macro_rules! list_query {
 /// 配合 #[utoipa::path] 使用：
 /// ```
 /// use ryframe_api::detail_body;
-/// use ryframe_http::{ApiResponse, AppResult};
+/// use ryframe_http::{ApiResponse, HttpResult};
 ///
 /// struct NoticeService;
 ///
@@ -68,7 +72,7 @@ macro_rules! list_query {
 ///         &self,
 ///         _actor: &ryframe_kernel::ActorContext,
 ///         _id: i64,
-///     ) -> AppResult<Option<String>> {
+///     ) -> ryframe_kernel::AppResult<Option<String>> {
 ///         Ok(None)
 ///     }
 /// }
@@ -85,7 +89,7 @@ macro_rules! list_query {
 ///     state: AppState,
 ///     actor: ryframe_kernel::ActorContext,
 ///     id: i64,
-/// ) -> AppResult<axum::Json<ApiResponse<String>>> {
+/// ) -> HttpResult<axum::Json<ApiResponse<String>>> {
 ///     detail_body!(state, actor, id, notice, String, "通知公告")
 /// }
 /// ```
@@ -93,11 +97,12 @@ macro_rules! list_query {
 macro_rules! detail_body {
     ($state:ident, $actor:ident, $id:ident, $service:ident, $vo:ty, $entity:literal) => {{
         match $state.services.$service.find_by_id(&$actor, $id).await? {
-            Some(v) => Ok(axum::Json(ryframe_http::ApiResponse::success(v))),
-            None => Err(ryframe_http::AppError::NotFound(format!(
-                "{}不存在",
-                $entity
+            Some(value) => Ok(axum::Json(ryframe_http::ApiResponse::<$vo>::success(
+                value.into(),
             ))),
+            None => Err(ryframe_http::HttpAppError::from(
+                ryframe_kernel::AppError::NotFound(format!("{}不存在", $entity)),
+            )),
         }
     }};
 }
@@ -107,7 +112,7 @@ macro_rules! detail_body {
 /// 配合 #[utoipa::path] 使用：
 /// ```
 /// use ryframe_api::remove_body;
-/// use ryframe_http::{ApiResponse, AppResult};
+/// use ryframe_http::{ApiResponse, HttpResult};
 ///
 /// struct NoticeService;
 ///
@@ -116,7 +121,7 @@ macro_rules! detail_body {
 ///         &self,
 ///         _actor: &ryframe_kernel::ActorContext,
 ///         _id: i64,
-///     ) -> AppResult<()> {
+///     ) -> ryframe_kernel::AppResult<()> {
 ///         Ok(())
 ///     }
 /// }
@@ -133,7 +138,7 @@ macro_rules! detail_body {
 ///     state: AppState,
 ///     actor: ryframe_kernel::ActorContext,
 ///     id: i64,
-/// ) -> AppResult<axum::Json<ApiResponse<()>>> {
+/// ) -> HttpResult<axum::Json<ApiResponse<()>>> {
 ///     remove_body!(state, actor, id, notice)
 /// }
 /// ```
@@ -149,7 +154,7 @@ macro_rules! remove_body {
 
 #[cfg(test)]
 mod pagination_query_tests {
-    use axum::extract::Query;
+    use axum::{extract::Query, http::StatusCode, response::IntoResponse};
     use ryframe_config::PaginationConfig;
 
     crate::list_query!(TestListQuery, TestFilterQuery {});
@@ -159,13 +164,12 @@ mod pagination_query_tests {
         let policy = PaginationConfig {
             default_page_size: 25,
             max_page_size: 100,
-            unpaged_max_records: 1_000,
         };
         let uri = "/?page=2".parse().unwrap();
         let Query(query) = Query::<TestListQuery>::try_from_uri(&uri).unwrap();
         let (page, _) = query.into_parts(&policy).unwrap();
-        assert_eq!(page.page, 2);
-        assert_eq!(page.page_size, 25);
+        assert_eq!(page.page(), 2);
+        assert_eq!(page.page_size(), 25);
 
         let uri = "/?page=0&page_size=101".parse().unwrap();
         let Query(query) = Query::<TestListQuery>::try_from_uri(&uri).unwrap();
@@ -176,5 +180,28 @@ mod pagination_query_tests {
     fn axum_query_rejects_legacy_camel_case_page_size() {
         let uri = "/?pageSize=20".parse().unwrap();
         assert!(Query::<TestListQuery>::try_from_uri(&uri).is_err());
+    }
+
+    #[test]
+    fn api_returns_bad_request_for_every_strict_pagination_boundary() {
+        let policy = PaginationConfig::default();
+
+        for uri in [
+            "/?page=0&page_size=10",
+            "/?page=1&page_size=0",
+            "/?page=1&page_size=101",
+            "/?page=18446744073709551615&page_size=2",
+        ] {
+            let uri = uri.parse().unwrap();
+            let Query(query) = Query::<TestListQuery>::try_from_uri(&uri).unwrap();
+            let response = query.into_parts(&policy).unwrap_err().into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+
+        for uri in ["/?page=1&page_size=1", "/?page=1&page_size=100"] {
+            let uri = uri.parse().unwrap();
+            let Query(query) = Query::<TestListQuery>::try_from_uri(&uri).unwrap();
+            assert!(query.into_parts(&policy).is_ok());
+        }
     }
 }

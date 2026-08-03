@@ -6,10 +6,8 @@
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use axum::Router;
+use ryframe_http::API_PREFIX;
 use serde::{Deserialize, Serialize};
-
-/// RyFrame 当前提供服务的唯一公开 API 版本前缀。
-pub const API_V1_PREFIX: &str = "/api/v1";
 
 /// URL 中的 API 主版本（`v1`、`v2` 等）。
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -36,7 +34,7 @@ impl ApiVersion {
 
     pub fn path_prefix(&self) -> String {
         if self.major == 1 {
-            API_V1_PREFIX.to_owned()
+            API_PREFIX.to_owned()
         } else {
             format!("/api/v{}", self.major)
         }

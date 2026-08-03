@@ -3,7 +3,7 @@
 //! 生产环境中只有 `ryframe-migrate up` 可以执行 DDL。
 //! API 和 Worker 进程改用 `database.migration_mode = "verify"`。
 
-use ryframe_config::AppConfig;
+use ryframe_config::{AppConfig, Environment};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,7 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("usage: ryframe-migrate <up|verify|status>".into());
     }
 
-    let config = AppConfig::load_from_env()?;
+    let environment = Environment::from_env()?;
+    let config = AppConfig::load_from_env(environment)?;
+    ryframe_utils::snowflake::initialize(config.snowflake_worker_id)?;
     let database = ryframe_db::connection::connect_with_level(
         &config.database.primary,
         config.database.sql_log_level,

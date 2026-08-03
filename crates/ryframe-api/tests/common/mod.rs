@@ -18,7 +18,8 @@ use axum::{
 use http_body_util::BodyExt;
 use ryframe_api::{AppServices, AppState, router::api_router, runtime::RuntimeComponents};
 use ryframe_config::{
-    AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, LoggerConfig, RateLimitConfig,
+    AppConfig, AppSettings, AuthConfig, DatabaseConfig, DbConnection, Environment, LoggerConfig,
+    RateLimitConfig,
 };
 use ryframe_db::{
     DatabaseCluster,
@@ -26,7 +27,7 @@ use ryframe_db::{
 };
 use ryframe_middleware::rate_limit::RateLimitState;
 use ryframe_service::{
-    AuthService,
+    AuthService, AuthorizationCache,
     system::{
         CaptchaStore, ConfigService, DeptService, DictService, FileService, GeneratorService,
         LoginInfoService, MenuService, NoticeService, OnlineUserService, OperLogService,
@@ -41,6 +42,7 @@ use tower::ServiceExt;
 
 /// 创建隔离的 MySQL 8.4 测试数据库并建表。
 pub async fn setup_test_db() -> TestDatabase {
+    ryframe_utils::snowflake::initialize(1).expect("初始化测试 Snowflake");
     let db = TestDatabase::create("api").await;
     create_all_tables(&db).await;
     db
@@ -59,6 +61,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
     }
 
     create!(ryframe_db::entities::tenant::Entity);
+    create!(ryframe_db::entities::cache_namespace_version::Entity);
     create!(ryframe_db::entities::dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);
     create!(ryframe_db::entities::dict_data::Entity);
@@ -77,6 +80,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::background_job::Entity);
+    create!(ryframe_db::entities::outbox_event::Entity);
     create!(ryframe_db::entities::export_job::Entity);
     create!(ryframe_db::entities::message::Entity);
     create!(ryframe_db::entities::message_audience::Entity);
@@ -97,6 +101,7 @@ pub async fn seed_test_data(db: &DatabaseConnection) {
         max_storage_mb: 1024,
         max_requests_per_min: 1000,
         session_version: 1,
+        authorization_epoch: 1,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -104,6 +109,18 @@ pub async fn seed_test_data(db: &DatabaseConnection) {
         .exec(db)
         .await
         .unwrap();
+    ryframe_db::entities::cache_namespace_version::Entity::insert(
+        ryframe_db::entities::cache_namespace_version::ActiveModel {
+            tenant_id: sea_orm::ActiveValue::Set("system".into()),
+            namespace: sea_orm::ActiveValue::Set(ryframe_db::CONFIG_CACHE_NAMESPACE.into()),
+            version: sea_orm::ActiveValue::Set(0),
+            created_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+            updated_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+        },
+    )
+    .exec(db)
+    .await
+    .unwrap();
     // 创建根部门
     let dept_model = dept::Model {
         id: 1,
@@ -236,7 +253,7 @@ pub async fn seed_user(
         avatar_file_id: None,
         preferred_locale: None,
         status: user::Model::STATUS_NORMAL.to_string(),
-        auth_version: 1,
+        authorization_version: 1,
         dept_id,
         remark: None,
         login_ip: None,
@@ -254,6 +271,8 @@ pub async fn seed_user(
 /// 创建测试用的 AppConfig
 pub fn test_config() -> AppConfig {
     AppConfig {
+        environment: Environment::Test,
+        snowflake_worker_id: 1,
         app: AppSettings {
             name: "test".into(),
             port: 0,
@@ -274,7 +293,7 @@ pub fn test_config() -> AppConfig {
         },
         redis: None,
         logger: LoggerConfig {
-            level: "warn".into(),
+            level: ryframe_config::LoggerLevel::Warn,
             ..Default::default()
         },
         rate_limit: RateLimitConfig::default(),
@@ -287,6 +306,7 @@ pub fn test_config() -> AppConfig {
         monitor: Default::default(),
         jobs: Default::default(),
         telemetry: Default::default(),
+        messaging: Default::default(),
     }
 }
 
@@ -307,7 +327,12 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
     let config_arc = Arc::new(config.clone());
     let token_blacklist = ryframe_core::TokenBlacklist::new(None);
     let database = DatabaseCluster::single(db.clone());
-    let auth_service = Arc::new(AuthService::new(database.clone(), config_arc.clone(), None));
+    let auth_service = Arc::new(AuthService::new(
+        database.clone(),
+        config_arc.clone(),
+        None,
+        AuthorizationCache::disabled(),
+    ));
     let localizer = Arc::new(ryframe_i18n::Localizer::embedded().expect("内嵌国际化资源"));
     AppState {
         auth: ryframe_auth::middleware::AuthState {
@@ -319,33 +344,75 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
         monitor: ryframe_monitor::MonitorState {
             database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database.clone())),
             redis: None,
+            readiness: {
+                let cache = ryframe_monitor::DependencyHealthCache::new(
+                    false,
+                    true,
+                    std::time::Duration::from_secs(15),
+                );
+                cache.update(true, false, true);
+                cache
+            },
             metrics_bearer_token: Arc::from(""),
         },
         config: config_arc,
         localizer: localizer.clone(),
         services: Arc::new(AppServices {
             auth: auth_service,
-            user: Arc::new(UserService::new(database.clone(), None)),
-            role: Arc::new(RoleService::new(database.clone(), None)),
-            tenant: Arc::new(TenantService::new(database.clone())),
-            permission: Arc::new(PermissionService::new(database.clone(), None)),
-            menu: Arc::new(MenuService::new(database.clone(), None)),
-            dept: Arc::new(DeptService::new(database.clone(), None)),
+            user: Arc::new(UserService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            role: Arc::new(RoleService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            tenant: Arc::new(TenantService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            permission: Arc::new(PermissionService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            menu: Arc::new(MenuService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
+            dept: Arc::new(DeptService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
             post: Arc::new(PostService::new(database.clone())),
-            config: Arc::new(ConfigService::new(database.clone(), None)),
+            config: Arc::new(ConfigService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
             dict: Arc::new(DictService::new(database.clone(), None)),
             export: Arc::new(ryframe_service::system::ExportService::new(
                 database.clone(),
-                Arc::new(UserService::new(database.clone(), None)),
+                Arc::new(UserService::new(
+                    database.clone(),
+                    AuthorizationCache::disabled(),
+                )),
                 Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
+                &config.jobs,
             )),
             notice: Arc::new(NoticeService::new(database.clone())),
             message: Arc::new(ryframe_service::system::MessageService::new(
                 database.clone(),
                 Arc::new(ryframe_service::JobQueue::new(database.clone())),
+                config.messaging.clone(),
             )),
-            websocket_ticket: Arc::new(ryframe_service::system::WebSocketTicketService::new(None)),
+            websocket_ticket: Arc::new(ryframe_service::system::WebSocketTicketService::new(
+                None,
+                config.messaging.clone(),
+            )),
             oper_log: Arc::new(OperLogService::new(database.clone())),
+            audit_outbox: Arc::new(ryframe_service::AuditOutbox::new(
+                database.clone(),
+                config.jobs.default_max_attempts,
+            )),
             job_queue: Arc::new(ryframe_service::JobQueue::new(database.clone())),
             login_info: Arc::new(LoginInfoService::new(database.clone())),
             generator: Arc::new(GeneratorService::new(
@@ -353,7 +420,10 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
                 "primary".into(),
                 std::env::current_dir().unwrap(),
             )),
-            profile: Arc::new(ProfileService::new(database.clone())),
+            profile: Arc::new(ProfileService::new(
+                database.clone(),
+                AuthorizationCache::disabled(),
+            )),
             file: Arc::new(FileService::new(
                 database,
                 Arc::new(ryframe_storage::LocalObjectStorage::new("uploads")),
@@ -364,6 +434,7 @@ pub async fn build_test_app(db: DatabaseConnection) -> AppState {
         redis: None,
         message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
             localizer.clone(),
+            config.messaging.clone(),
         )),
         token_blacklist,
         rate_limiter: Arc::new(ryframe_middleware::RateLimiter::new_in_memory(100, 10)),

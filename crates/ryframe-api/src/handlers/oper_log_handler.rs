@@ -1,21 +1,19 @@
+use crate::dto::oper_log_dto::OperLogPageQuery;
+use crate::dto::public_dto::{ExportJobVo, OperLogVo};
+use crate::state::AppState;
+use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 use axum::{
     Json, Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
-use ryframe_macro::{get, post, route};
-use ryframe_service::system::OperLogVo;
-
-use crate::dto::oper_log_dto::{OperLogFilterQuery, OperLogPageQuery};
-use crate::state::AppState;
-use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 use ryframe_auth::RequestPrincipal;
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
+use ryframe_macro::{get, post, route};
 
 pub fn oper_log_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
-        .merge(route!(list_no_page))
         .merge(route!(request_oper_log_export))
         .with_state(state)
 }
@@ -30,7 +28,7 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<OperLogPageQuery>,
-) -> AppResult<Json<ApiPageResponse<OperLogVo>>> {
+) -> HttpResult<Json<ApiPageResponse<OperLogVo>>> {
     state
         .services
         .oper_log
@@ -39,10 +37,10 @@ async fn list(
             query.into_service_query(&state.config.pagination)?,
         )
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::new(
-                p.records,
+                p.records.into_iter().map(OperLogVo::from).collect(),
                 p.total,
                 p.page,
                 p.page_size,
@@ -52,45 +50,18 @@ async fn list(
         })
 }
 
-/// 操作日志不分页查询（返回全部数据）
-#[get("/all")]
-#[perm("system:operlog:list")]
-#[utoipa::path(get, path = "/api/v1/system/operlogs/all", tag = "操作日志",
-    params(OperLogFilterQuery),
-    responses((status = 200, description = "全部操作日志", body = ApiResponse<Vec<OperLogVo>>)), security(("bearer" = [])))]
-async fn list_no_page(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<OperLogFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<OperLogVo>>>> {
-    let logs = state
-        .services
-        .oper_log
-        .find_all(
-            &current_user,
-            query.into_service_query(ryframe_core::PageQuery::bounded_unpaged(
-                &state.config.pagination,
-            )?),
-        )
-        .await?;
-    Ok(Json(ApiResponse::success(logs)))
-}
-
 /// 创建操作日志异步导出任务。
 #[post("/exports")]
 #[perm("system:operlog:export")]
 #[utoipa::path(post, path = "/api/v1/system/operlogs/exports", tag = "操作日志",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
-    responses((status = 202, description = "操作日志导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+    responses((status = 202, description = "操作日志导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_oper_log_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
     Json(request): Json<ExportRequestDto>,
-) -> AppResult<(
-    StatusCode,
-    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
-)> {
+) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     request_export(
         state,
         current_user,

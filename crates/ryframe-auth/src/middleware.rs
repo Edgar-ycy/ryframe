@@ -12,7 +12,8 @@ use axum::{
 };
 use ryframe_config::AppConfig;
 use ryframe_core::{RefreshSessionStore, TenantContext, TokenBlacklist, with_tenant_context};
-use ryframe_http::{AppError, HttpAppError};
+use ryframe_http::HttpAppError;
+use ryframe_kernel::AppError;
 
 use crate::{
     jwt::decode_token,
@@ -58,7 +59,11 @@ pub async fn auth_middleware(
 ) -> Result<Response, Response> {
     let token = match extract_bearer_token(&request) {
         Some(t) => t,
-        None => return Err(AppError::Authentication("缺少认证令牌".into()).into_response()),
+        None => {
+            return Err(
+                HttpAppError::from(AppError::Authentication("缺少认证令牌".into())).into_response(),
+            );
+        }
     };
 
     let claims = match decode_token(&token, &auth_state.config.auth.jwt_secret) {
@@ -67,9 +72,10 @@ pub async fn auth_middleware(
     };
 
     if claims.token_type != "access" {
-        return Err(
-            AppError::Authentication("令牌类型错误，请使用访问令牌".into()).into_response(),
-        );
+        return Err(HttpAppError::from(AppError::Authentication(
+            "令牌类型错误，请使用访问令牌".into(),
+        ))
+        .into_response());
     }
 
     // 令牌黑名单检查（支持 JWT 主动撤销）
@@ -82,14 +88,12 @@ pub async fn auth_middleware(
             HttpAppError::from(error).into_response()
         })?
     {
-        return Err(AppError::Authentication("令牌已被撤销，请重新登录".into()).into_response());
+        return Err(HttpAppError::from(AppError::Authentication(
+            "令牌已被撤销，请重新登录".into(),
+        ))
+        .into_response());
     }
 
-    if claims.sid.is_empty() {
-        return Err(
-            AppError::Authentication("legacy access token is not accepted".into()).into_response(),
-        );
-    }
     if !auth_state
         .refresh_sessions
         .is_active(&claims.sid)
@@ -99,7 +103,10 @@ pub async fn auth_middleware(
             HttpAppError::from(error).into_response()
         })?
     {
-        return Err(AppError::Authentication("session is no longer active".into()).into_response());
+        return Err(HttpAppError::from(AppError::Authentication(
+            "session is no longer active".into(),
+        ))
+        .into_response());
     }
 
     // 用已验证令牌中绑定的租户身份替换未认证、由请求头派生的上下文。
@@ -152,7 +159,8 @@ pub fn require_permission(
                 .extensions()
                 .get::<RequestPrincipal>()
                 .ok_or_else(|| {
-                    AppError::Authentication("未认证，请先登录".into()).into_response()
+                    HttpAppError::from(AppError::Authentication("未认证，请先登录".into()))
+                        .into_response()
                 })?;
 
             check_permission(context, perm)

@@ -5,11 +5,14 @@
 #[path = "../../../ryframe-db/tests/common/test_database.rs"]
 mod test_database;
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, EntityTrait, Schema};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection, EntityTrait, Schema,
+};
 pub use test_database::TestDatabase;
 
 /// 创建独立 MySQL 数据库并建表。
 pub async fn setup_test_db() -> TestDatabase {
+    ryframe_utils::snowflake::initialize(1).expect("初始化测试 Snowflake");
     let db = TestDatabase::create("service").await;
     create_all_tables(&db).await;
     let tenant = ryframe_db::entities::tenant::Model {
@@ -24,6 +27,7 @@ pub async fn setup_test_db() -> TestDatabase {
         max_storage_mb: 1024,
         max_requests_per_min: 1000,
         session_version: 1,
+        authorization_epoch: 1,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -32,6 +36,16 @@ pub async fn setup_test_db() -> TestDatabase {
         .exec(&db)
         .await
         .expect("seed system tenant failed");
+    ryframe_db::entities::cache_namespace_version::ActiveModel {
+        tenant_id: sea_orm::ActiveValue::Set("system".into()),
+        namespace: sea_orm::ActiveValue::Set(ryframe_db::CONFIG_CACHE_NAMESPACE.into()),
+        version: sea_orm::ActiveValue::Set(0),
+        created_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+        updated_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+    }
+    .insert(&db)
+    .await
+    .expect("seed config cache namespace failed");
     db
 }
 
@@ -48,6 +62,7 @@ async fn create_all_tables(db: &DatabaseConnection) {
     }
 
     create!(ryframe_db::entities::tenant::Entity);
+    create!(ryframe_db::entities::cache_namespace_version::Entity);
     create!(ryframe_db::entities::config::Entity);
     create!(ryframe_db::entities::dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);
@@ -65,4 +80,5 @@ async fn create_all_tables(db: &DatabaseConnection) {
     create!(ryframe_db::entities::user_role::Entity);
     create!(ryframe_db::entities::role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
+    create!(ryframe_db::entities::outbox_event::Entity);
 }

@@ -219,6 +219,31 @@ def validate_package_version(frontend: Path, expected: str) -> None:
         )
 
 
+def validate_frontend_contract_source(
+    frontend: Path,
+    backend_repository: str,
+    backend_commit: str,
+    openapi_hash: str,
+) -> None:
+    """校验前端契约元数据固定到本次后端发布提交。"""
+    source = json_object(
+        frontend / "openapi" / "source.json", "frontend OpenAPI source"
+    )
+    expected = {
+        "schema_version": 1,
+        "backend_repository": backend_repository,
+        "backend_commit": backend_commit,
+        "openapi_path": "openapi/openapi.json",
+        "sha256": openapi_hash,
+    }
+    for field, value in expected.items():
+        if source.get(field) != value:
+            fail(
+                "frontend openapi/source.json "
+                f"{field} is {source.get(field)!r}, expected {value!r}"
+            )
+
+
 def validate_repository_ref(
     repository: Path,
     tag: str,
@@ -357,6 +382,12 @@ def main() -> int:
             identity.version,
             identity.stable_tag,
             frontend_commit,
+        )
+        validate_frontend_contract_source(
+            frontend,
+            backend_repository,
+            backend_commit,
+            frontend_openapi_hash,
         )
         frontend_ref = RepositoryRef(
             repository=frontend_repository,

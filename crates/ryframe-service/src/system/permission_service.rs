@@ -1,13 +1,16 @@
 use std::collections::{BTreeSet, HashSet};
 
 use ryframe_core::{
-    LoggedRepo, RedisClient, Repository,
+    Repository,
     auto_fill::{AutoFill, FillContext},
 };
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{PermissionRepository, entities::permission};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
+use sea_orm::TransactionTrait;
+
+use crate::AuthorizationCache;
 
 mod model;
 mod tree;
@@ -20,14 +23,16 @@ pub use tree::build_perm_tree;
 
 pub struct PermissionService {
     db: DatabaseCluster,
-    perm_repo: LoggedRepo<PermissionRepository>,
+    perm_repo: PermissionRepository,
+    authorization_cache: AuthorizationCache,
 }
 
 impl PermissionService {
-    pub fn new(db: DatabaseCluster, _redis: Option<RedisClient>) -> Self {
+    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
-            perm_repo: LoggedRepo::new(PermissionRepository),
+            perm_repo: PermissionRepository,
+            authorization_cache,
         }
     }
 
@@ -37,9 +42,9 @@ impl PermissionService {
         role_ids: &[i64],
     ) -> AppResult<Vec<String>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read_strong();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         self.perm_repo
-            .find_role_perms(db, tenant_id, role_ids)
+            .find_role_perms(&db, tenant_id, role_ids)
             .await
             .map(|permissions| {
                 permissions
@@ -55,9 +60,9 @@ impl PermissionService {
         role_id: i64,
     ) -> AppResult<Vec<i64>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read_strong();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         self.perm_repo
-            .find_role_perm_ids(db, tenant_id, role_id)
+            .find_role_perm_ids(&db, tenant_id, role_id)
             .await
     }
 
@@ -67,8 +72,8 @@ impl PermissionService {
         perm_type: Option<&str>,
     ) -> AppResult<Vec<PermissionTreeNode>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read_strong();
-        let all = self.perm_repo.find_all(db, tenant_id).await?;
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
+        let all = self.perm_repo.find_all(&db, tenant_id).await?;
         let filtered: Vec<&permission::Model> = if let Some(t) = perm_type {
             all.iter().filter(|p| p.perm_type == t).collect()
         } else {
@@ -85,9 +90,9 @@ impl PermissionService {
         id: i64,
     ) -> AppResult<Option<PermissionVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read_strong();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         self.perm_repo
-            .find_by_id(db, tenant_id, id)
+            .find_by_id(&db, tenant_id, id)
             .await
             .map(|permission| permission.map(PermissionVo::from))
     }
@@ -121,7 +126,22 @@ impl PermissionService {
             updated_at: Default::default(),
         };
         model.fill_on_insert(&FillContext::new())?;
-        let saved = self.perm_repo.insert(db, tenant_id, model).await?;
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let saved = self
+            .perm_repo
+            .insert_in_transaction(&transaction, tenant_id, model)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(PermissionVo::from(saved))
     }
 
@@ -132,12 +152,12 @@ impl PermissionService {
     ) -> AppResult<PermissionVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        let mut model = self
+        let existing = self
             .perm_repo
             .find_by_id(db, tenant_id, command.id)
             .await?
             .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
-        if model.code != command.code
+        if existing.code != command.code
             && self
                 .perm_repo
                 .find_by_code(db, tenant_id, &command.code)
@@ -146,6 +166,15 @@ impl PermissionService {
         {
             return Err(AppError::Conflict("权限码已存在".into()));
         }
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let mut model = self
+            .perm_repo
+            .find_by_id_for_update(&transaction, tenant_id, command.id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
         model.name = command.name;
         model.code = command.code;
         model.parent_id = command.parent_id;
@@ -154,7 +183,18 @@ impl PermissionService {
         model.sort = command.sort;
         model.status = command.status;
         model.fill_on_update(&FillContext::new())?;
-        let saved = self.perm_repo.update(db, tenant_id, model).await?;
+        let saved = self
+            .perm_repo
+            .update_in_transaction(&transaction, tenant_id, model)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(PermissionVo::from(saved))
     }
 
@@ -166,7 +206,25 @@ impl PermissionService {
                 "权限仍被角色或菜单引用，不能删除".into(),
             ));
         }
-        self.perm_repo.delete(db, tenant_id, id).await?;
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.perm_repo
+            .find_by_id_for_update(&transaction, tenant_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
+        self.perm_repo
+            .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(())
     }
 
@@ -184,8 +242,8 @@ impl PermissionService {
         let existing = self.perm_repo.find_all(db, tenant_id).await?;
         let existing_codes: HashSet<String> = existing.iter().map(|p| p.code.clone()).collect();
         let scanned_total = scanned.len();
-        let mut created = 0usize;
         let mut missing = Vec::new();
+        let mut models = Vec::new();
 
         for code in scanned {
             if existing_codes.contains(&code) {
@@ -207,8 +265,28 @@ impl PermissionService {
                 updated_at: Default::default(),
             };
             model.fill_on_insert(&FillContext::new())?;
-            self.perm_repo.insert(db, tenant_id, model).await?;
-            created += 1;
+            models.push(model);
+        }
+
+        let created = models.len();
+        if created > 0 {
+            let transaction = db
+                .begin()
+                .await
+                .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+            for model in models {
+                self.perm_repo
+                    .insert_in_transaction(&transaction, tenant_id, model)
+                    .await?;
+            }
+            let authorization_epoch = self
+                .authorization_cache
+                .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .await?;
+            crate::commit_current_audit(transaction).await?;
+            self.authorization_cache
+                .sync_tenant_epoch(tenant_id, authorization_epoch)
+                .await?;
         }
 
         Ok(PermissionSyncReport {

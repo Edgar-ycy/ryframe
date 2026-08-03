@@ -1,11 +1,13 @@
-use ryframe_core::{PageQuery, PageResult};
+use ryframe_core::{PageResult, ValidatedPageQuery};
 use ryframe_kernel::AppResult;
 use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, Select};
 /// 使用方式：
 /// ```
-/// use ryframe_core::{PageQuery, PageResult};
+/// use ryframe_config::PaginationConfig;
+/// use ryframe_core::{PageResult, ValidatedPageQuery};
 ///
-/// let query = PageQuery { page: 1, page_size: 10 };
+/// # fn main() -> ryframe_kernel::AppResult<()> {
+/// let query = ValidatedPageQuery::new(1, 10, &PaginationConfig::default())?;
 /// assert_eq!(query.offset(), 0);
 ///
 /// let result: PageResult<String> = PageResult::new(
@@ -15,6 +17,8 @@ use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, 
 /// );
 /// assert_eq!(result.total_pages(), 1);
 /// assert_eq!(result.records.len(), 2);
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// 实际分页查询需提供 `DatabaseConnection` 和 `Select<E>`：
@@ -24,20 +28,20 @@ use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, 
 pub async fn paginate<E>(
     db: &DatabaseConnection,
     select: Select<E>,
-    query: &PageQuery,
+    query: &ValidatedPageQuery,
 ) -> AppResult<PageResult<E::Model>>
 where
     E: EntityTrait,
     E::Model: FromQueryResult + Send + Sync,
 {
-    let paginator = select.paginate(db, query.page_size);
+    let paginator = select.paginate(db, query.page_size());
     let total = paginator
         .num_items()
         .await
         .map_err(|e| ryframe_kernel::AppError::Database(format!("查询总数失败: {}", e)))?;
 
     let records = paginator
-        .fetch_page(query.page.saturating_sub(1))
+        .fetch_page(query.page() - 1)
         .await
         .map_err(|e| ryframe_kernel::AppError::Database(format!("分页查询失败: {}", e)))?;
 

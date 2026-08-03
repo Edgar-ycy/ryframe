@@ -12,7 +12,10 @@ use ryframe_service::system::{CreateUserParams, UserService};
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 
 fn user_service(db: &sea_orm::DatabaseConnection) -> UserService {
-    UserService::new(DatabaseCluster::single(db.clone()), None)
+    UserService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    )
 }
 
 fn actor() -> ActorContext {
@@ -197,7 +200,7 @@ async fn test_password_reset_request_can_only_be_consumed_once() {
         .await
         .expect("find user")
         .expect("user exists");
-    assert_eq!(saved_user.auth_version, 2);
+    assert_eq!(saved_user.authorization_version, 2);
     assert!(password::verify(winning_password, &saved_user.password_hash).unwrap());
 }
 

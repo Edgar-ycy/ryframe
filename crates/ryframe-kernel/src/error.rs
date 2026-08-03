@@ -5,7 +5,7 @@ use validator::ValidationErrors;
 
 /// 可长期稳定使用的领域错误码。
 ///
-/// 序列化键是跨进程、跨版本的契约；新增错误码可以向后兼容，已有键不得改名或复用。
+/// 序列化键是当前唯一的跨进程契约；已有键不得改名或复用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
@@ -37,21 +37,6 @@ impl ErrorCode {
             Self::Config => "config",
             Self::Internal => "internal",
             Self::ServiceUnavailable => "service_unavailable",
-        }
-    }
-
-    /// 返回当前兼容响应信封使用的数字错误码。
-    pub const fn legacy_api_code(self) -> i32 {
-        match self {
-            Self::Validation => 400,
-            Self::Authentication => 401,
-            Self::Authorization => 403,
-            Self::NotFound => 404,
-            Self::Conflict => 409,
-            Self::PayloadTooLarge => 413,
-            Self::RateLimited => 429,
-            Self::Database | Self::ServiceUnavailable => 503,
-            Self::Config | Self::Internal => 500,
         }
     }
 }

@@ -8,6 +8,9 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         if manager.has_table("sys_user").await?
             && !manager.has_column("sys_user", "auth_version").await?
+            && !manager
+                .has_column("sys_user", "authorization_version")
+                .await?
         {
             manager
                 .alter_table(
@@ -27,6 +30,8 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
-        Ok(())
+        Err(DbErr::Custom(
+            "用户授权版本迁移不可逆：回退会破坏会话与权限失效语义，请恢复同版本备份".into(),
+        ))
     }
 }

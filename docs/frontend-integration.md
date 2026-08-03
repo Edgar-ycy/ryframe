@@ -4,7 +4,7 @@
 
 ## 契约同步
 
-后端仓库将规范快照提交到 `openapi/openapi.json`，CI 会重新运行导出器并检查差异。接口变更后，在前端仓库同步本地后端快照：
+后端仓库将规范快照提交到 `openapi/openapi.json`。接口变更后，先在本地运行导出器和契约测试并检入快照，再在前端仓库同步该后端快照；托管 CI 不会为快照重复编译后端：
 
 ```powershell
 Set-Location ryframe-vue3
@@ -21,13 +21,13 @@ pnpm api:check
 
 ## 基础约定
 
-开发环境中前端通过 `VITE_APP_BASE_API` 配置后端接口前缀：
+API 路径前缀不再由环境变量维护，而是由后端 OpenAPI 的 `x-ryframe-api-prefix` 扩展生成到 `src/shared/config/apiPrefix.generated.json`。开发环境未设置 origin 时使用当前页面 origin，并由 Vite 代理 API 请求；需要直接连接本地后端时只配置 origin：
 
 ```env
-VITE_APP_BASE_API=/api/v1
+VITE_APP_API_ORIGIN=http://localhost:8080
 ```
 
-生产环境的管理端和 API 使用不同的同站子域，必须改用 API 的绝对 HTTPS 地址，例如 `VITE_APP_BASE_API=https://api.example.com/api/v1`。不能继续使用相对 `/api/v1`，否则浏览器会把请求发送到只提供 SPA 的管理端域名。GitHub Release 仅发布通用源码，不嵌入 API 地址；部署方必须在构建前通过 `VITE_APP_BASE_API` 注入实际地址。
+生产环境的管理端和 API 使用不同的同站子域时，必须配置 API 的绝对 HTTPS origin，例如 `VITE_APP_API_ORIGIN=https://api.example.com`。该值只能包含协议、主机和可选端口，不能包含 `/api/v1` 等路径；版本前缀始终来自已同步的 OpenAPI。GitHub Release 仅发布通用源码，不嵌入 API origin；部署方必须在构建前注入实际值。
 
 本地后端默认运行在 `http://localhost:8080`。Vite 开发代理建议把 `/api` 转发到后端服务，前端业务代码只关心相对路径，例如 `/auth/login`、`/system/users`。
 
@@ -75,7 +75,7 @@ export interface PageResponse<T> {
   max_page_size: number
 }
 
-export interface PageQuery {
+export interface PaginationParams {
   page?: number
   page_size?: number
   keyword?: string
@@ -94,7 +94,7 @@ export interface PageQuery {
 2. 内存保存 JSON 中的 `csrf_token`，调用空请求体的 `POST /auth/refresh` 尝试使用 HttpOnly Cookie 恢复会话。
 3. `200` 更新 access token、用户、权限和动态路由；`401` 进入 `anonymous`；`503` 进入 `unavailable`，不得清除服务器 Cookie。
 
-v0.5 首次运行要主动删除旧版 access/refresh token localStorage 键，租户 ID 可以继续持久化。所有登录、刷新和登出请求都必须先确保 challenge 未过期，并在 `X-CSRF-Token` 中发送它。
+前端不读取、迁移或清理任何旧版凭据键；租户 ID 可以持久化。所有登录、刷新和登出请求都必须先确保 challenge 未过期，并在 `X-CSRF-Token` 中发送它。
 
 前端不得自行生成或发送 `X-Nonce` / `X-Timestamp`。它们不是 RyFrame API 契约的一部分，裸值也不能替代 CSRF、Bearer 授权或请求签名。业务写请求需要安全重试时使用 `Idempotency-Key`；登录、刷新和登出继续严格使用本节定义的签名 CSRF challenge 与 refresh 轮换流程，不增加额外双头。
 
@@ -129,7 +129,7 @@ export interface LoginResult {
 
 登录成功后只把 `access_token` 写入内存。refresh token 仅由浏览器保存为 API 域 host-only HttpOnly Cookie，JavaScript 既不能读取也不能复制；登录响应和生成类型中不得存在 refresh token 字段。后续业务请求从内存读取 access token 并携带 `Authorization`。
 
-登录只校验现有账号凭据。个人修改密码、密码重置完成和租户管理员初始密码必须使用 OpenAPI `x-ryframe-password-policy` 生成的前端验证器：8-72 位可见 ASCII 字符，且至少包含大小写字母、数字和特殊字符。密码更新成功后旧会话会因 `auth_version` 变化而失效，前端应清理本地状态并重新登录。
+登录只校验现有账号凭据。个人修改密码、密码重置完成和租户管理员初始密码必须使用 OpenAPI `x-ryframe-password-policy` 生成的前端验证器：8-72 位可见 ASCII 字符，且至少包含大小写字母、数字和特殊字符。密码更新成功后旧会话会因 `authorization_version` 变化而失效，前端应清理本地状态并重新登录。
 
 ### 刷新与登出
 
@@ -251,7 +251,7 @@ tools.gen          -> /tools/gen
 | `post.ts` | `/system/posts` | 岗位管理。 |
 | `config.ts` | `/system/configs` | 参数配置。 |
 | `dict.ts` | `/system/dict` | 字典类型和字典数据。 |
-| `notice.ts` | `/system/notices` | 通知公告。 |
+| `notice.ts` | `/system/notices` | 通知公告；Markdown 字段固定为 `content_markdown`，UTF-8 字节限制从 OpenAPI 生成。 |
 | `permission.ts` | `/system/perms` | 权限管理。 |
 | `monitor.ts` | `/monitor` | 服务、缓存、数据库连接池和指标。 |
 | `generator.ts` | `/tools/gen` | 代码生成接口。 |
@@ -284,7 +284,7 @@ DELETE /system/roles/batch/1,2
 
 ## 上传、下载与导出
 
-上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。普通文件上限 10 MiB、头像上限 5 MiB，上传超时 120 秒；上传接口均需登录，并会执行大小、扩展名、魔数、MD5 去重、对象存储写入和操作日志记录：
+上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。普通文件上限 10 MiB、头像上限 5 MiB，上传超时 120 秒；上传接口均需登录，并会执行大小、扩展名、魔数、SHA-256 去重、对象存储写入和操作日志记录：
 
 ```http
 POST /common/upload
@@ -303,10 +303,11 @@ request.get('/system/users/export', {
 
 ```http
 Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-Content-Disposition: attachment; filename="users.xlsx"
+Content-Disposition: attachment; filename*=UTF-8''%E7%94%A8%E6%88%B7%2Exlsx
 ```
 
-前端从 `Content-Disposition` 解析文件名；如果没有该响应头，则使用模块默认文件名。
+前端下载调用显式传入本地化文件名；后台导出优先使用任务响应中的 `result_file_name`。
+后端不再输出旧式 ASCII `filename` 回退值。
 
 ## 监控接口
 
@@ -321,7 +322,7 @@ Content-Disposition: attachment; filename="users.xlsx"
 | `GET /monitor/db-pool` | JSON | 主数据库连接池状态。 |
 | `GET /monitor/runtime` | JSON | 主库、命名只读副本、命名业务数据源、读取策略、Redis、RustFS/对象存储和上传熔断器动态状态。 |
 
-根路径 `GET /livez` 固定检查进程存活；`GET /readyz` 检查 MySQL、required Redis 和必要对象存储。两者无需登录且不使用统一业务前缀，依赖不可用时 readiness 返回 `503`。除探针和指标采集外，管理端页面应按后端权限要求携带 token 并校验 `perms`。
+根路径 `GET /livez` 固定检查进程存活；后台任务定期检查 MySQL、required Redis 和必要对象存储，`GET /readyz` 只读取有时效上限的内存快照，不在请求中访问依赖。两者无需登录且不使用统一业务前缀，必要依赖不可用或快照过期时 readiness 返回 `503`。除探针和指标采集外，管理端页面应按后端权限要求携带 token 并校验 `perms`。
 
 ## 前端开发检查清单
 

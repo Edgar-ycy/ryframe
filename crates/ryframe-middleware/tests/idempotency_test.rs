@@ -10,7 +10,7 @@ use axum::{
     Router,
     body::{Body, to_bytes},
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::{Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::post,
@@ -83,7 +83,7 @@ fn test_router(
     calls: Arc<AtomicUsize>,
 ) -> Router {
     Router::new()
-        .route("/test", post(handler))
+        .route("/test", post(handler).put(handler))
         .route("/other", post(handler))
         .route("/resources/{id}", post(handler))
         .route("/response-headers", post(response_headers_handler))
@@ -100,7 +100,11 @@ fn request(key: Option<&str>, body: &str) -> Request {
 }
 
 fn request_at(path: &str, key: Option<&str>, body: &str) -> Request {
-    let mut builder = Request::builder().uri(path).method("POST");
+    request_with_method(Method::POST, path, key, body)
+}
+
+fn request_with_method(method: Method, path: &str, key: Option<&str>, body: &str) -> Request {
+    let mut builder = Request::builder().uri(path).method(method);
     if let Some(key) = key {
         builder = builder.header("Idempotency-Key", key);
     }
@@ -148,6 +152,22 @@ async fn requests_without_a_key_pass_through() {
     .unwrap();
     assert_eq!(response.status(), 200);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn idempotency_key_is_not_trimmed_or_normalized() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let response = test_router(
+        IdempotencyState::new(None, 60),
+        principal("tenant-a", 1),
+        calls.clone(),
+    )
+    .oneshot(request(Some(" raw-key "), "payload"))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), 400);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -208,6 +228,37 @@ async fn same_key_with_different_body_is_rejected() {
 }
 
 #[tokio::test]
+async fn same_key_with_different_method_is_rejected() {
+    let state = IdempotencyState::new(None, 60);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let principal = principal("tenant-a", 1);
+
+    let first = test_router(state.clone(), principal.clone(), calls.clone())
+        .oneshot(request_with_method(
+            Method::POST,
+            "/test",
+            Some("method-key"),
+            "payload",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+
+    let conflict = test_router(state, principal, calls.clone())
+        .oneshot(request_with_method(
+            Method::PUT,
+            "/test",
+            Some("method-key"),
+            "payload",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(conflict.status(), 409);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn tenant_and_user_scope_prevent_cross_account_replays() {
     let state = IdempotencyState::new(None, 60);
     let calls = Arc::new(AtomicUsize::new(0));
@@ -227,24 +278,27 @@ async fn tenant_and_user_scope_prevent_cross_account_replays() {
 }
 
 #[tokio::test]
-async fn different_route_templates_are_part_of_the_scope() {
+async fn same_key_with_different_route_is_rejected() {
     let state = IdempotencyState::new(None, 60);
     let calls = Arc::new(AtomicUsize::new(0));
     let principal = principal("tenant-a", 1);
 
-    for path in ["/test", "/other"] {
-        let response = test_router(state.clone(), principal.clone(), calls.clone())
-            .oneshot(request_at(path, Some("same-key"), "payload"))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), 200);
-        assert!(!response.headers().contains_key("X-Idempotency-Replay"));
-    }
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let first = test_router(state.clone(), principal.clone(), calls.clone())
+        .oneshot(request_at("/test", Some("route-key"), "payload"))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+
+    let conflict = test_router(state, principal, calls.clone())
+        .oneshot(request_at("/other", Some("route-key"), "payload"))
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), 409);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
-async fn concrete_path_and_query_are_part_of_the_idempotency_scope() {
+async fn concrete_path_and_sorted_query_are_bound_to_the_fingerprint() {
     let state = IdempotencyState::new(None, 60);
     let calls = Arc::new(AtomicUsize::new(0));
     let principal = principal("tenant-a", 1);
@@ -252,7 +306,7 @@ async fn concrete_path_and_query_are_part_of_the_idempotency_scope() {
     let first = test_router(state.clone(), principal.clone(), calls.clone())
         .oneshot(request_at(
             "/resources/1",
-            Some("resource-operation-a"),
+            Some("concrete-path-key"),
             "payload-a",
         ))
         .await
@@ -262,17 +316,17 @@ async fn concrete_path_and_query_are_part_of_the_idempotency_scope() {
     let different_resource = test_router(state.clone(), principal.clone(), calls.clone())
         .oneshot(request_at(
             "/resources/2",
-            Some("resource-operation-a"),
+            Some("concrete-path-key"),
             "payload-a",
         ))
         .await
         .unwrap();
-    assert_eq!(different_resource.status(), 200);
+    assert_eq!(different_resource.status(), 409);
 
     let first_query = test_router(state.clone(), principal.clone(), calls.clone())
         .oneshot(request_at(
             "/resources/3?dry_run=true&tag=a",
-            Some("resource-operation-a"),
+            Some("query-value-key"),
             "payload-a",
         ))
         .await
@@ -282,17 +336,27 @@ async fn concrete_path_and_query_are_part_of_the_idempotency_scope() {
     let different_query = test_router(state.clone(), principal.clone(), calls.clone())
         .oneshot(request_at(
             "/resources/3?dry_run=false&tag=a",
-            Some("resource-operation-a"),
+            Some("query-value-key"),
             "payload-a",
         ))
         .await
         .unwrap();
-    assert_eq!(different_query.status(), 200);
+    assert_eq!(different_query.status(), 409);
+
+    let canonical_query = test_router(state.clone(), principal.clone(), calls.clone())
+        .oneshot(request_at(
+            "/resources/3?dry_run=true&tag=a",
+            Some("query-order-key"),
+            "payload-a",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(canonical_query.status(), 200);
 
     let reordered_equivalent_query = test_router(state, principal, calls.clone())
         .oneshot(request_at(
             "/resources/3?tag=a&dry_run=true",
-            Some("resource-operation-a"),
+            Some("query-order-key"),
             "payload-a",
         ))
         .await
@@ -302,7 +366,7 @@ async fn concrete_path_and_query_are_part_of_the_idempotency_scope() {
         reordered_equivalent_query.headers()["X-Idempotency-Replay"],
         "true"
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
@@ -366,6 +430,42 @@ async fn expired_result_executes_again() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     let body = to_bytes(second.into_body(), 4096).await.unwrap();
     assert!(String::from_utf8_lossy(&body).contains("invocation"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_reservation_allows_only_one_side_effect_under_fifty_callers() {
+    let state = IdempotencyState::new(None, 60);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let local_principal = principal("tenant-local", 42);
+    let barrier = Arc::new(tokio::sync::Barrier::new(51));
+
+    let mut tasks = Vec::new();
+    for _ in 0..50 {
+        let router = test_router(state.clone(), local_principal.clone(), calls.clone());
+        let barrier = barrier.clone();
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            router
+                .oneshot(request(Some("local-concurrency-key"), "one-side-effect"))
+                .await
+                .unwrap()
+        }));
+    }
+    barrier.wait().await;
+
+    for task in tasks {
+        let status = task.await.unwrap().status();
+        assert!(status == 200 || status == 409, "unexpected status {status}");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let replay = test_router(state, local_principal, calls.clone())
+        .oneshot(request(Some("local-concurrency-key"), "one-side-effect"))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), 200);
+    assert_eq!(replay.headers()["X-Idempotency-Replay"], "true");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

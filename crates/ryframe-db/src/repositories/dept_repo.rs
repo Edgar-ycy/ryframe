@@ -1,9 +1,10 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, LockType},
 };
 
 use crate::entities::{dept, role_dept, user};
@@ -42,7 +43,7 @@ impl Repository<dept::Model, i64> for DeptRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<dept::Model>> {
         crate::pagination::paginate(
             db,
@@ -78,6 +79,76 @@ impl Repository<dept::Model, i64> for DeptRepository {
 }
 
 impl DeptRepository {
+    pub async fn find_by_id_for_update(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<dept::Model>> {
+        dept::Entity::find_by_id(id)
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
+            .filter(dept::Column::TenantId.eq(tenant_id))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: dept::Model,
+    ) -> AppResult<dept::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("部门租户不匹配".into()));
+        }
+        dept::ActiveModel::from(entity)
+            .insert(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: dept::Model,
+    ) -> AppResult<dept::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("部门租户不匹配".into()));
+        }
+        dept::ActiveModel::from(entity)
+            .reset_all()
+            .update(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        let result = dept::Entity::update_many()
+            .col_expr(
+                dept::Column::DelFlag,
+                Expr::value(dept::Model::DEL_FLAG_DELETED),
+            )
+            .col_expr(dept::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .filter(dept::Column::Id.eq(id))
+            .filter(dept::Column::TenantId.eq(tenant_id))
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
+            .exec(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("部门不存在".into()));
+        }
+        Ok(())
+    }
+
     /// 查询部门树
     pub async fn find_tree(
         &self,
@@ -292,7 +363,7 @@ impl DeptRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
         name: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<dept::Model>> {
@@ -309,7 +380,7 @@ impl DeptRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
         name: Option<&str>,
         status: Option<&str>,
         visible_ids: &[i64],

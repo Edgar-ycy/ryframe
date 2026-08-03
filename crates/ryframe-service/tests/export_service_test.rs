@@ -11,7 +11,7 @@ use ryframe_db::{
 use ryframe_kernel::{ActorContext, DataScope};
 use ryframe_service::{
     ExportJobHandler, JobQueue, JobRunResult, JobWorker,
-    system::{ExportService, RequestExportCommand, UserExportFilters, UserListParams, UserService},
+    system::{ExportService, RequestExportCommand, UserExportFilters, UserService},
 };
 use sea_orm::{ConnectionTrait, EntityTrait, Schema, Set};
 use serde_json::to_value;
@@ -45,7 +45,7 @@ async fn seed_export_requester(database: &sea_orm::DatabaseConnection) {
         avatar_file_id: Set(None),
         preferred_locale: Set(None),
         status: Set(user::Model::STATUS_NORMAL.into()),
-        auth_version: Set(1),
+        authorization_version: Set(1),
         dept_id: Set(None),
         remark: Set(None),
         login_ip: Set(None),
@@ -112,11 +112,15 @@ async fn user_export_is_created_processed_and_exposed_as_a_result_file() {
     seed_export_requester(database.connection()).await;
     let directory = tempdir().unwrap();
     let cluster = DatabaseCluster::single(database.connection().clone());
-    let users = Arc::new(UserService::new(cluster.clone(), None));
+    let users = Arc::new(UserService::new(
+        cluster.clone(),
+        ryframe_service::AuthorizationCache::disabled(),
+    ));
     let exports = Arc::new(ExportService::new(
         cluster.clone(),
         users,
         Arc::new(ryframe_storage::LocalObjectStorage::new(directory.path())),
+        &JobConfig::default(),
     ));
     let queue = Arc::new(JobQueue::new(cluster));
 
@@ -191,11 +195,15 @@ async fn revoked_export_permission_stops_queued_job_without_retrying() {
     seed_export_requester(database.connection()).await;
     let directory = tempdir().unwrap();
     let cluster = DatabaseCluster::single(database.connection().clone());
-    let users = Arc::new(UserService::new(cluster.clone(), None));
+    let users = Arc::new(UserService::new(
+        cluster.clone(),
+        ryframe_service::AuthorizationCache::disabled(),
+    ));
     let exports = Arc::new(ExportService::new(
         cluster.clone(),
         users,
         Arc::new(ryframe_storage::LocalObjectStorage::new(directory.path())),
+        &JobConfig::default(),
     ));
     let queue = Arc::new(JobQueue::new(cluster));
 
@@ -260,11 +268,15 @@ async fn worker_processes_every_supported_export_resource() {
     seed_export_requester(database.connection()).await;
     let directory = tempdir().unwrap();
     let cluster = DatabaseCluster::single(database.connection().clone());
-    let users = Arc::new(UserService::new(cluster.clone(), None));
+    let users = Arc::new(UserService::new(
+        cluster.clone(),
+        ryframe_service::AuthorizationCache::disabled(),
+    ));
     let exports = Arc::new(ExportService::new(
         cluster.clone(),
         users,
         Arc::new(ryframe_storage::LocalObjectStorage::new(directory.path())),
+        &JobConfig::default(),
     ));
     let queue = Arc::new(JobQueue::new(cluster));
     let worker = JobWorker::new(queue, &JobConfig::default())
@@ -337,7 +349,7 @@ async fn user_export_query_reads_more_than_one_cursor_batch_in_primary_key_order
             avatar_file_id: Set(None),
             preferred_locale: Set(None),
             status: Set(user::Model::STATUS_NORMAL.into()),
-            auth_version: Set(1),
+            authorization_version: Set(1),
             dept_id: Set(None),
             remark: Set(None),
             login_ip: Set(None),
@@ -352,19 +364,12 @@ async fn user_export_query_reads_more_than_one_cursor_batch_in_primary_key_order
         .await
         .unwrap();
 
-    let service = UserService::new(DatabaseCluster::single(database.connection().clone()), None);
+    let service = UserService::new(
+        DatabaseCluster::single(database.connection().clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
     let exported = service
-        .find_for_export(
-            &actor(),
-            &UserListParams {
-                page: Default::default(),
-                username: None,
-                phone: None,
-                status: None,
-                dept_id: None,
-            },
-            500_000,
-        )
+        .find_for_export(&actor(), None, None, None, None, 500_000)
         .await
         .unwrap();
 

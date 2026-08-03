@@ -1,38 +1,29 @@
 use ryframe_config::PaginationConfig;
-use ryframe_core::{LoggedRepo, PageQuery, PageResult};
+use ryframe_core::{PageResult, ValidatedPageQuery};
+
+fn page_query(page: u64, page_size: u64) -> ValidatedPageQuery {
+    ValidatedPageQuery::new(page, page_size, &PaginationConfig::default()).unwrap()
+}
 
 #[test]
-fn test_page_query_default() {
-    let q = PageQuery::default();
-    assert_eq!(q.page, 1);
-    assert_eq!(q.page_size, 10);
+fn test_page_query_uses_runtime_default() {
+    let q = ValidatedPageQuery::from_optional(None, None, &PaginationConfig::default()).unwrap();
+    assert_eq!(q.page(), 1);
+    assert_eq!(q.page_size(), 10);
 }
 
 #[test]
 fn test_page_query_offset() {
-    let q = PageQuery {
-        page: 1,
-        page_size: 10,
-    };
+    let q = page_query(1, 10);
     assert_eq!(q.offset(), 0);
 
-    let q = PageQuery {
-        page: 2,
-        page_size: 10,
-    };
+    let q = page_query(2, 10);
     assert_eq!(q.offset(), 10);
 
-    let q = PageQuery {
-        page: 3,
-        page_size: 20,
-    };
+    let q = page_query(3, 20);
     assert_eq!(q.offset(), 40);
 
-    let q = PageQuery {
-        page: 0,
-        page_size: 10,
-    };
-    assert_eq!(q.offset(), 0);
+    assert!(ValidatedPageQuery::new(0, 10, &PaginationConfig::default()).is_err());
 }
 
 #[test]
@@ -40,24 +31,61 @@ fn test_page_query_rejects_invalid_values_instead_of_clamping() {
     let policy = PaginationConfig {
         default_page_size: 20,
         max_page_size: 100,
-        unpaged_max_records: 1_000,
     };
 
-    assert!(PageQuery::from_optional(Some(1), Some(5_000), &policy).is_err());
-    assert!(PageQuery::from_optional(Some(1), Some(0), &policy).is_err());
-    assert!(PageQuery::from_optional(Some(0), Some(10), &policy).is_err());
+    assert!(ValidatedPageQuery::from_optional(Some(1), Some(5_000), &policy).is_err());
+    assert!(ValidatedPageQuery::from_optional(Some(1), Some(0), &policy).is_err());
+    assert!(ValidatedPageQuery::from_optional(Some(0), Some(10), &policy).is_err());
 
-    let query = PageQuery::from_optional(Some(3), Some(25), &policy).unwrap();
-    assert_eq!(query.page, 3);
-    assert_eq!(query.page_size, 25);
+    let query = ValidatedPageQuery::from_optional(Some(3), Some(25), &policy).unwrap();
+    assert_eq!(query.page(), 3);
+    assert_eq!(query.page_size(), 25);
+}
+
+#[test]
+fn strict_pagination_acceptance_matrix() {
+    let policy = PaginationConfig {
+        default_page_size: 10,
+        max_page_size: 100,
+    };
+
+    assert!(ValidatedPageQuery::new(0, 10, &policy).is_err());
+    assert!(ValidatedPageQuery::new(1, 0, &policy).is_err());
+
+    let minimum = ValidatedPageQuery::new(1, 1, &policy).unwrap();
+    assert_eq!(minimum.page(), 1);
+    assert_eq!(minimum.page_size(), 1);
+    assert_eq!(minimum.offset(), 0);
+
+    let maximum = ValidatedPageQuery::new(1, 100, &policy).unwrap();
+    assert_eq!(maximum.page_size(), 100);
+    assert!(ValidatedPageQuery::new(1, 101, &policy).is_err());
+
+    let largest_safe_page = ValidatedPageQuery::new(u64::MAX, 1, &policy).unwrap();
+    assert_eq!(largest_safe_page.offset(), u64::MAX - 1);
+    assert!(ValidatedPageQuery::new(u64::MAX, 2, &policy).is_err());
+
+    for invalid_policy in [
+        PaginationConfig {
+            default_page_size: 0,
+            max_page_size: 100,
+        },
+        PaginationConfig {
+            default_page_size: 10,
+            max_page_size: 0,
+        },
+        PaginationConfig {
+            default_page_size: 101,
+            max_page_size: 100,
+        },
+    ] {
+        assert!(ValidatedPageQuery::from_optional(None, None, &invalid_policy).is_err());
+    }
 }
 
 #[test]
 fn test_page_result_new() {
-    let q = PageQuery {
-        page: 2,
-        page_size: 10,
-    };
+    let q = page_query(2, 10);
     let pr = PageResult::new(vec![1, 2, 3], 30u64, &q);
     assert_eq!(pr.records, vec![1, 2, 3]);
     assert_eq!(pr.total, 30);
@@ -67,7 +95,7 @@ fn test_page_result_new() {
 
 #[test]
 fn test_page_result_total_pages() {
-    let q = PageQuery::default();
+    let q = page_query(1, 10);
 
     let pr = PageResult::new(vec![1; 10], 30u64, &q);
     assert_eq!(pr.total_pages(), 3);
@@ -88,11 +116,4 @@ fn test_page_result_total_pages() {
         page_size: 0,
     };
     assert_eq!(pr.total_pages(), 0);
-}
-
-#[test]
-fn test_logged_repo_new_and_deref() {
-    let inner = 42i32;
-    let logged = LoggedRepo::new(inner);
-    assert_eq!(*logged, 42);
 }

@@ -1,6 +1,7 @@
 debug
 target
 /ryframe-vue3/
+/.codex/
 .pnpm-store/
 uploads/
 **/*.rs.bk

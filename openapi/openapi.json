@@ -478,6 +478,69 @@
         ],
         "type": "object"
       },
+      "ApiResponse_ApiVersionInfo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "description": "API 版本与构建信息。",
+            "properties": {
+              "api_prefix": {
+                "type": "string"
+              },
+              "endpoints": {
+                "$ref": "#/components/schemas/ApiVersionEndpoints"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source_commit": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "source_commit",
+              "api_prefix",
+              "endpoints"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_AvatarResponse": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -578,7 +641,7 @@
             "type": "integer"
           },
           "data": {
-            "description": "当前租户的后台任务队列统计。",
+            "description": "后台任务队列统计。",
             "properties": {
               "dead": {
                 "format": "int64",
@@ -657,7 +720,7 @@
             "type": "integer"
           },
           "data": {
-            "description": "面向管理端的后台任务安全视图。\n\n任务载荷可能包含业务敏感字段，因此监控列表不会返回 `payload`。",
+            "description": "后台任务的公开视图，不包含内部载荷。",
             "properties": {
               "attempts": {
                 "format": "int32",
@@ -999,13 +1062,13 @@
             "type": "integer"
           },
           "data": {
+            "description": "参数配置响应。",
             "properties": {
               "created_at": {
                 "format": "date-time",
                 "type": "string"
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "key": {
@@ -1177,6 +1240,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "部门响应。",
             "properties": {
               "ancestors": {
                 "type": "string"
@@ -1186,7 +1250,6 @@
                 "type": "string"
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "name": {
@@ -1258,6 +1321,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "字典数据响应。",
             "properties": {
               "css_class": {
                 "type": [
@@ -1266,7 +1330,6 @@
                 ]
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "label": {
@@ -1332,6 +1395,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "字典类型响应。",
             "properties": {
               "code": {
                 "type": "string"
@@ -1341,7 +1405,6 @@
                 "type": "string"
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "name": {
@@ -1402,7 +1465,7 @@
             "type": "integer"
           },
           "data": {
-            "description": "面向 API 的导出任务安全视图，不暴露内部后台任务载荷。",
+            "description": "导出任务响应。",
             "properties": {
               "completed_at": {
                 "format": "date-time",
@@ -1561,6 +1624,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "菜单响应。",
             "properties": {
               "created_at": {
                 "format": "date-time",
@@ -1719,8 +1783,9 @@
             "type": "integer"
           },
           "data": {
+            "description": "通知公告响应。",
             "properties": {
-              "content": {
+              "content_markdown": {
                 "type": "string"
               },
               "created_at": {
@@ -1734,7 +1799,6 @@
                 ]
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "notice_type": {
@@ -1753,9 +1817,63 @@
             "required": [
               "id",
               "title",
-              "content",
+              "content_markdown",
               "status",
               "created_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_OptionList": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "description": "有界选择器响应。",
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/OptionItem"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "items",
+              "has_more"
             ],
             "type": "object"
           },
@@ -1849,6 +1967,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "权限同步结果。",
             "properties": {
               "created": {
                 "minimum": 0,
@@ -1913,6 +2032,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "权限详情响应。",
             "properties": {
               "code": {
                 "type": "string"
@@ -1997,6 +2117,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "岗位响应。",
             "properties": {
               "code": {
                 "type": "string"
@@ -2006,7 +2127,6 @@
                 "type": "string"
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "name": {
@@ -2128,6 +2248,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "角色响应。",
             "properties": {
               "code": {
                 "type": "string"
@@ -2140,7 +2261,6 @@
                 "type": "string"
               },
               "dept_ids": {
-                "description": "自定义数据权限的部门ID列表（仅查询详情时填充）",
                 "items": {
                   "type": "string"
                 },
@@ -2150,7 +2270,6 @@
                 ]
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "is_super": {
@@ -2414,6 +2533,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "租户响应。",
             "properties": {
               "domain": {
                 "type": [
@@ -2519,7 +2639,8 @@
                 ],
                 "type": "object"
               }
-            ]
+            ],
+            "description": "用户详情响应。"
           },
           "details": {
             "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
@@ -2616,7 +2737,7 @@
             "type": "integer"
           },
           "data": {
-            "description": "用户信息",
+            "description": "当前登录用户的公开信息。",
             "properties": {
               "avatar": {
                 "type": [
@@ -2634,7 +2755,6 @@
                 "type": "string"
               },
               "id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "nickname": {
@@ -2720,7 +2840,7 @@
             "type": "integer"
           },
           "data": {
-            "description": "用户个人信息响应",
+            "description": "用户个人信息响应。",
             "properties": {
               "avatar": {
                 "type": [
@@ -2792,7 +2912,6 @@
                 "type": "string"
               },
               "user_id": {
-                "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                 "type": "string"
               },
               "username": {
@@ -2848,6 +2967,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "用户响应。",
             "properties": {
               "avatar": {
                 "type": [
@@ -2933,79 +3053,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_Vec_ConfigVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "key": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "remark": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "value": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "key",
-                "value",
-                "created_at"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_Vec_DeptTreeNode": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -3017,6 +3064,7 @@
           },
           "data": {
             "items": {
+              "description": "部门树节点。",
               "properties": {
                 "children": {
                   "items": {
@@ -3081,90 +3129,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_Vec_DeptVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "ancestors": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "parent_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "remark": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "sort": {
-                  "format": "int32",
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "ancestors",
-                "sort",
-                "status",
-                "created_at"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_Vec_DictDataVo": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -3176,6 +3140,7 @@
           },
           "data": {
             "items": {
+              "description": "字典数据响应。",
               "properties": {
                 "css_class": {
                   "type": [
@@ -3184,7 +3149,6 @@
                   ]
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "label": {
@@ -3301,79 +3265,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_Vec_DictTypeVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "code": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "remark": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "status": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "code",
-                "status",
-                "created_at"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_Vec_ExportJobVo": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -3385,7 +3276,7 @@
           },
           "data": {
             "items": {
-              "description": "面向 API 的导出任务安全视图，不暴露内部后台任务载荷。",
+              "description": "导出任务响应。",
               "properties": {
                 "completed_at": {
                   "format": "date-time",
@@ -3492,7 +3383,7 @@
           },
           "data": {
             "items": {
-              "description": "生成的文件",
+              "description": "代码生成预览文件。",
               "properties": {
                 "content": {
                   "type": "string"
@@ -3535,97 +3426,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_Vec_LoginInfoVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "description": "登录日志视图对象",
-              "properties": {
-                "browser": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "ipaddr": {
-                  "type": "string"
-                },
-                "login_location": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "login_time": {
-                  "type": "string"
-                },
-                "msg": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "os": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "status": {
-                  "type": "string"
-                },
-                "user_name": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "user_name",
-                "ipaddr",
-                "status",
-                "login_time"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_Vec_MenuTreeNode": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -3637,6 +3437,7 @@
           },
           "data": {
             "items": {
+              "description": "菜单树节点。",
               "properties": {
                 "children": {
                   "items": {
@@ -3733,397 +3534,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_Vec_MenuVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "icon": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "id": {
-                  "type": "string"
-                },
-                "menu_type": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "parent_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "perm_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "remark": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "route_key": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "sort": {
-                  "format": "int32",
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "visible": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "menu_type",
-                "sort",
-                "visible",
-                "status",
-                "created_at"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
-      "ApiResponse_Vec_NoticeVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "content": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "created_by": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "notice_type": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "status": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "title",
-                "content",
-                "status",
-                "created_at"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
-      "ApiResponse_Vec_OnlineUserVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "description": "在线用户信息（DTO）",
-              "properties": {
-                "browser": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "dept_name": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "ipaddr": {
-                  "type": "string"
-                },
-                "last_access_time": {
-                  "type": "string"
-                },
-                "login_location": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "login_time": {
-                  "type": "string"
-                },
-                "os": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "sid": {
-                  "description": "稳定的刷新令牌族会话标识，而非访问令牌 JTI。",
-                  "type": "string"
-                },
-                "username": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "sid",
-                "username",
-                "ipaddr",
-                "login_time",
-                "last_access_time"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
-      "ApiResponse_Vec_OperLogVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "description": "操作日志视图对象",
-              "properties": {
-                "business_type": {
-                  "type": "string"
-                },
-                "cost_time": {
-                  "format": "int64",
-                  "type": "integer"
-                },
-                "error_msg": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "json_result": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "method": {
-                  "type": "string"
-                },
-                "oper_ip": {
-                  "type": "string"
-                },
-                "oper_location": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "oper_name": {
-                  "type": "string"
-                },
-                "oper_param": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "oper_time": {
-                  "type": "string"
-                },
-                "oper_url": {
-                  "type": "string"
-                },
-                "request_method": {
-                  "type": "string"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "title",
-                "business_type",
-                "method",
-                "request_method",
-                "oper_name",
-                "oper_url",
-                "oper_ip",
-                "status",
-                "cost_time",
-                "oper_time"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_Vec_PermissionTreeNode": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -4135,6 +3545,7 @@
           },
           "data": {
             "items": {
+              "description": "权限树节点。",
               "properties": {
                 "children": {
                   "items": {
@@ -4152,7 +3563,6 @@
                   ]
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "name": {
@@ -4183,181 +3593,6 @@
                 "sort",
                 "status",
                 "children"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
-      "ApiResponse_Vec_PostVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "code": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "remark": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "sort": {
-                  "format": "int32",
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "code",
-                "sort",
-                "status",
-                "created_at"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
-      "ApiResponse_Vec_RoleVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "code": {
-                  "type": "string"
-                },
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "data_scope": {
-                  "type": "string"
-                },
-                "dept_ids": {
-                  "description": "自定义数据权限的部门ID列表（仅查询详情时填充）",
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": [
-                    "array",
-                    "null"
-                  ]
-                },
-                "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
-                  "type": "string"
-                },
-                "is_super": {
-                  "format": "int32",
-                  "type": "integer"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "remark": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "sort": {
-                  "format": "int32",
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "code",
-                "is_super",
-                "data_scope",
-                "status",
-                "sort",
-                "created_at"
               ],
               "type": "object"
             },
@@ -4441,6 +3676,7 @@
           },
           "data": {
             "items": {
+              "description": "租户响应。",
               "properties": {
                 "domain": {
                   "type": [
@@ -4531,13 +3767,16 @@
           },
           "data": {
             "items": {
-              "description": "文件上传响应",
+              "description": "文件上传响应。",
               "properties": {
                 "file_id": {
                   "type": "string"
                 },
-                "file_info": {
-                  "$ref": "#/components/schemas/UploadFileInfo"
+                "file_name": {
+                  "type": "string"
+                },
+                "file_path": {
+                  "type": "string"
                 },
                 "file_url": {
                   "type": "string"
@@ -4545,106 +3784,9 @@
               },
               "required": [
                 "file_id",
-                "file_url",
-                "file_info"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
-      "ApiResponse_Vec_UserVo": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "properties": {
-                "avatar": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "created_at": {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                "dept_id": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "dept_name": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "email": {
-                  "type": "string"
-                },
-                "id": {
-                  "type": "string"
-                },
-                "nickname": {
-                  "type": "string"
-                },
-                "phone": {
-                  "type": "string"
-                },
-                "remark": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "status": {
-                  "type": "string"
-                },
-                "username": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "username",
-                "nickname",
-                "email",
-                "phone",
-                "status",
-                "created_at"
+                "file_name",
+                "file_path",
+                "file_url"
               ],
               "type": "object"
             },
@@ -4739,6 +3881,7 @@
             "type": "integer"
           },
           "data": {
+            "description": "代码生成写入报告。",
             "properties": {
               "skipped": {
                 "items": {
@@ -4825,6 +3968,70 @@
         ],
         "type": "object"
       },
+      "ApiVersionEndpoints": {
+        "description": "API 主要入口。",
+        "properties": {
+          "auth": {
+            "type": "string"
+          },
+          "common": {
+            "type": "string"
+          },
+          "monitor": {
+            "type": "string"
+          },
+          "openapi": {
+            "type": "string"
+          },
+          "swagger": {
+            "type": "string"
+          },
+          "system": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "auth",
+          "system",
+          "monitor",
+          "tools",
+          "common",
+          "openapi",
+          "swagger"
+        ],
+        "type": "object"
+      },
+      "ApiVersionInfo": {
+        "description": "API 版本与构建信息。",
+        "properties": {
+          "api_prefix": {
+            "type": "string"
+          },
+          "endpoints": {
+            "$ref": "#/components/schemas/ApiVersionEndpoints"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_commit": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "source_commit",
+          "api_prefix",
+          "endpoints"
+        ],
+        "type": "object"
+      },
       "AvatarResponse": {
         "properties": {
           "avatar_url": {
@@ -4876,7 +4083,7 @@
         "type": "object"
       },
       "BackgroundJobQueueStats": {
-        "description": "当前租户的后台任务队列统计。",
+        "description": "后台任务队列统计。",
         "properties": {
           "dead": {
             "format": "int64",
@@ -4920,7 +4127,7 @@
         "type": "object"
       },
       "BackgroundJobVo": {
-        "description": "面向管理端的后台任务安全视图。\n\n任务载荷可能包含业务敏感字段，因此监控列表不会返回 `payload`。",
+        "description": "后台任务的公开视图，不包含内部载荷。",
         "properties": {
           "attempts": {
             "format": "int32",
@@ -5198,6 +4405,7 @@
         "type": "object"
       },
       "ColumnInfo": {
+        "description": "数据库列结构响应。",
         "properties": {
           "comment": {
             "type": [
@@ -5267,13 +4475,13 @@
         "type": "object"
       },
       "ConfigVo": {
+        "description": "参数配置响应。",
         "properties": {
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "key": {
@@ -5456,7 +4664,10 @@
       "CreateNoticeDto": {
         "additionalProperties": false,
         "properties": {
-          "content": {
+          "content_markdown": {
+            "description": "公告 Markdown 原文，长度为 1 到 60,000 个 UTF-8 字节。",
+            "maxLength": 60000,
+            "minLength": 1,
             "type": "string"
           },
           "notice_type": {
@@ -5471,7 +4682,7 @@
         },
         "required": [
           "title",
-          "content"
+          "content_markdown"
         ],
         "type": "object"
       },
@@ -5722,6 +4933,7 @@
         "type": "object"
       },
       "DeptTreeNode": {
+        "description": "部门树节点。",
         "properties": {
           "children": {
             "items": {
@@ -5759,6 +4971,7 @@
         "type": "object"
       },
       "DeptVo": {
+        "description": "部门响应。",
         "properties": {
           "ancestors": {
             "type": "string"
@@ -5768,7 +4981,6 @@
             "type": "string"
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "name": {
@@ -5805,6 +5017,7 @@
         "type": "object"
       },
       "DictDataVo": {
+        "description": "字典数据响应。",
         "properties": {
           "css_class": {
             "type": [
@@ -5813,7 +5026,6 @@
             ]
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "label": {
@@ -5865,6 +5077,7 @@
         "type": "object"
       },
       "DictTypeVo": {
+        "description": "字典类型响应。",
         "properties": {
           "code": {
             "type": "string"
@@ -5874,7 +5087,6 @@
             "type": "string"
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "name": {
@@ -5900,7 +5112,7 @@
         "type": "object"
       },
       "ExportJobVo": {
-        "description": "面向 API 的导出任务安全视图，不暴露内部后台任务载荷。",
+        "description": "导出任务响应。",
         "properties": {
           "completed_at": {
             "format": "date-time",
@@ -6093,7 +5305,7 @@
         "type": "object"
       },
       "GeneratedFile": {
-        "description": "生成的文件",
+        "description": "代码生成预览文件。",
         "properties": {
           "content": {
             "type": "string"
@@ -6120,7 +5332,7 @@
         "type": "object"
       },
       "LoginInfoVo": {
-        "description": "登录日志视图对象",
+        "description": "登录日志响应。",
         "properties": {
           "browser": {
             "type": [
@@ -6129,7 +5341,6 @@
             ]
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "ipaddr": {
@@ -6269,6 +5480,7 @@
         "type": "object"
       },
       "MenuTreeNode": {
+        "description": "菜单树节点。",
         "properties": {
           "children": {
             "items": {
@@ -6338,6 +5550,7 @@
         "type": "object"
       },
       "MenuType": {
+        "description": "菜单类型。",
         "enum": [
           "M",
           "C",
@@ -6346,6 +5559,7 @@
         "type": "string"
       },
       "MenuVo": {
+        "description": "菜单响应。",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -6510,8 +5724,9 @@
         "type": "object"
       },
       "NoticeVo": {
+        "description": "通知公告响应。",
         "properties": {
-          "content": {
+          "content_markdown": {
             "type": "string"
           },
           "created_at": {
@@ -6525,7 +5740,6 @@
             ]
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "notice_type": {
@@ -6544,14 +5758,14 @@
         "required": [
           "id",
           "title",
-          "content",
+          "content_markdown",
           "status",
           "created_at"
         ],
         "type": "object"
       },
       "OnlineUserVo": {
-        "description": "在线用户信息（DTO）",
+        "description": "在线用户响应。",
         "properties": {
           "browser": {
             "type": [
@@ -6587,7 +5801,6 @@
             ]
           },
           "sid": {
-            "description": "稳定的刷新令牌族会话标识，而非访问令牌 JTI。",
             "type": "string"
           },
           "username": {
@@ -6652,7 +5865,7 @@
         "type": "object"
       },
       "OperLogVo": {
-        "description": "操作日志视图对象",
+        "description": "操作日志响应。",
         "properties": {
           "business_type": {
             "type": "string"
@@ -6668,7 +5881,6 @@
             ]
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "json_result": {
@@ -6729,12 +5941,57 @@
         ],
         "type": "object"
       },
+      "OptionItem": {
+        "description": "选择器候选项。",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "disabled"
+        ],
+        "type": "object"
+      },
+      "OptionList": {
+        "description": "有界选择器响应。",
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OptionItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "type": "object"
+      },
       "PageData_BackgroundJobVo": {
         "description": "分页接口的业务数据。",
         "properties": {
           "items": {
             "items": {
-              "description": "面向管理端的后台任务安全视图。\n\n任务载荷可能包含业务敏感字段，因此监控列表不会返回 `payload`。",
+              "description": "后台任务的公开视图，不包含内部载荷。",
               "properties": {
                 "attempts": {
                   "format": "int32",
@@ -6858,13 +6115,13 @@
         "properties": {
           "items": {
             "items": {
+              "description": "参数配置响应。",
               "properties": {
                 "created_at": {
                   "format": "date-time",
                   "type": "string"
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "key": {
@@ -6935,6 +6192,7 @@
         "properties": {
           "items": {
             "items": {
+              "description": "部门响应。",
               "properties": {
                 "ancestors": {
                   "type": "string"
@@ -6944,7 +6202,6 @@
                   "type": "string"
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "name": {
@@ -7023,6 +6280,7 @@
         "properties": {
           "items": {
             "items": {
+              "description": "字典类型响应。",
               "properties": {
                 "code": {
                   "type": "string"
@@ -7032,7 +6290,6 @@
                   "type": "string"
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "name": {
@@ -7100,7 +6357,7 @@
         "properties": {
           "items": {
             "items": {
-              "description": "登录日志视图对象",
+              "description": "登录日志响应。",
               "properties": {
                 "browser": {
                   "type": [
@@ -7109,7 +6366,6 @@
                   ]
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "ipaddr": {
@@ -7195,6 +6451,7 @@
         "properties": {
           "items": {
             "items": {
+              "description": "菜单响应。",
               "properties": {
                 "created_at": {
                   "format": "date-time",
@@ -7304,8 +6561,9 @@
         "properties": {
           "items": {
             "items": {
+              "description": "通知公告响应。",
               "properties": {
-                "content": {
+                "content_markdown": {
                   "type": "string"
                 },
                 "created_at": {
@@ -7319,7 +6577,6 @@
                   ]
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "notice_type": {
@@ -7338,7 +6595,7 @@
               "required": [
                 "id",
                 "title",
-                "content",
+                "content_markdown",
                 "status",
                 "created_at"
               ],
@@ -7387,7 +6644,7 @@
         "properties": {
           "items": {
             "items": {
-              "description": "在线用户信息（DTO）",
+              "description": "在线用户响应。",
               "properties": {
                 "browser": {
                   "type": [
@@ -7423,7 +6680,6 @@
                   ]
                 },
                 "sid": {
-                  "description": "稳定的刷新令牌族会话标识，而非访问令牌 JTI。",
                   "type": "string"
                 },
                 "username": {
@@ -7482,7 +6738,7 @@
         "properties": {
           "items": {
             "items": {
-              "description": "操作日志视图对象",
+              "description": "操作日志响应。",
               "properties": {
                 "business_type": {
                   "type": "string"
@@ -7498,7 +6754,6 @@
                   ]
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "json_result": {
@@ -7602,6 +6857,7 @@
         "properties": {
           "items": {
             "items": {
+              "description": "岗位响应。",
               "properties": {
                 "code": {
                   "type": "string"
@@ -7611,7 +6867,6 @@
                   "type": "string"
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "name": {
@@ -7684,6 +6939,7 @@
         "properties": {
           "items": {
             "items": {
+              "description": "角色响应。",
               "properties": {
                 "code": {
                   "type": "string"
@@ -7696,7 +6952,6 @@
                   "type": "string"
                 },
                 "dept_ids": {
-                  "description": "自定义数据权限的部门ID列表（仅查询详情时填充）",
                   "items": {
                     "type": "string"
                   },
@@ -7706,7 +6961,6 @@
                   ]
                 },
                 "id": {
-                  "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
                   "type": "string"
                 },
                 "is_super": {
@@ -7785,6 +7039,7 @@
         "properties": {
           "items": {
             "items": {
+              "description": "数据库表结构响应。",
               "properties": {
                 "columns": {
                   "items": {
@@ -7851,6 +7106,7 @@
         "properties": {
           "items": {
             "items": {
+              "description": "用户响应。",
               "properties": {
                 "avatar": {
                   "type": [
@@ -7980,6 +7236,7 @@
         "type": "object"
       },
       "PermissionSyncReport": {
+        "description": "权限同步结果。",
         "properties": {
           "created": {
             "minimum": 0,
@@ -8009,6 +7266,7 @@
         "type": "object"
       },
       "PermissionTreeNode": {
+        "description": "权限树节点。",
         "properties": {
           "children": {
             "items": {
@@ -8026,7 +7284,6 @@
             ]
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "name": {
@@ -8061,6 +7318,7 @@
         "type": "object"
       },
       "PermissionType": {
+        "description": "权限类型。",
         "enum": [
           "api",
           "menu"
@@ -8068,6 +7326,7 @@
         "type": "string"
       },
       "PermissionVo": {
+        "description": "权限详情响应。",
         "properties": {
           "code": {
             "type": "string"
@@ -8117,6 +7376,7 @@
         "type": "object"
       },
       "PostVo": {
+        "description": "岗位响应。",
         "properties": {
           "code": {
             "type": "string"
@@ -8126,7 +7386,6 @@
             "type": "string"
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "name": {
@@ -8396,6 +7655,7 @@
         "type": "object"
       },
       "RoleBriefVo": {
+        "description": "用户关联的简要角色信息。",
         "properties": {
           "code": {
             "type": "string"
@@ -8420,6 +7680,7 @@
         "type": "object"
       },
       "RoleVo": {
+        "description": "角色响应。",
         "properties": {
           "code": {
             "type": "string"
@@ -8432,7 +7693,6 @@
             "type": "string"
           },
           "dept_ids": {
-            "description": "自定义数据权限的部门ID列表（仅查询详情时填充）",
             "items": {
               "type": "string"
             },
@@ -8442,7 +7702,6 @@
             ]
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "is_super": {
@@ -8489,6 +7748,27 @@
         ],
         "type": "object"
       },
+      "RuntimeDatabaseReadSelection": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "reason",
+          "count"
+        ],
+        "type": "object"
+      },
       "RuntimeDatabaseReplicaStatus": {
         "properties": {
           "connected": {
@@ -8530,8 +7810,19 @@
           "primary_connected": {
             "type": "boolean"
           },
+          "read_fallback_total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "read_policy": {
             "type": "string"
+          },
+          "read_selections": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeDatabaseReadSelection"
+            },
+            "type": "array"
           },
           "replica_count": {
             "minimum": 0,
@@ -8562,7 +7853,9 @@
           "replicas",
           "source_count",
           "sources",
-          "read_policy"
+          "read_policy",
+          "read_fallback_total",
+          "read_selections"
         ],
         "type": "object"
       },
@@ -8687,6 +7980,7 @@
         "type": "object"
       },
       "TableInfo": {
+        "description": "数据库表结构响应。",
         "properties": {
           "columns": {
             "items": {
@@ -8711,6 +8005,7 @@
         "type": "object"
       },
       "TenantVo": {
+        "description": "租户响应。",
         "properties": {
           "domain": {
             "type": [
@@ -8909,7 +8204,10 @@
       "UpdateNoticeDto": {
         "additionalProperties": false,
         "properties": {
-          "content": {
+          "content_markdown": {
+            "description": "公告 Markdown 原文，长度为 1 到 60,000 个 UTF-8 字节。",
+            "maxLength": 60000,
+            "minLength": 1,
             "type": "string"
           },
           "notice_type": {
@@ -8927,7 +8225,7 @@
         },
         "required": [
           "title",
-          "content",
+          "content_markdown",
           "status"
         ],
         "type": "object"
@@ -9154,54 +8452,17 @@
         ],
         "type": "object"
       },
-      "UploadFileInfo": {
-        "description": "上传文件信息",
-        "properties": {
-          "content_type": {
-            "description": "文件 MIME 类型",
-            "type": "string"
-          },
-          "file_path": {
-            "description": "文件路径（相对路径）",
-            "type": "string"
-          },
-          "file_size": {
-            "description": "文件大小（字节）",
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "original_name": {
-            "description": "原始文件名",
-            "type": "string"
-          },
-          "storage_name": {
-            "description": "存储文件名（UUID + 扩展名）",
-            "type": "string"
-          },
-          "upload_time": {
-            "description": "上传时间",
-            "type": "string"
-          }
-        },
-        "required": [
-          "original_name",
-          "storage_name",
-          "file_path",
-          "file_size",
-          "content_type",
-          "upload_time"
-        ],
-        "type": "object"
-      },
       "UploadResponse": {
-        "description": "文件上传响应",
+        "description": "文件上传响应。",
         "properties": {
           "file_id": {
             "type": "string"
           },
-          "file_info": {
-            "$ref": "#/components/schemas/UploadFileInfo"
+          "file_name": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
           },
           "file_url": {
             "type": "string"
@@ -9209,8 +8470,9 @@
         },
         "required": [
           "file_id",
-          "file_url",
-          "file_info"
+          "file_name",
+          "file_path",
+          "file_url"
         ],
         "type": "object"
       },
@@ -9233,7 +8495,8 @@
             ],
             "type": "object"
           }
-        ]
+        ],
+        "description": "用户详情响应。"
       },
       "UserExportRequestDto": {
         "additionalProperties": false,
@@ -9292,7 +8555,7 @@
         "type": "object"
       },
       "UserInfo": {
-        "description": "用户信息",
+        "description": "当前登录用户的公开信息。",
         "properties": {
           "avatar": {
             "type": [
@@ -9310,7 +8573,6 @@
             "type": "string"
           },
           "id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "nickname": {
@@ -9361,7 +8623,7 @@
         "type": "object"
       },
       "UserProfileResponse": {
-        "description": "用户个人信息响应",
+        "description": "用户个人信息响应。",
         "properties": {
           "avatar": {
             "type": [
@@ -9433,7 +8695,6 @@
             "type": "string"
           },
           "user_id": {
-            "description": "id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER",
             "type": "string"
           },
           "username": {
@@ -9454,6 +8715,7 @@
         "type": "object"
       },
       "UserVo": {
+        "description": "用户响应。",
         "properties": {
           "avatar": {
             "type": [
@@ -9532,6 +8794,7 @@
         "type": "object"
       },
       "WriteReport": {
+        "description": "代码生成写入报告。",
         "properties": {
           "skipped": {
             "items": {
@@ -9570,12 +8833,12 @@
       "email": "edgar@example.com",
       "name": "edgar_ye"
     },
-    "description": "RyFrame —— 基于 Rust + Axum 的现代化企业级后端框架。\n\n## 认证\n所有受保护接口需在请求头携带 `Authorization: Bearer <access_token>`。\n登录接口在 JSON 中返回短期 `access_token`，长期 refresh token 只通过 HttpOnly Cookie 下发。\n\n## 响应格式\n```json\n{ \"code\": 200, \"msg\": \"操作成功\", \"data\": { ... } }\n```\n分页接口返回 `{ \"code\": 200, \"msg\": \"查询成功\", \"rows\": [...], \"total\": 100 }`。\n\n## 菜单类型\n菜单管理使用 `menu_type` 字段区分节点类型：\n- `M`（目录）：侧边栏一级分组，无实际页面\n- `C`（菜单）：可点击的页面路由\n- `F`（按钮）：页面内的操作按钮，显示与授权由独立权限码控制\n",
+    "description": "RyFrame —— 基于 Rust + Axum 的现代化企业级后端框架。\n\n## 认证\n所有受保护接口需在请求头携带 `Authorization: Bearer <access_token>`。\n登录接口在 JSON 中返回短期 `access_token`，长期 refresh token 只通过 HttpOnly Cookie 下发。\n\n## 响应格式\n```json\n{\n  \"code\": 200,\n  \"message\": \"操作成功\",\n  \"data\": { ... },\n  \"request_id\": \"01K...\",\n  \"error_key\": null,\n  \"details\": null\n}\n```\n分页数据统一位于 `data`，字段为 `items/page/page_size/total/total_pages/max_page_size`；\n不再使用旧 `msg`、顶层 `rows` 或顶层 `total`。\n\n## 菜单类型\n菜单管理使用 `menu_type` 字段区分节点类型：\n- `M`（目录）：侧边栏一级分组，无实际页面\n- `C`（菜单）：可点击的页面路由\n- `F`（按钮）：页面内的操作按钮，显示与授权由独立权限码控制\n",
     "license": {
       "name": "MIT"
     },
     "title": "RyFrame API",
-    "version": "0.5.1"
+    "version": "0.6.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -10991,50 +10254,6 @@
         ]
       }
     },
-    "/api/v1/system/configs/all": {
-      "get": {
-        "operationId": "get_system_configs_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "key",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_ConfigVo"
-                }
-              }
-            },
-            "description": "配置列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "参数配置列表不分页查询（返回全部数据）",
-        "tags": [
-          "参数配置"
-        ]
-      }
-    },
     "/api/v1/system/configs/cache": {
       "delete": {
         "description": "清空所有参数配置的 Redis 缓存",
@@ -11357,50 +10576,6 @@
           }
         ],
         "summary": "创建部门",
-        "tags": [
-          "部门管理"
-        ]
-      }
-    },
-    "/api/v1/system/depts/all": {
-      "get": {
-        "operationId": "get_system_depts_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_DeptVo"
-                }
-              }
-            },
-            "description": "部门列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "部门列表不分页查询（返回全部数据）",
         "tags": [
           "部门管理"
         ]
@@ -11844,58 +11019,6 @@
         ]
       }
     },
-    "/api/v1/system/dict/types/all": {
-      "get": {
-        "operationId": "get_system_dict_types_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "code",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_DictTypeVo"
-                }
-              }
-            },
-            "description": "字典类型列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "字典类型不分页查询",
-        "tags": [
-          "字典管理"
-        ]
-      }
-    },
     "/api/v1/system/dict/types/exports": {
       "post": {
         "operationId": "post_system_dict_types_exports",
@@ -12107,66 +11230,6 @@
         ]
       }
     },
-    "/api/v1/system/loginlogs/all": {
-      "get": {
-        "operationId": "get_system_loginlogs_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "user_name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "begin_time",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "end_time",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_LoginInfoVo"
-                }
-              }
-            },
-            "description": "全部登录日志"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "登录日志不分页查询（返回全部数据）",
-        "tags": [
-          "登录日志"
-        ]
-      }
-    },
     "/api/v1/system/loginlogs/exports": {
       "post": {
         "operationId": "post_system_loginlogs_exports",
@@ -12309,50 +11372,6 @@
           }
         ],
         "summary": "创建菜单",
-        "tags": [
-          "菜单管理"
-        ]
-      }
-    },
-    "/api/v1/system/menus/all": {
-      "get": {
-        "operationId": "get_system_menus_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_MenuVo"
-                }
-              }
-            },
-            "description": "菜单列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "菜单列表不分页查询（返回全部数据）",
         "tags": [
           "菜单管理"
         ]
@@ -12853,58 +11872,6 @@
         ]
       }
     },
-    "/api/v1/system/notices/all": {
-      "get": {
-        "operationId": "get_system_notices_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "title",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "notice_type",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_NoticeVo"
-                }
-              }
-            },
-            "description": "公告列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "通知公告列表不分页查询（返回全部数据）",
-        "tags": [
-          "通知公告"
-        ]
-      }
-    },
     "/api/v1/system/notices/{id}": {
       "delete": {
         "operationId": "delete_system_notices_by_id",
@@ -13126,50 +12093,6 @@
         ]
       }
     },
-    "/api/v1/system/online/all": {
-      "get": {
-        "operationId": "get_system_online_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "username",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "ipaddr",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_OnlineUserVo"
-                }
-              }
-            },
-            "description": "在线用户列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "获取在线用户列表\n获取在线用户列表",
-        "tags": [
-          "在线用户"
-        ]
-      }
-    },
     "/api/v1/system/online/{sid}": {
       "delete": {
         "operationId": "delete_system_online_by_sid",
@@ -13290,66 +12213,6 @@
           }
         ],
         "summary": "操作日志列表",
-        "tags": [
-          "操作日志"
-        ]
-      }
-    },
-    "/api/v1/system/operlogs/all": {
-      "get": {
-        "operationId": "get_system_operlogs_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "oper_name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "begin_time",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "end_time",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_OperLogVo"
-                }
-              }
-            },
-            "description": "全部操作日志"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "操作日志不分页查询（返回全部数据）",
         "tags": [
           "操作日志"
         ]
@@ -13719,58 +12582,6 @@
         ]
       }
     },
-    "/api/v1/system/posts/all": {
-      "get": {
-        "operationId": "get_system_posts_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "code",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_PostVo"
-                }
-              }
-            },
-            "description": "岗位列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "岗位列表不分页查询（返回全部数据）",
-        "tags": [
-          "岗位管理"
-        ]
-      }
-    },
     "/api/v1/system/posts/exports": {
       "post": {
         "operationId": "post_system_posts_exports",
@@ -14043,58 +12854,6 @@
         ]
       }
     },
-    "/api/v1/system/roles/all": {
-      "get": {
-        "operationId": "get_system_roles_all",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "code",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_RoleVo"
-                }
-              }
-            },
-            "description": "角色列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "角色列表不分页查询（返回全部数据）",
-        "tags": [
-          "角色管理"
-        ]
-      }
-    },
     "/api/v1/system/roles/batch/{ids}": {
       "delete": {
         "operationId": "delete_system_roles_batch_by_ids",
@@ -14173,6 +12932,55 @@
           }
         ],
         "summary": "创建角色异步导出任务。",
+        "tags": [
+          "角色管理"
+        ]
+      }
+    },
+    "/api/v1/system/roles/options": {
+      "get": {
+        "operationId": "get_system_roles_options",
+        "parameters": [
+          {
+            "description": "按名称或稳定编码做前缀搜索；首尾空白会被移除。",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "返回上限；省略时使用服务端默认分页大小。",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_OptionList"
+                }
+              }
+            },
+            "description": "角色选项"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "查询当前操作者可以分配的角色选项。",
         "tags": [
           "角色管理"
         ]
@@ -14538,31 +13346,6 @@
         ]
       }
     },
-    "/api/v1/system/users/all": {
-      "get": {
-        "operationId": "get_system_users_all",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_UserVo"
-                }
-              }
-            },
-            "description": "用户列表"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "用户管理"
-        ]
-      }
-    },
     "/api/v1/system/users/batch/{ids}": {
       "delete": {
         "operationId": "delete_system_users_batch_by_ids",
@@ -14706,6 +13489,55 @@
             "bearer": []
           }
         ],
+        "tags": [
+          "用户管理"
+        ]
+      }
+    },
+    "/api/v1/system/users/options": {
+      "get": {
+        "operationId": "get_system_users_options",
+        "parameters": [
+          {
+            "description": "按名称或稳定编码做前缀搜索；首尾空白会被移除。",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "返回上限；省略时使用服务端默认分页大小。",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_OptionList"
+                }
+              }
+            },
+            "description": "用户选项"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "查询当前操作者数据范围内的用户选项。",
         "tags": [
           "用户管理"
         ]
@@ -15148,6 +13980,27 @@
         ]
       }
     },
+    "/api/v1/version": {
+      "get": {
+        "operationId": "get_version",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ApiVersionInfo"
+                }
+              }
+            },
+            "description": "API 版本与构建信息"
+          }
+        },
+        "summary": "返回 API 版本与主要入口。",
+        "tags": [
+          "通用"
+        ]
+      }
+    },
     "/livez": {
       "get": {
         "operationId": "get_livez",
@@ -15180,7 +14033,7 @@
                 }
               }
             },
-            "description": "必要依赖可用"
+            "description": "后台依赖快照有效且必要依赖可用"
           },
           "503": {
             "content": {
@@ -15190,7 +14043,7 @@
                 }
               }
             },
-            "description": "必要依赖不可用"
+            "description": "后台依赖快照过期或必要依赖不可用"
           }
         },
         "tags": [
@@ -15265,7 +14118,7 @@
       "name": "服务器监控"
     },
     {
-      "description": "/livez 只报告进程存活；/readyz 检查 MySQL、required Redis 与对象存储。",
+      "description": "/livez 只报告进程存活；后台任务检查 MySQL、required Redis 与对象存储，/readyz 只读取有时效上限的内存快照。",
       "name": "运行探针"
     },
     {
@@ -15285,6 +14138,10 @@
       "name": "租户管理"
     }
   ],
+  "x-ryframe-api-prefix": {
+    "value": "/api/v1",
+    "version": 1
+  },
   "x-ryframe-menu-routes": {
     "routes": [
       {
@@ -15372,6 +14229,13 @@
         "route_key": "tools.gen"
       }
     ],
+    "version": 1
+  },
+  "x-ryframe-notice-policy": {
+    "content_markdown": {
+      "max_utf8_bytes": 60000,
+      "min_utf8_bytes": 1
+    },
     "version": 1
   },
   "x-ryframe-password-policy": {

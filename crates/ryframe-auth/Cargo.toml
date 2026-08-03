@@ -16,6 +16,7 @@ ryframe-core = { path = "../ryframe-core" }
 async-trait = { workspace = true }
 jsonwebtoken = { workspace = true, features = ["aws_lc_rs"] }
 argon2 = { workspace = true }
+password-hash = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }

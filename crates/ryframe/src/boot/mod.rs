@@ -13,6 +13,7 @@ pub mod app_state;
 pub mod datasource;
 pub mod limiter;
 pub mod logging;
+pub mod readiness;
 pub mod redis;
 pub mod services;
 pub mod storage;

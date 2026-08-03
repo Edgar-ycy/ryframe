@@ -20,13 +20,19 @@ fn actor() -> ActorContext {
 
 #[tokio::test]
 async fn role_service_constructs_without_menu_repository() {
-    let _svc = RoleService::new(DatabaseCluster::single(Default::default()), None);
+    let _svc = RoleService::new(
+        DatabaseCluster::single(Default::default()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
 }
 
 #[tokio::test]
 async fn menu_service_create_only_persists_structure_fields() {
     let db = common::setup_test_db().await;
-    let svc = MenuService::new(DatabaseCluster::single(db.connection().clone()), None);
+    let svc = MenuService::new(
+        DatabaseCluster::single(db.connection().clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    );
 
     let menu = svc
         .create(

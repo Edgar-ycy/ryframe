@@ -10,12 +10,6 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 
 
 class ReleaseWorkflowTest(unittest.TestCase):
-    def publishing_workflows(self) -> list[Path]:
-        paths = {WORKFLOWS / "release.yml"}
-        paths.update(WORKFLOWS.glob("*nightly*.yml"))
-        paths.update(WORKFLOWS.glob("*nightly*.yaml"))
-        return sorted(paths)
-
     def test_release_publishes_only_github_source_archives(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         self.assertIn("Create source-only GitHub release", source)
@@ -51,26 +45,6 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
 
-    def test_nightly_still_publishes_no_custom_assets(self) -> None:
-        source = (WORKFLOWS / "nightly.yml").read_text(encoding="utf-8")
-        for fragment in (
-            "actions/upload-artifact",
-            "actions/download-artifact",
-            "docker/build-push-action",
-            "docker/login-action",
-            "docker buildx imagetools",
-            "gh release upload",
-            "ghcr.io/",
-            "packages: write",
-            "SHA256SUMS",
-            ".cdx.json",
-            "type=oci",
-            "\n          files:",
-        ):
-            with self.subTest(fragment=fragment):
-                self.assertNotIn(fragment, source)
-        self.assertIn("'.assets | length == 0'", source)
-
     def test_release_rerun_removes_assets_only_from_target_tag(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
         lookup = "releases/tags/${RELEASE_TAG}"
@@ -97,22 +71,21 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertNotIn("release-candidate", source)
         self.assertNotIn("minimum-rc-hours", source)
 
-    def test_contract_snapshots_run_only_from_manual_ci(self) -> None:
+    def test_contract_snapshots_are_generated_locally_without_ci_recompilation(self) -> None:
         ci_source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         release_source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-        manual_condition = "if: ${{ github.event_name == 'workflow_dispatch' }}"
 
-        for step_name in (
+        for fragment in (
             "Check OpenAPI contract snapshot",
             "Check generated MySQL schema snapshot",
-            "Upload OpenAPI contract",
+            "cargo run --locked -p ryframe-api --bin export_openapi",
+            "cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot",
         ):
-            with self.subTest(step_name=step_name):
-                step_start = ci_source.index(f"- name: {step_name}")
-                step_source = ci_source[step_start : step_start + 240]
-                self.assertIn(manual_condition, step_source)
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, ci_source)
         self.assertNotIn("contract-snapshots:", release_source)
         self.assertNotIn("Verify generated snapshots", release_source)
+        self.assertNotIn("Upload OpenAPI contract", ci_source)
 
     def test_release_uses_fixed_frontend_source_without_custom_artifacts(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
@@ -127,6 +100,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             "ref: ${{ needs.validate-release.outputs.backend_commit }}",
             "ref: ${{ needs.validate-release.outputs.frontend_commit }}",
             "Verify published notes and zero custom assets",
+            'select(.event == "push" and .status == "completed" and .conclusion == "success")',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, source)
@@ -140,7 +114,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         )
         self.assertNotIn("auto-promote.yml", source)
 
-    def test_ci_uses_read_only_token_and_nextest_without_cargo_test(self) -> None:
+    def test_ci_uses_linux_static_gates_without_rust_tests(self) -> None:
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         workflow_sources = "\n".join(
             path.read_text(encoding="utf-8")
@@ -148,17 +122,56 @@ class ReleaseWorkflowTest(unittest.TestCase):
         )
         self.assertIn("permissions:\n  contents: read", source)
         self.assertIn("Check & Lint (Linux)", source)
-        self.assertIn("Run Windows library tests with nextest", source)
         self.assertEqual(
-            source.count("cargo nextest run --locked --workspace --lib"), 1
+            source.count(
+                "cargo clippy --locked --workspace --all-targets -- -D warnings"
+            ),
+            1,
         )
-        self.assertNotIn("cargo test ", workflow_sources)
+        for fragment in (
+            "cargo run ",
+            "cargo check ",
+            "cargo build ",
+            "cargo test ",
+            "cargo nextest",
+            "cargo llvm-cov",
+            "test-windows:",
+            "coverage:",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, workflow_sources)
+
+    def test_weekly_schedule_runs_only_dependency_security_job(self) -> None:
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        check_job = source.split("\n  check:\n", maxsplit=1)[1].split(
+            "\n  security-audit:\n", maxsplit=1
+        )[0]
+        security_job_header = source.split(
+            "\n  security-audit:\n", maxsplit=1
+        )[1].split("\n    steps:\n", maxsplit=1)[0]
+
+        self.assertIn("  schedule:\n", source)
+        self.assertIn(
+            "    if: ${{ github.event_name != 'schedule' }}", check_job
+        )
+        self.assertNotIn("\n    if:", security_job_header)
+        self.assertNotIn("RUSTDOCFLAGS", source)
+
+    def test_ci_runs_only_the_offline_smoke_contract_test(self) -> None:
+        source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(source.count("node deploy/tests/smoke-test.test.js"), 1)
+        self.assertIsNone(
+            re.search(
+                r"(?m)^\s*node\s+deploy/tests/smoke-test\.js(?:\s|$)",
+                source,
+            )
+        )
 
     def test_release_governance_files_are_utf8_lf_without_bom(self) -> None:
         paths = (
             WORKFLOWS / "ci.yml",
             WORKFLOWS / "release.yml",
-            WORKFLOWS / "nightly.yml",
             ROOT / "docs" / "release-guide.md",
         )
         for path in paths:
@@ -180,6 +193,14 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, source)
         self.assertNotIn("ARG RYFRAME_BUILD_COMMIT=", source)
+
+    def test_production_compose_starts_worker_before_api(self) -> None:
+        source = (ROOT / "deploy" / "compose.prod.yml").read_text(encoding="utf-8")
+        api_section = source.split("  api:\n", maxsplit=1)[1].split(
+            "\n  worker:\n    <<:", maxsplit=1
+        )[0]
+        self.assertIn("migrate:\n        condition: service_completed_successfully", api_section)
+        self.assertIn("worker:\n        condition: service_healthy", api_section)
 
     def test_release_uses_both_non_empty_changelogs(self) -> None:
         source = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
@@ -211,27 +232,21 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, source)
 
-    def test_nightly_waits_for_successful_main_ci(self) -> None:
-        source = (WORKFLOWS / "nightly.yml").read_text(encoding="utf-8")
-        for fragment in (
-            "workflow_run:",
-            "workflows: [ CI ]",
-            "github.event.workflow_run.conclusion == 'success'",
-            "github.event.workflow_run.event == 'push'",
-            "github.event.workflow_run.head_branch == 'main'",
-            "ref: ${{ github.event.workflow_run.head_sha }}",
-            "gh api --paginate",
-            "CHANGELOG.md",
-            'git tag -a -f --cleanup=verbatim -F "$RUNNER_TEMP/nightly-release-notes.md" nightly',
-            "git cat-file -t refs/tags/nightly",
-            "CHANGELOG section has no update items",
-            "body_path: ${{ runner.temp }}/nightly-release-notes.md",
-            "Verify Nightly notes and zero custom assets",
-            "'.assets | length == 0'",
-            "make_latest: false",
-        ):
-            with self.subTest(fragment=fragment):
-                self.assertIn(fragment, source)
+    def test_only_stable_release_workflow_can_publish(self) -> None:
+        workflow_paths = sorted(WORKFLOWS.glob("*.y*ml"))
+        self.assertFalse(any("nightly" in path.name.lower() for path in workflow_paths))
+        for path in workflow_paths:
+            source = path.read_text(encoding="utf-8")
+            if path.name == "release.yml":
+                continue
+            for fragment in (
+                "softprops/action-gh-release",
+                "prerelease: true",
+                "refs/tags/nightly",
+                "tag_name: nightly",
+            ):
+                with self.subTest(path=path.name, fragment=fragment):
+                    self.assertNotIn(fragment, source)
 
 
 if __name__ == "__main__":

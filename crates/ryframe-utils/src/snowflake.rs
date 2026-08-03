@@ -72,7 +72,7 @@ const WORKER_ID_BITS: i64 = 10;
 const SEQUENCE_BITS: i64 = 12;
 
 /// 最大工作机器 ID。
-const MAX_WORKER_ID: i64 = (1 << WORKER_ID_BITS) - 1;
+pub const MAX_WORKER_ID: i64 = (1 << WORKER_ID_BITS) - 1;
 /// 最大序列号。
 const MAX_SEQUENCE: i64 = (1 << SEQUENCE_BITS) - 1;
 /// 41 位时间戳能够表示的最大 Unix 毫秒时间戳。
@@ -166,35 +166,8 @@ impl Snowflake {
     }
 }
 
-/// 读取并校验当前进程的 Snowflake worker ID。
-///
-/// 生产环境必须显式设置 `SNOWFLAKE_WORKER_ID`；开发和测试环境未设置时默认使用 1。
-/// 如果变量已设置，则所有环境都会校验它是否为 0~1023 的整数。
-pub fn worker_id_from_environment(environment: &str) -> Result<i64, String> {
-    let production = matches!(
-        environment.trim().to_ascii_lowercase().as_str(),
-        "prod" | "production"
-    );
-
-    match std::env::var("SNOWFLAKE_WORKER_ID") {
-        Ok(value) => {
-            let worker_id = value.trim().parse::<i64>().map_err(|_| {
-                format!("SNOWFLAKE_WORKER_ID 必须是 0~{MAX_WORKER_ID} 的整数，当前值: {value}")
-            })?;
-            validate_worker_id(worker_id).map_err(|error| error.to_string())?;
-            Ok(worker_id)
-        }
-        Err(std::env::VarError::NotPresent) if production => {
-            Err("生产环境必须显式设置 SNOWFLAKE_WORKER_ID，且每个应用实例必须使用不同值".into())
-        }
-        Err(std::env::VarError::NotPresent) => Ok(1),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err("SNOWFLAKE_WORKER_ID 必须是有效的 UTF-8 整数".into())
-        }
-    }
-}
-
-fn validate_worker_id(worker_id: i64) -> Result<(), SnowflakeError> {
+/// 校验 Snowflake worker ID 是否处于可编码范围。
+pub fn validate_worker_id(worker_id: i64) -> Result<(), SnowflakeError> {
     if !(0..=MAX_WORKER_ID).contains(&worker_id) {
         return Err(SnowflakeError::InvalidWorkerId { worker_id });
     }
@@ -208,21 +181,48 @@ fn system_timestamp() -> i64 {
         .as_millis() as i64
 }
 
-/// 全局默认雪花算法实例。
+static DEFAULT_SNOWFLAKE: OnceLock<Snowflake> = OnceLock::new();
+
+/// 在进程启动边界初始化全局 Snowflake 实例。
 ///
-/// `SNOWFLAKE_WORKER_ID` 只会在实例首次使用时读取一次。生产环境必须显式配置；
-/// 开发和测试环境未配置时使用 worker ID 1。
-pub fn default_snowflake() -> Result<&'static Snowflake, SnowflakeError> {
-    static INSTANCE: OnceLock<Result<Snowflake, SnowflakeError>> = OnceLock::new();
-    match INSTANCE.get_or_init(|| {
-        let environment = std::env::var("APP_ENV").unwrap_or_else(|_| "dev".into());
-        let worker_id =
-            worker_id_from_environment(&environment).map_err(SnowflakeError::Configuration)?;
-        Snowflake::new(worker_id)
-    }) {
-        Ok(snowflake) => Ok(snowflake),
-        Err(error) => Err(error.clone()),
+/// 使用相同 worker ID 重复初始化是幂等的；尝试切换为其他 worker ID 会返回配置错误。
+pub fn initialize(worker_id: i64) -> Result<(), SnowflakeError> {
+    validate_worker_id(worker_id)?;
+    if let Some(existing) = DEFAULT_SNOWFLAKE.get() {
+        return if existing.worker_id == worker_id {
+            Ok(())
+        } else {
+            Err(SnowflakeError::Configuration(format!(
+                "Snowflake 已使用 worker ID {} 初始化，不能切换为 {worker_id}",
+                existing.worker_id
+            )))
+        };
     }
+
+    let snowflake = Snowflake::new(worker_id)?;
+    match DEFAULT_SNOWFLAKE.set(snowflake) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            let existing = DEFAULT_SNOWFLAKE
+                .get()
+                .expect("并发初始化完成后实例必须存在");
+            if existing.worker_id == worker_id {
+                Ok(())
+            } else {
+                Err(SnowflakeError::Configuration(format!(
+                    "Snowflake 已使用 worker ID {} 初始化，不能切换为 {worker_id}",
+                    existing.worker_id
+                )))
+            }
+        }
+    }
+}
+
+/// 返回已在进程启动边界初始化的全局 Snowflake 实例。
+pub fn default_snowflake() -> Result<&'static Snowflake, SnowflakeError> {
+    DEFAULT_SNOWFLAKE
+        .get()
+        .ok_or_else(|| SnowflakeError::Configuration("Snowflake 尚未在进程启动边界初始化".into()))
 }
 
 /// 便捷函数：尝试生成一个进程内唯一且单调递增的 ID。

@@ -1,11 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use chrono::Utc;
-use ryframe_core::RedisClient;
-use ryframe_kernel::{ActorContext, AppResult};
+use ryframe_core::{RedisClient, ValidatedPageQuery};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use utoipa::ToSchema;
 
 mod keyspace;
 mod memory_backend;
@@ -15,7 +14,7 @@ mod session_codec;
 use session_codec::remaining_ttl;
 
 /// 在线用户信息（DTO）
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnlineUserVo {
     /// 稳定的刷新令牌族会话标识，而非访问令牌 JTI。
     pub sid: String,
@@ -140,17 +139,15 @@ impl OnlineUserService {
         actor: &ActorContext,
         username: Option<&str>,
         ipaddr: Option<&str>,
-        page: u64,
-        page_size: u64,
+        page: ValidatedPageQuery,
     ) -> AppResult<(Vec<OnlineUserVo>, u64)> {
         let filtered = self.list_filtered(actor, username, ipaddr).await?;
         let total = filtered.len() as u64;
-        let offset = ((page.saturating_sub(1)) * page_size) as usize;
-        let rows: Vec<OnlineUserVo> = filtered
-            .into_iter()
-            .skip(offset)
-            .take(page_size as usize)
-            .collect();
+        let offset = usize::try_from(page.offset())
+            .map_err(|_| AppError::Validation("分页偏移量超出当前平台范围".into()))?;
+        let page_size = usize::try_from(page.page_size())
+            .map_err(|_| AppError::Validation("分页大小超出当前平台范围".into()))?;
+        let rows: Vec<OnlineUserVo> = filtered.into_iter().skip(offset).take(page_size).collect();
         Ok((rows, total))
     }
 

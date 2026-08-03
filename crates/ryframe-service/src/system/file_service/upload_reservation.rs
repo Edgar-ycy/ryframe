@@ -26,11 +26,56 @@ pub(super) fn reservation_expires_at(now: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 fn cleanup_grace(storage: &dyn ObjectStorage) -> chrono::Duration {
+    cleanup_grace_for_bound(storage.late_put_completion_bound())
+}
+
+fn cleanup_grace_for_bound(late_completion_bound: Duration) -> chrono::Duration {
     let late_completion_seconds =
-        i64::try_from(storage.late_put_completion_bound().as_secs()).unwrap_or(i64::MAX / 2);
+        i64::try_from(late_completion_bound.as_secs()).unwrap_or(i64::MAX / 2);
     chrono::Duration::seconds(
         MIN_CLEANUP_GRACE_SECONDS.max(late_completion_seconds.saturating_mul(2)),
     )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExpiredReservationPlan {
+    BeginCleanup { cleanup_after: DateTime<Utc> },
+    DeleteCleanup,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompensationPlan {
+    DeleteOwnedObject,
+    PreserveObject,
+}
+
+fn plan_expired_reservation(
+    reservation: &sys_file::Model,
+    now: DateTime<Utc>,
+    cleanup_grace: chrono::Duration,
+) -> Option<ExpiredReservationPlan> {
+    if reservation.del_flag != sys_file::Model::DEL_FLAG_NORMAL
+        || !reservation
+            .reservation_expires_at
+            .is_some_and(|expires_at| expires_at <= now)
+    {
+        return None;
+    }
+    match reservation.upload_status.as_str() {
+        sys_file::Model::UPLOAD_STATUS_PENDING => Some(ExpiredReservationPlan::BeginCleanup {
+            cleanup_after: now + cleanup_grace,
+        }),
+        sys_file::Model::UPLOAD_STATUS_CLEANUP => Some(ExpiredReservationPlan::DeleteCleanup),
+        _ => None,
+    }
+}
+
+fn plan_compensation(cleanup_claimed: bool) -> CompensationPlan {
+    if cleanup_claimed {
+        CompensationPlan::DeleteOwnedObject
+    } else {
+        CompensationPlan::PreserveObject
+    }
 }
 
 pub(super) enum ReservationOutcome {
@@ -183,7 +228,6 @@ impl FileService {
         &self,
         tenant_id: &str,
         mut model: sys_file::Model,
-        legacy_md5: &str,
     ) -> AppResult<ReservationOutcome> {
         let transaction = self
             .db
@@ -199,17 +243,13 @@ impl FileService {
             model.reservation_expires_at = Some(reservation_expires_at(database_now));
             model.updated_at = database_now;
 
-            let file_sha256 = model
-                .file_sha256
-                .as_deref()
-                .ok_or_else(|| AppError::Internal("上传预留缺少内容摘要".into()))?;
+            let file_sha256 = model.file_sha256.as_str();
             if let Some(existing) = FileRepository
-                .find_by_digests_any_status_in_txn(
+                .find_by_sha256_any_status_in_txn(
                     &transaction,
                     tenant_id,
                     &model.bucket,
                     file_sha256,
-                    legacy_md5,
                 )
                 .await?
             {
@@ -249,69 +289,72 @@ impl FileService {
 
         match outcome {
             ReservationOutcome::Ready(existing) => {
-                if let Err(error) = transaction.commit().await {
-                    // 此分支只读。即使释放锁时丢失响应，已有的已提交记录仍是权威状态。
+                if let Err(error) = transaction.rollback().await {
+                    // 此分支只读，回滚只用于释放锁；已有的已提交记录仍是权威状态。
                     tracing::warn!(
                         file_id = existing.id,
                         %error,
-                        "read-only upload dedupe transaction commit response was lost"
+                        "read-only upload dedupe transaction rollback failed"
                     );
                 }
                 Ok(ReservationOutcome::Ready(existing))
             }
             ReservationOutcome::InProgress(existing) => {
-                if let Err(error) = transaction.commit().await {
+                if let Err(error) = transaction.rollback().await {
                     tracing::warn!(
                         file_id = existing.id,
                         %error,
-                        "read-only in-progress upload transaction commit response was lost"
+                        "read-only in-progress upload transaction rollback failed"
                     );
                 }
                 Ok(ReservationOutcome::InProgress(existing))
             }
-            ReservationOutcome::Reserved(saved) => match transaction.commit().await {
-                Ok(()) => Ok(ReservationOutcome::Reserved(saved)),
-                Err(commit_error) => {
-                    // 丢失 COMMIT 响应时结果不明确。尚未写入对象，因此需在 PUT 前
-                    // 校验持久化所有权。
-                    match FileRepository
-                        .find_by_id_any_status(self.db.write(), tenant_id, saved.id)
-                        .await
-                    {
-                        Ok(Some(confirmed))
-                            if confirmed.reservation_token == saved.reservation_token
-                                && confirmed.upload_status
-                                    == sys_file::Model::UPLOAD_STATUS_PENDING =>
+            ReservationOutcome::Reserved(saved) => {
+                match FileRepository.commit_upload_reservation(transaction).await {
+                    Ok(()) => Ok(ReservationOutcome::Reserved(saved)),
+                    Err(commit_error) => {
+                        // 丢失 COMMIT 响应时结果不明确。尚未写入对象，因此需在 PUT 前
+                        // 校验持久化所有权。
+                        match FileRepository
+                            .find_by_id_any_status(self.db.write(), tenant_id, saved.id)
+                            .await
                         {
-                            tracing::warn!(
-                                file_id = saved.id,
-                                %commit_error,
-                                "upload reservation commit response was lost, but ownership was confirmed"
-                            );
-                            Ok(ReservationOutcome::Reserved(confirmed))
-                        }
-                        Ok(Some(confirmed))
-                            if confirmed.upload_status == sys_file::Model::UPLOAD_STATUS_READY =>
-                        {
-                            Ok(ReservationOutcome::Ready(confirmed))
-                        }
-                        Ok(_) => Err(AppError::Database(format!(
-                            "文件预留提交结果未知: {commit_error}"
-                        ))),
-                        Err(verification_error) => {
-                            tracing::error!(
-                                file_id = saved.id,
-                                %commit_error,
-                                %verification_error,
-                                "could not verify an ambiguous upload reservation commit"
-                            );
-                            Err(AppError::Database(format!(
+                            Ok(Some(confirmed))
+                                if confirmed.reservation_token == saved.reservation_token
+                                    && confirmed.upload_status
+                                        == sys_file::Model::UPLOAD_STATUS_PENDING =>
+                            {
+                                tracing::warn!(
+                                    file_id = saved.id,
+                                    %commit_error,
+                                    "upload reservation commit response was lost, but ownership was confirmed"
+                                );
+                                Ok(ReservationOutcome::Reserved(confirmed))
+                            }
+                            Ok(Some(confirmed))
+                                if confirmed.upload_status
+                                    == sys_file::Model::UPLOAD_STATUS_READY =>
+                            {
+                                Ok(ReservationOutcome::Ready(confirmed))
+                            }
+                            Ok(_) => Err(AppError::Database(format!(
                                 "文件预留提交结果未知: {commit_error}"
-                            )))
+                            ))),
+                            Err(verification_error) => {
+                                tracing::error!(
+                                    file_id = saved.id,
+                                    %commit_error,
+                                    %verification_error,
+                                    "could not verify an ambiguous upload reservation commit"
+                                );
+                                Err(AppError::Database(format!(
+                                    "文件预留提交结果未知: {commit_error}"
+                                )))
+                            }
                         }
                     }
                 }
-            },
+            }
         }
     }
 
@@ -319,7 +362,6 @@ impl FileService {
         &self,
         mut existing: sys_file::Model,
         expected_sha256: &str,
-        expected_legacy_md5: &str,
     ) -> AppResult<UploadResponse> {
         if existing.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP {
             return Err(AppError::Conflict(
@@ -346,31 +388,28 @@ impl FileService {
             Err(error) => return Err(map_storage_read_error(error)),
         };
         let object_len = object.len();
-        let (actual_sha256, actual_md5) =
-            run_blocking_task("pending upload verification", move || {
-                (
-                    hex::encode(Sha256::digest(&object)),
-                    format!("{:x}", md5::compute(object)),
-                )
-            })
-            .await?;
-        let stored_digest_matches = match (&existing.file_sha256, &existing.file_md5) {
-            (Some(stored_sha256), _) => stored_sha256 == &actual_sha256,
-            (None, Some(stored_md5)) => stored_md5 == &actual_md5,
-            (None, None) => false,
-        };
+        let actual_sha256 = run_blocking_task("pending upload verification", move || {
+            hex::encode(Sha256::digest(&object))
+        })
+        .await?;
+        let stored_sha256 = existing.file_sha256.as_str();
         if actual_sha256 != expected_sha256
-            || actual_md5 != expected_legacy_md5
-            || !stored_digest_matches
+            || stored_sha256 != actual_sha256
             || u64::try_from(existing.file_size).unwrap_or_default()
                 != u64::try_from(object_len).unwrap_or_default()
         {
             return Err(AppError::Conflict("相同文件正在上传，请稍后重试".into()));
         }
 
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启上传恢复事务失败: {error}")))?;
         match FileRepository
             .mark_ready(
-                self.db.write(),
+                &transaction,
                 &existing.tenant_id,
                 existing.id,
                 &reservation_token,
@@ -378,21 +417,42 @@ impl FileService {
             )
             .await
         {
-            Ok(true) => {
-                existing.upload_status = sys_file::Model::UPLOAD_STATUS_READY.to_owned();
-                existing.reservation_token = None;
-                existing.reservation_expires_at = None;
-                existing.del_flag = sys_file::Model::DEL_FLAG_NORMAL.to_owned();
-                self.upload_response_for_existing(existing)
+            Ok(true) => match crate::commit_current_audit(transaction).await {
+                Ok(()) => {
+                    existing.upload_status = sys_file::Model::UPLOAD_STATUS_READY.to_owned();
+                    existing.reservation_token = None;
+                    existing.reservation_expires_at = None;
+                    existing.del_flag = sys_file::Model::DEL_FLAG_NORMAL.to_owned();
+                    Ok(Self::upload_response_for_existing(existing))
+                }
+                Err(error) => {
+                    if let Some(ready) = FileRepository
+                        .find_by_id(self.db.write(), &existing.tenant_id, existing.id)
+                        .await?
+                    {
+                        tracing::warn!(
+                            file_id = ready.id,
+                            %error,
+                            "upload recovery commit response was ambiguous, but ready state was confirmed"
+                        );
+                        Ok(Self::upload_response_for_existing(ready))
+                    } else {
+                        Err(error)
+                    }
+                }
+            },
+            Ok(false) => {
+                let _ = transaction.rollback().await;
+                FileRepository
+                    .find_by_id(self.db.write(), &existing.tenant_id, existing.id)
+                    .await?
+                    .map_or_else(
+                        || Err(AppError::Conflict("相同文件正在上传，请稍后重试".into())),
+                        |ready| Ok(Self::upload_response_for_existing(ready)),
+                    )
             }
-            Ok(false) => FileRepository
-                .find_by_id(self.db.write(), &existing.tenant_id, existing.id)
-                .await?
-                .map_or_else(
-                    || Err(AppError::Conflict("相同文件正在上传，请稍后重试".into())),
-                    |ready| self.upload_response_for_existing(ready),
-                ),
             Err(error) => {
+                let _ = transaction.rollback().await;
                 if let Some(ready) = FileRepository
                     .find_by_id(self.db.write(), &existing.tenant_id, existing.id)
                     .await?
@@ -401,7 +461,7 @@ impl FileService {
                         file_id = ready.id,
                         "upload recovery response was ambiguous, but ready state was confirmed"
                     );
-                    self.upload_response_for_existing(ready)
+                    Ok(Self::upload_response_for_existing(ready))
                 } else {
                     Err(error)
                 }
@@ -418,9 +478,15 @@ impl FileService {
             .reservation_token
             .as_deref()
             .ok_or_else(|| AppError::Internal("文件上传预留缺少所有权令牌".into()))?;
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启上传完成事务失败: {error}")))?;
         let result = FileRepository
             .mark_ready(
-                self.db.write(),
+                &transaction,
                 &reservation.tenant_id,
                 reservation.id,
                 reservation_token,
@@ -428,8 +494,34 @@ impl FileService {
             )
             .await;
         match result {
-            Ok(true) => Ok(()),
+            Ok(true) => match crate::commit_current_audit(transaction).await {
+                Ok(()) => Ok(()),
+                Err(error) => match FileRepository
+                    .find_by_id(self.db.write(), &reservation.tenant_id, reservation.id)
+                    .await
+                {
+                    Ok(Some(_)) => {
+                        tracing::warn!(
+                            file_id = reservation.id,
+                            %error,
+                            "upload finalization commit response was ambiguous, but ready state was confirmed"
+                        );
+                        Ok(())
+                    }
+                    Ok(None) => Err(error),
+                    Err(verification_error) => {
+                        tracing::error!(
+                            file_id = reservation.id,
+                            %error,
+                            %verification_error,
+                            "could not verify an ambiguous upload finalization commit"
+                        );
+                        Err(error)
+                    }
+                },
+            },
             Ok(false) => {
+                let _ = transaction.rollback().await;
                 if FileRepository
                     .find_by_id(self.db.write(), &reservation.tenant_id, reservation.id)
                     .await?
@@ -440,29 +532,32 @@ impl FileService {
                     Err(AppError::Conflict("文件上传预留已失效".into()))
                 }
             }
-            Err(error) => match FileRepository
-                .find_by_id(self.db.write(), &reservation.tenant_id, reservation.id)
-                .await
-            {
-                Ok(Some(_)) => {
-                    tracing::warn!(
-                        file_id = reservation.id,
-                        %error,
-                        "upload finalization response was ambiguous, but ready state was confirmed"
-                    );
-                    Ok(())
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                match FileRepository
+                    .find_by_id(self.db.write(), &reservation.tenant_id, reservation.id)
+                    .await
+                {
+                    Ok(Some(_)) => {
+                        tracing::warn!(
+                            file_id = reservation.id,
+                            %error,
+                            "upload finalization response was ambiguous, but ready state was confirmed"
+                        );
+                        Ok(())
+                    }
+                    Ok(None) => Err(error),
+                    Err(verification_error) => {
+                        tracing::error!(
+                            file_id = reservation.id,
+                            %error,
+                            %verification_error,
+                            "could not verify an ambiguous upload finalization"
+                        );
+                        Err(error)
+                    }
                 }
-                Ok(None) => Err(error),
-                Err(verification_error) => {
-                    tracing::error!(
-                        file_id = reservation.id,
-                        %error,
-                        %verification_error,
-                        "could not verify an ambiguous upload finalization"
-                    );
-                    Err(error)
-                }
-            },
+            }
         }
     }
 
@@ -507,7 +602,12 @@ impl FileService {
             .await?;
         let mut processed = 0_u64;
         for reservation in reservations {
-            if reservation.upload_status == sys_file::Model::UPLOAD_STATUS_PENDING {
+            let Some(plan) =
+                plan_expired_reservation(&reservation, now, cleanup_grace(self.storage.as_ref()))
+            else {
+                continue;
+            };
+            if let ExpiredReservationPlan::BeginCleanup { cleanup_after } = plan {
                 // 首次处理仅创建带有新宽限期的墓碑。客户端任务取消后，延迟的 PUT
                 // 仍可能完成，因此有意延后删除。
                 if FileRepository
@@ -516,15 +616,12 @@ impl FileService {
                         &reservation.tenant_id,
                         reservation.id,
                         now,
-                        now + cleanup_grace(self.storage.as_ref()),
+                        cleanup_after,
                     )
                     .await?
                 {
                     processed += 1;
                 }
-                continue;
-            }
-            if reservation.upload_status != sys_file::Model::UPLOAD_STATUS_CLEANUP {
                 continue;
             }
             if let Err(error) = self
@@ -600,28 +697,30 @@ async fn compensate_upload_reservation(
         )
         .await
     {
-        Ok(true) => {
-            if let Err(error) = storage
-                .delete(&reservation.bucket, &reservation.storage_path)
-                .await
-            {
-                tracing::error!(
+        Ok(cleanup_claimed) => match plan_compensation(cleanup_claimed) {
+            CompensationPlan::DeleteOwnedObject => {
+                if let Err(error) = storage
+                    .delete(&reservation.bucket, &reservation.storage_path)
+                    .await
+                {
+                    tracing::error!(
+                        file_id = reservation.id,
+                        bucket = reservation.bucket,
+                        object_key = reservation.storage_path,
+                        %error,
+                        "upload compensation could not delete the object; the cleanup record was retained"
+                    );
+                }
+            }
+            CompensationPlan::PreserveObject => {
+                // 成功完成的一方赢得比较并设置竞争。除非此预留仍拥有该记录，
+                // 否则绝不删除对象。
+                tracing::debug!(
                     file_id = reservation.id,
-                    bucket = reservation.bucket,
-                    object_key = reservation.storage_path,
-                    %error,
-                    "upload compensation could not delete the object; the cleanup record was retained"
+                    "upload reservation no longer owns the metadata row; compensation skipped"
                 );
             }
-        }
-        Ok(false) => {
-            // 成功完成的一方赢得比较并设置竞争。除非此预留仍拥有该记录，
-            // 否则绝不删除对象。
-            tracing::debug!(
-                file_id = reservation.id,
-                "upload reservation no longer owns the metadata row; compensation skipped"
-            );
-        }
+        },
         Err(error) => {
             // 有意保留持久化 pending 记录。全局清理器会在 TTL 之后重试协调。
             tracing::error!(
@@ -638,5 +737,86 @@ fn storage_error_is_not_found(error: &StorageError) -> bool {
         StorageError::Service { status: 404, .. } => true,
         StorageError::Io { source, .. } => source.kind() == std::io::ErrorKind::NotFound,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CompensationPlan, ExpiredReservationPlan, cleanup_grace_for_bound, plan_compensation,
+        plan_expired_reservation,
+    };
+    use chrono::{Duration as ChronoDuration, Utc};
+    use ryframe_db::entities::sys_file;
+    use std::time::Duration;
+
+    #[test]
+    fn 失败补偿只有持有预留所有权时才删除对象() {
+        assert_eq!(plan_compensation(true), CompensationPlan::DeleteOwnedObject);
+        assert_eq!(plan_compensation(false), CompensationPlan::PreserveObject);
+    }
+
+    #[test]
+    fn 过期清理计划可重复执行并保留两阶段宽限期() {
+        let now = Utc::now();
+        let grace = cleanup_grace_for_bound(Duration::from_secs(600));
+        assert_eq!(grace, ChronoDuration::seconds(1_200));
+        assert_eq!(
+            cleanup_grace_for_bound(Duration::from_secs(30)),
+            ChronoDuration::seconds(300)
+        );
+
+        let mut reservation = reservation(
+            sys_file::Model::UPLOAD_STATUS_PENDING,
+            Some(now - ChronoDuration::seconds(1)),
+        );
+        let expected = ExpiredReservationPlan::BeginCleanup {
+            cleanup_after: now + grace,
+        };
+        assert_eq!(
+            plan_expired_reservation(&reservation, now, grace),
+            Some(expected)
+        );
+        assert_eq!(
+            plan_expired_reservation(&reservation, now, grace),
+            Some(expected),
+            "同一过期 pending 记录重复规划必须得到相同墓碑截止时间"
+        );
+
+        reservation.upload_status = sys_file::Model::UPLOAD_STATUS_CLEANUP.to_owned();
+        reservation.reservation_expires_at = Some(now + grace);
+        assert_eq!(plan_expired_reservation(&reservation, now, grace), None);
+        assert_eq!(
+            plan_expired_reservation(&reservation, now + grace, grace),
+            Some(ExpiredReservationPlan::DeleteCleanup)
+        );
+        assert_eq!(
+            plan_expired_reservation(&reservation, now + grace, grace),
+            Some(ExpiredReservationPlan::DeleteCleanup),
+            "到期 cleanup 记录重复规划仍应执行幂等对象删除"
+        );
+    }
+
+    fn reservation(status: &str, expires_at: Option<chrono::DateTime<Utc>>) -> sys_file::Model {
+        let now = Utc::now();
+        sys_file::Model {
+            id: 1,
+            tenant_id: "system".into(),
+            original_name: "原始文件.txt".into(),
+            storage_name: "opaque.txt".into(),
+            storage_path: "system/opaque.txt".into(),
+            bucket: "uploads".into(),
+            file_url: "uploads/system/opaque.txt".into(),
+            file_size: 1,
+            content_type: "text/plain".into(),
+            file_sha256: "a".repeat(64),
+            upload_by: None,
+            upload_status: status.into(),
+            reservation_token: Some("owner".into()),
+            reservation_expires_at: expires_at,
+            del_flag: sys_file::Model::DEL_FLAG_NORMAL.into(),
+            created_at: now,
+            updated_at: now,
+        }
     }
 }

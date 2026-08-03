@@ -2,8 +2,8 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use ryframe_config::PaginationConfig;
-use ryframe_core::PageQuery;
-use ryframe_http::AppResult;
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::HttpResult;
 use ryframe_service::system::ConfigListParams;
 
 crate::list_query!(pub ConfigListQuery, ConfigFilterQuery {
@@ -12,14 +12,14 @@ crate::list_query!(pub ConfigListQuery, ConfigFilterQuery {
 });
 
 impl ConfigListQuery {
-    pub fn into_service_params(self, policy: &PaginationConfig) -> AppResult<ConfigListParams> {
+    pub fn into_service_params(self, policy: &PaginationConfig) -> HttpResult<ConfigListParams> {
         let (page, filter) = self.into_parts(policy)?;
         Ok(filter.into_service_params(page))
     }
 }
 
 impl ConfigFilterQuery {
-    pub fn into_service_params(self, page: PageQuery) -> ConfigListParams {
+    pub fn into_service_params(self, page: ValidatedPageQuery) -> ConfigListParams {
         ConfigListParams {
             page,
             name: self.name,

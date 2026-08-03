@@ -47,14 +47,13 @@ ryframe/
 │   ├── ryframe-captcha/     # 验证码生成与图像渲染
 │   ├── ryframe-excel/       # Excel 导入导出
 │   ├── ryframe-mail/        # 邮件发送适配
-│   ├── ryframe-common/      # 仅供外部旧调用使用的兼容入口，内部禁止依赖
 │   ├── ryframe-config/      # 配置管理 (多环境 TOML)
 │   ├── ryframe-core/        # 基础设施 (缓存/Redis/锁/熔断)
 │   ├── ryframe-db/          # 数据访问层 (entities/repositories)
 │   ├── ryframe-db-migration/# 数据库迁移
 │   ├── ryframe-generator/   # 代码生成器
 │   ├── ryframe-macro/       # 过程宏
-│   ├── ryframe-middleware/  # 中间件 (限流/XSS/CORS/日志)
+│   ├── ryframe-middleware/  # 中间件 (限流/CORS/日志/安全响应头)
 │   ├── ryframe-monitor/     # 监控 (健康检查/服务器信息)
 │   ├── ryframe-service/     # 业务服务层
 │   └── ryframe-storage/     # 对象存储端口与本地/S3 实现

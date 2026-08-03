@@ -2,20 +2,22 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{Query, State},
-    http::header,
+    http::{HeaderMap, HeaderValue, header},
     response::IntoResponse,
 };
 use ryframe_config::PaginationConfig;
-use ryframe_core::PageQuery;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{get, post, route};
-use ryframe_service::system::generator_service::{
-    GeneratedFile, TableInfo, TableListParams, WriteReport,
-};
+use ryframe_service::system::generator_service::TableListParams;
 use serde::Deserialize;
 
 use crate::{
-    dto::generator_dto::{GenerateOptionsDto, GenerateRequestDto},
+    dto::{
+        generator_dto::{GenerateOptionsDto, GenerateRequestDto},
+        public_dto::{GeneratedFile, TableInfo, WriteReport},
+    },
+    handler_utils::attachment_content_disposition,
     state::AppState,
 };
 
@@ -43,9 +45,9 @@ struct TableListQuery {
 }
 
 impl TableListQuery {
-    fn into_service_params(self, policy: &PaginationConfig) -> AppResult<TableListParams> {
+    fn into_service_params(self, policy: &PaginationConfig) -> HttpResult<TableListParams> {
         Ok(TableListParams {
-            page: PageQuery::from_optional(self.page, self.page_size, policy)?,
+            page: ValidatedPageQuery::from_optional(self.page, self.page_size, policy)?,
             table_name: self.table_name,
             table_comment: self.table_comment,
         })
@@ -61,16 +63,16 @@ impl TableListQuery {
 async fn list_tables(
     State(state): State<AppState>,
     Query(query): Query<TableListQuery>,
-) -> AppResult<Json<ApiPageResponse<TableInfo>>> {
+) -> HttpResult<Json<ApiPageResponse<TableInfo>>> {
     state
         .services
         .generator
         .list_tables(query.into_service_params(&state.config.pagination)?)
         .await
-        .map_err(ryframe_http::AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|page| {
             Json(ApiPageResponse::new(
-                page.records,
+                page.records.into_iter().map(TableInfo::from).collect(),
                 page.total,
                 page.page,
                 page.page_size,
@@ -88,9 +90,11 @@ async fn list_tables(
 async fn preview(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptionsDto>,
-) -> AppResult<Json<ApiResponse<Vec<GeneratedFile>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<GeneratedFile>>>> {
     let files = state.services.generator.preview(opts.into()).await?;
-    Ok(Json(ApiResponse::success(files)))
+    Ok(Json(ApiResponse::success(
+        files.into_iter().map(GeneratedFile::from).collect(),
+    )))
 }
 
 /// 写入磁盘
@@ -101,13 +105,13 @@ async fn preview(
 async fn generate(
     State(state): State<AppState>,
     Json(request): Json<GenerateRequestDto>,
-) -> AppResult<Json<ApiResponse<WriteReport>>> {
+) -> HttpResult<Json<ApiResponse<WriteReport>>> {
     let written = state
         .services
         .generator
         .generate(request.options.into(), request.output_dir.into())
         .await?;
-    Ok(Json(ApiResponse::success(written)))
+    Ok(Json(ApiResponse::success(written.into())))
 }
 
 /// 打包 zip 下载
@@ -118,16 +122,18 @@ async fn generate(
 async fn download(
     State(state): State<AppState>,
     Json(opts): Json<GenerateOptionsDto>,
-) -> Result<impl IntoResponse, ryframe_http::AppError> {
+) -> HttpResult<impl IntoResponse> {
     let zip_data = state.services.generator.download_zip(opts.into()).await?;
 
-    let headers = [
-        (header::CONTENT_TYPE, "application/zip"),
-        (
-            header::CONTENT_DISPOSITION,
-            "attachment; filename=\"ryframe-gen.zip\"",
-        ),
-    ];
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        attachment_content_disposition("ryframe-gen.zip")?,
+    );
 
     Ok((headers, Body::from(zip_data)))
 }

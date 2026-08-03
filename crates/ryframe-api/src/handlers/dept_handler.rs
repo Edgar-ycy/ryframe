@@ -2,12 +2,13 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{CreateDeptCommand, DeptTreeNode, DeptVo, UpdateDeptCommand};
+use ryframe_service::system::{CreateDeptCommand, UpdateDeptCommand};
 use validator::Validate;
 
 use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
+use crate::dto::public_dto::{DeptTreeNode, DeptVo};
 use crate::handler_utils::parse_optional_i64;
 use crate::state::AppState;
 use crate::{list_query, remove_body};
@@ -22,7 +23,6 @@ pub fn dept_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(tree))
         .merge(route!(list_page))
-        .merge(route!(list_no_page))
         .merge(route!(detail))
         .merge(route!(create))
         .merge(route!(update))
@@ -38,14 +38,18 @@ pub fn dept_router(state: AppState) -> Router {
 async fn tree(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
     state
         .services
         .dept
         .filter_dept_by_user(&current_user)
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|nodes| {
+            Json(ApiResponse::success(
+                nodes.into_iter().map(DeptTreeNode::from).collect(),
+            ))
+        })
 }
 
 /// 部门列表分页查询
@@ -59,7 +63,7 @@ async fn list_page(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<DeptListQuery>,
-) -> AppResult<Json<ApiPageResponse<DeptVo>>> {
+) -> HttpResult<Json<ApiPageResponse<DeptVo>>> {
     let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
@@ -71,10 +75,10 @@ async fn list_page(
             filter.status.as_deref(),
         )
         .await
-        .map_err(ryframe_http::AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::new(
-                p.records,
+                p.records.into_iter().map(DeptVo::from).collect(),
                 p.total,
                 p.page,
                 p.page_size,
@@ -82,31 +86,6 @@ async fn list_page(
                 "查询成功",
             ))
         })
-}
-
-/// 部门列表不分页查询（返回全部数据）
-#[get("/all")]
-#[perm("system:dept:list")]
-#[utoipa::path(get, path = "/api/v1/system/depts/all", tag = "部门管理",
-    params(DeptFilterQuery),
-    responses((status = 200, description = "部门列表", body = ApiResponse<Vec<DeptVo>>)),
-    security(("bearer" = [])))]
-async fn list_no_page(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<DeptFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<DeptVo>>>> {
-    state
-        .services
-        .dept
-        .find_filtered(
-            &current_user,
-            query.name.as_deref(),
-            query.status.as_deref(),
-        )
-        .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 创建部门
@@ -118,7 +97,7 @@ async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreateDeptDto>,
-) -> AppResult<Json<ApiResponse<DeptVo>>> {
+) -> HttpResult<Json<ApiResponse<DeptVo>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     state
@@ -133,8 +112,8 @@ async fn create(
             },
         )
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 更新部门
@@ -148,7 +127,7 @@ async fn update(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateDeptDto>,
-) -> AppResult<Json<ApiResponse<DeptVo>>> {
+) -> HttpResult<Json<ApiResponse<DeptVo>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     state
@@ -165,8 +144,8 @@ async fn update(
             },
         )
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 部门详情
@@ -180,14 +159,14 @@ async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<DeptVo>>> {
-    state
+) -> HttpResult<Json<ApiResponse<DeptVo>>> {
+    let value = state
         .services
         .dept
         .find_by_id(&current_user, id)
         .await?
-        .ok_or_else(|| ryframe_http::AppError::NotFound("部门不存在".into()))
-        .map(|value| Json(ApiResponse::success(value)))
+        .ok_or_else(|| ryframe_kernel::AppError::NotFound("部门不存在".into()))?;
+    Ok(Json(ApiResponse::success(value.into())))
 }
 
 /// 删除部门
@@ -199,6 +178,6 @@ async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     remove_body!(state, current_user, id, dept)
 }

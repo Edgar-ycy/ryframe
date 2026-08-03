@@ -7,7 +7,8 @@ use ryframe_db::{PasswordResetRequestRepository, entities::password_reset_reques
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{
-    ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QuerySelect, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QuerySelect,
+    TransactionTrait,
     sea_query::{Expr, LockType},
 };
 use uuid::Uuid;
@@ -50,9 +51,17 @@ impl UserService {
             updated_at: Default::default(),
         };
         request.fill_on_insert(&FillContext::new())?;
-        let request = PasswordResetRequestRepository
-            .insert(self.db.write(), tenant_id, request)
-            .await?;
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let request = password_reset_request::ActiveModel::from(request)
+            .insert(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        crate::commit_current_audit(transaction).await?;
         Ok(PasswordResetRequestOutcome { request, token })
     }
 
@@ -158,7 +167,7 @@ impl UserService {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
-        if current_user.auth_version != target_user.auth_version
+        if current_user.authorization_version != target_user.authorization_version
             || current_user.status != target_user.status
         {
             return Err(AppError::Conflict(
@@ -184,10 +193,19 @@ impl UserService {
                 "用户认证状态已发生变化，请重新发起密码重置".into(),
             ));
         }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+        let authorization_version = target_user.authorization_version.saturating_add(1);
+        self.authorization_cache
+            .record_user_mirror_update_in_transaction(
+                &transaction,
+                tenant_id,
+                user_id,
+                authorization_version,
+            )
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_user_versions(tenant_id, &[(user_id, authorization_version)])
+            .await?;
         Ok(user_id)
     }
 }
@@ -204,8 +222,8 @@ fn guarded_password_update(
             Expr::value(password_hash),
         )
         .col_expr(
-            ryframe_db::entities::user::Column::AuthVersion,
-            Expr::col(ryframe_db::entities::user::Column::AuthVersion).add(1),
+            ryframe_db::entities::user::Column::AuthorizationVersion,
+            Expr::col(ryframe_db::entities::user::Column::AuthorizationVersion).add(1),
         )
         .col_expr(
             ryframe_db::entities::user::Column::Status,
@@ -222,7 +240,10 @@ fn guarded_password_update(
                 .eq(ryframe_db::entities::user::Model::DEL_FLAG_NORMAL),
         )
         .filter(ryframe_db::entities::user::Column::Status.eq(target_user.status.as_str()))
-        .filter(ryframe_db::entities::user::Column::AuthVersion.eq(target_user.auth_version))
+        .filter(
+            ryframe_db::entities::user::Column::AuthorizationVersion
+                .eq(target_user.authorization_version),
+        )
 }
 
 #[cfg(test)]
@@ -233,7 +254,7 @@ mod tests {
     use super::guarded_password_update;
 
     #[test]
-    fn password_update_uses_status_and_auth_version_cas() {
+    fn password_update_uses_status_and_authorization_version_cas() {
         let now = Utc::now();
         let user = ryframe_db::entities::user::Model {
             id: 42,
@@ -247,7 +268,7 @@ mod tests {
             avatar_file_id: None,
             preferred_locale: None,
             status: ryframe_db::entities::user::Model::STATUS_NORMAL.into(),
-            auth_version: 7,
+            authorization_version: 7,
             dept_id: None,
             remark: None,
             login_ip: None,
@@ -265,7 +286,10 @@ mod tests {
         )
         .build(DbBackend::MySql);
 
-        assert_eq!(statement.sql.matches("`auth_version` =").count(), 2);
+        assert_eq!(
+            statement.sql.matches("`authorization_version` =").count(),
+            2
+        );
         assert_eq!(statement.sql.matches("`status` =").count(), 2);
     }
 }

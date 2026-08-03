@@ -1,8 +1,7 @@
 use ryframe_db::entities::permission;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionType {
     Api,
@@ -18,7 +17,7 @@ impl PermissionType {
     }
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct PermissionTreeNode {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -29,11 +28,10 @@ pub struct PermissionTreeNode {
     pub icon: Option<String>,
     pub sort: i32,
     pub status: String,
-    #[schema(no_recursion)]
     pub children: Vec<PermissionTreeNode>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct PermissionVo {
     pub id: String,
     pub name: String,
@@ -85,7 +83,7 @@ pub struct UpdatePermissionCommand {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PermissionSyncReport {
     pub scanned: usize,
     pub existing: usize,

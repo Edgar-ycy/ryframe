@@ -49,7 +49,7 @@ impl UserService {
             avatar_file_id: None,
             preferred_locale: None,
             status: user::Model::STATUS_PENDING_ACTIVATION.into(),
-            auth_version: 1,
+            authorization_version: 1,
             dept_id,
             remark: None,
             login_ip: None,
@@ -79,10 +79,7 @@ impl UserService {
                 .replace_roles_in_txn(&transaction, tenant_id, saved.id, &role_ids)
                 .await?;
         }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+        crate::commit_current_audit(transaction).await?;
         Ok(UserVo::from(saved))
     }
 
@@ -121,12 +118,13 @@ impl UserService {
             .update(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[saved.id])
+        let versions = self
+            .invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[saved.id])
             .await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_user_versions(tenant_id, &versions)
+            .await?;
         Ok(UserVo::from(saved))
     }
 
@@ -152,12 +150,13 @@ impl UserService {
         self.user_repo
             .update_status(&transaction, tenant_id, id, status)
             .await?;
-        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[id])
+        let versions = self
+            .invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[id])
             .await?;
-        transaction
-            .commit()
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_user_versions(tenant_id, &versions)
             .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))
     }
 
     pub async fn delete_many(&self, actor: &ActorContext, ids: &[i64]) -> AppResult<u64> {
@@ -183,7 +182,8 @@ impl UserService {
             self.lock_manageable_user_in_txn(actor, &transaction, *id)
                 .await?;
         }
-        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &ids)
+        let versions = self
+            .invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &ids)
             .await?;
         let affected = self
             .user_repo
@@ -192,10 +192,10 @@ impl UserService {
         if affected != ids.len() as u64 {
             return Err(AppError::NotFound("用户不存在".into()));
         }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_user_versions(tenant_id, &versions)
+            .await?;
         Ok(affected)
     }
 
@@ -212,7 +212,8 @@ impl UserService {
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         self.lock_manageable_user_in_txn(actor, &transaction, id)
             .await?;
-        self.invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[id])
+        let versions = self
+            .invalidate_sessions_for_tenant_in_txn(&transaction, tenant_id, &[id])
             .await?;
         let affected = self
             .user_repo
@@ -221,10 +222,10 @@ impl UserService {
         if affected != 1 {
             return Err(AppError::NotFound("用户不存在".into()));
         }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_user_versions(tenant_id, &versions)
+            .await?;
         Ok(())
     }
 

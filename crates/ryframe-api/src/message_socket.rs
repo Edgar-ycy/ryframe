@@ -14,10 +14,11 @@ use axum::{
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use futures_util::{SinkExt, StreamExt};
+use ryframe_config::MessagingConfig;
 use ryframe_core::RedisClient;
-use ryframe_http::{AppError, AppResult};
+use ryframe_http::{HttpAppError, HttpResult};
 use ryframe_i18n::{Locale, Localizer};
-use ryframe_kernel::AppError as KernelAppError;
+use ryframe_kernel::AppError;
 use ryframe_service::system::{
     MESSAGE_DISPATCH_REDIS_CHANNEL, MessageDelivery, MessageService, WebSocketTicket,
 };
@@ -33,7 +34,6 @@ use crate::{
     state::AppState,
 };
 
-const CONNECTION_QUEUE_CAPACITY: usize = 256;
 const RESYNC_INTERVAL: Duration = Duration::from_secs(15);
 const RESYNC_BATCH_SIZE: u64 = 100;
 
@@ -50,6 +50,7 @@ pub struct MessageHub {
     connections: Arc<DashMap<String, HubConnection>>,
     connections_by_identity: Arc<DashMap<(String, i64), HashSet<String>>>,
     localizer: Arc<Localizer>,
+    config: MessagingConfig,
 }
 
 struct HubConnection {
@@ -62,11 +63,12 @@ struct HubConnection {
 
 impl MessageHub {
     /// 创建空的本实例连接中心。
-    pub fn new(localizer: Arc<Localizer>) -> Self {
+    pub fn new(localizer: Arc<Localizer>, config: MessagingConfig) -> Self {
         Self {
             connections: Arc::new(DashMap::new()),
             connections_by_identity: Arc::new(DashMap::new()),
             localizer,
+            config,
         }
     }
 
@@ -75,13 +77,21 @@ impl MessageHub {
         self.connections.len()
     }
 
-    fn register(
+    fn try_register(
         &self,
         ticket: &WebSocketTicket,
         sender: mpsc::Sender<Message>,
         shutdown: watch::Sender<bool>,
-    ) -> String {
+    ) -> Option<String> {
+        if !self.config.enabled {
+            return None;
+        }
         let id = uuid::Uuid::now_v7().to_string();
+        let identity = (ticket.tenant_id.clone(), ticket.user_id);
+        let mut connections = self.connections_by_identity.entry(identity).or_default();
+        if connections.len() >= self.config.max_connections_per_user {
+            return None;
+        }
         self.connections.insert(
             id.clone(),
             HubConnection {
@@ -92,12 +102,10 @@ impl MessageHub {
                 shutdown,
             },
         );
-        self.connections_by_identity
-            .entry((ticket.tenant_id.clone(), ticket.user_id))
-            .or_default()
-            .insert(id.clone());
+        connections.insert(id.clone());
+        drop(connections);
         ryframe_middleware::metrics::set_ws_connections(self.connection_count());
-        id
+        Some(id)
     }
 
     fn unregister(&self, connection_id: &str) {
@@ -176,7 +184,7 @@ impl MessageHub {
         &self,
         service: &MessageService,
         message_id: i64,
-    ) -> AppResult<usize> {
+    ) -> HttpResult<usize> {
         let online_user_ids = self.online_user_ids();
         if online_user_ids.is_empty() {
             return Ok(0);
@@ -197,6 +205,9 @@ impl MessageHub {
         redis: Option<RedisClient>,
         service: Arc<MessageService>,
     ) -> Option<JoinHandle<()>> {
+        if !self.config.enabled {
+            return None;
+        }
         let redis = redis?;
         let hub = self.clone();
         Some(tokio::spawn(async move {
@@ -247,7 +258,7 @@ pub async fn upgrade(
     ws: WebSocketUpgrade,
     Query(query): Query<WebSocketQuery>,
     headers: HeaderMap,
-) -> AppResult<impl IntoResponse> {
+) -> HttpResult<impl IntoResponse> {
     validate_websocket_origin(&state, &headers)?;
     let ticket = match state.services.websocket_ticket.consume(&query.ticket).await {
         Ok(ticket) => {
@@ -255,7 +266,7 @@ pub async fn upgrade(
             ticket
         }
         Err(error) => {
-            let result = if matches!(error, KernelAppError::ServiceUnavailable(_)) {
+            let result = if matches!(error, AppError::ServiceUnavailable(_)) {
                 "backend_error"
             } else {
                 "rejected"
@@ -271,7 +282,7 @@ pub async fn upgrade(
             &ticket.tenant_id,
             ticket.user_id,
             &ticket.session_id,
-            ticket.user_auth_version,
+            ticket.user_authorization_version,
             ticket.tenant_session_version,
         )
         .await?;
@@ -286,10 +297,20 @@ async fn handle_socket(
     service: Arc<MessageService>,
     ticket: WebSocketTicket,
 ) {
-    let (outbound, mut outbound_receiver) = mpsc::channel(CONNECTION_QUEUE_CAPACITY);
+    let (outbound, mut outbound_receiver) = mpsc::channel(hub.config.outbound_buffer);
     let (shutdown_sender, mut shutdown_receiver) = watch::channel(false);
-    let connection_id = hub.register(&ticket, outbound.clone(), shutdown_sender.clone());
     let (mut socket_sender, mut socket_receiver) = socket.split();
+    let Some(connection_id) = hub.try_register(&ticket, outbound.clone(), shutdown_sender.clone())
+    else {
+        ryframe_middleware::metrics::record_message_delivery("connection_limit");
+        let _ = socket_sender
+            .send(Message::Close(Some(CloseFrame {
+                code: 1008,
+                reason: "当前用户的 WebSocket 连接数已达上限".into(),
+            })))
+            .await;
+        return;
+    };
 
     let _ = queue_text(
         &outbound,
@@ -537,10 +558,7 @@ enum QueueTextResult {
     SerializationFailed,
 }
 
-fn queue_text(
-    outbound: &mpsc::Sender<Message>,
-    payload: Result<String, AppError>,
-) -> QueueTextResult {
+fn queue_text(outbound: &mpsc::Sender<Message>, payload: HttpResult<String>) -> QueueTextResult {
     let Ok(payload) = payload else {
         tracing::error!("消息 WebSocket 帧序列化失败");
         return QueueTextResult::SerializationFailed;
@@ -552,7 +570,7 @@ fn queue_text(
     }
 }
 
-fn serialize_hello_frame(connection_id: &str, locale: &str) -> AppResult<String> {
+fn serialize_hello_frame(connection_id: &str, locale: &str) -> HttpResult<String> {
     #[derive(Serialize)]
     struct Hello<'a> {
         v: u8,
@@ -571,7 +589,7 @@ fn serialize_hello_frame(connection_id: &str, locale: &str) -> AppResult<String>
     })
 }
 
-fn serialize_message_frame(message: &MessageVo) -> AppResult<String> {
+fn serialize_message_frame(message: &MessageVo) -> HttpResult<String> {
     #[derive(Serialize)]
     struct Delivery<'a> {
         v: u8,
@@ -586,7 +604,7 @@ fn serialize_message_frame(message: &MessageVo) -> AppResult<String> {
     })
 }
 
-fn serialize_ack_frame(ids: &[String]) -> AppResult<String> {
+fn serialize_ack_frame(ids: &[String]) -> HttpResult<String> {
     #[derive(Serialize)]
     struct Ack<'a> {
         v: u8,
@@ -601,7 +619,7 @@ fn serialize_ack_frame(ids: &[String]) -> AppResult<String> {
     })
 }
 
-fn serialize_simple_frame(kind: &'static str) -> AppResult<String> {
+fn serialize_simple_frame(kind: &'static str) -> HttpResult<String> {
     #[derive(Serialize)]
     struct Simple {
         v: u8,
@@ -615,12 +633,12 @@ fn localized_error_frame(
     localizer: &Localizer,
     locale: Locale,
     error: ClientFrameError,
-) -> AppResult<String> {
+) -> HttpResult<String> {
     let message = localizer.translate(locale, error.localization_key());
     serialize_error_frame(error.code(), &message)
 }
 
-fn serialize_error_frame(code: &'static str, message: &str) -> AppResult<String> {
+fn serialize_error_frame(code: &'static str, message: &str) -> HttpResult<String> {
     #[derive(Serialize)]
     struct ErrorFrame<'a> {
         v: u8,
@@ -637,12 +655,15 @@ fn serialize_error_frame(code: &'static str, message: &str) -> AppResult<String>
     })
 }
 
-fn serialize_frame(frame: &impl Serialize) -> AppResult<String> {
-    serde_json::to_string(frame)
-        .map_err(|error| AppError::Internal(format!("消息 WebSocket 帧序列化失败: {error}")))
+fn serialize_frame(frame: &impl Serialize) -> HttpResult<String> {
+    serde_json::to_string(frame).map_err(|error| {
+        HttpAppError::from(AppError::Internal(format!(
+            "消息 WebSocket 帧序列化失败: {error}"
+        )))
+    })
 }
 
-fn validate_websocket_origin(state: &AppState, headers: &HeaderMap) -> AppResult<()> {
+fn validate_websocket_origin(state: &AppState, headers: &HeaderMap) -> HttpResult<()> {
     match headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
@@ -657,27 +678,19 @@ fn validate_websocket_origin(state: &AppState, headers: &HeaderMap) -> AppResult
         {
             Ok(())
         }
-        Some(_) => Err(AppError::Authorization("WebSocket Origin 未获允许".into())),
-        None if production_environment() => Err(AppError::Authorization(
-            "生产环境的 WebSocket 请求必须携带 Origin".into(),
-        )),
+        Some(_) => Err(AppError::Authorization("WebSocket Origin 未获允许".into()).into()),
+        None if state.config.environment.is_production() => {
+            Err(AppError::Authorization("生产环境的 WebSocket 请求必须携带 Origin".into()).into())
+        }
         None => Ok(()),
     }
-}
-
-fn production_environment() -> bool {
-    std::env::var("APP_ENV").is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "prod" | "production"
-        )
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    use ryframe_config::MessagingConfig;
     use ryframe_i18n::{Locale, Localizer};
     use ryframe_service::system::WebSocketTicket;
     use tokio::sync::{mpsc, watch};
@@ -692,7 +705,7 @@ mod tests {
             tenant_id: tenant_id.into(),
             user_id,
             session_id: "session".into(),
-            user_auth_version: 1,
+            user_authorization_version: 1,
             tenant_session_version: 1,
             locale: "zh-CN".into(),
         }
@@ -701,12 +714,16 @@ mod tests {
     fn register(hub: &MessageHub, ticket: &WebSocketTicket) -> String {
         let (sender, _) = mpsc::channel(1);
         let (shutdown, _) = watch::channel(false);
-        hub.register(ticket, sender, shutdown)
+        hub.try_register(ticket, sender, shutdown)
+            .expect("连接数未达到上限")
     }
 
     #[test]
     fn connection_index_tracks_identity_lifecycle() {
-        let hub = MessageHub::new(Arc::new(Localizer::embedded().expect("内嵌国际化资源")));
+        let hub = MessageHub::new(
+            Arc::new(Localizer::embedded().expect("内嵌国际化资源")),
+            MessagingConfig::default(),
+        );
         let tenant_a_user = ticket("tenant-a", 1);
         let tenant_b_user = ticket("tenant-b", 2);
         let first = register(&hub, &tenant_a_user);
@@ -723,6 +740,67 @@ mod tests {
         assert!(hub.connection_ids_for_identity("tenant-a", 1).is_empty());
         hub.unregister(&third);
         assert!(hub.online_user_ids().is_empty());
+    }
+
+    #[test]
+    fn concurrent_registration_enforces_the_per_identity_limit() {
+        use std::{
+            sync::{Arc as StdArc, Barrier},
+            thread,
+        };
+
+        let config = MessagingConfig {
+            max_connections_per_user: 3,
+            ..MessagingConfig::default()
+        };
+        let hub = StdArc::new(MessageHub::new(
+            Arc::new(Localizer::embedded().expect("内嵌国际化资源")),
+            config,
+        ));
+        let barrier = StdArc::new(Barrier::new(12));
+        let handles = (0..12)
+            .map(|_| {
+                let hub = hub.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    let ticket = ticket("tenant-a", 7);
+                    let (sender, _) = mpsc::channel(1);
+                    let (shutdown, _) = watch::channel(false);
+                    barrier.wait();
+                    hub.try_register(&ticket, sender, shutdown)
+                })
+            })
+            .collect::<Vec<_>>();
+        let registered = handles
+            .into_iter()
+            .filter_map(|handle| handle.join().expect("并发注册线程应正常结束"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(registered.len(), 3);
+        assert_eq!(hub.connection_ids_for_identity("tenant-a", 7).len(), 3);
+        for id in registered {
+            hub.unregister(&id);
+        }
+        assert_eq!(hub.connection_count(), 0);
+    }
+
+    #[test]
+    fn disabled_messaging_rejects_connection_registration() {
+        let hub = MessageHub::new(
+            Arc::new(Localizer::embedded().expect("内嵌国际化资源")),
+            MessagingConfig {
+                enabled: false,
+                ..MessagingConfig::default()
+            },
+        );
+        let (sender, _) = mpsc::channel(1);
+        let (shutdown, _) = watch::channel(false);
+
+        assert!(
+            hub.try_register(&ticket("tenant-a", 1), sender, shutdown)
+                .is_none()
+        );
+        assert_eq!(hub.connection_count(), 0);
     }
 
     #[test]

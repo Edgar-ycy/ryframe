@@ -238,9 +238,9 @@ struct DatabaseClusterInner {
 
 /// 共享的主库、副本及具名业务数据源连接池。
 ///
-/// 命令始终使用 [`DatabaseCluster::write`]。兼容性辅助方法
-/// [`DatabaseCluster::read`] 会按轮询顺序选择健康副本，并在需要时回退到主库。
-/// 新代码可通过 [`DatabaseCluster::select_read`] 显式声明需要强一致性还是最终一致性。
+/// 命令始终使用 [`DatabaseCluster::write`]。查询只能通过
+/// [`DatabaseCluster::select_read`] 显式声明需要强一致性还是最终一致性；最终一致性读取
+/// 会按轮询顺序选择健康副本，并在没有可用副本时回退到主库。
 /// 异构业务数据源只能通过 [`DatabaseCluster::source`] 获取，绝不参与自动路由。
 #[derive(Clone, Debug)]
 pub struct DatabaseCluster {
@@ -248,45 +248,6 @@ pub struct DatabaseCluster {
 }
 
 impl DatabaseCluster {
-    pub fn new(
-        primary: DatabaseConnection,
-        replicas: impl IntoIterator<Item = (String, DatabaseConnection)>,
-    ) -> Self {
-        Self::with_sources(primary, replicas, std::iter::empty())
-    }
-
-    pub fn with_sources(
-        primary: DatabaseConnection,
-        replicas: impl IntoIterator<Item = (String, DatabaseConnection)>,
-        sources: impl IntoIterator<Item = (String, DatabaseConnection)>,
-    ) -> Self {
-        Self::with_sources_and_replica_health(
-            primary,
-            replicas
-                .into_iter()
-                .map(|(name, connection)| (name, connection, true)),
-            sources,
-        )
-    }
-
-    /// 构建集群时保留副本的启动探针状态。
-    ///
-    /// 启动期间无法连接的副本仍保持配置，但在连续两次探针成功恢复前，不参与
-    /// 最终一致性读取。
-    pub fn with_sources_and_replica_health(
-        primary: DatabaseConnection,
-        replicas: impl IntoIterator<Item = (String, DatabaseConnection, bool)>,
-        sources: impl IntoIterator<Item = (String, DatabaseConnection)>,
-    ) -> Self {
-        Self::with_sources_and_replica_slots(
-            primary,
-            replicas
-                .into_iter()
-                .map(|(name, connection, healthy)| (name, Some(connection), healthy)),
-            sources,
-        )
-    }
-
     /// 使用可替换副本连接槽位构建集群。
     ///
     /// `None` 表示该副本已经配置但当前无可用连接；它会保留在拓扑和指标中，等待
@@ -315,7 +276,7 @@ impl DatabaseCluster {
     }
 
     pub fn single(primary: DatabaseConnection) -> Self {
-        Self::new(primary, std::iter::empty())
+        Self::with_sources_and_replica_slots(primary, std::iter::empty(), std::iter::empty())
     }
 
     /// 安装应用层提供的低基数监控观察者，并同步当前已配置节点状态。
@@ -341,40 +302,6 @@ impl DatabaseCluster {
     /// 为命令和一致性敏感读取返回主库连接池。
     pub fn write(&self) -> &DatabaseConnection {
         &self.inner.primary
-    }
-
-    /// 为只读操作返回健康副本连接池的克隆。
-    ///
-    /// 所有副本均降级或未配置副本时返回主库。能够显式声明一致性要求的新代码应
-    /// 优先使用 [`Self::select_read`]。返回克隆可确保副本连接池在该用例执行期间
-    /// 保持稳定，不会因后台重连而切换节点。
-    pub fn read(&self) -> DatabaseConnection {
-        match self.select_read_replica() {
-            Some((_name, connection)) => {
-                self.record_read_selection(
-                    DatabaseNodeKind::Replica,
-                    DatabaseReadSelectionReason::Replica,
-                );
-                connection
-            }
-            None => {
-                self.record_read_selection(
-                    DatabaseNodeKind::Primary,
-                    DatabaseReadSelectionReason::Fallback,
-                );
-                self.record_read_fallback();
-                self.inner.primary.clone()
-            }
-        }
-    }
-
-    /// 为强一致性读取返回主库连接。
-    pub fn read_strong(&self) -> &DatabaseConnection {
-        self.record_read_selection(
-            DatabaseNodeKind::Primary,
-            DatabaseReadSelectionReason::Strong,
-        );
-        self.write()
     }
 
     /// 按显式一致性策略选择克隆的连接池。
@@ -668,6 +595,18 @@ mod tests {
 
     use super::*;
 
+    fn cluster_with_healthy_replicas(
+        replicas: impl IntoIterator<Item = (String, DatabaseConnection)>,
+    ) -> DatabaseCluster {
+        DatabaseCluster::with_sources_and_replica_slots(
+            DatabaseConnection::default(),
+            replicas
+                .into_iter()
+                .map(|(name, connection)| (name, Some(connection), true)),
+            std::iter::empty(),
+        )
+    }
+
     #[derive(Debug, Default)]
     struct RecordingMetricsObserver {
         node_health: Mutex<Vec<(DatabaseNodeKind, String, bool)>>,
@@ -698,13 +637,10 @@ mod tests {
 
     #[test]
     fn reads_rotate_over_replicas_and_single_node_falls_back() {
-        let cluster = DatabaseCluster::new(
-            DatabaseConnection::default(),
-            [
-                ("replica-a".to_owned(), DatabaseConnection::default()),
-                ("replica-b".to_owned(), DatabaseConnection::default()),
-            ],
-        );
+        let cluster = cluster_with_healthy_replicas([
+            ("replica-a".to_owned(), DatabaseConnection::default()),
+            ("replica-b".to_owned(), DatabaseConnection::default()),
+        ]);
 
         let selected = (0..3)
             .map(|_| cluster.select_read_replica().unwrap().0)
@@ -727,10 +663,10 @@ mod tests {
 
     #[test]
     fn explicit_consistency_skips_degraded_replicas_and_falls_back_to_primary() {
-        let cluster = DatabaseCluster::new(
+        let cluster = cluster_with_healthy_replicas([(
+            "replica-a".to_owned(),
             DatabaseConnection::default(),
-            [("replica-a".to_owned(), DatabaseConnection::default())],
-        );
+        )]);
 
         assert!(cluster.set_replica_health("replica-a", false));
         let eventual = cluster.select_read(ReadConsistency::Eventual);
@@ -749,10 +685,10 @@ mod tests {
 
     #[test]
     fn metrics_observer_receives_bounded_routing_events() {
-        let cluster = DatabaseCluster::new(
+        let cluster = cluster_with_healthy_replicas([(
+            "replica-a".to_owned(),
             DatabaseConnection::default(),
-            [("replica-a".to_owned(), DatabaseConnection::default())],
-        );
+        )]);
         let observer = Arc::new(RecordingMetricsObserver::default());
         cluster.set_metrics_observer(observer.clone());
 
@@ -790,10 +726,10 @@ mod tests {
 
     #[test]
     fn replica_recovery_requires_two_successful_probes() {
-        let cluster = DatabaseCluster::new(
+        let cluster = cluster_with_healthy_replicas([(
+            "replica-a".to_owned(),
             DatabaseConnection::default(),
-            [("replica-a".to_owned(), DatabaseConnection::default())],
-        );
+        )]);
         let replica = &cluster.inner.replicas[0];
 
         replica.set_healthy(false);
@@ -848,10 +784,10 @@ mod tests {
 
     #[tokio::test]
     async fn topology_reads_do_not_advance_replica_probe_thresholds() {
-        let cluster = DatabaseCluster::new(
+        let cluster = cluster_with_healthy_replicas([(
+            "replica-a".to_owned(),
             DatabaseConnection::default(),
-            [("replica-a".to_owned(), DatabaseConnection::default())],
-        );
+        )]);
         let replica = &cluster.inner.replicas[0];
 
         replica.set_healthy(false);
@@ -867,7 +803,7 @@ mod tests {
     fn named_sources_require_explicit_selection() {
         let primary = DatabaseConnection::default();
         let business = DatabaseConnection::default();
-        let cluster = DatabaseCluster::with_sources(
+        let cluster = DatabaseCluster::with_sources_and_replica_slots(
             primary,
             std::iter::empty(),
             [("business".to_owned(), business)],

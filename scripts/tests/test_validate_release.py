@@ -168,6 +168,32 @@ class FixedSourceTests(unittest.TestCase):
         ), self.assertRaisesRegex(ValueError, "package.json version"):
             validate_release.validate_package_version(Path("frontend"), "0.5.0")
 
+    def test_frontend_contract_source_must_pin_the_release_backend(self) -> None:
+        source = {
+            "schema_version": 1,
+            "backend_repository": "example/ryframe",
+            "backend_commit": COMMIT_A,
+            "openapi_path": "openapi/openapi.json",
+            "sha256": "c" * 64,
+        }
+        with mock.patch.object(validate_release, "json_object", return_value=source):
+            validate_release.validate_frontend_contract_source(
+                Path("frontend"), "example/ryframe", COMMIT_A, "c" * 64
+            )
+
+        for field, value in (
+            ("backend_repository", "other/ryframe"),
+            ("backend_commit", COMMIT_B),
+            ("sha256", "d" * 64),
+        ):
+            mismatched = {**source, field: value}
+            with self.subTest(field=field), mock.patch.object(
+                validate_release, "json_object", return_value=mismatched
+            ), self.assertRaisesRegex(ValueError, field):
+                validate_release.validate_frontend_contract_source(
+                    Path("frontend"), "example/ryframe", COMMIT_A, "c" * 64
+                )
+
 
 class ManifestTests(unittest.TestCase):
     def test_manifest_is_deterministic_and_records_both_fixed_sources(self) -> None:

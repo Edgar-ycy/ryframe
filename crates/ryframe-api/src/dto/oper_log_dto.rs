@@ -1,6 +1,6 @@
 use ryframe_config::PaginationConfig;
-use ryframe_core::PageQuery;
-use ryframe_http::AppResult;
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::HttpResult;
 use ryframe_service::system::OperLogQuery;
 
 crate::list_query!(pub OperLogPageQuery, OperLogFilterQuery {
@@ -11,14 +11,14 @@ crate::list_query!(pub OperLogPageQuery, OperLogFilterQuery {
 });
 
 impl OperLogPageQuery {
-    pub fn into_service_query(self, policy: &PaginationConfig) -> AppResult<OperLogQuery> {
+    pub fn into_service_query(self, policy: &PaginationConfig) -> HttpResult<OperLogQuery> {
         let (page, filter) = self.into_parts(policy)?;
         Ok(filter.into_service_query(page))
     }
 }
 
 impl OperLogFilterQuery {
-    pub fn into_service_query(self, page: PageQuery) -> OperLogQuery {
+    pub fn into_service_query(self, page: ValidatedPageQuery) -> OperLogQuery {
         OperLogQuery {
             page,
             oper_name: self.oper_name,

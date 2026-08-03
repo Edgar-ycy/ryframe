@@ -1,7 +1,6 @@
 use sea_orm_migration::prelude::*;
 
-/// 在不改写历史记录的前提下补充权威的 SHA-256 内容摘要。旧 MD5 值在后续后台
-/// 重算填充新列前仍可读取。
+/// 以可空列补充权威的 SHA-256 内容摘要，供独立维护命令分批回填。
 #[derive(DeriveMigrationName)]
 pub struct Migration;
 

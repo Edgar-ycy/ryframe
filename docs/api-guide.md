@@ -10,6 +10,8 @@ GET /api/v1/api-docs/openapi.json
 GET /api/v1/swagger-ui
 ```
 
+Swagger UI 的 HTML、CSS、JavaScript、字体和图标均由 Rust crate 在编译期内嵌，浏览器不会从 CDN 或其他外部站点加载资源。`/api/v1/swagger-ui` 是唯一页面入口，不提供尾斜杠或 `index.html` 兼容路由；静态资源位于 `/api/v1/swagger-ui/{asset}`。文档页面的 CSP 保持 `script-src 'self'`，仅因 Swagger UI 运行时组件使用内联样式而对该 HTML 响应设置 `style-src 'self' 'unsafe-inline'`。
+
 以上运行时文档只用于开发和受控测试环境。生产配置强制
 `APP_API_DOCS_ENABLED=false`，公网 Nginx 也应返回 `404`；生产排查使用仓库中经过
 CI 校验的 `openapi/openapi.json`。
@@ -110,7 +112,7 @@ X-Tenant-Id: <tenant_id>
 
 ### 重试、幂等和代理边界
 
-认证后的 `/system`、`/platform` 写请求可以携带 `Idempotency-Key`。服务端把它与租户、用户、HTTP 方法、规范路径和 body hash 绑定：处理中重复请求返回 `409` 与 `Retry-After`，完成结果保留 300 秒并可回放；同键不同 body 返回 `409`。超过 1 MiB 的成功响应不会被缓存，后续重复请求返回不可回放冲突，但首次成功响应保持不变。认证、上传下载、生成器、监控和流式响应不参与幂等缓存。
+认证后的 `/system`、`/platform` 写请求可以携带 `Idempotency-Key`。存储键只隔离租户、用户和客户端提供的原始键；请求指纹完整绑定 HTTP 方法、真实规范化路径、排序后的查询参数以及 body SHA-256。同一主体复用同一个键且指纹一致时，处理中请求返回 `409` 与 `Retry-After`，完成结果保留 300 秒并可回放；方法、路径、查询值或正文任一不同都会返回 `409`，仅查询参数顺序不同仍视为同一请求。超过 1 MiB 的成功响应不会被缓存，后续重复请求返回不可回放冲突，但首次成功响应保持不变。认证、上传下载、生成器、监控和流式响应不参与幂等缓存。
 
 API 不定义 `X-Nonce` / `X-Timestamp` 通用防重放协议，客户端不得依赖或发送这两个头。未签名且由客户端自行生成的 nonce 与时间戳不能证明请求来源，也没有绑定主体、方法、目标路径和 body；把它们当作安全校验会产生错误的保护预期。当前浏览器边界由 HTTPS、Bearer 身份与授权、签名 CSRF challenge、refresh family 原子轮换以及上述幂等绑定共同承担。未来若为外部机器客户端增加应用层持有者证明，必须设计独立的密钥注册与轮换流程，并采用 [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) 一类可验证签名，明确覆盖方法、目标 URI、内容摘要、创建时间与 nonce；不得恢复裸双头方案。
 
@@ -186,7 +188,7 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 - 仅允许可见 ASCII 字符，不允许空格。
 - 至少包含一个大写字母、一个小写字母、一个数字和一个特殊字符。
 
-策略由 OpenAPI 顶层扩展 `x-ryframe-password-policy` 发布，各密码字段同时声明等价的 `minLength`、`maxLength` 和 `pattern`。前端必须从该扩展生成验证配置，不维护第二份正则。个人修改密码和重置密码成功后，服务端会递增用户 `auth_version`，此前签发的 access/refresh token 会失效。
+策略由 OpenAPI 顶层扩展 `x-ryframe-password-policy` 发布，各密码字段同时声明等价的 `minLength`、`maxLength` 和 `pattern`。前端必须从该扩展生成验证配置，不维护第二份正则。个人修改密码和重置密码成功后，服务端会递增用户 `authorization_version`，此前签发的 access/refresh token 会失效。
 
 管理员不能直接设置用户新密码。标准流程是：
 
@@ -202,14 +204,31 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 | 操作 | 形式 |
 | --- | --- |
 | 分页列表 | `GET /resources` |
-| 全量列表 | `GET /resources/all` |
 | 详情 | `GET /resources/{id}` |
 | 创建 | `POST /resources` |
 | 更新 | `PUT /resources/{id}` |
 | 删除 | `DELETE /resources/{id}` |
 | 领域动作 | `/resources/{id}/action` 或资源级动作路径 |
 
-项目不保留旧接口别名。以下旧风格已禁止：`listNoPage`、`changeStatus`、`configKey`、`refreshCache` 和单数 `/system/user`、`/system/role`。
+项目不提供无上限列表；表格查询必须分页，选择器必须使用有限候选接口。项目不保留旧接口别名，状态修改和缓存刷新等动作只使用当前 OpenAPI 声明的资源路径。
+
+角色和用户候选项分别使用 `GET /api/v1/system/roles/options` 与 `GET /api/v1/system/users/options`。两者只接受可选的 `q` 和 `limit`：`q` 会去除首尾空白并执行当前租户内的前缀搜索，最长 64 个字符；`limit` 默认使用分页配置的默认页大小，必须位于 `1..=max_page_size`，非法值返回 `400`。响应固定为：
+
+```json
+{
+  "items": [
+    {
+      "value": "角色或用户 ID",
+      "label": "显示名称",
+      "description": "可选说明",
+      "disabled": false
+    }
+  ],
+  "has_more": false
+}
+```
+
+候选接口采用 `limit + 1` 判断 `has_more`，不执行总数统计，也不返回 `page`、`page_size` 或 `total`。
 
 ## 5. 模块目录
 
@@ -217,24 +236,26 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 
 | 前缀 | 模块 | 额外动作 |
 | --- | --- | --- |
-| `/api/v1/system/users` | 用户 | `/all`、`PUT /{id}/roles`、`PUT /{id}/status`、`/batch/{ids}`、导入导出和重置请求 |
-| `/api/v1/system/roles` | 角色 | `/all`、`GET/PUT /{id}/permissions`、`PUT /{id}/data-scope` |
+| `/api/v1/system/users` | 用户 | `/options`、`PUT /{id}/roles`、`PUT /{id}/status`、`/batch/{ids}`、导入导出和重置请求 |
+| `/api/v1/system/roles` | 角色 | `/options`、`GET/PUT /{id}/permissions`、`PUT /{id}/data-scope` |
 | `/api/v1/system/perms` | 权限 | `/tree`、`/sync` |
-| `/api/v1/system/menus` | 菜单 | `/tree`、`/current`、`/all` |
-| `/api/v1/system/depts` | 部门 | `/tree`、`/all` |
-| `/api/v1/system/posts` | 岗位 | `/all`、`/export` |
-| `/api/v1/system/configs` | 参数配置 | `/all`、`/key/{key}`、`DELETE /cache`、`/export` |
-| `/api/v1/system/dict` | 字典 | `/types`、`/types/all`、`/data`、`/data/type/{dict_type}` |
-| `/api/v1/system/notices` | 通知公告 | `/all` |
-| `/api/v1/system/operlogs` | 操作日志 | `/all`、`/export` |
-| `/api/v1/system/loginlogs` | 登录日志 | `/all`、`/export` |
-| `/api/v1/system/online` | 在线用户 | `/all`、`DELETE /{sid}`；`sid` 精确表示一个设备会话 |
+| `/api/v1/system/menus` | 菜单 | `/tree`、`/current` |
+| `/api/v1/system/depts` | 部门 | `/tree` |
+| `/api/v1/system/posts` | 岗位 | `/exports` |
+| `/api/v1/system/configs` | 参数配置 | `/key/{key}`、`DELETE /cache`、`/exports` |
+| `/api/v1/system/dict` | 字典 | `/types`、`/data`、`/data/type/{dict_type}`、`/types/exports` |
+| `/api/v1/system/notices` | 通知公告 | `POST /{id}/publish-message` |
+| `/api/v1/system/operlogs` | 操作日志 | `/exports` |
+| `/api/v1/system/loginlogs` | 登录日志 | `/exports` |
+| `/api/v1/system/online` | 在线用户 | `DELETE /{sid}`；`sid` 精确表示一个设备会话 |
 | `/api/v1/platform/tenants` | 租户 | `PUT /{tenant_id}/status` |
 | `/api/v1/auth/profile` | 个人中心 | `/password`、`/avatar` |
 | `/api/v1/tools/gen` | 代码生成 | `/tables`、`/preview`、`/generate`、`/download` |
 | `/api/v1/common/upload` | 文件上传 | `/image`、`/avatar` |
 | `/api/v1/common/file` | 文件 | `/download` |
 | `/api/v1/monitor` | 监控 | `/metrics`、`/server`、`/cache`、`/db-pool`、`/runtime`；探针位于根路径 `/livez`、`/readyz` |
+
+公告创建、更新和响应只使用 `content_markdown`，不接受旧 `content` 字段。Markdown 原文按 UTF-8 字节校验，允许 1–60,000 字节；限制由 OpenAPI 的 `x-ryframe-notice-policy` 发布，前端不得复制常量。
 
 ### 当前用户菜单
 
@@ -295,7 +316,7 @@ system:user:remove
 
 数据范围作用于用户、部门、公告和日志等查询。即使用户拥有接口权限，也只能读取主体数据范围允许的记录。
 
-## 7. DTO 兼容规则
+## 7. DTO 契约规则
 
 - 写入 DTO 默认拒绝未知字段；拼错字段会返回 `400`，不会被静默忽略。
 - 状态、长度、邮箱、手机号和密码规则由服务端校验。
@@ -319,7 +340,7 @@ curl --fail http://127.0.0.1:8080/readyz
 curl http://127.0.0.1:8080/api/v1/api-docs/openapi.json
 ```
 
-`/livez` 只证明进程存活并固定返回 `200`；`/readyz` 检查 MySQL、required Redis 和必要对象存储，依赖故障时返回 `503`。探针不经过租户、认证、幂等和业务限流。
+`/livez` 只证明进程存活并固定返回 `200`；后台任务定期检查 MySQL、required Redis 和必要对象存储，`/readyz` 只读取最近一次内存快照，请求路径不执行 SQL、Redis 或对象存储网络调用。必要依赖故障或快照过期时返回 `503`。探针不经过租户、认证、幂等和业务限流。
 
 提交 API 变更前运行：
 

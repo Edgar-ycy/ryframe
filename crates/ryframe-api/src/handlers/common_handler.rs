@@ -5,14 +5,14 @@ use axum::{
     response::IntoResponse,
 };
 use ryframe_core::resilience::CircuitBreaker;
-use ryframe_http::{ApiResponse, AppError, AppResult};
-use ryframe_kernel::{AppError as KernelAppError, AppResult as KernelAppResult};
+use ryframe_http::{ApiResponse, HttpResult};
+use ryframe_kernel::{AppError, AppResult as KernelAppResult};
 use ryframe_macro::{get, post, route};
-use ryframe_service::system::file_service::{AVATAR_BUCKET, UPLOAD_BUCKET, UploadResponse};
-use ryframe_utils::file_upload::{UploadConfig, get_content_type};
+use ryframe_service::system::file_service::{AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET};
+use ryframe_utils::file_upload::UploadConfig;
 use serde::Deserialize;
 
-use crate::dto::multipart_dto::FileUploadForm;
+use crate::dto::{multipart_dto::FileUploadForm, public_dto::UploadResponse};
 use crate::{handler_utils::attachment_content_disposition, state::AppState};
 use ryframe_auth::RequestPrincipal;
 
@@ -35,10 +35,10 @@ fn default_bucket() -> String {
     UPLOAD_BUCKET.to_string()
 }
 
-fn upload_failure_affects_circuit_breaker(error: &KernelAppError) -> bool {
+fn upload_failure_affects_circuit_breaker(error: &AppError) -> bool {
     matches!(
         error,
-        KernelAppError::Database(_) | KernelAppError::ServiceUnavailable(_)
+        AppError::Database(_) | AppError::ServiceUnavailable(_)
     )
 }
 
@@ -81,7 +81,7 @@ pub async fn upload_file(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     multipart: Multipart,
-) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
+) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig {
         max_file_size: state.config.upload.file_max_bytes as u64,
         ..Default::default()
@@ -110,7 +110,7 @@ pub async fn upload_image(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     multipart: Multipart,
-) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
+) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig {
         allowed_extensions: vec![
             "jpg".to_string(),
@@ -139,7 +139,7 @@ pub async fn upload_avatar(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     multipart: Multipart,
-) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
+) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     let config = UploadConfig {
         allowed_extensions: vec![
             "jpg".to_string(),
@@ -163,11 +163,11 @@ async fn process_multipart_upload(
     bucket: &'static str,
     compress: bool,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<MultiUploadResponse>>> {
+) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     if !state.runtime.upload_circuit_breaker.allow_request() {
-        return Err(AppError::ServiceUnavailable(
-            "文件上传服务暂时不可用，请稍后再试".into(),
-        ));
+        return Err(
+            AppError::ServiceUnavailable("文件上传服务暂时不可用，请稍后再试".into()).into(),
+        );
     }
 
     let mut results: MultiUploadResponse = Vec::new();
@@ -181,9 +181,7 @@ async fn process_multipart_upload(
         let field_name = field.name().unwrap_or("").to_string();
 
         if field_name == "bucket" {
-            return Err(AppError::Validation(
-                "v0.5 不允许客户端选择对象存储 bucket".into(),
-            ));
+            return Err(AppError::Validation("v0.5 不允许客户端选择对象存储 bucket".into()).into());
         }
 
         let filename = match field.file_name() {
@@ -201,7 +199,8 @@ async fn process_multipart_upload(
             return Err(AppError::PayloadTooLarge(format!(
                 "单次上传文件总大小超过限制（最大 {} MiB）",
                 config.max_file_size / 1024 / 1024
-            )));
+            ))
+            .into());
         }
 
         // 委托 FileService 处理业务逻辑
@@ -222,11 +221,11 @@ async fn process_multipart_upload(
         record_upload_result(state.runtime.upload_circuit_breaker.as_ref(), &result);
         let result = result?;
 
-        results.push(result);
+        results.push(result.into());
     }
 
     if results.is_empty() {
-        return Err(AppError::Validation("未找到上传文件".into()));
+        return Err(AppError::Validation("未找到上传文件".into()).into());
     }
 
     Ok(Json(ApiResponse::success(results)))
@@ -245,44 +244,85 @@ pub async fn download_file(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<DownloadQuery>,
-) -> AppResult<impl IntoResponse> {
+) -> HttpResult<impl IntoResponse> {
     let bucket = if query.bucket.is_empty() {
         UPLOAD_BUCKET
     } else if matches!(query.bucket.as_str(), UPLOAD_BUCKET | AVATAR_BUCKET) {
         query.bucket.as_str()
     } else {
-        return Err(AppError::Validation("不允许访问未知文件 bucket".into()));
+        return Err(AppError::Validation("不允许访问未知文件 bucket".into()).into());
     };
 
-    let (data, filename) = state
+    let file = state
         .services
         .file
         .download(&current_user, bucket, &query.path)
         .await?;
 
-    let content_type = get_content_type(&filename);
+    downloaded_file_response(file)
+}
 
-    // 构建响应头
+fn downloaded_file_response(file: DownloadedFile) -> HttpResult<(HeaderMap, Vec<u8>)> {
+    // 内容类型和原始名称均来自数据库元数据，不能根据对象键或扩展名重新推断。
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
-        content_type
+        file.content_type
             .parse()
             .map_err(|e| AppError::Internal(format!("设置 Content-Type 失败: {}", e)))?,
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        attachment_content_disposition(&filename)?,
+        attachment_content_disposition(&file.original_name)?,
     );
 
-    Ok((headers, data))
+    Ok((headers, file.data))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{record_upload_result, upload_failure_affects_circuit_breaker};
+    use axum::http::header;
+
+    use super::{
+        downloaded_file_response, record_upload_result, upload_failure_affects_circuit_breaker,
+    };
     use ryframe_core::resilience::{CircuitBreaker, CircuitState};
     use ryframe_kernel::{AppError, AppResult};
+    use ryframe_service::system::file_service::DownloadedFile;
+
+    #[test]
+    fn download_response_uses_persisted_content_type_instead_of_filename_extension() {
+        let (headers, body) = downloaded_file_response(DownloadedFile {
+            data: b"persisted".to_vec(),
+            original_name: "report.txt".into(),
+            content_type: "application/pdf".into(),
+        })
+        .unwrap();
+
+        assert_eq!(headers[header::CONTENT_TYPE], "application/pdf");
+        assert_eq!(
+            headers[header::CONTENT_DISPOSITION],
+            "attachment; filename*=UTF-8''report%2Etxt"
+        );
+        assert_eq!(body, b"persisted");
+    }
+
+    #[test]
+    fn 下载响应逐字保留数据库原文件名并使用_rfc5987() {
+        let (headers, body) = downloaded_file_response(DownloadedFile {
+            data: b"database metadata".to_vec(),
+            original_name: "报告.xlsx".into(),
+            content_type: "text/csv; charset=utf-8".into(),
+        })
+        .unwrap();
+
+        assert_eq!(headers[header::CONTENT_TYPE], "text/csv; charset=utf-8");
+        assert_eq!(
+            headers[header::CONTENT_DISPOSITION],
+            "attachment; filename*=UTF-8''%E6%8A%A5%E5%91%8A%2Exlsx"
+        );
+        assert_eq!(body, b"database metadata");
+    }
 
     fn record_error(circuit_breaker: &CircuitBreaker, error: AppError) {
         let result: AppResult<()> = Err(error);

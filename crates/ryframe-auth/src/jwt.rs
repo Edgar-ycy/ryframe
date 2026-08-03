@@ -14,13 +14,12 @@ pub struct Claims {
     /// 租户会话版本。租户状态变更时递增该值，使此前的访问令牌和刷新令牌全部失效。
     pub tenant_session_version: i32,
     /// 用户认证版本。角色、权限或凭据变更时递增该值，使现有访问令牌和刷新令牌失效。
-    pub user_auth_version: i32,
+    pub user_authorization_version: i32,
     /// 用户名
     pub username: String,
     /// 令牌类型: "access" | "refresh"
     pub token_type: String,
     /// 访问令牌与刷新令牌共享的稳定登录会话标识。
-    #[serde(default)]
     pub sid: String,
     /// 令牌唯一标识（用于在线用户管理）
     pub jti: String,
@@ -35,7 +34,7 @@ pub struct TokenIdentity<'a> {
     pub user_id: i64,
     pub tenant_id: &'a str,
     pub tenant_session_version: i32,
-    pub user_auth_version: i32,
+    pub user_authorization_version: i32,
     pub username: &'a str,
 }
 
@@ -62,7 +61,7 @@ pub fn encode_access_for_session(
         sub: identity.user_id.to_string(),
         tenant_id: identity.tenant_id.to_string(),
         tenant_session_version: identity.tenant_session_version,
-        user_auth_version: identity.user_auth_version,
+        user_authorization_version: identity.user_authorization_version,
         username: identity.username.to_string(),
         token_type: "access".into(),
         sid: sid.to_owned(),
@@ -113,7 +112,7 @@ pub fn encode_refresh_for_session_at(
         sub: identity.user_id.to_string(),
         tenant_id: identity.tenant_id.to_string(),
         tenant_session_version: identity.tenant_session_version,
-        user_auth_version: identity.user_auth_version,
+        user_authorization_version: identity.user_authorization_version,
         username: identity.username.to_string(),
         token_type: "refresh".into(),
         sid: sid.to_owned(),
@@ -191,13 +190,17 @@ fn encode_claims(claims: &Claims, config: &AuthConfig) -> AppResult<String> {
 
 /// 验证并解码 JWT
 pub fn decode_token(token: &str, secret: &str) -> AppResult<Claims> {
-    decode::<Claims>(
+    let claims = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
         &Validation::default(),
     )
     .map(|data| data.claims)
-    .map_err(|e| AppError::Authentication(format!("令牌无效或已过期: {}", e)))
+    .map_err(|e| AppError::Authentication(format!("令牌无效或已过期: {}", e)))?;
+    if claims.sid.is_empty() {
+        return Err(AppError::Authentication("令牌会话标识无效".into()));
+    }
+    Ok(claims)
 }
 
 /// 解析 duration 字符串为秒数

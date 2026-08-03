@@ -9,7 +9,7 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-ryframe-http = { path = "../ryframe-http" }
+ryframe-http = { path = "../ryframe-http", features = ["openapi"] }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-middleware = { path = "../ryframe-middleware" }

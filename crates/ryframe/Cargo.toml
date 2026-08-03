@@ -10,7 +10,6 @@ description.workspace = true
 default-run = "ryframe"
 
 [dependencies]
-ryframe-http = { path = "../ryframe-http" }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
 ryframe-i18n = { path = "../ryframe-i18n" }
@@ -31,6 +30,18 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "json"]}
 tracing-appender = { workspace = true }
 sea-orm = { workspace = true}
 redis = { workspace = true }
+md5 = { version = "0.8", optional = true }
+sha2 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+
+[features]
+default = []
+# 一次性文件维护工具必须显式启用，常规 API、Worker 和迁移命令不会携带旧 MD5 实现。
+file-maintenance = ["dep:md5", "dep:sha2", "dep:hex", "dep:chrono"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [[bin]]
 name = "ryframe"
@@ -47,3 +58,8 @@ path = "src/bin/ryframe_migrate.rs"
 [[bin]]
 name = "ryframe-worker"
 path = "src/bin/ryframe_worker.rs"
+
+[[bin]]
+name = "ryframe-file-maintenance"
+path = "src/bin/ryframe_file_maintenance.rs"
+required-features = ["file-maintenance"]

@@ -6,9 +6,9 @@ RyFrame 是一个基于 Rust 2024 的后台管理系统框架，采用 Cargo Wor
 
 - 认证授权：内存 access token、HttpOnly refresh Cookie、CSRF 防护、会话轮换、RBAC 权限和数据权限。
 - 系统管理：用户、角色、权限、菜单、部门、岗位、参数、字典、通知、日志。
-- 安全中间件：限流、XSS 过滤、请求日志、CORS、超时、请求体限制、安全响应头、幂等与重放防护。
+- 安全中间件：限流、请求日志、CORS、超时、请求体限制、安全响应头、幂等与重放防护。
 - 数据与缓存：MySQL 8.4、SeaORM 主库/多只读副本、命名业务数据源、Rust Migrator、Redis 分布式状态。
-- 监控运维：存活与就绪探针、服务状态、缓存统计、数据库连接池、Prometheus 指标。
+- 监控运维：存活探针、后台依赖探测与缓存式就绪快照、服务状态、缓存统计、数据库连接池、Prometheus 指标。
 - 扩展能力：代码生成、RustFS/MinIO/S3 对象存储、文件上传下载、Excel 导入导出、国际化和 WebSocket。
 - 前端管理端：独立仓库 [ryframe-vue3](https://github.com/Edgar-ycy/ryframe-vue3) 提供 Vue 3 + TypeScript + Element Plus 后台界面。
 
@@ -35,7 +35,7 @@ mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS ryframe_device DEFAULT CHARSE
 # 仅本机开发使用以下 Redis 端口绑定；生产必须另外配置 TLS、网络隔离和 ACL
 docker run -d --name ryframe-redis -p 127.0.0.1:6379:6379 -v ryframe-redis-data:/data -v "$PWD/deploy/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro" redis:7-alpine redis-server /usr/local/etc/redis/redis.conf --bind 0.0.0.0 --protected-mode no
 
-# 启动与 CI 相同版本的 RustFS；已有本机实例时无需重复执行
+# 启动仓库本地集成环境固定版本的 RustFS；已有本机实例时无需重复执行
 docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_KEY=rustfsadmin1 -e RUSTFS_SECRET_KEY=rustfsadmin1 -v ryframe-rustfs-data:/data rustfs/rustfs:1.0.0-beta.8
 
 # 按本地环境修改数据库、Redis、对象存储等配置
@@ -44,7 +44,7 @@ docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_K
 cargo run
 ```
 
-首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。日常联合检查使用 `cargo xtask check`；提交前需要完整验证时使用 `cargo xtask verify`。两者都可附加 `--scope backend` 或 `--scope frontend` 缩小范围。
+首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。日常联合检查使用 `cargo xtask check`；提交前需要完整验证时使用 `cargo xtask verify`。两者都可附加 `--scope backend` 或 `--scope frontend` 缩小范围。Cargo feature 必须在 `config/feature-matrix.json` 登记最小与最大组合，并在本地运行 `cargo xtask feature-matrix`；CI 只校验注册表元数据，不重复编译矩阵。`file-maintenance` 只用于一次性历史文件校验，常规 API 和 Worker 不会启用它。
 
 `xtask` 会在后端 `target/corepack-bin/` 中创建临时 Corepack shim，并从前端的 `packageManager` 字段读取固定的 pnpm 版本；该目录是本机构建缓存，不应提交。
 
@@ -55,6 +55,9 @@ cargo run
 - 就绪探针：`http://localhost:8080/readyz`
 - Swagger UI：`http://localhost:8080/api/v1/swagger-ui`
 - Prometheus：`http://localhost:8080/api/v1/monitor/metrics`
+
+`/readyz` 只读取后台任务最近一次依赖探测的内存快照，不在请求路径执行 SQL、Redis
+或对象存储网络调用；快照过期或必要依赖不可用时返回 `503`。
 
 默认账号：
 
@@ -84,17 +87,30 @@ pnpm build
 
 ## 常用命令
 
-```bash
+以下命令用于本地开发与完整验收；GitHub 后端 CI 不运行 `cargo test`，测试与覆盖率只在
+本地执行：
+
+```powershell
 cargo check --workspace --all-targets
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 python scripts/check_source_hygiene.py
 python scripts/check_architecture.py
-cargo run -p ryframe-api --bin export_openapi -- openapi/openapi.json
-# 构建 Linux 可执行文件
+# 在唯一 Docker project 中执行 MySQL、Redis、RustFS、独立 Worker 与 API 的完整本地验收
+.\scripts\runtime_acceptance.ps1
+# 在独立旧库与 RustFS 中执行 FILE-A 单向迁移闭环验收
+.\scripts\file_a_acceptance.ps1
+cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
+cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
+# 部署环境按需从稳定标签源码构建 Linux 可执行文件
 cross build --release --target x86_64-unknown-linux-gnu
 ```
+
+托管后端 CI 在 Linux 上执行格式、源码卫生、架构与权限门禁、工作流和部署静态校验，
+并只通过一次全目标 Clippy 编译工作区；依赖安全审计在独立作业执行。OpenAPI 与 MySQL
+快照由开发者在本地生成并检入，托管 CI 不再为快照重复编译；稳定版 Release 也不重复
+编译或测试，只接受两仓精确提交已成功完成各自 push CI 的证据。
 
 ## 重置数据库
 
@@ -131,7 +147,6 @@ cargo nextest run --workspace
 │   ├── ryframe-mail/         # 邮件发送适配
 │   ├── ryframe-core/         # 分页、缓存、租户上下文、分布式锁与熔断
 │   ├── ryframe-config/       # 配置加载与环境覆盖
-│   ├── ryframe-common/       # 仅供外部旧调用使用的兼容入口，内部禁止依赖
 │   ├── ryframe-middleware/   # 通用中间件
 │   ├── ryframe-monitor/      # 监控与健康检查
 │   ├── ryframe-generator/    # 代码生成
@@ -139,10 +154,10 @@ cargo nextest run --workspace
 │   └── ryframe-macro/        # 过程宏
 ├── config/                   # app.toml 与环境配置
 ├── docs/                     # 使用指南与架构文档
-├── openapi/openapi.json      # CI 校验并发布的规范 API 快照
+├── openapi/openapi.json      # 本地生成、联合发布比对的规范 API 快照
 ├── scripts/                  # 源码、权限和架构门禁
 ├── locales/                  # 国际化资源
-├── sql/                      # Migrator 生成并由 CI 校验的只读 MySQL 快照
+├── sql/                      # Migrator 在本地生成的只读 MySQL 快照
 └── deploy/                   # 部署相关资源
 ```
 
@@ -188,17 +203,23 @@ config/app.prod.toml
 容器镜像默认使用 `APP_ENV=prod`，启动时必须通过 `docker run -e SNOWFLAKE_WORKER_ID=<唯一节点号> ...` 或编排平台注入节点 ID；滚动发布期间新旧实例也不能复用同一个值。Snowflake 遇到时钟回拨或单毫秒序列耗尽会立即返回可重试的 503，不会等待或生成逻辑未来时间；由于时间戳高水位不跨重启持久化，同一 worker ID 只能在物理时间超过其最后生成时间后复用。
 生产环境的数据库、Redis 和对象存储如果跨主机，必须启用证书校验的 TLS；多实例部署应使用 RustFS/MinIO/S3，本地存储只允许单实例或经过验证的共享持久卷。详细要求见[生产部署基线](docs/production-deployment.md)。
 
+GitHub 稳定版 Release 只保留平台自动生成的源码 ZIP/TAR，不构建或分发可执行文件、前端
+构建产物、容器镜像、SBOM、签名或发布清单。部署环境必须从稳定标签源码独立构建、扫描并
+固定自身产物摘要。
+
 ## 文档
 
 - [文档索引](docs/README.md)
 - [API 使用指南](docs/api-guide.md)
 - [架构说明](docs/architecture.md)
 - [数据库指南](docs/db-guide.md)
+- [缓存命名空间一致性协议](docs/cache-namespace.md)
 - [对象存储与 RustFS 指南](docs/storage-guide.md)
 - [前端集成指南](docs/frontend-integration.md)
 - [生产部署基线](docs/production-deployment.md)
 - [生产监控与值班手册](docs/operations-runbook.md)
 - [容量测试与验收标准](docs/capacity-guide.md)
+- [稳定发布与回滚指南](docs/release-guide.md)
 
 
 ## 许可

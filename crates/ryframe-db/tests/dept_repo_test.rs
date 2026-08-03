@@ -2,9 +2,18 @@
 
 mod common;
 
+fn page_query(page: u64, page_size: u64) -> ryframe_core::ValidatedPageQuery {
+    ryframe_core::ValidatedPageQuery::new(
+        page,
+        page_size,
+        &ryframe_config::PaginationConfig::default(),
+    )
+    .expect("测试分页参数必须有效")
+}
+
 use chrono::Utc;
 use common::setup_test_db;
-use ryframe_core::repository::{PageQuery, Repository};
+use ryframe_core::repository::Repository;
 use ryframe_db::{
     DeptRepository,
     entities::{dept, role, role_dept},
@@ -66,14 +75,7 @@ async fn crud_pagination_and_filters_are_consistent() {
         .expect("insert sales");
 
     let page = repo
-        .find_by_page(
-            &db,
-            TENANT,
-            PageQuery {
-                page: 1,
-                page_size: 1,
-            },
-        )
+        .find_by_page(&db, TENANT, page_query(1, 1))
         .await
         .expect("page departments");
     assert_eq!(page.total, 2);
@@ -107,12 +109,12 @@ async fn crud_pagination_and_filters_are_consistent() {
     );
 
     let visible_page = repo
-        .find_by_page_filtered_by_ids(&db, TENANT, PageQuery::default(), None, None, &[sales.id])
+        .find_by_page_filtered_by_ids(&db, TENANT, page_query(1, 10), None, None, &[sales.id])
         .await
         .expect("visible page");
     assert_eq!(visible_page.total, 1);
     let empty_page = repo
-        .find_by_page_filtered_by_ids(&db, TENANT, PageQuery::default(), None, None, &[])
+        .find_by_page_filtered_by_ids(&db, TENANT, page_query(1, 10), None, None, &[])
         .await
         .expect("empty page");
     assert_eq!(empty_page.total, 0);
@@ -227,14 +229,14 @@ async fn department_queries_are_tenant_scoped() {
 
     assert_eq!(
         DeptRepository
-            .find_by_page(&db, TENANT, PageQuery::default())
+            .find_by_page(&db, TENANT, page_query(1, 10))
             .await
             .expect("system page")
             .total,
         1
     );
     let other_page = DeptRepository
-        .find_by_page(&db, "other", PageQuery::default())
+        .find_by_page(&db, "other", page_query(1, 10))
         .await
         .expect("other page");
     assert_eq!(other_page.total, 1);

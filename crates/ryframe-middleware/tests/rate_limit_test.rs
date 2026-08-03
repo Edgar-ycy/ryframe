@@ -41,7 +41,7 @@ async fn test_rate_limiter() {
     assert!(limiter2.try_acquire("b").await);
 
     // 固定窗口在窗口结束前不会补充容量。
-    let limiter3 = RateLimiter::new_in_memory(2, 100);
+    let limiter3 = RateLimiter::new_in_memory(2, 1);
     assert!(limiter3.try_acquire("test").await);
     assert!(limiter3.try_acquire("test").await);
     assert!(!limiter3.try_acquire("test").await);
@@ -59,18 +59,17 @@ async fn test_spawn_gc() {
 }
 
 #[tokio::test]
-async fn test_sliding_window_memory_fallback() {
-    // 内存模式下滑动窗口回退到固定窗口
+async fn test_explicit_rule_uses_fixed_window() {
+    // 显式规则在内存模式下同样使用固定窗口。
     let limiter = RateLimiter::new_in_memory(5, 10);
 
     // 窗口内应通过
     for _ in 0..5 {
-        assert!(limiter.sliding_window_acquire("sw_test", 60, 10).await);
+        assert!(limiter.acquire("sw_test", 60, 5).await.unwrap().allowed);
     }
 
-    // 第 6 次请求：快速补充率（refill_per_sec=10）下令牌可能已补充完成
-    // 也可能尚未补充，此处仅验证调用不 panic
-    let _result = limiter.sliding_window_acquire("sw_test", 60, 10).await;
+    // 第 6 次请求仍在窗口内，必须被拒绝。
+    assert!(!limiter.acquire("sw_test", 60, 5).await.unwrap().allowed);
 }
 
 #[tokio::test]
@@ -100,17 +99,9 @@ async fn test_user_api_key() {
     );
 }
 
-#[tokio::test]
-async fn test_available_tokens() {
-    let limiter = RateLimiter::new_in_memory(5, 2);
-    assert_eq!(limiter.available_tokens("tok"), 5.0);
-    limiter.try_acquire("tok").await;
-    assert!(limiter.available_tokens("tok") < 5.0);
-}
-
 fn api_limited_router(rules: HashMap<String, u32>) -> Router {
     let state = RateLimitState {
-        limiter: Arc::new(RateLimiter::new_in_memory(100, 0)),
+        limiter: Arc::new(RateLimiter::new_in_memory(100, 60)),
         config: Arc::new(RateLimitConfig {
             enabled: true,
             api_limits: rules,
@@ -223,7 +214,7 @@ async fn method_wide_rule_uses_one_bucket_across_paths() {
 #[tokio::test]
 async fn redis_and_memory_fixed_windows_apply_the_same_rule() {
     let redis = RateLimiter::new_redis(docker_redis().await, 100, 60);
-    let memory = RateLimiter::new_in_memory(100, 0);
+    let memory = RateLimiter::new_in_memory(100, 60);
     let key = format!(
         "parity-{}-{}",
         std::process::id(),

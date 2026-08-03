@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 
 use crate::entities::post;
@@ -37,7 +37,7 @@ impl Repository<post::Model, i64> for PostRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<post::Model>> {
         crate::pagination::paginate(
             db,
@@ -73,6 +73,33 @@ impl Repository<post::Model, i64> for PostRepository {
 }
 
 impl PostRepository {
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: post::Model,
+    ) -> AppResult<post::Model> {
+        insert_entity!(post, transaction, tenant_id, entity)
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: post::Model,
+    ) -> AppResult<post::Model> {
+        update_entity!(post, transaction, tenant_id, entity)
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        soft_delete_entity!(post, transaction, tenant_id, id)
+    }
+
     /// 按主键递增游标读取岗位导出批次。
     pub async fn find_for_export_after_id(
         &self,
@@ -126,7 +153,7 @@ impl PostRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
         name: Option<&str>,
         code: Option<&str>,
         status: Option<&str>,

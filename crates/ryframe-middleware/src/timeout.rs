@@ -1,11 +1,13 @@
 use std::time::Duration;
 
 use axum::{
+    Json,
     extract::{Request, State},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use ryframe_config::UploadLimitsConfig;
+use ryframe_http::{API_PREFIX, ApiResponse};
 
 pub const API_TIMEOUT_SECONDS: u64 = 30;
 pub const UPLOAD_TIMEOUT_SECONDS: u64 = 120;
@@ -20,25 +22,25 @@ pub async fn timeout_middleware(
         Ok(response) => response,
         Err(_) => {
             tracing::warn!(timeout_seconds, "HTTP request timed out");
-            let mut response = (
+            (
                 http::StatusCode::REQUEST_TIMEOUT,
-                r#"{"code":408,"msg":"request timed out"}"#,
+                Json(ApiResponse::<()>::fail(
+                    http::StatusCode::REQUEST_TIMEOUT.as_u16(),
+                    "请求处理超时",
+                    "request_timeout",
+                )),
             )
-                .into_response();
-            response.headers_mut().insert(
-                http::header::CONTENT_TYPE,
-                http::HeaderValue::from_static("application/json"),
-            );
-            response
+                .into_response()
         }
     }
 }
 
 pub fn request_timeout_seconds(config: &UploadLimitsConfig, path: &str) -> u64 {
-    if path.starts_with("/api/v1/common/upload")
+    let api_path = path.strip_prefix(API_PREFIX);
+    if api_path.is_some_and(|path| path.starts_with("/common/upload"))
         || matches!(
-            path,
-            "/api/v1/auth/profile/avatar" | "/api/v1/system/users/import"
+            api_path,
+            Some("/auth/profile/avatar" | "/system/users/import")
         )
     {
         config.upload_timeout_seconds

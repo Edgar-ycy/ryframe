@@ -472,6 +472,26 @@ impl RedisClient {
             ))
         })
     }
+
+    /// 执行返回可空字符串数组的 Lua 脚本。
+    ///
+    /// 该返回类型用于一次原子读取多个相互关联的缓存值；Lua 返回的 `false`
+    /// 会被转换为 `None`，避免调用方依赖 Redis 协议值的内部表示。
+    pub async fn eval_script_optional_strings<S: AsRef<str>, K: AsRef<str>, V: AsRef<str>>(
+        &self,
+        script: S,
+        keys: &[K],
+        args: &[V],
+    ) -> Result<Vec<Option<String>>, redis::RedisError> {
+        let value = self.eval_script(script, keys, args).await?;
+        redis::from_redis_value(value).map_err(|error| {
+            redis::RedisError::from((
+                redis::ErrorKind::Parse,
+                "unable to parse Redis script response",
+                error.to_string(),
+            ))
+        })
+    }
 }
 
 async fn build_client(config: &RedisConfig) -> Result<redis::Client, redis::RedisError> {

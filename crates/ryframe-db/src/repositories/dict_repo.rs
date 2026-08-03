@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 
 use crate::entities::{dict_data, dict_type};
@@ -37,7 +37,7 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<dict_type::Model>> {
         crate::pagination::paginate(
             db,
@@ -73,6 +73,33 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
 }
 
 impl DictTypeRepository {
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: dict_type::Model,
+    ) -> AppResult<dict_type::Model> {
+        insert_entity!(dict_type, transaction, tenant_id, entity)
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: dict_type::Model,
+    ) -> AppResult<dict_type::Model> {
+        update_entity!(dict_type, transaction, tenant_id, entity)
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        soft_delete_entity!(dict_type, transaction, tenant_id, id)
+    }
+
     /// 按主键递增游标读取字典类型导出批次。
     pub async fn find_for_export_after_id(
         &self,
@@ -109,7 +136,7 @@ impl DictTypeRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: &PageQuery,
+        query: &ValidatedPageQuery,
         filter: &DictTypeFilter<'_>,
     ) -> AppResult<PageResult<dict_type::Model>> {
         let mut select = dict_type::Entity::find()
@@ -167,7 +194,7 @@ impl Repository<dict_data::Model, i64> for DictDataRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<dict_data::Model>> {
         crate::pagination::paginate(
             db,
@@ -203,6 +230,33 @@ impl Repository<dict_data::Model, i64> for DictDataRepository {
 }
 
 impl DictDataRepository {
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: dict_data::Model,
+    ) -> AppResult<dict_data::Model> {
+        insert_entity!(dict_data, transaction, tenant_id, entity)
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: dict_data::Model,
+    ) -> AppResult<dict_data::Model> {
+        update_entity!(dict_data, transaction, tenant_id, entity)
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        soft_delete_entity!(dict_data, transaction, tenant_id, id)
+    }
+
     /// 按字典类型编码获取字典数据
     pub async fn find_by_type_code(
         &self,

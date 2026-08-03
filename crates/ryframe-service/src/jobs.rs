@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    future::Future,
     sync::{Arc, RwLock},
     time::Duration as StdDuration,
 };
@@ -8,7 +9,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_config::JobConfig;
 use ryframe_core::RedisClient;
-use ryframe_core::repository::{PageQuery, PageResult};
+use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, DatabaseCluster,
     EnqueueBackgroundJob, EnqueueBackgroundJobResult, JobFailureDisposition, OutboxEventRepository,
@@ -20,17 +21,16 @@ use serde::{Deserialize, Serialize};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
-use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::system::{
     EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, ExportService, MESSAGE_DISPATCH_JOB_TYPE,
     MESSAGE_DISPATCH_REDIS_CHANNEL, MESSAGE_RETENTION_JOB_TYPE, MessageService, OperLogService,
-    RecordOperLogCommand,
 };
-
-/// 操作日志任务的稳定类型标识。
-pub const OPER_LOG_JOB_TYPE: &str = "system.oper_log.record";
+use crate::{
+    AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent,
+    AuthorizationCache, AuthorizationMirrorUpdate, record_audit_failure,
+};
 
 /// 消息发布 Outbox 事件的稳定类型标识。
 pub const MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE: &str = "system.message.published";
@@ -92,7 +92,7 @@ impl JobMetricsObserver for CallbackJobMetricsObserver {
 /// 后台任务分页列表的业务查询参数。
 #[derive(Clone, Debug)]
 pub struct BackgroundJobListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub job_type: Option<String>,
     pub status: Option<String>,
 }
@@ -100,7 +100,7 @@ pub struct BackgroundJobListParams {
 /// 面向管理端的后台任务安全视图。
 ///
 /// 任务载荷可能包含业务敏感字段，因此监控列表不会返回 `payload`。
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
 pub struct BackgroundJobVo {
     pub id: String,
     pub job_type: String,
@@ -140,7 +140,7 @@ impl From<background_job::Model> for BackgroundJobVo {
 }
 
 /// 当前租户的后台任务队列统计。
-#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct BackgroundJobQueueStats {
     pub total: u64,
     pub pending: u64,
@@ -261,37 +261,6 @@ impl JobQueue {
         let now = self.repository.database_utc_now(transaction).await?;
         self.repository
             .enqueue_in_transaction(transaction, command, now)
-            .await
-    }
-
-    /// 将操作日志写入持久化任务队列，避免响应返回后因进程退出而丢失日志。
-    pub async fn enqueue_oper_log(
-        &self,
-        tenant_id: String,
-        command: RecordOperLogCommand,
-    ) -> AppResult<EnqueueBackgroundJobResult> {
-        ryframe_core::validate_explicit_tenant(&tenant_id)?;
-        let now = self.database_now().await?;
-        let payload = serde_json::to_value(OperLogJobPayload {
-            tenant_id: tenant_id.clone(),
-            command,
-        })
-        .map_err(|error| AppError::Internal(format!("操作日志任务序列化失败: {error}")))?;
-        self.repository
-            .enqueue(
-                self.database.write(),
-                EnqueueBackgroundJob {
-                    tenant_id: Some(tenant_id.clone()),
-                    job_type: OPER_LOG_JOB_TYPE.to_owned(),
-                    payload,
-                    priority: 0,
-                    available_at: now,
-                    max_attempts: 5,
-                    dedupe_key: None,
-                    traceparent: crate::trace_context::current_traceparent(),
-                },
-                now,
-            )
             .await
     }
 
@@ -461,11 +430,12 @@ impl JobQueue {
 /// 多个 API 或 Worker 实例可同时运行该调度器；数据库中的幂等键会确保每天只保留一条任务。
 pub fn spawn_message_retention_scheduler(
     queue: Arc<JobQueue>,
+    messaging_enabled: bool,
     mut shutdown: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            if let Err(error) = queue.enqueue_message_retention().await {
+            if messaging_enabled && let Err(error) = queue.enqueue_message_retention().await {
                 tracing::warn!(%error, "无法写入每日消息过期清理任务");
             }
             if let Err(error) = queue.enqueue_export_cleanup().await {
@@ -501,6 +471,9 @@ fn duration_until_next_utc_day(now: DateTime<Utc>) -> StdDuration {
 }
 
 /// 任务处理器。实现必须具备幂等性，因为 Worker 提供至少一次投递语义。
+///
+/// 租约心跳失效时，Worker 会立即丢弃处理器 Future；实现不得把不可取消的业务工作
+/// 转移到脱离该 Future 的后台任务中，并应为已经完成的外部副作用提供幂等键或补偿逻辑。
 #[async_trait]
 pub trait JobHandler: Send + Sync {
     /// 返回唯一的任务类型标识。
@@ -508,6 +481,50 @@ pub trait JobHandler: Send + Sync {
 
     /// 执行已领取任务；返回错误将触发退避重试或死信。
     async fn handle(&self, job: &background_job::Model) -> AppResult<()>;
+}
+
+enum LeaseHeartbeatOutcome<T> {
+    Completed(T),
+    LeaseLost,
+    RenewalFailed(AppError),
+}
+
+/// 在处理器运行期间定时续租，并在返回处理结果前再做一次所有权确认。
+///
+/// 续租失败会直接丢弃处理器 Future，旧 Worker 不再提交成功、重试或死信状态。
+async fn run_with_lease_heartbeat<F, R, RFut, T>(
+    operation: F,
+    heartbeat_interval: StdDuration,
+    mut renew: R,
+) -> LeaseHeartbeatOutcome<T>
+where
+    F: Future<Output = T>,
+    R: FnMut() -> RFut,
+    RFut: Future<Output = AppResult<bool>>,
+{
+    let first_heartbeat = time::Instant::now() + heartbeat_interval;
+    let mut heartbeat = time::interval_at(first_heartbeat, heartbeat_interval);
+    tokio::pin!(operation);
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = heartbeat.tick() => {
+                match renew().await {
+                    Ok(true) => {}
+                    Ok(false) => return LeaseHeartbeatOutcome::LeaseLost,
+                    Err(error) => return LeaseHeartbeatOutcome::RenewalFailed(error),
+                }
+            }
+            result = &mut operation => {
+                return match renew().await {
+                    Ok(true) => LeaseHeartbeatOutcome::Completed(result),
+                    Ok(false) => LeaseHeartbeatOutcome::LeaseLost,
+                    Err(error) => LeaseHeartbeatOutcome::RenewalFailed(error),
+                };
+            }
+        }
+    }
 }
 
 /// 单次 Worker 循环的结果。
@@ -532,6 +549,7 @@ pub struct JobWorker {
     handlers: Arc<BTreeMap<String, Arc<dyn JobHandler>>>,
     worker_prefix: String,
     lease_duration: Duration,
+    heartbeat_interval: StdDuration,
     poll_interval: StdDuration,
     concurrency: usize,
 }
@@ -550,6 +568,7 @@ impl JobWorker {
             handlers: Arc::new(BTreeMap::new()),
             worker_prefix,
             lease_duration: Duration::seconds(lease_seconds),
+            heartbeat_interval: StdDuration::from_secs(config.heartbeat_seconds),
             poll_interval: StdDuration::from_millis(config.poll_interval_ms),
             concurrency: config.concurrency,
         })
@@ -666,7 +685,54 @@ impl JobWorker {
             job.traceparent.as_deref(),
         ));
         async {
-            match handler.handle(&job).await {
+            let heartbeat_queue = self.queue.clone();
+            let heartbeat_worker_id = worker_id.to_owned();
+            let heartbeat_job_id = job.id;
+            let lease_duration = self.lease_duration;
+            let handler_result = match run_with_lease_heartbeat(
+                handler.handle(&job),
+                self.heartbeat_interval,
+                move || {
+                    let queue = heartbeat_queue.clone();
+                    let worker_id = heartbeat_worker_id.clone();
+                    async move {
+                        let now = queue.database_now().await?;
+                        queue
+                            .repository()
+                            .renew_lease(
+                                queue.primary(),
+                                heartbeat_job_id,
+                                &worker_id,
+                                lease_duration,
+                                now,
+                            )
+                            .await
+                    }
+                },
+            )
+            .await
+            {
+                LeaseHeartbeatOutcome::Completed(result) => result,
+                LeaseHeartbeatOutcome::LeaseLost => {
+                    tracing::warn!(
+                        job_id = job.id,
+                        worker_id,
+                        "后台任务租约已失效，处理器已取消且不会提交最终状态"
+                    );
+                    return Ok(JobRunResult::LeaseLost);
+                }
+                LeaseHeartbeatOutcome::RenewalFailed(error) => {
+                    tracing::error!(
+                        %error,
+                        job_id = job.id,
+                        worker_id,
+                        "后台任务续租失败，处理器已取消且不会提交最终状态"
+                    );
+                    return Ok(JobRunResult::LeaseLost);
+                }
+            };
+
+            match handler_result {
                 Ok(()) => {
                     let now = self.queue.database_now().await?;
                     let completed = self
@@ -805,6 +871,8 @@ pub struct OutboxWorker {
     lease_duration: Duration,
     poll_interval: StdDuration,
     concurrency: usize,
+    authorization_cache: AuthorizationCache,
+    audit_service: Option<Arc<OperLogService>>,
 }
 
 impl OutboxWorker {
@@ -822,7 +890,21 @@ impl OutboxWorker {
             lease_duration: Duration::seconds(lease_seconds),
             poll_interval: StdDuration::from_millis(config.poll_interval_ms),
             concurrency: config.concurrency,
+            authorization_cache: AuthorizationCache::disabled(),
+            audit_service: None,
         })
+    }
+
+    /// 注入授权版本镜像修复器；生产 Worker 必须与 API 使用相同 Redis 配置。
+    pub fn with_authorization_cache(mut self, authorization_cache: AuthorizationCache) -> Self {
+        self.authorization_cache = authorization_cache;
+        self
+    }
+
+    /// 注入操作审计落库服务。
+    pub fn with_audit_service(mut self, audit_service: Arc<OperLogService>) -> Self {
+        self.audit_service = Some(audit_service);
+        self
     }
 
     /// 启动多个 Outbox 消费循环，并在收到关闭信号后有序退出。
@@ -912,6 +994,14 @@ impl OutboxWorker {
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
+        if event.event_type == AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE {
+            return self
+                .repair_authorization_mirror(event, worker_id, now)
+                .await;
+        }
+        if event.event_type == AUDIT_OPERATION_OUTBOX_EVENT_TYPE {
+            return self.publish_audit_event(event, worker_id, now).await;
+        }
         let job_type = match event.event_type.as_str() {
             MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE => MESSAGE_DISPATCH_JOB_TYPE,
             _ => {
@@ -967,6 +1057,128 @@ impl OutboxWorker {
                 Err(error)
             }
         }
+    }
+
+    async fn publish_audit_event(
+        &self,
+        event: &outbox_event::Model,
+        worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let service = self.audit_service.as_ref().ok_or_else(|| {
+            record_audit_failure("handler_missing");
+            AppError::Config("Outbox Worker 未配置操作审计服务".into())
+        })?;
+        let payload: AuditOperationEvent =
+            serde_json::from_value(event.payload.clone()).map_err(|error| {
+                record_audit_failure("payload_decode");
+                AppError::Validation(format!("操作审计事件载荷无效: {error}"))
+            })?;
+        if event.tenant_id.as_deref() != Some(payload.tenant_id.as_str()) {
+            record_audit_failure("tenant_mismatch");
+            return Err(AppError::Authorization(
+                "操作审计事件的租户与 Outbox 信封不一致".into(),
+            ));
+        }
+
+        let transaction = self
+            .queue
+            .primary()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let result = async {
+            service
+                .record_event_in_transaction(
+                    &transaction,
+                    &payload.event_id,
+                    &payload.request_id,
+                    &payload.tenant_id,
+                    payload.command,
+                )
+                .await
+                .inspect_err(|_| record_audit_failure("oper_log_write"))?;
+            self.repository
+                .mark_published_in_transaction(&transaction, event.id, worker_id, now)
+                .await
+        }
+        .await;
+        match result {
+            Ok(true) => {
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| AppError::Database(error.to_string()))?;
+                Ok(true)
+            }
+            Ok(false) => {
+                let _ = transaction.rollback().await;
+                Ok(false)
+            }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn repair_authorization_mirror(
+        &self,
+        event: &outbox_event::Model,
+        worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let update: AuthorizationMirrorUpdate = serde_json::from_value(event.payload.clone())
+            .map_err(|error| AppError::Validation(format!("授权镜像事件负载无效: {error}")))?;
+        match update {
+            AuthorizationMirrorUpdate::Tenant {
+                tenant_id,
+                authorization_epoch,
+            } => {
+                self.authorization_cache
+                    .repair_tenant_epoch(&tenant_id, authorization_epoch)
+                    .await?;
+            }
+            AuthorizationMirrorUpdate::User {
+                tenant_id,
+                user_id,
+                authorization_version,
+            } => {
+                self.authorization_cache
+                    .repair_user_version(&tenant_id, user_id, authorization_version)
+                    .await?;
+            }
+            AuthorizationMirrorUpdate::TenantCacheNamespace {
+                tenant_id,
+                namespace,
+                namespace_version,
+            } => {
+                self.authorization_cache
+                    .repair_namespace_version(&tenant_id, &namespace, namespace_version)
+                    .await?;
+            }
+        }
+
+        // Redis 更新脚本是单调且幂等的；崩溃后重复执行不会覆盖更新版本。
+        let transaction = self
+            .queue
+            .primary()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let marked = self
+            .repository
+            .mark_published_in_transaction(&transaction, event.id, worker_id, now)
+            .await?;
+        if marked {
+            transaction
+                .commit()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+        } else {
+            let _ = transaction.rollback().await;
+        }
+        Ok(marked)
     }
 
     async fn run_until_shutdown(&self, worker_id: String, mut shutdown: watch::Receiver<bool>) {
@@ -1068,40 +1280,6 @@ fn bounded_job_type_label(registered: bool, job_type: &str) -> &str {
     if registered { job_type } else { "unregistered" }
 }
 
-/// 操作日志任务的序列化载荷。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OperLogJobPayload {
-    tenant_id: String,
-    command: RecordOperLogCommand,
-}
-
-/// 将持久化任务还原为操作日志记录。
-pub struct OperLogJobHandler {
-    service: Arc<OperLogService>,
-}
-
-impl OperLogJobHandler {
-    /// 使用操作日志服务创建处理器。
-    pub fn new(service: Arc<OperLogService>) -> Self {
-        Self { service }
-    }
-}
-
-#[async_trait]
-impl JobHandler for OperLogJobHandler {
-    fn job_type(&self) -> &'static str {
-        OPER_LOG_JOB_TYPE
-    }
-
-    async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
-        let payload: OperLogJobPayload = serde_json::from_value(job.payload.clone())
-            .map_err(|error| AppError::Validation(format!("操作日志任务载荷无效: {error}")))?;
-        self.service
-            .record_for_tenant(&payload.tenant_id, payload.command)
-            .await
-    }
-}
-
 /// 执行对象存储导出并更新公开导出任务状态的处理器。
 pub struct ExportJobHandler {
     service: Arc<ExportService>,
@@ -1111,6 +1289,18 @@ impl ExportJobHandler {
     pub fn new(service: Arc<ExportService>) -> Self {
         Self { service }
     }
+}
+
+fn is_terminal_export_error(error: &AppError) -> bool {
+    matches!(
+        error,
+        AppError::Validation(_)
+            | AppError::Authentication(_)
+            | AppError::Authorization(_)
+            | AppError::NotFound(_)
+            | AppError::Conflict(_)
+            | AppError::PayloadTooLarge(_)
+    )
 }
 
 #[async_trait]
@@ -1123,15 +1313,7 @@ impl JobHandler for ExportJobHandler {
         match self.service.execute_background_job(job.id).await {
             Ok(()) => Ok(()),
             Err(error) => {
-                let terminal = matches!(
-                    error,
-                    AppError::Validation(_)
-                        | AppError::Authentication(_)
-                        | AppError::Authorization(_)
-                        | AppError::NotFound(_)
-                        | AppError::Conflict(_)
-                        | AppError::PayloadTooLarge(_)
-                );
+                let terminal = is_terminal_export_error(&error);
                 if let Err(record_error) = self
                     .service
                     .record_execution_failure(
@@ -1336,17 +1518,98 @@ fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     use ryframe_kernel::AppError;
 
     use super::{
-        JobRunResult, bounded_job_type_label, infrastructure_retry_delay, job_run_result_label,
-        normalize_job_status_filter, normalize_job_type_filter, report_redis_wakeup_failure,
-        retry_delay,
+        JobRunResult, LeaseHeartbeatOutcome, bounded_job_type_label, infrastructure_retry_delay,
+        is_terminal_export_error, job_run_result_label, normalize_job_status_filter,
+        normalize_job_type_filter, report_redis_wakeup_failure, retry_delay,
+        run_with_lease_heartbeat,
     };
+
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_keeps_a_long_handler_owned_past_the_original_lease() {
+        let lease_duration = std::time::Duration::from_secs(60);
+        let heartbeat_interval = std::time::Duration::from_secs(15);
+        let lease_until = Arc::new(Mutex::new(tokio::time::Instant::now() + lease_duration));
+        let operation_completed = Arc::new(AtomicBool::new(false));
+
+        let completed = operation_completed.clone();
+        let operation = async move {
+            tokio::time::sleep(std::time::Duration::from_secs(130)).await;
+            completed.store(true, Ordering::SeqCst);
+            "completed"
+        };
+        let renewed_lease_until = lease_until.clone();
+        let task = tokio::spawn(run_with_lease_heartbeat(
+            operation,
+            heartbeat_interval,
+            move || {
+                let lease_until = renewed_lease_until.clone();
+                async move {
+                    *lease_until.lock().unwrap() = tokio::time::Instant::now() + lease_duration;
+                    Ok::<bool, AppError>(true)
+                }
+            },
+        ));
+
+        for _ in 0..13 {
+            tokio::time::advance(std::time::Duration::from_secs(10)).await;
+            tokio::task::yield_now().await;
+            assert!(
+                tokio::time::Instant::now() < *lease_until.lock().unwrap(),
+                "持续心跳期间其他 Worker 不得把任务判定为可接管"
+            );
+        }
+
+        match task.await.unwrap() {
+            LeaseHeartbeatOutcome::Completed(result) => assert_eq!(result, "completed"),
+            LeaseHeartbeatOutcome::LeaseLost => panic!("持续心跳不应丢失租约"),
+            LeaseHeartbeatOutcome::RenewalFailed(error) => {
+                panic!("持续心跳不应续租失败: {error}")
+            }
+        }
+        assert!(operation_completed.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lost_heartbeat_cancels_the_old_handler_and_allows_takeover_after_expiry() {
+        let lease_duration = std::time::Duration::from_secs(60);
+        let lease_until = tokio::time::Instant::now() + lease_duration;
+        let operation_completed = Arc::new(AtomicBool::new(false));
+        let completed = operation_completed.clone();
+        let operation = async move {
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            completed.store(true, Ordering::SeqCst);
+        };
+
+        let task = tokio::spawn(run_with_lease_heartbeat(
+            operation,
+            std::time::Duration::from_secs(15),
+            || async { Ok::<bool, AppError>(false) },
+        ));
+        tokio::time::advance(std::time::Duration::from_secs(15)).await;
+        tokio::task::yield_now().await;
+
+        assert!(matches!(
+            task.await.unwrap(),
+            LeaseHeartbeatOutcome::LeaseLost
+        ));
+        assert!(
+            !operation_completed.load(Ordering::SeqCst),
+            "租约丢失后旧处理器不得继续产生副作用"
+        );
+
+        tokio::time::advance(std::time::Duration::from_secs(45)).await;
+        assert!(
+            tokio::time::Instant::now() >= lease_until,
+            "停止心跳后应在原租约到期时允许其他 Worker 接管"
+        );
+    }
 
     #[test]
     fn retry_delay_is_bounded_exponential_backoff() {
@@ -1354,6 +1617,16 @@ mod tests {
         assert_eq!(retry_delay(2).num_seconds(), 10);
         assert_eq!(retry_delay(7).num_seconds(), 300);
         assert_eq!(retry_delay(99).num_seconds(), 300);
+    }
+
+    #[test]
+    fn permission_revocation_stops_export_while_storage_failures_remain_retryable() {
+        assert!(is_terminal_export_error(&AppError::Authorization(
+            "导出权限已撤销".into()
+        )));
+        assert!(!is_terminal_export_error(&AppError::ServiceUnavailable(
+            "对象存储暂时不可用".into()
+        )));
     }
 
     #[test]

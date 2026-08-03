@@ -1,5 +1,4 @@
 use axum::{Json, extract::State, http::StatusCode};
-use ryframe_config::RedisMode;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -33,47 +32,13 @@ pub async fn livez() -> (StatusCode, Json<LivenessResponse>) {
     path = "/readyz",
     tag = "运行探针",
     responses(
-        (status = 200, description = "必要依赖可用", body = ReadinessResponse),
-        (status = 503, description = "必要依赖不可用", body = ReadinessResponse)
+        (status = 200, description = "后台依赖快照有效且必要依赖可用", body = ReadinessResponse),
+        (status = 503, description = "后台依赖快照过期或必要依赖不可用", body = ReadinessResponse)
     )
 )]
 pub async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<ReadinessResponse>) {
-    let dependency_timeout = std::time::Duration::from_secs(2);
-    let mysql = tokio::time::timeout(dependency_timeout, state.monitor.database.ping());
-    // 超时时分离存储任务，使就绪探针能够执行到删除步骤；避免在写入、读取和删除
-    // 之间被取消，从而在 `.ryframe-readiness/` 下遗留对象。
-    let file_service = state.services.file.clone();
-    let storage_task = tokio::spawn(async move { file_service.check_storage().await });
-    let storage = tokio::time::timeout(dependency_timeout, storage_task);
-    let redis_required = state
-        .config
-        .redis
-        .as_ref()
-        .is_some_and(|config| config.mode == RedisMode::Required);
-    let redis = tokio::time::timeout(dependency_timeout, async {
-        match &state.redis {
-            Some(redis) => redis.ping().await.is_ok(),
-            None => false,
-        }
-    });
-    let (mysql_result, redis_result, storage_result) = tokio::join!(mysql, redis, storage);
-    let mysql_ok = matches!(mysql_result, Ok(true));
-    let redis_reachable = matches!(redis_result, Ok(true));
-    let redis_ok = !redis_required || redis_reachable;
-    let storage_ok = matches!(storage_result, Ok(Ok(Ok(()))));
-
-    if !mysql_ok {
-        ryframe_middleware::metrics::record_readiness_failure("mysql");
-    }
-    if !redis_ok {
-        ryframe_middleware::metrics::record_readiness_failure("redis");
-    }
-    ryframe_middleware::metrics::set_redis_degraded_state("readiness", !redis_reachable);
-    if !storage_ok {
-        ryframe_middleware::metrics::record_readiness_failure("object_storage");
-    }
-
-    let ready = mysql_ok && redis_ok && storage_ok;
+    let snapshot = state.monitor.readiness.snapshot();
+    let ready = snapshot.is_ready();
     (
         if ready {
             StatusCode::OK
@@ -82,15 +47,9 @@ pub async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Readines
         },
         Json(ReadinessResponse {
             status: if ready { "ready" } else { "not_ready" },
-            mysql: if mysql_ok { "up" } else { "down" },
-            redis: if redis_reachable {
-                "up"
-            } else if redis_required {
-                "down"
-            } else {
-                "optional_degraded"
-            },
-            object_storage: if storage_ok { "up" } else { "down" },
+            mysql: snapshot.mysql.as_str(),
+            redis: snapshot.redis.as_str(),
+            object_storage: snapshot.object_storage.as_str(),
         }),
     )
 }

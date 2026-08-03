@@ -1,16 +1,16 @@
 use chrono::Utc;
-use ryframe_core::{LoggedRepo, PageQuery, PageResult, Repository};
-use ryframe_db::DatabaseCluster;
+use ryframe_core::{PageResult, Repository, ValidatedPageQuery};
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{LoginInfoFilter, LoginInfoRepository, entities::login_info};
-use ryframe_kernel::{ActorContext, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
+use sea_orm::TransactionTrait;
 use serde::Serialize;
-use utoipa::ToSchema;
 
 use super::log_time_range::parse_log_time_range;
 
 /// 登录日志视图对象
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LoginInfoVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -68,7 +68,7 @@ pub struct RecordLoginCommand {
 
 #[derive(Debug)]
 pub struct LoginInfoQuery {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub user_name: Option<String>,
     pub status: Option<String>,
     pub begin_time: Option<String>,
@@ -77,14 +77,14 @@ pub struct LoginInfoQuery {
 
 pub struct LoginInfoService {
     db: DatabaseCluster,
-    login_info_repo: LoggedRepo<LoginInfoRepository>,
+    login_info_repo: LoginInfoRepository,
 }
 
 impl LoginInfoService {
     pub fn new(db: DatabaseCluster) -> Self {
         Self {
             db,
-            login_info_repo: LoggedRepo::new(LoginInfoRepository),
+            login_info_repo: LoginInfoRepository,
         }
     }
 
@@ -115,7 +115,7 @@ impl LoginInfoService {
     ) -> AppResult<PageResult<LoginInfoVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let (begin_time, end_time) =
             parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref());
         let filter = LoginInfoFilter {
@@ -141,22 +141,24 @@ impl LoginInfoService {
     pub async fn find_for_export(
         &self,
         actor: &ActorContext,
-        query: &LoginInfoQuery,
+        user_name: Option<&str>,
+        status: Option<&str>,
+        begin_time: Option<&str>,
+        end_time: Option<&str>,
         maximum_records: usize,
     ) -> AppResult<Vec<LoginInfoVo>> {
         const BATCH_SIZE: u64 = 1_000;
 
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
-        let db = self.db.read();
-        let (begin_time, end_time) =
-            parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref());
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let (begin_time, end_time) = parse_log_time_range(begin_time, end_time);
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
             let filter = LoginInfoFilter {
-                user_name: query.user_name.as_deref(),
-                status: query.status.as_deref(),
+                user_name,
+                status,
                 begin_time,
                 end_time,
             };
@@ -180,17 +182,16 @@ impl LoginInfoService {
 
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        self.login_info_repo.clean_all(db, tenant_id).await
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let rows_affected = self
+            .login_info_repo
+            .clean_all_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(rows_affected)
     }
+}
 
-    /// 导出登录日志（带过滤条件，返回全部匹配结果）
-    pub async fn find_all(
-        &self,
-        actor: &ActorContext,
-        query: LoginInfoQuery,
-    ) -> AppResult<Vec<LoginInfoVo>> {
-        let result = self.find_by_page(actor, query).await?;
-        Ok(result.records)
-    }
+fn database_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Database(error.to_string())
 }

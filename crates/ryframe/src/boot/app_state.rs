@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_api::{AppServices, runtime::RuntimeComponents};
-use ryframe_config::AppConfig;
+use ryframe_config::{AppConfig, RedisMode};
 use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_db::DatabaseCluster;
 use ryframe_i18n::Localizer;
@@ -21,6 +21,7 @@ pub fn assemble(
     let trusted_proxies = TrustedProxySet::new(&config.proxy.trusted_cidrs)
         .expect("proxy CIDRs were validated during configuration loading");
     let principal_resolver = services.auth.clone();
+    let messaging = config.messaging.clone();
     let auth = ryframe_auth::middleware::AuthState {
         config: config.clone(),
         blacklist: token_blacklist.clone(),
@@ -30,6 +31,14 @@ pub fn assemble(
     let monitor = ryframe_monitor::MonitorState {
         database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
         redis: redis_client.clone(),
+        readiness: ryframe_monitor::DependencyHealthCache::new(
+            config
+                .redis
+                .as_ref()
+                .is_some_and(|redis| redis.mode == RedisMode::Required),
+            true,
+            super::readiness::CACHE_MAX_AGE,
+        ),
         metrics_bearer_token: Arc::from(config.monitor.metrics_bearer_token.as_str()),
     };
 
@@ -42,6 +51,7 @@ pub fn assemble(
         redis: redis_client.clone(),
         message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
             localizer.clone(),
+            messaging,
         )),
         token_blacklist,
         rate_limiter: limiter,

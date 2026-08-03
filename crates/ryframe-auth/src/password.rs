@@ -1,7 +1,5 @@
-use argon2::{
-    Argon2, PasswordHash, PasswordVerifier,
-    password_hash::{PasswordHasher, SaltString, rand_core::OsRng},
-};
+use argon2::Argon2;
+use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng};
 use ryframe_kernel::{AppError, AppResult};
 
 lazy_static::lazy_static! {

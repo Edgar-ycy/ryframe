@@ -6,9 +6,10 @@
 //! - 缓存读写与防护
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use ryframe_config::PaginationConfig;
 use ryframe_core::{
     cache::{BreakdownGuard, Cache, CacheStrategy, LocalMemoryCache, NoopCache},
-    repository::PageQuery,
+    repository::ValidatedPageQuery,
 };
 
 // ============ 雪花 ID ============
@@ -43,10 +44,12 @@ fn bench_snowflake_batch_1000(c: &mut Criterion) {
 fn bench_page_query_construct(c: &mut Criterion) {
     c.bench_function("page_query_construct", |b| {
         b.iter(|| {
-            let q = PageQuery {
-                page: std::hint::black_box(1),
-                page_size: std::hint::black_box(10),
-            };
+            let q = ValidatedPageQuery::new(
+                std::hint::black_box(1),
+                std::hint::black_box(10),
+                &PaginationConfig::default(),
+            )
+            .unwrap();
             std::hint::black_box(q);
         });
     });
@@ -55,10 +58,12 @@ fn bench_page_query_construct(c: &mut Criterion) {
 fn bench_page_query_offset(c: &mut Criterion) {
     c.bench_function("page_query_offset", |b| {
         b.iter(|| {
-            let q = PageQuery {
-                page: std::hint::black_box(5),
-                page_size: std::hint::black_box(20),
-            };
+            let q = ValidatedPageQuery::new(
+                std::hint::black_box(5),
+                std::hint::black_box(20),
+                &PaginationConfig::default(),
+            )
+            .unwrap();
             let offset = q.offset();
             std::hint::black_box(offset);
         });

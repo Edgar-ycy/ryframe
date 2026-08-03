@@ -4,6 +4,7 @@
 //! 同时允许覆盖前端目录。
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     error::Error,
     fs,
@@ -70,6 +71,13 @@ const MINIMUM_PYTHON_VERSION: ToolVersion = ToolVersion {
     patch: 0,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FeatureMatrixEntry {
+    package: String,
+    minimal: Vec<String>,
+    maximal: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
     let frontend_dir = take_option(&mut args, "--frontend-dir")
@@ -82,6 +90,7 @@ fn main() -> Result<()> {
         "check" => check(&args[1..], &frontend_dir),
         "verify" => verify(&args[1..], &frontend_dir),
         "contract" => contract(&args[1..], &frontend_dir),
+        "feature-matrix" => feature_matrix(),
         "release-verify" => release_verify(&args[1..], &frontend_dir),
         "dev" => dev(&frontend_dir),
         "help" | "--help" | "-h" => {
@@ -186,6 +195,7 @@ fn verify(args: &[String], frontend_dir: &Path) -> Result<()> {
 
 fn backend_check() -> Result<()> {
     let root = root_dir();
+    check_feature_registry(&root)?;
     run(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
     run(
         &root,
@@ -214,6 +224,246 @@ fn backend_check() -> Result<()> {
         run(&root, "python", &[script])?;
     }
     Ok(())
+}
+
+fn feature_matrix() -> Result<()> {
+    let root = root_dir();
+    let metadata = load_workspace_metadata(&root)?;
+    let registry = load_feature_registry(&root)?;
+    validate_feature_registry(&metadata, &registry)?;
+
+    for entry in &registry {
+        run_feature_combination(&root, &entry.package, "最小", &entry.minimal)?;
+        if entry.minimal != entry.maximal {
+            run_feature_combination(&root, &entry.package, "最大", &entry.maximal)?;
+        }
+    }
+    Ok(())
+}
+
+fn check_feature_registry(root: &Path) -> Result<()> {
+    let metadata = load_workspace_metadata(root)?;
+    let registry = load_feature_registry(root)?;
+    validate_feature_registry(&metadata, &registry)?;
+    println!("Cargo feature 注册表检查通过。");
+    Ok(())
+}
+
+fn load_feature_registry(root: &Path) -> Result<Vec<FeatureMatrixEntry>> {
+    let path = root.join("config/feature-matrix.json");
+    let source = fs::read(&path)
+        .map_err(|error| format!("无法读取 feature 注册表 {}: {error}", path.display()))?;
+    let document: serde_json::Value = serde_json::from_slice(&source)
+        .map_err(|error| format!("feature 注册表不是有效 JSON: {error}"))?;
+    if document.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Err("feature 注册表 version 必须为 1".into());
+    }
+    let packages = document
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("feature 注册表缺少 packages 数组")?;
+
+    packages
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let package = entry
+                .get("package")
+                .and_then(serde_json::Value::as_str)
+                .filter(|package| !package.trim().is_empty())
+                .ok_or_else(|| format!("feature 注册表 packages[{index}] 缺少 package"))?;
+            Ok(FeatureMatrixEntry {
+                package: package.to_owned(),
+                minimal: feature_names(entry.get("minimal"), index, "minimal")?,
+                maximal: feature_names(entry.get("maximal"), index, "maximal")?,
+            })
+        })
+        .collect()
+}
+
+fn feature_names(
+    value: Option<&serde_json::Value>,
+    index: usize,
+    field: &str,
+) -> Result<Vec<String>> {
+    value
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("feature 注册表 packages[{index}].{field} 必须是数组"))?
+        .iter()
+        .enumerate()
+        .map(|(feature_index, value)| {
+            value
+                .as_str()
+                .filter(|feature| !feature.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    format!(
+                        "feature 注册表 packages[{index}].{field}[{feature_index}] 必须是非空字符串"
+                    )
+                    .into()
+                })
+        })
+        .collect()
+}
+
+fn load_workspace_metadata(root: &Path) -> Result<serde_json::Value> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(root)
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!("无法读取 Cargo 工作区元数据: {stderr}").into());
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Cargo 工作区元数据不是有效 JSON: {error}").into())
+}
+
+fn workspace_features(metadata: &serde_json::Value) -> Result<BTreeMap<String, BTreeSet<String>>> {
+    let members = metadata
+        .get("workspace_members")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("Cargo 元数据缺少 workspace_members")?
+        .iter()
+        .map(|member| {
+            member
+                .as_str()
+                .map(str::to_owned)
+                .ok_or("Cargo workspace_members 中存在非字符串成员")
+        })
+        .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+    let packages = metadata
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("Cargo 元数据缺少 packages")?;
+    let mut result = BTreeMap::new();
+
+    for package in packages {
+        let id = package
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("Cargo package 缺少 id")?;
+        if !members.contains(id) {
+            continue;
+        }
+        let name = package
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("Cargo package 缺少 name")?;
+        let features = package
+            .get("features")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("Cargo package 缺少 features")?
+            .keys()
+            .cloned()
+            .collect();
+        if result.insert(name.to_owned(), features).is_some() {
+            return Err(format!("Cargo 工作区存在重复包名: {name}").into());
+        }
+    }
+
+    if result.len() != members.len() {
+        return Err("Cargo 元数据未包含全部工作区成员".into());
+    }
+    Ok(result)
+}
+
+fn validate_feature_registry(
+    metadata: &serde_json::Value,
+    registry: &[FeatureMatrixEntry],
+) -> Result<()> {
+    let packages = workspace_features(metadata)?;
+    let feature_packages = packages
+        .iter()
+        .filter(|(_, features)| !features.is_empty())
+        .map(|(name, _)| name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut registered_packages = BTreeSet::new();
+
+    for entry in registry {
+        if !registered_packages.insert(entry.package.as_str()) {
+            return Err(format!("Cargo feature 注册表重复登记包: {}", entry.package).into());
+        }
+        let available = packages
+            .get(entry.package.as_str())
+            .ok_or_else(|| format!("Cargo feature 注册表包含未知包: {}", entry.package))?;
+        if available.is_empty() {
+            return Err(format!("包 {} 没有 feature，不应登记矩阵", entry.package).into());
+        }
+
+        let minimal =
+            validate_feature_combination(&entry.package, "最小", &entry.minimal, available)?;
+        let maximal =
+            validate_feature_combination(&entry.package, "最大", &entry.maximal, available)?;
+        if !minimal.is_subset(&maximal) {
+            return Err(
+                format!("包 {} 的最小 feature 组合不是最大组合的子集", entry.package).into(),
+            );
+        }
+        if &maximal != available {
+            let missing = available.difference(&maximal).cloned().collect::<Vec<_>>();
+            return Err(format!(
+                "包 {} 的最大 feature 组合未覆盖: {}",
+                entry.package,
+                missing.join(", ")
+            )
+            .into());
+        }
+    }
+
+    if registered_packages != feature_packages {
+        let missing = feature_packages
+            .difference(&registered_packages)
+            .copied()
+            .collect::<Vec<_>>();
+        let extra = registered_packages
+            .difference(&feature_packages)
+            .copied()
+            .collect::<Vec<_>>();
+        return Err(format!(
+            "Cargo feature 注册表与工作区不一致；未登记: [{}]，多余: [{}]",
+            missing.join(", "),
+            extra.join(", ")
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_feature_combination(
+    package: &str,
+    label: &str,
+    combination: &[String],
+    available: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    let selected = combination.iter().cloned().collect::<BTreeSet<_>>();
+    if selected.len() != combination.len() {
+        return Err(format!("包 {package} 的{label} feature 组合包含重复项").into());
+    }
+    let unknown = selected.difference(available).cloned().collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "包 {package} 的{label} feature 组合包含未知项: {}",
+            unknown.join(", ")
+        )
+        .into());
+    }
+    Ok(selected)
+}
+
+fn run_feature_combination(
+    root: &Path,
+    package: &str,
+    label: &str,
+    features: &[String],
+) -> Result<()> {
+    println!("检查 {package} 的{label} feature 组合。");
+    let feature_list = features.join(",");
+    let mut args = vec!["check", "--locked", "-p", package, "--no-default-features"];
+    if !feature_list.is_empty() {
+        args.extend(["--features", feature_list.as_str()]);
+    }
+    run(root, "cargo", &args)
 }
 
 fn backend_verify() -> Result<()> {
@@ -695,6 +945,7 @@ fn print_help() {
          cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]\n\
          cargo xtask verify [--scope all|backend|frontend] [--frontend-dir PATH]\n\
          cargo xtask contract <check|sync> [--frontend-dir PATH]\n\
+         cargo xtask feature-matrix\n\
          cargo xtask release-verify --tag vMAJOR.MINOR.PATCH \\
              --backend-repository OWNER/REPO --backend-commit SHA \\
              --frontend-repository OWNER/REPO --frontend-commit SHA \\
@@ -705,7 +956,10 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolVersion, node_engine_satisfies, required_option};
+    use super::{
+        FeatureMatrixEntry, ToolVersion, node_engine_satisfies, required_option,
+        validate_feature_registry,
+    };
 
     fn version(value: &str) -> ToolVersion {
         ToolVersion::parse(value, "测试版本").expect("版本格式")
@@ -749,5 +1003,49 @@ mod tests {
 
         assert!(error.contains("--backend-commit"));
         assert!(error.contains("--manifest-path"));
+    }
+
+    #[test]
+    fn feature_registry_requires_every_feature_package() {
+        let metadata = serde_json::json!({
+            "workspace_members": ["package-a", "package-b"],
+            "packages": [
+                {
+                    "id": "package-a",
+                    "name": "package-a",
+                    "features": {"default": ["fast"], "fast": []}
+                },
+                {
+                    "id": "package-b",
+                    "name": "package-b",
+                    "features": {}
+                }
+            ]
+        });
+
+        let error = validate_feature_registry(&metadata, &[])
+            .expect_err("存在 feature 的包未登记时必须报错")
+            .to_string();
+
+        assert!(error.contains("package-a"));
+    }
+
+    #[test]
+    fn feature_registry_accepts_explicit_minimal_and_maximal_combinations() {
+        let metadata = serde_json::json!({
+            "workspace_members": ["package-a"],
+            "packages": [{
+                "id": "package-a",
+                "name": "package-a",
+                "features": {"default": ["fast"], "fast": []}
+            }]
+        });
+        let registry = [FeatureMatrixEntry {
+            package: "package-a".into(),
+            minimal: vec![],
+            maximal: vec!["default".into(), "fast".into()],
+        }];
+
+        validate_feature_registry(&metadata, &registry).expect("完整 feature 注册表应通过");
     }
 }

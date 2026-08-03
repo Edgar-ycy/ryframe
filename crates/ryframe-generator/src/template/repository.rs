@@ -100,7 +100,7 @@ pub fn render_repository(table: &TableInfo, base_name: &str) -> String {
         r#"// 此文件由 ryframe-generator v{generator_version} 自动生成。
 use async_trait::async_trait;
 use ryframe_kernel::{{AppError, AppResult}};
-use ryframe_core::repository::{{PageQuery, PageResult, Repository}};
+use ryframe_core::repository::{{ValidatedPageQuery, PageResult, Repository}};
 use sea_orm::{{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter}};
 
 use crate::entities::{snake};
@@ -125,7 +125,7 @@ impl Repository<{snake}::Model, {primary_key_type}> for {struct_name}Repository 
         &self,
         db: &DatabaseConnection,
         {tenant_parameter}: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<{snake}::Model>> {{
         let select = {snake}::Entity::find(){find_filters};
         crate::pagination::paginate(db, select, &query).await

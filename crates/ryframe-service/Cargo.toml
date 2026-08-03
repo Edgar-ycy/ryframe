@@ -26,18 +26,17 @@ sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
-utoipa = { workspace = true }
 tracing = { workspace = true }
-md5 = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
-percent-encoding = { workspace = true }
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 
 [dev-dependencies]
+axum = { workspace = true }
 opentelemetry_sdk = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
-sea-orm = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "net", "rt", "test-util"] }
+sea-orm = { workspace = true, features = ["mock"] }
 tempfile = { workspace = true }

@@ -2,9 +2,18 @@
 
 mod common;
 
+fn page_query(page: u64, page_size: u64) -> ryframe_core::ValidatedPageQuery {
+    ryframe_core::ValidatedPageQuery::new(
+        page,
+        page_size,
+        &ryframe_config::PaginationConfig::default(),
+    )
+    .expect("测试分页参数必须有效")
+}
+
 use chrono::Utc;
 use common::setup_test_db;
-use ryframe_core::repository::{PageQuery, Repository};
+use ryframe_core::repository::Repository;
 use ryframe_db::{
     DeptRepository, RoleRepository,
     entities::{dept, role, user},
@@ -56,7 +65,7 @@ async fn insert_user(db: &DatabaseConnection, username: &str) -> i64 {
         avatar_file_id: sea_orm::ActiveValue::Set(None),
         preferred_locale: sea_orm::ActiveValue::Set(None),
         status: sea_orm::ActiveValue::Set(user::Model::STATUS_NORMAL.into()),
-        auth_version: sea_orm::ActiveValue::Set(0),
+        authorization_version: sea_orm::ActiveValue::Set(1),
         dept_id: sea_orm::ActiveValue::Set(None),
         remark: sea_orm::ActiveValue::Set(None),
         login_ip: sea_orm::ActiveValue::Set(None),
@@ -100,14 +109,7 @@ async fn crud_filter_and_batch_delete_are_consistent() {
     let auditor = insert_role(&db, "审计员", "auditor").await;
 
     let page = repo
-        .find_by_page(
-            &db,
-            TENANT,
-            PageQuery {
-                page: 1,
-                page_size: 1,
-            },
-        )
+        .find_by_page(&db, TENANT, page_query(1, 1))
         .await
         .expect("page roles");
     assert_eq!(page.total, 2);
@@ -117,7 +119,7 @@ async fn crud_filter_and_batch_delete_are_consistent() {
         .find_by_page_filtered(
             &db,
             TENANT,
-            PageQuery::default(),
+            page_query(1, 10),
             Some("管理"),
             Some("admin"),
             Some(role::Model::STATUS_NORMAL),
@@ -281,8 +283,9 @@ async fn data_scope_and_super_role_queries_are_covered() {
     let dept_a = insert_dept(&db, "研发部").await;
     let dept_b = insert_dept(&db, "审计部").await;
 
+    let transaction = db.begin().await.expect("begin first scope transaction");
     repo.replace_data_scope(
-        &db,
+        &transaction,
         TENANT,
         first.id,
         role::Model::DATA_SCOPE_CUSTOM,
@@ -290,8 +293,10 @@ async fn data_scope_and_super_role_queries_are_covered() {
     )
     .await
     .expect("assign first scope");
+    transaction.commit().await.expect("commit first scope");
+    let transaction = db.begin().await.expect("begin second scope transaction");
     repo.replace_data_scope(
-        &db,
+        &transaction,
         TENANT,
         second.id,
         role::Model::DATA_SCOPE_CUSTOM,
@@ -299,6 +304,7 @@ async fn data_scope_and_super_role_queries_are_covered() {
     )
     .await
     .expect("assign second scope");
+    transaction.commit().await.expect("commit second scope");
     assert_eq!(
         repo.find_role_dept_ids(&db, TENANT, first.id)
             .await
@@ -352,9 +358,10 @@ async fn replacing_data_scope_rolls_back_role_and_departments_together() {
     .await
     .expect("create rejection trigger");
 
+    let transaction = db.begin().await.expect("begin rollback transaction");
     let result = repo
         .replace_data_scope(
-            &db,
+            &transaction,
             TENANT,
             target.id,
             role::Model::DATA_SCOPE_CUSTOM,
@@ -363,6 +370,7 @@ async fn replacing_data_scope_rolls_back_role_and_departments_together() {
         .await;
 
     assert!(result.is_err());
+    transaction.rollback().await.expect("rollback failed scope");
     assert_eq!(
         repo.find_by_id(&db, TENANT, target.id)
             .await
@@ -392,14 +400,74 @@ async fn pagination_is_tenant_scoped() {
         .expect("insert other tenant role");
 
     let system_page = RoleRepository
-        .find_by_page(&db, TENANT, PageQuery::default())
+        .find_by_page(&db, TENANT, page_query(1, 10))
         .await
         .expect("system page");
     assert_eq!(system_page.total, 1);
 
     let other_page = RoleRepository
-        .find_by_page(&db, "other", PageQuery::default())
+        .find_by_page(&db, "other", page_query(1, 10))
         .await
         .expect("other page");
     assert_eq!(other_page.total, 1);
+}
+
+#[tokio::test]
+async fn options_are_bounded_stable_and_respect_tenant_and_super_role_rules() {
+    let db = setup_test_db().await;
+    let repo = RoleRepository;
+
+    let mut enabled = make_role("Alpha Enabled", "alpha-enabled", role::Model::STATUS_NORMAL);
+    enabled.sort = 2;
+    repo.insert(&db, TENANT, enabled)
+        .await
+        .expect("insert enabled role");
+
+    let mut disabled = make_role(
+        "Alpha Disabled",
+        "alpha-disabled",
+        role::Model::STATUS_DISABLED,
+    );
+    disabled.sort = 1;
+    repo.insert(&db, TENANT, disabled)
+        .await
+        .expect("insert disabled role");
+
+    let mut super_role = make_role("Alpha Super", "alpha-super", role::Model::STATUS_NORMAL);
+    super_role.is_super = 1;
+    repo.insert(&db, TENANT, super_role)
+        .await
+        .expect("insert super role");
+
+    let mut other_tenant = make_role("Alpha Other", "alpha-other", role::Model::STATUS_NORMAL);
+    other_tenant.tenant_id = "other".into();
+    repo.insert(&db, "other", other_tenant)
+        .await
+        .expect("insert other tenant role");
+
+    let visible = repo
+        .find_options(&db, TENANT, Some("Alpha"), false, 10)
+        .await
+        .expect("find role options");
+    assert_eq!(
+        visible
+            .iter()
+            .map(|item| item.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["alpha-disabled", "alpha-enabled"]
+    );
+
+    let bounded = repo
+        .find_options(&db, TENANT, Some("Alpha"), false, 1)
+        .await
+        .expect("find bounded role options");
+    assert_eq!(bounded.len(), 1);
+    assert_eq!(bounded[0].code, "alpha-disabled");
+
+    let with_super = repo
+        .find_options(&db, TENANT, Some("alpha-super"), true, 10)
+        .await
+        .expect("find super role option");
+    assert_eq!(with_super.len(), 1);
+    assert_eq!(with_super[0].code, "alpha-super");
 }

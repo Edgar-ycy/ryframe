@@ -111,7 +111,7 @@ impl AuthService {
             user_id: user.id,
             tenant_id: &user.tenant_id,
             tenant_session_version,
-            user_auth_version: user.auth_version,
+            user_authorization_version: user.authorization_version,
             username: &user.username,
         };
         let sid = jwt::new_sid();
@@ -163,11 +163,6 @@ impl AuthService {
         claims: &jwt::Claims,
         rotation_attempt_id: &str,
     ) -> AppResult<LoginResult> {
-        if claims.sid.is_empty() {
-            return Err(AppError::Authentication(
-                "legacy refresh token is not accepted".into(),
-            ));
-        }
         let now = chrono::Utc::now().timestamp();
         if claims.exp <= now as usize {
             return Err(AppError::Authentication("refresh token expired".into()));
@@ -176,7 +171,7 @@ impl AuthService {
             user_id: user.id,
             tenant_id: &user.tenant_id,
             tenant_session_version,
-            user_auth_version: user.auth_version,
+            user_authorization_version: user.authorization_version,
             username: &user.username,
         };
         let expires_in = jwt::parse_duration(&self.config.auth.access_token_expire)?;

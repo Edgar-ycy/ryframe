@@ -1,7 +1,8 @@
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, EntityTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,
+    ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, ExprTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, LockType},
 };
 
 use crate::entities::{role, sys_file, tenant, user};
@@ -9,12 +10,6 @@ use crate::entities::{role, sys_file, tenant, user};
 pub struct TenantRepository;
 
 impl TenantRepository {
-    fn quota_file_condition() -> Condition {
-        Condition::any()
-            .add(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .add(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_UPLOAD_RESERVED))
-    }
-
     pub async fn list_all(&self, db: &DatabaseConnection) -> AppResult<Vec<tenant::Model>> {
         tenant::Entity::find()
             .order_by_asc(tenant::Column::TenantId)
@@ -59,6 +54,35 @@ impl TenantRepository {
             .one(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))
+    }
+
+    /// 在调用方事务内递增租户授权纪元，并返回递增后的持久化值。
+    pub async fn increment_authorization_epoch_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+    ) -> AppResult<i32> {
+        self.lock_tenant_in_txn(txn, tenant_id).await?;
+        let result = tenant::Entity::update_many()
+            .col_expr(
+                tenant::Column::AuthorizationEpoch,
+                Expr::col(tenant::Column::AuthorizationEpoch).add(1),
+            )
+            .col_expr(tenant::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .exec(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("租户不存在".into()));
+        }
+        tenant::Entity::find()
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .one(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .map(|tenant| tenant.authorization_epoch)
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 
@@ -123,7 +147,7 @@ impl TenantRepository {
 
         let storage_bytes = sys_file::Entity::find()
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(Self::quota_file_condition())
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .all(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?
@@ -156,7 +180,7 @@ impl TenantRepository {
         let tenant = self.lock_tenant_in_txn(txn, tenant_id).await?;
         let used = sys_file::Entity::find()
             .filter(sys_file::Column::TenantId.eq(tenant_id))
-            .filter(Self::quota_file_condition())
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .all(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?
@@ -248,7 +272,7 @@ impl TenantRepository {
 
     pub async fn update_status(
         &self,
-        db: &DatabaseConnection,
+        transaction: &DatabaseTransaction,
         tenant_id: &str,
         status: &str,
     ) -> AppResult<()> {
@@ -266,7 +290,7 @@ impl TenantRepository {
                 sea_orm::sea_query::Expr::value(chrono::Utc::now()),
             )
             .filter(tenant::Column::TenantId.eq(tenant_id))
-            .exec(db)
+            .exec(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         if result.rows_affected == 0 {

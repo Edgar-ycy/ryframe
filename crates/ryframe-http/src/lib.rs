@@ -7,114 +7,27 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use ryframe_kernel::{AppError as KernelAppError, ErrorCode};
+use ryframe_kernel::AppError;
 use serde::Serialize;
-use utoipa::ToSchema;
+use std::fmt;
 use validator::ValidationErrors;
 
-/// HTTP 调用方使用的兼容错误类型。
-///
-/// 新的领域代码应直接使用 `ryframe_kernel::AppError`。该类型保留相同变体，
-/// 以维持 Axum 处理器的 `IntoResponse` 契约，并可与内核错误双向转换。
-#[derive(Debug, thiserror::Error)]
-pub enum AppError {
-    #[error("参数校验失败: {0}")]
-    Validation(String),
-    #[error("认证失败: {0}")]
-    Authentication(String),
-    #[error("权限不足: {0}")]
-    Authorization(String),
-    #[error("资源不存在: {0}")]
-    NotFound(String),
-    #[error("数据冲突: {0}")]
-    Conflict(String),
-    #[error("请求体过大: {0}")]
-    PayloadTooLarge(String),
-    #[error("请求过于频繁: {0}")]
-    RateLimited(String, u64),
-    #[error("数据库错误: {0}")]
-    Database(String),
-    #[error("配置错误: {0}")]
-    Config(String),
-    #[error("内部错误: {0}")]
-    Internal(String),
-    #[error("服务暂不可用: {0}")]
-    ServiceUnavailable(String),
-}
+/// 当前公开 API 的唯一 URL 前缀。
+pub const API_PREFIX: &str = "/api/v1";
 
-impl AppError {
-    /// 返回与内核错误一致的稳定错误码。
-    pub const fn error_code(&self) -> ErrorCode {
-        match self {
-            Self::Validation(_) => ErrorCode::Validation,
-            Self::Authentication(_) => ErrorCode::Authentication,
-            Self::Authorization(_) => ErrorCode::Authorization,
-            Self::NotFound(_) => ErrorCode::NotFound,
-            Self::Conflict(_) => ErrorCode::Conflict,
-            Self::PayloadTooLarge(_) => ErrorCode::PayloadTooLarge,
-            Self::RateLimited(_, _) => ErrorCode::RateLimited,
-            Self::Database(_) => ErrorCode::Database,
-            Self::Config(_) => ErrorCode::Config,
-            Self::Internal(_) => ErrorCode::Internal,
-            Self::ServiceUnavailable(_) => ErrorCode::ServiceUnavailable,
-        }
-    }
-
-    /// 将 HTTP 兼容错误转换为纯领域错误。
-    pub fn into_kernel(self) -> KernelAppError {
-        self.into()
+/// 将不带版本的相对路径连接到唯一公开 API 前缀。
+pub fn api_path(relative_path: &str) -> String {
+    let relative_path = relative_path.trim_matches('/');
+    if relative_path.is_empty() {
+        API_PREFIX.to_owned()
+    } else {
+        format!("{API_PREFIX}/{relative_path}")
     }
 }
-
-impl From<AppError> for KernelAppError {
-    fn from(error: AppError) -> Self {
-        match error {
-            AppError::Validation(message) => Self::Validation(message),
-            AppError::Authentication(message) => Self::Authentication(message),
-            AppError::Authorization(message) => Self::Authorization(message),
-            AppError::NotFound(message) => Self::NotFound(message),
-            AppError::Conflict(message) => Self::Conflict(message),
-            AppError::PayloadTooLarge(message) => Self::PayloadTooLarge(message),
-            AppError::RateLimited(message, retry_after) => Self::RateLimited(message, retry_after),
-            AppError::Database(message) => Self::Database(message),
-            AppError::Config(message) => Self::Config(message),
-            AppError::Internal(message) => Self::Internal(message),
-            AppError::ServiceUnavailable(message) => Self::ServiceUnavailable(message),
-        }
-    }
-}
-
-impl From<KernelAppError> for AppError {
-    fn from(error: KernelAppError) -> Self {
-        match error {
-            KernelAppError::Validation(message) => Self::Validation(message),
-            KernelAppError::Authentication(message) => Self::Authentication(message),
-            KernelAppError::Authorization(message) => Self::Authorization(message),
-            KernelAppError::NotFound(message) => Self::NotFound(message),
-            KernelAppError::Conflict(message) => Self::Conflict(message),
-            KernelAppError::PayloadTooLarge(message) => Self::PayloadTooLarge(message),
-            KernelAppError::RateLimited(message, retry_after) => {
-                Self::RateLimited(message, retry_after)
-            }
-            KernelAppError::Database(message) => Self::Database(message),
-            KernelAppError::Config(message) => Self::Config(message),
-            KernelAppError::Internal(message) => Self::Internal(message),
-            KernelAppError::ServiceUnavailable(message) => Self::ServiceUnavailable(message),
-        }
-    }
-}
-
-impl From<ValidationErrors> for AppError {
-    fn from(error: ValidationErrors) -> Self {
-        KernelAppError::from(error).into()
-    }
-}
-
-/// HTTP 处理器的统一结果类型。
-pub type AppResult<T> = Result<T, AppError>;
 
 /// 统一 API 响应结构。
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ApiResponse<T: Serialize> {
     /// 与 HTTP 状态码一致的业务结果码。
     pub code: u16,
@@ -134,7 +47,8 @@ pub struct ApiResponse<T: Serialize> {
 ///
 /// 保持独立类型可让 OpenAPI 正确生成空数据响应的 Schema，避免把 Rust 的
 /// 单元类型错误地暴露成不存在的组件引用。
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ApiEmptyResponse {
     pub code: u16,
     pub message: String,
@@ -235,7 +149,8 @@ impl ApiResponse<()> {
 }
 
 /// 分页接口的业务数据。
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct PageData<T: Serialize> {
     pub items: Vec<T>,
     pub page: u64,
@@ -246,7 +161,8 @@ pub struct PageData<T: Serialize> {
 }
 
 /// 统一分页 API 响应结构。
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ApiPageResponse<T: Serialize> {
     pub code: u16,
     pub message: String,
@@ -294,48 +210,53 @@ impl<T: Serialize> ApiPageResponse<T> {
 /// `AppError` 位于 `ryframe-kernel`，因此领域库不实现 Axum 的 `IntoResponse`；
 /// HTTP 边缘代码需要直接返回响应时，应使用本包装器。
 #[derive(Debug)]
-pub struct HttpAppError(pub KernelAppError);
+pub struct HttpAppError(pub AppError);
 
-impl From<KernelAppError> for HttpAppError {
-    fn from(error: KernelAppError) -> Self {
+impl fmt::Display for HttpAppError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl std::error::Error for HttpAppError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+impl From<AppError> for HttpAppError {
+    fn from(error: AppError) -> Self {
         Self(error)
     }
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        HttpAppError::from(self.into_kernel()).into_response()
+impl From<ValidationErrors> for HttpAppError {
+    fn from(error: ValidationErrors) -> Self {
+        Self(AppError::from(error))
     }
 }
 
+/// HTTP 处理器的统一结果类型。
+pub type HttpResult<T> = Result<T, HttpAppError>;
+
 impl IntoResponse for HttpAppError {
     fn into_response(self) -> Response {
-        let is_prod = std::env::var("APP_ENV").is_ok_and(|env| {
-            matches!(
-                env.trim().to_ascii_lowercase().as_str(),
-                "prod" | "production"
-            )
-        });
         let error = self.0;
         let (status, message, retry_after) = match &error {
-            KernelAppError::Validation(message) => (StatusCode::BAD_REQUEST, message.clone(), None),
-            KernelAppError::Authentication(message) => {
-                (StatusCode::UNAUTHORIZED, message.clone(), None)
-            }
-            KernelAppError::Authorization(message) => {
-                (StatusCode::FORBIDDEN, message.clone(), None)
-            }
-            KernelAppError::NotFound(message) => (StatusCode::NOT_FOUND, message.clone(), None),
-            KernelAppError::Conflict(message) => (StatusCode::CONFLICT, message.clone(), None),
-            KernelAppError::PayloadTooLarge(message) => {
+            AppError::Validation(message) => (StatusCode::BAD_REQUEST, message.clone(), None),
+            AppError::Authentication(message) => (StatusCode::UNAUTHORIZED, message.clone(), None),
+            AppError::Authorization(message) => (StatusCode::FORBIDDEN, message.clone(), None),
+            AppError::NotFound(message) => (StatusCode::NOT_FOUND, message.clone(), None),
+            AppError::Conflict(message) => (StatusCode::CONFLICT, message.clone(), None),
+            AppError::PayloadTooLarge(message) => {
                 (StatusCode::PAYLOAD_TOO_LARGE, message.clone(), None)
             }
-            KernelAppError::RateLimited(message, retry_after) => (
+            AppError::RateLimited(message, retry_after) => (
                 StatusCode::TOO_MANY_REQUESTS,
                 message.clone(),
                 Some(*retry_after),
             ),
-            KernelAppError::Database(message) => {
+            AppError::Database(message) => {
                 tracing::error!(error = %message, "数据库错误");
                 (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -343,27 +264,27 @@ impl IntoResponse for HttpAppError {
                     None,
                 )
             }
-            KernelAppError::Config(message) => {
+            AppError::Config(message) => {
                 tracing::error!(error = %message, "配置错误");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    internal_error_message(is_prod, message),
+                    internal_error_message(),
                     None,
                 )
             }
-            KernelAppError::Internal(message) => {
+            AppError::Internal(message) => {
                 tracing::error!(error = %message, "内部错误");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    internal_error_message(is_prod, message),
+                    internal_error_message(),
                     None,
                 )
             }
-            KernelAppError::ServiceUnavailable(message) => {
+            AppError::ServiceUnavailable(message) => {
                 tracing::error!(error = %message, "服务暂不可用");
                 (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    service_unavailable_error_message(is_prod, message),
+                    service_unavailable_error_message(),
                     None,
                 )
             }
@@ -391,39 +312,79 @@ impl IntoResponse for HttpAppError {
     }
 }
 
-/// 将领域错误转换为当前 HTTP 兼容响应。
-pub fn app_error_response(error: KernelAppError) -> Response {
+/// 将领域错误转换为统一 HTTP 响应。
+pub fn app_error_response(error: AppError) -> Response {
     HttpAppError(error).into_response()
 }
 
-fn internal_error_message(is_prod: bool, detail: &str) -> String {
-    if is_prod {
-        "服务器内部错误".to_string()
-    } else {
-        detail.to_string()
-    }
+fn internal_error_message() -> String {
+    "服务器内部错误".to_string()
 }
 
-fn service_unavailable_error_message(is_prod: bool, detail: &str) -> String {
-    if is_prod {
-        "服务暂不可用".to_string()
-    } else {
-        detail.to_string()
-    }
+fn service_unavailable_error_message() -> String {
+    "服务暂不可用".to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::service_unavailable_error_message;
+    use axum::response::IntoResponse;
+    use ryframe_kernel::AppError;
+    use validator::{ValidationError, ValidationErrors};
+
+    use super::{
+        API_PREFIX, HttpAppError, api_path, internal_error_message,
+        service_unavailable_error_message,
+    };
 
     #[test]
-    fn production_service_unavailable_errors_do_not_expose_dependency_details() {
-        let detail = "redis://user:secret@internal.example:6379 unavailable";
+    fn api_path_uses_the_canonical_prefix() {
+        assert_eq!(API_PREFIX, "/api/v1");
+        assert_eq!(api_path("system/users"), "/api/v1/system/users");
+        assert_eq!(api_path("/common/jobs/"), "/api/v1/common/jobs");
+        assert_eq!(api_path(""), API_PREFIX);
+    }
 
+    #[test]
+    fn validation_errors_convert_directly_at_the_http_boundary() {
+        let mut validation = ValidationErrors::new();
+        validation.add("name", ValidationError::new("required"));
+
+        let HttpAppError(error) = HttpAppError::from(validation);
+        assert!(matches!(error, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn http_mapping_preserves_status_and_retry_after_contract() {
+        let database = HttpAppError::from(AppError::Database("private dsn".into())).into_response();
         assert_eq!(
-            service_unavailable_error_message(true, detail),
-            "服务暂不可用"
+            database.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
         );
-        assert_eq!(service_unavailable_error_message(false, detail), detail);
+
+        let limited =
+            HttpAppError::from(AppError::RateLimited("slow down".into(), 7)).into_response();
+        assert_eq!(limited.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            limited.headers().get(http::header::RETRY_AFTER).unwrap(),
+            "7"
+        );
+    }
+
+    #[test]
+    fn internal_errors_never_expose_details() {
+        let detail = "mysql://user:secret@internal.example/private";
+        let message = internal_error_message();
+
+        assert_eq!(message, "服务器内部错误");
+        assert!(!message.contains(detail));
+    }
+
+    #[test]
+    fn service_unavailable_errors_never_expose_dependency_details() {
+        let detail = "redis://user:secret@internal.example:6379 unavailable";
+        let message = service_unavailable_error_message();
+
+        assert_eq!(message, "服务暂不可用");
+        assert!(!message.contains(detail));
     }
 }

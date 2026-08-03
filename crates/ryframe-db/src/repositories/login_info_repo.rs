@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 
 use crate::entities::login_info;
@@ -37,7 +37,7 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<login_info::Model>> {
         crate::pagination::paginate(
             db,
@@ -119,7 +119,7 @@ impl LoginInfoRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: &PageQuery,
+        query: &ValidatedPageQuery,
         filter: LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<login_info::Model>> {
@@ -155,5 +155,18 @@ impl LoginInfoRepository {
             .await
             .map(|r| r.rows_affected)
             .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub async fn clean_all_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+    ) -> AppResult<u64> {
+        login_info::Entity::delete_many()
+            .filter(login_info::Column::TenantId.eq(tenant_id))
+            .exec(transaction)
+            .await
+            .map(|result| result.rows_affected)
+            .map_err(|error| AppError::Database(error.to_string()))
     }
 }

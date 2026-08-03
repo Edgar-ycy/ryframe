@@ -7,7 +7,7 @@ use ryframe_i18n::Localizer;
 use ryframe_middleware::RateLimiter;
 use ryframe_monitor::MonitorState;
 use ryframe_service::{
-    AuthService, JobQueue,
+    AuditOutbox, AuthService, JobQueue,
     system::{
         CaptchaStore, ConfigService, DeptService, DictService, ExportService, FileService,
         GeneratorService, LoginInfoService, MenuService, MessageService, NoticeService,
@@ -36,6 +36,7 @@ pub struct AppServices {
     pub message: Arc<MessageService>,
     pub websocket_ticket: Arc<WebSocketTicketService>,
     pub oper_log: Arc<OperLogService>,
+    pub audit_outbox: Arc<AuditOutbox>,
     pub job_queue: Arc<JobQueue>,
     pub login_info: Arc<LoginInfoService>,
     pub generator: Arc<GeneratorService>,

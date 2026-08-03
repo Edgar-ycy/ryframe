@@ -1,16 +1,15 @@
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
 use serde::Serialize;
-use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TableInfo {
     pub table_name: String,
     pub comment: Option<String>,
     pub columns: Vec<ColumnInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ColumnInfo {
     pub name: String,
     pub data_type: String,

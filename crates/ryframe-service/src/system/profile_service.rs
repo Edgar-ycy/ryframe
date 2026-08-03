@@ -1,22 +1,23 @@
 use ryframe_auth::password;
 use ryframe_core::{
-    LoggedRepo, Repository,
+    Repository,
     auto_fill::{AutoFill, FillContext},
 };
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{
     DeptRepository, FileRepository, PermissionRepository, RoleRepository, UserRepository,
-    entities::sys_file,
+    entities::{sys_file, user},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
+use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
-use utoipa::ToSchema;
+
+use crate::AuthorizationCache;
 
 const AVATAR_CLEANUP_GRACE_MINUTES: i64 = 5;
 
 /// 用户个人信息响应
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct UserProfileResponse {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub user_id: String,
@@ -40,26 +41,28 @@ pub struct UserProfileResponse {
 /// 个人中心服务
 pub struct ProfileService {
     db: DatabaseCluster,
-    user_repo: LoggedRepo<UserRepository>,
-    role_repo: LoggedRepo<RoleRepository>,
-    perm_repo: LoggedRepo<PermissionRepository>,
-    dept_repo: LoggedRepo<DeptRepository>,
+    user_repo: UserRepository,
+    role_repo: RoleRepository,
+    perm_repo: PermissionRepository,
+    dept_repo: DeptRepository,
+    authorization_cache: AuthorizationCache,
 }
 
 impl ProfileService {
-    pub fn new(db: DatabaseCluster) -> Self {
+    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            dept_repo: LoggedRepo::new(DeptRepository),
+            user_repo: UserRepository,
+            role_repo: RoleRepository,
+            perm_repo: PermissionRepository,
+            dept_repo: DeptRepository,
+            authorization_cache,
         }
     }
     /// 获取当前用户个人信息
     pub async fn get_profile(&self, actor: &ActorContext) -> AppResult<UserProfileResponse> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         // 查询用户信息
         let user = self
             .user_repo
@@ -120,10 +123,15 @@ impl ProfileService {
         preferred_locale: Option<String>,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
         let mut user = self
             .user_repo
-            .find_by_id(db, tenant_id, actor.user_id)
+            .find_by_id_for_update(&transaction, tenant_id, actor.user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
@@ -133,8 +141,12 @@ impl ProfileService {
         user.preferred_locale = normalize_preferred_locale(preferred_locale)?;
         user.fill_on_update(&FillContext::new())?;
 
-        self.user_repo.update(db, tenant_id, user).await?;
-
+        user::ActiveModel::from(user)
+            .reset_all()
+            .update(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        crate::commit_current_audit(transaction).await?;
         Ok(())
     }
 
@@ -146,10 +158,15 @@ impl ProfileService {
         new_password: &str,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
         let mut user = self
             .user_repo
-            .find_by_id(db, tenant_id, actor.user_id)
+            .find_by_id_for_update(&transaction, tenant_id, actor.user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
 
@@ -164,11 +181,21 @@ impl ProfileService {
         password::validate_complexity(new_password)?;
         let new_hash = password::hash(new_password)?;
         user.password_hash = new_hash;
-        user.auth_version = user.auth_version.saturating_add(1);
         user.fill_on_update(&FillContext::new())?;
 
-        self.user_repo.update(db, tenant_id, user).await?;
-
+        user::ActiveModel::from(user)
+            .reset_all()
+            .update(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let versions = self
+            .authorization_cache
+            .increment_user_versions_in_transaction(&transaction, tenant_id, &[actor.user_id])
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_user_versions(tenant_id, &versions)
+            .await?;
         Ok(())
     }
 
@@ -220,9 +247,7 @@ impl ProfileService {
             if avatar_file.bucket != "avatar" {
                 return Err(AppError::Validation("只能关联头像专用文件".into()));
             }
-            if avatar_file.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP
-                && avatar_file.del_flag == sys_file::Model::DEL_FLAG_UPLOAD_RESERVED
-            {
+            if avatar_file.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP {
                 if !FileRepository
                     .restore_avatar_file_for_reference_in_txn(
                         &transaction,
@@ -274,10 +299,7 @@ impl ProfileService {
         .await;
 
         match result {
-            Ok(()) => transaction
-                .commit()
-                .await
-                .map_err(|error| AppError::Database(error.to_string())),
+            Ok(()) => crate::commit_current_audit(transaction).await,
             Err(error) => {
                 let _ = transaction.rollback().await;
                 Err(error)
@@ -298,13 +320,13 @@ impl ProfileService {
             .begin()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        let result = async {
+        let result: AppResult<bool> = async {
             let now = FileRepository.database_utc_now(&transaction).await?;
             let Some(file) = FileRepository
                 .find_by_id_any_status_for_update(&transaction, tenant_id, avatar_file_id)
                 .await?
             else {
-                return Ok(());
+                return Ok(false);
             };
             if file.bucket != "avatar" {
                 return Err(AppError::Validation("只能清理头像专用文件".into()));
@@ -314,7 +336,7 @@ impl ProfileService {
                 .count_avatar_file_references_in_txn(&transaction, tenant_id, avatar_file_id)
                 .await?;
             if references == 0 {
-                FileRepository
+                return FileRepository
                     .mark_avatar_orphan_for_cleanup_in_txn(
                         &transaction,
                         tenant_id,
@@ -322,18 +344,21 @@ impl ProfileService {
                         now,
                         now + chrono::Duration::minutes(AVATAR_CLEANUP_GRACE_MINUTES),
                     )
-                    .await?;
+                    .await;
             }
-            Ok(())
+            Ok(false)
         }
         .await;
         match result {
-            Ok(()) => transaction
-                .commit()
+            Ok(true) => crate::commit_current_audit(transaction).await,
+            Ok(false) => transaction
+                .rollback()
                 .await
                 .map_err(|error| AppError::Database(error.to_string())),
             Err(error) => {
-                let _ = transaction.rollback().await;
+                if let Err(rollback_error) = transaction.rollback().await {
+                    tracing::error!(%rollback_error, "头像延迟回收事务回滚失败");
+                }
                 Err(error)
             }
         }

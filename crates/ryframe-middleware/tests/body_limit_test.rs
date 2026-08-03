@@ -58,5 +58,10 @@ async fn chunked_body_over_limit_returns_uniform_413() {
     let body = to_bytes(response.into_body(), 1024).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["code"], 413);
-    assert_eq!(json["msg"], "request body is too large");
+    assert_eq!(json["message"], "请求体过大");
+    assert_eq!(json["data"], serde_json::Value::Null);
+    assert_eq!(json["request_id"], "");
+    assert_eq!(json["error_key"], "payload_too_large");
+    assert_eq!(json["details"], serde_json::Value::Null);
+    assert!(json.get("msg").is_none());
 }

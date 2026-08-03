@@ -21,7 +21,8 @@ use axum::{{
     extract::{{Path, Query, State}},
 }};
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{{ApiPageResponse, ApiResponse, AppResult}};
+use ryframe_http::{{ApiPageResponse, ApiResponse, HttpResult}};
+use ryframe_kernel::AppError;
 use ryframe_macro::{{delete, get, post, put, route}};
 use ryframe_service::system::{{
     Create{struct_name}Command, {struct_name}Vo, Update{struct_name}Command,
@@ -52,14 +53,14 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<{struct_name}ListQuery>,
-) -> AppResult<Json<ApiPageResponse<{struct_name}Vo>>> {{
+) -> HttpResult<Json<ApiPageResponse<{struct_name}Vo>>> {{
     let (page_query, _) = query.into_parts(&state.config.pagination)?;
-    state
+    let page = state
         .services
         .{snake}
         .find_by_page(&current_user, page_query)
-        .await
-        .map(|page| Json(ApiPageResponse::new(
+        .await?;
+    Ok(Json(ApiPageResponse::new(
             page.records,
             page.total,
             page.page,
@@ -78,14 +79,14 @@ async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<{primary_key_type}>,
-) -> AppResult<Json<ApiResponse<{struct_name}Vo>>> {{
-    state
+) -> HttpResult<Json<ApiResponse<{struct_name}Vo>>> {{
+    let value = state
         .services
         .{snake}
         .find_by_id(&current_user, id)
         .await?
-        .map(|value| Json(ApiResponse::success(value)))
-        .ok_or_else(|| ryframe_http::AppError::NotFound("记录不存在".into()))
+        .ok_or_else(|| AppError::NotFound("记录不存在".into()))?;
+    Ok(Json(ApiResponse::success(value)))
 }}
 
 #[post("/")]
@@ -97,17 +98,17 @@ async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<Create{struct_name}Dto>,
-) -> AppResult<Json<ApiResponse<{struct_name}Vo>>> {{
+) -> HttpResult<Json<ApiResponse<{struct_name}Vo>>> {{
     dto.validate()?;
     let command = Create{struct_name}Command {{
 {create_command_fields}
     }};
-    state
+    let value = state
         .services
         .{snake}
         .create(&current_user, command)
-        .await
-        .map(|value| Json(ApiResponse::success(value)))
+        .await?;
+    Ok(Json(ApiResponse::success(value)))
 }}
 
 #[put("/{{id}}")]
@@ -120,17 +121,17 @@ async fn update(
     current_user: RequestPrincipal,
     Path(id): Path<{primary_key_type}>,
     Json(dto): Json<Update{struct_name}Dto>,
-) -> AppResult<Json<ApiResponse<{struct_name}Vo>>> {{
+) -> HttpResult<Json<ApiResponse<{struct_name}Vo>>> {{
     dto.validate()?;
     let command = Update{struct_name}Command {{
 {create_command_fields}
     }};
-    state
+    let value = state
         .services
         .{snake}
         .update(&current_user, id, command)
-        .await
-        .map(|value| Json(ApiResponse::success(value)))
+        .await?;
+    Ok(Json(ApiResponse::success(value)))
 }}
 
 #[delete("/{{id}}")]
@@ -142,7 +143,7 @@ async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<{primary_key_type}>,
-) -> AppResult<Json<ApiResponse<()>>> {{
+) -> HttpResult<Json<ApiResponse<()>>> {{
     state.services.{snake}.delete(&current_user, id).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }}

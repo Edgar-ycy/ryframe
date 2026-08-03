@@ -2,15 +2,14 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_core::PageQuery;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{
-    CreateMenuCommand, MenuListParams, MenuTreeNode, MenuVo, UpdateMenuCommand,
-};
+use ryframe_service::system::{CreateMenuCommand, MenuListParams, UpdateMenuCommand};
 use validator::Validate;
 
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
+use crate::dto::public_dto::{MenuTreeNode, MenuVo};
 use crate::handler_utils::{parse_optional_i64, parse_optional_i64_str};
 use crate::state::AppState;
 use crate::{list_query, remove_body};
@@ -22,7 +21,7 @@ list_query!(pub MenuListQuery, MenuFilterQuery {
 });
 
 impl MenuFilterQuery {
-    fn into_service_params(self, page: PageQuery) -> MenuListParams {
+    fn into_service_params(self, page: ValidatedPageQuery) -> MenuListParams {
         MenuListParams {
             page,
             name: self.name,
@@ -36,7 +35,6 @@ pub fn menu_router(state: AppState) -> Router {
         .merge(route!(tree))
         .merge(route!(user_tree))
         .merge(route!(list_page))
-        .merge(route!(list_no_page))
         .merge(route!(create))
         .merge(route!(detail))
         .merge(route!(update))
@@ -52,14 +50,18 @@ pub fn menu_router(state: AppState) -> Router {
 async fn tree(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
     state
         .services
         .menu
         .find_tree(&current_user)
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|nodes| {
+            Json(ApiResponse::success(
+                nodes.into_iter().map(MenuTreeNode::from).collect(),
+            ))
+        })
 }
 
 /// 当前用户可见的菜单树（按角色过滤，前端用）
@@ -69,7 +71,7 @@ async fn tree(
 pub async fn user_tree(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
+) -> HttpResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
     let tree = if current_user.is_super_admin {
         // 超级管理员看全部菜单树
         state.services.menu.find_tree(&current_user).await?
@@ -82,7 +84,9 @@ pub async fn user_tree(
             .find_tree_by_permissions(&current_user, &current_user.permissions)
             .await?
     };
-    Ok(Json(ApiResponse::success(tree)))
+    Ok(Json(ApiResponse::success(
+        tree.into_iter().map(MenuTreeNode::from).collect(),
+    )))
 }
 
 /// 菜单列表分页查询
@@ -96,17 +100,17 @@ async fn list_page(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<MenuListQuery>,
-) -> AppResult<Json<ApiPageResponse<MenuVo>>> {
+) -> HttpResult<Json<ApiPageResponse<MenuVo>>> {
     let (page, filter) = query.into_parts(&state.config.pagination)?;
     state
         .services
         .menu
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map_err(ryframe_http::AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|page| {
             Json(ApiPageResponse::new(
-                page.records,
+                page.records.into_iter().map(MenuVo::from).collect(),
                 page.total,
                 page.page,
                 page.page_size,
@@ -114,30 +118,6 @@ async fn list_page(
                 "查询成功",
             ))
         })
-}
-
-/// 菜单列表不分页查询（返回全部数据）
-#[get("/all")]
-#[perm("system:menu:list")]
-#[utoipa::path(get, path = "/api/v1/system/menus/all", tag = "菜单管理",
-    params(MenuFilterQuery),
-    responses((status = 200, description = "菜单列表", body = ApiResponse<Vec<MenuVo>>)),
-    security(("bearer" = [])))]
-async fn list_no_page(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<MenuFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<MenuVo>>>> {
-    state
-        .services
-        .menu
-        .find_by_page(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|page| Json(ApiResponse::success(page.records)))
 }
 
 /// 创建菜单
@@ -149,7 +129,7 @@ async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreateMenuDto>,
-) -> AppResult<Json<ApiResponse<MenuVo>>> {
+) -> HttpResult<Json<ApiResponse<MenuVo>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let perm_id = parse_optional_i64_str(dto.perm_id.as_deref())?;
@@ -161,7 +141,7 @@ async fn create(
             CreateMenuCommand {
                 name: dto.name,
                 parent_id,
-                menu_type: dto.menu_type,
+                menu_type: dto.menu_type.into(),
                 perm_id,
                 route_key: dto.route_key,
                 icon: dto.icon,
@@ -170,8 +150,8 @@ async fn create(
             },
         )
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 更新菜单
@@ -185,7 +165,7 @@ async fn update(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateMenuDto>,
-) -> AppResult<Json<ApiResponse<MenuVo>>> {
+) -> HttpResult<Json<ApiResponse<MenuVo>>> {
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let perm_id = parse_optional_i64_str(dto.perm_id.as_deref())?;
@@ -198,7 +178,7 @@ async fn update(
                 id,
                 name: dto.name,
                 parent_id,
-                menu_type: dto.menu_type,
+                menu_type: dto.menu_type.into(),
                 perm_id,
                 route_key: dto.route_key,
                 icon: dto.icon,
@@ -208,8 +188,8 @@ async fn update(
             },
         )
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 菜单详情
@@ -223,14 +203,14 @@ async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<MenuVo>>> {
-    state
+) -> HttpResult<Json<ApiResponse<MenuVo>>> {
+    let menu = state
         .services
         .menu
         .find_by_id(&current_user, id)
         .await?
-        .ok_or_else(|| ryframe_http::AppError::NotFound("菜单不存在".into()))
-        .map(|menu| Json(ApiResponse::success(menu)))
+        .ok_or_else(|| ryframe_kernel::AppError::NotFound("菜单不存在".into()))?;
+    Ok(Json(ApiResponse::success(menu.into())))
 }
 
 /// 删除菜单
@@ -242,6 +222,6 @@ async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     remove_body!(state, current_user, id, menu)
 }

@@ -1,9 +1,9 @@
-use ryframe_service::{LoginResult, UserInfo};
+use ryframe_service::LoginResult;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{
-    password_validation::validate_password_complexity,
+    password_validation::validate_password_complexity, public_dto::UserInfo,
     tenant_validation::validate_tenant_identifier,
 };
 
@@ -44,11 +44,19 @@ pub struct LoginResponse {
 }
 
 impl From<LoginResult> for LoginResponse {
-    fn from(r: LoginResult) -> Self {
+    fn from(value: LoginResult) -> Self {
+        let LoginResult {
+            access_token,
+            refresh_token: _,
+            sid: _,
+            user_info,
+            expires_in,
+            refresh_expires_at: _,
+        } = value;
         Self {
-            access_token: r.access_token,
-            expires_in: r.expires_in,
-            user_info: r.user_info,
+            access_token,
+            expires_in,
+            user_info: user_info.into(),
         }
     }
 }

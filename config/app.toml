@@ -5,7 +5,6 @@
 
 [app]
 name = "ryframe"
-version = "0.5.1"
 host = "0.0.0.0"
 port = 8080
 
@@ -61,6 +60,7 @@ tls = false
 level = "info"
 format = "text"
 output = "stdout"
+retention_days = 7
 
 [telemetry]
 # OTLP 导出失败只会降级为本地日志，不会影响应用就绪状态。
@@ -70,6 +70,20 @@ service_name = "ryframe"
 sample_ratio = 0.1
 export_timeout_secs = 5
 max_queue_size = 2048
+
+[messaging]
+# 消息收件箱、发布、WebSocket 票据和实时投递的总开关。
+enabled = true
+# 一次性 WebSocket 票据有效期（秒）。
+ticket_ttl_seconds = 60
+# 消息最大保留天数。
+retention_days = 90
+# 每个租户用户在单个 API 实例上的最大 WebSocket 连接数。
+max_connections_per_user = 5
+# 每条 WebSocket 连接的有界出站队列容量。
+outbound_buffer = 256
+# 单条消息允许固化的最大收件人数。
+max_recipients_per_message = 100000
 
 [cors]
 # 允许来源示例：allow_origins = ["https://admin.example.com"]
@@ -93,12 +107,10 @@ api_timeout_seconds = 30
 [rate_limit]
 # 是否启用全局限流
 enabled = true
-# 令牌桶容量（每窗口最大请求数）
+# 每个窗口允许的最大请求数
 capacity = 100
-# 每秒补充令牌数（0 表示使用 window_secs 固定窗口模式）
-refill_per_sec = 20
-# 固定窗口时长（秒），0 使用 refill_per_sec 令牌桶模式
-window_secs = 0
+# 固定窗口时长（秒）
+window_secs = 60
 # ========== 用户级限流 ==========
 # 是否启用用户级限流（需 Redis + 在 system_router 添加中间件）
 enable_user_rate_limit = false
@@ -121,14 +133,16 @@ api_window_secs = 60
 # max_page_size 的 page_size 时，请求会以 400 被拒绝。
 default_page_size = 10
 max_page_size = 100
-# 显式的 /all 风格查询和导出端点仍然受上限约束。
-unpaged_max_records = 1000
 
 [jobs]
 # 后台任务：开发环境由 Web 进程内置 Worker 消费；生产环境默认改为 external，
 # 并由独立的 `ryframe-worker` 进程运行。
 poll_interval_ms = 500
 lease_seconds = 60
+heartbeat_seconds = 15
+default_max_attempts = 8
+export_max_rows = 500000
+export_retention_hours = 24
 concurrency = 4
 # 独立 `ryframe-worker` 的存活、就绪和 Prometheus 指标端口。
 health_host = "0.0.0.0"

@@ -1,11 +1,12 @@
 use ryframe_core::{
     Repository,
-    repository::{PageQuery, PageResult},
+    repository::{PageResult, ValidatedPageQuery},
 };
+use ryframe_db::ReadConsistency;
 use ryframe_kernel::{ActorContext, AppResult, DataScope, DataScopeContext};
 use sea_orm::DatabaseConnection;
 
-use super::{CACHE_TTL_SECS, DeptService, DeptTreeNode, DeptVo, dept_tree_cache_key};
+use super::{CACHE_TTL_SECS, DEPT_TREE_CACHE_NAMESPACE, DeptService, DeptTreeNode, DeptVo};
 
 impl DeptService {
     async fn visible_dept_ids(
@@ -35,10 +36,14 @@ impl DeptService {
         db: &DatabaseConnection,
         tenant_id: &str,
     ) -> AppResult<Vec<DeptTreeNode>> {
-        let cache_key = dept_tree_cache_key(tenant_id);
-        if let Some(redis) = &self.redis
-            && let Ok(Some(json)) = redis.get(&cache_key).await
-            && let Ok(cached) = serde_json::from_str::<Vec<DeptTreeNode>>(&json)
+        let cache_lookup = self
+            .authorization_cache
+            .read_tenant_value(tenant_id, DEPT_TREE_CACHE_NAMESPACE)
+            .await?;
+        if let Some(json) = cache_lookup
+            .as_ref()
+            .and_then(|lookup| lookup.value.as_deref())
+            && let Ok(cached) = serde_json::from_str::<Vec<DeptTreeNode>>(json)
         {
             return Ok(cached);
         }
@@ -51,11 +56,19 @@ impl DeptService {
             .map(DeptTreeNode::from)
             .collect::<Vec<_>>();
 
-        if let Some(redis) = &self.redis
-            && let Ok(json) = serde_json::to_string(&tree)
-            && let Err(error) = redis.set_ex(&cache_key, &json, CACHE_TTL_SECS).await
-        {
-            tracing::warn!(tenant_id, %error, "failed to cache department tree");
+        if let Some(cache_lookup) = cache_lookup {
+            let json = serde_json::to_string(&tree).map_err(|error| {
+                ryframe_kernel::AppError::Internal(format!("序列化部门树缓存失败: {error}"))
+            })?;
+            self.authorization_cache
+                .store_tenant_value(
+                    tenant_id,
+                    DEPT_TREE_CACHE_NAMESPACE,
+                    cache_lookup.tenant_authorization_epoch,
+                    &json,
+                    CACHE_TTL_SECS,
+                )
+                .await?;
         }
         Ok(tree)
     }
@@ -63,7 +76,7 @@ impl DeptService {
     pub async fn filter_dept_by_user(&self, actor: &ActorContext) -> AppResult<Vec<DeptTreeNode>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         match self.visible_dept_ids(&db, tenant_id, &scope).await? {
             None => self.tree_list(&db, tenant_id).await,
             Some(ids) => self
@@ -74,40 +87,16 @@ impl DeptService {
         }
     }
 
-    pub async fn find_filtered(
-        &self,
-        actor: &ActorContext,
-        name: Option<&str>,
-        status: Option<&str>,
-    ) -> AppResult<Vec<DeptVo>> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
-        let scope = actor.data_scope_context();
-        let db = self.db.read();
-        let models = match self.visible_dept_ids(&db, tenant_id, &scope).await? {
-            None => {
-                self.dept_repo
-                    .find_filtered(&db, tenant_id, name, status)
-                    .await?
-            }
-            Some(ids) => {
-                self.dept_repo
-                    .find_filtered_by_ids(&db, tenant_id, name, status, &ids)
-                    .await?
-            }
-        };
-        Ok(models.into_iter().map(DeptVo::from).collect())
-    }
-
     pub async fn find_by_page_filtered(
         &self,
         actor: &ActorContext,
-        query: PageQuery,
+        query: ValidatedPageQuery,
         name: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<DeptVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let page = match self.visible_dept_ids(&db, tenant_id, &scope).await? {
             None => {
                 self.dept_repo
@@ -127,7 +116,7 @@ impl DeptService {
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<DeptVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         if let Some(ids) = self.visible_dept_ids(&db, tenant_id, &scope).await?
             && !ids.contains(&id)
         {

@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use ryframe_http::{AppError, AppResult};
+use ryframe_http::HttpResult;
 use ryframe_i18n::LocalizedText;
+use ryframe_kernel::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
@@ -68,7 +69,7 @@ pub struct PublishMessageDto {
 
 impl PublishMessageDto {
     /// 将 HTTP 输入规范化为服务层可校验的本地化文本。
-    pub fn localized_content(&self) -> AppResult<(LocalizedText, LocalizedText)> {
+    pub fn localized_content(&self) -> HttpResult<(LocalizedText, LocalizedText)> {
         match (&self.title, &self.content, &self.title_key, &self.body_key) {
             (Some(title), Some(content), None, None) if self.args.is_empty() => Ok((
                 LocalizedText::Literal {
@@ -93,19 +94,21 @@ impl PublishMessageDto {
             }
             _ => Err(AppError::Validation(
                 "消息标题和正文必须同时提供纯文本，或同时提供本地化键".into(),
-            )),
+            )
+            .into()),
         }
     }
 }
 
-fn validate_localized_args(args: &BTreeMap<String, String>) -> AppResult<()> {
+fn validate_localized_args(args: &BTreeMap<String, String>) -> HttpResult<()> {
     if args
         .iter()
         .any(|(key, value)| key.trim().is_empty() || key.len() > 64 || value.len() > 512)
     {
         return Err(AppError::Validation(
             "消息本地化参数的键不能为空且最长 64 个字符，值最长 512 个字符".into(),
-        ));
+        )
+        .into());
     }
     Ok(())
 }
@@ -116,7 +119,7 @@ mod tests {
     use validator::Validate;
 
     #[test]
-    fn accepts_legacy_literal_message_payload() {
+    fn accepts_literal_message_payload() {
         let dto: PublishMessageDto = serde_json::from_value(serde_json::json!({
             "topic": "system",
             "title": "标题",

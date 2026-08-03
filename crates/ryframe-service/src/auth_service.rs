@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use ryframe_config::AppConfig;
-use ryframe_core::{LoggedRepo, RedisClient, RefreshSessionStore};
+use ryframe_core::{RedisClient, RefreshSessionStore};
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
     DeptRepository, PermissionRepository, RoleRepository, UserRepository, entities::user,
 };
 use serde::Serialize;
-use utoipa::ToSchema;
+
+use crate::AuthorizationCache;
 
 mod brute_force;
 mod identity;
@@ -26,7 +27,7 @@ pub struct LoginResult {
 }
 
 /// 用户信息
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize)]
 pub struct UserInfo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -65,29 +66,36 @@ impl From<&user::Model> for UserInfo {
 /// 认证服务
 pub struct AuthService {
     db: DatabaseCluster,
-    user_repo: LoggedRepo<UserRepository>,
-    role_repo: LoggedRepo<RoleRepository>,
-    perm_repo: LoggedRepo<PermissionRepository>,
-    dept_repo: LoggedRepo<DeptRepository>,
+    user_repo: UserRepository,
+    role_repo: RoleRepository,
+    perm_repo: PermissionRepository,
+    dept_repo: DeptRepository,
     config: Arc<AppConfig>,
     /// Redis 客户端（用于 refresh family 与登录暴力破解防护，可空）
     redis: Option<RedisClient>,
     refresh_sessions: RefreshSessionStore,
+    authorization_cache: AuthorizationCache,
 }
 
 impl AuthService {
-    pub fn new(db: DatabaseCluster, config: Arc<AppConfig>, redis: Option<RedisClient>) -> Self {
+    pub fn new(
+        db: DatabaseCluster,
+        config: Arc<AppConfig>,
+        redis: Option<RedisClient>,
+        authorization_cache: AuthorizationCache,
+    ) -> Self {
         ryframe_auth::password::warm_dummy_hash();
         let refresh_sessions = RefreshSessionStore::new(redis.clone());
         Self {
             db,
-            user_repo: LoggedRepo::new(UserRepository),
-            role_repo: LoggedRepo::new(RoleRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            dept_repo: LoggedRepo::new(DeptRepository),
+            user_repo: UserRepository,
+            role_repo: RoleRepository,
+            perm_repo: PermissionRepository,
+            dept_repo: DeptRepository,
             config,
             redis,
             refresh_sessions,
+            authorization_cache,
         }
     }
 

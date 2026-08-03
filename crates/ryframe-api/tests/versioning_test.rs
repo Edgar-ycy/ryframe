@@ -1,11 +1,14 @@
 use axum::{
     Json, Router,
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
+    middleware::from_fn,
     routing::get,
 };
+use ryframe_api::router::api_version;
 use ryframe_api::versioning::{ApiVersion, VersionedRouter};
-use serde_json::json;
+use ryframe_middleware::{api_response_envelope_middleware, request_id_middleware};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 #[test]
@@ -88,7 +91,9 @@ async fn test_versioned_router_only_v1_rejects_v2_without_fallback() {
 
     let router = VersionedRouter::new()
         .with_v1(Router::<()>::new().route("/version-check", get(v1_handler)))
-        .into_router();
+        .into_router()
+        .layer(from_fn(api_response_envelope_middleware))
+        .layer(from_fn(request_id_middleware));
 
     let v1_response = router
         .clone()
@@ -102,14 +107,60 @@ async fn test_versioned_router_only_v1_rejects_v2_without_fallback() {
         .unwrap();
     assert_eq!(v1_response.status(), StatusCode::OK);
 
-    let v2_response = router
+    for uri in ["/api/v2/version-check", "/api/version-check"] {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .expect("响应头必须包含请求 ID")
+            .to_string();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(value["code"], 404);
+        assert_eq!(value["message"], "资源不存在");
+        assert_eq!(value["data"], Value::Null);
+        assert_eq!(value["request_id"], request_id);
+        assert_eq!(value["error_key"], "not_found");
+        assert_eq!(value["details"], Value::Null);
+    }
+}
+
+#[tokio::test]
+async fn version_endpoint_uses_the_unified_response_contract() {
+    let router = Router::new()
+        .route("/api/v1/version", get(api_version))
+        .layer(from_fn(api_response_envelope_middleware))
+        .layer(from_fn(request_id_middleware));
+
+    let response = router
         .oneshot(
             Request::builder()
-                .uri("/api/v2/version-check")
+                .uri("/api/v1/version")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(v2_response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response.status(), StatusCode::OK);
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .expect("响应头必须包含请求 ID")
+        .to_string();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let value: Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(value["code"], 200);
+    assert_eq!(value["request_id"], request_id);
+    assert_eq!(value["data"]["name"], "ryframe-api");
+    assert_eq!(value["data"]["api_prefix"], "/api/v1");
+    assert!(value["data"]["endpoints"].is_object());
 }

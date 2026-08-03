@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, LockType},
 };
 
 use crate::entities::{menu, permission};
@@ -54,7 +56,7 @@ impl Repository<menu::Model, i64> for MenuRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<menu::Model>> {
         crate::pagination::paginate(
             db,
@@ -90,6 +92,76 @@ impl Repository<menu::Model, i64> for MenuRepository {
 }
 
 impl MenuRepository {
+    pub async fn find_by_id_for_update(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<menu::Model>> {
+        menu::Entity::find_by_id(id)
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::TenantId.eq(tenant_id))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: menu::Model,
+    ) -> AppResult<menu::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("菜单租户不匹配".into()));
+        }
+        menu::ActiveModel::from(entity)
+            .insert(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: menu::Model,
+    ) -> AppResult<menu::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("菜单租户不匹配".into()));
+        }
+        menu::ActiveModel::from(entity)
+            .reset_all()
+            .update(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        let result = menu::Entity::update_many()
+            .col_expr(
+                menu::Column::DelFlag,
+                Expr::value(menu::Model::DEL_FLAG_DELETED),
+            )
+            .col_expr(menu::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .filter(menu::Column::Id.eq(id))
+            .filter(menu::Column::TenantId.eq(tenant_id))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .exec(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("菜单不存在".into()));
+        }
+        Ok(())
+    }
+
     pub async fn find_by_route_key(
         &self,
         db: &DatabaseConnection,
@@ -219,7 +291,7 @@ impl MenuRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: &PageQuery,
+        query: &ValidatedPageQuery,
         filter: &MenuFilter<'_>,
     ) -> AppResult<PageResult<menu::Model>> {
         let mut select = menu::Entity::find()

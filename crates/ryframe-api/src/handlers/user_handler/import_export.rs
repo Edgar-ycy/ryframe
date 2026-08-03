@@ -6,15 +6,16 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiResponse, AppError, AppResult};
-use ryframe_kernel::AppError as KernelAppError;
+use ryframe_http::{ApiResponse, HttpResult};
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, post};
-use ryframe_service::system::{CreateUserParams, ExportJobVo, UserExportFilters};
+use ryframe_service::system::{CreateUserParams, UserExportFilters};
 use validator::Validate;
 
 use crate::{
     dto::{
         multipart_dto::FileUploadForm,
+        public_dto::ExportJobVo,
         user_dto::UserExportRequestDto,
         user_import_dto::{UserImportData, UserImportResult},
     },
@@ -36,7 +37,7 @@ pub(crate) async fn request_user_export(
     current_user: RequestPrincipal,
     headers: HeaderMap,
     Json(request): Json<UserExportRequestDto>,
-) -> AppResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     let dept_id = request
         .dept_id
         .as_deref()
@@ -73,7 +74,7 @@ pub(crate) async fn import_users(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     mut multipart: Multipart,
-) -> AppResult<Json<ApiResponse<UserImportResult>>> {
+) -> HttpResult<Json<ApiResponse<UserImportResult>>> {
     use ryframe_excel::ExcelImporter;
 
     let lock_key = format!("tenant:{}:system:user:import", current_user.tenant_id);
@@ -83,7 +84,7 @@ pub(crate) async fn import_users(
         .try_acquire(&lock_key, Duration::from_secs(300))
         .await
         .map_err(|error| {
-            if matches!(error, KernelAppError::ServiceUnavailable(_)) {
+            if matches!(error, AppError::ServiceUnavailable(_)) {
                 ryframe_middleware::metrics::record_redis_degraded("distributed_lock");
             }
             error
@@ -150,7 +151,7 @@ pub(crate) async fn import_users(
             },
         )));
     }
-    Err(AppError::Validation("未找到上传的文件".into()))
+    Err(AppError::Validation("未找到上传的文件".into()).into())
 }
 
 #[get("/import-template")]
@@ -160,7 +161,7 @@ pub(crate) async fn import_users(
 pub(crate) async fn download_import_template(
     State(_state): State<AppState>,
     _current_user: RequestPrincipal,
-) -> AppResult<axum::response::Response> {
+) -> HttpResult<axum::response::Response> {
     use ryframe_excel::ExcelExporter;
 
     let bytes = ExcelExporter::export_template("用户数据", UserImportData::excel_headers())?;

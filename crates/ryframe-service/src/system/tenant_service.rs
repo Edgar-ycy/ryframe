@@ -1,18 +1,19 @@
 use chrono::{DateTime, Utc};
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{
     ProvisionTenantCommand, TenantProvisioningRepository, TenantRepository, entities::tenant,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
-use utoipa::ToSchema;
+
+use crate::AuthorizationCache;
 
 const SYSTEM_TENANT_ID: &str = "system";
 const MIN_TENANT_USERS: i32 = 1;
 const MIN_TENANT_ROLES: i32 = 2;
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct TenantVo {
     pub tenant_id: String,
     pub name: String,
@@ -70,20 +71,22 @@ pub struct TenantService {
     db: DatabaseCluster,
     tenant_repo: TenantRepository,
     provisioning_repo: TenantProvisioningRepository,
+    authorization_cache: AuthorizationCache,
 }
 
 impl TenantService {
-    pub fn new(db: DatabaseCluster) -> Self {
+    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             tenant_repo: TenantRepository,
             provisioning_repo: TenantProvisioningRepository,
+            authorization_cache,
         }
     }
 
     pub async fn list(&self, actor: &ActorContext) -> AppResult<Vec<TenantVo>> {
         ensure_platform_admin(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         self.tenant_repo
             .list_all(&db)
             .await
@@ -136,10 +139,18 @@ impl TenantService {
             admin_username: params.admin_username,
             admin_password_hash: ryframe_auth::password::hash(&params.admin_password)?,
         };
-        self.provisioning_repo
-            .provision(self.db.write(), command)
+        let transaction = self
+            .db
+            .write()
+            .begin()
             .await
-            .map(TenantVo::from)
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let tenant = self
+            .provisioning_repo
+            .provision_in_transaction(&transaction, command)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(TenantVo::from(tenant))
     }
 
     pub async fn update(
@@ -189,10 +200,14 @@ impl TenantService {
             .update(&transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(TenantVo::from(saved))
     }
 
@@ -209,8 +224,22 @@ impl TenantService {
         if !matches!(status.as_str(), "0" | "1") {
             return Err(AppError::Validation("无效的租户状态".into()));
         }
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         self.tenant_repo
-            .update_status(self.db.write(), tenant_id, &status)
+            .update_status(&transaction, tenant_id, &status)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await
     }
 }

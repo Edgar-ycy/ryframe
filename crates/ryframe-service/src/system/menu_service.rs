@@ -1,12 +1,15 @@
 use ryframe_core::{
-    LoggedRepo, RedisClient, Repository,
+    Repository,
     auto_fill::{AutoFill, FillContext},
-    repository::{PageQuery, PageResult},
+    repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{MenuFilter, MenuRepository, PermissionRepository, entities::menu};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
+use sea_orm::TransactionTrait;
+
+use crate::AuthorizationCache;
 
 mod model;
 mod validation;
@@ -15,54 +18,46 @@ pub use model::{CreateMenuCommand, MenuTreeNode, MenuType, MenuVo, UpdateMenuCom
 
 #[derive(Debug)]
 pub struct MenuListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub name: Option<String>,
     pub status: Option<String>,
 }
 
 const CACHE_TTL_SECS: u64 = 3600;
-
-fn menu_tree_cache_key(tenant_id: &str) -> String {
-    format!("tenant:{tenant_id}:sys_menu:tree")
-}
+const MENU_TREE_CACHE_NAMESPACE: &str = "menu-tree";
 
 pub struct MenuService {
     db: DatabaseCluster,
-    menu_repo: LoggedRepo<MenuRepository>,
-    perm_repo: LoggedRepo<PermissionRepository>,
-    redis: Option<RedisClient>,
+    menu_repo: MenuRepository,
+    perm_repo: PermissionRepository,
+    authorization_cache: AuthorizationCache,
 }
 
 impl MenuService {
-    pub fn new(db: DatabaseCluster, redis: Option<RedisClient>) -> Self {
+    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
-            menu_repo: LoggedRepo::new(MenuRepository),
-            perm_repo: LoggedRepo::new(PermissionRepository),
-            redis,
-        }
-    }
-
-    pub async fn invalidate_all_menu_caches(&self) {
-        let Some(redis) = &self.redis else {
-            return;
-        };
-        if let Err(error) = redis.delete_by_pattern("tenant:*:sys_menu:tree").await {
-            tracing::warn!(%error, "failed to clear menu tree caches");
+            menu_repo: MenuRepository,
+            perm_repo: PermissionRepository,
+            authorization_cache,
         }
     }
 
     pub async fn find_tree(&self, actor: &ActorContext) -> AppResult<Vec<MenuTreeNode>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
-        let cache_key = menu_tree_cache_key(tenant_id);
-        if let Some(ref redis) = self.redis
-            && let Ok(Some(json)) = redis.get(&cache_key).await
-            && let Ok(cached) = serde_json::from_str::<Vec<MenuTreeNode>>(&json)
+        let cache_lookup = self
+            .authorization_cache
+            .read_tenant_value(tenant_id, MENU_TREE_CACHE_NAMESPACE)
+            .await?;
+        if let Some(json) = cache_lookup
+            .as_ref()
+            .and_then(|lookup| lookup.value.as_deref())
+            && let Ok(cached) = serde_json::from_str::<Vec<MenuTreeNode>>(json)
         {
             return Ok(cached);
         }
 
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let tree = self
             .menu_repo
             .find_tree(&db, tenant_id)
@@ -71,11 +66,18 @@ impl MenuService {
             .map(MenuTreeNode::from)
             .collect::<Vec<_>>();
 
-        if let Some(ref redis) = self.redis
-            && let Ok(json) = serde_json::to_string(&tree)
-            && let Err(error) = redis.set_ex(&cache_key, &json, CACHE_TTL_SECS).await
-        {
-            tracing::warn!(tenant_id, %error, "failed to cache menu tree");
+        if let Some(cache_lookup) = cache_lookup {
+            let json = serde_json::to_string(&tree)
+                .map_err(|error| AppError::Internal(format!("序列化菜单树缓存失败: {error}")))?;
+            self.authorization_cache
+                .store_tenant_value(
+                    tenant_id,
+                    MENU_TREE_CACHE_NAMESPACE,
+                    cache_lookup.tenant_authorization_epoch,
+                    &json,
+                    CACHE_TTL_SECS,
+                )
+                .await?;
         }
 
         Ok(tree)
@@ -87,7 +89,7 @@ impl MenuService {
         permission_codes: &[String],
     ) -> AppResult<Vec<MenuTreeNode>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         self.menu_repo
             .find_tree_by_permission_codes(&db, tenant_id, permission_codes)
             .await
@@ -130,8 +132,22 @@ impl MenuService {
         };
 
         new_menu.fill_on_insert(&FillContext::new())?;
-        let saved = self.menu_repo.insert(db, tenant_id, new_menu).await?;
-        self.invalidate_menu_cache(tenant_id).await;
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let saved = self
+            .menu_repo
+            .insert_in_transaction(&transaction, tenant_id, new_menu)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(MenuVo::from(saved))
     }
 
@@ -170,8 +186,26 @@ impl MenuService {
         menu.status = command.status;
         menu.fill_on_update(&FillContext::new())?;
 
-        let saved = self.menu_repo.update(db, tenant_id, menu).await?;
-        self.invalidate_menu_cache(tenant_id).await;
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.menu_repo
+            .find_by_id_for_update(&transaction, tenant_id, command.id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
+        let saved = self
+            .menu_repo
+            .update_in_transaction(&transaction, tenant_id, menu)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(MenuVo::from(saved))
     }
 
@@ -187,8 +221,25 @@ impl MenuService {
             return Err(AppError::Validation("存在子菜单，无法删除".into()));
         }
 
-        self.menu_repo.delete(db, tenant_id, id).await?;
-        self.invalidate_menu_cache(tenant_id).await;
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        self.menu_repo
+            .find_by_id_for_update(&transaction, tenant_id, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
+        self.menu_repo
+            .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        let authorization_epoch = self
+            .authorization_cache
+            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        self.authorization_cache
+            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .await?;
         Ok(())
     }
 
@@ -198,7 +249,7 @@ impl MenuService {
         params: MenuListParams,
     ) -> AppResult<PageResult<MenuVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let page = self
             .menu_repo
             .find_by_page_filtered(
@@ -217,19 +268,11 @@ impl MenuService {
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<MenuVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         self.menu_repo
             .find_by_id(&db, tenant_id, id)
             .await
             .map(|menu| menu.map(MenuVo::from))
-    }
-
-    pub async fn invalidate_menu_cache(&self, tenant_id: &str) {
-        if let Some(redis) = &self.redis
-            && let Err(error) = redis.del(menu_tree_cache_key(tenant_id)).await
-        {
-            tracing::warn!(tenant_id, %error, "failed to invalidate menu tree cache");
-        }
     }
 }
 
@@ -237,18 +280,4 @@ fn normalize_route_key(route_key: Option<String>) -> Option<String> {
     route_key
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::menu_tree_cache_key;
-
-    #[test]
-    fn cache_key_is_tenant_scoped() {
-        let first = menu_tree_cache_key("tenant-a");
-        let second = menu_tree_cache_key("tenant-b");
-        assert_eq!(first, "tenant:tenant-a:sys_menu:tree");
-        assert_eq!(second, "tenant:tenant-b:sys_menu:tree");
-        assert_ne!(first, second);
-    }
 }

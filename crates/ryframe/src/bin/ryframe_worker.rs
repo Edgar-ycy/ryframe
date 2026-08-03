@@ -12,32 +12,37 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use ryframe_config::{AppConfig, MigrationMode, RedisMode, StorageBackend};
+use ryframe_config::{AppConfig, Environment, MigrationMode, RedisMode, StorageBackend};
 use ryframe_core::RedisClient;
-use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster, DbSpanLayer, SqlLogLayer};
-use ryframe_http::AppError;
-use ryframe_middleware::telemetry::{TelemetryGuard, init_tracer_provider};
+use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
+use ryframe_kernel::AppError;
 use ryframe_service::{
-    CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue, JobWorker,
-    MessageDispatchJobHandler, MessageRetentionJobHandler, OperLogJobHandler, OutboxWorker,
+    AuthorizationCache, CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler,
+    JobQueue, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, OutboxWorker,
     spawn_message_retention_scheduler,
     system::{EXPORT_BUCKET, ExportService, MessageService, OperLogService, UserService},
 };
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
 use tokio::sync::watch;
-use tracing_subscriber::{
-    EnvFilter, Layer, filter::FilterFn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
-};
+
+#[path = "../boot/logging.rs"]
+mod process_logging;
+#[path = "../boot/readiness.rs"]
+mod process_readiness;
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    ryframe_service::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
     let run_once = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
         [] => false,
         [command] if command == "--once" => true,
         _ => return Err(AppError::Config("用法: ryframe-worker [--once]".into())),
     };
-    let config = AppConfig::load_from_env()?;
-    let _telemetry_guard = init_logging(&config);
+    let environment = Environment::from_env()?;
+    let config = AppConfig::load_from_env(environment)?;
+    ryframe_utils::snowflake::initialize(config.snowflake_worker_id)
+        .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
+    let (_logger_guard, _telemetry_guard) = process_logging::init(&config)?;
     ryframe_middleware::metrics::spawn_process_metrics_updater();
 
     let primary = ryframe_db::connection::connect_with_level(
@@ -65,32 +70,60 @@ async fn main() -> Result<(), AppError> {
         .map_err(|error| AppError::Internal(format!("数据库结构指纹校验失败: {error}")))?;
 
     let redis = connect_redis_for_worker(&config).await?;
+    let authorization_cache = AuthorizationCache::new(
+        redis.clone(),
+        config
+            .redis
+            .as_ref()
+            .map(|redis| redis.mode)
+            .unwrap_or(RedisMode::Disabled),
+    );
     let object_storage = connect_storage_for_worker(&config).await?;
 
     let queue = Arc::new(JobQueue::new(database.clone()));
     install_job_metrics(&queue);
     let oper_log = Arc::new(OperLogService::new(database.clone()));
-    let message = Arc::new(MessageService::new(database.clone(), queue.clone()));
-    let user = Arc::new(UserService::new(database.clone(), redis.clone()));
-    let export = Arc::new(ExportService::new(database.clone(), user, object_storage));
+    let message = Arc::new(MessageService::new(
+        database.clone(),
+        queue.clone(),
+        config.messaging.clone(),
+    ));
+    let user = Arc::new(UserService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
+    let export = Arc::new(ExportService::new(
+        database.clone(),
+        user,
+        object_storage,
+        &config.jobs,
+    ));
     let worker = JobWorker::new(queue.clone(), &config.jobs)?
-        .with_handler(Arc::new(OperLogJobHandler::new(oper_log)))?
         .with_handler(Arc::new(ExportJobHandler::new(export.clone())))?
-        .with_handler(Arc::new(ExportCleanupJobHandler::new(export.clone())))?
-        .with_handler(Arc::new(
-            MessageDispatchJobHandler::new(message.clone(), redis.clone())
-                .with_redis_wakeup_failure_observer(Arc::new(|| {
-                    ryframe_middleware::metrics::record_redis_degraded("message_dispatch_wakeup");
-                })),
-        ))?
-        .with_handler(Arc::new(
-            MessageRetentionJobHandler::new(message).with_deleted_observer(Arc::new(
-                ryframe_middleware::metrics::record_message_retention_deleted,
-            )),
-        ))?;
+        .with_handler(Arc::new(ExportCleanupJobHandler::new(export.clone())))?;
+    let worker = if config.messaging.enabled {
+        worker
+            .with_handler(Arc::new(
+                MessageDispatchJobHandler::new(message.clone(), redis.clone())
+                    .with_redis_wakeup_failure_observer(Arc::new(|| {
+                        ryframe_middleware::metrics::record_redis_degraded(
+                            "message_dispatch_wakeup",
+                        );
+                    })),
+            ))?
+            .with_handler(Arc::new(
+                MessageRetentionJobHandler::new(message).with_deleted_observer(Arc::new(
+                    ryframe_middleware::metrics::record_message_retention_deleted,
+                )),
+            ))?
+    } else {
+        worker
+    };
 
     if run_once {
-        let outbox_worker = OutboxWorker::new(queue, &config.jobs)?;
+        let outbox_worker = OutboxWorker::new(queue, &config.jobs)?
+            .with_authorization_cache(authorization_cache.clone())
+            .with_audit_service(oper_log.clone());
         let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
         let job_result = worker.run_once("ryframe-worker-once-job").await?;
         tracing::info!(?outbox_result, ?job_result, "Worker 单次运行已完成");
@@ -99,9 +132,12 @@ async fn main() -> Result<(), AppError> {
     }
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let mut retention_scheduler =
-        spawn_message_retention_scheduler(queue.clone(), shutdown_receiver.clone());
-    let mut health_task = start_health_server(
+    let mut retention_scheduler = spawn_message_retention_scheduler(
+        queue.clone(),
+        config.messaging.enabled,
+        shutdown_receiver.clone(),
+    );
+    let mut health_tasks = start_health_server(
         database,
         redis,
         config
@@ -115,7 +151,12 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
     let mut worker_tasks = worker.spawn(shutdown_receiver.clone());
-    worker_tasks.extend(OutboxWorker::new(queue.clone(), &config.jobs)?.spawn(shutdown_receiver));
+    worker_tasks.extend(
+        OutboxWorker::new(queue.clone(), &config.jobs)?
+            .with_authorization_cache(authorization_cache)
+            .with_audit_service(oper_log)
+            .spawn(shutdown_receiver),
+    );
     tracing::info!(
         concurrency = config.jobs.concurrency,
         "独立后台任务 Worker 已启动"
@@ -140,12 +181,15 @@ async fn main() -> Result<(), AppError> {
         tracing::warn!("消息保留调度器未在宽限期内停止");
         retention_scheduler.abort();
     }
-    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut health_task)
-        .await
-        .is_err()
-    {
-        tracing::warn!("Worker 健康探针未在宽限期内停止");
-        health_task.abort();
+    let health_shutdown_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    for task in &mut health_tasks {
+        if tokio::time::timeout_at(health_shutdown_deadline, &mut *task)
+            .await
+            .is_err()
+        {
+            tracing::warn!("Worker 健康服务未在总宽限期内停止");
+            task.abort();
+        }
     }
     _telemetry_guard.shutdown();
     Ok(())
@@ -153,9 +197,7 @@ async fn main() -> Result<(), AppError> {
 
 #[derive(Clone)]
 struct WorkerHealthState {
-    database: DatabaseCluster,
-    redis: Option<RedisClient>,
-    redis_required: bool,
+    readiness: ryframe_monitor::DependencyHealthCache,
     metrics_bearer_token: Arc<str>,
 }
 
@@ -168,21 +210,31 @@ async fn start_health_server(
     host: String,
     port: u16,
     mut shutdown: watch::Receiver<bool>,
-) -> Result<tokio::task::JoinHandle<()>, AppError> {
+) -> Result<Vec<tokio::task::JoinHandle<()>>, AppError> {
     let address: SocketAddr = format!("{host}:{port}")
         .parse()
         .map_err(|error| AppError::Config(format!("Worker 健康探针地址无效: {error}")))?;
-    let state = WorkerHealthState {
-        database,
-        redis,
-        redis_required,
-        metrics_bearer_token,
-    };
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(|error| {
             AppError::Internal(format!("无法绑定 Worker 健康探针 {address}: {error}"))
         })?;
+    let readiness = ryframe_monitor::DependencyHealthCache::new(
+        redis_required,
+        false,
+        process_readiness::CACHE_MAX_AGE,
+    );
+    let readiness_task = process_readiness::spawn(
+        Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
+        redis,
+        None,
+        readiness.clone(),
+        shutdown.clone(),
+    );
+    let state = WorkerHealthState {
+        readiness,
+        metrics_bearer_token,
+    };
     let router = Router::new()
         .route("/livez", get(worker_livez))
         .route("/readyz", get(worker_readyz))
@@ -190,7 +242,7 @@ async fn start_health_server(
         .with_state(state);
     tracing::info!(%address, "Worker 健康探针已启动");
 
-    Ok(tokio::spawn(async move {
+    let server_task = tokio::spawn(async move {
         let shutdown_signal = async move {
             loop {
                 if shutdown.changed().await.is_err() || *shutdown.borrow() {
@@ -204,7 +256,8 @@ async fn start_health_server(
         {
             tracing::warn!(%error, "Worker 健康探针已停止");
         }
-    }))
+    });
+    Ok(vec![server_task, readiness_task])
 }
 
 async fn worker_livez() -> StatusCode {
@@ -212,29 +265,11 @@ async fn worker_livez() -> StatusCode {
 }
 
 async fn worker_readyz(State(state): State<WorkerHealthState>) -> StatusCode {
-    let dependency_timeout = Duration::from_secs(2);
-    if !matches!(
-        tokio::time::timeout(
-            dependency_timeout,
-            ryframe_db::connection::ping(state.database.write()),
-        )
-        .await,
-        Ok(Ok(()))
-    ) {
-        return StatusCode::SERVICE_UNAVAILABLE;
+    if state.readiness.snapshot().is_ready() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
     }
-    if state.redis_required {
-        let Some(redis) = state.redis.as_ref() else {
-            return StatusCode::SERVICE_UNAVAILABLE;
-        };
-        if !matches!(
-            tokio::time::timeout(dependency_timeout, redis.ping()).await,
-            Ok(Ok(_))
-        ) {
-            return StatusCode::SERVICE_UNAVAILABLE;
-        }
-    }
-    StatusCode::OK
 }
 
 async fn worker_metrics(
@@ -327,42 +362,6 @@ async fn connect_redis_for_worker(config: &AppConfig) -> Result<Option<RedisClie
             Ok(None)
         }
     }
-}
-
-/// 初始化独立 Worker 的应用日志、SQL 日志和 OpenTelemetry 链路。
-///
-/// 返回的守卫必须存活至进程退出，确保已缓存的 Span 在关闭前完成导出。
-fn init_logging(config: &AppConfig) -> TelemetryGuard {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logger.level));
-    let sqlx_filter = FilterFn::new(|meta| meta.target() != "sqlx::query");
-
-    let telemetry_guard = init_tracer_provider(&config.telemetry);
-    let otel_layer = telemetry_guard.tracing_layer();
-    let fmt_layer = if config.logger.format == "json" {
-        fmt::layer()
-            .json()
-            .with_ansi(config.logger.output != "file")
-            .with_filter(sqlx_filter)
-            .boxed()
-    } else {
-        fmt::layer()
-            .with_ansi(config.logger.output != "file")
-            .with_filter(sqlx_filter)
-            .boxed()
-    };
-    let subscriber = tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(DbSpanLayer::new())
-        .with(SqlLogLayer::new(config.database.sql_log_level, 0));
-
-    if let Some(otel) = otel_layer {
-        subscriber.with(otel).with(env_filter).init();
-    } else {
-        subscriber.with(env_filter).init();
-    }
-
-    telemetry_guard
 }
 
 /// 等待 Ctrl+C 或 Unix 的 SIGTERM，并通知所有消费循环退出。

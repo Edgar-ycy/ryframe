@@ -1,9 +1,9 @@
-//! 操作日志自动记录中间件
+//! 操作审计自动记录中间件。
 //!
-//! 拦截 POST/PUT/DELETE 请求，自动记录操作日志到数据库。
-//! 在 auth_middleware 之后运行（RequestPrincipal 已在 extensions 中）。
+//! 拦截写请求并同步持久化事务 Outbox 意图，实际日志由 Worker 幂等落库。
+//! 在认证中间件之后运行，此时 `RequestPrincipal` 已在扩展中。
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use axum::{
     extract::{MatchedPath, Request, State},
@@ -11,22 +11,24 @@ use axum::{
     response::Response,
 };
 use ryframe_auth::RequestPrincipal;
+use ryframe_middleware::request_id::RequestId;
 use ryframe_service::{
-    JobQueue,
+    AuditOutbox, AuditRequestContext, scope_audit_request,
     system::{OperLogStatus, RecordOperLogCommand},
 };
 use ryframe_utils::ip::ClientIp;
+use uuid::Uuid;
 
 /// 操作日志中间件状态
 #[derive(Clone)]
 pub struct OperLogMiddlewareState {
-    queue: Arc<JobQueue>,
+    outbox: Arc<AuditOutbox>,
 }
 
 impl OperLogMiddlewareState {
     /// 创建供 axum 中间件注入的共享状态。
-    pub fn new_arc(queue: Arc<JobQueue>) -> Arc<Self> {
-        Arc::new(Self { queue })
+    pub fn new_arc(outbox: Arc<AuditOutbox>) -> Arc<Self> {
+        Arc::new(Self { outbox })
     }
 }
 
@@ -74,17 +76,43 @@ pub async fn oper_log_middleware(
     // 推导业务类型和模块标题（基于 URI + HTTP 方法精确映射）
     let (title, business_type) = infer_business_info(&uri, &request_method);
 
-    let start = Instant::now();
-    let response = next.run(request).await;
-    let cost_time = start.elapsed().as_millis() as i64;
+    let request_id = request
+        .extensions()
+        .get::<RequestId>()
+        .map(|value| value.0.clone())
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
+    let context = match AuditRequestContext::new(
+        Uuid::now_v7().to_string(),
+        request_id,
+        current_user.tenant_id.clone(),
+        RecordOperLogCommand {
+            title,
+            business_type,
+            method: format!("{} {}", request_method, uri),
+            request_method,
+            oper_name,
+            oper_url: uri,
+            oper_ip,
+            oper_param: None,
+            json_result: None,
+            status: OperLogStatus::Success,
+            error_msg: None,
+            cost_time: 0,
+        },
+    ) {
+        Ok(context) => context,
+        Err(error) => {
+            ryframe_service::record_audit_failure("context");
+            tracing::error!(%error, "无法创建操作审计上下文");
+            return next.run(request).await;
+        }
+    };
+
+    let response = scope_audit_request(context.clone(), next.run(request)).await;
 
     let http_status = response.status();
     let is_success = http_status.is_success();
 
-    // 绝不在操作日志中持久化请求体或响应体。拒绝列表无法证明未来的 DTO 字段、
-    // 配置值或令牌均安全；缓冲响应也会破坏大文件或流式下载。
-    let oper_param = None;
-    let json_result = None;
     let error_msg = (!is_success).then(|| format!("HTTP {}", http_status.as_u16()));
 
     let status = if is_success {
@@ -93,28 +121,23 @@ pub async fn oper_log_middleware(
         OperLogStatus::Failure
     };
 
-    // 同步完成轻量入队；真正的日志写入由 Worker 执行，因此进程在响应后退出也不会丢失任务。
-    let command = RecordOperLogCommand {
-        title,
-        business_type,
-        method: format!("{} {}", request_method, uri),
-        request_method,
-        oper_name,
-        oper_url: uri,
-        oper_ip,
-        oper_param,
-        json_result,
-        status,
-        error_msg,
-        cost_time,
-    };
-
-    if let Err(error) = state
-        .queue
-        .enqueue_oper_log(current_user.tenant_id.clone(), command)
-        .await
-    {
-        tracing::warn!(error = %error, "操作日志任务入队失败");
+    // 业务事务已经原子提交 Outbox 时无需重复写入；其他路径使用独立短事务。
+    // 审计故障只记录指标与错误日志，绝不覆盖原始业务响应。
+    if !(is_success && context.transaction_committed()) {
+        if is_success && !context.transaction_bound() {
+            ryframe_service::record_audit_failure("transaction_unbound");
+            tracing::warn!("写请求尚未接入业务事务审计绑定，使用独立 Outbox 事务");
+        }
+        let event = context.event(status, error_msg);
+        if let Err(error) = state.outbox.record(&event).await {
+            ryframe_service::record_audit_failure("outbox_record");
+            tracing::error!(
+                error = %error,
+                event_id = %event.event_id,
+                request_id = %event.request_id,
+                "操作审计 Outbox 持久化失败"
+            );
+        }
     }
 
     response

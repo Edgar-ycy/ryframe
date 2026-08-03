@@ -33,7 +33,10 @@ fn actor() -> ActorContext {
 }
 
 fn role_service(db: &DatabaseConnection) -> RoleService {
-    RoleService::new(DatabaseCluster::single(db.clone()), None)
+    RoleService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    )
 }
 
 async fn seed_role(db: &DatabaseConnection, id: i64, code: &str, is_super: i8) -> role::Model {

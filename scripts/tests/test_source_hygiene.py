@@ -104,3 +104,58 @@ class SourceHygieneCommentLanguageTest(unittest.TestCase):
             ),
             [],
         )
+
+
+class SourceHygieneIgnoredTestPolicyTest(unittest.TestCase):
+    def test_unallowlisted_ignored_test_in_src_is_rejected(self) -> None:
+        relative = "crates/example/src/lib.rs"
+        source = '#[test]\n#[ignore = "需要外部服务"]\nfn external_test() {}\n'
+
+        self.assertEqual(
+            CHECKER.ignored_test_violations(relative, source),
+            [f"{relative}: ignored test is not allowlisted (external_test)"],
+        )
+
+    def test_src_allowlist_requires_exact_path_and_test_name(self) -> None:
+        relative = (
+            "crates/ryframe-service/src/system/online_user_service/redis_backend.rs"
+        )
+        allowed = (
+            '#[ignore = "requires Docker Compose Redis service"]\n'
+            "async fn stale_touch_cannot_resurrect_or_overwrite_online_user_index() {}\n"
+        )
+        unexpected = allowed.replace(
+            "stale_touch_cannot_resurrect_or_overwrite_online_user_index",
+            "another_ignored_test",
+        )
+
+        self.assertEqual(CHECKER.ignored_test_violations(relative, allowed), [])
+        self.assertEqual(
+            CHECKER.ignored_test_violations(relative, unexpected),
+            [f"{relative}: ignored test is not allowlisted (another_ignored_test)"],
+        )
+
+    def test_export_runtime_allowlist_requires_exact_path_and_test_name(self) -> None:
+        relative = "crates/ryframe-service/tests/export_runtime_acceptance_test.rs"
+        test_name = (
+            "export_runtime_acceptance_covers_scale_takeover_"
+            "storage_recovery_and_cleanup"
+        )
+        allowed = f'#[ignore = "需要隔离 MySQL 与 RustFS"]\nasync fn {test_name}() {{}}\n'
+
+        self.assertEqual(CHECKER.ignored_test_violations(relative, allowed), [])
+        self.assertEqual(
+            CHECKER.ignored_test_violations(
+                "crates/ryframe-service/tests/another_test.rs",
+                allowed,
+            ),
+            [
+                "crates/ryframe-service/tests/another_test.rs: "
+                f"ignored test is not allowlisted ({test_name})"
+            ],
+        )
+        unexpected = allowed.replace(test_name, "another_export_runtime_acceptance")
+        self.assertEqual(
+            CHECKER.ignored_test_violations(relative, unexpected),
+            [f"{relative}: ignored test is not allowlisted (another_export_runtime_acceptance)"],
+        )

@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
 use async_trait::async_trait;
-use ryframe_core::repository::{PageQuery, PageResult, Repository};
-use ryframe_kernel::AppResult;
+use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
-    TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,
 };
 
 use crate::entities::{menu, permission, role_permission, user_role};
@@ -31,7 +31,7 @@ impl Repository<permission::Model, i64> for PermissionRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        query: PageQuery,
+        query: ValidatedPageQuery,
     ) -> AppResult<PageResult<permission::Model>> {
         crate::pagination::paginate(
             db,
@@ -71,6 +71,69 @@ impl Repository<permission::Model, i64> for PermissionRepository {
 }
 
 impl PermissionRepository {
+    pub async fn find_by_id_for_update(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<permission::Model>> {
+        permission::Entity::find_by_id(id)
+            .filter(permission::Column::TenantId.eq(tenant_id))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn insert_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: permission::Model,
+    ) -> AppResult<permission::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("权限租户不匹配".into()));
+        }
+        permission::ActiveModel::from(entity)
+            .insert(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn update_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        entity: permission::Model,
+    ) -> AppResult<permission::Model> {
+        if entity.tenant_id != tenant_id {
+            return Err(AppError::Authorization("权限租户不匹配".into()));
+        }
+        permission::ActiveModel::from(entity)
+            .reset_all()
+            .update(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn delete_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<()> {
+        let result = permission::Entity::delete_many()
+            .filter(permission::Column::Id.eq(id))
+            .filter(permission::Column::TenantId.eq(tenant_id))
+            .exec(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("权限不存在".into()));
+        }
+        Ok(())
+    }
+
     /// 查询租户内指定 ID 的权限，用于批量存在性校验。
     pub async fn find_by_ids(
         &self,
@@ -220,30 +283,23 @@ impl PermissionRepository {
         Ok(ids)
     }
 
-    /// 为角色分配权限（先删后插）
+    /// 在调用方事务内为角色替换权限关系（先删后插）。
     pub async fn assign_perms(
         &self,
-        db: &DatabaseConnection,
+        transaction: &DatabaseTransaction,
         tenant_id: &str,
         role_id: i64,
         perm_ids: &[i64],
     ) -> AppResult<()> {
-        let txn = db
-            .begin()
-            .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
         // 清除现有权限
         role_permission::Entity::delete_many()
             .filter(role_permission::Column::RoleId.eq(role_id))
             .filter(role_permission::Column::TenantId.eq(tenant_id))
-            .exec(&txn)
+            .exec(transaction)
             .await
             .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
 
         if perm_ids.is_empty() {
-            txn.commit()
-                .await
-                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
             return Ok(());
         }
 
@@ -257,10 +313,7 @@ impl PermissionRepository {
             .collect();
 
         role_permission::Entity::insert_many(models)
-            .exec(&txn)
-            .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
-        txn.commit()
+            .exec(transaction)
             .await
             .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
         Ok(())

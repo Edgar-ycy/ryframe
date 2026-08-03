@@ -29,7 +29,10 @@ fn actor() -> ActorContext {
 }
 
 fn user_service(db: &DatabaseConnection) -> UserService {
-    UserService::new(DatabaseCluster::single(db.clone()), None)
+    UserService::new(
+        DatabaseCluster::single(db.clone()),
+        ryframe_service::AuthorizationCache::disabled(),
+    )
 }
 
 async fn seed_user(db: &DatabaseConnection, id: i64, username: &str) {
@@ -46,7 +49,7 @@ async fn seed_user(db: &DatabaseConnection, id: i64, username: &str) {
         avatar_file_id: None,
         preferred_locale: None,
         status: user::Model::STATUS_NORMAL.into(),
-        auth_version: 1,
+        authorization_version: 1,
         dept_id: None,
         remark: None,
         login_ip: None,
@@ -188,7 +191,10 @@ async fn concurrent_super_promotion_blocks_every_user_mutation_after_lock_wait()
             .await
             .expect("load protected user")
             .expect("rejected mutation must not delete user");
-        assert_eq!(saved.auth_version, 1, "rejected mutation must roll back");
+        assert_eq!(
+            saved.authorization_version, 1,
+            "rejected mutation must roll back"
+        );
         assert_eq!(saved.status, user::Model::STATUS_NORMAL);
         assert_ne!(saved.nickname, "Concurrent Update");
     }

@@ -1,6 +1,6 @@
 use ryframe_config::PaginationConfig;
-use ryframe_core::PageQuery;
-use ryframe_http::AppResult;
+use ryframe_core::ValidatedPageQuery;
+use ryframe_http::HttpResult;
 use ryframe_service::BackgroundJobListParams;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
@@ -26,9 +26,9 @@ impl BackgroundJobPageQuery {
     pub fn into_service_params(
         self,
         policy: &PaginationConfig,
-    ) -> AppResult<BackgroundJobListParams> {
+    ) -> HttpResult<BackgroundJobListParams> {
         Ok(BackgroundJobListParams {
-            page: PageQuery::from_optional(self.page, self.page_size, policy)?,
+            page: ValidatedPageQuery::from_optional(self.page, self.page_size, policy)?,
             job_type: self.job_type,
             status: self.status,
         })

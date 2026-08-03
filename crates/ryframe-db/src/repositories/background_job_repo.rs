@@ -493,7 +493,7 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         filter: BackgroundJobFilter<'_>,
-        query: &ryframe_core::repository::PageQuery,
+        query: &ryframe_core::repository::ValidatedPageQuery,
     ) -> AppResult<ryframe_core::repository::PageResult<background_job::Model>> {
         crate::pagination::paginate(
             db,
@@ -780,14 +780,42 @@ async fn rollback_quietly(transaction: DatabaseTransaction) {
 mod tests {
     use chrono::{TimeZone, Utc};
     use sea_orm::{
-        DbBackend, QuerySelect, QueryTrait,
+        DbBackend, MockDatabase, MockExecResult, QuerySelect, QueryTrait,
         sea_query::{LockBehavior, LockType},
     };
 
+    use crate::entities::background_job;
+
     use super::{
         BackgroundJobRepository, EXPIRED_LEASE_DEAD_ERROR, EnqueueBackgroundJob,
-        is_duplicate_key_error, truncate_error, validate_enqueue_command,
+        JobFailureDisposition, is_duplicate_key_error, truncate_error, validate_enqueue_command,
     };
+
+    fn running_job(
+        now: chrono::DateTime<Utc>,
+        attempts: i32,
+        max_attempts: i32,
+    ) -> background_job::Model {
+        background_job::Model {
+            id: 42,
+            tenant_id: Some("tenant-a".into()),
+            job_type: "message.dispatch".into(),
+            payload: serde_json::json!({"message_id": "7"}),
+            status: background_job::Model::STATUS_RUNNING.into(),
+            priority: 0,
+            available_at: now,
+            attempts,
+            max_attempts,
+            lease_owner: Some("worker-a".into()),
+            lease_until: Some(now + chrono::Duration::minutes(1)),
+            dedupe_key: Some("message:7".into()),
+            traceparent: None,
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        }
+    }
 
     #[test]
     fn claim_query_uses_skip_locked_on_mysql() {
@@ -870,5 +898,168 @@ mod tests {
         assert!(sql.contains("`completed_at` = ?"));
         assert!(sql.contains("`tenant_id` = ?"));
         assert_eq!(sql.matches("`status` = ?").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn duplicate_enqueue_reuses_the_existing_job_without_an_insert() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 26, 8, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let existing = running_job(now, 1, 3);
+        let db = MockDatabase::new(DbBackend::MySql)
+            .append_query_results([[existing.clone()]])
+            .into_connection();
+
+        let result = BackgroundJobRepository
+            .enqueue(
+                &db,
+                EnqueueBackgroundJob {
+                    tenant_id: Some("tenant-a".into()),
+                    job_type: existing.job_type.clone(),
+                    payload: existing.payload.clone(),
+                    priority: 0,
+                    available_at: now,
+                    max_attempts: 3,
+                    dedupe_key: existing.dedupe_key.clone(),
+                    traceparent: None,
+                },
+                now,
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.inserted);
+        assert_eq!(result.job.id, existing.id);
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].statements().len(), 1);
+        assert!(log[0].statements()[0].sql.starts_with("SELECT "));
+    }
+
+    #[tokio::test]
+    async fn lost_worker_lease_rolls_back_without_overwriting_recovery() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 26, 8, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let db = MockDatabase::new(DbBackend::MySql)
+            .append_query_results([Vec::<background_job::Model>::new()])
+            .into_connection();
+
+        let disposition = BackgroundJobRepository
+            .fail(
+                &db,
+                42,
+                "worker-a",
+                now + chrono::Duration::seconds(5),
+                "handler failed",
+                now,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(disposition, JobFailureDisposition::LeaseLost);
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(
+            log[0]
+                .statements()
+                .last()
+                .map(|statement| statement.sql.as_str()),
+            Some("ROLLBACK")
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_failure_commits_the_dead_transition() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 26, 8, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let running = running_job(now, 3, 3);
+        let mut dead = running.clone();
+        dead.status = background_job::Model::STATUS_DEAD.into();
+        dead.available_at = now;
+        dead.lease_owner = None;
+        dead.lease_until = None;
+        dead.last_error = Some("handler failed".into());
+        dead.completed_at = Some(now);
+        let db = MockDatabase::new(DbBackend::MySql)
+            .append_query_results([[running], [dead]])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+
+        let disposition = BackgroundJobRepository
+            .fail(
+                &db,
+                42,
+                "worker-a",
+                now + chrono::Duration::seconds(5),
+                "handler failed",
+                now,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(disposition, JobFailureDisposition::Dead);
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1);
+        assert!(
+            log[0]
+                .statements()
+                .iter()
+                .any(|statement| statement.sql.starts_with("UPDATE `sys_background_job`"))
+        );
+        assert_eq!(
+            log[0]
+                .statements()
+                .last()
+                .map(|statement| statement.sql.as_str()),
+            Some("COMMIT")
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_worker_leases_are_split_between_requeue_and_dead() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 26, 8, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let db = MockDatabase::new(DbBackend::MySql)
+            .append_exec_results([
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 2,
+                },
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 3,
+                },
+            ])
+            .into_connection();
+
+        let recovered = BackgroundJobRepository
+            .recover_expired_leases(&db, now)
+            .await
+            .unwrap();
+
+        assert_eq!(recovered.dead, 2);
+        assert_eq!(recovered.requeued, 3);
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 2);
+        assert!(
+            log[0].statements()[0]
+                .sql
+                .contains("`attempts` >= `max_attempts`")
+        );
+        assert!(
+            log[1].statements()[0]
+                .sql
+                .contains("`attempts` < `max_attempts`")
+        );
     }
 }

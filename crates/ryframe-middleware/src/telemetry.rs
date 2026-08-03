@@ -55,6 +55,7 @@ use crate::{
 pub use ryframe_config::TelemetryConfig;
 
 const BUILD_COMMIT: &str = env!("RYFRAME_BUILD_COMMIT");
+const TELEMETRY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 仅从 HTTP 请求头读取 W3C 传播字段的适配器。
 struct HeaderExtractor<'a>(&'a HeaderMap);
@@ -126,7 +127,10 @@ impl TelemetryGuard {
             .is_err()
         {
             record_otel_exporter_runtime_failure();
-            warn!("OTLP 导出器关闭时未能完成 flush");
+            warn!(
+                failure_stage = "shutdown",
+                "OTLP 导出器关闭时未能在时限内完成 flush"
+            );
         }
     }
 }
@@ -150,12 +154,10 @@ pub fn init_tracer_provider(config: &TelemetryConfig) -> TelemetryGuard {
         return TelemetryGuard {
             tracer_provider: None,
             tracer: None,
-            shutdown_timeout: Duration::from_secs(5),
+            shutdown_timeout: TELEMETRY_SHUTDOWN_TIMEOUT,
             shutdown_called: AtomicBool::new(false),
         };
     }
-
-    let resource = telemetry_resource(config.service_name.clone());
 
     global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 
@@ -168,18 +170,44 @@ pub fn init_tracer_provider(config: &TelemetryConfig) -> TelemetryGuard {
         Ok(exporter) => exporter,
         Err(_) => {
             record_otel_exporter_failure();
-            warn!("OTLP 导出器创建失败，链路追踪降级为禁用");
+            warn!(
+                failure_stage = "initialization",
+                "OTLP 导出器创建失败，链路追踪降级为禁用"
+            );
             return TelemetryGuard {
                 tracer_provider: None,
                 tracer: None,
-                shutdown_timeout: Duration::from_secs(5),
+                shutdown_timeout: TELEMETRY_SHUTDOWN_TIMEOUT,
                 shutdown_called: AtomicBool::new(false),
             };
         }
     };
 
+    let guard = build_telemetry_guard(config, exporter, TELEMETRY_SHUTDOWN_TIMEOUT);
+    let tracer_provider = guard
+        .tracer_provider
+        .as_ref()
+        .expect("已启用链路追踪时必须存在 TracerProvider");
+    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
     set_otel_exporter_degraded(false);
 
+    info!(
+        service_name = %config.service_name,
+        sample_ratio = config.sample_ratio,
+        "链路追踪已启用"
+    );
+
+    guard
+}
+
+fn build_telemetry_guard<E>(
+    config: &TelemetryConfig,
+    exporter: E,
+    shutdown_timeout: Duration,
+) -> TelemetryGuard
+where
+    E: SpanExporter + Send + 'static,
+{
     let batch_config = BatchConfigBuilder::default()
         .with_max_queue_size(config.max_queue_size)
         .with_max_export_batch_size(config.max_queue_size.min(512))
@@ -191,25 +219,15 @@ pub fn init_tracer_provider(config: &TelemetryConfig) -> TelemetryGuard {
         .with_span_processor(span_processor)
         .with_sampler(Sampler::TraceIdRatioBased(config.sample_ratio))
         .with_id_generator(RandomIdGenerator::default())
-        .with_resource(resource)
+        .with_resource(telemetry_resource(config.service_name.clone()))
         .build();
 
-    // 获取 SdkTracer（Clone 的，持有 Arc<...>）
     let tracer = tracer_provider.tracer(config.service_name.clone());
-
-    // 设为全局 tracer provider
-    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
-
-    info!(
-        service_name = %config.service_name,
-        sample_ratio = config.sample_ratio,
-        "链路追踪已启用"
-    );
 
     TelemetryGuard {
         tracer_provider: Some(tracer_provider),
         tracer: Some(tracer),
-        shutdown_timeout: Duration::from_secs(5),
+        shutdown_timeout,
         shutdown_called: AtomicBool::new(false),
     }
 }
@@ -234,6 +252,7 @@ where
         let result = self.inner.export(batch).await;
         if result.is_err() {
             record_otel_exporter_runtime_failure();
+            warn!(failure_stage = "export", "OTLP 导出失败，业务请求继续执行");
         }
         result
     }
@@ -353,12 +372,28 @@ const fn classify_http_response(status: u16) -> HttpResponseClass {
 mod tests {
     use super::{
         BUILD_COMMIT, FailureCountingSpanExporter, HeaderExtractor, HttpResponseClass, SpanData,
-        SpanExporter, classify_http_response, telemetry_resource,
+        SpanExporter, TELEMETRY_SHUTDOWN_TIMEOUT, TelemetryConfig, build_telemetry_guard,
+        classify_http_response, telemetry_middleware, telemetry_resource,
     };
-    use axum::http::{HeaderMap, HeaderValue};
+    use axum::{
+        Router,
+        body::Body,
+        http::{HeaderMap, HeaderValue, Request, StatusCode},
+        middleware::from_fn,
+        routing::get,
+    };
     use opentelemetry::{Key, global, trace::TraceContextExt};
+    use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
     use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use std::{
+        io::Write,
+        net::TcpListener,
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+    use tower::ServiceExt;
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     #[test]
     fn response_statuses_use_operational_log_severity() {
@@ -431,12 +466,159 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn exporter_runtime_failures_are_counted() {
+    #[test]
+    fn invalid_otlp_endpoint_degrades_initialization_without_exposing_endpoint() {
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .finish();
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+        let endpoint = "invalid_uri/secret";
+        let config = TelemetryConfig {
+            enabled: true,
+            endpoint: endpoint.to_owned(),
+            ..TelemetryConfig::default()
+        };
+        let before = metric_counter("ryframe_otel_exporter_failures_total");
+
+        let guard = super::init_tracer_provider(&config);
+
+        assert!(guard.tracer_provider.is_none());
+        assert!(guard.tracer.is_none());
+        assert!(metric_counter("ryframe_otel_exporter_failures_total") >= before + 1.0);
+        assert_eq!(metric_counter("ryframe_otel_exporter_degraded"), 1.0);
+        let output = logs.text();
+        assert!(output.contains("OTLP 导出器创建失败，链路追踪降级为禁用"));
+        assert!(output.contains("failure_stage=\"initialization\""));
+        assert!(!output.contains(endpoint));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exporter_runtime_failures_are_counted_and_logged_without_error_details() {
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .finish();
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
         let before = metric_counter("ryframe_otel_exporter_runtime_failures_total");
         let exporter = FailureCountingSpanExporter::new(FailingExporter);
         assert!(exporter.export(Vec::new()).await.is_err());
         assert!(metric_counter("ryframe_otel_exporter_runtime_failures_total") >= before + 1.0);
+
+        let output = logs.text();
+        assert!(output.contains("OTLP 导出失败，业务请求继续执行"));
+        assert!(output.contains("failure_stage=\"export\""));
+        assert!(!output.contains("测试导出失败"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unavailable_otlp_endpoint_does_not_affect_routes_and_shutdown_is_bounded() {
+        // 保持监听但不接收请求，让本地 OTLP 端点稳定地在客户端超时，而不依赖外部服务。
+        let listener = TcpListener::bind("127.0.0.1:0").expect("应能绑定本地测试端口");
+        let endpoint = format!(
+            "http://{}/v1/traces",
+            listener.local_addr().expect("应能读取本地测试地址")
+        );
+        let config = TelemetryConfig {
+            enabled: true,
+            endpoint,
+            service_name: "ryframe-otel-failure-test".to_owned(),
+            sample_ratio: 1.0,
+            export_timeout_secs: 1,
+            max_queue_size: 8,
+        };
+        let exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .with_endpoint(&config.endpoint)
+            .with_timeout(Duration::from_secs(config.export_timeout_secs))
+            .build()
+            .expect("有效的本地 HTTP 地址应能创建导出器");
+        let guard = build_telemetry_guard(&config, exporter, TELEMETRY_SHUTDOWN_TIMEOUT);
+        let tracer = guard.tracer.as_ref().expect("应创建 tracer").clone();
+        let subscriber =
+            tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
+        let _subscriber_guard = subscriber.set_default();
+        let app = Router::new()
+            .route("/api/v1/ping", get(|| async { StatusCode::OK }))
+            .route("/readyz", get(|| async { StatusCode::OK }))
+            .layer(from_fn(telemetry_middleware));
+
+        assert_route_status(&app, "/api/v1/ping", StatusCode::OK).await;
+        assert_route_status(&app, "/readyz", StatusCode::OK).await;
+
+        let before = metric_counter("ryframe_otel_exporter_runtime_failures_total");
+        let flush_started = Instant::now();
+        assert!(
+            guard
+                .tracer_provider
+                .as_ref()
+                .expect("应创建 TracerProvider")
+                .force_flush()
+                .is_err()
+        );
+        assert!(flush_started.elapsed() < TELEMETRY_SHUTDOWN_TIMEOUT);
+        assert!(metric_counter("ryframe_otel_exporter_runtime_failures_total") >= before + 1.0);
+
+        // 导出失败后再次访问，确认业务和就绪响应都保持不变。
+        assert_route_status(&app, "/api/v1/ping", StatusCode::OK).await;
+        assert_route_status(&app, "/readyz", StatusCode::OK).await;
+
+        drop(listener);
+        let shutdown_started = Instant::now();
+        guard.shutdown();
+        assert!(shutdown_started.elapsed() <= TELEMETRY_SHUTDOWN_TIMEOUT);
+    }
+
+    #[test]
+    fn otel_failure_metrics_have_no_dynamic_labels() {
+        crate::metrics::record_otel_exporter_failure();
+        crate::metrics::record_otel_exporter_runtime_failure();
+        let metrics = crate::metrics::metrics_text();
+        let samples = metrics
+            .lines()
+            .filter(|line| line.starts_with("ryframe_otel_"))
+            .collect::<Vec<_>>();
+        assert_eq!(samples.len(), 3);
+        assert!(samples.iter().all(|line| !line.contains('{')));
+    }
+
+    async fn assert_route_status(app: &Router, path: &str, expected: StatusCode) {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl LogBuffer {
+        fn text(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    impl Write for LogBuffer {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     fn metric_counter(metric_name: &str) -> f64 {

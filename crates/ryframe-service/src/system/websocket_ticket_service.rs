@@ -1,11 +1,10 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
+use ryframe_config::MessagingConfig;
 use ryframe_core::RedisClient;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-const WEBSOCKET_TICKET_TTL_SECONDS: u64 = 60;
 
 /// 保存于 Redis 的一次性 WebSocket 票据内容。
 ///
@@ -15,7 +14,7 @@ pub struct WebSocketTicket {
     pub tenant_id: String,
     pub user_id: i64,
     pub session_id: String,
-    pub user_auth_version: i32,
+    pub user_authorization_version: i32,
     pub tenant_session_version: i32,
     pub locale: String,
 }
@@ -31,20 +30,22 @@ pub struct WebSocketTicketGrant {
 #[derive(Clone)]
 pub struct WebSocketTicketService {
     redis: Option<RedisClient>,
+    config: MessagingConfig,
 }
 
 impl WebSocketTicketService {
-    pub fn new(redis: Option<RedisClient>) -> Self {
-        Self { redis }
+    pub fn new(redis: Option<RedisClient>, config: MessagingConfig) -> Self {
+        Self { redis, config }
     }
 
-    /// 签发 60 秒有效且只能消费一次的 WebSocket 票据。
+    /// 按配置有效期签发只能消费一次的 WebSocket 票据。
     pub async fn issue(
         &self,
         principal: &RequestPrincipal,
         claims: &Claims,
         locale: &str,
     ) -> AppResult<WebSocketTicketGrant> {
+        self.ensure_enabled()?;
         let claimed_user_id = claims
             .sub
             .parse::<i64>()
@@ -66,14 +67,14 @@ impl WebSocketTicketService {
             tenant_id: principal.tenant_id.clone(),
             user_id: principal.user_id,
             session_id: claims.sid.clone(),
-            user_auth_version: claims.user_auth_version,
+            user_authorization_version: claims.user_authorization_version,
             tenant_session_version: claims.tenant_session_version,
             locale: normalize_locale(locale),
         };
         let encoded = serde_json::to_string(&payload)
             .map_err(|error| AppError::Internal(format!("WebSocket 票据序列化失败: {error}")))?;
         redis
-            .set_ex(ticket_key(&ticket), encoded, WEBSOCKET_TICKET_TTL_SECONDS)
+            .set_ex(ticket_key(&ticket), encoded, self.config.ticket_ttl_seconds)
             .await
             .map_err(|error| {
                 AppError::ServiceUnavailable(format!("WebSocket 票据写入失败: {error}"))
@@ -81,12 +82,13 @@ impl WebSocketTicketService {
 
         Ok(WebSocketTicketGrant {
             ticket,
-            expires_in: WEBSOCKET_TICKET_TTL_SECONDS,
+            expires_in: self.config.ticket_ttl_seconds,
         })
     }
 
     /// 原子消费一次性票据；缺失、过期和重放统一返回认证失败。
     pub async fn consume(&self, ticket: &str) -> AppResult<WebSocketTicket> {
+        self.ensure_enabled()?;
         if ticket.len() != 43 || !ticket.bytes().all(is_base64url_byte) {
             return Err(invalid_ticket_error());
         }
@@ -101,6 +103,14 @@ impl WebSocketTicketService {
             })?
             .ok_or_else(invalid_ticket_error)?;
         serde_json::from_str(&value).map_err(|_| invalid_ticket_error())
+    }
+
+    fn ensure_enabled(&self) -> AppResult<()> {
+        if self.config.enabled {
+            Ok(())
+        } else {
+            Err(AppError::ServiceUnavailable("消息中心已关闭".into()))
+        }
     }
 }
 
@@ -136,7 +146,10 @@ fn normalize_locale(locale: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_base64url_byte, normalize_locale, ticket_key};
+    use ryframe_config::MessagingConfig;
+    use ryframe_kernel::AppError;
+
+    use super::{WebSocketTicketService, is_base64url_byte, normalize_locale, ticket_key};
 
     #[test]
     fn ticket_key_does_not_include_the_ticket_value() {
@@ -158,5 +171,21 @@ mod tests {
     fn locale_normalization_uses_supported_defaults() {
         assert_eq!(normalize_locale("en-GB"), "en-US");
         assert_eq!(normalize_locale("zh"), "zh-CN");
+    }
+
+    #[test]
+    fn disabled_messaging_rejects_ticket_operations_before_redis_access() {
+        let service = WebSocketTicketService::new(
+            None,
+            MessagingConfig {
+                enabled: false,
+                ..MessagingConfig::default()
+            },
+        );
+
+        assert!(matches!(
+            service.ensure_enabled(),
+            Err(AppError::ServiceUnavailable(_))
+        ));
     }
 }

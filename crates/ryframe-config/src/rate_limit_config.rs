@@ -10,10 +10,6 @@ fn default_capacity() -> u32 {
     100
 }
 
-fn default_refill() -> u32 {
-    20
-}
-
 fn default_window() -> u64 {
     60
 }
@@ -33,16 +29,13 @@ pub struct RateLimitConfig {
     pub enabled: bool,
 
     // ========== 全局限流（IP 维度） ==========
-    /// 令牌桶容量
+    /// 每个窗口允许的最大请求数
     #[serde(default = "default_capacity")]
     pub capacity: u32,
-    /// 每秒补充令牌数
-    #[serde(default = "default_refill")]
-    pub refill_per_sec: u32,
 
-    // ========== 固定窗口模式（Redis 推荐） ==========
-    /// 固定窗口时长（秒），0 表示使用令牌桶模式
-    #[serde(default)]
+    // ========== 全局固定窗口 ==========
+    /// 固定窗口时长（秒）
+    #[serde(default = "default_window")]
     pub window_secs: u64,
 
     // ========== 用户级限流 ==========
@@ -73,13 +66,77 @@ impl Default for RateLimitConfig {
         Self {
             enabled: true,
             capacity: 100,
-            refill_per_sec: 20,
-            window_secs: 0,
+            window_secs: 60,
             enable_user_rate_limit: false,
             user_window_secs: 60,
             user_capacity: 500,
             api_limits: HashMap::new(),
             api_window_secs: 60,
         }
+    }
+}
+
+impl RateLimitConfig {
+    /// 校验所有固定窗口限流规则。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.capacity == 0 || self.window_secs == 0 {
+            return Err("rate_limit.capacity 和 rate_limit.window_secs 必须大于 0".into());
+        }
+        if self.user_capacity == 0 || self.user_window_secs == 0 {
+            return Err(
+                "rate_limit.user_capacity 和 rate_limit.user_window_secs 必须大于 0".into(),
+            );
+        }
+        if self.api_window_secs == 0 {
+            return Err("rate_limit.api_window_secs 必须大于 0".into());
+        }
+        for (rule, limit) in &self.api_limits {
+            if rule.trim().is_empty() {
+                return Err("rate_limit.api_limits 的规则名称不能为空".into());
+            }
+            if *limit == 0 {
+                return Err(format!("rate_limit.api_limits[{rule}] 必须大于 0"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RateLimitConfig;
+
+    #[test]
+    fn default_fixed_window_config_is_valid() {
+        RateLimitConfig::default().validate().unwrap();
+    }
+
+    #[test]
+    fn removed_refill_parameter_is_rejected() {
+        let error = toml::from_str::<RateLimitConfig>(
+            r#"
+            capacity = 100
+            window_secs = 60
+            refill_per_sec = 20
+            "#,
+        )
+        .expect_err("旧参数必须被拒绝");
+
+        assert!(error.to_string().contains("refill_per_sec"));
+    }
+
+    #[test]
+    fn zero_windows_and_limits_are_rejected() {
+        let config = RateLimitConfig {
+            window_secs: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        let mut config = RateLimitConfig::default();
+        config
+            .api_limits
+            .insert("POST /api/v1/auth/login".into(), 0);
+        assert!(config.validate().is_err());
     }
 }

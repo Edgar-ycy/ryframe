@@ -1,13 +1,18 @@
+use crate::{
+    dto::{
+        job_dto::BackgroundJobPageQuery,
+        public_dto::{BackgroundJobQueueStats, BackgroundJobVo},
+    },
+    state::AppState,
+};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppError, AppResult};
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
-use ryframe_service::{BackgroundJobQueueStats, BackgroundJobVo};
-
-use crate::{dto::job_dto::BackgroundJobPageQuery, state::AppState};
 
 /// 后台任务监控路由。
 pub fn job_router(state: AppState) -> Router {
@@ -29,7 +34,7 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<BackgroundJobPageQuery>,
-) -> AppResult<Json<ApiPageResponse<BackgroundJobVo>>> {
+) -> HttpResult<Json<ApiPageResponse<BackgroundJobVo>>> {
     state
         .services
         .job_queue
@@ -38,10 +43,13 @@ async fn list(
             query.into_service_params(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|page| {
             Json(ApiPageResponse::new(
-                page.records,
+                page.records
+                    .into_iter()
+                    .map(BackgroundJobVo::from)
+                    .collect(),
                 page.total,
                 page.page,
                 page.page_size,
@@ -60,13 +68,14 @@ async fn list(
 async fn stats(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<BackgroundJobQueueStats>>> {
+) -> HttpResult<Json<ApiResponse<BackgroundJobQueueStats>>> {
     state
         .services
         .job_queue
         .stats_for_tenant(&current_user)
         .await
-        .map_err(ryframe_http::AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(BackgroundJobQueueStats::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -86,23 +95,23 @@ async fn retry_dead(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<String>,
-) -> AppResult<Json<ApiResponse<BackgroundJobVo>>> {
+) -> HttpResult<Json<ApiResponse<BackgroundJobVo>>> {
     state
         .services
         .job_queue
         .retry_dead_for_tenant(&current_user, parse_job_id(&id)?)
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|job| ApiResponse::success_msg("任务已重新投递", job))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|job| ApiResponse::success_msg("任务已重新投递", job.into()))
         .map(Json)
 }
 
-fn parse_job_id(value: &str) -> AppResult<i64> {
-    value
+fn parse_job_id(value: &str) -> HttpResult<i64> {
+    Ok(value
         .parse::<i64>()
         .ok()
         .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation("后台任务 ID 必须是正整数".into()))
+        .ok_or_else(|| AppError::Validation("后台任务 ID 必须是正整数".into()))?)
 }
 
 #[cfg(test)]

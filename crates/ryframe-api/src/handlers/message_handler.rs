@@ -3,7 +3,8 @@ use axum::{
     extract::{Extension, Path, Query, State},
 };
 use ryframe_auth::{RequestPrincipal, permission::check_permission};
-use ryframe_http::{ApiEmptyResponse, ApiResponse, AppError, AppResult};
+use ryframe_http::{ApiEmptyResponse, ApiResponse, HttpResult};
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
 use ryframe_service::system::{MessageAudienceKind, MessageAudienceSelector, PublishMessageParams};
 use validator::Validate;
@@ -44,12 +45,12 @@ async fn inbox(
     current_user: RequestPrincipal,
     Extension(RequestLocale(locale)): Extension<RequestLocale>,
     Query(query): Query<MessageInboxQuery>,
-) -> AppResult<Json<ApiResponse<MessageInboxPage>>> {
+) -> HttpResult<Json<ApiResponse<MessageInboxPage>>> {
     let limit = query.limit.unwrap_or(DEFAULT_INBOX_LIMIT);
     if !(1..=MAX_INBOX_LIMIT).contains(&limit) {
-        return Err(AppError::Validation(format!(
-            "limit 必须在 1 到 {MAX_INBOX_LIMIT} 之间"
-        )));
+        return Err(
+            AppError::Validation(format!("limit 必须在 1 到 {MAX_INBOX_LIMIT} 之间")).into(),
+        );
     }
     let cursor = parse_optional_id(query.cursor.as_deref(), "cursor")?;
     state
@@ -57,7 +58,7 @@ async fn inbox(
         .message
         .inbox(&current_user, cursor, limit, query.unread_only)
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|page| render_inbox(page, &state.localizer, locale))
         .map(ApiResponse::success)
         .map(Json)
@@ -71,13 +72,13 @@ async fn inbox(
 async fn unread_count(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<u64>>> {
+) -> HttpResult<Json<ApiResponse<u64>>> {
     state
         .services
         .message
         .unread_count(&current_user)
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -94,7 +95,7 @@ async fn publish(
     current_user: RequestPrincipal,
     Extension(RequestLocale(locale)): Extension<RequestLocale>,
     Json(dto): Json<PublishMessageDto>,
-) -> AppResult<Json<ApiResponse<PublishedMessageVo>>> {
+) -> HttpResult<Json<ApiResponse<PublishedMessageVo>>> {
     dto.validate()?;
     let (title, content) = dto.localized_content()?;
     let title = into_message_text(title, &state.localizer)?;
@@ -108,7 +109,7 @@ async fn publish(
         .audiences
         .iter()
         .map(parse_audience)
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<HttpResult<Vec<_>>>()?;
     state
         .services
         .message
@@ -128,7 +129,7 @@ async fn publish(
             },
         )
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|published| render_published(published, &state.localizer, locale))
         .map(ApiResponse::success)
         .map(Json)
@@ -144,20 +145,20 @@ async fn acknowledge(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<AcknowledgeMessagesDto>,
-) -> AppResult<Json<ApiResponse<u64>>> {
+) -> HttpResult<Json<ApiResponse<u64>>> {
     dto.validate()?;
     let ids = dto
         .ids
         .iter()
         .map(|id| parse_id(id, "ids"))
-        .collect::<AppResult<Vec<_>>>()?;
+        .collect::<HttpResult<Vec<_>>>()?;
     let started = std::time::Instant::now();
     state
         .services
         .message
         .acknowledge(&current_user, &ids)
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .inspect(|_| ryframe_middleware::metrics::observe_message_ack_latency(started.elapsed()))
         .map(ApiResponse::success)
         .map(Json)
@@ -173,7 +174,7 @@ async fn mark_read(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<String>,
-) -> AppResult<Json<ApiEmptyResponse>> {
+) -> HttpResult<Json<ApiEmptyResponse>> {
     let message_id = parse_id(&id, "id")?;
     let started = std::time::Instant::now();
     state
@@ -181,7 +182,7 @@ async fn mark_read(
         .message
         .mark_read(&current_user, message_id)
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .inspect(|_| ryframe_middleware::metrics::observe_message_ack_latency(started.elapsed()))
         .map(|_| Json(ApiEmptyResponse::success_no_data()))
 }
@@ -194,14 +195,14 @@ async fn mark_read(
 async fn mark_all_read(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<u64>>> {
+) -> HttpResult<Json<ApiResponse<u64>>> {
     let started = std::time::Instant::now();
     state
         .services
         .message
         .mark_all_read(&current_user)
         .await
-        .map_err(AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .inspect(|_| ryframe_middleware::metrics::observe_message_ack_latency(started.elapsed()))
         .map(ApiResponse::success)
         .map(Json)
@@ -209,31 +210,33 @@ async fn mark_all_read(
 
 fn parse_audience(
     dto: &crate::dto::message_dto::MessageAudienceDto,
-) -> AppResult<MessageAudienceSelector> {
+) -> HttpResult<MessageAudienceSelector> {
     let kind = match dto.kind.as_str() {
         "tenant" => MessageAudienceKind::Tenant,
         "role" => MessageAudienceKind::Role,
         "user" => MessageAudienceKind::User,
         _ => {
-            return Err(AppError::Validation(
-                "消息受众 kind 只能是 tenant、role 或 user".into(),
-            ));
+            return Err(
+                AppError::Validation("消息受众 kind 只能是 tenant、role 或 user".into()).into(),
+            );
         }
     };
     let target_id = match kind {
         MessageAudienceKind::Tenant => match dto.target_id.as_deref() {
             None | Some("0") => 0,
             Some(_) => {
-                return Err(AppError::Validation(
-                    "tenant 受众不能指定非零 target_id".into(),
-                ));
+                return Err(
+                    AppError::Validation("tenant 受众不能指定非零 target_id".into()).into(),
+                );
             }
         },
-        MessageAudienceKind::Role | MessageAudienceKind::User => dto
-            .target_id
-            .as_deref()
-            .ok_or_else(|| AppError::Validation("角色和用户受众必须提供 target_id".into()))
-            .and_then(|id| parse_id(id, "target_id"))?,
+        MessageAudienceKind::Role | MessageAudienceKind::User => {
+            let id = dto
+                .target_id
+                .as_deref()
+                .ok_or_else(|| AppError::Validation("角色和用户受众必须提供 target_id".into()))?;
+            parse_id(id, "target_id")?
+        }
     };
     Ok(MessageAudienceSelector { kind, target_id })
 }
@@ -241,28 +244,30 @@ fn parse_audience(
 fn ensure_cross_tenant_publish_authority(
     current_user: &RequestPrincipal,
     target_tenant_id: &str,
-) -> AppResult<()> {
+) -> HttpResult<()> {
     if target_tenant_id == current_user.tenant_id {
         return Ok(());
     }
     if current_user.tenant_id != SYSTEM_TENANT_ID {
         return Err(AppError::Authorization(
             "只有 system 租户的平台管理员可以跨租户发布消息".into(),
-        ));
+        )
+        .into());
     }
-    check_permission(current_user, "platform:message:publish").map_err(AppError::from)
+    check_permission(current_user, "platform:message:publish")
+        .map_err(ryframe_http::HttpAppError::from)
 }
 
-fn parse_optional_id(value: Option<&str>, field: &str) -> AppResult<Option<i64>> {
+fn parse_optional_id(value: Option<&str>, field: &str) -> HttpResult<Option<i64>> {
     value.map(|value| parse_id(value, field)).transpose()
 }
 
-fn parse_id(value: &str, field: &str) -> AppResult<i64> {
-    value
+fn parse_id(value: &str, field: &str) -> HttpResult<i64> {
+    Ok(value
         .parse::<i64>()
         .ok()
         .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation(format!("{field} 必须是正整数 ID")))
+        .ok_or_else(|| AppError::Validation(format!("{field} 必须是正整数 ID")))?)
 }
 
 #[cfg(test)]

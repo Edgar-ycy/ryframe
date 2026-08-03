@@ -1,6 +1,10 @@
-use ryframe_config::AppConfig;
+use std::path::Path;
+
+use ryframe_config::{AppConfig, LoggerFormat, LoggerOutput};
 use ryframe_db::{DbSpanLayer, SqlLogLayer};
+use ryframe_kernel::AppError;
 use ryframe_middleware::telemetry::init_tracer_provider;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     EnvFilter, Layer, filter::FilterFn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -13,19 +17,17 @@ pub struct LoggerGuard {
 /// 初始化日志系统
 ///
 /// - `output = "stdout"` → 控制台输出
-/// - `output = "file"` → 滚动文件输出（每天滚动，保留 7 天）
+/// - `output = "file"` → 每天滚动，并按 `retention_days` 有界保留
 /// - `format = "json"` → JSON 格式，否则 text 格式
 /// - 同时初始化 OpenTelemetry 链路追踪（通过环境变量控制）
 pub fn init(
     config: &AppConfig,
-) -> (
-    LoggerGuard,
-    Option<ryframe_middleware::telemetry::TelemetryGuard>,
-) {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logger.level));
+) -> Result<(LoggerGuard, ryframe_middleware::telemetry::TelemetryGuard), AppError> {
+    config.logger.validate().map_err(AppError::Config)?;
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(config.logger.level.as_str()));
 
-    let is_json = config.logger.format == "json";
+    let is_json = config.logger.format == LoggerFormat::Json;
     let sql_log_level = config.database.sql_log_level;
 
     // 阻止 sqlx 查询事件到达 fmt 层（由 SqlLogLayer 单独格式化输出）
@@ -40,8 +42,11 @@ pub fn init(
     // env_filter 放最后因为 EnvFilter: Layer<S> for all S: Subscriber，
     // 而 Filtered<FmtLayer, FilterFn, Registry> 只能 Layer<Registry>，
     // 无法 layer 到 Layered<EnvFilter, Registry> 上
-    if config.logger.output == "file" {
-        let file_appender = tracing_appender::rolling::daily("logs", "ryframe.log");
+    if let Some(file_appender) = prepare_file_appender(
+        config.logger.output,
+        Path::new("logs"),
+        config.logger.retention_days,
+    )? {
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
         // 构建 subscriber：先用 .boxed() 擦除 Filtered 类型
@@ -74,12 +79,12 @@ pub fn init(
             subscriber.with(env_filter).init();
         }
 
-        (
+        Ok((
             LoggerGuard {
                 _worker: Some(guard),
             },
-            Some(telemetry_guard),
-        )
+            telemetry_guard,
+        ))
     } else {
         // 控制台输出
         let subscriber = if is_json {
@@ -102,6 +107,82 @@ pub fn init(
             subscriber.with(env_filter).init();
         }
 
-        (LoggerGuard { _worker: None }, Some(telemetry_guard))
+        Ok((LoggerGuard { _worker: None }, telemetry_guard))
+    }
+}
+
+fn build_file_appender(
+    directory: &Path,
+    retention_days: usize,
+) -> Result<RollingFileAppender, AppError> {
+    RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("ryframe.log")
+        .max_log_files(retention_days)
+        .build(directory)
+        .map_err(|error| AppError::Config(format!("初始化滚动日志目录失败: {error}")))
+}
+
+fn prepare_file_appender(
+    output: LoggerOutput,
+    directory: &Path,
+    retention_days: usize,
+) -> Result<Option<RollingFileAppender>, AppError> {
+    match output {
+        LoggerOutput::Stdout => Ok(None),
+        LoggerOutput::File => build_file_appender(directory, retention_days).map(Some),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use ryframe_config::LoggerOutput;
+
+    use super::{build_file_appender, prepare_file_appender};
+
+    #[test]
+    fn file_appender_prunes_matching_logs_to_configured_bound() {
+        let directory = tempdir().expect("创建临时日志目录");
+        for day in 1..=4 {
+            fs::write(
+                directory
+                    .path()
+                    .join(format!("ryframe.log.2026-07-{day:02}")),
+                format!("第 {day} 天"),
+            )
+            .expect("写入历史日志");
+        }
+        fs::write(directory.path().join("unrelated.txt"), "保留").expect("写入无关文件");
+
+        let appender = build_file_appender(directory.path(), 2).expect("创建滚动日志");
+        drop(appender);
+
+        let retained = fs::read_dir(directory.path())
+            .expect("读取日志目录")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("ryframe.log.")
+            })
+            .count();
+        assert_eq!(retained, 2);
+        assert!(directory.path().join("unrelated.txt").is_file());
+    }
+
+    #[test]
+    fn stdout_policy_does_not_prepare_a_log_directory() {
+        let root = tempdir().expect("创建临时根目录");
+        let directory = root.path().join("logs");
+
+        let appender = prepare_file_appender(LoggerOutput::Stdout, &directory, 7)
+            .expect("准备 stdout 日志输出");
+        assert!(appender.is_none());
+        assert!(!directory.exists());
     }
 }

@@ -22,7 +22,7 @@ pub struct Model {
     pub avatar_file_id: Option<i64>,
     pub preferred_locale: Option<String>,
     pub status: String,
-    pub auth_version: i32,
+    pub authorization_version: i32,
     pub dept_id: Option<i64>,
     pub remark: Option<String>,
     pub login_ip: Option<String>,

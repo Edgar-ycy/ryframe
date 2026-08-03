@@ -1,21 +1,21 @@
 use ryframe_core::{
-    LoggedRepo, Repository,
+    Repository,
     auto_fill::{AutoFill, FillContext},
-    repository::{PageQuery, PageResult},
+    repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{NoticeFilter, NoticeRepository, entities::notice};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
+use sea_orm::TransactionTrait;
 use serde::Serialize;
-use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct NoticeVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
     pub title: String,
-    pub content: String,
+    pub content_markdown: String,
     pub notice_type: Option<String>,
     pub status: String,
     pub created_by: Option<String>,
@@ -27,7 +27,7 @@ impl From<notice::Model> for NoticeVo {
         Self {
             id: n.id.to_string(),
             title: n.title,
-            content: n.content,
+            content_markdown: n.content,
             notice_type: n.r#type,
             status: n.status,
             created_by: n.created_by.map(|id| id.to_string()),
@@ -38,7 +38,7 @@ impl From<notice::Model> for NoticeVo {
 
 #[derive(Debug)]
 pub struct NoticeListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub title: Option<String>,
     pub notice_type: Option<String>,
     pub status: Option<String>,
@@ -46,14 +46,14 @@ pub struct NoticeListParams {
 
 pub struct NoticeService {
     db: DatabaseCluster,
-    notice_repo: LoggedRepo<NoticeRepository>,
+    notice_repo: NoticeRepository,
 }
 
 impl NoticeService {
     pub fn new(db: DatabaseCluster) -> Self {
         Self {
             db,
-            notice_repo: LoggedRepo::new(NoticeRepository),
+            notice_repo: NoticeRepository,
         }
     }
 
@@ -64,7 +64,7 @@ impl NoticeService {
     ) -> AppResult<PageResult<NoticeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let page = self
             .notice_repo
             .find_by_page_filtered(
@@ -85,7 +85,7 @@ impl NoticeService {
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<NoticeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         Ok(self
             .notice_repo
             .find_by_id(&db, tenant_id, id)
@@ -97,7 +97,7 @@ impl NoticeService {
         &self,
         actor: &ActorContext,
         title: &str,
-        content: &str,
+        content_markdown: &str,
         notice_type: Option<&str>,
     ) -> AppResult<NoticeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
@@ -106,7 +106,7 @@ impl NoticeService {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             title: title.to_string(),
-            content: content.to_string(),
+            content: content_markdown.to_string(),
             r#type: notice_type.map(|s| s.to_string()),
             status: notice::Model::STATUS_PUBLISHED.to_string(),
             created_by: Some(actor.user_id),
@@ -115,9 +115,13 @@ impl NoticeService {
             updated_at: Default::default(),
         };
         new_notice.fill_on_insert(&FillContext::new())?;
-        Ok(NoticeVo::from(
-            self.notice_repo.insert(db, tenant_id, new_notice).await?,
-        ))
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .notice_repo
+            .insert_in_transaction(&transaction, tenant_id, new_notice)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(NoticeVo::from(saved))
     }
 
     pub async fn update(
@@ -125,7 +129,7 @@ impl NoticeService {
         actor: &ActorContext,
         id: i64,
         title: &str,
-        content: &str,
+        content_markdown: &str,
         notice_type: Option<&str>,
         status: String,
     ) -> AppResult<NoticeVo> {
@@ -137,13 +141,17 @@ impl NoticeService {
             .await?
             .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
         n.title = title.to_string();
-        n.content = content.to_string();
+        n.content = content_markdown.to_string();
         n.r#type = notice_type.map(|s| s.to_string());
         n.status = status;
         n.fill_on_update(&FillContext::new())?;
-        Ok(NoticeVo::from(
-            self.notice_repo.update(db, tenant_id, n).await?,
-        ))
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .notice_repo
+            .update_in_transaction(&transaction, tenant_id, n)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(NoticeVo::from(saved))
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
@@ -153,6 +161,14 @@ impl NoticeService {
             .find_by_id(db, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
-        self.notice_repo.delete(db, tenant_id, id).await
+        let transaction = db.begin().await.map_err(database_error)?;
+        self.notice_repo
+            .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        crate::commit_current_audit(transaction).await
     }
+}
+
+fn database_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Database(error.to_string())
 }

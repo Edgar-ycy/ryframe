@@ -155,16 +155,17 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 
 | 表名 | 说明 |
 | --- | --- |
-| `sys_user` | 用户和会话版本 |
+| `sys_user` | 用户与 `authorization_version` 授权版本 |
 | `sys_role` | 角色和数据范围 |
 | `sys_permission` | API/按钮权限码 |
 | `sys_menu` | 前端菜单树和稳定 `route_key` |
 | `sys_dept` | 部门树 |
 | `sys_post` | 岗位 |
 | `sys_config` | 系统参数 |
+| `sys_cache_namespace_version` | 租户业务缓存命名空间的数据库权威单调版本 |
 | `sys_dict_type`、`sys_dict_data` | 字典类型和数据 |
 | `sys_notice` | 通知公告 |
-| `sys_tenant` | 租户状态和配额 |
+| `sys_tenant` | 租户状态、配额与 `authorization_epoch` 授权规则版本 |
 | `sys_file` | 上传文件元数据 |
 | `password_reset_requests` | 一次性密码重置请求 |
 
@@ -218,15 +219,23 @@ pub struct Model {
 Repository 只处理持久化，不承载 HTTP 或 UI 语义：
 
 ```rust,ignore
-use ryframe_core::{LoggedRepo, PageQuery, Repository};
+use ryframe_core::{Repository, ValidatedPageQuery};
 use ryframe_db::ExampleRepository;
 
-let repo = LoggedRepo::new(ExampleRepository);
+// API 层先将原始 Option 参数按运行时策略转换为已校验值对象。
+let validated_page = ValidatedPageQuery::from_optional(
+    raw_query.page,
+    raw_query.page_size,
+    &config.pagination,
+)?;
+let repo = ExampleRepository;
 let record = repo.find_by_id(&db, &actor.tenant_id, id).await?;
 let page = repo
-    .find_by_page(&db, &actor.tenant_id, PageQuery::new(1, 20))
+    .find_by_page(&db, &actor.tenant_id, validated_page)
     .await?;
 ```
+
+Service 直接保存具体 Repository，不再增加无行为的包装类型。仓储调用需要日志或指标时，应在真正的可观测边界统一实现，不在 Service 字段上套空壳。
 
 新增 Repository 时必须保证：
 
@@ -236,6 +245,7 @@ let page = repo
 4. 批量操作有明确上限，并在需要时使用事务。
 5. 跨租户管理查询使用专用、命名清晰的方法，不能偷偷绕过过滤。
 6. Repository 测试至少覆盖租户隔离、更新持久化和删除行为。
+7. Service 与 Repository 只接收 `ValidatedPageQuery`；不得反序列化、默认构造或用字段字面量绕过 API 层校验。
 
 ## 7. Service 和事务
 
@@ -252,7 +262,7 @@ txn.commit().await?;
 
 不要手写“任一步失败再 rollback”的分支；`?` 返回时事务对象会回滚，只有所有步骤成功后显式 `commit`。
 
-普通只读用例在入口调用一次 `let db = self.db.read();`，后续 Repository 共用该引用。命令、事务、权限/会话校验、唯一性校验和写后立即读取使用 `self.db.write()`。不要把 `DatabaseConnection` 添加到公开 Service 参数，也不要让 Handler 决定读写节点。
+同一用例只在入口选择一次连接，后续 Repository 共用该连接。不要把 `DatabaseConnection` 添加到公开 Service 参数，也不要让 Handler 决定读写节点。
 
 Service 应接收 Command/Query，而不是持续增加位置参数：
 
@@ -265,6 +275,13 @@ pub struct CreateExampleCommand {
 pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
     -> AppResult<ExampleOutput>;
 ```
+
+命令和事务通过 `DatabaseCluster::write()` 固定使用主库。查询不得使用隐含默认策略的辅助入口，必须显式调用 `select_read(ReadConsistency)`：
+
+- `Strong`：写后读、认证授权、数据权限、安全决策、配额和唯一性校验。
+- `Eventual`：不参与安全或业务决策的普通只读列表、详情和导出；有健康副本时轮询副本，否则回退主库。
+
+`select_read` 返回本次用例固定使用的 `SelectedDatabase`，同一用例应持有其中的连接完成全部查询，避免执行过程中切换节点。
 
 ## 8. 租户和数据范围
 
@@ -323,15 +340,13 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 
 数据库相关改动至少运行：
 
-```bash
-docker compose -f docker-compose.test.yml up -d --wait
+```powershell
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p ryframe-db
-cargo test -p ryframe-db-migration
-cargo test -p ryframe-service
-docker compose -f docker-compose.test.yml down
+.\scripts\runtime_acceptance.ps1
 ```
 
-涉及 API 输出时还必须运行 `cargo test -p ryframe-api`，并确认 OpenAPI 与前端字符串 ID 契约同步。
+运行时验收脚本只接受本机 Docker context，使用唯一 Compose project、独立回环端口和测试数据库，
+并在 `finally` 中按同一 project 清理容器、网络和数据卷；不要用省略 `--project-name` 的手工
+Compose 命令代替。涉及 API 输出时还必须确认 OpenAPI 与前端字符串 ID 契约同步。

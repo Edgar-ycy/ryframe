@@ -1,17 +1,17 @@
 use ryframe_core::{
-    LoggedRepo, Repository,
+    Repository,
     auto_fill::{AutoFill, FillContext},
-    repository::{PageQuery, PageResult},
+    repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::DatabaseCluster;
+use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{
     DictDataRepository, DictTypeFilter, DictTypeRepository,
     entities::{dict_data, dict_type},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
+use sea_orm::TransactionTrait;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// 字典缓存 Redis key 前缀
 const DICT_CACHE_KEY_PREFIX: &str = "sys_dict:data:";
@@ -22,7 +22,7 @@ fn dict_cache_key(tenant_id: &str, type_code: &str) -> String {
     format!("{DICT_CACHE_KEY_PREFIX}{tenant_id}:{type_code}")
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
 pub struct DictTypeVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -48,13 +48,13 @@ impl From<dict_type::Model> for DictTypeVo {
 
 #[derive(Debug)]
 pub struct DictTypeListParams {
-    pub page: PageQuery,
+    pub page: ValidatedPageQuery,
     pub name: Option<String>,
     pub code: Option<String>,
     pub status: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DictDataVo {
     /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
     pub id: String,
@@ -82,8 +82,8 @@ impl From<dict_data::Model> for DictDataVo {
 
 pub struct DictService {
     db: DatabaseCluster,
-    dict_type_repo: LoggedRepo<DictTypeRepository>,
-    dict_data_repo: LoggedRepo<DictDataRepository>,
+    dict_type_repo: DictTypeRepository,
+    dict_data_repo: DictDataRepository,
     redis: Option<ryframe_core::RedisClient>,
 }
 
@@ -91,8 +91,8 @@ impl DictService {
     pub fn new(db: DatabaseCluster, redis: Option<ryframe_core::RedisClient>) -> Self {
         Self {
             db,
-            dict_type_repo: LoggedRepo::new(DictTypeRepository),
-            dict_data_repo: LoggedRepo::new(DictDataRepository),
+            dict_type_repo: DictTypeRepository,
+            dict_data_repo: DictDataRepository,
             redis,
         }
     }
@@ -106,7 +106,7 @@ impl DictService {
         params: DictTypeListParams,
     ) -> AppResult<PageResult<DictTypeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let filter = DictTypeFilter {
             name: params.name.as_deref(),
             code: params.code.as_deref(),
@@ -124,18 +124,16 @@ impl DictService {
     pub async fn find_types_for_export(
         &self,
         actor: &ActorContext,
-        params: &DictTypeListParams,
+        name: Option<&str>,
+        code: Option<&str>,
+        status: Option<&str>,
         maximum_records: usize,
     ) -> AppResult<Vec<DictTypeVo>> {
         const BATCH_SIZE: u64 = 1_000;
 
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
-        let filter = DictTypeFilter {
-            name: params.name.as_deref(),
-            code: params.code.as_deref(),
-            status: params.status.as_deref(),
-        };
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let filter = DictTypeFilter { name, code, status };
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
@@ -185,9 +183,13 @@ impl DictService {
             updated_at: Default::default(),
         };
         new_type.fill_on_insert(&FillContext::new())?;
-        Ok(DictTypeVo::from(
-            self.dict_type_repo.insert(db, tenant_id, new_type).await?,
-        ))
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .dict_type_repo
+            .insert_in_transaction(&transaction, tenant_id, new_type)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(DictTypeVo::from(saved))
     }
 
     pub async fn update_type(
@@ -207,9 +209,13 @@ impl DictService {
         t.name = name.to_string();
         t.status = status;
         t.fill_on_update(&FillContext::new())?;
-        Ok(DictTypeVo::from(
-            self.dict_type_repo.update(db, tenant_id, t).await?,
-        ))
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .dict_type_repo
+            .update_in_transaction(&transaction, tenant_id, t)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        Ok(DictTypeVo::from(saved))
     }
 
     pub async fn delete_type(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
@@ -219,7 +225,11 @@ impl DictService {
             .find_by_id(db, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
-        self.dict_type_repo.delete(db, tenant_id, id).await
+        let transaction = db.begin().await.map_err(database_error)?;
+        self.dict_type_repo
+            .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        crate::commit_current_audit(transaction).await
     }
 
     // --- 字典数据 ---
@@ -230,7 +240,6 @@ impl DictService {
         type_code: &str,
     ) -> AppResult<Vec<DictDataVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.read();
         // 尝试从 Redis 缓存读取
         if let Some(ref redis) = self.redis
             && let Ok(Some(json)) = redis.get(&dict_cache_key(tenant_id, type_code)).await
@@ -239,6 +248,8 @@ impl DictService {
             return Ok(cached);
         }
 
+        // 仅在缓存未命中后选择数据库节点，避免把缓存命中误计为数据库读取。
+        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let data = self
             .dict_data_repo
             .find_by_type_code(&db, tenant_id, type_code)
@@ -283,9 +294,15 @@ impl DictService {
             updated_at: Default::default(),
         };
         new_data.fill_on_insert(&FillContext::new())?;
-        let vo = DictDataVo::from(self.dict_data_repo.insert(db, tenant_id, new_data).await?);
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .dict_data_repo
+            .insert_in_transaction(&transaction, tenant_id, new_data)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        let vo = DictDataVo::from(saved);
 
-        // 便新缓存
+        // 更新缓存
         self.invalidate_dict_cache(tenant_id, type_code).await;
 
         Ok(vo)
@@ -313,9 +330,15 @@ impl DictService {
         d.sort = sort;
         d.status = status;
         d.fill_on_update(&FillContext::new())?;
-        let vo = DictDataVo::from(self.dict_data_repo.update(db, tenant_id, d).await?);
+        let transaction = db.begin().await.map_err(database_error)?;
+        let saved = self
+            .dict_data_repo
+            .update_in_transaction(&transaction, tenant_id, d)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
+        let vo = DictDataVo::from(saved);
 
-        // 便新缓存
+        // 更新缓存
         self.invalidate_dict_cache(tenant_id, &type_code).await;
 
         Ok(vo)
@@ -330,9 +353,13 @@ impl DictService {
             .await?
             .ok_or_else(|| AppError::NotFound("字典数据不存在".into()))?;
         let type_code = d.type_code.clone();
-        self.dict_data_repo.delete(db, tenant_id, id).await?;
+        let transaction = db.begin().await.map_err(database_error)?;
+        self.dict_data_repo
+            .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        crate::commit_current_audit(transaction).await?;
 
-        // 便新缓存
+        // 更新缓存
         self.invalidate_dict_cache(tenant_id, &type_code).await;
 
         Ok(())
@@ -346,4 +373,8 @@ impl DictService {
             tracing::warn!(tenant_id, type_code, %error, "failed to invalidate dictionary cache");
         }
     }
+}
+
+fn database_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Database(error.to_string())
 }

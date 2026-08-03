@@ -4,22 +4,18 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_core::PageQuery;
-use ryframe_http::{ApiPageResponse, ApiResponse, AppResult};
+use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::ConfigVo;
 use validator::Validate;
 
-use crate::dto::config_dto::{
-    ConfigFilterQuery, ConfigListQuery, CreateConfigDto, UpdateConfigDto,
-};
+use crate::dto::config_dto::{ConfigListQuery, CreateConfigDto, UpdateConfigDto};
+use crate::dto::public_dto::{ConfigVo, ExportJobVo};
 use crate::state::AppState;
 use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
 
 pub fn config_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
-        .merge(route!(list_no_page))
         .merge(route!(request_config_export))
         .merge(route!(refresh_cache))
         .merge(route!(get_by_key))
@@ -40,7 +36,7 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<ConfigListQuery>,
-) -> AppResult<Json<ryframe_http::ApiPageResponse<ConfigVo>>> {
+) -> HttpResult<Json<ryframe_http::ApiPageResponse<ConfigVo>>> {
     state
         .services
         .config
@@ -49,10 +45,10 @@ async fn list(
             query.into_service_params(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::AppError::from)
+        .map_err(ryframe_http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::new(
-                p.records,
+                p.records.into_iter().map(ConfigVo::from).collect(),
                 p.total,
                 p.page,
                 p.page_size,
@@ -60,30 +56,6 @@ async fn list(
                 "查询成功",
             ))
         })
-}
-
-/// 参数配置列表不分页查询（返回全部数据）
-#[get("/all")]
-#[perm("system:config:list")]
-#[utoipa::path(get, path = "/api/v1/system/configs/all", tag = "参数配置",
-    params(ConfigFilterQuery),
-    responses((status = 200, description = "配置列表", body = ApiResponse<Vec<ConfigVo>>)),
-    security(("bearer" = [])))]
-async fn list_no_page(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<ConfigFilterQuery>,
-) -> AppResult<Json<ApiResponse<Vec<ConfigVo>>>> {
-    state
-        .services
-        .config
-        .find_all(
-            &current_user,
-            query.into_service_params(PageQuery::bounded_unpaged(&state.config.pagination)?),
-        )
-        .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
 }
 
 /// 参数配置详情
@@ -97,10 +69,10 @@ async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<ConfigVo>>> {
+) -> HttpResult<Json<ApiResponse<ConfigVo>>> {
     match state.services.config.find_by_id(&current_user, id).await? {
-        Some(cfg) => Ok(Json(ApiResponse::success(cfg))),
-        None => Err(ryframe_http::AppError::NotFound("参数配置不存在".into())),
+        Some(cfg) => Ok(Json(ApiResponse::success(cfg.into()))),
+        None => Err(ryframe_kernel::AppError::NotFound("参数配置不存在".into()).into()),
     }
 }
 
@@ -113,7 +85,7 @@ async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Json(dto): Json<CreateConfigDto>,
-) -> AppResult<Json<ApiResponse<ConfigVo>>> {
+) -> HttpResult<Json<ApiResponse<ConfigVo>>> {
     dto.validate()?;
     state
         .services
@@ -126,8 +98,8 @@ async fn create(
             dto.remark.as_deref(),
         )
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 更新参数配置
@@ -141,15 +113,15 @@ async fn update(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
     Json(dto): Json<UpdateConfigDto>,
-) -> AppResult<Json<ApiResponse<ConfigVo>>> {
+) -> HttpResult<Json<ApiResponse<ConfigVo>>> {
     dto.validate()?;
     state
         .services
         .config
         .update(&current_user, id, &dto.value)
         .await
-        .map_err(ryframe_http::AppError::from)
-        .map(|v| Json(ApiResponse::success(v)))
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 删除参数配置
@@ -161,7 +133,7 @@ async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.config.delete(&current_user, id).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
 }
@@ -175,7 +147,7 @@ async fn get_by_key(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Path(key): Path<String>,
-) -> AppResult<Json<ApiResponse<String>>> {
+) -> HttpResult<Json<ApiResponse<String>>> {
     match state
         .services
         .config
@@ -183,10 +155,7 @@ async fn get_by_key(
         .await?
     {
         Some(cfg) => Ok(Json(ApiResponse::success(cfg.value))),
-        None => Err(ryframe_http::AppError::NotFound(format!(
-            "参数 '{}' 不存在",
-            key
-        ))),
+        None => Err(ryframe_kernel::AppError::NotFound(format!("参数 '{}' 不存在", key)).into()),
     }
 }
 
@@ -200,7 +169,7 @@ async fn get_by_key(
 async fn refresh_cache(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-) -> AppResult<Json<ApiResponse<()>>> {
+) -> HttpResult<Json<ApiResponse<()>>> {
     let deleted = state.services.config.clear_cache(&current_user).await?;
     Ok(Json(ApiResponse::success_no_data_with_msg(format!(
         "已清除 {deleted} 个缓存"
@@ -212,16 +181,13 @@ async fn refresh_cache(
 #[perm("system:config:export")]
 #[utoipa::path(post, path = "/api/v1/system/configs/exports", tag = "参数配置",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
-    responses((status = 202, description = "参数配置导出任务已创建", body = ApiResponse<ryframe_service::system::ExportJobVo>)), security(("bearer" = [])))]
+    responses((status = 202, description = "参数配置导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_config_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
     Json(request): Json<ExportRequestDto>,
-) -> AppResult<(
-    StatusCode,
-    Json<ApiResponse<ryframe_service::system::ExportJobVo>>,
-)> {
+) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     request_export(
         state,
         current_user,

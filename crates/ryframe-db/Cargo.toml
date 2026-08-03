@@ -29,7 +29,7 @@ tokio = { workspace = true, features = ["time"] }
 [dev-dependencies]
 criterion = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
-sea-orm = { workspace = true }
+sea-orm = { workspace = true, features = ["mock"] }
 
 [[bench]]
 name = "db_bench"

@@ -1,8 +1,9 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_http::{AppError, AppResult};
+use ryframe_http::HttpResult;
 use ryframe_i18n::{Locale, LocalizedText, Localizer};
+use ryframe_kernel::AppError;
 use ryframe_service::system::{MessageInbox, MessageTemplate, MessageText, PublishedMessage};
 
 /// 面向 REST 与 WebSocket 客户端的已渲染消息。
@@ -93,12 +94,12 @@ pub fn render_message(
 }
 
 /// 校验本地化键后转换为不依赖国际化 crate 的服务层表达。
-pub fn into_message_text(text: LocalizedText, localizer: &Localizer) -> AppResult<MessageText> {
+pub fn into_message_text(text: LocalizedText, localizer: &Localizer) -> HttpResult<MessageText> {
     match text {
         LocalizedText::Literal { value } => Ok(MessageText::Literal { value }),
         LocalizedText::Key { key, args } => {
             if !localizer.has_key(&key) {
-                return Err(AppError::Validation(format!("消息本地化键不存在: {key}")));
+                return Err(AppError::Validation(format!("消息本地化键不存在: {key}")).into());
             }
             Ok(MessageText::Key { key, args })
         }

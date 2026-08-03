@@ -9,7 +9,7 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-ryframe-http = { path = "../ryframe-http" }
+ryframe-http = { path = "../ryframe-http", features = ["openapi"] }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
 ryframe-captcha = { path = "../ryframe-captcha" }
@@ -34,6 +34,7 @@ uuid = { workspace = true, features = ["v4", "v7"] }
 base64 = { workspace = true }
 regex = { workspace = true }
 utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
 tracing = { workspace = true }
 http-body-util = { workspace = true }
 percent-encoding = { workspace = true }

@@ -21,7 +21,7 @@ fn make_user(tenant_id: &str, username: &str) -> user::Model {
         avatar_file_id: None,
         preferred_locale: None,
         status: user::Model::STATUS_NORMAL.into(),
-        auth_version: 0,
+        authorization_version: 1,
         dept_id: None,
         remark: None,
         login_ip: None,

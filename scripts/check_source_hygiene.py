@@ -30,6 +30,14 @@ TEXT_SUFFIXES = {
 TEXT_NAMES = {".editorconfig", ".gitattributes", ".gitignore", "Dockerfile"}
 MOJIBAKE_MARKERS = ("\ufffd", "\u951b", "\u9286", "\u922b")
 ALLOWED_IGNORED_TESTS = {
+    (
+        "crates/ryframe/tests/file_a_acceptance_test.rs",
+        "seed_file_a_legacy_fixture",
+    ),
+    (
+        "crates/ryframe/tests/file_a_acceptance_test.rs",
+        "assert_file_a_final_state",
+    ),
     ("crates/ryframe-storage/tests/object_storage_test.rs", "test_s3_integration_put_get_delete"),
     (
         "crates/ryframe-core/tests/refresh_session_redis_test.rs",
@@ -46,6 +54,14 @@ ALLOWED_IGNORED_TESTS = {
     (
         "crates/ryframe-api/tests/integration_test.rs",
         "auth_middleware_fails_closed_when_redis_is_unavailable",
+    ),
+    (
+        "crates/ryframe-service/src/system/online_user_service/redis_backend.rs",
+        "stale_touch_cannot_resurrect_or_overwrite_online_user_index",
+    ),
+    (
+        "crates/ryframe-service/tests/export_runtime_acceptance_test.rs",
+        "export_runtime_acceptance_covers_scale_takeover_storage_recovery_and_cleanup",
     ),
 }
 IGNORED_TEST_PATTERN = re.compile(
@@ -310,6 +326,15 @@ def comment_language_violations(relative: str, text: str, suffix: str) -> list[s
     return violations
 
 
+def ignored_test_violations(relative: str, text: str) -> list[str]:
+    """返回未被精确白名单允许的 ignored Rust 测试。"""
+    return [
+        f"{relative}: ignored test is not allowlisted ({test_name})"
+        for test_name in IGNORED_TEST_PATTERN.findall(text)
+        if (relative, test_name) not in ALLOWED_IGNORED_TESTS
+    ]
+
+
 def main() -> int:
     errors: list[str] = []
     checked = 0
@@ -379,10 +404,12 @@ def main() -> int:
             for route in LEGACY_ACTION_PATHS:
                 if route in text:
                     errors.append(f"{relative}: contains legacy action path {route}")
-        if is_first_party and "tests" in path.parts:
-            for test_name in IGNORED_TEST_PATTERN.findall(text):
-                if (relative, test_name) not in ALLOWED_IGNORED_TESTS:
-                    errors.append(f"{relative}: ignored test is not allowlisted ({test_name})")
+        if (
+            is_first_party
+            and path.suffix == ".rs"
+            and relative.startswith("crates/")
+        ):
+            errors.extend(ignored_test_violations(relative, text))
 
         is_current_doc = relative in CURRENT_DOC_NAMES or relative.startswith("docs/")
         if is_current_doc and LEGACY_DATABASE_DOC_PATTERN.search(text):

@@ -17,8 +17,6 @@ use ryframe_utils::ip::{ClientIp, TrustedProxySet};
 use crate::metrics::{record_rate_limit_rejection, record_redis_degraded};
 
 const RATE_LIMIT_KEY_PREFIX: &str = "ryframe:v0.5:rate-limit:";
-const DEFAULT_WINDOW_SECS: u64 = 60;
-
 #[derive(Debug)]
 struct WindowBucket {
     count: u32,
@@ -65,23 +63,14 @@ impl RateLimiter {
         }
     }
 
-    /// 创建仅用于开发环境的内存限流器。
-    /// 为保持源码兼容性保留 `refill_per_sec`；两个模式均使用固定窗口，
-    /// 以使配置的 API/用户限额语义一致。
-    pub fn new_in_memory(capacity: u32, refill_per_sec: u32) -> Self {
-        let default_window_secs = if refill_per_sec == 0 {
-            DEFAULT_WINDOW_SECS
-        } else {
-            (capacity.max(1) as u64)
-                .div_ceil(refill_per_sec as u64)
-                .max(1)
-        };
+    /// 创建仅用于开发与测试环境的内存固定窗口限流器。
+    pub fn new_in_memory(capacity: u32, window_secs: u64) -> Self {
         Self {
             mode: RateLimiterMode::InMemory {
                 inner: Arc::new(RateLimiterInner {
                     buckets: DashMap::new(),
                     default_capacity: capacity.max(1),
-                    default_window_secs,
+                    default_window_secs: window_secs.max(1),
                 }),
             },
         }
@@ -156,25 +145,6 @@ impl RateLimiter {
         self.acquire(key, window_secs, capacity)
             .await
             .is_ok_and(|decision| decision.allowed)
-    }
-
-    pub async fn sliding_window_acquire(&self, key: &str, window_secs: u64, limit: u32) -> bool {
-        self.acquire(key, window_secs, limit)
-            .await
-            .is_ok_and(|decision| decision.allowed)
-    }
-
-    pub fn available_tokens(&self, key: &str) -> f64 {
-        match &self.mode {
-            RateLimiterMode::InMemory { inner } => inner
-                .buckets
-                .get(key)
-                .map(|bucket| inner.default_capacity.saturating_sub(bucket.count) as f64)
-                .unwrap_or(inner.default_capacity as f64),
-            RateLimiterMode::Redis {
-                default_capacity, ..
-            } => *default_capacity as f64,
-        }
     }
 
     pub fn spawn_gc(self: &Arc<Self>) {
@@ -252,11 +222,7 @@ pub async fn rate_limit_middleware(
         .get::<ClientIp>()
         .map(|value| value.0)
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    let window = if state.config.window_secs == 0 {
-        DEFAULT_WINDOW_SECS
-    } else {
-        state.config.window_secs
-    };
+    let window = state.config.window_secs;
     match state
         .limiter
         .acquire(
@@ -368,8 +334,8 @@ pub async fn api_rate_limit_middleware(
         .get::<ClientIp>()
         .map(|value| value.0)
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    // 将令牌桶限定到命中的规则。尤其是，`{param}` 路由的所有具体 ID 以及方法级规则的所有路径
-    // 必须共享同一个令牌桶；否则客户端可通过变换 URL 绕过限额。
+    // 将固定窗口限定到命中的规则。尤其是，`{param}` 路由的所有具体 ID 以及方法级规则的所有路径
+    // 必须共享同一个窗口；否则客户端可通过变换 URL 绕过限额。
     let key = RateLimiter::api_client_key(rule_scope, client_ip);
     match state
         .limiter

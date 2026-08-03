@@ -1,6 +1,6 @@
 # 生产部署基线
 
-> 最后核对：2026-07-25
+> 最后核对：2026-08-03
 
 本文档给出 RyFrame 生产环境的最低安全和可靠性基线。示例配置必须按实际域名、网段、
 证书和容量修改，不能原样作为生产凭据或网络策略。
@@ -35,7 +35,16 @@ docker build \
 
 稳定发布工作流只发布 GitHub 自动生成的源码快照，不构建或分发任何平台镜像。生产镜像必须由部署环境从同一稳定标签的源码独立构建、扫描并记录不可变摘要；升级 Rust 或 Debian 后必须重新运行全量测试、迁移/恢复演练和容量基准。
 
+部署环境完成构建和扫描后，应将镜像推送到自身受控的内部仓库，并把
+`repository@sha256:digest` 写入 `RYFRAME_IMAGE`。`deploy/.env.production.example` 中的值
+仅表示部署方构建产物，不引用 GHCR、GitHub Release 附件或已经删除的发布清单。
+
 `deploy/compose.prod.yml` 仅编排 API、独立迁移进程和独立 Worker，MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。复制 `deploy/.env.production.example` 到部署平台的秘密注入配置，替换所有示例值，并将 TLS 证书文件以 Docker secret 形式挂载；不得把真实密码、令牌、私钥或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，镜像必须采用部署环境构建并审计过的 digest 引用。
+
+生产配置与 Compose 将 `APP_LOGGER_OUTPUT` 默认设为 `stdout`，API 和 Worker 均由容器平台
+采集、轮转和保留日志，不会在只读根文件系统中创建 `logs/`。只有在已挂载可写持久卷并
+明确需要进程内文件滚动时才能改为 `file`；此时使用 `APP_LOGGER_RETENTION_DAYS` 设置
+1–3650 个按日滚动文件的上限，并把平台侧与应用侧保留策略一并纳入容量告警。
 
 ## 2. 网络与入口
 
@@ -48,6 +57,7 @@ docker build \
   Prometheus/VPN 地址。安全组也应执行同样限制，不能只依赖 Nginx。
 - Nginx 必须覆盖客户端提供的转发头；`APP_PROXY_TRUSTED_CIDRS` 仅包含真实代理地址。
 - `/api/v1/ws` 必须使用 WebSocket 专用反向代理：转发 `Upgrade`，关闭缓冲，并将读取超时设为高于心跳间隔。一次性 ticket 位于查询参数，Nginx、负载均衡器和 CDN 均不得记录完整请求 URI 或 ticket；模板已对该路径关闭访问日志。
+- 生产启用消息中心时必须保持 `APP_REDIS_MODE=required`。默认容量为票据 60 秒、消息保留 90 天、每租户用户单实例 5 条连接、每连接 256 条有界出站队列和单消息最多 100000 名收件人；调整 `APP_MESSAGING_*` 前必须完成连接、内存、数据库写放大和大受众发布压测。
 - `APP_API_DOCS_ENABLED=false`，并在 Nginx 阻断 Swagger/OpenAPI；`APP_MONITOR_METRICS_BEARER_TOKEN`
   使用独立随机 secret。配置和轮换方法见[值班手册](operations-runbook.md)。
 
@@ -97,8 +107,10 @@ MySQL/Redis 的服务地址必须与证书身份匹配。禁止通过关闭主�
 ## 5. 最低上线检查
 
 - 配置校验通过，密钥均由 secret 管理注入，日志中无敏感值。
+- API 与 Worker 默认向 stdout 输出 JSON 日志，平台采集、轮转、保留和容量告警均已生效。
 - `/livez=200`、`/readyz=200`，公网 Swagger/OpenAPI 为 `404`。
 - 登录后可建立 `/api/v1/ws` 并收到 `101 Switching Protocols`；抽查 Nginx、负载均衡器和 CDN 日志，确认其中不包含 `ticket=`。
+- 并发建立超过 `APP_MESSAGING_MAX_CONNECTIONS_PER_USER` 的同租户用户连接会被拒绝；慢消费者以 `1013` 关闭，大受众发布超过配置上限时整笔事务回滚且无部分收件人记录。
 - Prometheus 从允许网段携带 Bearer Token 抓取成功；公网或无 Token 请求被拒绝。
 - MySQL/Redis/对象存储 TLS 证书校验成功，数据库迁移和隔离库恢复演练通过。
 - 告警规则加载成功，Alertmanager 测试通知到达；备份与证书指标有实际数据。

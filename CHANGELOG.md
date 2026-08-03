@@ -2,10 +2,47 @@
 
 ## [Unreleased]
 
+## [v0.6.0] - 2026-08-03
+
 ### Changed
 
-- 稳定发布收敛为双仓不可变身份校验与纯源码 GitHub Release，删除停用的后端/前端门禁、重复快照作业和 `stable-release` 人工环境审批。
-- 删除多架构容器构建、GHCR 推送、SBOM、Cosign 签名、OCI 发布清单和全部自定义 Release 附件；稳定版与 Nightly 均只保留 GitHub 自动生成的源码 ZIP/TAR。
+- 新增两套本地隔离验收入口：通用脚本以唯一 Docker project 完成 MySQL、Redis、RustFS、全工作区测试及独立 Worker/API 冒烟，FILE-A 脚本以固定旧库夹具和真实 MD5 碰撞对象验证回填、排空、迁移闭锁与最终结构；两者均拒绝远程 Docker context，并在受限范围内清理临时资源。
+- API 与独立 Worker 统一使用同一日志初始化实现；日志级别、格式、输出目标和保留数量改为强类型启动配置。文件模式按日滚动并真正限制历史文件数量，生产配置与容器编排默认输出 stdout，避免只读容器创建本地日志目录。
+- API 与独立 Worker 的 `/readyz` 改为只读后台依赖探测生成的有时效内存快照，请求路径不再执行 SQL、Redis 或对象存储网络调用；快照过期时按未就绪处理，Worker 明确不以对象存储作为就绪条件。
+- 用户授权版本字段统一为 `authorization_version`，JWT 与 WebSocket 票据同步使用新名称；新增租户级 `authorization_epoch`。新安装直接使用新列，增量迁移只负责无损重命名历史列且明确禁止回滚。
+- HTTP 错误边界删除重复的 `ryframe-http::AppError/AppResult` 兼容层及双向转换；领域层统一使用 `ryframe-kernel::AppError/AppResult`，Handler 仅通过 `HttpAppError/HttpResult` 单向适配为 HTTP 响应，并由架构门禁禁止旧符号回流。
+- 消息中心新增唯一的强类型 `messaging` 配置并由组合根显式注入；票据有效期、保留期、单用户连接数、出站队列和单消息收件人数不再硬编码。发布事务改用 `INSERT … SELECT` 在 MySQL 内固化收件人，超过 `max_recipients_per_message + 1` 即回滚拒绝；关闭消息中心后 REST、票据、WebSocket 和消息任务均明确不可用。
+- 删除未产生任何日志的 `LoggedRepo`，Service 和代码生成模板直接保存具体 Repository；同时删除 `DatabaseCluster::new/with_sources/with_sources_and_replica_health` 旧构造入口，架构门禁防止这些空包装和隐式构造逻辑回流。
+- Swagger UI 改为由与 utoipa 版本匹配的 Rust crate 在编译期内嵌全部 HTML、CSS、JavaScript、字体和图标；删除 CDN、外部校验器、外部资源回退与兼容重定向，生产环境仍强制关闭 API 文档。
+- 收紧文档与全局内容安全策略：脚本仅允许同源且不启用 `unsafe-eval`，仅 Swagger UI 页面因运行时组件确有需要而放宽内联样式，所有文档静态资源均由同源提供。
+- 限流配置删除旧 `refill_per_sec` 参数，Redis 与内存实现统一使用 `window_secs` 固定窗口，避免运行模式改变限流语义。
+- OTel 导出失败统一记录固定阶段日志和无动态标签指标；新增不响应回环端点的确定性验收，保证业务与 readiness 不受影响且退出 flush 最多等待 5 秒。
+- 下载响应只输出 RFC 5987 `filename*` UTF-8 文件名，删除旧客户端专用的 ASCII `filename` 回退值。
+- JWT 必须携带非空 `sid` 才能完成解码，删除旧 token 专用拒绝分支；同时移除未使用的旧数字错误码和刷新会话序列化兼容默认值。
+- 数据库迁移库删除 `run` 兼容别名，调用方统一使用 `up/status/verify`；架构门禁同时禁止迁移别名和 Serde 字段别名回流。
+- 操作日志与登录日志导出筛选统一只接受 `name`，旧 `oper_name/user_name` 请求字段会明确失败。
+- 生产环境变量示例改为部署方从稳定标签源码构建并审计后的内部镜像摘要，不再引用 GHCR 或发布清单。
+- 公告写入与响应字段统一改为 `content_markdown`，删除旧 `content` 契约；内容限制改为 1–60,000 个 UTF-8 字节，并通过 OpenAPI 扩展向前端发布唯一运行时策略。
+- 所有配置错误与未知内部错误统一返回通用 `500` 消息，内部详情仅写日志；删除废弃的 `X-XSS-Protection` 响应头和误导性的全局 XSS 过滤表述。
+- 响应信封覆盖全部 `/api` 路径，未知版本和无版本路径统一返回 JSON `404`；已删除的 `msg/rows/total` 顶层响应字段会被明确拒绝。
+- 响应信封只以 16 MiB 有界缓冲处理 JSON；WebSocket 升级、文件/图片等成功非 JSON 响应以及启用的 OpenAPI/Swagger 文档保持原始流式响应。成功的非信封 JSON 会失败关闭，错误规范化继续保留 `Retry-After`、CORS 响应头和响应扩展。
+- `/api/v1/version` 改为强类型统一响应并纳入 OpenAPI；架构门禁同时验证生产响应有界缓冲、原响应 Parts 复用，以及所有公开 API JSON 2xx Schema 只能使用当前统一信封。
+- 请求体超限与请求超时统一返回标准错误信封；在线用户分页直接向 Service 传递 `ValidatedPageQuery`，新增架构守卫禁止 Service 或 Repository 重新接收原始 `page/page_size/offset` 数值。
+- 删除 11 个无上限列表及相关配置、服务、OpenAPI 和测试，不保留旧接口兼容；角色与用户选择器统一使用受限的 `/options?q&limit` 契约，并按租户、权限和数据范围执行稳定前缀查询。
+- 幂等存储键只隔离租户、用户和原始客户端键；请求指纹统一绑定方法、真实规范化路径、排序查询和 body SHA-256，同键不同指纹返回 `409`。
+- 稳定发布收敛为双仓不可变身份校验与纯源码 GitHub Release；联合发布工作流不再重复编译、测试或生成快照，而是校验两仓精确提交已有成功 push CI、检入 OpenAPI 一致且 tag 未移动，同时删除重复快照作业和 `stable-release` 人工环境审批。
+- 删除 Nightly 标签与预发布工作流，只允许后端稳定版联合发布主控创建 Release；同时删除多架构容器构建、GHCR 推送、SBOM、Cosign 签名、OCI 发布清单和全部自定义附件，稳定版只保留 GitHub 自动生成的源码 ZIP/TAR。
+- 后端 CI 仅保留 Linux 静态质量门禁与依赖安全审计，删除重复编译的 Windows nextest 和定时覆盖率作业；Rust 测试、覆盖率及 OpenAPI/MySQL 快照生成统一在本地执行，CI 不再通过 `cargo run/check/build/test/nextest/llvm-cov` 重复编译。
+- 生产 secret 统一通过 `APP_*` 环境变量或外部 secret manager 注入，配置文件仅允许空占位；删除 `ENC[...]`、`CONFIG_MASTER_KEY` 和 AES 配置加解密双格式，不保留旧配置回退。
+- 公开 API 前缀统一由 `ryframe-http::API_PREFIX` 与 `api_path` 生成；OpenAPI 通过 `x-ryframe-api-prefix` 向前端发布同一前缀，部署环境只配置 API origin，不再维护版本路径。
+- API 层拥有全部公开响应 DTO 并对 Service 模型执行穷尽所有权转换；Service、Generator 和 Utils 的运行依赖图已移除 Utoipa。文件 Service 只返回存储身份，私有下载 URL 仅在 API DTO 边界构造。
+- Cargo feature 最小与最大组合统一登记在 `config/feature-matrix.json`；CI 复用 Cargo 元数据执行轻量完整性守卫，完整组合编译只通过本地 `cargo xtask feature-matrix` 显式运行。
+- 配置缓存改用数据库持久化的租户命名空间 `BIGINT` 权威版本；配置写入、版本递增与 Outbox 同事务提交，Redis 使用同槽固定 version/values 键和不经过 Lua 浮点数的精确十进制版本比较。
+- 文件上传运行时只使用 SHA-256 与 `upload_status` 状态机；旧 MD5 校验和 `del_flag = '3'` 清理被隔离到一次性维护二进制，最终单向迁移在前置数据未收敛时闭锁失败，并在成功后删除旧列与索引。
+- 所有受审计的业务写命令统一在同一 MySQL 事务内提交业务变更、授权版本和 `audit.operation` Outbox；失败审计使用独立短事务且不会覆盖原业务错误，Service 层架构守卫禁止裸提交回流。
+- Outbox 与后台任务补齐去重、租约心跳、崩溃恢复、指数退避、dead 状态和人工重试；导出任务使用稳定主键游标、创建者权限与数据范围复核、确定性对象标识以及 24 小时到期清理。
+- 幂等指纹绑定租户、用户、方法、真实规范路径、排序查询参数与正文 SHA-256；同键不同指纹返回 `409`，本地 50 并发验收确认副作用只执行一次。
+- 文件维护工具使用真实碰撞样本验证 MD5 不可作为复用依据，并补齐双摘要、CAS、补偿所有权、两阶段清理及数据库原文件名和 Content-Type 下载验收。
 
 ## [v0.5.1] - 2026-08-02
 
@@ -161,7 +198,7 @@
 - 启动流程只在主库执行迁移，并在接收流量前连接、探活和校验全部已配置副本；副本失败不再被静默跳过
 - 将用户 Service/Handler 按命令、查询、角色、密码重置、CRUD 和导入导出拆分，将租户初始化事务下沉到专用 Repository
 - 将 `ryframe-core` 缓存实现拆为后端、权限缓存、保护条目、策略、击穿保护和预热子模块，公共导出保持集中
-- 在线用户、强制退出和会话黑名单统一使用租户作用域键；密码与 `auth_version` 在同一事务内更新
+- 在线用户、强制退出和会话黑名单统一使用租户作用域键；密码与 `authorization_version` 在同一事务内更新
 - 文件公开 URL 的选择从 Repository 移入 `FileService`；应用组合根显式构造存储后端，无效 RustFS/S3 配置不再静默降级为本地存储
 - 角色权限和数据范围改为资源化整体替换接口，数据范围字段与部门关联在同一事务内更新
 - 用户资料、角色和状态接口按职责拆分；创建用户与初始角色同事务提交，用户角色替换统一为原子 Repository 操作
@@ -176,7 +213,7 @@
 - JSON 响应中的 Snowflake ID 统一序列化为字符串，前端可直接从规范快照生成查询、请求体和响应类型
 - 分页查询宏同时生成 `ListQuery` 和 `FilterQuery`，列表、全量与导出统一映射到命名 Service 查询参数
 - 菜单分页下沉到 Repository，代码生成器表筛选与分页移入 Service，Handler 不再加载全量集合后切片
-- 登录后修改密码、重置密码和租户管理员初始密码统一使用 8-72 位可见 ASCII 强密码策略；个人修改密码会递增 `auth_version` 使旧会话失效
+- 登录后修改密码、重置密码和租户管理员初始密码统一使用 8-72 位可见 ASCII 强密码策略；个人修改密码会递增 `authorization_version` 使旧会话失效
 
 ### Fixed
 
@@ -192,7 +229,7 @@
 - 修复部门/菜单写入后异步失效缓存导致的短暂脏读、菜单 `route_key` 校验值与持久化值不一致的问题
 - 修复验证码 Redis 取值与删除非原子导致同一答案可能并发复用，以及缓存写入失败被静默忽略的问题
 - 修复公告创建人、个人资料部门和上传文件 ID 在 OpenAPI 中被建模为 JavaScript `number` 的契约偏差
-- 修复字典、岗位、角色和公告筛选在 `/all` 或导出链路中被忽略，以及全量操作错误暴露分页参数的问题
+- 修复字典、岗位、角色和公告筛选在列表或导出链路中被忽略的问题
 - 修复菜单和代码生成器在 HTTP Handler 中执行内存分页、导致分层职责泄漏的问题
 - 修复个人中心、密码重置和租户创建分别维护不同密码规则，以及修改密码后旧令牌仍可继续使用的问题
 - 修复部署冒烟脚本仍访问旧 `/system/permissions/tree`，并使数据库初始化发生 SQL 或默认账号更新错误时返回失败状态
@@ -242,7 +279,7 @@
 - 受保护路由统一通过认证主体执行租户限流，删除请求头驱动的重复租户配额状态
 - 拆分公共与受保护监控路由，集中受保护路由策略组装
 - 数据库配置改为唯一 `[database.connection]`，启动时连接或迁移失败会直接终止
-- API 使用复数资源和统一路径：分页列表为资源根、全量列表为 `/all`，不再保留旧路径别名
+- API 使用复数资源和统一路径，分页列表使用资源根且不保留旧路径别名
 - HTTP 64 位 ID 统一序列化为字符串，写入 DTO 默认拒绝未知字段
 - Handler 不再导入数据库实体或 Repository，Service 的 Repository 字段改为私有
 - 数据库连接在组合根统一注入 Service，Handler 和公开用例方法不再逐次传递连接

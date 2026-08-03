@@ -5,7 +5,7 @@ use axum::{
     extract::{ConnectInfo, Path, State},
 };
 use ryframe_auth::RequestPrincipal;
-use ryframe_http::{ApiResponse, AppResult};
+use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::post;
 use ryframe_utils::ip::ClientIp;
 use validator::Validate;
@@ -29,7 +29,7 @@ pub(crate) async fn request_password_reset(
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
     Path(id): Path<i64>,
     Json(dto): Json<PasswordResetRequestDto>,
-) -> AppResult<Json<ApiResponse<PasswordResetRequestResponse>>> {
+) -> HttpResult<Json<ApiResponse<PasswordResetRequestResponse>>> {
     dto.validate()?;
     let outcome = state
         .services
