@@ -4,8 +4,8 @@ mod common;
 
 use chrono::{Duration, Utc};
 use ryframe_db::{
-    MessageAudienceKind, MessageAudienceSelector, MessageInboxQuery, MessageRepository,
-    PublishMessageCommand,
+    BackgroundJobRepository, MessageAudienceKind, MessageAudienceSelector, MessageInboxQuery,
+    MessageRepository, PublishMessageCommand,
     entities::{message, message_recipient, user},
 };
 use sea_orm::{
@@ -271,4 +271,54 @@ async fn publish_uses_insert_select_and_rejects_recipient_overflow() {
         .collect::<Vec<_>>();
     assert_eq!(user_ids, vec![11, 12, 13]);
     transaction.commit().await.expect("commit publication");
+}
+
+#[tokio::test]
+async fn committed_publication_is_immediately_visible_from_inbox() {
+    let db = common::setup_test_db().await;
+    insert_user(&db, 1, user::Model::STATUS_NORMAL).await;
+    let published_at = BackgroundJobRepository
+        .database_utc_now(&db)
+        .await
+        .expect("read database clock before publication");
+    let mut command = publish_command(published_at);
+    command.audiences = vec![MessageAudienceSelector {
+        kind: MessageAudienceKind::User,
+        target_id: 1,
+    }];
+
+    let transaction = db.begin().await.expect("begin publication transaction");
+    let published = MessageRepository
+        .publish_in_transaction(&transaction, command, 1)
+        .await
+        .expect("publish message for one user");
+    transaction.commit().await.expect("commit publication");
+
+    let query_time = BackgroundJobRepository
+        .database_utc_now(&db)
+        .await
+        .expect("read database clock after publication");
+    let inbox = MessageRepository
+        .inbox(
+            &db,
+            MessageInboxQuery {
+                tenant_id: "system",
+                user_id: 1,
+                cursor: None,
+                limit: 100,
+                unread_only: false,
+                unacknowledged_only: false,
+                now: query_time,
+            },
+        )
+        .await
+        .expect("read committed publication from inbox");
+
+    assert!(
+        inbox
+            .records
+            .iter()
+            .any(|record| record.message.id == published.message.id),
+        "committed publication must be visible to a fresh inbox query"
+    );
 }

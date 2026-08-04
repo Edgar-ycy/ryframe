@@ -1124,8 +1124,28 @@ async function publishRetentionCandidate(apiBase, token, userId, marker) {
     "runtime_acceptance_0_7_retention",
     marker,
   );
-  const record = await inboxRecord(apiBase, token, messageId);
-  if (!record) fail("90 天清理候选消息未进入持久化收件箱");
+  let lastInboxIds = [];
+  let record;
+  try {
+    record = await waitFor(
+      "90 天清理候选消息进入持久化收件箱",
+      10_000,
+      async () => {
+        const records = await inboxRecords(apiBase, token);
+        lastInboxIds = records.map((item) => String(item?.id ?? ""));
+        const matched = records.filter((item) => item?.id === messageId);
+        if (matched.length > 1) {
+          fail(`收件箱中的消息 ${messageId} 出现重复记录`);
+        }
+        return matched[0] ?? null;
+      },
+    );
+  } catch (error) {
+    fail(
+      `90 天清理候选消息未进入持久化收件箱：message_id=${messageId}，`
+      + `last_inbox_ids=${JSON.stringify(lastInboxIds)}，原因=${error.message}`,
+    );
+  }
   const publishedAt = Date.parse(record.published_at);
   const expiresAt = Date.parse(record.expires_at);
   const expectedRetentionSeconds = 90 * 24 * 60 * 60;

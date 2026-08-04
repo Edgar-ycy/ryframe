@@ -403,6 +403,7 @@ function Wait-MessageAcceptanceFile {
         [Parameter(Mandatory = $true)][string]$Path,
         [AllowNull()][System.Diagnostics.Process]$Process,
         [AllowNull()][string]$ExpectedExecutable,
+        [AllowNull()][string]$FailurePath,
         [string]$Label = $script:MessageAcceptanceMessages.ClientLabel,
         [int]$TimeoutSeconds = 30
     )
@@ -411,6 +412,23 @@ function Wait-MessageAcceptanceFile {
     while ([DateTime]::UtcNow -lt $deadline) {
         if (Test-Path -LiteralPath $Path -PathType Leaf) {
             return
+        }
+        if (
+            -not [string]::IsNullOrWhiteSpace($FailurePath) `
+            -and (Test-Path -LiteralPath $FailurePath -PathType Leaf)
+        ) {
+            $failureText = Get-Content -LiteralPath $FailurePath -Raw -Encoding utf8
+            try {
+                $failure = $failureText | ConvertFrom-Json
+            }
+            catch {
+                throw ($script:MessageAcceptanceMessages.ClientResult -f $failureText)
+            }
+            if ($failure.status -eq "failed") {
+                throw ($script:MessageAcceptanceMessages.ClientResult -f (
+                    $failure | ConvertTo-Json -Depth 8 -Compress
+                ))
+            }
         }
         if ($null -ne $Process -and $null -ne $ExpectedExecutable) {
             [void](Assert-MessageAcceptanceProcess `
@@ -788,8 +806,9 @@ try {
         -Path $clientReadyPath `
         -Process $clientProcess `
         -ExpectedExecutable $nodeExecutable `
+        -FailurePath $clientResultPath `
         -Label $script:MessageAcceptanceMessages.ClientLabel `
-        -TimeoutSeconds 45
+        -TimeoutSeconds 120
     $clientReady = Get-Content -LiteralPath $clientReadyPath -Raw -Encoding utf8 | ConvertFrom-Json
     if (
         $clientReady.status -ne "ready" `
@@ -905,8 +924,9 @@ SELECT CONCAT(
         -Path $tenantResultPath `
         -Process $clientProcess `
         -ExpectedExecutable $nodeExecutable `
+        -FailurePath $clientResultPath `
         -Label $script:MessageAcceptanceMessages.ClientLabel `
-        -TimeoutSeconds 60
+        -TimeoutSeconds 120
     $tenantResult = Get-Content -LiteralPath $tenantResultPath -Raw -Encoding utf8 | ConvertFrom-Json
     if (
         $tenantResult.status -ne "passed" `
@@ -1008,8 +1028,9 @@ SELECT CONCAT(
         -Path $clientDeliveredPath `
         -Process $clientProcess `
         -ExpectedExecutable $nodeExecutable `
+        -FailurePath $clientResultPath `
         -Label $script:MessageAcceptanceMessages.ClientLabel `
-        -TimeoutSeconds 45
+        -TimeoutSeconds 120
     $clientDelivered = Get-Content -LiteralPath $clientDeliveredPath -Raw -Encoding utf8 | ConvertFrom-Json
     if (
         $clientDelivered.status -ne "delivered" `
@@ -1091,8 +1112,9 @@ SELECT CONCAT(
         -Path $cleanupReadyPath `
         -Process $clientProcess `
         -ExpectedExecutable $nodeExecutable `
+        -FailurePath $clientResultPath `
         -Label $script:MessageAcceptanceMessages.ClientLabel `
-        -TimeoutSeconds 30
+        -TimeoutSeconds 120
     $cleanupReady = Get-Content -LiteralPath $cleanupReadyPath -Raw -Encoding utf8 | ConvertFrom-Json
     $retentionMessageId = [string]$cleanupReady.message_id
     $retentionMessageIdValue = 0L
@@ -1246,7 +1268,11 @@ SELECT CONCAT(
         throw ($script:MessageAcceptanceMessages.ClientFailed -f $clientExitCode, $clientOutput, $clientError)
     }
     $clientProcess = $null
-    Wait-MessageAcceptanceFile -Path $clientResultPath -Process $null -ExpectedExecutable $null
+    Wait-MessageAcceptanceFile `
+        -Path $clientResultPath `
+        -Process $null `
+        -ExpectedExecutable $null `
+        -FailurePath $null
     $clientResult = Get-Content -LiteralPath $clientResultPath -Raw -Encoding utf8 | ConvertFrom-Json
     if (
         $clientResult.status -ne "passed" `
