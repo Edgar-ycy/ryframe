@@ -1,15 +1,15 @@
-# v0.5 发布与回滚指南
+# 稳定发布与回滚指南
 
-> 最后核对：2026-08-03
+> 最后核对：2026-08-05
 
-RyFrame 后端与 `ryframe-vue3` 位于独立仓库，但从 v0.5 起仅使用同名稳定版 SemVer tag 协同发布。后端 API、前端生成类型和部署配置不提供跨版本兼容，禁止单独切换其中一端。
+RyFrame 后端与 `ryframe-vue3` 位于独立仓库，仅使用同名稳定版 SemVer tag 协同发布。后端 API、前端生成类型和部署配置不提供跨版本兼容，禁止单独切换其中一端。
 
 ## 1. 创建稳定版 tag
 
-只接受 `vMAJOR.MINOR.PATCH` 格式的 annotated tag，例如 `v0.5.0`；不接受 RC、beta、nightly 或 lightweight tag。tag annotation 必须与该仓库 `CHANGELOG.md` 中对应版本的完整章节完全一致。前端和后端分别执行以下命令，仅替换 `release_tag`；如需 GPG 签名，可将 `-a` 改为 `-s`，但必须保留 `--cleanup=verbatim` 和 `-F`：
+只接受 `vMAJOR.MINOR.PATCH` 格式的 annotated tag，例如当前路线的 `v0.7.0`；不接受 RC、beta、nightly 或 lightweight tag。tag annotation 必须与该仓库 `CHANGELOG.md` 中对应版本的完整章节完全一致。前端和后端分别执行以下命令，仅替换 `release_tag`；如需 GPG 签名，可将 `-a` 改为 `-s`，但必须保留 `--cleanup=verbatim` 和 `-F`：
 
 ```bash
-release_tag=v0.5.0
+release_tag=v0.7.0
 notes_file="$(mktemp)"
 trap 'rm -f "$notes_file"' EXIT
 
@@ -42,7 +42,7 @@ git push origin "refs/tags/$release_tag"
 
 涉及 FILE-A 的版本必须按固定顺序发布：完成备份与隔离恢复演练，停止旧版 API 和 Worker，按 [FILE-A 文件维护](file-maintenance.md)依次执行两类 `dry-run` 与 `apply` 并确认各自 `remaining=0`，再执行 `ryframe-migrate up`、`ryframe-migrate status` 和 `ryframe-migrate verify`。迁移验证通过后先启动新 Worker，再启动同版本 API 和管理端。生产 Compose 已将 API 启动条件绑定为 Worker 健康，不能在部署环境中覆盖或删除这项依赖。全新数据库可以跳过 FILE-A 数据维护，但不能跳过迁移与验证。开发阶段不保留旧数据模型或旧进程并行运行的兼容路径。
 
-v0.4 会话没有 `sid`，切换后会主动失效，用户需要重新登录。上线公告必须明确这一点。
+开发阶段不提供跨版本会话兼容，切换后旧会话可能失效，用户需要重新登录。上线公告必须明确这一点。
 
 `/readyz` 读取后台周期探测生成的内存快照，不会因一次请求即时访问 MySQL、Redis 或对象
 存储。新实例启动后应等待至少一轮探测再判断就绪；快照过期会 fail-closed。API 要求 MySQL、

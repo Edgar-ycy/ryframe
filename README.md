@@ -193,13 +193,15 @@ config/app.prod.toml
 | `APP_OBJECT_STORAGE_ENDPOINT` | RustFS/MinIO/S3 API 地址 | 按环境配置 |
 | `APP_OBJECT_STORAGE_USE_SSL` | 远程对象存储是否使用 TLS；生产还要求 `https://` endpoint | `false` |
 | `APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION` | 显式确认生产单实例/共享卷使用本地存储 | `false` |
-| `OTEL_ENABLED` | 是否启用链路追踪 | `false` |
-| `OTEL_ENDPOINT` | OTLP 上报地址 | `http://localhost:4318/v1/traces` |
-| `OTEL_SERVICE_NAME` | 服务名 | `ryframe` |
-| `OTEL_SAMPLE_RATE` | 采样率 | `1.0` |
+| `APP_TELEMETRY_ENABLED` | 是否启用链路追踪 | `false` |
+| `APP_TELEMETRY_ENDPOINT` | OTLP 上报地址 | `http://localhost:4318/v1/traces` |
+| `APP_TELEMETRY_SERVICE_NAME` | 服务名 | `ryframe` |
+| `APP_TELEMETRY_SAMPLE_RATIO` | 根 Span 采样率 | `0.1` |
+| `APP_TELEMETRY_EXPORT_TIMEOUT_SECS` | 单次 OTLP 导出最大等待秒数 | `5` |
+| `APP_TELEMETRY_MAX_QUEUE_SIZE` | 批量导出前允许暂存的最大 Span 数 | `2048` |
 
 生产环境不要把密钥、数据库密码、对象存储凭据写入仓库，建议通过环境变量或部署平台注入。
-配置在启动时完成解密和严格校验；配置文件或环境变量变化后必须重启进程才会生效。
+配置在启动时完成合并和严格校验；当前不提供配置密文解密，任何使用旧 `ENC[...]` 格式的值都会被拒绝。配置文件或环境变量变化后必须重启进程才会生效。
 容器镜像默认使用 `APP_ENV=prod`，启动时必须通过 `docker run -e SNOWFLAKE_WORKER_ID=<唯一节点号> ...` 或编排平台注入节点 ID；滚动发布期间新旧实例也不能复用同一个值。Snowflake 遇到时钟回拨或单毫秒序列耗尽会立即返回可重试的 503，不会等待或生成逻辑未来时间；由于时间戳高水位不跨重启持久化，同一 worker ID 只能在物理时间超过其最后生成时间后复用。
 生产环境的数据库、Redis 和对象存储如果跨主机，必须启用证书校验的 TLS；多实例部署应使用 RustFS/MinIO/S3，本地存储只允许单实例或经过验证的共享持久卷。详细要求见[生产部署基线](docs/production-deployment.md)。
 
