@@ -252,10 +252,42 @@ class RuntimeAcceptanceV07PolicyTest(unittest.TestCase):
             self.assertIn(fragment, function_source)
         self.assertNotIn("& $DockerExecutable", self.support)
 
+    def test_ports_avoid_the_os_ephemeral_range_and_share_one_allocator(self) -> None:
+        for fragment in (
+            "function Test-RyFrameV07LoopbackPortAvailable",
+            "function Get-RyFrameV07LoopbackPorts",
+            "function Assert-RyFrameV07LoopbackPortsAvailable",
+            "$minimumPort = 20000",
+            "$maximumPortExclusive = 30000",
+            "Get-Random -Minimum $minimumPort -Maximum $maximumPortExclusive",
+            "Test-RyFrameV07LoopbackPortAvailable -Port $candidate",
+        ):
+            self.assertIn(fragment, self.support)
+
+        for script_name in (
+            "runtime_acceptance_0_7_message.ps1",
+            "runtime_acceptance_0_7_replica.ps1",
+            "runtime_acceptance_0_7_otel.ps1",
+        ):
+            source = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+            with self.subTest(script=script_name):
+                self.assertIn("Get-RyFrameV07LoopbackPorts -Names", source)
+                self.assertIn(
+                    "Assert-RyFrameV07LoopbackPortsAvailable -Ports $ports",
+                    source,
+                )
+                self.assertNotRegex(source, r"AcceptanceFreePort|Loopback,\s*0")
+
     def test_support_helpers_run_in_available_powershell(self) -> None:
         self_test = SUPPORT_SELF_TEST.read_text(encoding="utf-8")
         for fragment in (
             'node.Name -eq $functionName',
+            '"Test-RyFrameV07LoopbackPortAvailable"',
+            '"Get-RyFrameV07LoopbackPorts"',
+            '"Assert-RyFrameV07LoopbackPortsAvailable"',
+            'Get-RyFrameV07LoopbackPorts -Names @(',
+            'Assert-RyFrameV07LoopbackPortsAvailable -Ports $ports',
+            'Test-RyFrameV07LoopbackPortAvailable -Port $occupiedPort',
             '"ConvertTo-RyFrameV07ProcessArgument"',
             '"Invoke-RyFrameV07ProcessLines"',
             '"Write-RyFrameV07MetadataAtomically"',

@@ -35,7 +35,6 @@ $script:OtelAcceptanceMessages = ConvertFrom-Json @'
   "EvidenceExists": "OTel \u9a8c\u6536\u8bc1\u636e\u5df2\u5b58\u5728\uff0c\u62d2\u7edd\u8986\u76d6\uff1a{0}",
   "MissingFile": "OTel \u9a8c\u6536\u7f3a\u5c11\u6587\u4ef6\uff1a{0}",
   "CommandFailed": "{0}\u5931\u8d25\uff0c\u9000\u51fa\u7801\u4e3a {1}",
-  "PortUnavailable": "\u56de\u73af\u7aef\u53e3 {0} \u5df2\u88ab\u5360\u7528\u6216\u4e0d\u53ef\u7ed1\u5b9a",
   "MissingBinary": "OTel \u9a8c\u6536\u590d\u7528\u524d\u7f6e\u9636\u6bb5\u4e8c\u8fdb\u5236\u65f6\u4ecd\u7f3a\u5c11\u6587\u4ef6\uff1a{0}",
   "ImageEvidence": "OTel \u9a8c\u6536\u955c\u50cf\u8bc1\u636e\u5fc5\u987b\u7cbe\u786e\u5305\u542b mysql\u3001redis\u3001rustfs \u548c otel-collector\uff1a{0}",
   "ComposeValidate": "\u6821\u9a8c OTel \u9694\u79bb Compose \u914d\u7f6e",
@@ -128,51 +127,6 @@ function Invoke-OtelAcceptanceCommand {
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw ($script:OtelAcceptanceMessages.CommandFailed -f $Description, $exitCode)
-    }
-}
-
-function Get-OtelAcceptanceFreePort {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-    try {
-        $listener.Start()
-        return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
-    }
-    finally {
-        $listener.Stop()
-    }
-}
-
-function Get-OtelAcceptancePorts {
-    param([Parameter(Mandatory = $true)][string[]]$Names)
-
-    $ports = [ordered]@{}
-    $used = New-Object System.Collections.Generic.HashSet[int]
-    foreach ($name in $Names) {
-        do {
-            $port = Get-OtelAcceptanceFreePort
-        } while (-not $used.Add($port))
-        $ports[$name] = $port
-    }
-    return $ports
-}
-
-function Assert-OtelAcceptancePortsAvailable {
-    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Ports)
-
-    foreach ($port in $Ports.Values) {
-        $listener = [System.Net.Sockets.TcpListener]::new(
-            [System.Net.IPAddress]::Loopback,
-            [int]$port
-        )
-        try {
-            $listener.Start()
-        }
-        catch {
-            throw ($script:OtelAcceptanceMessages.PortUnavailable -f $port)
-        }
-        finally {
-            $listener.Stop()
-        }
     }
 }
 
@@ -1174,7 +1128,7 @@ foreach ($evidencePath in @(
     }
 }
 
-$ports = Get-OtelAcceptancePorts -Names @(
+$ports = Get-RyFrameV07LoopbackPorts -Names @(
     "mysql",
     "redis",
     "rustfs",
@@ -1257,7 +1211,7 @@ try {
     $transcriptStarted = $true
     Set-Location -LiteralPath $repositoryRoot
     $locationChanged = $true
-    Assert-OtelAcceptancePortsAvailable -Ports $ports
+    Assert-RyFrameV07LoopbackPortsAvailable -Ports $ports
 
     $resolvedDockerExecutable = (Resolve-Path -LiteralPath $DockerExecutable).Path
     $contextInfo = Get-RyFrameV07LocalDockerContext -DockerExecutable $resolvedDockerExecutable

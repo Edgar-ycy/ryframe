@@ -26,6 +26,7 @@
 - 修复异步任务只从当前 tracing Span 查询上下文导致 API→Worker/Outbox 父链丢失的问题，统一从当前 OTel Context 生成并持久化 W3C `traceparent/tracestate`。
 - 修复 Windows PowerShell 5.1 对泛型列表和二进制就绪响应处理不一致导致验收证据误判的问题，并在 OTel 失败时保留 Collector 日志与跟踪证据。
 - 修复微秒级数据库时钟写入无小数精度 `DATETIME` 后被舍入到下一秒，导致已提交消息短暂无法进入收件箱的问题；消息与收件箱的 8 个时间列统一迁移为 `DATETIME(6)`，测试夹具、基线和 SQL 快照同步使用同一精度。
+- 修复 Windows 将验收脚本释放的临时端口复用于出站连接，导致后续 API 绑定偶发失败的问题；三阶段删除重复的端口分配实现，统一从非临时端口范围选择并执行真实回环绑定校验。
 
 ### Security
 

@@ -19,6 +19,9 @@ $script:RyFrameV07SupportMessages = ConvertFrom-Json @'
   "ContextInspect": "\u65e0\u6cd5\u68c0\u67e5 Docker context\u201c{0}\u201d\uff1a{1}",
   "ContextRemote": "Docker context\u201c{0}\u201d\u6307\u5411\u975e\u672c\u673a endpoint\u201c{1}\u201d\uff0c\u62d2\u7edd\u8fd0\u884c\u9a8c\u6536",
   "DaemonUnavailable": "Docker context\u201c{0}\u201d\u7684\u672c\u673a daemon \u4e0d\u53ef\u7528\uff1a{1}",
+  "PortName": "\u7aef\u53e3\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a\u6216\u91cd\u590d\uff1a{0}",
+  "PortAllocation": "\u65e0\u6cd5\u5728\u975e\u4e34\u65f6\u7aef\u53e3\u8303\u56f4 20000~29999 \u5185\u4e3a\u201c{0}\u201d\u5206\u914d\u53ef\u7ed1\u5b9a\u7aef\u53e3",
+  "PortUnavailable": "\u56de\u73af\u7aef\u53e3 {0}\u5df2\u88ab\u5360\u7528\u6216\u4e0d\u53ef\u7ed1\u5b9a",
   "StopService": "\u505c\u6b62\u9694\u79bb project\u201c{0}\u201d\u7684\u670d\u52a1\u201c{1}\u201d",
   "StartService": "\u542f\u52a8\u9694\u79bb project\u201c{0}\u201d\u7684\u670d\u52a1\u201c{1}\u201d",
   "DisconnectNetwork": "\u65ad\u5f00\u670d\u52a1\u201c{0}\u201d\u4e0e\u7f51\u7edc\u201c{1}\u201d\u7684\u8fde\u63a5",
@@ -67,6 +70,82 @@ function Assert-RyFrameV07ResourceName {
 
     if ($Name -notmatch "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$") {
         throw ($script:RyFrameV07SupportMessages.ResourceName -f $Name)
+    }
+}
+
+function Test-RyFrameV07LoopbackPortAvailable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, 65535)]
+        [int]$Port
+    )
+
+    $listener = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        $Port
+    )
+    try {
+        $listener.Start()
+        return $true
+    }
+    catch [System.Net.Sockets.SocketException] {
+        return $false
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+function Get-RyFrameV07LoopbackPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$Names
+    )
+
+    $minimumPort = 20000
+    $maximumPortExclusive = 30000
+    $maximumAttempts = 512
+    $ports = [ordered]@{}
+    $used = New-Object System.Collections.Generic.HashSet[int]
+
+    foreach ($name in $Names) {
+        if ([string]::IsNullOrWhiteSpace($name) -or $ports.Contains($name)) {
+            throw ($script:RyFrameV07SupportMessages.PortName -f $name)
+        }
+
+        $selectedPort = 0
+        for ($attempt = 0; $attempt -lt $maximumAttempts; $attempt++) {
+            $candidate = Get-Random -Minimum $minimumPort -Maximum $maximumPortExclusive
+            if ($used.Contains($candidate)) {
+                continue
+            }
+            if (-not (Test-RyFrameV07LoopbackPortAvailable -Port $candidate)) {
+                continue
+            }
+            [void]$used.Add($candidate)
+            $selectedPort = $candidate
+            break
+        }
+        if ($selectedPort -eq 0) {
+            throw ($script:RyFrameV07SupportMessages.PortAllocation -f $name)
+        }
+        $ports[$name] = $selectedPort
+    }
+
+    return $ports
+}
+
+function Assert-RyFrameV07LoopbackPortsAvailable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary]$Ports
+    )
+
+    foreach ($port in $Ports.Values) {
+        if (-not (Test-RyFrameV07LoopbackPortAvailable -Port ([int]$port))) {
+            throw ($script:RyFrameV07SupportMessages.PortUnavailable -f $port)
+        }
     }
 }
 

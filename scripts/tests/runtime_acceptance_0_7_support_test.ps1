@@ -29,6 +29,9 @@ if ($parseErrors.Count -gt 0) {
 }
 
 foreach ($functionName in @(
+    "Test-RyFrameV07LoopbackPortAvailable",
+    "Get-RyFrameV07LoopbackPorts",
+    "Assert-RyFrameV07LoopbackPortsAvailable",
     "ConvertTo-RyFrameV07ProcessArgument",
     "Invoke-RyFrameV07ProcessLines",
     "Write-RyFrameV07MetadataAtomically"
@@ -52,6 +55,9 @@ foreach ($functionName in @(
 $script:RyFrameV07SupportMessages = ConvertFrom-Json @'
 {
   "CommandFailed": "\u539f\u751f\u547d\u4ee4\u5931\u8d25\uff0c\u9000\u51fa\u7801\u4e3a {0}\uff1a{1}",
+  "PortName": "\u7aef\u53e3\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a\u6216\u91cd\u590d\uff1a{0}",
+  "PortAllocation": "\u65e0\u6cd5\u5206\u914d\u7aef\u53e3\uff1a{0}",
+  "PortUnavailable": "\u56de\u73af\u7aef\u53e3 {0}\u5df2\u88ab\u5360\u7528\u6216\u4e0d\u53ef\u7ed1\u5b9a",
   "MetadataArtifactCleanup": "\u9a8c\u6536\u8bc1\u636e\u5df2\u63d0\u4ea4\uff0c\u4f46\u4e34\u65f6\u6587\u4ef6\u6e05\u7406\u5931\u8d25\uff1a{0}"
 }
 '@
@@ -64,6 +70,53 @@ $metadataPath = Join-Path $testDirectory "run metadata.json"
 $echoScript = Join-Path $testDirectory "echo arguments.ps1"
 
 try {
+    $ports = Get-RyFrameV07LoopbackPorts -Names @(
+        "mysql",
+        "redis",
+        "rustfs",
+        "collector_http",
+        "collector_health",
+        "api",
+        "worker"
+    )
+    if ($ports.Count -ne 7) {
+        throw "Loopback port allocation returned an unexpected count"
+    }
+    $distinctPorts = New-Object System.Collections.Generic.HashSet[int]
+    foreach ($port in $ports.Values) {
+        if ($port -lt 20000 -or $port -ge 30000 -or -not $distinctPorts.Add([int]$port)) {
+            throw "Loopback port allocation returned an unsafe or duplicate port"
+        }
+    }
+    Assert-RyFrameV07LoopbackPortsAvailable -Ports $ports
+
+    $occupiedPort = [int]$ports.api
+    $occupiedListener = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        $occupiedPort
+    )
+    try {
+        $occupiedListener.Start()
+        if (Test-RyFrameV07LoopbackPortAvailable -Port $occupiedPort) {
+            throw "Occupied loopback port was reported as available"
+        }
+        $occupiedRejected = $false
+        try {
+            Assert-RyFrameV07LoopbackPortsAvailable -Ports ([ordered]@{
+                api = $occupiedPort
+            })
+        }
+        catch {
+            $occupiedRejected = $true
+        }
+        if (-not $occupiedRejected) {
+            throw "Occupied loopback port was not rejected"
+        }
+    }
+    finally {
+        $occupiedListener.Stop()
+    }
+
     $firstMetadata = [ordered]@{ status = "starting"; sequence = 1 }
     $secondMetadata = [ordered]@{ status = "passed"; sequence = 2 }
     Write-RyFrameV07MetadataAtomically -Metadata $firstMetadata -Path $metadataPath

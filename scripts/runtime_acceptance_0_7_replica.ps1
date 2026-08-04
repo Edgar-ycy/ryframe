@@ -36,7 +36,6 @@ $script:ReplicaAcceptanceMessages = ConvertFrom-Json @'
   "MissingFile": "\u526f\u672c\u9a8c\u6536\u7f3a\u5c11\u6587\u4ef6\uff1a{0}",
   "MissingCommand": "\u526f\u672c\u9a8c\u6536\u7f3a\u5c11\u547d\u4ee4\uff1a{0}",
   "CommandFailed": "{0}\u5931\u8d25\uff0c\u9000\u51fa\u7801\u4e3a {1}",
-  "PortUnavailable": "\u56de\u73af\u7aef\u53e3 {0} \u5df2\u88ab\u5360\u7528\u6216\u4e0d\u53ef\u7ed1\u5b9a",
   "ComposeValidate": "\u6821\u9a8c\u526f\u672c\u4e13\u7528 Compose \u914d\u7f6e",
   "ComposeStart": "\u542f\u52a8\u9694\u79bb\u4e3b\u5e93\u4e0e\u526f\u672c",
   "ResetPrimary": "\u91cd\u7f6e\u9694\u79bb\u4e3b\u5e93",
@@ -116,49 +115,6 @@ function Invoke-ReplicaAcceptanceCommand {
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw ($script:ReplicaAcceptanceMessages.CommandFailed -f $Description, $exitCode)
-    }
-}
-
-function Get-ReplicaAcceptanceFreePort {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-    try {
-        $listener.Start()
-        return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
-    }
-    finally {
-        $listener.Stop()
-    }
-}
-
-function Get-ReplicaAcceptancePorts {
-    $ports = [ordered]@{}
-    $used = New-Object System.Collections.Generic.HashSet[int]
-    foreach ($name in @("primary", "replica", "api")) {
-        do {
-            $port = Get-ReplicaAcceptanceFreePort
-        } while (-not $used.Add($port))
-        $ports[$name] = $port
-    }
-    return $ports
-}
-
-function Assert-ReplicaAcceptancePortsAvailable {
-    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Ports)
-
-    foreach ($port in $Ports.Values) {
-        $listener = [System.Net.Sockets.TcpListener]::new(
-            [System.Net.IPAddress]::Loopback,
-            [int]$port
-        )
-        try {
-            $listener.Start()
-        }
-        catch {
-            throw ($script:ReplicaAcceptanceMessages.PortUnavailable -f $port)
-        }
-        finally {
-            $listener.Stop()
-        }
     }
 }
 
@@ -557,7 +513,7 @@ $recoveryThresholdError = Join-Path $resolvedRunDirectory "replica-recovery-obse
 $recoveredEvidencePath = Join-Path $resolvedRunDirectory "replica-recovered.json"
 $ledgerLagEvidencePath = Join-Path $resolvedRunDirectory "ledger-lag.json"
 $ledgerRepairedEvidencePath = Join-Path $resolvedRunDirectory "ledger-repaired.json"
-$ports = Get-ReplicaAcceptancePorts
+$ports = Get-RyFrameV07LoopbackPorts -Names @("primary", "replica", "api")
 $sentinelUser = "ryframe_v07_replica_marker"
 $sentinelId = "799999999999999900"
 $replicaNickname = "ryframe-v07-replica-only"
@@ -622,7 +578,7 @@ try {
     $transcriptStarted = $true
     Set-Location -LiteralPath $repositoryRoot
     $locationChanged = $true
-    Assert-ReplicaAcceptancePortsAvailable -Ports $ports
+    Assert-RyFrameV07LoopbackPortsAvailable -Ports $ports
 
     $nodeExecutable = Get-ReplicaAcceptanceCommand -Name "node"
     $resolvedDockerExecutable = (Resolve-Path -LiteralPath $DockerExecutable).Path

@@ -35,7 +35,6 @@ $script:MessageAcceptanceMessages = ConvertFrom-Json @'
   "MissingFile": "\u6d88\u606f\u4e2d\u5fc3\u9a8c\u6536\u7f3a\u5c11\u6587\u4ef6\uff1a{0}",
   "MissingCommand": "\u6d88\u606f\u4e2d\u5fc3\u9a8c\u6536\u7f3a\u5c11\u547d\u4ee4\uff1a{0}",
   "CommandFailed": "{0}\u5931\u8d25\uff0c\u9000\u51fa\u7801\u4e3a {1}",
-  "PortUnavailable": "\u56de\u73af\u7aef\u53e3 {0}\u5df2\u88ab\u5360\u7528\u6216\u4e0d\u53ef\u7ed1\u5b9a",
   "Build": "\u6784\u5efa\u6d88\u606f\u4e2d\u5fc3\u9a8c\u6536\u6240\u9700\u4e8c\u8fdb\u5236",
   "ImageEvidence": "\u6d88\u606f\u4e2d\u5fc3\u9a8c\u6536\u955c\u50cf\u8bc1\u636e\u5fc5\u987b\u7cbe\u786e\u5305\u542b mysql\u3001redis \u548c rustfs\uff1a{0}",
   "MissingBinary": "\u6784\u5efa\u5b8c\u6210\u540e\u4ecd\u7f3a\u5c11\u4e8c\u8fdb\u5236\uff1a{0}",
@@ -192,51 +191,6 @@ function Invoke-MessageAcceptanceRedisPublish {
             "ryframe:message:dispatch", $MessageId
         ))
     Assert-MessageAcceptanceSqlResult -Lines $lines -Expected "2"
-}
-
-function Get-MessageAcceptanceFreePort {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-    try {
-        $listener.Start()
-        return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
-    }
-    finally {
-        $listener.Stop()
-    }
-}
-
-function Get-MessageAcceptancePorts {
-    param([Parameter(Mandatory = $true)][string[]]$Names)
-
-    $ports = [ordered]@{}
-    $used = New-Object System.Collections.Generic.HashSet[int]
-    foreach ($name in $Names) {
-        do {
-            $port = Get-MessageAcceptanceFreePort
-        } while (-not $used.Add($port))
-        $ports[$name] = $port
-    }
-    return $ports
-}
-
-function Assert-MessageAcceptancePortsAvailable {
-    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Ports)
-
-    foreach ($port in $Ports.Values) {
-        $listener = [System.Net.Sockets.TcpListener]::new(
-            [System.Net.IPAddress]::Loopback,
-            [int]$port
-        )
-        try {
-            $listener.Start()
-        }
-        catch {
-            throw ($script:MessageAcceptanceMessages.PortUnavailable -f $port)
-        }
-        finally {
-            $listener.Stop()
-        }
-    }
 }
 
 function Set-MessageAcceptanceEnvironment {
@@ -551,7 +505,7 @@ $cleanupResultPath = Join-Path $resolvedRunDirectory "cleanup-result.json"
 $redisFaultFixturePath = Join-Path $resolvedRunDirectory "redis-fault-fixture.json"
 $redisRestoredSignal = Join-Path $resolvedRunDirectory "redis-restored.signal"
 
-$ports = Get-MessageAcceptancePorts -Names @("mysql", "redis", "rustfs", "api_a", "api_b")
+$ports = Get-RyFrameV07LoopbackPorts -Names @("mysql", "redis", "rustfs", "api_a", "api_b")
 $metadata = [ordered]@{
     schema_version = 1
     stage = "message"
@@ -601,7 +555,7 @@ try {
     $transcriptStarted = $true
     Set-Location -LiteralPath $repositoryRoot
     $locationChanged = $true
-    Assert-MessageAcceptancePortsAvailable -Ports $ports
+    Assert-RyFrameV07LoopbackPortsAvailable -Ports $ports
 
     $cargoExecutable = Get-MessageAcceptanceCommand -Name "cargo"
     $nodeExecutable = Get-MessageAcceptanceCommand -Name "node"

@@ -60,7 +60,7 @@ class RuntimeAcceptanceV07OtelPolicyTest(unittest.TestCase):
             "$resolvedRunDirectory.StartsWith($targetPrefix, $runPathComparison)",
             'Join-Path $resolvedRunDirectory "otel-run.json"',
             "Assert-RyFrameV07ProjectName -ProjectName $ProjectName",
-            "Assert-OtelAcceptancePortsAvailable -Ports $ports",
+            "Assert-RyFrameV07LoopbackPortsAvailable -Ports $ports",
             "Get-RyFrameV07LocalDockerContext",
             "Resolve-RyFrameV07ServiceContainer",
             "Get-RyFrameV07ProjectImageEvidence",
