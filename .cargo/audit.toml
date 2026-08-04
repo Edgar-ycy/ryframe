@@ -7,10 +7,20 @@ ignore = [
     # proc-macro-error2 已停止维护
     # 传播路径:
     #   SeaORM 依赖链：sea-orm 2.0.0 → sea-orm-macros 2.0.0 → sea-bae 0.2.1 → proc-macro-error2
-    #   validator 依赖链：validator 0.20.0 → validator_derive 0.20.0 → proc-macro-error2
+    #   validator 依赖链：validator 0.21.0 → validator_derive 0.20.0 → proc-macro-error2
     # 风险: 极低 - 仅编译时使用，无运行时攻击面；仓库已应用本地兼容补丁
     # 处置: 等待 SeaORM/validator 上游迁移到维护中的诊断库。
     # 复查: 每次升级 SeaORM 或 validator 时重新运行 cargo tree -i proc-macro-error2；
     #       最迟于 2026-10-24 再次评估。
     "RUSTSEC-2026-0173",
+
+    # rkyv 0.7.46 的归档校验存在越界读取漏洞。
+    # 当前状态：该版本只存在于保留的可选数据库依赖锁文件中；默认、全 feature
+    # 及全目标依赖图均没有可编译路径，CI 会在出现活动路径时立即失败。
+    # 风险：当前运行时不可达；按项目决定继续保留 PostgreSQL、SQLite 等可选生态依赖。
+    # 责任人：后端依赖维护者。
+    # 处置：等待上游数据库依赖迁移至 rkyv 0.8.17 及以上版本。
+    # 复查：每次升级 SeaORM、SQLx 或数据库 feature 时重新运行全 feature 反向依赖守卫；
+    #       最迟于 2026-10-31 再次评估。
+    "RUSTSEC-2026-0235",
 ]

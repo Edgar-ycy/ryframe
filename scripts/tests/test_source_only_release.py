@@ -157,6 +157,29 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertNotIn("\n    if:", security_job_header)
         self.assertNotIn("RUSTDOCFLAGS", source)
 
+    def test_rkyv_audit_exception_guard_checks_all_workspace_features(self) -> None:
+        ci_source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        architecture_source = (
+            ROOT / "scripts" / "check_architecture.py"
+        ).read_text(encoding="utf-8")
+        audit_source = (ROOT / ".cargo" / "audit.toml").read_text(encoding="utf-8")
+        required_command = (
+            "cargo tree --locked --workspace --all-features --target all "
+            "--invert rkyv@0.7.46"
+        )
+        incomplete_command = (
+            "cargo tree --locked --workspace --target all "
+            "--invert rkyv@0.7.46"
+        )
+
+        self.assertEqual(ci_source.count(required_command), 1)
+        self.assertNotIn(incomplete_command, ci_source)
+        self.assertEqual(architecture_source.count(required_command), 1)
+        self.assertNotIn(incomplete_command, architecture_source)
+        self.assertEqual(ci_source.count("run: cargo audit --deny warnings"), 1)
+        self.assertNotIn("--ignore RUSTSEC-2026-0235", ci_source)
+        self.assertEqual(audit_source.count('"RUSTSEC-2026-0235"'), 1)
+
     def test_ci_runs_only_the_offline_smoke_contract_test(self) -> None:
         source = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
 
