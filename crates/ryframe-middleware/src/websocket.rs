@@ -376,7 +376,7 @@ async fn handle_socket(socket: WebSocket, manager: Arc<WsManager>, query: WsQuer
                     tracing::trace!(conn_id = %conn_id_clone, "收到 Ping");
                 }
                 Ok(Message::Close(_)) => {
-                    tracing::info!(conn_id = %conn_id_clone, "客户端主动关闭");
+                    info!(conn_id = %conn_id_clone, "客户端主动关闭");
                     break;
                 }
                 Ok(Message::Pong(_)) => {

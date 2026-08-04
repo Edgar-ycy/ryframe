@@ -12,3 +12,6 @@ description = "RyFrame 的显式注入式国际化能力"
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 toml = { workspace = true }
+
+[lints]
+workspace = true

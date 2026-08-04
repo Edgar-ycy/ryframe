@@ -169,6 +169,11 @@ class ArchitectureSecurityTest(unittest.TestCase):
         CHECK_ARCHITECTURE.check_response_envelope_boundary(errors)
         self.assertEqual(errors, [])
 
+    def test_embedded_swagger_ui_contract_remains_local(self) -> None:
+        errors: list[str] = []
+        CHECK_ARCHITECTURE.check_embedded_swagger_ui(errors)
+        self.assertEqual(errors, [])
+
     def test_unbounded_or_unmounted_response_envelope_is_rejected(self) -> None:
         response_source = (
             ROOT / "crates/ryframe-middleware/src/response_envelope.rs"

@@ -36,7 +36,7 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Query(query): Query<ConfigListQuery>,
-) -> HttpResult<Json<ryframe_http::ApiPageResponse<ConfigVo>>> {
+) -> HttpResult<Json<ApiPageResponse<ConfigVo>>> {
     state
         .services
         .config

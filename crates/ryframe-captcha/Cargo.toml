@@ -12,3 +12,6 @@ description = "RyFrame 验证码生成组件"
 ryframe-kernel = { path = "../ryframe-kernel" }
 rand = { workspace = true }
 image = { workspace = true }
+
+[lints]
+workspace = true

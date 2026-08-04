@@ -164,7 +164,7 @@ fn current_timestamp() -> String {
 }
 
 fn text_response(text: String, content_type: &'static str) -> axum::response::Response {
-    ([(axum::http::header::CONTENT_TYPE, content_type)], text).into_response()
+    ([(header::CONTENT_TYPE, content_type)], text).into_response()
 }
 
 #[cfg(test)]

@@ -40,7 +40,6 @@ http-body-util = { workspace = true }
 percent-encoding = { workspace = true }
 dashmap = { workspace = true }
 futures-util = { workspace = true }
-sha2 = { workspace = true }
 
 [build-dependencies]
 syn = { workspace = true }
@@ -53,3 +52,6 @@ tower = { workspace = true, features = ["util"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 sea-orm = { workspace = true }
 redis = { workspace = true }
+
+[lints]
+workspace = true

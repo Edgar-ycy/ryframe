@@ -159,12 +159,12 @@ impl OperLogService {
     ) -> AppResult<bool> {
         ryframe_core::validate_explicit_tenant(tenant_id)?;
         if event_id.is_empty() || event_id.len() > 36 {
-            return Err(ryframe_kernel::AppError::Validation(
+            return Err(AppError::Validation(
                 "审计事件标识长度必须介于 1 和 36 之间".into(),
             ));
         }
         if request_id.is_empty() || request_id.len() > 36 {
-            return Err(ryframe_kernel::AppError::Validation(
+            return Err(AppError::Validation(
                 "请求标识长度必须介于 1 和 36 之间".into(),
             ));
         }
@@ -257,7 +257,7 @@ impl OperLogService {
             after_id = batch.last().map(|log| log.id);
             records.extend(batch.into_iter().map(OperLogVo::from));
             if records.len() > maximum_records {
-                return Err(ryframe_kernel::AppError::Validation(format!(
+                return Err(AppError::Validation(format!(
                     "导出记录数超过 {maximum_records} 条上限"
                 )));
             }

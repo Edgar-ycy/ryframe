@@ -24,7 +24,7 @@ impl Repository<permission::Model, i64> for PermissionRepository {
             .filter(permission::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn find_by_page(
@@ -65,7 +65,7 @@ impl Repository<permission::Model, i64> for PermissionRepository {
             .filter(permission::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 }
@@ -150,7 +150,7 @@ impl PermissionRepository {
             .filter(permission::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub async fn find_affected_user_ids(
@@ -167,7 +167,7 @@ impl PermissionRepository {
             .filter(role_permission::Column::PermId.is_in(perm_ids.iter().copied()))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|row| row.role_id)
             .collect();
@@ -179,7 +179,7 @@ impl PermissionRepository {
             .filter(user_role::Column::RoleId.is_in(role_ids))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|row| row.user_id)
             .collect();
@@ -199,7 +199,7 @@ impl PermissionRepository {
             .filter(role_permission::Column::PermId.eq(perm_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .is_some();
         if role_reference {
             return Ok(true);
@@ -211,7 +211,7 @@ impl PermissionRepository {
             .one(db)
             .await
             .map(|row| row.is_some())
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub async fn find_by_code(
@@ -225,7 +225,7 @@ impl PermissionRepository {
             .filter(permission::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 批量查询角色的权限码（去重）
@@ -246,7 +246,7 @@ impl PermissionRepository {
             .filter(role_permission::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|rp| rp.perm_id)
             .collect();
@@ -261,7 +261,7 @@ impl PermissionRepository {
             .filter(permission::Column::Status.eq("1"))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 查询角色绑定的权限ID列表
@@ -276,7 +276,7 @@ impl PermissionRepository {
             .filter(role_permission::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|rp| rp.perm_id)
             .collect();
@@ -297,7 +297,7 @@ impl PermissionRepository {
             .filter(role_permission::Column::TenantId.eq(tenant_id))
             .exec(transaction)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         if perm_ids.is_empty() {
             return Ok(());
@@ -315,7 +315,7 @@ impl PermissionRepository {
         role_permission::Entity::insert_many(models)
             .exec(transaction)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -330,6 +330,6 @@ impl PermissionRepository {
             .order_by_asc(permission::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 }

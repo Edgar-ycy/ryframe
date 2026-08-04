@@ -31,7 +31,7 @@ impl Repository<role::Model, i64> for RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     async fn find_by_page(
@@ -242,7 +242,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|ur| ur.role_id)
             .collect();
@@ -258,7 +258,7 @@ impl RoleRepository {
             .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 查询用户拥有的角色列表（包含停用角色，用于危险操作保护）
@@ -276,7 +276,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|ur| ur.role_id)
             .collect();
@@ -291,7 +291,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 通过锁定的当前读检查超级管理员归属。
@@ -339,7 +339,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|ur| ur.user_id)
             .collect();
@@ -375,7 +375,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .exec(txn)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         if !role_ids.is_empty() {
             let models: Vec<user_role::ActiveModel> = role_ids
@@ -390,7 +390,7 @@ impl RoleRepository {
             user_role::Entity::insert_many(models)
                 .exec(txn)
                 .await
-                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
         Ok(())
     }
@@ -428,7 +428,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub async fn find_super_role(
@@ -442,7 +442,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub async fn find_by_ids(
@@ -461,7 +461,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+            .map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 查询角色关联的自定义数据权限部门ID列表
@@ -478,7 +478,7 @@ impl RoleRepository {
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|rd| rd.dept_id)
             .collect();
@@ -503,7 +503,7 @@ impl RoleRepository {
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?
+            .map_err(|e| AppError::Database(e.to_string()))?
             .into_iter()
             .map(|rd| rd.dept_id)
             .collect::<Vec<i64>>();
@@ -540,7 +540,7 @@ impl RoleRepository {
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
             .exec(transaction)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .map_err(|e| AppError::Database(e.to_string()))?;
         if updated.rows_affected != 1 {
             return Err(AppError::NotFound("角色不存在".into()));
         }
@@ -550,7 +550,7 @@ impl RoleRepository {
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .exec(transaction)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         if !dept_ids.is_empty() {
             let relations = dept_ids.iter().map(|dept_id| role_dept::ActiveModel {
@@ -561,7 +561,7 @@ impl RoleRepository {
             role_dept::Entity::insert_many(relations)
                 .exec(transaction)
                 .await
-                .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
         Ok(())
     }

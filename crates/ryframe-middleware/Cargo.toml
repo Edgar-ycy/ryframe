@@ -46,3 +46,6 @@ criterion = { workspace = true }
 [[bench]]
 name = "middleware_bench"
 harness = false
+
+[lints]
+workspace = true

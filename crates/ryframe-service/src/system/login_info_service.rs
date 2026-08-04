@@ -172,7 +172,7 @@ impl LoginInfoService {
             after_id = batch.last().map(|log| log.id);
             records.extend(batch.into_iter().map(LoginInfoVo::from));
             if records.len() > maximum_records {
-                return Err(ryframe_kernel::AppError::Validation(format!(
+                return Err(AppError::Validation(format!(
                     "导出记录数超过 {maximum_records} 条上限"
                 )));
             }

@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn 最终事件保留请求与事件关联标识() {
+    fn final_event_preserves_request_and_event_correlation_ids() {
         let context = AuditRequestContext::new(
             "01988f44-4f04-7df1-b1c3-7df6ca0bbbe8".into(),
             "01988f44-4f04-7df1-b1c3-7df6ca0bbbe9".into(),
@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn 空标识会被拒绝() {
+    fn empty_correlation_ids_are_rejected() {
         let result = AuditRequestContext::new(
             String::new(),
             "01988f44-4f04-7df1-b1c3-7df6ca0bbbe9".into(),

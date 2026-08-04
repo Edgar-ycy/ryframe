@@ -179,7 +179,7 @@ const EXTENDED_SERVICES: &[ExtendedServiceAuditContract] = &[
 ];
 
 #[test]
-fn 写服务的事务必须通过审计提交守卫() {
+fn write_services_must_use_audited_transaction_guard() {
     for service in SERVICES {
         let begin_count = service.source.matches(".begin()").count();
         let audit_commit_count = service
@@ -214,7 +214,7 @@ fn 写服务的事务必须通过审计提交守卫() {
 }
 
 #[test]
-fn 消息导出与文件事务必须通过分层审计提交守卫() {
+fn message_export_and_file_transactions_must_use_layered_audit_guard() {
     for service in EXTENDED_SERVICES {
         let begin_count = service.source.matches(".begin()").count();
         let audit_commit_count = service
@@ -266,7 +266,7 @@ fn 消息导出与文件事务必须通过分层审计提交守卫() {
 }
 
 #[test]
-fn 上传预留与导出补偿不得提前绑定成功审计() {
+fn upload_reservation_and_export_compensation_must_not_bind_success_audit_early() {
     let upload_source = include_str!("../src/system/file_service/upload_reservation.rs");
     let reserve_section = upload_source
         .split_once("pub(super) async fn reserve_upload")
@@ -290,7 +290,7 @@ fn 上传预留与导出补偿不得提前绑定成功审计() {
 }
 
 #[test]
-fn 租户初始化仓储只能加入调用方事务() {
+fn tenant_provisioning_repository_must_join_caller_transaction() {
     let source = include_str!("../../ryframe-db/src/repositories/tenant_provisioning_repo.rs");
 
     assert!(source.contains("pub async fn provision_in_transaction("));

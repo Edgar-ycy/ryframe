@@ -6,7 +6,7 @@ use std::{
 
 use axum::{
     extract::{MatchedPath, State},
-    http::{HeaderValue, StatusCode, header::RETRY_AFTER},
+    http::{HeaderMap, HeaderValue, StatusCode, header::RETRY_AFTER},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -203,7 +203,7 @@ pub struct RateLimitState {
 }
 
 impl RateLimitState {
-    pub fn client_ip(&self, headers: &axum::http::HeaderMap, peer: IpAddr) -> IpAddr {
+    pub fn client_ip(&self, headers: &HeaderMap, peer: IpAddr) -> IpAddr {
         self.trusted_proxies.client_ip(headers, peer)
     }
 }

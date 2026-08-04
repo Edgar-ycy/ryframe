@@ -11,7 +11,7 @@
 
 | 条目 | 状态 | 当前证据与剩余工作 |
 | --- | --- | --- |
-| 工作流、编码与仓库卫生 | 部分完成 | 后端当前已通过全工作区全目标 `check`、Clippy、格式、108 项 Python 策略测试、架构检查、feature matrix、`cargo audit` 与 `cargo deny`；前端源码、workflow、依赖、架构、ESLint、Stylelint、67 个文件的 329 项普通单元测试及核心业务覆盖率门禁已通过。CI 已删除重复的 Windows、coverage、Nightly 与 Rust 测试作业，第三方 Action 固定到提交 SHA 或容器摘要。根目录误建的 `.pnpm-store` 已不存在；最终契约后的类型/构建/E2E 及托管 CI 仍待闭环。 |
+| 工作流、编码与仓库卫生 | 部分完成 | 后端当前已通过全工作区全目标 `check`、Clippy、格式、111 项 Python 策略测试、架构检查、feature matrix、`cargo audit` 与 `cargo deny`；28 个中文测试函数已统一改为英文 `snake_case`，21 个工作区成员通过编译器 `non_ascii_idents = "forbid"` 禁止非 ASCII 代码标识符。Qodana 报告中的 2 项重复定义、2 项无效依赖、108 项冗余限定名和 2 项 trait 实现顺序问题已修复；7 项破坏性依赖升级提示转入 `0.7.0` 独立升级波次。前端源码、workflow、依赖、架构、ESLint、Stylelint、67 个文件的 329 项普通单元测试及核心业务覆盖率门禁已通过。CI 已删除重复的 Windows、coverage、Nightly 与 Rust 测试作业，第三方 Action 固定到提交 SHA 或容器摘要。根目录误建的 `.pnpm-store` 已不存在；最终契约后的类型/构建/E2E 及托管 CI 仍待闭环。 |
 | 稳定版联合发布 | 部分完成 | 前后端 `v0.5.1` annotated tag 已推送，且本地联合发布输入校验通过。稳定发布已收敛为双仓不可变身份校验和纯源码 GitHub Release，不再构建平台镜像、签名或自定义附件；仍需取得精简后托管发布的完成证据。 |
 | 固定来源 OpenAPI 契约 | 部分完成 | 固定 40 位提交、离线校验和固定上游校验机制已具备；当前严格契约代码已继续演进，但前端 `openapi/source.json` 仍指向旧后端提交与旧哈希，快照仍残留已删除的 `/all` 路径并缺少 `/options` schema。必须先完成并提交后端，再以真实提交 SHA 同步前端、重新生成类型并复跑两仓契约门禁。 |
 | 开发工具链与 `xtask` | 已完成 | 工具链、`xtask` 和统一配置入口已具备；已在 `v0.5.0` 双仓干净克隆中运行完整联合 `cargo xtask check --scope all`，工作区无差异。 |
@@ -58,11 +58,18 @@
 - 脚本按固定顺序完成工作区测试、Redis refresh CAS、在线用户旧触碰并发守卫、API 隔离集成、真实 RustFS CRUD，以及 `export_runtime_acceptance_covers_scale_takeover_storage_recovery_and_cleanup` 精确 ignored 测试；最后一项覆盖 10 万条 XLSX 导出回读、Worker 租约接管、PUT/DELETE 503 恢复与过期对象清理。所有阶段退出成功后才进入数据库重置和跨进程烟测。
 - API 与独立 Worker 跨进程烟测 22/22 通过；同一 Compose project 的 3 个容器、1 个数据卷和 1 个网络清理 5/5。`run.json` 终态为 `passed`，`error=null`、`cleanup_errors=[]`，证据目录无 `.tmp/.bak` 残留。
 
+2026-08-04 Qodana 与代码标识符静态收口：
+
+- Qodana 基于后端提交 `61ecc984cbc426ba53059b42311808513e8a3924` 报告 121 项新增问题；其中 114 项可直接修复的问题已完成，包括 2 项重复定义、2 项无效依赖、108 项冗余限定名和 2 项 trait 实现顺序问题。
+- 28 个中文 Rust 测试函数已改为英文 `snake_case`；根工作区使用 `non_ascii_idents = "forbid"`，21 个成员 crate 全部继承该 lint，防止非 ASCII 代码标识符再次进入。
+- `jsonwebtoken`、`base64`、`password-hash`、`validator`、`rust_xlsxwriter`、`tower-http` 与 `syn` 的升级提示涉及主版本、安全边界或未稳定 API，不与 `0.6.0` 收口混合，转入 `0.7.0` 独立升级、迁移与回归波次。
+- 最终复核通过全工作区全目标 `cargo check`、Clippy、格式、全工作区 `lib/bins` 测试、111 项 Python 策略测试、源码卫生、依赖策略、权限路由和架构检查；仅 1 项要求 Docker Redis 的测试按设计忽略。
+
 2026-08-03 完成本轮静态收口：
 
 - `cargo check --locked --workspace --all-targets`、全工作区 Clippy、格式检查与两仓 `git diff --check` 通过。
 - `cargo xtask feature-matrix` 已实际编译 `ryframe` 与 `ryframe-http` 的最小/最大 feature 组合。
-- 全工作区 `cargo test --locked --workspace --lib --bins` 通过；其中 API 单元测试 58 项，Service 单元测试 63 项通过、1 项 Docker Redis 测试按设计忽略；Python 策略测试 108 项和架构检查通过。
+- 全工作区 `cargo test --locked --workspace --lib --bins` 通过；其中 API 单元测试 58 项，Service 单元测试 63 项通过、1 项 Docker Redis 测试按设计忽略；当次 Python 策略测试 110 项和架构检查通过，后续 Qodana 路由别名守卫加入后增至 111 项。
 - 后端 workspace 与 `Cargo.lock` 已统一为 `0.6.0`，后端 OpenAPI `info.version` 已生成 `0.6.0` 并通过自身快照测试；前端 `package.json` 已为 `0.6.0`，但契约快照和来源元数据必须等待后端真实提交 SHA 后再同步，不以工作区 HEAD 冒充已提交契约来源。
 - 前端普通全量单元测试 67 个文件、329 项全部通过；核心业务覆盖率为语句 83.97%、分支 74.03%、函数 76.79%、行 87.71%，并由动态清单守卫防止关键模块静默逃逸。`pnpm lint`、`pnpm lint:styles`、`pnpm check:workflows`、`pnpm check:dependencies`、`pnpm check:architecture` 与 `pnpm check:sources` 通过；完整 typecheck、生产构建和 E2E 必须在最终 OpenAPI 同步后重跑。
 - 根目录误建的 `.pnpm-store` 已不存在；最终提交前仍须随完整门禁再次确认两仓源码卫生。

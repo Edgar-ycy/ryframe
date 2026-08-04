@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn 下载响应逐字保留数据库原文件名并使用_rfc5987() {
+    fn download_response_preserves_database_filename_with_rfc5987() {
         let (headers, body) = downloaded_file_response(DownloadedFile {
             data: b"database metadata".to_vec(),
             original_name: "报告.xlsx".into(),

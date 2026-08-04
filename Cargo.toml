@@ -19,6 +19,9 @@ repository = "https://github.com/Edgar-ycy/ryframe"
 homepage = "https://github.com/Edgar-ycy/ryframe"
 description = "Production-oriented Rust 2024 admin backend with Vue 3, RBAC, observability, and multi-tenant support"
 
+[workspace.lints.rust]
+non_ascii_idents = "forbid"
+
 
 [workspace.dependencies]
 axum = { version = "0.8", features = ["ws"] }

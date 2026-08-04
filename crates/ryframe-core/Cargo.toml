@@ -33,3 +33,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 [[bench]]
 name = "core_bench"
 harness = false
+
+[lints]
+workspace = true

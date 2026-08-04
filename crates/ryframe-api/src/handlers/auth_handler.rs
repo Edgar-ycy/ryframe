@@ -135,7 +135,7 @@ fn verify_csrf(
     Ok(claims.jti)
 }
 
-fn decode_refresh_cookie(jar: &CookieJar, secret: &str) -> HttpResult<ryframe_auth::jwt::Claims> {
+fn decode_refresh_cookie(jar: &CookieJar, secret: &str) -> HttpResult<Claims> {
     let token = jar
         .get(REFRESH_COOKIE)
         .map(Cookie::value)

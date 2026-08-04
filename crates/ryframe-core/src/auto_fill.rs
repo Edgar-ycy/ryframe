@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_kernel::AppResult;
+pub use ryframe_kernel::AppResult;
 
 // ============================================================
 // 填充策略

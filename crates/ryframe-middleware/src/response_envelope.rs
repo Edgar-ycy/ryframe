@@ -1,7 +1,7 @@
 use axum::{
     body::{Body, to_bytes},
     extract::Request,
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderValue, StatusCode, header, response::Parts},
     middleware::Next,
     response::Response,
 };
@@ -182,11 +182,7 @@ fn error_response_from_response(
     error_response_from_parts(parts, status, request_id)
 }
 
-fn error_response_from_parts(
-    mut parts: axum::http::response::Parts,
-    status: StatusCode,
-    request_id: &str,
-) -> Response {
+fn error_response_from_parts(mut parts: Parts, status: StatusCode, request_id: &str) -> Response {
     let body = failure_envelope(status, request_id).to_string();
     parts.status = status;
     for name in [
@@ -247,7 +243,7 @@ mod tests {
     use axum::{
         Json, Router,
         body::{Body, to_bytes},
-        http::{HeaderValue, StatusCode, header},
+        http::{HeaderValue, Request, StatusCode, header},
         middleware::from_fn,
         response::Response,
         routing::get,
@@ -260,7 +256,7 @@ mod tests {
     use ryframe_http::ApiResponse;
 
     #[tokio::test]
-    async fn 请求_id_在响应头和响应体中保持一致() {
+    async fn request_id_matches_between_response_header_and_body() {
         let app = Router::new()
             .route(
                 "/api/v1/example",
@@ -271,7 +267,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/example")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),
@@ -297,7 +293,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 未知版本和无版本_api_路径返回统一_json_404() {
+    async fn unknown_version_and_unversioned_api_paths_return_enveloped_json_404() {
         let app = Router::new()
             .route("/api/v1/example", get(|| async { "ok" }))
             .layer(from_fn(api_response_envelope_middleware))
@@ -307,14 +303,14 @@ mod tests {
             let response = app
                 .clone()
                 .oneshot(
-                    axum::http::Request::builder()
+                    Request::builder()
                         .uri(uri)
                         .body(Body::empty())
                         .expect("测试请求应可构造"),
                 )
                 .await
                 .expect("路由应返回响应");
-            assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
             let header_request_id = response
                 .headers()
                 .get("x-request-id")
@@ -336,7 +332,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 已删除的旧响应字段会被拒绝() {
+    async fn removed_legacy_response_fields_are_rejected() {
         let app = Router::new()
             .route(
                 "/api/v1/legacy",
@@ -347,7 +343,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/legacy")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),
@@ -355,10 +351,7 @@ mod tests {
             .await
             .expect("路由应返回响应");
 
-        assert_eq!(
-            response.status(),
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-        );
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("响应体应可读取");
@@ -368,7 +361,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 成功的非信封_json_会失败关闭() {
+    async fn successful_unenveloped_json_fails_closed() {
         let app = Router::new()
             .route(
                 "/api/v1/raw-json",
@@ -379,7 +372,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/raw-json")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),
@@ -397,7 +390,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 二进制响应保持原始响应体和类型() {
+    async fn binary_response_preserves_original_body_and_content_type() {
         let app = Router::new()
             .route(
                 "/api/v1/download",
@@ -415,7 +408,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/download")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),
@@ -435,7 +428,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn openapi_json_文档不套业务响应信封() {
+    async fn openapi_json_document_bypasses_business_envelope() {
         let app = Router::new()
             .route(
                 "/api/v1/api-docs/openapi.json",
@@ -446,7 +439,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/api-docs/openapi.json")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),
@@ -464,7 +457,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn switching_protocols_响应不会被统一信封改写() {
+    async fn switching_protocols_response_bypasses_business_envelope() {
         let app = Router::new()
             .route(
                 "/api/v1/ws",
@@ -479,7 +472,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/ws")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),
@@ -491,14 +484,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 禁用文档时_openapi_路径仍返回统一_404() {
+    async fn disabled_documentation_openapi_path_returns_enveloped_404() {
         let app = Router::<()>::new()
             .layer(from_fn(api_response_envelope_middleware))
             .layer(from_fn(request_id_middleware));
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/api-docs/openapi.json")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),
@@ -516,7 +509,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn 规范化错误时保留非内容响应头和扩展() {
+    async fn error_normalization_preserves_non_content_headers_and_extensions() {
         #[derive(Clone, Debug, PartialEq, Eq)]
         struct ResponseMarker(&'static str);
 
@@ -546,7 +539,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
+                Request::builder()
                     .uri("/api/v1/limited")
                     .body(Body::empty())
                     .expect("测试请求应可构造"),

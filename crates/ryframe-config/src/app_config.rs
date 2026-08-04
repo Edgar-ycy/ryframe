@@ -637,7 +637,7 @@ fn validate_database_connection(
     Ok(())
 }
 
-fn validate_redis_tls(redis: &crate::RedisConfig, production: bool) -> AppResult<()> {
+fn validate_redis_tls(redis: &RedisConfig, production: bool) -> AppResult<()> {
     let client_cert = non_empty(redis.tls_client_cert.as_deref());
     let client_key = non_empty(redis.tls_client_key.as_deref());
     if client_cert.is_some() != client_key.is_some() {
@@ -729,7 +729,7 @@ mod secret_policy_tests {
     use super::*;
 
     #[test]
-    fn 生产配置文件只允许空敏感值和默认占位符() {
+    fn production_config_files_allow_only_empty_secrets_and_default_placeholders() {
         let table: toml::Table = toml::from_str(
             r#"
 [auth]
@@ -751,7 +751,7 @@ metrics_bearer_token = ""
     }
 
     #[test]
-    fn 生产配置文件拒绝主库和嵌套连接密码() {
+    fn production_config_files_reject_primary_and_nested_connection_passwords() {
         for source in [
             r#"[database.primary]
 password = "file-secret"
@@ -774,7 +774,7 @@ password = "replica-secret"
     }
 
     #[test]
-    fn 旧加密格式在任何环境都被拒绝() {
+    fn legacy_encrypted_values_are_rejected_in_all_environments() {
         let table: toml::Table = toml::from_str(
             r#"[auth]
 jwt_secret = "ENC[removed]"

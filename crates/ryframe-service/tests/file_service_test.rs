@@ -161,7 +161,7 @@ impl Drop for CommitAfterCancellation {
         let delete_observed = self.delete_observed.clone();
         let location = self.location.clone();
         let data = std::mem::take(&mut self.data);
-        std::mem::drop(tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             // 模拟远程服务器仅在已取消客户端的首次补偿 DELETE 完成后才提交。
             let Ok(permit) = delete_observed.acquire().await else {
                 return;

@@ -375,12 +375,9 @@ impl UserRepository {
         let result = user::Entity::update_many()
             .col_expr(
                 user::Column::DelFlag,
-                sea_orm::sea_query::Expr::value(user::Model::DEL_FLAG_DELETED),
+                Expr::value(user::Model::DEL_FLAG_DELETED),
             )
-            .col_expr(
-                user::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
-            )
+            .col_expr(user::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
             .filter(user::Column::Id.is_in(ids.to_vec()))
             .filter(user::Column::TenantId.eq(tenant_id))
             .exec(db)
@@ -400,14 +397,8 @@ impl UserRepository {
         C: ConnectionTrait,
     {
         let result = user::Entity::update_many()
-            .col_expr(
-                user::Column::Status,
-                sea_orm::sea_query::Expr::value(status),
-            )
-            .col_expr(
-                user::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
-            )
+            .col_expr(user::Column::Status, Expr::value(status))
+            .col_expr(user::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
             .filter(user::Column::Id.eq(id))
             .filter(user::Column::TenantId.eq(tenant_id))
             .exec(db)

@@ -34,3 +34,6 @@ sea-orm = { workspace = true, features = ["mock"] }
 [[bench]]
 name = "db_bench"
 harness = false
+
+[lints]
+workspace = true

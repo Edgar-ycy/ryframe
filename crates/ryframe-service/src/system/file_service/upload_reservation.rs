@@ -134,7 +134,7 @@ impl Drop for UploadReservationGuard {
         let storage = self.storage.clone();
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
-                std::mem::drop(handle.spawn(async move {
+                drop(handle.spawn(async move {
                     compensate_upload_reservation(db, storage, reservation).await;
                 }));
             }
@@ -564,7 +564,7 @@ impl FileService {
     /// 启动进程级、有界的上传协调循环。
     pub fn spawn_upload_janitor(self: &Arc<Self>) {
         let service = Arc::clone(self);
-        std::mem::drop(tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             let mut next_delay = Duration::ZERO;
             let mut error_backoff = JANITOR_INITIAL_ERROR_BACKOFF_SECONDS;
             loop {
@@ -751,13 +751,13 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn 失败补偿只有持有预留所有权时才删除对象() {
+    fn failure_compensation_deletes_object_only_for_owned_reservation() {
         assert_eq!(plan_compensation(true), CompensationPlan::DeleteOwnedObject);
         assert_eq!(plan_compensation(false), CompensationPlan::PreserveObject);
     }
 
     #[test]
-    fn 过期清理计划可重复执行并保留两阶段宽限期() {
+    fn expired_cleanup_plan_is_idempotent_and_preserves_two_phase_grace_period() {
         let now = Utc::now();
         let grace = cleanup_grace_for_bound(Duration::from_secs(600));
         assert_eq!(grace, ChronoDuration::seconds(1_200));

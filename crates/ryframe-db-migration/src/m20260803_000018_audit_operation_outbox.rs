@@ -84,7 +84,7 @@ mod tests {
     use super::{EVENT_ID_COLUMN, EVENT_ID_UNIQUE_INDEX, REQUEST_ID_COLUMN};
 
     #[test]
-    fn 审计迁移使用稳定的列名和唯一索引名() {
+    fn audit_migration_uses_stable_column_and_unique_index_names() {
         assert_eq!(EVENT_ID_COLUMN, "event_id");
         assert_eq!(REQUEST_ID_COLUMN, "request_id");
         assert_eq!(EVENT_ID_UNIQUE_INDEX, "uq_oper_log_event_id");

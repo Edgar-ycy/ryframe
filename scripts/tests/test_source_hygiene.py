@@ -1,5 +1,6 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import tomllib
 import unittest
 
 
@@ -10,6 +11,25 @@ SPEC = spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 CHECKER = module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
+
+
+class RustIdentifierLintPolicyTest(unittest.TestCase):
+    def test_all_workspace_members_forbid_non_ascii_identifiers(self) -> None:
+        workspace_manifest = tomllib.loads(
+            (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        )
+        workspace = workspace_manifest["workspace"]
+
+        self.assertEqual(
+            workspace["lints"]["rust"]["non_ascii_idents"],
+            "forbid",
+        )
+        for member in workspace["members"]:
+            with self.subTest(member=member):
+                member_manifest = tomllib.loads(
+                    (ROOT / member / "Cargo.toml").read_text(encoding="utf-8")
+                )
+                self.assertIs(member_manifest.get("lints", {}).get("workspace"), True)
 
 
 class SourceHygieneCommentLanguageTest(unittest.TestCase):

@@ -277,18 +277,12 @@ impl TenantRepository {
         status: &str,
     ) -> AppResult<()> {
         let result = tenant::Entity::update_many()
-            .col_expr(
-                tenant::Column::Status,
-                sea_orm::sea_query::Expr::value(status),
-            )
+            .col_expr(tenant::Column::Status, Expr::value(status))
             .col_expr(
                 tenant::Column::SessionVersion,
-                sea_orm::sea_query::Expr::cust("session_version + 1"),
+                Expr::cust("session_version + 1"),
             )
-            .col_expr(
-                tenant::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
-            )
+            .col_expr(tenant::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .exec(transaction)
             .await

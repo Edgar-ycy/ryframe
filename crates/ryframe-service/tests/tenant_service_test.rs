@@ -341,7 +341,7 @@ async fn tenant_lifecycle_initializes_admin_and_invalidates_sessions() {
     assert_eq!(created.tenant_id, "tenant-b");
     assert_eq!(created.max_users, 100);
 
-    let user = ryframe_db::UserRepository
+    let user = UserRepository
         .find_by_username(&db, "tenant-b", "tenant-admin")
         .await
         .unwrap()

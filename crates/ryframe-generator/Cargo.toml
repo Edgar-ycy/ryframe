@@ -22,3 +22,6 @@ sea-orm = { workspace = true }
 [[bin]]
 name = "ryframe-gen"
 path = "src/bin/gen.rs"
+
+[lints]
+workspace = true

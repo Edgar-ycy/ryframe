@@ -174,7 +174,7 @@ async fn main() -> Result<(), AppError> {
             task.abort();
         }
     }
-    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut retention_scheduler)
+    if tokio::time::timeout(Duration::from_secs(5), &mut retention_scheduler)
         .await
         .is_err()
     {

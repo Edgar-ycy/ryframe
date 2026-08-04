@@ -234,7 +234,7 @@ mod tests {
     use super::is_duplicate_key_error;
 
     #[test]
-    fn 只把数据库唯一键冲突识别为幂等重放() {
+    fn only_unique_constraint_violations_are_idempotent_replays() {
         let duplicate = sea_orm::DbErr::Custom("ERROR 1062 duplicate entry".into());
         let unrelated = sea_orm::DbErr::Custom("connection closed".into());
 

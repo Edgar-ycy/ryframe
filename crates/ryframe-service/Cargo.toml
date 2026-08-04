@@ -40,3 +40,6 @@ reqwest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt", "test-util"] }
 sea-orm = { workspace = true, features = ["mock"] }
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

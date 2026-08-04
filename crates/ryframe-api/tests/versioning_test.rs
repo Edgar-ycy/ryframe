@@ -55,10 +55,10 @@ fn test_api_version_ordering() {
 
 #[test]
 fn test_versioned_router_basic() {
-    async fn v1_handler() -> Json<serde_json::Value> {
+    async fn v1_handler() -> Json<Value> {
         Json(json!({"version": "v1"}))
     }
-    async fn v2_handler() -> Json<serde_json::Value> {
+    async fn v2_handler() -> Json<Value> {
         Json(json!({"version": "v2"}))
     }
 

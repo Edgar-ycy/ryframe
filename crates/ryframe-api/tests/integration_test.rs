@@ -61,24 +61,24 @@ async fn create_all_tables(db: &DatabaseConnection) {
         };
     }
 
-    create!(ryframe_db::entities::tenant::Entity);
+    create!(tenant::Entity);
     create!(ryframe_db::entities::cache_namespace_version::Entity);
-    create!(ryframe_db::entities::config::Entity);
-    create!(ryframe_db::entities::dept::Entity);
+    create!(config::Entity);
+    create!(dept::Entity);
     create!(ryframe_db::entities::dict_type::Entity);
     create!(ryframe_db::entities::dict_data::Entity);
     create!(ryframe_db::entities::login_info::Entity);
     create!(ryframe_db::entities::notice::Entity);
     create!(ryframe_db::entities::oper_log::Entity);
-    create!(ryframe_db::entities::permission::Entity);
+    create!(permission::Entity);
     create!(ryframe_db::entities::post::Entity);
-    create!(ryframe_db::entities::role::Entity);
+    create!(role::Entity);
     create!(ryframe_db::entities::menu::Entity);
     create!(ryframe_db::entities::sys_file::Entity);
-    create!(ryframe_db::entities::user::Entity);
+    create!(user::Entity);
     create!(ryframe_db::entities::password_reset_request::Entity);
     create!(ryframe_db::entities::user_role::Entity);
-    create!(ryframe_db::entities::role_permission::Entity);
+    create!(role_permission::Entity);
     create!(ryframe_db::entities::role_dept::Entity);
     create!(ryframe_db::entities::background_job::Entity);
     create!(ryframe_db::entities::outbox_event::Entity);

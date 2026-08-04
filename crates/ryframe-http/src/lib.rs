@@ -356,14 +356,11 @@ mod tests {
     #[test]
     fn http_mapping_preserves_status_and_retry_after_contract() {
         let database = HttpAppError::from(AppError::Database("private dsn".into())).into_response();
-        assert_eq!(
-            database.status(),
-            axum::http::StatusCode::SERVICE_UNAVAILABLE
-        );
+        assert_eq!(database.status(), http::StatusCode::SERVICE_UNAVAILABLE);
 
         let limited =
             HttpAppError::from(AppError::RateLimited("slow down".into(), 7)).into_response();
-        assert_eq!(limited.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(limited.status(), http::StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
             limited.headers().get(http::header::RETRY_AFTER).unwrap(),
             "7"

@@ -3341,7 +3341,6 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "syn 2.0.118",
  "tempfile",
  "tokio",
@@ -3516,7 +3515,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "ryframe-core",
- "ryframe-kernel",
  "ryframe-utils",
  "syn 2.0.118",
 ]

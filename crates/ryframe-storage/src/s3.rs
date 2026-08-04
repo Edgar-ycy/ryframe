@@ -282,6 +282,16 @@ impl ObjectStorage for S3ObjectStorage {
         }
     }
 
+    async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
+        trace_storage_operation("s3", StorageOperation::EnsureBucket, async {
+            if !self.bucket_exists(bucket).await? {
+                self.create_bucket(bucket).await?;
+            }
+            self.enforce_private_bucket(bucket).await
+        })
+        .await
+    }
+
     async fn readiness_check(&self, bucket: &str) -> StorageResult<()> {
         trace_storage_operation("s3", StorageOperation::Readiness, async {
             if self.bucket_exists(bucket).await? {
@@ -291,16 +301,6 @@ impl ObjectStorage for S3ObjectStorage {
                     "required bucket '{bucket}' does not exist"
                 )))
             }
-        })
-        .await
-    }
-
-    async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
-        trace_storage_operation("s3", StorageOperation::EnsureBucket, async {
-            if !self.bucket_exists(bucket).await? {
-                self.create_bucket(bucket).await?;
-            }
-            self.enforce_private_bucket(bucket).await
         })
         .await
     }

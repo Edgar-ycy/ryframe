@@ -188,7 +188,7 @@ pub fn init_tracer_provider(config: &TelemetryConfig) -> TelemetryGuard {
         .tracer_provider
         .as_ref()
         .expect("已启用链路追踪时必须存在 TracerProvider");
-    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+    global::set_tracer_provider(tracer_provider.clone());
     set_otel_exporter_degraded(false);
 
     info!(
@@ -343,7 +343,7 @@ pub async fn telemetry_middleware(request: Request, next: Next) -> Response {
     }
 
     if elapsed.as_millis() > 1000 {
-        tracing::warn!(
+        warn!(
             http.duration_ms = elapsed.as_millis(),
             http.route = %path,
             "慢请求"

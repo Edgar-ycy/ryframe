@@ -373,10 +373,7 @@ impl MessageRepository {
             return Ok(0);
         }
         let result = message_recipient::Entity::update_many()
-            .col_expr(
-                message_recipient::Column::AckedAt,
-                sea_orm::sea_query::Expr::value(now),
-            )
+            .col_expr(message_recipient::Column::AckedAt, Expr::value(now))
             .filter(message_recipient::Column::TenantId.eq(tenant_id))
             .filter(message_recipient::Column::UserId.eq(user_id))
             .filter(message_recipient::Column::MessageId.is_in(message_ids.to_vec()))
@@ -402,10 +399,7 @@ impl MessageRepository {
         C: ConnectionTrait,
     {
         let result = message_recipient::Entity::update_many()
-            .col_expr(
-                message_recipient::Column::EnqueuedAt,
-                sea_orm::sea_query::Expr::value(now),
-            )
+            .col_expr(message_recipient::Column::EnqueuedAt, Expr::value(now))
             .filter(message_recipient::Column::MessageId.eq(message_id))
             .filter(message_recipient::Column::EnqueuedAt.is_null())
             .exec(db)
@@ -429,11 +423,11 @@ impl MessageRepository {
         let result = message_recipient::Entity::update_many()
             .col_expr(
                 message_recipient::Column::ReadAt,
-                sea_orm::sea_query::Expr::cust_with_values("COALESCE(`read_at`, ?)", [now]),
+                Expr::cust_with_values("COALESCE(`read_at`, ?)", [now]),
             )
             .col_expr(
                 message_recipient::Column::AckedAt,
-                sea_orm::sea_query::Expr::cust_with_values("COALESCE(`acked_at`, ?)", [now]),
+                Expr::cust_with_values("COALESCE(`acked_at`, ?)", [now]),
             )
             .filter(message_recipient::Column::TenantId.eq(tenant_id))
             .filter(message_recipient::Column::UserId.eq(user_id))
@@ -462,11 +456,11 @@ impl MessageRepository {
         let result = message_recipient::Entity::update_many()
             .col_expr(
                 message_recipient::Column::ReadAt,
-                sea_orm::sea_query::Expr::cust_with_values("COALESCE(`read_at`, ?)", [now]),
+                Expr::cust_with_values("COALESCE(`read_at`, ?)", [now]),
             )
             .col_expr(
                 message_recipient::Column::AckedAt,
-                sea_orm::sea_query::Expr::cust_with_values("COALESCE(`acked_at`, ?)", [now]),
+                Expr::cust_with_values("COALESCE(`acked_at`, ?)", [now]),
             )
             .filter(message_recipient::Column::TenantId.eq(tenant_id))
             .filter(message_recipient::Column::UserId.eq(user_id))

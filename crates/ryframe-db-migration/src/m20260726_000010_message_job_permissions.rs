@@ -125,15 +125,15 @@ where
             tenant_id.into(),
             spec.name.into(),
             spec.code.into(),
-            sea_orm::sea_query::Expr::value(parent_id),
+            Expr::value(parent_id),
             "api".into(),
-            sea_orm::sea_query::Expr::value(Option::<String>::None),
+            Expr::value(Option::<String>::None),
             spec.sort.into(),
             "1".into(),
-            sea_orm::sea_query::Expr::current_timestamp(),
-            sea_orm::sea_query::Expr::current_timestamp(),
+            Expr::current_timestamp(),
+            Expr::current_timestamp(),
         ])
-        .build(sea_orm::sea_query::MysqlQueryBuilder);
+        .build(MysqlQueryBuilder);
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         statement.0,

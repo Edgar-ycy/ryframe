@@ -226,7 +226,7 @@ async fn batch_remove(
     let ids = parse_csv_i64(&ids_str)?;
 
     if ids.is_empty() {
-        return Err(ryframe_kernel::AppError::Validation("请选择要删除的角色".into()).into());
+        return Err(AppError::Validation("请选择要删除的角色".into()).into());
     }
 
     for id in &ids {

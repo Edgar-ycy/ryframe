@@ -63,3 +63,6 @@ path = "src/bin/ryframe_worker.rs"
 name = "ryframe-file-maintenance"
 path = "src/bin/ryframe_file_maintenance.rs"
 required-features = ["file-maintenance"]
+
+[lints]
+workspace = true

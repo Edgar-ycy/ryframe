@@ -1457,8 +1457,8 @@ def check_embedded_swagger_ui(errors: list[str]) -> None:
             "utoipa-swagger-ui = { workspace = true }",
         ),
         "crates/ryframe-api/src/router.rs": (
-            '.route("/swagger-ui", get(swagger_ui_index))',
-            '.route("/swagger-ui/{*asset}", get(swagger_ui_asset))',
+            '.route("/swagger-ui", get_route(swagger_ui_index))',
+            '.route("/swagger-ui/{*asset}", get_route(swagger_ui_asset))',
             "serve as serve_swagger_ui",
             'validator_url("none")',
             "fn swagger_ui_base_element() -> String",

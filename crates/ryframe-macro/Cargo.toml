@@ -17,7 +17,9 @@ quote = { workspace = true }
 proc-macro2 = { workspace = true }
 
 [dev-dependencies]
-ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
 axum.workspace = true
 chrono.workspace = true
+
+[lints]
+workspace = true

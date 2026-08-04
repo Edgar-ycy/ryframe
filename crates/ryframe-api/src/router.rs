@@ -8,7 +8,7 @@ use axum::{
     middleware,
     middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get as get_route, post},
 };
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_config::RedisMode;
@@ -93,7 +93,7 @@ where
             },
             authenticated_tenant_rate_limit,
         ))
-        .layer(middleware::from_fn_with_state(
+        .layer(from_fn_with_state(
             state.auth.clone(),
             ryframe_auth::middleware::auth_middleware,
         ))
@@ -147,7 +147,7 @@ pub fn auth_router(state: AppState) -> Router {
     // 认证端点可能携带 Cookie、CSRF challenge 或令牌数据，因此绝不进入通用的
     // 操作日志中间件。
     let public = Router::new()
-        .route("/csrf", get(auth_handler::csrf))
+        .route("/csrf", get_route(auth_handler::csrf))
         .route("/login", post(auth_handler::login))
         .route("/refresh", post(auth_handler::refresh))
         .route("/logout", post(auth_handler::logout))
@@ -160,7 +160,7 @@ pub fn auth_router(state: AppState) -> Router {
     // .layer() 从后往前执行：auth（外层先执行）→ oper_log（内层后执行）→ handler
     let protected = protect(
         Router::new()
-            .route("/me", get(auth_handler::me))
+            .route("/me", get_route(auth_handler::me))
             .route("/ws-ticket", post(auth_handler::websocket_ticket))
             .layer(from_fn_with_state(
                 oper_log_state.clone(),
@@ -254,7 +254,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     );
 
     let mut router = Router::new()
-        .route("/ws", get(crate::message_socket::upgrade))
+        .route("/ws", get_route(crate::message_socket::upgrade))
         .with_state(state.clone())
         .nest("/auth", auth_router(state.clone()))
         .nest("/platform/tenants", platform)
@@ -272,11 +272,14 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         .nest("/common", common_router(state.clone()))
         // API 版本信息端点
-        .route("/version", get(api_version));
+        .route("/version", get_route(api_version));
 
     if state.config.api_docs.enabled {
         router = router
-            .route("/api-docs/openapi.json", get(crate::openapi::openapi_json))
+            .route(
+                "/api-docs/openapi.json",
+                get_route(crate::openapi::openapi_json),
+            )
             .merge(swagger_ui_router());
     }
     router.layer(middleware::from_fn(request_locale_middleware))
@@ -552,8 +555,8 @@ fn swagger_ui_base_element() -> String {
 
 fn swagger_ui_router() -> Router {
     Router::new()
-        .route("/swagger-ui", get(swagger_ui_index))
-        .route("/swagger-ui/{*asset}", get(swagger_ui_asset))
+        .route("/swagger-ui", get_route(swagger_ui_index))
+        .route("/swagger-ui/{*asset}", get_route(swagger_ui_asset))
 }
 
 /// 返回唯一的 Swagger UI 文档入口，不提供尾斜杠兼容路由或重定向。
@@ -670,7 +673,7 @@ mod swagger_ui_tests {
     }
 
     #[tokio::test]
-    async fn 文档入口只引用同源外部脚本和样式() {
+    async fn documentation_entry_references_only_same_origin_assets() {
         let response = get("/swagger-ui").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -723,7 +726,7 @@ mod swagger_ui_tests {
     }
 
     #[tokio::test]
-    async fn 内嵌静态资源具有正确类型和缓存策略() {
+    async fn embedded_static_assets_have_correct_content_types_and_cache_policy() {
         for (asset, expected_content_type) in [
             ("swagger-ui.css", "text/css"),
             ("index.css", "text/css"),
@@ -773,7 +776,7 @@ mod swagger_ui_tests {
     }
 
     #[tokio::test]
-    async fn 文档入口没有兼容重定向或重复首页() {
+    async fn documentation_entry_has_no_compatibility_redirect_or_duplicate_index() {
         assert_eq!(get("/swagger-ui/").await.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             get("/swagger-ui/index.html").await.status(),

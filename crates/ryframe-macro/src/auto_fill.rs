@@ -132,14 +132,14 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
             fn fill_on_insert(
                 &mut self,
                 ctx: &ryframe_core::auto_fill::FillContext,
-            ) -> ryframe_kernel::AppResult<()> {
+            ) -> ryframe_core::auto_fill::AppResult<()> {
                 #(#insert_stmts)*
                 Ok(())
             }
             fn fill_on_update(
                 &mut self,
                 ctx: &ryframe_core::auto_fill::FillContext,
-            ) -> ryframe_kernel::AppResult<()> {
+            ) -> ryframe_core::auto_fill::AppResult<()> {
                 #(#update_stmts)*
                 Ok(())
             }

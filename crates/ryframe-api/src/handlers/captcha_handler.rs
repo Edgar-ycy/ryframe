@@ -191,7 +191,7 @@ pub async fn captcha_image_handler(
     let (captcha_id, image_data) = issue_captcha(&state, query.captcha_type).await?;
 
     // 构建响应头
-    let mut headers = axum::http::HeaderMap::new();
+    let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
         "image/png"

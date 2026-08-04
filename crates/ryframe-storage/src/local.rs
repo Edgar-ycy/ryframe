@@ -111,7 +111,7 @@ pub struct LocalObjectStorage {
     cleanup_schedule: Arc<CleanupSchedule>,
     active_staging: Arc<ActiveStagingRegistry>,
     #[cfg(test)]
-    publish_pause: Option<std::sync::Arc<PublishPause>>,
+    publish_pause: Option<Arc<PublishPause>>,
     #[cfg(test)]
     test_stale_after: Option<Duration>,
 }
@@ -542,16 +542,6 @@ impl ObjectStorage for LocalObjectStorage {
         .await
     }
 
-    async fn readiness_check(&self, bucket: &str) -> StorageResult<()> {
-        trace_storage_operation("local", StorageOperation::Readiness, async {
-            // 健康探针不得创建存储根目录、存储桶、暂存目录或探测对象。已配置的
-            // 存储桶缺失或不可读即表示就绪检查失败。
-            self.canonical_bucket_directory(bucket, false).await?;
-            Ok(())
-        })
-        .await
-    }
-
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         trace_storage_operation("local", StorageOperation::EnsureBucket, async {
             self.canonical_bucket_directory(bucket, true).await?;
@@ -559,6 +549,16 @@ impl ObjectStorage for LocalObjectStorage {
             // 启动清理由尽力而为：无效存储桶路径仍会在上方以失败即拒绝方式处理；
             // 清理 I/O 失败只记录日志，不会使原本可用的本地存储失效。
             self.trigger_staging_cleanup(bucket, true);
+            Ok(())
+        })
+        .await
+    }
+
+    async fn readiness_check(&self, bucket: &str) -> StorageResult<()> {
+        trace_storage_operation("local", StorageOperation::Readiness, async {
+            // 健康探针不得创建存储根目录、存储桶、暂存目录或探测对象。已配置的
+            // 存储桶缺失或不可读即表示就绪检查失败。
+            self.canonical_bucket_directory(bucket, false).await?;
             Ok(())
         })
         .await

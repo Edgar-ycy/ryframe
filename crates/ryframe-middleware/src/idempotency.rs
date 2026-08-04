@@ -356,7 +356,7 @@ pub async fn idempotency_middleware(
     }
     if request
         .headers()
-        .get(http::header::CONTENT_TYPE)
+        .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| {
             value
