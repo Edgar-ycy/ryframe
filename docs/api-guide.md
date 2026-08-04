@@ -346,7 +346,7 @@ curl http://127.0.0.1:8080/api/v1/api-docs/openapi.json
 
 ```bash
 python scripts/check_architecture.py
-cargo run -p ryframe-api --bin export_openapi -- openapi/openapi.json
+cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo test -p ryframe-api
 cargo clippy --workspace --all-targets -- -D warnings
 ```

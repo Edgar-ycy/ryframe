@@ -10,7 +10,7 @@
 Set-Location ryframe-vue3
 $env:RYFRAME_BACKEND_REPOSITORY='Edgar-ycy/ryframe'
 $env:RYFRAME_BACKEND_COMMIT=(git -C .. rev-parse HEAD)
-$env:RYFRAME_OPENAPI_SOURCE='..\openapi\openapi.json'
+$env:RYFRAME_BACKEND_WORKTREE='..'
 pnpm api:sync
 pnpm api:check
 ```

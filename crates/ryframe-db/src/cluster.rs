@@ -174,13 +174,15 @@ impl ReplicaNode {
             .connection
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-        self.set_healthy(false);
+        self.healthy.store(false, Ordering::Release);
+        self.consecutive_successes.store(0, Ordering::Release);
     }
 
     fn is_healthy(&self) -> bool {
         self.healthy.load(Ordering::Acquire) && self.connection().is_some()
     }
 
+    #[cfg(test)]
     fn set_healthy(&self, healthy: bool) {
         self.healthy
             .store(healthy && self.connection().is_some(), Ordering::Release);
@@ -191,24 +193,38 @@ impl ReplicaNode {
     fn record_probe(&self, reachable: bool) {
         if reachable {
             self.consecutive_failures.store(0, Ordering::Release);
-            if self.is_healthy() {
-                self.consecutive_successes.store(0, Ordering::Release);
-                return;
-            }
-
-            let successes = self.consecutive_successes.fetch_add(1, Ordering::AcqRel) + 1;
-            if successes >= REPLICA_RECOVERY_THRESHOLD {
-                self.set_healthy(true);
+            let successes = increment_streak(&self.consecutive_successes);
+            if !self.is_healthy() && successes >= REPLICA_RECOVERY_THRESHOLD {
+                self.healthy
+                    .store(self.connection().is_some(), Ordering::Release);
             }
             return;
         }
 
         self.consecutive_successes.store(0, Ordering::Release);
-        let failures = self.consecutive_failures.fetch_add(1, Ordering::AcqRel) + 1;
+        let failures = increment_streak(&self.consecutive_failures);
         if failures >= REPLICA_FAILURE_THRESHOLD {
             self.healthy.store(false, Ordering::Release);
         }
     }
+
+    fn health(&self) -> DatabaseNodeHealth {
+        DatabaseNodeHealth {
+            name: self.name.to_string(),
+            healthy: self.is_healthy(),
+            consecutive_failures: self.consecutive_failures.load(Ordering::Acquire),
+            consecutive_successes: self.consecutive_successes.load(Ordering::Acquire),
+        }
+    }
+}
+
+fn increment_streak(streak: &AtomicUsize) -> usize {
+    streak
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            Some(current.saturating_add(1))
+        })
+        .unwrap_or(usize::MAX)
+        .saturating_add(1)
 }
 
 /// 具名业务数据源不参与副本自动恢复，保持为启动时建立的固定连接池。
@@ -486,10 +502,7 @@ impl DatabaseCluster {
         self.inner
             .replicas
             .iter()
-            .map(|replica| DatabaseNodeHealth {
-                name: replica.name.to_string(),
-                healthy: replica.is_healthy(),
-            })
+            .map(ReplicaNode::health)
             .collect()
     }
 
@@ -578,6 +591,8 @@ async fn node_health<'a>(
         DatabaseNodeHealth {
             name: name.to_owned(),
             healthy: crate::connection::ping(connection).await.is_ok(),
+            consecutive_failures: 0,
+            consecutive_successes: 0,
         }
     }))
     .await
@@ -735,14 +750,39 @@ mod tests {
         replica.set_healthy(false);
         replica.record_probe(true);
         assert!(!replica.is_healthy());
+        assert_eq!(replica.health().consecutive_successes, 1);
+        assert_eq!(replica.health().consecutive_failures, 0);
         replica.record_probe(true);
         assert!(replica.is_healthy());
+        assert_eq!(replica.health().consecutive_successes, 2);
+
+        replica.record_probe(true);
+        assert_eq!(replica.health().consecutive_successes, 3);
+        replica.clear_connection();
+        assert!(!replica.is_healthy());
+        assert_eq!(replica.health().consecutive_successes, 0);
+        replica.replace_connection(DatabaseConnection::default());
+        replica.record_probe(true);
+        assert!(!replica.is_healthy());
+        assert_eq!(replica.health().consecutive_successes, 1);
+        replica.record_probe(true);
+        assert!(replica.is_healthy());
+        assert_eq!(replica.health().consecutive_successes, 2);
 
         replica.record_probe(false);
+        assert!(replica.is_healthy());
+        assert_eq!(replica.health().consecutive_failures, 1);
+        assert_eq!(replica.health().consecutive_successes, 0);
         replica.record_probe(false);
         assert!(replica.is_healthy());
+        assert_eq!(replica.health().consecutive_failures, 2);
         replica.record_probe(false);
         assert!(!replica.is_healthy());
+        assert_eq!(replica.health().consecutive_failures, 3);
+
+        replica.clear_connection();
+        assert_eq!(replica.health().consecutive_failures, 3);
+        assert_eq!(replica.health().consecutive_successes, 0);
     }
 
     #[test]
@@ -764,6 +804,8 @@ mod tests {
             vec![DatabaseNodeHealth {
                 name: "replica-a".to_owned(),
                 healthy: false,
+                consecutive_failures: 0,
+                consecutive_successes: 0,
             }]
         );
 
@@ -848,5 +890,11 @@ mod tests {
         );
         assert!(health.replicas.iter().all(|node| !node.healthy));
         assert!(health.sources.iter().all(|node| !node.healthy));
+        assert!(
+            health
+                .sources
+                .iter()
+                .all(|node| { node.consecutive_failures == 0 && node.consecutive_successes == 0 })
+        );
     }
 }

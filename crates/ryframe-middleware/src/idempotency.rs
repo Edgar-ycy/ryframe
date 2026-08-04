@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 
 use crate::metrics::{record_idempotency_conflict, record_redis_degraded};
 
-const KEY_PREFIX: &str = "ryframe:v0.6:idempotency:";
+const KEY_PREFIX: &str = "ryframe:v0.7:idempotency:";
 const DEFAULT_PROCESSING_TTL_SECS: u64 = 30;
 const MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
 const MAX_CACHED_RESPONSE_BYTES: usize = 1024 * 1024;

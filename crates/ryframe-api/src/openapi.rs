@@ -821,7 +821,7 @@ mod tests {
         let expected = include_str!("../../../openapi/openapi.json");
         assert_eq!(
             actual, expected,
-            "run `cargo run -p ryframe-api --bin export_openapi -- openapi/openapi.json`"
+            "run `cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json`"
         );
     }
 }

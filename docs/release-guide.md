@@ -32,13 +32,14 @@ git push origin "refs/tags/$release_tag"
 
 ## 2. 上线前准备
 
-1. 确认后端和前端 `main` 均已通过各自 CI，版本、OpenAPI 和生成类型一致。
-2. 使用部署环境自有的备份工具备份 MySQL 与对象存储，校验备份摘要，并在隔离环境完成恢复演练；仓库不提供 `deploy.sh`，不得把不存在的脚本作为发布前置条件。
-3. 备份旧配置；以 `deploy/redis/redis.conf` 为基线确认生产 Redis 开启 AOF 持久化并使用 `noeviction`，同时配置部署环境专属的 TLS、网络边界和 ACL。
-4. 按[生产部署基线](production-deployment.md)核对 MySQL、Redis、对象存储 TLS、metrics allowlist 与 Token、API 文档关闭和持久存储；按[容量验收标准](capacity-guide.md)保留当前版本报告。
-5. 加载 `deploy/prometheus/ryframe-alerts.yml`，逐条确认查询有数据并完成 Alertmanager 测试通知；值班人熟悉[生产监控与值班手册](operations-runbook.md)。
-6. 验证 API 与管理端证书、同站子域、可信代理 CIDR、CORS Origin 和 Cookie Secure 属性。
-7. 准备蓝绿或双 upstream，两端的新版本在未接流量时先通过 `/livez` 和 `/readyz`。
+1. 从后端干净提交运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime_acceptance_0_7.ps1 -ConfirmRun RUN-RYFRAME-V0-7-ACCEPTANCE`，确认消息中心、读副本与 OTel 三个阶段全部为 `passed`，总证据和子阶段证据均无 `error` 或 `cleanup_errors`，且 Docker project 无残留资源。
+2. 确认后端和前端 `main` 均已通过各自 CI，版本、OpenAPI 和生成类型一致。
+3. 使用部署环境自有的备份工具备份 MySQL 与对象存储，校验备份摘要，并在隔离环境完成恢复演练；仓库不提供 `deploy.sh`，不得把不存在的脚本作为发布前置条件。
+4. 备份旧配置；以 `deploy/redis/redis.conf` 为基线确认生产 Redis 开启 AOF 持久化并使用 `noeviction`，同时配置部署环境专属的 TLS、网络边界和 ACL。
+5. 按[生产部署基线](production-deployment.md)核对 MySQL、Redis、对象存储 TLS、metrics allowlist 与 Token、API 文档关闭和持久存储；按[容量验收标准](capacity-guide.md)保留当前版本报告。
+6. 加载 `deploy/prometheus/ryframe-alerts.yml`，逐条确认查询有数据并完成 Alertmanager 测试通知；值班人熟悉[生产监控与值班手册](operations-runbook.md)。
+7. 验证 API 与管理端证书、同站子域、可信代理 CIDR、CORS Origin 和 Cookie Secure 属性。
+8. 准备蓝绿或双 upstream，两端的新版本在未接流量时先通过 `/livez` 和 `/readyz`。
 
 涉及 FILE-A 的版本必须按固定顺序发布：完成备份与隔离恢复演练，停止旧版 API 和 Worker，按 [FILE-A 文件维护](file-maintenance.md)依次执行两类 `dry-run` 与 `apply` 并确认各自 `remaining=0`，再执行 `ryframe-migrate up`、`ryframe-migrate status` 和 `ryframe-migrate verify`。迁移验证通过后先启动新 Worker，再启动同版本 API 和管理端。生产 Compose 已将 API 启动条件绑定为 Worker 健康，不能在部署环境中覆盖或删除这项依赖。全新数据库可以跳过 FILE-A 数据维护，但不能跳过迁移与验证。开发阶段不保留旧数据模型或旧进程并行运行的兼容路径。
 

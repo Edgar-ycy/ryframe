@@ -512,6 +512,14 @@ def check_removed_compatibility_surfaces(errors: list[str]) -> None:
                 f"production code declares a removed Serde field alias: {path.relative_to(ROOT)}"
             )
 
+    idempotency_source = (
+        ROOT / "crates/ryframe-middleware/src/idempotency.rs"
+    ).read_text(encoding="utf-8")
+    if 'const KEY_PREFIX: &str = "ryframe:v0.7:idempotency:";' not in idempotency_source:
+        errors.append("idempotency key namespace must use only the v0.7 contract")
+    if "ryframe:v0.6:idempotency:" in idempotency_source:
+        errors.append("idempotency runtime restores the removed v0.6 key namespace")
+
 
 REMOVED_OPER_LOG_JOB_PATTERNS = {
     "legacy operation-log job constant": re.compile(r"\bOPER_LOG_" r"JOB_TYPE\b"),
@@ -1444,7 +1452,21 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
             "pub fn source(&self, name: &str) -> Option<&DatabaseConnection>",
             "pub fn with_sources_and_replica_slots(",
             "pub fn record_replica_probe(",
+            "consecutive_failures: self.consecutive_failures.load(Ordering::Acquire)",
+            "consecutive_successes: self.consecutive_successes.load(Ordering::Acquire)",
+            "consecutive_failures: 0",
+            "consecutive_successes: 0",
             "fetch_add(1, Ordering::Relaxed)",
+        ),
+        "crates/ryframe-core/src/database_monitor.rs": (
+            "pub consecutive_failures: usize",
+            "pub consecutive_successes: usize",
+        ),
+        "crates/ryframe-api/src/router.rs": (
+            "consecutive_failures: replica.consecutive_failures",
+            "consecutive_successes: replica.consecutive_successes",
+            "consecutive_failures: usize",
+            "consecutive_successes: usize",
         ),
         "crates/ryframe/src/boot/datasource.rs": (
             "config.database.primary",

@@ -322,6 +322,8 @@ async fn runtime_status(
         .map(|replica| RuntimeDatabaseReplicaStatus {
             name: replica.name,
             connected: replica.healthy,
+            consecutive_failures: replica.consecutive_failures,
+            consecutive_successes: replica.consecutive_successes,
         })
         .collect::<Vec<_>>();
     let sources_connected = database_health.sources.iter().all(|source| source.healthy);
@@ -415,6 +417,8 @@ struct RuntimeDatabaseReadSelection {
 struct RuntimeDatabaseReplicaStatus {
     name: String,
     connected: bool,
+    consecutive_failures: usize,
+    consecutive_successes: usize,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

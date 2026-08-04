@@ -4,6 +4,8 @@ use async_trait::async_trait;
 pub struct DatabaseNodeHealth {
     pub name: String,
     pub healthy: bool,
+    pub consecutive_failures: usize,
+    pub consecutive_successes: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

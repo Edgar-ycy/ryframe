@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-08-05
+
+### Added
+
+- 新增单一显式确认的 v0.7 运行验收入口，严格串行验证消息中心双实例、读副本连续三次失败摘除与两次成功恢复，以及真实 OpenTelemetry Collector 的完整父子链路和故障恢复。
+- 运行验收为每次执行生成独立 Docker project 和所有权令牌；容器、网络与卷必须同时匹配 project 和令牌才允许故障注入或清理，并记录源码提交、锁文件、二进制与不可变镜像身份。
+- 运行时数据库拓扑响应新增 `consecutive_failures` 与 `consecutive_successes`，用于直接观察副本摘除和恢复阈值。
+
+### Changed
+
+- HTTP 成功、错误、消息协议与后台任务语义统一使用完整中英文资源；语言协商、`Content-Language` 和 `Vary: Accept-Language` 在当前契约内闭环，不保留旧固定中文响应分支。
+- OTel 跨进程传播同时持久化并恢复 `traceparent` 与 `tracestate`；API、独立 Worker 和 Outbox 使用同一链路上下文，并对 Collector 中断实行有界失败和恢复导出。
+- 读副本健康选择显式采用连续探测阈值；失败前两次继续路由、第三次摘除，恢复第一次仍保持摘除、第二次才重新加入，不提供旧即时切换写法。
+- 幂等 Redis 键命名空间单向升级为 `ryframe:v0.7:idempotency:`，不读取或双写 v0.6 键。
+- OTel 验收复用消息阶段构建的二进制，三个运行阶段不再重复执行相同 Cargo 构建。
+- 完成 `rust_xlsxwriter`、`validator`、`tower-http`、`jsonwebtoken` 与 `syn` 的分波升级；`base64` 与 `password-hash` 保持已审计的稳定依赖族。
+
+### Security
+
+- 子阶段只接受固定内部确认令牌、精确回环 URL、仓库内固定证据根目录和排他证据写入；进程终止前同时校验启动时间与可执行文件，防止 PID 复用导致误杀。
+- 每个子阶段在退出前恢复完整进程环境；Docker context 必须指向本机 daemon，同名 project 已含资源时拒绝接管，任何所有权不匹配都会安全停止清理。
+
+### Validation
+
+- 本地门禁覆盖全工作区格式、架构、Clippy、`cargo check --workspace --all-targets`、工作区库与二进制测试、OpenAPI 快照和 v0.7 运行验收策略测试；依赖真实 MySQL/Redis 的行为由隔离 Docker 验收覆盖。
+- 稳定发布继续仅输出 GitHub 自动生成的源码 ZIP/TAR，不构建或签名任何平台镜像，也不上传 SBOM、发布清单或其他自定义附件。
+
 ## [v0.6.0] - 2026-08-03
 
 ### Changed
