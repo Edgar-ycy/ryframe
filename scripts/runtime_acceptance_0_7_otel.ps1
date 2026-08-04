@@ -76,6 +76,8 @@ $script:OtelAcceptanceMessages = ConvertFrom-Json @'
   "CollectorRecovered": "\u6062\u590d\u540e OpenTelemetry Collector",
   "CopyTraces": "\u590d\u5236 Collector \u8ddf\u8e2a\u8bc1\u636e",
   "CollectorRestore": "Collector \u6545\u969c\u6062\u590d\u5931\u8d25\uff1a{0}",
+  "CollectorLogEvidence": "Collector \u65e5\u5fd7\u4fdd\u5b58\u5931\u8d25\uff1a{0}",
+  "CollectorTraceEvidence": "Collector trace \u4fdd\u5b58\u5931\u8d25\uff1a{0}",
   "ProcessCleanup": "{0}\u8fdb\u7a0b\u6e05\u7406\u5931\u8d25\uff1a{1}",
   "DockerCleanup": "OTel Docker \u8d44\u6e90\u6e05\u7406\u5931\u8d25\uff1a{0}",
   "DirectoryRestore": "\u5de5\u4f5c\u76ee\u5f55\u6062\u590d\u5931\u8d25\uff1a{0}",
@@ -1218,6 +1220,7 @@ $metadata = [ordered]@{
         recovered_traces = $finalTracePath
         collector_log = $collectorLogPath
     }
+    evidence_capture_errors = @()
     error = $null
     cleanup_errors = @()
 }
@@ -1226,6 +1229,7 @@ Write-RyFrameV07MetadataAtomically -Metadata $metadata -Path $metadataPath
 $runError = $null
 $runSucceeded = $false
 $cleanupErrors = New-Object System.Collections.Generic.List[string]
+$evidenceCaptureErrors = New-Object System.Collections.Generic.List[string]
 $transcriptStarted = $false
 $dockerOwned = $false
 $collectorFault = $null
@@ -1267,9 +1271,21 @@ try {
     foreach ($name in $existingAppVariables) {
         [System.Environment]::SetEnvironmentVariable($name, $null, "Process")
     }
+    $existingOtelVariables = @(
+        [System.Environment]::GetEnvironmentVariables("Process").Keys |
+            Where-Object {
+                $_ -is [string] `
+                -and $_.StartsWith("OTEL_", [System.StringComparison]::Ordinal)
+            }
+    )
+    foreach ($name in $existingOtelVariables) {
+        [System.Environment]::SetEnvironmentVariable($name, $null, "Process")
+    }
     foreach ($name in @("ADMIN_USER", "ADMIN_PASS", "TENANT_ID", "SNOWFLAKE_WORKER_ID")) {
         [System.Environment]::SetEnvironmentVariable($name, $null, "Process")
     }
+    Set-OtelAcceptanceEnvironment -Name "RUST_LOG" -Value "info"
+    Set-OtelAcceptanceEnvironment -Name "OTEL_BSP_SCHEDULE_DELAY" -Value "1000"
 
     Set-OtelAcceptanceEnvironment -Name "RYFRAME_TEST_MYSQL_PORT" -Value $ports.mysql.ToString()
     Set-OtelAcceptanceEnvironment -Name "RYFRAME_TEST_REDIS_PORT" -Value $ports.redis.ToString()
@@ -1615,6 +1631,35 @@ finally {
         }
     }
 
+    if ($dockerOwned -and $null -ne $collectorContainerId) {
+        if (-not (Test-Path -LiteralPath $collectorLogPath -PathType Leaf)) {
+            try {
+                $collectorLog = @(Invoke-RyFrameV07DockerLines `
+                    -DockerExecutable $DockerExecutable `
+                    -Context $DockerContext `
+                    -Arguments @("container", "logs", $collectorContainerId)) -join `
+                    [Environment]::NewLine
+                Write-OtelAcceptanceText -Path $collectorLogPath -Content $collectorLog
+            }
+            catch {
+                $evidenceCaptureErrors.Add(($script:OtelAcceptanceMessages.CollectorLogEvidence -f $_.Exception.Message))
+            }
+        }
+        if (-not (Test-Path -LiteralPath $healthyTracePath -PathType Leaf)) {
+            try {
+                Copy-OtelAcceptanceTraces `
+                    -ContainerId $collectorContainerId `
+                    -Destination $healthyTracePath `
+                    -DockerExecutable $DockerExecutable `
+                    -Context $DockerContext `
+                    -Quiet $true
+            }
+            catch {
+                $evidenceCaptureErrors.Add(($script:OtelAcceptanceMessages.CollectorTraceEvidence -f $_.Exception.Message))
+            }
+        }
+    }
+
     foreach ($processInfo in @(
         @($apiProcess, $apiBinary, "API"),
         @($workerProcess, $workerBinary, "Worker")
@@ -1670,6 +1715,7 @@ finally {
     }
 
     $metadata["completed_at"] = [DateTime]::UtcNow.ToString("o")
+    $metadata["evidence_capture_errors"] = @($evidenceCaptureErrors)
     $metadata["cleanup_errors"] = @($cleanupErrors)
     if ($null -ne $runError) {
         $metadata["status"] = "failed"

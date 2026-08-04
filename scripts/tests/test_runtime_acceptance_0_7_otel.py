@@ -316,6 +316,23 @@ class RuntimeAcceptanceV07OtelPolicyTest(unittest.TestCase):
         )
         self.assertLess(restore, metadata)
 
+    def test_runtime_environment_is_isolated_and_failure_evidence_is_preserved(self) -> None:
+        for fragment in (
+            '$_.StartsWith("OTEL_", [System.StringComparison]::Ordinal)',
+            'Set-OtelAcceptanceEnvironment -Name "RUST_LOG" -Value "info"',
+            'Set-OtelAcceptanceEnvironment -Name "OTEL_BSP_SCHEDULE_DELAY" -Value "1000"',
+            "evidence_capture_errors = @()",
+            '$metadata["evidence_capture_errors"] = @($evidenceCaptureErrors)',
+        ):
+            self.assertIn(fragment, self.script)
+
+        terminal = self.script[self.script.rindex("finally {") :]
+        log_capture = terminal.index('Arguments @("container", "logs", $collectorContainerId)')
+        trace_capture = terminal.index("Copy-OtelAcceptanceTraces")
+        cleanup = terminal.index("Remove-RyFrameV07DockerProjectResources")
+        self.assertLess(log_capture, cleanup)
+        self.assertLess(trace_capture, cleanup)
+
     def test_runtime_messages_decode_to_chinese(self) -> None:
         match = re.search(r"ConvertFrom-Json @'\n(.*?)\n'@", self.script, re.DOTALL)
         self.assertIsNotNone(match)
