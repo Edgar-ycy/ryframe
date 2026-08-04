@@ -202,6 +202,20 @@ class RuntimeAcceptanceV07OtelPolicyTest(unittest.TestCase):
             self.script,
         )
 
+    def test_async_export_uses_only_the_current_accepted_contract(self) -> None:
+        export = self.script[
+            self.script.index("function Invoke-OtelAcceptanceExport") :
+            self.script.index("function Wait-OtelAcceptanceExport")
+        ]
+        for fragment in (
+            "-ExpectedStatus 202",
+            "$json.code -ne 202",
+            '$json.data.status -cne "queued"',
+            '$json.data.resource -cne "users"',
+        ):
+            self.assertIn(fragment, export)
+        self.assertNotIn("$json.code -ne 200", export)
+
     def test_collector_outage_preserves_readiness_and_business_but_increments_each_process(self) -> None:
         execution = self.script[
             self.script.index("try {", self.script.index("$locationChanged = $false")) :

@@ -514,7 +514,12 @@ function Invoke-OtelAcceptanceExport {
     Write-OtelAcceptanceText -Path $EvidencePath -Content $response.Content
     $json = $response.Content | ConvertFrom-Json
     $jobId = [string]$json.data.id
-    if ($json.code -ne 200 -or [string]::IsNullOrWhiteSpace($jobId)) {
+    if (
+        $json.code -ne 202 `
+        -or [string]::IsNullOrWhiteSpace($jobId) `
+        -or $json.data.status -cne "queued" `
+        -or $json.data.resource -cne "users"
+    ) {
         throw ($script:OtelAcceptanceMessages.ApiContract -f $script:OtelAcceptanceMessages.CreateExportLabel, $response.Content)
     }
     return $jobId
