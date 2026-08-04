@@ -454,14 +454,18 @@ function Wait-MessageAcceptanceProcessExit {
         -ExpectedExecutable $ExpectedExecutable
     if ($null -eq $ownedProcess) {
         if ($Process.WaitForExit(0)) {
-            return $Process.ExitCode
+            $Process.WaitForExit()
+            $Process.Refresh()
+            return [int]$Process.ExitCode
         }
         throw ($script:MessageAcceptanceMessages.ProcessExited -f $Label, $Process.Id)
     }
     if (-not $ownedProcess.WaitForExit($TimeoutSeconds * 1000)) {
         throw ($script:MessageAcceptanceMessages.ProcessStopTimeout -f $Label, $Process.Id)
     }
-    return $ownedProcess.ExitCode
+    $Process.WaitForExit()
+    $Process.Refresh()
+    return [int]$Process.ExitCode
 }
 
 function Write-MessageAcceptanceSignal {
