@@ -308,11 +308,20 @@ function Wait-OtelAcceptanceUri {
 function Write-OtelAcceptanceText {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Content
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Content
     )
 
+    $text = if ($null -eq $Content) {
+        ""
+    }
+    elseif ($Content -is [byte[]]) {
+        [System.Text.Encoding]::UTF8.GetString($Content)
+    }
+    else {
+        [string]$Content
+    }
     $encoding = [System.Text.UTF8Encoding]::new($false)
-    [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+    [System.IO.File]::WriteAllText($Path, $text, $encoding)
 }
 
 function Invoke-OtelAcceptanceWebRequest {

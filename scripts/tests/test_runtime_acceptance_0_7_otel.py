@@ -339,6 +339,16 @@ class RuntimeAcceptanceV07OtelPolicyTest(unittest.TestCase):
         self.assertNotIn("return @($documents)", self.script)
         self.assertNotIn("return @($spans)", self.script)
 
+    def test_evidence_writer_normalizes_powershell_byte_responses_as_utf8(self) -> None:
+        writer = self.script[
+            self.script.index("function Write-OtelAcceptanceText") :
+            self.script.index("function Invoke-OtelAcceptanceWebRequest")
+        ]
+        self.assertIn("[AllowNull()][object]$Content", writer)
+        self.assertIn("$Content -is [byte[]]", writer)
+        self.assertIn("[System.Text.Encoding]::UTF8.GetString($Content)", writer)
+        self.assertIn("WriteAllText($Path, $text, $encoding)", writer)
+
     def test_runtime_messages_decode_to_chinese(self) -> None:
         match = re.search(r"ConvertFrom-Json @'\n(.*?)\n'@", self.script, re.DOTALL)
         self.assertIsNotNone(match)
