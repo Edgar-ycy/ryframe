@@ -1,5 +1,15 @@
-use std::{fmt::Write, io, io::Write as _};
+use std::{
+    fmt::Write,
+    io,
+    io::Write as _,
+    time::{Duration, SystemTime},
+};
 
+use opentelemetry::{
+    Context as OtelContext, KeyValue, global,
+    trace::{Span as _, SpanKind, Tracer as _},
+};
+use opentelemetry_semantic_conventions::attribute::{DB_OPERATION_NAME, DB_SYSTEM_NAME};
 use tracing::{
     Event,
     field::{Field, Visit},
@@ -135,13 +145,13 @@ impl Visit for SqlxVisitor {
 
 /// DB 查询 Span 追踪 Layer
 ///
-/// 为每个 sqlx 查询自动创建 `tracing::Span`，OpenTelemetry Layer 会将其导出为 DB Span。
+/// 为每个 sqlx 查询直接创建 OpenTelemetry DB Span。
 ///
 /// - 自动提取 SQL 操作类型（SELECT / INSERT / UPDATE / DELETE）
-/// - 记录数据库系统和稳定的操作类型；耗时由 span 生命周期自动计算
+/// - 记录数据库系统、稳定的操作类型和 sqlx 上报的真实查询耗时
 /// - 不向 OpenTelemetry 写入原始 SQL，避免文本值、标识符或动态语句造成敏感信息和
 ///   高基数字段扩散
-/// - Span 作为当前 HTTP 请求 Span 的子 Span，在 Jaeger/Tempo 中展示完整调用链
+/// - Span 继承 tracing-opentelemetry 激活的当前上下文，在 Jaeger/Tempo 中展示完整调用链
 ///
 /// # 使用方式
 ///
@@ -199,19 +209,29 @@ where
         // 提取 SQL 操作类型
         let operation = extract_sql_operation(sql);
 
-        // 创建 DB 查询子 Span（继承当前 HTTP Span 作为父 Span）
-        let span = tracing::info_span!(
-            "db.query",
-            otel.name = format!("SQL {}", operation),
-            otel.kind = "client",
-            db.system = "mysql",
-            db.operation = %operation,
-        );
-
-        let _enter = span.enter();
-        // Span 在离开作用域时自动 drop，
-        // tracing-opentelemetry Layer 会在 span close 时导出 OTel Span
+        emit_db_span(operation, visitor.elapsed_secs);
     }
+}
+
+fn emit_db_span(operation: &str, elapsed_secs: Option<f64>) {
+    let end_time = SystemTime::now();
+    let start_time = elapsed_secs
+        .filter(|elapsed| elapsed.is_finite() && *elapsed >= 0.0)
+        .and_then(|elapsed| Duration::try_from_secs_f64(elapsed).ok())
+        .and_then(|duration| end_time.checked_sub(duration))
+        .unwrap_or(end_time);
+    let tracer = global::tracer("ryframe-db");
+    let parent_context = OtelContext::current();
+    let mut span = tracer
+        .span_builder(format!("SQL {operation}"))
+        .with_kind(SpanKind::Client)
+        .with_start_time(start_time)
+        .with_attributes([
+            KeyValue::new(DB_SYSTEM_NAME, "mysql"),
+            KeyValue::new(DB_OPERATION_NAME, operation.to_owned()),
+        ])
+        .start_with_context(&tracer, &parent_context);
+    span.end_with_timestamp(end_time);
 }
 
 /// 从 SQL 语句首关键字提取操作类型
@@ -240,7 +260,11 @@ fn extract_sql_operation(sql: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_sql_operation;
+    use opentelemetry::{global, trace::TracerProvider as _};
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use super::{DB_OPERATION_NAME, DB_SYSTEM_NAME, DbSpanLayer, extract_sql_operation};
 
     #[test]
     fn sql_span_uses_a_bounded_operation_category() {
@@ -256,6 +280,69 @@ mod tests {
         assert_eq!(
             extract_sql_operation("CALL untrusted_dynamic_sql()"),
             "OTHER"
+        );
+    }
+
+    #[test]
+    fn sql_event_exports_a_timed_child_span_with_current_semantic_attributes() {
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        global::set_tracer_provider(provider.clone());
+        let subscriber = tracing_subscriber::registry()
+            .with(DbSpanLayer::new())
+            .with(
+                tracing_opentelemetry::layer()
+                    .with_tracer(provider.tracer("ryframe-db-parent-test")),
+            );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let parent = tracing::info_span!("HTTP");
+            let _entered = parent.enter();
+            tracing::info!(
+                target: "sqlx::query",
+                summary = "SELECT * FROM sys_user WHERE id = ?",
+                elapsed_secs = 0.002_f64,
+                rows_returned = 1_u64,
+            );
+        });
+        provider.force_flush().expect("应能刷新内存导出器");
+
+        let spans = exporter
+            .get_finished_spans()
+            .expect("应能读取已导出的 span");
+        let http = spans
+            .iter()
+            .find(|span| span.name == "HTTP")
+            .expect("应导出父 HTTP span");
+        let database = spans
+            .iter()
+            .find(|span| span.name == "SQL SELECT")
+            .expect("应导出 SQL 子 span");
+        assert_eq!(
+            database.span_context.trace_id(),
+            http.span_context.trace_id()
+        );
+        assert_eq!(database.parent_span_id, http.span_context.span_id());
+        assert_eq!(database.span_kind, opentelemetry::trace::SpanKind::Client);
+        assert!(
+            database
+                .end_time
+                .duration_since(database.start_time)
+                .is_ok()
+        );
+        assert!(database.attributes.iter().any(|attribute| {
+            attribute.key.as_str() == DB_SYSTEM_NAME && attribute.value.to_string() == "mysql"
+        }));
+        assert!(database.attributes.iter().any(|attribute| {
+            attribute.key.as_str() == DB_OPERATION_NAME && attribute.value.to_string() == "SELECT"
+        }));
+        assert!(
+            database
+                .attributes
+                .iter()
+                .all(|attribute| attribute.key.as_str() != "db.statement")
         );
     }
 }

@@ -3426,6 +3426,9 @@ dependencies = [
  "criterion",
  "futures-util",
  "log",
+ "opentelemetry",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
  "rand 0.10.1",
  "ryframe-config",
  "ryframe-core",
@@ -3437,6 +3440,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
 ]
 

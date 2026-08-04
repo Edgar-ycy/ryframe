@@ -76,8 +76,8 @@ fn redis_operation_span(operation: RedisOperation) -> tracing::Span {
         "redis.command",
         otel.name = operation.as_str(),
         otel.kind = "client",
-        db.system = "redis",
-        db.operation = operation.as_str(),
+        db.system.name = "redis",
+        db.operation.name = operation.as_str(),
         redis.result = tracing::field::Empty,
     )
 }

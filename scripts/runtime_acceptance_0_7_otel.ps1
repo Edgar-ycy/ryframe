@@ -906,13 +906,13 @@ function Assert-OtelAcceptanceUploadChain {
         throw ($script:OtelAcceptanceMessages.TraceAssertion -f $script:OtelAcceptanceMessages.TraceState)
     }
     $mysql = @($traceSpans | Where-Object {
-        $_.Attributes.ContainsKey("db.system") `
-        -and [string]$_.Attributes["db.system"] -eq "mysql" `
+        $_.Attributes.ContainsKey("db.system.name") `
+        -and [string]$_.Attributes["db.system.name"] -eq "mysql" `
         -and (Test-OtelAcceptanceDescendant -Spans $traceSpans -Candidate $_ -AncestorSpanId $http.SpanId)
     })
     $redis = @($traceSpans | Where-Object {
-        $_.Attributes.ContainsKey("db.system") `
-        -and [string]$_.Attributes["db.system"] -eq "redis" `
+        $_.Attributes.ContainsKey("db.system.name") `
+        -and [string]$_.Attributes["db.system.name"] -eq "redis" `
         -and (Test-OtelAcceptanceDescendant -Spans $traceSpans -Candidate $_ -AncestorSpanId $http.SpanId)
     })
     $storage = @($traceSpans | Where-Object {

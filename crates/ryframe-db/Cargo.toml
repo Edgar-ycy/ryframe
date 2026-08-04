@@ -20,6 +20,8 @@ futures-util = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["registry", "std", "fmt"] }
+opentelemetry = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
 serde = { workspace = true ,features = ["derive"]}
 serde_json = { workspace = true }
 chrono = {workspace = true,features = ["serde"]}
@@ -30,6 +32,8 @@ tokio = { workspace = true, features = ["time"] }
 criterion = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 sea-orm = { workspace = true, features = ["mock"] }
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+tracing-opentelemetry = { workspace = true }
 
 [[bench]]
 name = "db_bench"

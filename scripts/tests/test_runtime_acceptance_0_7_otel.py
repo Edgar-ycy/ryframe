@@ -145,9 +145,9 @@ class RuntimeAcceptanceV07OtelPolicyTest(unittest.TestCase):
             'Route "/api/v1/common/upload"',
             "$http.ParentSpanId -ne $TraceContext.ParentSpanId",
             "$http.TraceState -cne $TraceContext.TraceState",
-            '$_.Attributes.ContainsKey("db.system")',
-            '[string]$_.Attributes["db.system"] -eq "mysql"',
-            '[string]$_.Attributes["db.system"] -eq "redis"',
+            '$_.Attributes.ContainsKey("db.system.name")',
+            '[string]$_.Attributes["db.system.name"] -eq "mysql"',
+            '[string]$_.Attributes["db.system.name"] -eq "redis"',
             '$_.Attributes.ContainsKey("storage.backend")',
             "Test-OtelAcceptanceDescendant",
         ):
