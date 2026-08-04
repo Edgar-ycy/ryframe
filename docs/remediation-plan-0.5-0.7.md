@@ -11,9 +11,9 @@
 
 | 条目 | 状态 | 当前证据与剩余工作 |
 | --- | --- | --- |
-| 工作流、编码与仓库卫生 | 部分完成 | 后端当前已通过全工作区全目标 `check`、Clippy、格式、111 项 Python 策略测试、架构检查、feature matrix、`cargo audit` 与 `cargo deny`；28 个中文测试函数已统一改为英文 `snake_case`，21 个工作区成员通过编译器 `non_ascii_idents = "forbid"` 禁止非 ASCII 代码标识符。Qodana 报告中的 2 项重复定义、2 项无效依赖、108 项冗余限定名和 2 项 trait 实现顺序问题已修复；7 项破坏性依赖升级提示转入 `0.7.0` 独立升级波次。前端源码、workflow、依赖、架构、ESLint、Stylelint、67 个文件的 329 项普通单元测试及核心业务覆盖率门禁已通过。CI 已删除重复的 Windows、coverage、Nightly 与 Rust 测试作业，第三方 Action 固定到提交 SHA 或容器摘要。根目录误建的 `.pnpm-store` 已不存在；最终契约后的类型检查、覆盖率、生产构建、包体预算和 14 项 E2E 已通过，仍待提交前端同步结果并取得托管 CI 证据。 |
+| 工作流、编码与仓库卫生 | 部分完成 | 后端当前已通过全工作区全目标 `check`、Clippy、格式、111 项 Python 策略测试、架构检查、feature matrix、`cargo audit` 与 `cargo deny`；28 个中文测试函数已统一改为英文 `snake_case`，21 个工作区成员通过编译器 `non_ascii_idents = "forbid"` 禁止非 ASCII 代码标识符。Qodana 报告中的 2 项重复定义、2 项无效依赖、108 项冗余限定名和 2 项 trait 实现顺序问题已修复；后续报告只剩 7 项已登记的依赖升级提示，按风险进入 `0.7.0` 升级评估，不在 `0.6.0` 混入。前端源码、workflow、依赖、架构、契约、ESLint、Stylelint、typecheck、67 个文件的 329 项覆盖率测试、生产构建、包体预算、14 项开发态 E2E 和 1 项 `dist` 生产烟测均已通过。CI 已删除重复的 Windows、coverage、Nightly 与 Rust 测试作业，第三方 Action 固定到提交 SHA 或容器摘要。根目录误建的 `.pnpm-store` 已不存在；仍待提交最终前端同步结果并取得托管 CI 证据。 |
 | 稳定版联合发布 | 部分完成 | 前后端 `v0.5.1` annotated tag 已推送，且本地联合发布输入校验通过。稳定发布已收敛为双仓不可变身份校验和纯源码 GitHub Release，不再构建平台镜像、签名或自定义附件；仍需取得精简后托管发布的完成证据。 |
-| 固定来源 OpenAPI 契约 | 部分完成 | 固定 40 位提交、离线校验和固定上游校验机制已具备。前端同步流程、本地来源校验、契约检查和生成幂等性均已验证；快照及生成类型删除旧 `/all` 路径并加入受限 `/options?q&limit`，最终审计又将全部路径与查询 ID 锁定为字符串传输。最终前端 `openapi/source.json` 必须固定承载本次契约的后端提交及 SHA-256；仍须在本轮后端契约提交后执行最终同步、提交结果，并在推送后取得固定上游校验证据。 |
+| 固定来源 OpenAPI 契约 | 部分完成 | 固定 40 位提交、离线校验和固定上游校验机制已具备。前端最终快照、来源元数据和生成类型已同步，删除旧 `/all` 路径、加入受限 `/options?q&limit`，并将全部路径与查询 ID 锁定为字符串传输；本地来源校验、契约检查、生成幂等性和完整门禁均已通过。仍须提交最终同步结果，并在后端提交推送后取得固定上游校验证据。 |
 | 开发工具链与 `xtask` | 已完成 | 工具链、`xtask` 和统一配置入口已具备；已在 `v0.5.0` 双仓干净克隆中运行完整联合 `cargo xtask check --scope all`，工作区无差异。 |
 | 0.5 发布验收 | 部分完成 | 本地后端全工作区门禁、前端完整门禁、固定上游 OpenAPI 校验与干净双仓标签克隆验收均已通过；`v0.5.1` 双仓稳定标签已推送，仍需取得精简后托管 CI 与纯源码联合发布的完成证据。 |
 
@@ -21,21 +21,22 @@
 
 | 条目 | 状态 | 当前证据与剩余工作 |
 | --- | --- | --- |
-| 统一 API 响应与分页契约 | 部分完成 | 后端实现与静态验收已完成：响应统一为 `message/data/request_id/error_key/details`，分页数据进入 `data`；C1 已删除 11 个无上限列表及其前后端调用，不保留旧接口兼容。角色和用户候选项使用受限 `/options?q&limit`，Service/Repository 原始分页数值回流已有架构守卫；13 个分页 operationId、两个 `/options`、参数边界、11 个旧路径和字符串 ID 均有精确契约守卫。响应中间件只对 JSON 做 16 MiB 有界缓冲，显式旁路 WebSocket、下载和文档流，非信封 JSON 失败关闭并保留原错误响应头；`/version` 已使用强类型信封。后端 workspace、`Cargo.lock` 与 OpenAPI `info.version` 已统一为 `0.6.0`；前端同步流程和完整本地门禁已验证，仍须在本轮后端契约提交后执行最终固定来源同步并提交，因此本项暂不标记完成。 |
+| 统一 API 响应与分页契约 | 已完成 | 响应统一为 `message/data/request_id/error_key/details`，分页数据进入 `data`；C1 已删除 11 个无上限列表及其前后端调用，不保留旧接口兼容。角色和用户候选项使用受限 `/options?q&limit`，Service/Repository 原始分页数值回流已有架构守卫；13 个分页 operationId、两个 `/options`、参数边界、11 个旧路径和字符串 ID 均有精确契约守卫。响应中间件只对 JSON 做 16 MiB 有界缓冲，显式旁路 WebSocket、下载和文档流，非信封 JSON 失败关闭并保留原错误响应头；`/version` 已使用强类型信封。后端 workspace、`Cargo.lock` 与 OpenAPI `info.version` 已统一为 `0.6.0`，前端最终固定来源同步和完整本地门禁均已通过。 |
 | 安全、Markdown 与幂等 | 已完成 | 公告 API 已删除旧 `content` 字段并统一为 `content_markdown`，按 1–60,000 个 UTF-8 字节校验；限制由 OpenAPI 扩展发布，前端预览继续禁用原始 HTML 并经 DOMPurify 清洗。配置错误与未知内部错误只返回通用 `500` 消息，废弃的 `X-XSS-Protection` 已删除。幂等存储键已收敛为租户、用户和原始客户端键，完整指纹绑定方法、真实规范化路径、排序查询和 body SHA-256，同键不同指纹返回 `409`。实现、架构守卫以及隔离 MySQL/Redis 并发与故障测试均已通过；在线用户 Redis 旧触碰并发守卫也已在最终通用 Docker 运行时验收中通过。 |
 | 增量迁移与独立 Worker | 部分完成 | 迁移、任务表、独立 Worker 与生产外置限制已实现；`sys_outbox_event` 具备事务写入、租约领取、退避重试、死信及与后台任务原子投递，`ryframe-worker --once` 可用于单轮演练。过期租约回收已与并发领取事务解耦，Worker 会在执行时复核任务创建者当前权限与数据范围，导出资源使用稳定主键游标批处理。隔离 Docker 已通过 19/19 迁移、结构校验、API 与独立 Worker 就绪、真实异步导出，以及 Worker A 中断、30 秒租约自然过期、生产恢复和 Worker B 接管；仍须在部署环境完成 API/Worker 正式切换演练。 |
 | 后台导出与通用任务接口 | 已完成 | 用户、角色、岗位、参数配置、字典类型、操作日志和登录日志已统一为 `POST /system/{resource}/exports`，创建请求必须携带 `Idempotency-Key` 并返回 `202`；任务统一从 `/common/jobs` 查询、取消和受控下载，结果 24 小时过期清理。前端创建、轮询和下载已迁移到统一 mutation，具备同一 `AbortSignal`、集中错误处理、重复提交守卫和按租户精确失效；相关导出专项测试及管理组合式函数回归测试已通过。单一 opt-in 精确验收已在隔离 MySQL 与 RustFS 上真实通过，覆盖恰好 10 万用户、游标导出与 XLSX 回读、Worker 租约接管、PUT 503 生产重试、DELETE 503 跨轮恢复和无残留清理；最终生成类型也已随 `0.6.0` 后端 OpenAPI 同步并通过前端门禁。 |
 | 权限快照、缓存与文件完整性 | 已完成 | 权限快照迁移与授权边界、CACHE-C 数据库 `BIGINT` 权威版本、同事务配置写/版本递增/Outbox、Redis 同槽固定键与精确十进制 Lua 比较均已实现并通过静态、本地单元与隔离运行验证。FILE-A 已在隔离 MySQL 与 RustFS 上完整通过：旧 schema 和真实 MD5 碰撞对象种子、两次迁移闭锁、SHA-256 回填 dry-run/apply、旧预留排空 dry-run/apply、最终迁移、旧列/索引删除及对象隔离断言全部成功；通用验收中的 Redis refresh CAS、Redis 故障恢复、在线用户旧触碰并发守卫、真实 RustFS S3 读写删、对象存储故障恢复与过期清理链路也已通过。 |
-| 前端数据层、错误处理与可访问性 | 部分完成 | TanStack Query、会话恢复、安全渲染、真实 CRUD、动态权限路由及通用异步导出迁移均已落地；API origin 与 OpenAPI 生成前缀已分离，前缀扩展由同步和契约检查严格验证。`package.json` 与 OpenAPI 已统一为 `0.6.0`，契约快照和生成类型移除旧 `/all` 接口并加入角色、用户受限 `/options`。源码、workflow、依赖、架构、契约、ESLint、Stylelint、typecheck、67 个文件 329 项覆盖率测试、生产构建、包体预算、14 项开发态 Playwright E2E 和独立 `dist` 同源生产烟测均已通过；E2E Mock 也已删除旧 `msg` 兼容转换并接受生成契约类型约束。仍须在后端字符串 ID 契约提交后执行最终固定来源同步、提交结果并完成固定上游校验。 |
-| 0.6 发布验收 | 部分完成 | 后端版本面和 `0.6.0` OpenAPI 已生成，本地后端静态门禁、专项测试、架构检查、feature matrix、FILE-A 与通用 Docker 真实闭环验收均已通过；最终通用验收包含 6 个严格串行测试阶段、数据库重置与 19/19 迁移校验、API/独立 Worker 启动、22/22 跨进程烟测及 5/5 Docker 资源清理，终态 `run.json` 为 `passed` 且无错误。前端已同步固定后端提交对应的 `0.6.0` 契约，并通过源码、workflow、依赖、架构、契约、Lint、typecheck、覆盖率、生产构建、包体预算和 E2E 门禁。仍待提交前端同步结果、双仓精确提交 CI、同名 annotated tag、纯源码联合发布及部署环境 API/Web 正式切换。 |
+| 前端数据层、错误处理与可访问性 | 已完成 | TanStack Query、会话恢复、安全渲染、真实 CRUD、动态权限路由及通用异步导出迁移均已落地；API origin 与 OpenAPI 生成前缀已分离，前缀扩展由同步和契约检查严格验证。`package.json` 与 OpenAPI 已统一为 `0.6.0`，契约快照和生成类型移除旧 `/all` 接口并加入角色、用户受限 `/options`。源码、workflow、依赖、架构、契约、ESLint、Stylelint、typecheck、67 个文件 329 项覆盖率测试、生产构建、包体预算、14 项开发态 Playwright E2E 和独立 `dist` 同源生产烟测均已通过；E2E Mock 已删除旧 `msg` 兼容转换并接受生成契约类型约束。 |
+| 0.6 发布验收 | 部分完成 | 后端版本面和 `0.6.0` OpenAPI 已生成，本地后端静态门禁、专项测试、架构检查、feature matrix、FILE-A 与通用 Docker 真实闭环验收均已通过；最终通用验收包含 6 个严格串行测试阶段、数据库重置与 19/19 迁移校验、API/独立 Worker 启动、22/22 跨进程烟测及 5/5 Docker 资源清理，终态 `run.json` 为 `passed` 且无错误。前端已同步最终 `0.6.0` 契约，并通过源码、workflow、依赖、架构、契约、Lint、typecheck、覆盖率、生产构建、包体预算、开发态 E2E 和 `dist` 生产烟测。仍待提交最终同步结果、双仓精确提交 CI、同名 annotated tag、纯源码联合发布及部署环境 API/Web 正式切换。 |
 
-当前结论：`0.6.0` 的后端主要实现、FILE-A、通用 Docker 真实依赖运行验收，以及前端固定来源 OpenAPI 同步和本地完整门禁均已闭环；当前尚缺前端同步结果提交、双仓精确提交托管 CI、固定上游校验、同名稳定标签、纯源码联合发布及部署环境正式切换。在这些证据齐备前不得声明 `0.6.0` 发布完成。
+当前结论：`0.6.0` 的本地代码实现、FILE-A、通用 Docker 真实依赖运行验收、前端固定来源 OpenAPI 同步和完整门禁均已闭环；当前尚缺最终同步结果提交、双仓精确提交托管 CI、固定上游校验、同名稳定标签、纯源码联合发布及部署环境正式切换。在这些证据齐备前不得声明 `0.6.0` 发布完成。
 
 ## 0.7.0：架构与正式扩展能力
 
 | 条目 | 状态 | 当前证据与剩余工作 |
 | --- | --- | --- |
 | Crate 边界与最小依赖 | 已完成 | `kernel`、`i18n`、`excel`、`mail` 等拆分已存在，旧公共兼容包已删除。API 拥有全部公开 DTO 并对 Service 模型做穷尽所有权转换；Service、Generator、Utils 运行依赖已移除 Utoipa。`config/feature-matrix.json` 是最小/最大 feature 组合唯一注册表，CI 校验元数据，本地 `cargo xtask feature-matrix` 执行完整编译。 |
+| 依赖升级与生态收敛 | 部分完成 | Qodana 在后端提交 `45db06e69d1f7593aeb06dc8699d9d5ce4426ab6` 上只报告 7 项新版本提示，未发现新的代码质量问题。`rust_xlsxwriter` 作为低风险首波，随后独立处理 `validator`、`tower-http`、`jsonwebtoken` 与 `syn`，每波均要求锁文件、专项回归和完整门禁；`base64 0.23` 默认 SIMD `unsafe` 且会与依赖树中的 `0.22` 并存，`password-hash 0.6` 又缺少兼容的稳定版 `argon2` 依赖族，二者不得为了消除版本提示强行升级，须等稳定生态收敛后再处理。仓库不全局禁用 `NewCrateVersionAvailable`，确保后续新提示仍可见。 |
 | i18n、OTel、URL 版本与读副本 | 部分完成 | 双语、语言协商、`Content-Language`、`Vary: Accept-Language`、OTel、`/api/v1` 与读一致性选择已实现；未知版本和无版本 API 路径已统一为 JSON `404`。API 与独立 Worker 已共用日志初始化，文件模式按日滚动并执行有界保留，生产容器默认 stdout。两类进程的 `/readyz` 均只读后台探测生成的有时效内存快照，过期时 fail-closed，请求路径不再访问依赖；Worker 对象存储明确为 `not_required`。隔离环境已验证健康副本参与轮询读取，副本不可达时 API 仍就绪并切换为 `primary_fallback`。OTel 已通过不响应的本机回环端点完成确定性故障验收：业务与 readiness 不受影响、失败使用无动态标签指标和固定阶段日志、退出 flush 最多等待 5 秒。仍需在托管环境完成真实 Collector 故障演练和完整端到端验收。 |
 | 通用消息中心 | 待核验 | 消息表、票据、服务端持久化收件箱、ack/read 与前端连接均已具备；容量与生命周期由强类型 `MessagingConfig` 注入，收件人通过同事务 `INSERT … SELECT` 固化。现有记录描述过一次双实例链路，但仓库内尚缺可重复执行的证据；仍需验证断线补拉、去重、ticket 过期与重放、错误 Origin、Redis 故障、1013 慢消费者、90 天清理和双实例租户隔离。 |
 | 源码发布与生产 Compose | 部分完成 | GitHub Release 已明确只保留平台自动生成的源码 ZIP/TAR，不分发任何平台镜像或自定义附件；生产 Compose 已将 API、迁移和独立 Worker 与外部托管依赖分离。仍需由部署环境完成稳定标签源码构建、扫描、摘要固化和升级演练。 |
@@ -74,6 +75,7 @@
 - 28 个中文 Rust 测试函数已改为英文 `snake_case`；根工作区使用 `non_ascii_idents = "forbid"`，21 个成员 crate 全部继承该 lint，防止非 ASCII 代码标识符再次进入。
 - `jsonwebtoken`、`base64`、`password-hash`、`validator`、`rust_xlsxwriter`、`tower-http` 与 `syn` 的升级提示涉及主版本、安全边界或未稳定 API，不与 `0.6.0` 收口混合，转入 `0.7.0` 独立升级、迁移与回归波次。
 - 最终复核通过全工作区全目标 `cargo check`、Clippy、格式、全工作区 `lib/bins` 测试、111 项 Python 策略测试、源码卫生、依赖策略、权限路由和架构检查；仅 1 项要求 Docker Redis 的测试按设计忽略。
+- 后续 Qodana 报告以提交 `45db06e69d1f7593aeb06dc8699d9d5ce4426ab6` 为 revision，仅剩上述 7 项 `NewCrateVersionAvailable`，没有新增实现缺陷。升级评估确认 `rust_xlsxwriter` 可优先处理，`validator`、`tower-http`、`jsonwebtoken` 与 `syn` 必须独立回归；`base64` 与 `password-hash` 分别受重复依赖、默认 SIMD `unsafe` 和稳定版 `argon2` 尚未衔接限制，当前不做冒进升级，也不通过全局关闭检查掩盖。
 
 2026-08-03 完成本轮静态收口：
 
