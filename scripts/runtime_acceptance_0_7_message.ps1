@@ -808,22 +808,22 @@ try {
         -or $clientReady.offline_reconnect.disconnected_instance -ne "api_a" `
         -or $clientReady.offline_reconnect.reconnected_instance -ne "api_b" `
         -or $clientReady.offline_reconnect.published_while_offline -ne $true `
-        -or $clientReady.offline_reconnect.message_count -ne 1 `
-        -or $clientReady.offline_reconnect.replay_query_delta -ne 1 `
-        -or $clientReady.offline_reconnect.delivery_delta -ne 1 `
+        -or $clientReady.offline_reconnect.logical_message_count -ne 1 `
+        -or $clientReady.offline_reconnect.raw_frame_count -lt 1 `
+        -or $clientReady.offline_reconnect.replay_query_delta -lt 1 `
+        -or $clientReady.offline_reconnect.delivery_delta -ne $clientReady.offline_reconnect.raw_frame_count `
         -or @($clientReady.offline_reconnect.initial_connections).Count -ne 2 `
         -or @($clientReady.offline_reconnect.initial_connections | Where-Object { $_ -ne 0 }).Count -ne 0 `
         -or $clientReady.offline_reconnect.final_secondary_connections -ne 0 `
-        -or $clientReady.offline_reconnect.stability_window.full_replay_cycle_observed -ne $true `
-        -or $clientReady.offline_reconnect.stability_window.error_count -ne 0 `
-        -or $clientReady.offline_reconnect.stability_window.instance_metrics.api_b.replay_query_delta -lt 1 `
-        -or $clientReady.offline_reconnect.stability_window.instance_metrics.api_b.total_replay_query_delta -lt 2 `
-        -or $clientReady.offline_reconnect.stability_window.instance_metrics.api_b.delivery_delta -ne 0 `
-        -or $clientReady.offline_reconnect.stability_window.instance_metrics.api_b.connection_count -ne 1 `
-        -or @($clientReady.offline_reconnect.stability_window.probe_counts).Count -ne 1 `
-        -or @($clientReady.offline_reconnect.stability_window.probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
-        -or @($clientReady.offline_reconnect.stability_window.final_probe_counts).Count -ne 1 `
-        -or @($clientReady.offline_reconnect.stability_window.final_probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0
+        -or @($clientReady.offline_reconnect.delivery_probe_counts).Count -ne 1 `
+        -or @($clientReady.offline_reconnect.delivery_probe_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
+        -or $clientReady.offline_reconnect.ack_persistence.verified_across_new_connection -ne $true `
+        -or $clientReady.offline_reconnect.ack_persistence.full_replay_cycles -ne 2 `
+        -or $clientReady.offline_reconnect.ack_persistence.post_ack_message_count -ne 0 `
+        -or $clientReady.offline_reconnect.ack_persistence.alignment_replay_query_delta -lt 1 `
+        -or $clientReady.offline_reconnect.ack_persistence.replay_query_delta -lt 2 `
+        -or $clientReady.offline_reconnect.ack_persistence.delivery_delta -ne 0 `
+        -or $clientReady.offline_reconnect.ack_persistence.final_connections -ne 0
     ) {
         throw ($script:MessageAcceptanceMessages.ClientResult -f ($clientReady | ConvertTo-Json -Compress))
     }
@@ -915,7 +915,8 @@ SELECT CONCAT(
         -or $tenantResult.system_inbox_count -ne 0 `
         -or $tenantResult.system_connection_count -ne 0 `
         -or $tenantResult.isolated_inbox_count -ne 1 `
-        -or $tenantResult.isolated_connection_count -ne 1
+        -or $tenantResult.isolated_logical_message_count -ne 1 `
+        -or $tenantResult.isolated_raw_frame_count -lt 1
     ) {
         throw ($script:MessageAcceptanceMessages.ClientResult -f ($tenantResult | ConvertTo-Json -Depth 8 -Compress))
     }
@@ -1018,10 +1019,15 @@ SELECT CONCAT(
         -or $clientDelivered.primary_connection_count -ne 3 `
         -or $clientDelivered.secondary_connection_count -ne 1 `
         -or $clientDelivered.total_connection_count -ne 4 `
+        -or $clientDelivered.primary_raw_frame_count -lt 3 `
+        -or $clientDelivered.secondary_raw_frame_count -lt 1 `
+        -or $clientDelivered.total_raw_frame_count -ne ($clientDelivered.primary_raw_frame_count + $clientDelivered.secondary_raw_frame_count) `
+        -or @($clientDelivered.per_connection_counts).Count -ne 4 `
+        -or @($clientDelivered.per_connection_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
         -or $clientDelivered.instance_metrics.api_a.replay_query_delta -lt 1 `
-        -or $clientDelivered.instance_metrics.api_a.delivery_delta -ne 3 `
+        -or $clientDelivered.instance_metrics.api_a.delivery_delta -ne $clientDelivered.primary_raw_frame_count `
         -or $clientDelivered.instance_metrics.api_b.replay_query_delta -lt 1 `
-        -or $clientDelivered.instance_metrics.api_b.delivery_delta -ne 1 `
+        -or $clientDelivered.instance_metrics.api_b.delivery_delta -ne $clientDelivered.secondary_raw_frame_count `
         -or $clientDelivered.websocket_ack_received -ne $true `
         -or $clientDelivered.ticket_guards.expired_status -ne 401 `
         -or $clientDelivered.ticket_guards.wrong_origin_status -ne 403 `
@@ -1030,26 +1036,27 @@ SELECT CONCAT(
         -or $clientDelivered.offline_reconnect.disconnected_instance -ne "api_a" `
         -or $clientDelivered.offline_reconnect.reconnected_instance -ne "api_b" `
         -or $clientDelivered.offline_reconnect.published_while_offline -ne $true `
-        -or $clientDelivered.offline_reconnect.message_count -ne 1 `
-        -or $clientDelivered.offline_reconnect.replay_query_delta -ne 1 `
-        -or $clientDelivered.offline_reconnect.delivery_delta -ne 1 `
+        -or $clientDelivered.offline_reconnect.logical_message_count -ne 1 `
+        -or $clientDelivered.offline_reconnect.raw_frame_count -lt 1 `
+        -or $clientDelivered.offline_reconnect.replay_query_delta -lt 1 `
+        -or $clientDelivered.offline_reconnect.delivery_delta -ne $clientDelivered.offline_reconnect.raw_frame_count `
         -or @($clientDelivered.offline_reconnect.initial_connections).Count -ne 2 `
         -or @($clientDelivered.offline_reconnect.initial_connections | Where-Object { $_ -ne 0 }).Count -ne 0 `
         -or $clientDelivered.offline_reconnect.final_secondary_connections -ne 0 `
-        -or $clientDelivered.offline_reconnect.stability_window.full_replay_cycle_observed -ne $true `
-        -or $clientDelivered.offline_reconnect.stability_window.error_count -ne 0 `
-        -or $clientDelivered.offline_reconnect.stability_window.instance_metrics.api_b.replay_query_delta -lt 1 `
-        -or $clientDelivered.offline_reconnect.stability_window.instance_metrics.api_b.total_replay_query_delta -lt 2 `
-        -or $clientDelivered.offline_reconnect.stability_window.instance_metrics.api_b.delivery_delta -ne 0 `
-        -or $clientDelivered.offline_reconnect.stability_window.instance_metrics.api_b.connection_count -ne 1 `
-        -or @($clientDelivered.offline_reconnect.stability_window.probe_counts).Count -ne 1 `
-        -or @($clientDelivered.offline_reconnect.stability_window.probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
-        -or @($clientDelivered.offline_reconnect.stability_window.final_probe_counts).Count -ne 1 `
-        -or @($clientDelivered.offline_reconnect.stability_window.final_probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
+        -or @($clientDelivered.offline_reconnect.delivery_probe_counts).Count -ne 1 `
+        -or @($clientDelivered.offline_reconnect.delivery_probe_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
+        -or $clientDelivered.offline_reconnect.ack_persistence.verified_across_new_connection -ne $true `
+        -or $clientDelivered.offline_reconnect.ack_persistence.full_replay_cycles -ne 2 `
+        -or $clientDelivered.offline_reconnect.ack_persistence.post_ack_message_count -ne 0 `
+        -or $clientDelivered.offline_reconnect.ack_persistence.alignment_replay_query_delta -lt 1 `
+        -or $clientDelivered.offline_reconnect.ack_persistence.replay_query_delta -lt 2 `
+        -or $clientDelivered.offline_reconnect.ack_persistence.delivery_delta -ne 0 `
+        -or $clientDelivered.offline_reconnect.ack_persistence.final_connections -ne 0 `
         -or $clientDelivered.tenant_isolation.system_inbox_count -ne 0 `
+        -or $clientDelivered.tenant_isolation.system_connection_count -ne 0 `
         -or $clientDelivered.tenant_isolation.isolated_inbox_count -ne 1 `
-        -or @($clientDelivered.per_connection_counts).Count -ne 4 `
-        -or @($clientDelivered.per_connection_counts | Where-Object { $_.count -ne 1 }).Count -ne 0
+        -or $clientDelivered.tenant_isolation.isolated_logical_message_count -ne 1 `
+        -or $clientDelivered.tenant_isolation.isolated_raw_frame_count -lt 1
     ) {
         throw ($script:MessageAcceptanceMessages.ClientResult -f ($clientDelivered | ConvertTo-Json -Depth 8 -Compress))
     }
@@ -1246,10 +1253,16 @@ SELECT CONCAT(
         -or $clientResult.primary_connection_count -ne 3 `
         -or $clientResult.secondary_connection_count -ne 1 `
         -or $clientResult.total_connection_count -ne 4 `
+        -or $clientResult.primary_raw_frame_count -lt 3 `
+        -or $clientResult.secondary_raw_frame_count -lt 1 `
+        -or $clientResult.total_raw_frame_count -ne ($clientResult.primary_raw_frame_count + $clientResult.secondary_raw_frame_count) `
+        -or @($clientResult.per_connection_counts).Count -ne 4 `
+        -or @($clientResult.per_connection_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
         -or $clientResult.instance_metrics.api_a.replay_query_delta -lt 1 `
-        -or $clientResult.instance_metrics.api_a.delivery_delta -ne 3 `
+        -or $clientResult.instance_metrics.api_a.delivery_delta -ne $clientResult.primary_raw_frame_count `
         -or $clientResult.instance_metrics.api_b.replay_query_delta -lt 1 `
-        -or $clientResult.instance_metrics.api_b.delivery_delta -ne 1 `
+        -or $clientResult.instance_metrics.api_b.delivery_delta -ne $clientResult.secondary_raw_frame_count `
+        -or $clientResult.websocket_ack_received -ne $true `
         -or $clientResult.ticket_guards.expired_status -ne 401 `
         -or $clientResult.ticket_guards.wrong_origin_status -ne 403 `
         -or $clientResult.ticket_guards.replay_status -ne 401 `
@@ -1257,29 +1270,35 @@ SELECT CONCAT(
         -or $clientResult.offline_reconnect.disconnected_instance -ne "api_a" `
         -or $clientResult.offline_reconnect.reconnected_instance -ne "api_b" `
         -or $clientResult.offline_reconnect.published_while_offline -ne $true `
-        -or $clientResult.offline_reconnect.message_count -ne 1 `
-        -or $clientResult.offline_reconnect.replay_query_delta -ne 1 `
-        -or $clientResult.offline_reconnect.delivery_delta -ne 1 `
+        -or $clientResult.offline_reconnect.logical_message_count -ne 1 `
+        -or $clientResult.offline_reconnect.raw_frame_count -lt 1 `
+        -or $clientResult.offline_reconnect.replay_query_delta -lt 1 `
+        -or $clientResult.offline_reconnect.delivery_delta -ne $clientResult.offline_reconnect.raw_frame_count `
         -or @($clientResult.offline_reconnect.initial_connections).Count -ne 2 `
         -or @($clientResult.offline_reconnect.initial_connections | Where-Object { $_ -ne 0 }).Count -ne 0 `
         -or $clientResult.offline_reconnect.final_secondary_connections -ne 0 `
-        -or $clientResult.offline_reconnect.stability_window.full_replay_cycle_observed -ne $true `
-        -or $clientResult.offline_reconnect.stability_window.error_count -ne 0 `
-        -or $clientResult.offline_reconnect.stability_window.instance_metrics.api_b.replay_query_delta -lt 1 `
-        -or $clientResult.offline_reconnect.stability_window.instance_metrics.api_b.total_replay_query_delta -lt 2 `
-        -or $clientResult.offline_reconnect.stability_window.instance_metrics.api_b.delivery_delta -ne 0 `
-        -or $clientResult.offline_reconnect.stability_window.instance_metrics.api_b.connection_count -ne 1 `
-        -or @($clientResult.offline_reconnect.stability_window.probe_counts).Count -ne 1 `
-        -or @($clientResult.offline_reconnect.stability_window.probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
-        -or @($clientResult.offline_reconnect.stability_window.final_probe_counts).Count -ne 1 `
-        -or @($clientResult.offline_reconnect.stability_window.final_probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
+        -or @($clientResult.offline_reconnect.delivery_probe_counts).Count -ne 1 `
+        -or @($clientResult.offline_reconnect.delivery_probe_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
+        -or $clientResult.offline_reconnect.ack_persistence.verified_across_new_connection -ne $true `
+        -or $clientResult.offline_reconnect.ack_persistence.full_replay_cycles -ne 2 `
+        -or $clientResult.offline_reconnect.ack_persistence.post_ack_message_count -ne 0 `
+        -or $clientResult.offline_reconnect.ack_persistence.alignment_replay_query_delta -lt 1 `
+        -or $clientResult.offline_reconnect.ack_persistence.replay_query_delta -lt 2 `
+        -or $clientResult.offline_reconnect.ack_persistence.delivery_delta -ne 0 `
+        -or $clientResult.offline_reconnect.ack_persistence.final_connections -ne 0 `
         -or $clientResult.tenant_isolation.system_inbox_count -ne 0 `
         -or $clientResult.tenant_isolation.system_connection_count -ne 0 `
         -or $clientResult.tenant_isolation.isolated_inbox_count -ne 1 `
-        -or $clientResult.tenant_isolation.isolated_connection_count -ne 1 `
+        -or $clientResult.tenant_isolation.isolated_logical_message_count -ne 1 `
+        -or $clientResult.tenant_isolation.isolated_raw_frame_count -lt 1 `
         -or $clientResult.persisted_state.verified_across_instances -ne $true `
         -or [string]::IsNullOrWhiteSpace([string]$clientResult.persisted_state.acked_at) `
         -or [string]::IsNullOrWhiteSpace([string]$clientResult.persisted_state.read_at) `
+        -or $clientResult.redis_recovery_stability.raw_frame_counts_unchanged -ne $true `
+        -or $clientResult.redis_recovery_stability.api_a_delivery_delta -ne 0 `
+        -or $clientResult.redis_recovery_stability.api_b_delivery_delta -ne 0 `
+        -or @($clientResult.redis_recovery_stability.probe_counts).Count -ne 4 `
+        -or @($clientResult.redis_recovery_stability.probe_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
         -or $clientResult.deduplication_stability.full_replay_cycle_observed -ne $true `
         -or $clientResult.deduplication_stability.error_count -ne 0 `
         -or $clientResult.deduplication_stability.instance_metrics.api_a.replay_query_delta -lt 1 `
@@ -1291,9 +1310,9 @@ SELECT CONCAT(
         -or $clientResult.deduplication_stability.instance_metrics.api_b.delivery_delta -ne 0 `
         -or $clientResult.deduplication_stability.instance_metrics.api_b.connection_count -ne 1 `
         -or @($clientResult.deduplication_stability.probe_counts).Count -ne 4 `
-        -or @($clientResult.deduplication_stability.probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
+        -or @($clientResult.deduplication_stability.probe_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
         -or @($clientResult.deduplication_stability.final_probe_counts).Count -ne 4 `
-        -or @($clientResult.deduplication_stability.final_probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
+        -or @($clientResult.deduplication_stability.final_probe_counts | Where-Object { $_.logical_message_count -ne 1 -or $_.raw_frame_count -lt 1 }).Count -ne 0 `
         -or $clientResult.retention_cleanup.status -ne "passed" `
         -or $clientResult.retention_cleanup.retention_days -ne 90 `
         -or $clientResult.retention_cleanup.default_retention_seconds -lt 7775995 `

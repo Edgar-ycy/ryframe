@@ -291,7 +291,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         self.assertNotIn("toxiproxy", (self.stage + self.client).lower())
         self.assertNotRegex(self.stage, r'@\("(?:container|network)",\s*"(?:stop|start|disconnect|connect)"')
 
-    def test_client_proves_multi_connection_bilingual_exact_delivery(self) -> None:
+    def test_client_proves_multi_connection_bilingual_logical_delivery(self) -> None:
         for fragment in (
             'const expectedZh = "欢迎 redis-fault-proof"',
             'const expectedEn = "Welcome redis-fault-proof"',
@@ -300,8 +300,14 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             '{ locale: "zh-CN", text: expectedZh, label: "中文连接二" }',
             'label: "API-B 英文连接"',
             'headers: authHeaders(token, locale)',
-            "state.targetCount > 1",
-            "allProbes.every((probe) => probe.state.targetCount === 1)",
+            "targetMessageIds: new Set()",
+            "targetRawFrameCount: 0",
+            "armProbeTarget(",
+            "allProbes.every((probe) => probe.state.targetMessageIds.size === 1)",
+            'probes[0].socket.send(JSON.stringify({ v: 1, type: "ack", ids: [messageId] }))',
+            "probes[0].state.acknowledgedIds.has(messageId)",
+            "logical_message_count: probe.state.targetMessageIds.size",
+            "raw_frame_count: probe.state.targetRawFrameCount",
             'assertInboxRendering(apiBase, token, messageId, "zh-CN", expectedZh)',
             'assertInboxRendering(apiBase, token, messageId, "en-US", expectedEn)',
         ):
@@ -312,10 +318,10 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "INSERT INTO sys_message_recipient",
         ):
             self.assertIn(fragment, self.stage)
-        down_wait = self.client.index('waitFor("Redis 故障补拉夹具"')
+        down_wait = self.client.index('"Redis 故障补拉夹具"')
         fixture_read = self.client.index("readJson(redisFaultFixturePath)", down_wait)
         delivered_write = self.client.index("writeJsonAtomically(deliveredPath", fixture_read)
-        restore_wait = self.client.index('waitFor("Redis 恢复信号"', delivered_write)
+        restore_wait = self.client.index('"Redis 恢复信号"', delivered_write)
         inbox_render = self.client.index("await assertInboxRendering", restore_wait)
         self.assertLess(down_wait, fixture_read)
         self.assertLess(fixture_read, delivered_write)
@@ -331,10 +337,11 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "secondaryProbe = createSocketProbe(",
             "const allProbes = [...probes, secondaryProbe]",
             "await waitForHealthyProbes(allProbes)",
-            "alignReplayBaseline(apiBase, probes.length)",
-            "alignReplayBaseline(secondaryApiBase, 1)",
+            "alignReplayBaseline(apiBase, probes.length, probes)",
+            "alignReplayBaseline(secondaryApiBase, 1, [secondaryProbe])",
             "primaryReplayQueryDelta < 1 || secondaryReplayQueryDelta < 1",
-            "primaryDeliveryDelta !== probes.length || secondaryDeliveryDelta !== 1",
+            "primaryDeliveryDelta !== primaryRawFrameCount",
+            "secondaryDeliveryDelta !== secondaryRawFrameCount",
             "primary_connection_count: probes.length",
             "secondary_connection_count: 1",
             "total_connection_count: allProbes.length",
@@ -344,9 +351,9 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "$clientDelivered.secondary_connection_count -ne 1",
             "$clientDelivered.total_connection_count -ne 4",
             "$clientDelivered.instance_metrics.api_a.replay_query_delta -lt 1",
-            "$clientDelivered.instance_metrics.api_a.delivery_delta -ne 3",
+            "$clientDelivered.instance_metrics.api_a.delivery_delta -ne $clientDelivered.primary_raw_frame_count",
             "$clientDelivered.instance_metrics.api_b.replay_query_delta -lt 1",
-            "$clientDelivered.instance_metrics.api_b.delivery_delta -ne 1",
+            "$clientDelivered.instance_metrics.api_b.delivery_delta -ne $clientDelivered.secondary_raw_frame_count",
         ):
             self.assertIn(fragment, self.stage + self.client)
 
@@ -354,13 +361,38 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         secondary_grant = self.client.index("const secondaryGrant = await issueTicket(")
         combined = self.client.index("const allProbes = [...probes, secondaryProbe]")
         target_wait = self.client.index(
-            "allProbes.every((probe) => probe.state.targetCount === 1)"
+            "allProbes.every((probe) => probe.state.targetMessageIds.size === 1)"
         )
+        ack_send = self.client.index(
+            'probes[0].socket.send(JSON.stringify({ v: 1, type: "ack", ids: [messageId] }))',
+            target_wait,
+        )
+        ack_received = self.client.index(
+            "probes[0].state.acknowledgedIds.has(messageId)",
+            ack_send,
+        )
+        delivered_write = self.client.index("writeJsonAtomically(deliveredPath", ack_received)
         self.assertLess(primary_grants, secondary_grant)
         self.assertLess(secondary_grant, combined)
         self.assertLess(combined, target_wait)
+        self.assertLess(target_wait, ack_send)
+        self.assertLess(ack_send, ack_received)
+        self.assertLess(ack_received, delivered_write)
 
-    def test_offline_window_reconnects_to_secondary_once(self) -> None:
+    def test_probe_waits_fail_fast_on_terminal_socket_errors(self) -> None:
+        for fragment in (
+            "async function waitFor(description, timeoutMilliseconds, predicate, terminalError = null)",
+            "const fatalError = terminalError?.()",
+            "if (fatalError) throw fatalError",
+            "function probeTerminalError(probes)",
+            "const terminalError = probes.length > 0 ? () => probeTerminalError(probes) : null",
+            "() => probeTerminalError([reconnectProbe])",
+            "() => probeTerminalError([isolatedProbe])",
+        ):
+            self.assertIn(fragment, self.client)
+        self.assertEqual(self.client.count("() => probeTerminalError(allProbes)"), 7)
+
+    def test_offline_window_acknowledges_logically_once_and_rechecks_new_connection(self) -> None:
         for fragment in (
             "async function assertOfflineReconnect(",
             "settledMetrics(primaryApiBase, 0)",
@@ -370,19 +402,31 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "whileOffline[index].delivered !== offlineBaselines[index].delivered",
             "const reconnectGrant = await issueTicket(secondaryApiBase",
             "createSocketProbe(\n    secondaryApiBase,",
-            "reconnectProbe.state.targetCount === 1",
-            "replayDelta !== 1 || deliveryDelta !== 1",
+            "armProbeTarget(",
+            "reconnectProbe.state.targetMessageIds.size === 1",
+            "reconnectProbe.state.acknowledgedIds.has(messageId)",
+            "async function settleSingleProbeDelivery(",
+            '"断线重连投递指标与客户端帧稳定"',
+            "raw_frame_count: deliveryEvidence.rawFrameCount",
+            "async function assertAcknowledgedMessageAbsentAcrossReplayCycles(",
+            "post_ack_message_count: postAckMessageCount",
+            "verified_across_new_connection: true",
             "primaryAfterReconnect.replaySuccess !== offlineBaselines[0].replaySuccess",
             "await closeProbes([reconnectProbe])",
             "const offlineReconnect = await assertOfflineReconnect(",
             "offline_reconnect: offlineReconnect",
             '$clientReady.offline_reconnect.disconnected_instance -ne "api_a"',
             '$clientReady.offline_reconnect.reconnected_instance -ne "api_b"',
-            "$clientReady.offline_reconnect.message_count -ne 1",
-            "$clientDelivered.offline_reconnect.message_count -ne 1",
-            "$clientResult.offline_reconnect.message_count -ne 1",
+            "$clientReady.offline_reconnect.logical_message_count -ne 1",
+            "$clientDelivered.offline_reconnect.raw_frame_count -lt 1",
+            "$clientResult.offline_reconnect.ack_persistence.post_ack_message_count -ne 0",
+            "delivery_probe_counts: deliveryProbeCounts",
         ):
             self.assertIn(fragment, self.stage + self.client)
+        self.assertEqual(
+            self.stage.count("offline_reconnect.ack_persistence.alignment_replay_query_delta -lt 1"),
+            3,
+        )
 
         offline_call = self.client.index("const offlineReconnect = await assertOfflineReconnect(")
         main_grants = self.client.index("const grants = await Promise.all(", offline_call)
@@ -395,10 +439,11 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             'metricValue(text, "ryframe_ws_connections")',
             'metricValue(text, "ryframe_message_replay_query_total", { result: "success" })',
             'metricValue(text, "ryframe_message_delivery_total", { result: "delivered" })',
-            "alignReplayBaseline(apiBase, probes.length)",
-            "alignReplayBaseline(secondaryApiBase, 1)",
+            "alignReplayBaseline(apiBase, probes.length, probes)",
+            "alignReplayBaseline(secondaryApiBase, 1, [secondaryProbe])",
             "primaryReplayQueryDelta < 1 || secondaryReplayQueryDelta < 1",
-            "primaryDeliveryDelta !== probes.length || secondaryDeliveryDelta !== 1",
+            "primaryDeliveryDelta !== primaryRawFrameCount",
+            "secondaryDeliveryDelta !== secondaryRawFrameCount",
             "replay_query_delta: primaryReplayQueryDelta",
             "delivery_delta: primaryDeliveryDelta",
             "replay_query_delta: secondaryReplayQueryDelta",
@@ -407,9 +452,9 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             self.assertIn(fragment, self.client)
         for fragment in (
             "$clientDelivered.instance_metrics.api_a.replay_query_delta -lt 1",
-            "$clientDelivered.instance_metrics.api_a.delivery_delta -ne 3",
+            "$clientDelivered.instance_metrics.api_a.delivery_delta -ne $clientDelivered.primary_raw_frame_count",
             "$clientDelivered.instance_metrics.api_b.replay_query_delta -lt 1",
-            "$clientDelivered.instance_metrics.api_b.delivery_delta -ne 1",
+            "$clientDelivered.instance_metrics.api_b.delivery_delta -ne $clientDelivered.secondary_raw_frame_count",
             "$clientResult.instance_metrics.api_a.replay_query_delta -lt 1",
             "$clientResult.instance_metrics.api_b.replay_query_delta -lt 1",
         ):
@@ -418,23 +463,27 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
     def test_deduplication_stability_crosses_a_full_later_replay_cycle(self) -> None:
         for fragment in (
             "function assertTargetProbesStable(probes, label)",
-            "async function waitForReplayAdvance(instance, baseline, probes, label)",
-            "async function assertReplayDeduplicationWindow(instances, probes, label)",
+            "function assertProbeCountsUnchanged(probes, expectedCounts, label)",
+            "async function waitForReplayAdvance(",
+            "async function assertReplayDeduplicationWindow(",
             "current.replaySuccess > baseline.replaySuccess",
             "current.delivered !== baseline.delivered",
-            "waitForReplayAdvance(instance, starting[index]",
-            "waitForReplayAdvance(instance, aligned[index]",
+            "starting[index],\n      probes,\n      expectedProbeCounts",
+            "aligned[index],\n      probes,\n      expectedProbeCounts",
             "completed[index].replaySuccess <= aligned[index].replaySuccess",
             "full_replay_cycle_observed: true",
             "total_replay_query_delta: final.replaySuccess - starting[index].replaySuccess",
             "delivery_delta: final.delivered - starting[index].delivered",
-            "const stabilityWindow = await assertReplayDeduplicationWindow(",
-            '[{ name: "api_b", apiBase: secondaryApiBase, connectionCount: 1 }]',
+            "async function assertAcknowledgedMessageAbsentAcrossReplayCycles(",
+            '"ACK 持久化第一完整补拉周期"',
+            '"ACK 持久化第二完整补拉周期"',
+            "post_ack_message_count: postAckMessageCount",
+            "verified_across_new_connection: true",
             "const deduplicationStability = await assertReplayDeduplicationWindow(",
             '{ name: "api_a", apiBase, connectionCount: probes.length }',
             '{ name: "api_b", apiBase: secondaryApiBase, connectionCount: 1 }',
-            'assertTargetProbesStable([reconnectProbe], "断线重连关闭前检查")',
-            'assertTargetProbesStable(allProbes, "关闭前统一检查")',
+            "const deliveryEvidence = await settleSingleProbeDelivery(",
+            '"关闭前统一检查"',
             "deduplication_stability: {",
             "$clientResult.deduplication_stability.full_replay_cycle_observed -ne $true",
             "$clientResult.deduplication_stability.instance_metrics.api_a.replay_query_delta -lt 1",
@@ -447,33 +496,72 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "$clientResult.deduplication_stability.instance_metrics.api_b.connection_count -ne 1",
             "@($clientResult.deduplication_stability.probe_counts).Count -ne 4",
             "@($clientResult.deduplication_stability.final_probe_counts).Count -ne 4",
-            "$clientResult.offline_reconnect.stability_window.full_replay_cycle_observed -ne $true",
-            "$clientResult.offline_reconnect.stability_window.instance_metrics.api_b.total_replay_query_delta -lt 2",
-            "$clientResult.offline_reconnect.stability_window.instance_metrics.api_b.delivery_delta -ne 0",
+            "$clientResult.offline_reconnect.ack_persistence.full_replay_cycles -ne 2",
+            "$clientResult.offline_reconnect.ack_persistence.post_ack_message_count -ne 0",
+            "$clientResult.offline_reconnect.ack_persistence.delivery_delta -ne 0",
+            "$clientResult.redis_recovery_stability.raw_frame_counts_unchanged -ne $true",
+            "$clientResult.redis_recovery_stability.api_a_delivery_delta -ne 0",
+            "$clientResult.redis_recovery_stability.api_b_delivery_delta -ne 0",
+            "@($clientResult.redis_recovery_stability.probe_counts).Count -ne 4",
         ):
             self.assertIn(fragment, self.stage + self.client)
 
-        offline_read = self.client.index(
-            "await requestJson(secondaryApiBase, `/api/v1/system/messages/${messageId}/read`",
+        offline_final = self.client.index(
+            "const deliveryEvidence = await settleSingleProbeDelivery(",
             self.client.index("async function assertOfflineReconnect("),
         )
-        offline_stability = self.client.index(
-            "const stabilityWindow = await assertReplayDeduplicationWindow(",
-            offline_read,
-        )
-        offline_final = self.client.index(
-            'assertTargetProbesStable([reconnectProbe], "断线重连关闭前检查")',
-            offline_stability,
-        )
         offline_close = self.client.index("await closeProbes([reconnectProbe])", offline_final)
-        self.assertLess(offline_read, offline_stability)
-        self.assertLess(offline_stability, offline_final)
+        ack_persistence = self.client.index(
+            "const ackPersistence = await assertAcknowledgedMessageAbsentAcrossReplayCycles(",
+            offline_close,
+        )
+        offline_read = self.client.index(
+            "await requestJson(secondaryApiBase, `/api/v1/system/messages/${messageId}/read`",
+            ack_persistence,
+        )
         self.assertLess(offline_final, offline_close)
+        self.assertLess(offline_close, ack_persistence)
+        self.assertLess(ack_persistence, offline_read)
+
+    def test_redis_recovery_preserves_acknowledged_raw_frame_snapshot(self) -> None:
+        for fragment in (
+            "function assertProbeCountsUnchanged(probes, expectedCounts, label)",
+            "current.raw_frame_count !== expectedCounts[index].raw_frame_count",
+            "const deliveryProbeCounts = deliveryEvidence.probeCounts",
+            '"Redis 恢复后检查"',
+            "recoveryApiA.delivered !== finalMetrics.api_a.delivered",
+            "recoveryApiB.delivered !== finalMetrics.api_b.delivered",
+            "raw_frame_counts_unchanged: true",
+            "redis_recovery_stability: redisRecoveryStability",
+        ):
+            self.assertIn(fragment, self.client)
+        delivered = self.client.index("writeJsonAtomically(deliveredPath")
+        restored = self.client.index('"Redis 恢复信号"', delivered)
+        snapshot_check = self.client.index('"Redis 恢复后检查"', restored)
+        deduplication = self.client.index(
+            "const deduplicationStability = await assertReplayDeduplicationWindow(",
+            snapshot_check,
+        )
+        self.assertLess(delivered, restored)
+        self.assertLess(restored, snapshot_check)
+        self.assertLess(snapshot_check, deduplication)
+
+    def test_removed_message_contract_fields_cannot_return(self) -> None:
+        contract = self.stage + self.client
+        for pattern in (
+            r"\btargetCount\b",
+            r"\btarget_count\b",
+            r"\.acknowledgement\b",
+            r"offline_reconnect\.(?:message_count|stability_window)\b",
+            r"\bisolated_connection_count\b",
+            r"\bpre_ack_probe_counts\b",
+        ):
+            self.assertNotRegex(contract, pattern)
 
     def test_no_placeholder_can_be_reported_as_passed(self) -> None:
         client_result = self.client.index("await writeJsonAtomically(resultPath, {")
         delivered = self.client.index("writeJsonAtomically(deliveredPath")
-        restored = self.client.index('waitFor("Redis 恢复信号"')
+        restored = self.client.index('"Redis 恢复信号"')
         persisted = self.client.index("assertAckAndReadPersistence", restored)
         stable = self.client.index(
             "const deduplicationStability = await assertReplayDeduplicationWindow(",
@@ -482,7 +570,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         cleanup_ready = self.client.index("writeJsonAtomically(cleanupReadyPath", stable)
         cleanup = self.client.index("assertRetentionCleanup", cleanup_ready)
         final_probe_check = self.client.index(
-            'assertTargetProbesStable(allProbes, "关闭前统一检查")',
+            '"关闭前统一检查"',
             cleanup,
         )
         closed = self.client.index("await closeProbes(allProbes)", final_probe_check)
@@ -547,7 +635,11 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
     def test_ack_and_read_are_verified_across_api_instances(self) -> None:
         for fragment in (
             '"--secondary-api-base"',
-            'probes[0].socket.send(JSON.stringify({ v: 1, type: "ack", ids: [messageId] }))',
+            "acknowledgedIds: new Set()",
+            "acknowledgementRequestedIds: new Set()",
+            'socket.send(JSON.stringify({ v: 1, type: "ack", ids: [state.target.id] }))',
+            "for (const id of frame.ids) state.acknowledgedIds.add(String(id))",
+            "assertAcknowledgedMessageAbsentAcrossReplayCycles(",
             'record?.acked_at && record?.read_at === null',
             '`/api/v1/system/messages/${messageId}/read`',
             'record?.acked_at && record?.read_at ? record : null',
@@ -557,9 +649,11 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "$clientResult.persisted_state.read_at",
         ):
             self.assertIn(fragment, self.stage + self.client)
-        ack = self.client.index('type: "ack", ids: [messageId]')
+        ack = self.client.index('type: "ack", ids: [state.target.id]')
         persisted = self.client.index("assertAckAndReadPersistence", ack)
         self.assertLess(ack, persisted)
+        ack_handler = self.client.index("if (frame.type === \"ack\" && Array.isArray(frame.ids))")
+        self.assertNotIn("&& state.target", self.client[ack_handler:ack_handler + 180])
 
     def test_tenant_isolation_uses_isolated_database_and_live_delivery(self) -> None:
         for fragment in (
@@ -584,9 +678,11 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "system_inbox_count: systemInboxCount",
             "system_connection_count: systemConnectionCount",
             "isolated_inbox_count: isolatedInboxCount",
-            "isolated_connection_count: isolatedProbe.state.targetCount",
+            "isolated_logical_message_count: isolatedProbe.state.targetMessageIds.size",
+            "isolated_raw_frame_count: isolatedProbe.state.targetRawFrameCount",
             '$tenantResult.system_connection_count -ne 0',
-            '$tenantResult.isolated_connection_count -ne 1',
+            '$tenantResult.isolated_logical_message_count -ne 1',
+            '$tenantResult.isolated_raw_frame_count -lt 1',
             '-Expected "1:1:1:1:1"',
         ):
             self.assertIn(fragment, self.stage + self.client)

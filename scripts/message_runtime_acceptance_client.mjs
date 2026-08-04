@@ -147,10 +147,12 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function waitFor(description, timeoutMilliseconds, predicate) {
+async function waitFor(description, timeoutMilliseconds, predicate, terminalError = null) {
   const deadline = Date.now() + timeoutMilliseconds;
   let lastError = null;
   while (Date.now() < deadline) {
+    const fatalError = terminalError?.();
+    if (fatalError) throw fatalError;
     try {
       const value = await predicate();
       if (value) return value;
@@ -162,6 +164,10 @@ async function waitFor(description, timeoutMilliseconds, predicate) {
   }
   const suffix = lastError ? `；最后错误：${lastError.message}` : "";
   fail(`等待${description}超时${suffix}`);
+}
+
+function probeTerminalError(probes) {
+  return probes.map((probe) => probe.state.error).find(Boolean) ?? null;
 }
 
 class CookieJar {
@@ -343,20 +349,30 @@ function createSocketProbe(apiBase, ticket, expectedLocale, label) {
     expectedLocale,
     hello: null,
     target: null,
-    targetCount: 0,
+    targetMessageIds: new Set(),
+    targetRawFrameCount: 0,
     pendingMessages: [],
     allMessageIds: [],
-    acknowledgement: false,
+    acknowledgedIds: new Set(),
+    acknowledgementRequestedIds: new Set(),
+    acknowledgeTargetImmediately: false,
     error: null,
     closing: false,
     closed: false,
   };
   const acceptTargetMessage = (message) => {
     if (!state.target || message?.id !== state.target.id) return;
-    state.targetCount += 1;
-    if (state.targetCount > 1) fail(`${label} 重复收到消息 ${state.target.id}`);
     if (message.title !== state.target.text || message.content !== state.target.text) {
       fail(`${label} 的本地化消息不正确：${JSON.stringify(message)}`);
+    }
+    state.targetRawFrameCount += 1;
+    state.targetMessageIds.add(state.target.id);
+    if (
+      state.acknowledgeTargetImmediately
+      && !state.acknowledgementRequestedIds.has(state.target.id)
+    ) {
+      state.acknowledgementRequestedIds.add(state.target.id);
+      socket.send(JSON.stringify({ v: 1, type: "ack", ids: [state.target.id] }));
     }
   };
   const socket = new WebSocket(websocketUrl(apiBase, ticket));
@@ -380,13 +396,9 @@ function createSocketProbe(apiBase, ticket, expectedLocale, label) {
         else state.pendingMessages.push(frame.message);
         return;
       }
-      if (
-        frame.type === "ack"
-        && state.target
-        && Array.isArray(frame.ids)
-        && frame.ids.includes(state.target.id)
-      ) {
-        state.acknowledgement = true;
+      if (frame.type === "ack" && Array.isArray(frame.ids)) {
+        for (const id of frame.ids) state.acknowledgedIds.add(String(id));
+        return;
       }
     } catch (error) {
       state.error = error;
@@ -404,12 +416,24 @@ function createSocketProbe(apiBase, ticket, expectedLocale, label) {
   return { socket, state, acceptTargetMessage };
 }
 
+function armProbeTarget(probe, target, acknowledgeImmediately = false) {
+  if (probe.state.target) fail(`${probe.state.label} 已设置目标消息`);
+  probe.state.target = target;
+  probe.state.acknowledgeTargetImmediately = acknowledgeImmediately;
+  const pendingMessages = probe.state.pendingMessages;
+  probe.state.pendingMessages = [];
+  for (const pending of pendingMessages) probe.acceptTargetMessage(pending);
+}
+
 async function waitForHealthyProbes(probes) {
-  await waitFor("全部 WebSocket hello 帧", 15_000, () => {
-    const error = probes.map((probe) => probe.state.error).find(Boolean);
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const error = probeTerminalError(probes);
     if (error) throw error;
-    return probes.every((probe) => probe.state.hello);
-  });
+    if (probes.every((probe) => probe.state.hello)) return;
+    await sleep(50);
+  }
+  fail("等待全部 WebSocket hello 帧超时");
 }
 
 async function consumeTicketAndClose(apiBase, grant, locale, label) {
@@ -586,11 +610,12 @@ async function metrics(apiBase) {
   };
 }
 
-async function alignReplayBaseline(apiBase, connectionCount) {
+async function alignReplayBaseline(apiBase, connectionCount, probes = []) {
+  const terminalError = probes.length > 0 ? () => probeTerminalError(probes) : null;
   await waitFor("WebSocket 连接指标", 10_000, async () => {
     const current = await metrics(apiBase);
     return current.connections === connectionCount ? current : null;
-  });
+  }, terminalError);
 
   let stable = await metrics(apiBase);
   let stableSince = Date.now();
@@ -601,13 +626,13 @@ async function alignReplayBaseline(apiBase, connectionCount) {
       stableSince = Date.now();
     }
     return Date.now() - stableSince >= 1_000 ? current : null;
-  });
+  }, terminalError);
 
   const starting = await metrics(apiBase);
   await waitFor("下一次周期共享补拉查询", 25_000, async () => {
     const current = await metrics(apiBase);
     return current.replaySuccess > starting.replaySuccess ? current : null;
-  });
+  }, terminalError);
   await sleep(250);
   return metrics(apiBase);
 }
@@ -633,19 +658,70 @@ async function settledMetrics(apiBase, expectedConnections) {
 function assertTargetProbesStable(probes, label) {
   const failedProbe = probes.find((probe) => probe.state.error);
   if (failedProbe) throw failedProbe.state.error;
-  const invalidProbe = probes.find((probe) => probe.state.targetCount !== 1);
+  const invalidProbe = probes.find((probe) => (
+    probe.state.targetMessageIds.size !== 1 || probe.state.targetRawFrameCount < 1
+  ));
   if (invalidProbe) {
-    fail(`${label}：${invalidProbe.state.label} 的目标消息数量不是 1`);
+    fail(`${label}：${invalidProbe.state.label} 的逻辑目标消息数量不是 1`);
   }
   return probes.map((probe) => ({
     label: probe.state.label,
-    target_count: probe.state.targetCount,
+    locale: probe.state.expectedLocale,
+    logical_message_count: probe.state.targetMessageIds.size,
+    raw_frame_count: probe.state.targetRawFrameCount,
   }));
 }
 
-async function waitForReplayAdvance(instance, baseline, probes, label) {
+function assertProbeCountsUnchanged(probes, expectedCounts, label) {
+  const currentCounts = assertTargetProbesStable(probes, label);
+  if (
+    currentCounts.length !== expectedCounts.length
+    || currentCounts.some((current, index) => (
+      current.label !== expectedCounts[index].label
+      || current.logical_message_count !== expectedCounts[index].logical_message_count
+      || current.raw_frame_count !== expectedCounts[index].raw_frame_count
+    ))
+  ) {
+    fail(`${label}：ACK 后仍出现目标消息原始帧`);
+  }
+  return currentCounts;
+}
+
+async function settleSingleProbeDelivery(apiBase, baseline, probe, label) {
+  let stableSignature = null;
+  let stableSince = Date.now();
+  return waitFor(label, 8_000, async () => {
+    const current = await metrics(apiBase);
+    const probeCounts = assertTargetProbesStable([probe], label);
+    const rawFrameCount = probeCounts[0].raw_frame_count;
+    const replayDelta = current.replaySuccess - baseline.replaySuccess;
+    const deliveryDelta = current.delivered - baseline.delivered;
+    if (replayDelta < 1 || deliveryDelta !== rawFrameCount) {
+      stableSignature = null;
+      stableSince = Date.now();
+      return null;
+    }
+    const signature = `${current.replaySuccess}:${current.delivered}:${rawFrameCount}`;
+    if (signature !== stableSignature) {
+      stableSignature = signature;
+      stableSince = Date.now();
+      return null;
+    }
+    return Date.now() - stableSince >= 500
+      ? { current, probeCounts, rawFrameCount, replayDelta, deliveryDelta }
+      : null;
+  }, () => probeTerminalError([probe]));
+}
+
+async function waitForReplayAdvance(
+  instance,
+  baseline,
+  probes,
+  expectedProbeCounts,
+  label,
+) {
   return waitFor(`${label} ${instance.name} 补拉推进`, 8_000, async () => {
-    assertTargetProbesStable(probes, label);
+    assertProbeCountsUnchanged(probes, expectedProbeCounts, label);
     const current = await metrics(instance.apiBase);
     if (current.connections !== instance.connectionCount) {
       fail(
@@ -656,11 +732,11 @@ async function waitForReplayAdvance(instance, baseline, probes, label) {
       fail(`${label} ${instance.name} 在去重稳定窗口内发生了额外投递`);
     }
     return current.replaySuccess > baseline.replaySuccess ? current : null;
-  });
+  }, () => probeTerminalError(probes));
 }
 
-async function assertReplayDeduplicationWindow(instances, probes, label) {
-  assertTargetProbesStable(probes, label);
+async function assertReplayDeduplicationWindow(instances, probes, expectedProbeCounts, label) {
+  assertProbeCountsUnchanged(probes, expectedProbeCounts, label);
   const starting = await Promise.all(instances.map((instance) => metrics(instance.apiBase)));
   for (let index = 0; index < instances.length; index += 1) {
     if (starting[index].connections !== instances[index].connectionCount) {
@@ -669,14 +745,30 @@ async function assertReplayDeduplicationWindow(instances, probes, label) {
   }
 
   const aligned = await Promise.all(instances.map((instance, index) => (
-    waitForReplayAdvance(instance, starting[index], probes, `${label} 首次对齐`)
+    waitForReplayAdvance(
+      instance,
+      starting[index],
+      probes,
+      expectedProbeCounts,
+      `${label} 首次对齐`,
+    )
   )));
   const completed = await Promise.all(instances.map((instance, index) => (
-    waitForReplayAdvance(instance, aligned[index], probes, `${label} 完整周期`)
+    waitForReplayAdvance(
+      instance,
+      aligned[index],
+      probes,
+      expectedProbeCounts,
+      `${label} 完整周期`,
+    )
   )));
   await sleep(250);
   const finalMetrics = await Promise.all(instances.map((instance) => metrics(instance.apiBase)));
-  const probeCounts = assertTargetProbesStable(probes, `${label} 最终检查`);
+  const probeCounts = assertProbeCountsUnchanged(
+    probes,
+    expectedProbeCounts,
+    `${label} 最终检查`,
+  );
   const instanceMetrics = {};
   for (let index = 0; index < instances.length; index += 1) {
     const instance = instances[index];
@@ -700,6 +792,67 @@ async function assertReplayDeduplicationWindow(instances, probes, label) {
     error_count: 0,
     probe_counts: probeCounts,
     instance_metrics: instanceMetrics,
+  };
+}
+
+async function assertAcknowledgedMessageAbsentAcrossReplayCycles(
+  apiBase,
+  token,
+  messageId,
+) {
+  const grant = await issueTicket(apiBase, token, "zh-CN");
+  const probe = createSocketProbe(
+    apiBase,
+    grant.ticket,
+    "zh-CN",
+    "ACK 持久化验证连接",
+  );
+  await waitForHealthyProbes([probe]);
+  const connected = await metrics(apiBase);
+  if (connected.connections !== 1) fail("ACK 持久化验证连接数不是 1");
+  const alignmentBaseline = await alignReplayBaseline(apiBase, 1, [probe]);
+  const alignmentMessageCount = probe.state.allMessageIds.filter((id) => id === messageId).length;
+  if (alignmentMessageCount !== 0 || alignmentBaseline.delivered !== connected.delivered) {
+    fail("ACK 持久化对齐建连补拉时仍收到已确认消息");
+  }
+  const starting = alignmentBaseline;
+
+  const waitForCycle = (baseline, label) => waitFor(label, 8_000, async () => {
+    const postAckMessageCount = probe.state.allMessageIds.filter((id) => id === messageId).length;
+    if (postAckMessageCount !== 0) {
+      fail(`ACK 确认后的新连接仍收到消息 ${messageId}`);
+    }
+    const current = await metrics(apiBase);
+    if (current.connections !== 1) fail("ACK 持久化验证连接意外断开");
+    if (current.delivered !== starting.delivered) {
+      fail("ACK 确认后的新连接出现额外投递");
+    }
+    return current.replaySuccess > baseline.replaySuccess ? current : null;
+  }, () => probeTerminalError([probe]));
+
+  const firstCompleted = await waitForCycle(starting, "ACK 持久化第一完整补拉周期");
+  const secondCompleted = await waitForCycle(firstCompleted, "ACK 持久化第二完整补拉周期");
+  await sleep(250);
+  const final = await metrics(apiBase);
+  const postAckMessageCount = probe.state.allMessageIds.filter((id) => id === messageId).length;
+  if (
+    postAckMessageCount !== 0
+    || final.connections !== 1
+    || final.delivered !== starting.delivered
+    || secondCompleted.replaySuccess <= firstCompleted.replaySuccess
+  ) {
+    fail("ACK 持久化未通过新连接的两个完整补拉周期检查");
+  }
+  await closeProbes([probe]);
+  const closed = await settledMetrics(apiBase, 0);
+  return {
+    verified_across_new_connection: true,
+    full_replay_cycles: 2,
+    post_ack_message_count: postAckMessageCount,
+    alignment_replay_query_delta: starting.replaySuccess - connected.replaySuccess,
+    replay_query_delta: final.replaySuccess - starting.replaySuccess,
+    delivery_delta: final.delivered - starting.delivered,
+    final_connections: closed.connections,
   };
 }
 
@@ -753,57 +906,65 @@ async function assertOfflineReconnect(
     "zh-CN",
     "断线后 API-B 重连",
   );
-  reconnectProbe.state.target = { id: messageId, text: `断线窗口 ${marker}` };
   await waitForHealthyProbes([reconnectProbe]);
-  await waitFor("断线后重连补拉", 5_000, () => {
-    if (reconnectProbe.state.error) throw reconnectProbe.state.error;
-    return reconnectProbe.state.targetCount === 1;
-  });
-  reconnectProbe.socket.send(JSON.stringify({ v: 1, type: "ack", ids: [messageId] }));
-  await waitFor("断线补拉确认", 5_000, () => reconnectProbe.state.acknowledgement);
-  await sleep(500);
-  if (reconnectProbe.state.targetCount !== 1 || reconnectProbe.state.error) {
-    throw reconnectProbe.state.error ?? new Error("断线重连消息发生重复投递");
-  }
-  const reconnectedMetrics = await metrics(secondaryApiBase);
+  armProbeTarget(
+    reconnectProbe,
+    { id: messageId, text: `断线窗口 ${marker}` },
+    true,
+  );
+  await waitFor(
+    "断线后重连补拉",
+    5_000,
+    () => reconnectProbe.state.targetMessageIds.size === 1,
+    () => probeTerminalError([reconnectProbe]),
+  );
+  await waitFor(
+    "断线补拉确认",
+    5_000,
+    () => reconnectProbe.state.acknowledgedIds.has(messageId),
+    () => probeTerminalError([reconnectProbe]),
+  );
+  const deliveryEvidence = await settleSingleProbeDelivery(
+    secondaryApiBase,
+    offlineBaselines[1],
+    reconnectProbe,
+    "断线重连投递指标与客户端帧稳定",
+  );
+  const reconnectedMetrics = deliveryEvidence.current;
   const primaryAfterReconnect = await metrics(primaryApiBase);
-  const replayDelta = reconnectedMetrics.replaySuccess - offlineBaselines[1].replaySuccess;
-  const deliveryDelta = reconnectedMetrics.delivered - offlineBaselines[1].delivered;
-  if (replayDelta !== 1 || deliveryDelta !== 1) {
-    fail(`断线重连补拉指标不精确：查询 ${replayDelta}，投递 ${deliveryDelta}`);
-  }
+  const replayDelta = deliveryEvidence.replayDelta;
+  const deliveryDelta = deliveryEvidence.deliveryDelta;
   if (
     primaryAfterReconnect.replaySuccess !== offlineBaselines[0].replaySuccess
     || primaryAfterReconnect.delivered !== offlineBaselines[0].delivered
   ) {
     fail("断线重连期间 API-A 不应执行补拉或投递");
   }
+  const deliveryProbeCounts = deliveryEvidence.probeCounts;
+  await closeProbes([reconnectProbe]);
+  await settledMetrics(secondaryApiBase, 0);
+  const ackPersistence = await assertAcknowledgedMessageAbsentAcrossReplayCycles(
+    secondaryApiBase,
+    token,
+    messageId,
+  );
   await requestJson(secondaryApiBase, `/api/v1/system/messages/${messageId}/read`, {
     method: "PUT",
     headers: authHeaders(token, "zh-CN"),
   });
-  const stabilityWindow = await assertReplayDeduplicationWindow(
-    [{ name: "api_b", apiBase: secondaryApiBase, connectionCount: 1 }],
-    [reconnectProbe],
-    "断线重连去重稳定窗口",
-  );
-  const finalProbeCounts = assertTargetProbesStable([reconnectProbe], "断线重连关闭前检查");
-  await closeProbes([reconnectProbe]);
-  const closed = await settledMetrics(secondaryApiBase, 0);
   return {
     message_id: messageId,
     disconnected_instance: "api_a",
     reconnected_instance: "api_b",
     published_while_offline: true,
-    message_count: reconnectProbe.state.targetCount,
+    raw_frame_count: deliveryEvidence.rawFrameCount,
+    logical_message_count: reconnectProbe.state.targetMessageIds.size,
     replay_query_delta: replayDelta,
     delivery_delta: deliveryDelta,
     initial_connections: initial.map((item) => item.connections),
-    final_secondary_connections: closed.connections,
-    stability_window: {
-      ...stabilityWindow,
-      final_probe_counts: finalProbeCounts,
-    },
+    final_secondary_connections: ackPersistence.final_connections,
+    delivery_probe_counts: deliveryProbeCounts,
+    ack_persistence: ackPersistence,
   };
 }
 
@@ -927,12 +1088,20 @@ async function assertTenantIsolation(
     "zh-CN",
     "隔离租户连接",
   );
-  isolatedProbe.state.target = { id: messageId, text: expectedText };
   await waitForHealthyProbes([isolatedProbe]);
-  await waitFor("隔离租户连接收到自身消息", 5_000, () => {
-    if (isolatedProbe.state.error) throw isolatedProbe.state.error;
-    return isolatedProbe.state.targetCount === 1;
-  });
+  armProbeTarget(isolatedProbe, { id: messageId, text: expectedText }, true);
+  await waitFor(
+    "隔离租户连接收到自身消息",
+    5_000,
+    () => isolatedProbe.state.targetMessageIds.size === 1,
+    () => probeTerminalError([isolatedProbe]),
+  );
+  await waitFor(
+    "隔离租户消息确认",
+    5_000,
+    () => isolatedProbe.state.acknowledgedIds.has(messageId),
+    () => probeTerminalError([isolatedProbe]),
+  );
   await closeProbes([isolatedProbe]);
   return {
     tenant_id: tenantId,
@@ -940,7 +1109,8 @@ async function assertTenantIsolation(
     system_inbox_count: systemInboxCount,
     system_connection_count: systemConnectionCount,
     isolated_inbox_count: isolatedInboxCount,
-    isolated_connection_count: isolatedProbe.state.targetCount,
+    isolated_logical_message_count: isolatedProbe.state.targetMessageIds.size,
+    isolated_raw_frame_count: isolatedProbe.state.targetRawFrameCount,
   };
 }
 
@@ -1130,7 +1300,12 @@ async function main() {
       offline_reconnect: offlineReconnect,
     });
 
-    await waitFor("租户隔离夹具", 30_000, () => fileExists(tenantFixturePath));
+    await waitFor(
+      "租户隔离夹具",
+      30_000,
+      () => fileExists(tenantFixturePath),
+      () => probeTerminalError(allProbes),
+    );
     const tenantFixture = await readJson(tenantFixturePath);
     const tenantIsolation = await assertTenantIsolation(
       apiBase,
@@ -1140,8 +1315,8 @@ async function main() {
       tenantFixture,
     );
     const [primaryBaseline, secondaryBaseline] = await Promise.all([
-      alignReplayBaseline(apiBase, probes.length),
-      alignReplayBaseline(secondaryApiBase, 1),
+      alignReplayBaseline(apiBase, probes.length, probes),
+      alignReplayBaseline(secondaryApiBase, 1, [secondaryProbe]),
     ]);
     const baselines = { api_a: primaryBaseline, api_b: secondaryBaseline };
     await writeJsonAtomically(tenantResultPath, {
@@ -1150,7 +1325,12 @@ async function main() {
       baselines,
     });
 
-    await waitFor("Redis 故障补拉夹具", 30_000, () => fileExists(redisFaultFixturePath));
+    await waitFor(
+      "Redis 故障补拉夹具",
+      30_000,
+      () => fileExists(redisFaultFixturePath),
+      () => probeTerminalError(allProbes),
+    );
     const redisFaultFixture = await readJson(redisFaultFixturePath);
     const messageId = String(redisFaultFixture?.message_id ?? "");
     if (
@@ -1161,58 +1341,93 @@ async function main() {
       fail(`Redis 故障补拉夹具无效：${JSON.stringify(redisFaultFixture)}`);
     }
     for (let index = 0; index < probes.length; index += 1) {
-      probes[index].state.target = {
-        id: messageId,
-        text: primaryConnectionSpecifications[index].text,
-      };
-      for (const pending of probes[index].state.pendingMessages) {
-        probes[index].acceptTargetMessage(pending);
-      }
-      probes[index].state.pendingMessages = [];
+      armProbeTarget(
+        probes[index],
+        { id: messageId, text: primaryConnectionSpecifications[index].text },
+      );
     }
-    secondaryProbe.state.target = {
-      id: messageId,
-      text: secondaryConnectionSpecification.text,
-    };
-    for (const pending of secondaryProbe.state.pendingMessages) {
-      secondaryProbe.acceptTargetMessage(pending);
-    }
-    secondaryProbe.state.pendingMessages = [];
-
-    await waitFor("两实例全部连接收到唯一消息", 30_000, () => {
-      const error = allProbes.map((probe) => probe.state.error).find(Boolean);
-      if (error) throw error;
-      return allProbes.every((probe) => probe.state.targetCount === 1);
-    });
-    probes[0].socket.send(JSON.stringify({ v: 1, type: "ack", ids: [messageId] }));
-    await waitFor("WebSocket 确认响应", 5_000, () => probes[0].state.acknowledgement);
-    await sleep(1_000);
-    const duplicate = allProbes.find(
-      (probe) => probe.state.targetCount !== 1 || probe.state.error,
+    armProbeTarget(
+      secondaryProbe,
+      { id: messageId, text: secondaryConnectionSpecification.text },
     );
-    if (duplicate) throw duplicate.state.error ?? new Error(`${duplicate.state.label} 消息数量异常`);
 
-    const finalMetrics = await waitFor("双实例消息投递指标", 5_000, async () => {
+    await waitFor(
+      "两实例全部连接收到同一逻辑消息",
+      30_000,
+      () => allProbes.every((probe) => probe.state.targetMessageIds.size === 1),
+      () => probeTerminalError(allProbes),
+    );
+    probes[0].state.acknowledgementRequestedIds.add(messageId);
+    probes[0].socket.send(JSON.stringify({ v: 1, type: "ack", ids: [messageId] }));
+    await waitFor(
+      "WebSocket 确认响应",
+      5_000,
+      () => probes[0].state.acknowledgedIds.has(messageId),
+      () => probeTerminalError(allProbes),
+    );
+    let stableDeliverySignature = null;
+    let stableDeliverySince = Date.now();
+    const deliveryEvidence = await waitFor("双实例消息投递指标与客户端帧稳定", 10_000, async () => {
       const [apiA, apiB] = await Promise.all([
         metrics(apiBase),
         metrics(secondaryApiBase),
       ]);
-      return (
-        apiA.delivered - primaryBaseline.delivered >= probes.length
-        && apiB.delivered - secondaryBaseline.delivered >= 1
-      ) ? { api_a: apiA, api_b: apiB } : null;
-    });
+      const probeCounts = assertTargetProbesStable(allProbes, "双实例投递稳定检查");
+      const primaryRawFrames = probeCounts
+        .slice(0, probes.length)
+        .reduce((total, probe) => total + probe.raw_frame_count, 0);
+      const secondaryRawFrames = probeCounts[probes.length].raw_frame_count;
+      const primaryDelta = apiA.delivered - primaryBaseline.delivered;
+      const secondaryDelta = apiB.delivered - secondaryBaseline.delivered;
+      if (
+        apiA.replaySuccess - primaryBaseline.replaySuccess < 1
+        || apiB.replaySuccess - secondaryBaseline.replaySuccess < 1
+        || primaryDelta !== primaryRawFrames
+        || secondaryDelta !== secondaryRawFrames
+      ) {
+        stableDeliverySignature = null;
+        stableDeliverySince = Date.now();
+        return null;
+      }
+      const signature = JSON.stringify([
+        apiA.replaySuccess,
+        apiA.delivered,
+        apiB.replaySuccess,
+        apiB.delivered,
+        ...probeCounts.map((probe) => probe.raw_frame_count),
+      ]);
+      if (signature !== stableDeliverySignature) {
+        stableDeliverySignature = signature;
+        stableDeliverySince = Date.now();
+        return null;
+      }
+      return Date.now() - stableDeliverySince >= 750
+        ? {
+            finalMetrics: { api_a: apiA, api_b: apiB },
+            probeCounts,
+            primaryRawFrames,
+            secondaryRawFrames,
+          }
+        : null;
+    }, () => probeTerminalError(allProbes));
+    const finalMetrics = deliveryEvidence.finalMetrics;
+    const deliveryProbeCounts = deliveryEvidence.probeCounts;
     const primaryReplayQueryDelta = finalMetrics.api_a.replaySuccess - primaryBaseline.replaySuccess;
     const primaryDeliveryDelta = finalMetrics.api_a.delivered - primaryBaseline.delivered;
     const secondaryReplayQueryDelta = finalMetrics.api_b.replaySuccess
       - secondaryBaseline.replaySuccess;
     const secondaryDeliveryDelta = finalMetrics.api_b.delivered - secondaryBaseline.delivered;
+    const primaryRawFrameCount = deliveryEvidence.primaryRawFrames;
+    const secondaryRawFrameCount = deliveryEvidence.secondaryRawFrames;
     if (primaryReplayQueryDelta < 1 || secondaryReplayQueryDelta < 1) {
       fail(
         `双实例共享补拉查询未推进：API-A ${primaryReplayQueryDelta}，API-B ${secondaryReplayQueryDelta}`,
       );
     }
-    if (primaryDeliveryDelta !== probes.length || secondaryDeliveryDelta !== 1) {
+    if (
+      primaryDeliveryDelta !== primaryRawFrameCount
+      || secondaryDeliveryDelta !== secondaryRawFrameCount
+    ) {
       fail(`双实例投递增量不精确：API-A ${primaryDeliveryDelta}，API-B ${secondaryDeliveryDelta}`);
     }
 
@@ -1226,11 +1441,10 @@ async function main() {
       primary_connection_count: probes.length,
       secondary_connection_count: 1,
       total_connection_count: allProbes.length,
-      per_connection_counts: allProbes.map((probe) => ({
-        label: probe.state.label,
-        locale: probe.state.expectedLocale,
-        count: probe.state.targetCount,
-      })),
+      primary_raw_frame_count: primaryRawFrameCount,
+      secondary_raw_frame_count: secondaryRawFrameCount,
+      total_raw_frame_count: primaryRawFrameCount + secondaryRawFrameCount,
+      per_connection_counts: deliveryProbeCounts,
       instance_metrics: {
         api_a: {
           replay_query_delta: primaryReplayQueryDelta,
@@ -1241,7 +1455,7 @@ async function main() {
           delivery_delta: secondaryDeliveryDelta,
         },
       },
-      websocket_ack_received: probes[0].state.acknowledgement,
+      websocket_ack_received: probes[0].state.acknowledgedIds.has(messageId),
       ticket_guards: ticketGuards,
       slow_consumer: slowConsumer,
       offline_reconnect: offlineReconnect,
@@ -1251,14 +1465,34 @@ async function main() {
     };
     await writeJsonAtomically(deliveredPath, delivered);
 
-    await waitFor("Redis 恢复信号", 30_000, () => fileExists(redisRestoredPath));
-    await sleep(1_000);
-    const lateDuplicate = allProbes.find(
-      (probe) => probe.state.targetCount !== 1 || probe.state.error,
+    await waitFor(
+      "Redis 恢复信号",
+      30_000,
+      () => fileExists(redisRestoredPath),
+      () => probeTerminalError(allProbes),
     );
-    if (lateDuplicate) {
-      throw lateDuplicate.state.error ?? new Error(`${lateDuplicate.state.label} 恢复后消息数量异常`);
+    await sleep(1_000);
+    const recoveryProbeCounts = assertProbeCountsUnchanged(
+      allProbes,
+      deliveryProbeCounts,
+      "Redis 恢复后检查",
+    );
+    const [recoveryApiA, recoveryApiB] = await Promise.all([
+      metrics(apiBase),
+      metrics(secondaryApiBase),
+    ]);
+    if (
+      recoveryApiA.delivered !== finalMetrics.api_a.delivered
+      || recoveryApiB.delivered !== finalMetrics.api_b.delivered
+    ) {
+      fail("Redis 恢复后出现额外目标消息投递");
     }
+    const redisRecoveryStability = {
+      raw_frame_counts_unchanged: true,
+      api_a_delivery_delta: recoveryApiA.delivered - finalMetrics.api_a.delivered,
+      api_b_delivery_delta: recoveryApiB.delivered - finalMetrics.api_b.delivered,
+      probe_counts: recoveryProbeCounts,
+    };
     await assertInboxRendering(apiBase, token, messageId, "zh-CN", expectedZh);
     await assertInboxRendering(apiBase, token, messageId, "en-US", expectedEn);
     const persistedState = await assertAckAndReadPersistence(
@@ -1273,6 +1507,7 @@ async function main() {
         { name: "api_b", apiBase: secondaryApiBase, connectionCount: 1 },
       ],
       allProbes,
+      deliveryProbeCounts,
       "双实例去重稳定窗口",
     );
     const retentionPolicy = await publishRetentionCandidate(
@@ -1291,7 +1526,12 @@ async function main() {
       over_limit_status: retentionPolicy.over_limit_status,
       over_limit_error_key: retentionPolicy.over_limit_error_key,
     });
-    await waitFor("90 天清理 Worker 证据", 45_000, () => fileExists(cleanupResultPath));
+    await waitFor(
+      "90 天清理 Worker 证据",
+      45_000,
+      () => fileExists(cleanupResultPath),
+      () => probeTerminalError(allProbes),
+    );
     const retentionCleanup = await assertRetentionCleanup(
       apiBase,
       secondaryApiBase,
@@ -1299,12 +1539,17 @@ async function main() {
       retentionMessageId,
       await readJson(cleanupResultPath),
     );
-    const finalProbeCounts = assertTargetProbesStable(allProbes, "关闭前统一检查");
+    const finalProbeCounts = assertProbeCountsUnchanged(
+      allProbes,
+      deliveryProbeCounts,
+      "关闭前统一检查",
+    );
     await closeProbes(allProbes);
     await writeJsonAtomically(resultPath, {
       ...delivered,
       status: "passed",
       persisted_state: persistedState,
+      redis_recovery_stability: redisRecoveryStability,
       deduplication_stability: {
         ...deduplicationStability,
         final_probe_counts: finalProbeCounts,
