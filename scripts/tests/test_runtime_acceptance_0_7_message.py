@@ -550,6 +550,8 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             '"--file", $OwnershipComposeFile,',
             "INSERT INTO sys_tenant",
             "INSERT INTO sys_user",
+            "INSERT INTO sys_config",
+            "'sys.account.captchaEnabled', 'false'",
             "runtime-isolated-tenant",
             "INSERT INTO sys_message (",
             "INSERT INTO sys_message_recipient",
@@ -564,6 +566,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "isolated_connection_count: isolatedProbe.state.targetCount",
             '$tenantResult.system_connection_count -ne 0',
             '$tenantResult.isolated_connection_count -ne 1',
+            '-Expected "1:1:1:1:1"',
         ):
             self.assertIn(fragment, self.stage + self.client)
         self.assertNotIn("DROP DATABASE", self.stage.upper())

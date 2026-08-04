@@ -833,6 +833,11 @@ SELECT 900000000000000102, 'runtime-isolated', 'runtime-isolated-user', password
        'runtime-isolated-user', '1', 1, '0'
 FROM sys_user
 WHERE tenant_id = 'system' AND username = 'admin';
+INSERT INTO sys_config (id, tenant_id, name, `key`, `value`, remark)
+VALUES (
+    900000000000000104, 'runtime-isolated', 'runtime acceptance captcha switch',
+    'sys.account.captchaEnabled', 'false', 'runtime acceptance only'
+);
 INSERT INTO sys_message (
     id, tenant_id, topic, title_text, body_text, severity, source_type, source_id,
     published_at, expires_at, created_at, updated_at
@@ -856,6 +861,7 @@ COMMIT;
 SELECT CONCAT(
     (SELECT COUNT(*) FROM sys_tenant WHERE tenant_id = 'runtime-isolated'), ':',
     (SELECT COUNT(*) FROM sys_user WHERE tenant_id = 'runtime-isolated' AND id = 900000000000000102), ':',
+    (SELECT COUNT(*) FROM sys_config WHERE tenant_id = 'runtime-isolated' AND id = 900000000000000104), ':',
     (SELECT COUNT(*) FROM sys_message WHERE tenant_id = 'runtime-isolated' AND id = 900000000000000103), ':',
     (SELECT COUNT(*) FROM sys_message_recipient WHERE tenant_id = 'runtime-isolated' AND message_id = 900000000000000103)
 );
@@ -868,7 +874,7 @@ SELECT CONCAT(
         -OwnershipComposeFile $ownershipComposeFile `
         -Sql $tenantFixtureSql `
         -Description $script:MessageAcceptanceMessages.TenantFixture)
-    Assert-MessageAcceptanceSqlResult -Lines $tenantFixtureLines -Expected "1:1:1:1"
+    Assert-MessageAcceptanceSqlResult -Lines $tenantFixtureLines -Expected "1:1:1:1:1"
     Invoke-MessageAcceptanceRedisPublish `
         -DockerExecutable $resolvedDockerExecutable `
         -DockerContext $DockerContext `
