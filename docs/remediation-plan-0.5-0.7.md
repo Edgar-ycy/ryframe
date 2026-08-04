@@ -39,12 +39,19 @@
 | --- | --- | --- |
 | Crate 边界与最小依赖 | 已完成 | `kernel`、`i18n`、`excel`、`mail` 等拆分已存在，旧公共兼容包已删除。API 拥有全部公开 DTO 并对 Service 模型做穷尽所有权转换；Service、Generator、Utils 运行依赖已移除 Utoipa。`config/feature-matrix.json` 是最小/最大 feature 组合唯一注册表，CI 校验元数据，本地 `cargo xtask feature-matrix` 执行完整编译。 |
 | 依赖升级与生态收敛 | 已完成 | Qodana 登记的五个可安全推进项均已分波完成：提交 `d5d41cc` 升级 `rust_xlsxwriter`，`60b8fd2` 升级 `validator`，`526730d` 升级 `tower-http`，`d466452` 升级 `jsonwebtoken`，`31e2879` 升级 `syn`。`base64 0.23` 默认 SIMD `unsafe` 且会与依赖树中的 `0.22` 并存，`password-hash 0.6` 又缺少兼容的稳定版 `argon2` 依赖族；二者已明确延期至稳定生态收敛后再处理，不作为当前 `0.7.0` 阻断项。仓库继续保留 `NewCrateVersionAvailable` 检查，不以全局禁用方式掩盖后续提示。 |
-| i18n、OTel、URL 版本与读副本 | 待核验 | 双语 HTTP/消息/任务语义、语言协商、响应语言头、版本化 URL、只读就绪快照、OTel 跨进程 `traceparent/tracestate` 与读副本连续探测阈值均已实现。可重复验收脚本已覆盖真实 Collector 父子链路、Collector 中断恢复、连续三次失败摘除、两次成功恢复、Strong 主库固定和 schema 落后排除；等待从干净 `0.7.0` 提交执行正式 Docker 验收。 |
-| 通用消息中心 | 待核验 | 消息表、票据、持久化收件箱、ack/read、前端连接、强类型容量与生命周期、事务收件人固化均已完成。协议明确要求 hello 成功入队后连接才可投递；ACK 持久化前采用至少一次投递，客户端按 message ID 做逻辑合并，ACK 持久化后的新连接必须跨完整补拉周期保持零投递。双实例验收脚本还覆盖 ticket 过期与重放、错误 Origin、Redis 故障、1013 慢消费者、90 天清理和租户隔离；当前仍等待从最终干净 `0.7.0` 提交执行正式 Docker 验收，不据此虚报通过。 |
+| i18n、OTel、URL 版本与读副本 | 已完成 | 双语 HTTP/消息/任务语义、语言协商、响应语言头、版本化 URL、只读就绪快照、OTel 跨进程 `traceparent/tracestate` 与读副本连续探测阈值均已实现。正式 Docker 验收已从干净提交完成真实 Collector 父子链路、API→Worker/Outbox 上下文传播、MySQL/Redis/RustFS 依赖子链、Collector 中断与恢复，以及连续三次失败摘除、两次成功恢复、Strong 主库固定和 schema 落后排除；所有断言通过且无证据采集或清理错误。 |
+| 通用消息中心 | 已完成 | 消息表、票据、持久化收件箱、ack/read、前端连接、强类型容量与生命周期、事务收件人固化均已完成。协议明确要求 hello 成功入队后连接才可投递；ACK 持久化前采用至少一次投递，客户端按 message ID 做逻辑合并，ACK 持久化后的新连接必须跨完整补拉周期保持零投递。正式双实例 Docker 验收已通过 ticket 过期与重放、错误 Origin、Redis 故障补拉与双实例恢复、1013 慢消费者、ACK 零重投、90 天清理和租户隔离，证据终态为 `passed`。 |
 | 源码发布与生产 Compose | 已完成 | GitHub Release 只保留平台自动生成的源码 ZIP/TAR，不分发镜像或自定义附件；联合发布身份由两仓同名 annotated tag object 及其解引用出的精确提交锁定，不依赖额外交付身份文件。OCI 多架构镜像、SBOM、Cosign 与 GHCR 已按用户决定移出范围。生产 Compose 已分离 API、迁移、独立 Worker 和外部托管依赖。部署环境从稳定标签构建、扫描、固化摘要及切换回滚属于外部上线职责，不是仓库发布阻断项。 |
-| 0.7 发布验收 | 待核验 | 版本、OpenAPI、运行时实现和单一可重复验收入口已收口；策略测试已覆盖证据、防误清理、防 PID 复用、完整环境恢复和镜像身份。仍须从最终干净后端提交执行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime_acceptance_0_7.ps1 -ConfirmRun RUN-RYFRAME-V0-7-ACCEPTANCE`，完整通过消息、读副本与 OTel 三个 Docker 子阶段，再以该 40 位提交同步前端并通过双仓门禁。 |
+| 0.7 发布验收 | 部分完成 | 后端版本、OpenAPI、运行时实现、策略门禁和单一可重复验收入口均已收口；消息、读副本与 OTel 三个正式 Docker 子阶段已从干净提交完整通过，原子证据和资源清理均无错误。剩余发布前置仅为：在文档收口后的最终后端提交上复跑门禁与正式验收，以该 40 位提交同步前端固定来源 OpenAPI 与生成类型，将前端版本和变更日志统一为 `0.7.0`，完成双仓本地门禁和精确提交 CI，再创建同名 annotated tag 并验证纯源码 Release。 |
 
 ## 最近本地验收记录
+
+2026-08-05 `0.7.0` 三阶段正式 Docker 运行验收完整通过：
+
+- 证据目录为 `target/runtime-acceptance-0-7/20260805065041-10360-f09c11d3b453`；主 `run.json` 绑定干净后端提交 `be94ca7217d5188aa502d9cf8e65f74cc71d43f6`，消息、读副本与 OTel 三个阶段均为 `passed`。
+- 消息阶段完成双实例票据、Origin、慢消费者、离线补拉、ACK 零重投、租户隔离、Redis 中断恢复和 90 天保留清理；读副本阶段完成连续失败摘除、连续成功恢复、Strong 主库路由与迁移账本滞后拒绝。
+- OTel 阶段验证外部父链、API→Worker/Outbox 跨进程上下文、MySQL/Redis/RustFS 依赖子链和 Collector 中断恢复；所有断言通过，API 与 Worker 均观测到导出失败后恢复，业务与就绪状态未受影响。
+- 主阶段与三个子阶段的 `cleanup_errors` 均为空，OTel `evidence_capture_errors` 为空；按本次 Compose project 精确查询，容器、网络和数据卷残留均为 0。
 
 2026-08-04 先完成导出运行验收的代码接入（当时尚无真实运行证据）：
 
@@ -111,6 +118,6 @@
 
 1. `0.6.0` 的双仓契约、稳定标签、精确提交 CI 和纯源码联合发布已经收口。
 2. `0.7.0` 的依赖、架构、i18n、OTel、读副本、消息中心、版本面与可重复验收入口已经完成代码收口。
-3. 从最终干净后端提交执行消息、读副本和 OTel 三阶段 Docker 验收，确认原子证据全部为 `passed` 且无资源残留。
-4. 以该后端完整提交同步前端 OpenAPI 与生成契约，完成双仓本地门禁、提交和精确提交 CI。
+3. 消息、读副本和 OTel 三阶段 Docker 验收已从干净后端提交完整通过；文档收口后在最终提交上复跑同一入口，固定最终发布证据。
+4. 以最终后端完整提交同步前端固定来源 OpenAPI 与生成契约，将前端 `package.json` 和 `CHANGELOG.md` 收口到 `0.7.0`，完成双仓本地门禁、提交和精确提交 CI。
 5. 创建双仓同名 annotated tag 并验证 `0.7.0` 纯源码 Release；授权生产环境另行完成源码构建、扫描、摘要固化、迁移切换和回滚演练。

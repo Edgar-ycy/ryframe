@@ -20,6 +20,12 @@
 - OTel 验收复用消息阶段构建的二进制，三个运行阶段不再重复执行相同 Cargo 构建。
 - 完成 `rust_xlsxwriter`、`validator`、`tower-http`、`jsonwebtoken` 与 `syn` 的分波升级；`base64` 与 `password-hash` 保持已审计的稳定依赖族。
 
+### Fixed
+
+- 修复数据库事件在 `tracing::Layer::on_event` 重入期间无法形成真实 OTel 子 Span 的问题，改为从当前上下文直接导出带实际耗时的客户端 Span，并统一采用当前数据库语义属性且不记录 SQL 正文。
+- 修复异步任务只从当前 tracing Span 查询上下文导致 API→Worker/Outbox 父链丢失的问题，统一从当前 OTel Context 生成并持久化 W3C `traceparent/tracestate`。
+- 修复 Windows PowerShell 5.1 对泛型列表和二进制就绪响应处理不一致导致验收证据误判的问题，并在 OTel 失败时保留 Collector 日志与跟踪证据。
+
 ### Security
 
 - 子阶段只接受固定内部确认令牌、精确回环 URL、仓库内固定证据根目录和排他证据写入；进程终止前同时校验启动时间与可执行文件，防止 PID 复用导致误杀。
@@ -28,6 +34,7 @@
 ### Validation
 
 - 本地门禁覆盖全工作区格式、架构、Clippy、`cargo check --workspace --all-targets`、工作区库与二进制测试、OpenAPI 快照和 v0.7 运行验收策略测试；依赖真实 MySQL/Redis 的行为由隔离 Docker 验收覆盖。
+- 正式 v0.7 Docker 验收已从干净提交串行通过消息中心、读副本和 OTel 三个阶段；全部原子证据为 `passed`，失败断言、证据采集错误、清理错误以及隔离 Docker 资源残留均为 0。
 - 稳定发布继续仅输出 GitHub 自动生成的源码 ZIP/TAR，不构建或签名任何平台镜像，也不上传 SBOM 或其他自定义附件。
 
 ## [v0.6.0] - 2026-08-03
