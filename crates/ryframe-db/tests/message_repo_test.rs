@@ -2,7 +2,7 @@
 
 mod common;
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, Timelike, Utc};
 use ryframe_db::{
     BackgroundJobRepository, MessageAudienceKind, MessageAudienceSelector, MessageInboxQuery,
     MessageRepository, PublishMessageCommand,
@@ -277,10 +277,14 @@ async fn publish_uses_insert_select_and_rejects_recipient_overflow() {
 async fn committed_publication_is_immediately_visible_from_inbox() {
     let db = common::setup_test_db().await;
     insert_user(&db, 1, user::Model::STATUS_NORMAL).await;
-    let published_at = BackgroundJobRepository
+    let database_now = BackgroundJobRepository
         .database_utc_now(&db)
         .await
         .expect("read database clock before publication");
+    let published_at = database_now
+        .with_nanosecond(750_000_000)
+        .expect("set deterministic fractional second")
+        - Duration::seconds(1);
     let mut command = publish_command(published_at);
     command.audiences = vec![MessageAudienceSelector {
         kind: MessageAudienceKind::User,
@@ -294,10 +298,13 @@ async fn committed_publication_is_immediately_visible_from_inbox() {
         .expect("publish message for one user");
     transaction.commit().await.expect("commit publication");
 
-    let query_time = BackgroundJobRepository
-        .database_utc_now(&db)
+    let persisted = message::Entity::find_by_id(published.message.id)
+        .one(&db)
         .await
-        .expect("read database clock after publication");
+        .expect("read persisted publication")
+        .expect("persisted publication exists");
+    assert_eq!(persisted.published_at, published_at);
+    let query_time = published_at + Duration::milliseconds(100);
     let inbox = MessageRepository
         .inbox(
             &db,

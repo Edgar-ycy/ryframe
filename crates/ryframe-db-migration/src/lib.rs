@@ -29,6 +29,7 @@ mod m20260803_000016_cache_namespace_versions;
 mod m20260803_000017_file_digest_finalization;
 mod m20260803_000018_audit_operation_outbox;
 mod m20260805_000019_trace_context_state;
+mod m20260805_000020_message_time_precision;
 mod schema;
 mod seeder;
 
@@ -76,6 +77,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260803_000017_file_digest_finalization::Migration),
             Box::new(m20260803_000018_audit_operation_outbox::Migration),
             Box::new(m20260805_000019_trace_context_state::Migration),
+            Box::new(m20260805_000020_message_time_precision::Migration),
         ]
     }
 }
@@ -217,7 +219,7 @@ mod tests {
     use super::Migrator;
 
     #[test]
-    fn trace_context_state_migration_is_the_latest_registry_entry() {
+    fn message_time_precision_migration_is_the_latest_registry_entry() {
         let names = Migrator::migrations()
             .into_iter()
             .map(|migration| migration.name().to_owned())
@@ -225,12 +227,12 @@ mod tests {
 
         assert_eq!(
             names.last().map(String::as_str),
-            Some("m20260805_000019_trace_context_state")
+            Some("m20260805_000020_message_time_precision")
         );
         assert_eq!(
             names
                 .iter()
-                .filter(|name| name.as_str() == "m20260805_000019_trace_context_state")
+                .filter(|name| name.as_str() == "m20260805_000020_message_time_precision")
                 .count(),
             1
         );
@@ -248,6 +250,11 @@ mod tests {
             .position(|name| name == "m20260805_000019_trace_context_state")
             .unwrap();
         assert_eq!(trace_state_index, audit_index + 1);
+        let message_time_precision_index = names
+            .iter()
+            .position(|name| name == "m20260805_000020_message_time_precision")
+            .unwrap();
+        assert_eq!(message_time_precision_index, trace_state_index + 1);
     }
 
     #[test]

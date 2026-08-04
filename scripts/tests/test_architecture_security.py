@@ -373,6 +373,11 @@ impl From<ServiceDto> for PublicDto {
         CHECK_ARCHITECTURE.check_file_digest_runtime_policy(errors)
         self.assertEqual(errors, [])
 
+    def test_message_time_precision_matches_database_clock(self) -> None:
+        errors: list[str] = []
+        CHECK_ARCHITECTURE.check_message_time_precision(errors)
+        self.assertEqual(errors, [])
+
     def test_legacy_file_compatibility_code_is_rejected_from_runtime(self) -> None:
         source = """
 let legacy_md5 = format!("{:x}", md5::compute(bytes));

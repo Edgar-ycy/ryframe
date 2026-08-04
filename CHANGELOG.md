@@ -25,6 +25,7 @@
 - 修复数据库事件在 `tracing::Layer::on_event` 重入期间无法形成真实 OTel 子 Span 的问题，改为从当前上下文直接导出带实际耗时的客户端 Span，并统一采用当前数据库语义属性且不记录 SQL 正文。
 - 修复异步任务只从当前 tracing Span 查询上下文导致 API→Worker/Outbox 父链丢失的问题，统一从当前 OTel Context 生成并持久化 W3C `traceparent/tracestate`。
 - 修复 Windows PowerShell 5.1 对泛型列表和二进制就绪响应处理不一致导致验收证据误判的问题，并在 OTel 失败时保留 Collector 日志与跟踪证据。
+- 修复微秒级数据库时钟写入无小数精度 `DATETIME` 后被舍入到下一秒，导致已提交消息短暂无法进入收件箱的问题；消息与收件箱的 8 个时间列统一迁移为 `DATETIME(6)`，测试夹具、基线和 SQL 快照同步使用同一精度。
 
 ### Security
 

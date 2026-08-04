@@ -66,6 +66,20 @@ async fn empty_mysql_schema_is_initialized_and_idempotent() {
     assert_eq!(
         scalar_count(
             &database,
+            "SELECT COUNT(*) FROM information_schema.columns \
+             WHERE table_schema = DATABASE() \
+             AND ((table_name = 'sys_message' AND column_name IN \
+                   ('published_at', 'expires_at', 'created_at', 'updated_at')) \
+               OR (table_name = 'sys_message_recipient' AND column_name IN \
+                   ('created_at', 'enqueued_at', 'acked_at', 'read_at'))) \
+             AND column_type = 'datetime(6)'",
+        )
+        .await,
+        8
+    );
+    assert_eq!(
+        scalar_count(
+            &database,
             "SELECT COUNT(*) FROM sys_cache_namespace_version \
              WHERE tenant_id = 'system' AND namespace = 'config' AND version = 0",
         )
@@ -368,6 +382,86 @@ async fn platform_message_permission_repair_removes_only_non_system_grants() {
         )
         .await,
         1
+    );
+
+    cleanup_database(admin, database, &name).await;
+}
+
+#[tokio::test]
+async fn message_time_precision_migration_upgrades_existing_tables() {
+    let (admin, database, name) = isolated_database().await;
+    database
+        .execute_unprepared(
+            "CREATE TABLE sys_message (\
+                 id BIGINT NOT NULL PRIMARY KEY, \
+                 published_at DATETIME NOT NULL, \
+                 expires_at DATETIME DEFAULT NULL, \
+                 created_at DATETIME NOT NULL, \
+                 updated_at DATETIME NOT NULL\
+             ) ENGINE=InnoDB",
+        )
+        .await
+        .unwrap();
+    database
+        .execute_unprepared(
+            "CREATE TABLE sys_message_recipient (\
+                 message_id BIGINT NOT NULL, \
+                 user_id BIGINT NOT NULL, \
+                 created_at DATETIME NOT NULL, \
+                 enqueued_at DATETIME DEFAULT NULL, \
+                 acked_at DATETIME DEFAULT NULL, \
+                 read_at DATETIME DEFAULT NULL, \
+                 PRIMARY KEY (message_id, user_id)\
+             ) ENGINE=InnoDB",
+        )
+        .await
+        .unwrap();
+
+    let migration = ryframe_db_migration::Migrator::migrations()
+        .into_iter()
+        .find(|migration| migration.name() == "m20260805_000020_message_time_precision")
+        .expect("message time precision migration");
+    migration
+        .up(&SchemaManager::new(&database))
+        .await
+        .expect("upgrade existing message timestamp columns");
+
+    assert_eq!(
+        scalar_count(
+            &database,
+            "SELECT COUNT(*) FROM information_schema.columns \
+             WHERE table_schema = DATABASE() \
+             AND ((table_name = 'sys_message' AND column_name IN \
+                   ('published_at', 'expires_at', 'created_at', 'updated_at')) \
+               OR (table_name = 'sys_message_recipient' AND column_name IN \
+                   ('created_at', 'enqueued_at', 'acked_at', 'read_at'))) \
+             AND column_type = 'datetime(6)'",
+        )
+        .await,
+        8
+    );
+    database
+        .execute_unprepared(
+            "INSERT INTO sys_message \
+             (id, published_at, expires_at, created_at, updated_at) VALUES \
+             (1, '2026-08-05 12:34:56.654321', NULL, \
+              '2026-08-05 12:34:56.654321', '2026-08-05 12:34:56.654321')",
+        )
+        .await
+        .unwrap();
+    let row = database
+        .query_one_raw(Statement::from_string(
+            DbBackend::MySql,
+            "SELECT DATE_FORMAT(published_at, '%Y-%m-%d %H:%i:%s.%f') \
+             FROM sys_message WHERE id = 1"
+                .to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        String::try_get_by_index(&row, 0).unwrap(),
+        "2026-08-05 12:34:56.654321"
     );
 
     cleanup_database(admin, database, &name).await;

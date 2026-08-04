@@ -2400,6 +2400,40 @@ def check_persisted_trace_context(errors: list[str]) -> None:
             )
 
 
+def check_message_time_precision(errors: list[str]) -> None:
+    """保证消息写入、筛选与数据库时钟使用一致的微秒精度。"""
+    required_fragments = {
+        "crates/ryframe-db-migration/src/m20260522_000000_mysql_baseline.rs": (
+            "`published_at` DATETIME(6)",
+            "`read_at` DATETIME(6)",
+        ),
+        "crates/ryframe-db-migration/src/m20260726_000009_message_center.rs": (
+            "`published_at` DATETIME(6)",
+            "`read_at` DATETIME(6)",
+        ),
+        "crates/ryframe-db-migration/src/m20260805_000020_message_time_precision.rs": (
+            "ALTER_MESSAGE_TIME_PRECISION_SQL",
+            "ALTER_RECIPIENT_TIME_PRECISION_SQL",
+            "DATETIME(6)",
+        ),
+        "crates/ryframe-db/tests/common/mod.rs": (
+            "`published_at` DATETIME(6)",
+            "`read_at` DATETIME(6)",
+        ),
+        "sql/ryframe_config.sql": (
+            "`published_at` DATETIME(6)",
+            "`read_at` DATETIME(6)",
+        ),
+    }
+    for relative_path, fragments in required_fragments.items():
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        for fragment in fragments:
+            if fragment not in source:
+                errors.append(
+                    f"message time precision is incomplete in {relative_path}: {fragment}"
+                )
+
+
 def check_pinned_workflow_actions(errors: list[str]) -> None:
     """禁止工作流重新引入可变的第三方 Action 或容器镜像标签。"""
     uses_pattern = re.compile(r"^\s*(?:-\s+)?uses:\s+([^\s#]+)")
@@ -2454,6 +2488,7 @@ def main() -> int:
     check_logging_retention_policy(errors)
     check_file_digest_runtime_policy(errors)
     check_persisted_trace_context(errors)
+    check_message_time_precision(errors)
     check_database_and_storage_topology(errors)
     check_api_prefix_contract(errors)
     check_response_envelope_boundary(errors)
