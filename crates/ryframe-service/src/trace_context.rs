@@ -6,7 +6,6 @@ use opentelemetry::{
     Context, global,
     propagation::{Extractor, Injector},
 };
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// 可跨进程持久化的完整 W3C Trace Context。
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -15,9 +14,9 @@ pub(crate) struct PersistedTraceContext {
     pub tracestate: Option<String>,
 }
 
-/// 从当前 tracing span 取出可持久化的 W3C Trace Context。
+/// 从 tracing-opentelemetry 激活的当前上下文取出可持久化的 W3C Trace Context。
 pub(crate) fn current_trace_context() -> PersistedTraceContext {
-    let context = tracing::Span::current().context();
+    let context = Context::current();
     let mut carrier = HeaderCarrier::default();
     global::get_text_map_propagator(|propagator| propagator.inject_context(&context, &mut carrier));
     PersistedTraceContext {
@@ -63,9 +62,17 @@ impl Extractor for HeaderCarrier {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_parent_context;
-    use opentelemetry::{global, trace::TraceContextExt};
-    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use super::{current_trace_context, extract_parent_context};
+    use opentelemetry::{
+        global,
+        trace::{TraceContextExt, TracerProvider as _},
+    };
+    use opentelemetry_sdk::{
+        propagation::TraceContextPropagator,
+        trace::{InMemorySpanExporter, SdkTracerProvider},
+    };
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    use tracing_subscriber::layer::SubscriberExt;
 
     fn install_trace_context_propagator() {
         global::set_text_map_propagator(TraceContextPropagator::new());
@@ -96,5 +103,60 @@ mod tests {
         );
         assert_eq!(span_context.span_id().to_string(), "00f067aa0ba902b7");
         assert_eq!(span_context.trace_state().header(), "vendor=value");
+    }
+
+    #[test]
+    fn current_context_round_trips_into_a_worker_child_span() {
+        install_trace_context_propagator();
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        global::set_tracer_provider(provider.clone());
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_opentelemetry::layer()
+                .with_tracer(provider.tracer("ryframe-trace-context-test")),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let api = tracing::info_span!("HTTP");
+            api.set_parent(extract_parent_context(
+                Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+                Some("vendor=value"),
+            ))
+            .expect("应能设置 API 外部父上下文");
+            let persisted = api.in_scope(current_trace_context);
+            assert!(persisted.traceparent.is_some());
+            assert_eq!(persisted.tracestate.as_deref(), Some("vendor=value"));
+
+            let worker = tracing::info_span!("background_job");
+            worker
+                .set_parent(extract_parent_context(
+                    persisted.traceparent.as_deref(),
+                    persisted.tracestate.as_deref(),
+                ))
+                .expect("应能恢复 Worker 父上下文");
+            worker.in_scope(|| {});
+        });
+        provider.force_flush().expect("应能刷新内存导出器");
+
+        let spans = exporter
+            .get_finished_spans()
+            .expect("应能读取已导出的 span");
+        let api = spans
+            .iter()
+            .find(|span| span.name == "HTTP")
+            .expect("应导出 API span");
+        let worker = spans
+            .iter()
+            .find(|span| span.name == "background_job")
+            .expect("应导出 Worker span");
+        assert_eq!(
+            api.span_context.trace_id().to_string(),
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
+        assert_eq!(worker.span_context.trace_id(), api.span_context.trace_id());
+        assert_eq!(worker.parent_span_id, api.span_context.span_id());
+        assert_eq!(worker.span_context.trace_state().header(), "vendor=value");
     }
 }
