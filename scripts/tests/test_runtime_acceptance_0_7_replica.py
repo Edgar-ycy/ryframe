@@ -93,7 +93,7 @@ class RuntimeAcceptanceV07ReplicaPolicyTest(unittest.TestCase):
         ):
             self.assertIn(fragment, self.stage)
         self.assertIn(
-            '@("container", "stop", "--time", "10", $containerId)',
+            '@("container", "stop", "--timeout", "10", $containerId)',
             self.support,
         )
         self.assertIn('@("container", "start", $containerId)', self.support)
@@ -388,6 +388,7 @@ class RuntimeAcceptanceV07ReplicaPolicyTest(unittest.TestCase):
         self.assertIn('"mysql-primary,mysql-replica"', self.stage)
 
     def test_docker_project_resources_require_one_validated_ownership_token(self) -> None:
+        self.assertIn("ownership_token = $OwnershipToken", self.stage)
         parameter = re.search(
             r"\[Parameter\(Mandatory = \$true\)\]\s*\[string\]\$OwnershipToken",
             self.stage,

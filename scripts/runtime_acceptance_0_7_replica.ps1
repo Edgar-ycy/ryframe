@@ -568,6 +568,7 @@ $metadata = [ordered]@{
     completed_at = $null
     docker_project = $ProjectName
     docker_context = $DockerContext
+    ownership_token = $OwnershipToken
     images = @()
     run_directory = $resolvedRunDirectory
     ports = $ports

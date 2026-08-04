@@ -114,6 +114,7 @@ function Invoke-RyFrameV07ProcessLines {
 
         [Parameter(Mandatory = $true)]
         [AllowEmptyCollection()]
+        [AllowEmptyString()]
         [string[]]$Arguments
     )
 
@@ -652,7 +653,7 @@ function Stop-RyFrameV07DockerService {
     Invoke-RyFrameV07DockerChecked `
         -DockerExecutable $DockerExecutable `
         -Context $Context `
-        -Arguments @("container", "stop", "--time", "10", $containerId) `
+        -Arguments @("container", "stop", "--timeout", "10", $containerId) `
         -Description ($script:RyFrameV07SupportMessages.StopService -f $ProjectName, $Service)
     if (Test-RyFrameV07ContainerRunning -ContainerId $containerId -DockerExecutable $DockerExecutable -Context $Context) {
         throw ($script:RyFrameV07SupportMessages.StateMismatch -f $Service, $script:RyFrameV07SupportMessages.StillRunning)

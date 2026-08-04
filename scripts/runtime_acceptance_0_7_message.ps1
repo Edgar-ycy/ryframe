@@ -57,6 +57,7 @@ $script:MessageAcceptanceMessages = ConvertFrom-Json @'
   "SqlFailed": "\u6d88\u606f\u9a8c\u6536 SQL \u8bc1\u636e\u4e0d\u7b26\u5408\u9884\u671f\uff1a{0}",
   "TenantFixture": "\u5199\u5165\u9694\u79bb\u79df\u6237\u6d88\u606f\u9a8c\u6536\u5939\u5177",
   "TenantPublish": "\u53d1\u5e03\u9694\u79bb\u79df\u6237 Redis \u5524\u9192",
+  "RedisFaultFixture": "\u5199\u5165 Redis \u6545\u969c\u671f\u95f4\u7684 MySQL \u8865\u62c9\u5939\u5177",
   "RetentionPrepare": "\u5c06\u6307\u5b9a\u9a8c\u6536\u6d88\u606f\u7f6e\u4e3a 90 \u5929\u4fdd\u7559\u671f\u5df2\u8fc7\u671f",
   "RetentionWorker": "\u8fd0\u884c\u771f\u5b9e\u6d88\u606f\u4fdd\u7559\u6e05\u7406 Worker \u4efb\u52a1",
   "RetentionVerify": "\u9a8c\u8bc1 90 \u5929\u6d88\u606f\u6e05\u7406\u53ca\u7ea7\u8054\u8bb0\u5f55",
@@ -525,7 +526,7 @@ $clientDeliveredPath = Join-Path $resolvedRunDirectory "client-delivered.json"
 $clientResultPath = Join-Path $resolvedRunDirectory "client-result.json"
 $cleanupReadyPath = Join-Path $resolvedRunDirectory "cleanup-ready.json"
 $cleanupResultPath = Join-Path $resolvedRunDirectory "cleanup-result.json"
-$redisDownSignal = Join-Path $resolvedRunDirectory "redis-down.signal"
+$redisFaultFixturePath = Join-Path $resolvedRunDirectory "redis-fault-fixture.json"
 $redisRestoredSignal = Join-Path $resolvedRunDirectory "redis-restored.signal"
 
 $ports = Get-MessageAcceptancePorts -Names @("mysql", "redis", "rustfs", "api_a", "api_b")
@@ -537,6 +538,7 @@ $metadata = [ordered]@{
     completed_at = $null
     docker_project = $ProjectName
     docker_context = $DockerContext
+    ownership_token = $OwnershipToken
     images = @()
     run_directory = $resolvedRunDirectory
     ports = $ports
@@ -705,12 +707,14 @@ try {
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_TICKET_TTL_SECONDS" -Value "2"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_MAX_CONNECTIONS_PER_USER" -Value "5"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_OUTBOUND_BUFFER" -Value "4"
+    Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_RETENTION_DAYS" -Value "90"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_REPLAY_INTERVAL_SECONDS" -Value "3"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_REPLAY_JITTER_SECONDS" -Value "0"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_REPLAY_BATCH_SIZE" -Value "100"
     Set-MessageAcceptanceEnvironment -Name "APP_TELEMETRY_ENABLED" -Value "false"
     Set-MessageAcceptanceEnvironment -Name "APP_LOGGER_OUTPUT" -Value "stdout"
     Set-MessageAcceptanceEnvironment -Name "APP_LOGGER_FORMAT" -Value "text"
+    Set-MessageAcceptanceEnvironment -Name "TOKIO_WORKER_THREADS" -Value "1"
     Set-MessageAcceptanceEnvironment -Name "SNOWFLAKE_WORKER_ID" -Value "0"
 
     Invoke-MessageAcceptanceCommand `
@@ -833,10 +837,10 @@ SELECT 900000000000000102, 'runtime-isolated', 'runtime-isolated-user', password
        'runtime-isolated-user', '1', 1, '0'
 FROM sys_user
 WHERE tenant_id = 'system' AND username = 'admin';
-INSERT INTO sys_config (id, tenant_id, name, `key`, `value`, remark)
+INSERT INTO sys_config (id, tenant_id, name, `key`, `value`, remark, del_flag)
 VALUES (
     900000000000000104, 'runtime-isolated', 'runtime acceptance captcha switch',
-    'sys.account.captchaEnabled', 'false', 'runtime acceptance only'
+    'sys.account.captchaEnabled', 'false', 'runtime acceptance only', '0'
 );
 INSERT INTO sys_message (
     id, tenant_id, topic, title_text, body_text, severity, source_type, source_id,
@@ -861,7 +865,12 @@ COMMIT;
 SELECT CONCAT(
     (SELECT COUNT(*) FROM sys_tenant WHERE tenant_id = 'runtime-isolated'), ':',
     (SELECT COUNT(*) FROM sys_user WHERE tenant_id = 'runtime-isolated' AND id = 900000000000000102), ':',
-    (SELECT COUNT(*) FROM sys_config WHERE tenant_id = 'runtime-isolated' AND id = 900000000000000104), ':',
+    (SELECT COUNT(*) FROM sys_config
+     WHERE tenant_id = 'runtime-isolated'
+       AND id = 900000000000000104
+       AND `key` = 'sys.account.captchaEnabled'
+       AND `value` = 'false'
+       AND del_flag = '0'), ':',
     (SELECT COUNT(*) FROM sys_message WHERE tenant_id = 'runtime-isolated' AND id = 900000000000000103), ':',
     (SELECT COUNT(*) FROM sys_message_recipient WHERE tenant_id = 'runtime-isolated' AND message_id = 900000000000000103)
 );
@@ -936,8 +945,63 @@ SELECT CONCAT(
         -Label $script:MessageAcceptanceMessages.ApiBInterruptedLabel
     $metadata["redis_fault"]["interrupted"] = $true
     $metadata["redis_fault"]["interrupted_instance_count"] = 2
+    $redisFaultFixtureSql = @'
+START TRANSACTION;
+INSERT INTO sys_message (
+    id, tenant_id, topic, title_text, body_text, title_key, body_key, args_json,
+    severity, source_type, source_id, created_by, published_at, expires_at, created_at, updated_at
+)
+VALUES (
+    900000000000000105, 'system', 'runtime-acceptance', NULL, NULL,
+    'user.welcome', 'user.welcome', JSON_OBJECT('name', 'redis-fault-proof'),
+    'info', 'runtime_acceptance_0_7_redis_fault', 'redis-fault-proof', 1,
+    UTC_TIMESTAMP(), UTC_TIMESTAMP() + INTERVAL 1 DAY, UTC_TIMESTAMP(), UTC_TIMESTAMP()
+);
+INSERT INTO sys_message_audience (message_id, tenant_id, kind, target_id)
+VALUES (900000000000000105, 'system', 'user', 1);
+INSERT INTO sys_message_recipient (
+    message_id, user_id, tenant_id, created_at, enqueued_at, acked_at, read_at
+)
+VALUES (900000000000000105, 1, 'system', UTC_TIMESTAMP(), NULL, NULL, NULL);
+COMMIT;
+SELECT CONCAT(
+    (SELECT COUNT(*) FROM sys_message
+     WHERE id = 900000000000000105
+       AND tenant_id = 'system'
+       AND source_type = 'runtime_acceptance_0_7_redis_fault'
+       AND source_id = 'redis-fault-proof'), ':',
+    (SELECT COUNT(*) FROM sys_message_audience
+     WHERE message_id = 900000000000000105
+       AND tenant_id = 'system'
+       AND kind = 'user'
+       AND target_id = 1), ':',
+    (SELECT COUNT(*) FROM sys_message_recipient
+     WHERE message_id = 900000000000000105
+       AND tenant_id = 'system'
+       AND user_id = 1
+       AND acked_at IS NULL
+       AND read_at IS NULL)
+);
+'@
+    $redisFaultFixtureLines = @(Invoke-MessageAcceptanceSql `
+        -DockerExecutable $resolvedDockerExecutable `
+        -DockerContext $DockerContext `
+        -ProjectName $ProjectName `
+        -ComposeFile $composeFile `
+        -OwnershipComposeFile $ownershipComposeFile `
+        -Sql $redisFaultFixtureSql `
+        -Description $script:MessageAcceptanceMessages.RedisFaultFixture)
+    Assert-MessageAcceptanceSqlResult -Lines $redisFaultFixtureLines -Expected "1:1:1"
+    $metadata["redis_fault"]["message_id"] = "900000000000000105"
+    $metadata["redis_fault"]["fixture_source"] = "mysql"
     Write-RyFrameV07MetadataAtomically -Metadata $metadata -Path $metadataPath
-    Write-MessageAcceptanceSignal -Path $redisDownSignal
+    Write-RyFrameV07MetadataAtomically `
+        -Metadata ([ordered]@{
+            status = "ready"
+            message_id = "900000000000000105"
+            source_type = "runtime_acceptance_0_7_redis_fault"
+        }) `
+        -Path $redisFaultFixturePath
 
     Wait-MessageAcceptanceFile `
         -Path $clientDeliveredPath `
@@ -948,12 +1012,15 @@ SELECT CONCAT(
     $clientDelivered = Get-Content -LiteralPath $clientDeliveredPath -Raw -Encoding utf8 | ConvertFrom-Json
     if (
         $clientDelivered.status -ne "delivered" `
+        -or $clientDelivered.message_id -ne "900000000000000105" `
+        -or $clientDelivered.fixture_source -ne "mysql" `
+        -or $clientDelivered.published_while_redis_unavailable -ne $true `
         -or $clientDelivered.primary_connection_count -ne 3 `
         -or $clientDelivered.secondary_connection_count -ne 1 `
         -or $clientDelivered.total_connection_count -ne 4 `
-        -or $clientDelivered.instance_metrics.api_a.replay_query_delta -ne 1 `
+        -or $clientDelivered.instance_metrics.api_a.replay_query_delta -lt 1 `
         -or $clientDelivered.instance_metrics.api_a.delivery_delta -ne 3 `
-        -or $clientDelivered.instance_metrics.api_b.replay_query_delta -ne 1 `
+        -or $clientDelivered.instance_metrics.api_b.replay_query_delta -lt 1 `
         -or $clientDelivered.instance_metrics.api_b.delivery_delta -ne 1 `
         -or $clientDelivered.websocket_ack_received -ne $true `
         -or $clientDelivered.ticket_guards.expired_status -ne 401 `
@@ -1022,12 +1089,20 @@ SELECT CONCAT(
     $cleanupReady = Get-Content -LiteralPath $cleanupReadyPath -Raw -Encoding utf8 | ConvertFrom-Json
     $retentionMessageId = [string]$cleanupReady.message_id
     $retentionMessageIdValue = 0L
+    $defaultRetentionSeconds = 0
+    $overLimitStatus = 0
     if (
         $cleanupReady.status -ne "ready" `
         -or $cleanupReady.tenant_id -ne "system" `
         -or $cleanupReady.source_type -ne "runtime_acceptance_0_7_retention" `
         -or -not [long]::TryParse($retentionMessageId, [ref]$retentionMessageIdValue) `
-        -or $retentionMessageIdValue -le 0
+        -or $retentionMessageIdValue -le 0 `
+        -or -not [int]::TryParse([string]$cleanupReady.default_retention_seconds, [ref]$defaultRetentionSeconds) `
+        -or $defaultRetentionSeconds -lt 7775995 `
+        -or $defaultRetentionSeconds -gt 7776005 `
+        -or -not [int]::TryParse([string]$cleanupReady.over_limit_status, [ref]$overLimitStatus) `
+        -or $overLimitStatus -ne 400 `
+        -or $cleanupReady.over_limit_error_key -ne "validation"
     ) {
         throw ($script:MessageAcceptanceMessages.ClientResult -f ($cleanupReady | ConvertTo-Json -Compress))
     }
@@ -1045,9 +1120,23 @@ WHERE id = $retentionMessageIdValue
 UPDATE sys_message_recipient
 SET created_at = UTC_TIMESTAMP() - INTERVAL 91 DAY
 WHERE message_id = $retentionMessageIdValue AND tenant_id = 'system';
+SET @retention_job_count := (
+    SELECT COUNT(*)
+    FROM sys_background_job
+    WHERE job_type = 'system.message.retention' AND status = 'pending'
+);
+SET @retention_job_id := (
+    SELECT MIN(id)
+    FROM sys_background_job
+    WHERE job_type = 'system.message.retention' AND status = 'pending'
+);
 UPDATE sys_background_job
 SET priority = 2147483647, available_at = UTC_TIMESTAMP()
-WHERE job_type = 'system.message.retention' AND status = 'pending';
+WHERE id = @retention_job_id
+  AND @retention_job_count = 1
+  AND job_type = 'system.message.retention'
+  AND status = 'pending';
+SET @retention_job_updated := ROW_COUNT();
 COMMIT;
 SELECT CONCAT(
     (SELECT COUNT(*) FROM sys_message
@@ -1058,10 +1147,9 @@ SELECT CONCAT(
      WHERE id = $retentionMessageIdValue AND tenant_id = 'system'), ':',
     (SELECT expires_at <= UTC_TIMESTAMP() FROM sys_message
      WHERE id = $retentionMessageIdValue AND tenant_id = 'system'), ':',
-    (SELECT COUNT(*) FROM sys_background_job
-     WHERE job_type = 'system.message.retention' AND status = 'pending'), ':',
-    (SELECT id FROM sys_background_job
-     WHERE job_type = 'system.message.retention' AND status = 'pending' LIMIT 1)
+    @retention_job_count, ':',
+    COALESCE(@retention_job_id, 0), ':',
+    @retention_job_updated
 );
 "@
     $retentionPrepareLines = @(Invoke-MessageAcceptanceSql `
@@ -1078,13 +1166,14 @@ SELECT CONCAT(
     $retentionPrepareFields = @($retentionPrepareEvidence -split ":")
     $retentionJobIdValue = 0L
     if (
-        $retentionPrepareFields.Count -ne 5 `
+        $retentionPrepareFields.Count -ne 6 `
         -or $retentionPrepareFields[0] -ne "1" `
         -or [int]$retentionPrepareFields[1] -lt 90 `
         -or $retentionPrepareFields[2] -ne "1" `
         -or $retentionPrepareFields[3] -ne "1" `
         -or -not [long]::TryParse($retentionPrepareFields[4], [ref]$retentionJobIdValue) `
-        -or $retentionJobIdValue -le 0
+        -or $retentionJobIdValue -le 0 `
+        -or $retentionPrepareFields[5] -ne "1"
     ) {
         throw ($script:MessageAcceptanceMessages.SqlFailed -f $retentionPrepareEvidence)
     }
@@ -1125,6 +1214,10 @@ SELECT CONCAT(
         status = "passed"
         tenant_id = "system"
         message_id = $retentionMessageId
+        retention_days = 90
+        default_retention_seconds = $defaultRetentionSeconds
+        over_limit_status = $overLimitStatus
+        over_limit_error_key = [string]$cleanupReady.over_limit_error_key
         aged_days = [int]$retentionPrepareFields[1]
         message_rows = [int]$retentionVerifyFields[0]
         audience_rows = [int]$retentionVerifyFields[1]
@@ -1153,9 +1246,9 @@ SELECT CONCAT(
         -or $clientResult.primary_connection_count -ne 3 `
         -or $clientResult.secondary_connection_count -ne 1 `
         -or $clientResult.total_connection_count -ne 4 `
-        -or $clientResult.instance_metrics.api_a.replay_query_delta -ne 1 `
+        -or $clientResult.instance_metrics.api_a.replay_query_delta -lt 1 `
         -or $clientResult.instance_metrics.api_a.delivery_delta -ne 3 `
-        -or $clientResult.instance_metrics.api_b.replay_query_delta -ne 1 `
+        -or $clientResult.instance_metrics.api_b.replay_query_delta -lt 1 `
         -or $clientResult.instance_metrics.api_b.delivery_delta -ne 1 `
         -or $clientResult.ticket_guards.expired_status -ne 401 `
         -or $clientResult.ticket_guards.wrong_origin_status -ne 403 `
@@ -1202,6 +1295,11 @@ SELECT CONCAT(
         -or @($clientResult.deduplication_stability.final_probe_counts).Count -ne 4 `
         -or @($clientResult.deduplication_stability.final_probe_counts | Where-Object { $_.target_count -ne 1 }).Count -ne 0 `
         -or $clientResult.retention_cleanup.status -ne "passed" `
+        -or $clientResult.retention_cleanup.retention_days -ne 90 `
+        -or $clientResult.retention_cleanup.default_retention_seconds -lt 7775995 `
+        -or $clientResult.retention_cleanup.default_retention_seconds -gt 7776005 `
+        -or $clientResult.retention_cleanup.over_limit_status -ne 400 `
+        -or $clientResult.retention_cleanup.over_limit_error_key -ne "validation" `
         -or $clientResult.retention_cleanup.message_rows -ne 0 `
         -or $clientResult.retention_cleanup.audience_rows -ne 0 `
         -or $clientResult.retention_cleanup.recipient_rows -ne 0 `

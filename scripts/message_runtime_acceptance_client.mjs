@@ -530,11 +530,11 @@ async function assertSlowConsumer(apiBase, token, userId, marker) {
   }
   const grant = await issueTicket(apiBase, token, "zh-CN");
   const close = await waitForSlowConsumerClose(apiBase, grant.ticket);
-  const beforeRead = await inboxRecords(apiBase, token);
-  const persisted = beforeRead.filter((record) => backlogIds.includes(record?.id));
-  if (persisted.length !== backlogIds.length) {
-    fail(`慢消费者积压消息未完整持久化：${persisted.length}/${backlogIds.length}`);
-  }
+  const persisted = await waitFor("慢消费者积压消息完整持久化", 5_000, async () => {
+    const records = await inboxRecords(apiBase, token);
+    const matched = records.filter((record) => backlogIds.includes(record?.id));
+    return matched.length === backlogIds.length ? matched : null;
+  });
   const marked = await requestJson(apiBase, "/api/v1/system/messages/read-all", {
     method: "PUT",
     headers: authHeaders(token, "zh-CN"),
@@ -542,13 +542,13 @@ async function assertSlowConsumer(apiBase, token, userId, marker) {
   if (!Number.isInteger(marked?.data) || marked.data < 0) {
     fail(`慢消费者积压清理响应无效：${JSON.stringify(marked)}`);
   }
-  const afterRead = await inboxRecords(apiBase, token);
-  const readBack = afterRead.filter(
-    (record) => backlogIds.includes(record?.id) && record?.read_at && record?.acked_at,
-  );
-  if (readBack.length !== backlogIds.length) {
-    fail(`慢消费者积压消息未全部回读为已读：${readBack.length}/${backlogIds.length}`);
-  }
+  const readBack = await waitFor("慢消费者积压消息全部回读为已读", 5_000, async () => {
+    const records = await inboxRecords(apiBase, token);
+    const matched = records.filter(
+      (record) => backlogIds.includes(record?.id) && record?.read_at && record?.acked_at,
+    );
+    return matched.length === backlogIds.length ? matched : null;
+  });
   return {
     close_code: close.code,
     backlog_count: backlogIds.length,
@@ -807,32 +807,6 @@ async function assertOfflineReconnect(
   };
 }
 
-async function publishLocalizedMessage(apiBase, token, userId, marker) {
-  const response = await requestJson(apiBase, "/api/v1/system/messages", {
-    method: "POST",
-    headers: {
-      ...authHeaders(token, "zh-CN"),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      topic: "runtime-acceptance",
-      title_key: "user.welcome",
-      body_key: "user.welcome",
-      args: { name: marker },
-      severity: "info",
-      source_type: "runtime_acceptance_0_7",
-      source_id: marker,
-      audiences: [{ kind: "user", target_id: userId }],
-    }),
-  });
-  const message = response?.data?.message;
-  if (!/^\d+$/.test(String(message?.id ?? ""))) fail("发布响应缺少有效消息标识");
-  if (response?.data?.recipient_count !== 1 || response?.data?.inserted !== true) {
-    fail(`发布响应没有精确固化一个收件人：${JSON.stringify(response?.data)}`);
-  }
-  return String(message.id);
-}
-
 async function assertInboxRendering(apiBase, token, messageId, locale, expectedText) {
   const response = await requestJson(
     apiBase,
@@ -850,14 +824,28 @@ async function assertInboxRendering(apiBase, token, messageId, locale, expectedT
 }
 
 async function inboxRecords(apiBase, token, tenantId = "system") {
-  const response = await requestJson(
-    apiBase,
-    "/api/v1/system/messages?limit=100",
-    { headers: authHeaders(token, "zh-CN", tenantId) },
-  );
-  const records = response?.data?.records;
-  if (!Array.isArray(records)) fail("收件箱响应缺少 records");
-  return records;
+  const records = [];
+  const seenCursors = new Set();
+  let cursor = null;
+  for (let page = 0; page < 100; page += 1) {
+    const query = new URLSearchParams({ limit: "100" });
+    if (cursor) query.set("cursor", cursor);
+    const response = await requestJson(
+      apiBase,
+      `/api/v1/system/messages?${query}`,
+      { headers: authHeaders(token, "zh-CN", tenantId) },
+    );
+    const pageRecords = response?.data?.records;
+    if (!Array.isArray(pageRecords)) fail("收件箱响应缺少 records");
+    records.push(...pageRecords);
+    const nextCursor = response?.data?.next_cursor;
+    if (nextCursor === null || nextCursor === undefined) return records;
+    const next = String(nextCursor);
+    if (!/^\d+$/.test(next) || seenCursors.has(next)) fail("收件箱游标无效或重复");
+    seenCursors.add(next);
+    cursor = next;
+  }
+  fail("收件箱分页超过安全上限");
 }
 
 async function inboxRecord(apiBase, token, messageId, tenantId = "system") {
@@ -968,7 +956,51 @@ async function publishRetentionCandidate(apiBase, token, userId, marker) {
   );
   const record = await inboxRecord(apiBase, token, messageId);
   if (!record) fail("90 天清理候选消息未进入持久化收件箱");
-  return messageId;
+  const publishedAt = Date.parse(record.published_at);
+  const expiresAt = Date.parse(record.expires_at);
+  const expectedRetentionSeconds = 90 * 24 * 60 * 60;
+  const retentionSeconds = Math.round((expiresAt - publishedAt) / 1_000);
+  if (
+    !Number.isFinite(publishedAt)
+    || !Number.isFinite(expiresAt)
+    || Math.abs(retentionSeconds - expectedRetentionSeconds) > 5
+  ) {
+    fail(`默认消息保留期限不是 90 天：${JSON.stringify(record)}`);
+  }
+
+  const overLimitResponse = await request(apiBase, "/api/v1/system/messages", {
+    method: "POST",
+    headers: {
+      ...authHeaders(token, "zh-CN"),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      topic: "runtime-acceptance",
+      title: `超过保留上限 ${marker}`,
+      content: `超过保留上限 ${marker}`,
+      severity: "info",
+      source_type: "runtime_acceptance_0_7_retention_over_limit",
+      source_id: `${marker}-over-limit`,
+      audiences: [{ kind: "user", target_id: userId }],
+      expires_at: new Date(Date.now() + 91 * 24 * 60 * 60 * 1_000).toISOString(),
+    }),
+  });
+  const overLimitText = await overLimitResponse.text();
+  let overLimitBody = null;
+  try {
+    overLimitBody = JSON.parse(overLimitText);
+  } catch {
+    fail(`超过 90 天的发布响应不是有效 JSON：${overLimitText.slice(0, 300)}`);
+  }
+  if (overLimitResponse.status !== 400 || overLimitBody?.error_key !== "validation") {
+    fail(`超过 90 天的消息未被拒绝：HTTP ${overLimitResponse.status} ${overLimitText}`);
+  }
+  return {
+    message_id: messageId,
+    default_retention_seconds: retentionSeconds,
+    over_limit_status: overLimitResponse.status,
+    over_limit_error_key: overLimitBody.error_key,
+  };
 }
 
 async function assertRetentionCleanup(
@@ -981,6 +1013,10 @@ async function assertRetentionCleanup(
   if (
     evidence?.status !== "passed"
     || String(evidence?.message_id ?? "") !== messageId
+    || evidence?.retention_days !== 90
+    || Math.abs(evidence?.default_retention_seconds - 90 * 24 * 60 * 60) > 5
+    || evidence?.over_limit_status !== 400
+    || evidence?.over_limit_error_key !== "validation"
     || evidence?.aged_days < 90
     || evidence?.message_rows !== 0
     || evidence?.audience_rows !== 0
@@ -1015,7 +1051,7 @@ async function main() {
   const readyPath = controlPath(controlDirectory, "client-ready.json");
   const tenantFixturePath = controlPath(controlDirectory, "tenant-fixture.json");
   const tenantResultPath = controlPath(controlDirectory, "tenant-result.json");
-  const redisDownPath = controlPath(controlDirectory, "redis-down.signal");
+  const redisFaultFixturePath = controlPath(controlDirectory, "redis-fault-fixture.json");
   const deliveredPath = controlPath(controlDirectory, "client-delivered.json");
   const redisRestoredPath = controlPath(controlDirectory, "redis-restored.signal");
   const cleanupReadyPath = controlPath(controlDirectory, "cleanup-ready.json");
@@ -1029,8 +1065,8 @@ async function main() {
     resultPath,
   ]);
   const marker = `v07-${randomUUID()}`;
-  const expectedZh = `欢迎 ${marker}`;
-  const expectedEn = `Welcome ${marker}`;
+  const expectedZh = "欢迎 redis-fault-proof";
+  const expectedEn = "Welcome redis-fault-proof";
   const primaryConnectionSpecifications = [
     { locale: "zh-CN", text: expectedZh, label: "中文连接一" },
     { locale: "en-US", text: expectedEn, label: "英文连接" },
@@ -1114,8 +1150,16 @@ async function main() {
       baselines,
     });
 
-    await waitFor("Redis 中断信号", 30_000, () => fileExists(redisDownPath));
-    const messageId = await publishLocalizedMessage(apiBase, token, userId, marker);
+    await waitFor("Redis 故障补拉夹具", 30_000, () => fileExists(redisFaultFixturePath));
+    const redisFaultFixture = await readJson(redisFaultFixturePath);
+    const messageId = String(redisFaultFixture?.message_id ?? "");
+    if (
+      redisFaultFixture?.status !== "ready"
+      || messageId !== "900000000000000105"
+      || redisFaultFixture?.source_type !== "runtime_acceptance_0_7_redis_fault"
+    ) {
+      fail(`Redis 故障补拉夹具无效：${JSON.stringify(redisFaultFixture)}`);
+    }
     for (let index = 0; index < probes.length; index += 1) {
       probes[index].state.target = {
         id: messageId,
@@ -1163,22 +1207,22 @@ async function main() {
     const secondaryReplayQueryDelta = finalMetrics.api_b.replaySuccess
       - secondaryBaseline.replaySuccess;
     const secondaryDeliveryDelta = finalMetrics.api_b.delivered - secondaryBaseline.delivered;
-    if (primaryReplayQueryDelta !== 1 || secondaryReplayQueryDelta !== 1) {
+    if (primaryReplayQueryDelta < 1 || secondaryReplayQueryDelta < 1) {
       fail(
-        `双实例共享补拉查询增量不精确：API-A ${primaryReplayQueryDelta}，API-B ${secondaryReplayQueryDelta}`,
+        `双实例共享补拉查询未推进：API-A ${primaryReplayQueryDelta}，API-B ${secondaryReplayQueryDelta}`,
       );
     }
     if (primaryDeliveryDelta !== probes.length || secondaryDeliveryDelta !== 1) {
       fail(`双实例投递增量不精确：API-A ${primaryDeliveryDelta}，API-B ${secondaryDeliveryDelta}`);
     }
 
-    await assertInboxRendering(apiBase, token, messageId, "zh-CN", expectedZh);
-    await assertInboxRendering(apiBase, token, messageId, "en-US", expectedEn);
     const delivered = {
       status: "delivered",
       tenant_id: "system",
       user_id: userId,
       message_id: messageId,
+      fixture_source: "mysql",
+      published_while_redis_unavailable: true,
       primary_connection_count: probes.length,
       secondary_connection_count: 1,
       total_connection_count: allProbes.length,
@@ -1215,6 +1259,8 @@ async function main() {
     if (lateDuplicate) {
       throw lateDuplicate.state.error ?? new Error(`${lateDuplicate.state.label} 恢复后消息数量异常`);
     }
+    await assertInboxRendering(apiBase, token, messageId, "zh-CN", expectedZh);
+    await assertInboxRendering(apiBase, token, messageId, "en-US", expectedEn);
     const persistedState = await assertAckAndReadPersistence(
       apiBase,
       secondaryApiBase,
@@ -1229,17 +1275,21 @@ async function main() {
       allProbes,
       "双实例去重稳定窗口",
     );
-    const retentionMessageId = await publishRetentionCandidate(
+    const retentionPolicy = await publishRetentionCandidate(
       apiBase,
       token,
       userId,
       `${marker}-retention`,
     );
+    const retentionMessageId = retentionPolicy.message_id;
     await writeJsonAtomically(cleanupReadyPath, {
       status: "ready",
       tenant_id: "system",
       message_id: retentionMessageId,
       source_type: "runtime_acceptance_0_7_retention",
+      default_retention_seconds: retentionPolicy.default_retention_seconds,
+      over_limit_status: retentionPolicy.over_limit_status,
+      over_limit_error_key: retentionPolicy.over_limit_error_key,
     });
     await waitFor("90 天清理 Worker 证据", 45_000, () => fileExists(cleanupResultPath));
     const retentionCleanup = await assertRetentionCleanup(

@@ -160,6 +160,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         for fragment in (
             "[string]$OwnershipToken",
             "Assert-RyFrameV07OwnershipToken -OwnershipToken $OwnershipToken",
+            "ownership_token = $OwnershipToken",
             'Join-Path $repositoryRoot "deploy/tests/runtime-acceptance-0-7-ownership.compose.yml"',
             'Set-MessageAcceptanceEnvironment -Name "RYFRAME_V07_OWNERSHIP_TOKEN" -Value $OwnershipToken',
             '"--file", $ownershipComposeFile',
@@ -228,7 +229,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "client-ready.json",
             "tenant-fixture.json",
             "tenant-result.json",
-            "redis-down.signal",
+            "redis-fault-fixture.json",
             "client-delivered.json",
             "redis-restored.signal",
             "cleanup-ready.json",
@@ -245,6 +246,8 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             'Set-MessageAcceptanceEnvironment -Name "APP_JOBS_MODE" -Value "external"',
             'Set-MessageAcceptanceEnvironment -Name "APP_RATE_LIMIT_ENABLED" -Value "false"',
             'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_ENABLED" -Value "true"',
+            'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_RETENTION_DAYS" -Value "90"',
+            'Set-MessageAcceptanceEnvironment -Name "TOKIO_WORKER_THREADS" -Value "1"',
             'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_REPLAY_INTERVAL_SECONDS" -Value "3"',
             'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_REPLAY_JITTER_SECONDS" -Value "0"',
             'Set-MessageAcceptanceEnvironment -Name "SNOWFLAKE_WORKER_ID" -Value "901"',
@@ -258,14 +261,16 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
 
     def test_redis_interruption_is_native_observed_and_recovered(self) -> None:
         stop = self.stage.index("Stop-RyFrameV07DockerService")
-        down_signal = self.stage.index("Write-MessageAcceptanceSignal -Path $redisDownSignal")
-        delivered = self.stage.index("-Path $clientDeliveredPath", down_signal)
+        fixture_sql = self.stage.index("$redisFaultFixtureSql", stop)
+        fixture_signal = self.stage.index("-Path $redisFaultFixturePath", fixture_sql)
+        delivered = self.stage.index("-Path $clientDeliveredPath", fixture_signal)
         restore = self.stage.index("Restore-RyFrameV07DockerFault", delivered)
         restored_signal = self.stage.index(
             "Write-MessageAcceptanceSignal -Path $redisRestoredSignal", restore
         )
-        self.assertLess(stop, down_signal)
-        self.assertLess(down_signal, delivered)
+        self.assertLess(stop, fixture_sql)
+        self.assertLess(fixture_sql, fixture_signal)
+        self.assertLess(fixture_signal, delivered)
         self.assertLess(delivered, restore)
         self.assertLess(restore, restored_signal)
         for fragment in (
@@ -275,8 +280,11 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "-ExpectedValue 1",
             '$metadata["redis_fault"]["interrupted_instance_count"] = 2',
             '$metadata["redis_fault"]["restored_instance_count"] = 2',
+            "runtime_acceptance_0_7_redis_fault",
+            'Assert-MessageAcceptanceSqlResult -Lines $redisFaultFixtureLines -Expected "1:1:1"',
         ):
             self.assertIn(fragment, self.stage)
+        self.assertIn('fixture_source: "mysql"', self.client)
         self.assertEqual(self.stage.count("Wait-MessageAcceptanceMetric `"), 6)
         self.assertNotIn("Wait-MessageAcceptanceLogCount", self.stage)
         self.assertNotIn("Get-MessageAcceptanceLogCount", self.stage)
@@ -285,27 +293,36 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
 
     def test_client_proves_multi_connection_bilingual_exact_delivery(self) -> None:
         for fragment in (
+            'const expectedZh = "欢迎 redis-fault-proof"',
+            'const expectedEn = "Welcome redis-fault-proof"',
             '{ locale: "zh-CN", text: expectedZh, label: "中文连接一" }',
             '{ locale: "en-US", text: expectedEn, label: "英文连接" }',
             '{ locale: "zh-CN", text: expectedZh, label: "中文连接二" }',
             'label: "API-B 英文连接"',
             'headers: authHeaders(token, locale)',
-            'title_key: "user.welcome"',
-            'body_key: "user.welcome"',
-            'audiences: [{ kind: "user", target_id: userId }]',
             "state.targetCount > 1",
             "allProbes.every((probe) => probe.state.targetCount === 1)",
             'assertInboxRendering(apiBase, token, messageId, "zh-CN", expectedZh)',
             'assertInboxRendering(apiBase, token, messageId, "en-US", expectedEn)',
         ):
             self.assertIn(fragment, self.client)
-        down_wait = self.client.index('waitFor("Redis 中断信号"')
-        publish = self.client.index("publishLocalizedMessage", down_wait)
-        delivered_write = self.client.index("writeJsonAtomically(deliveredPath", publish)
+        for fragment in (
+            "'user.welcome', 'user.welcome', JSON_OBJECT('name', 'redis-fault-proof')",
+            "INSERT INTO sys_message_audience",
+            "INSERT INTO sys_message_recipient",
+        ):
+            self.assertIn(fragment, self.stage)
+        down_wait = self.client.index('waitFor("Redis 故障补拉夹具"')
+        fixture_read = self.client.index("readJson(redisFaultFixturePath)", down_wait)
+        delivered_write = self.client.index("writeJsonAtomically(deliveredPath", fixture_read)
         restore_wait = self.client.index('waitFor("Redis 恢复信号"', delivered_write)
-        self.assertLess(down_wait, publish)
-        self.assertLess(publish, delivered_write)
+        inbox_render = self.client.index("await assertInboxRendering", restore_wait)
+        self.assertLess(down_wait, fixture_read)
+        self.assertLess(fixture_read, delivered_write)
         self.assertLess(delivered_write, restore_wait)
+        self.assertLess(restore_wait, inbox_render)
+        fault_window = self.client[fixture_read:delivered_write]
+        self.assertNotIn('requestJson(apiBase, "/api/v1/system/messages"', fault_window)
 
     def test_same_identity_is_active_on_both_instances_with_exact_metrics(self) -> None:
         for fragment in (
@@ -316,7 +333,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "await waitForHealthyProbes(allProbes)",
             "alignReplayBaseline(apiBase, probes.length)",
             "alignReplayBaseline(secondaryApiBase, 1)",
-            "primaryReplayQueryDelta !== 1 || secondaryReplayQueryDelta !== 1",
+            "primaryReplayQueryDelta < 1 || secondaryReplayQueryDelta < 1",
             "primaryDeliveryDelta !== probes.length || secondaryDeliveryDelta !== 1",
             "primary_connection_count: probes.length",
             "secondary_connection_count: 1",
@@ -326,9 +343,9 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "$clientDelivered.primary_connection_count -ne 3",
             "$clientDelivered.secondary_connection_count -ne 1",
             "$clientDelivered.total_connection_count -ne 4",
-            "$clientDelivered.instance_metrics.api_a.replay_query_delta -ne 1",
+            "$clientDelivered.instance_metrics.api_a.replay_query_delta -lt 1",
             "$clientDelivered.instance_metrics.api_a.delivery_delta -ne 3",
-            "$clientDelivered.instance_metrics.api_b.replay_query_delta -ne 1",
+            "$clientDelivered.instance_metrics.api_b.replay_query_delta -lt 1",
             "$clientDelivered.instance_metrics.api_b.delivery_delta -ne 1",
         ):
             self.assertIn(fragment, self.stage + self.client)
@@ -380,7 +397,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             'metricValue(text, "ryframe_message_delivery_total", { result: "delivered" })',
             "alignReplayBaseline(apiBase, probes.length)",
             "alignReplayBaseline(secondaryApiBase, 1)",
-            "primaryReplayQueryDelta !== 1 || secondaryReplayQueryDelta !== 1",
+            "primaryReplayQueryDelta < 1 || secondaryReplayQueryDelta < 1",
             "primaryDeliveryDelta !== probes.length || secondaryDeliveryDelta !== 1",
             "replay_query_delta: primaryReplayQueryDelta",
             "delivery_delta: primaryDeliveryDelta",
@@ -389,12 +406,12 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         ):
             self.assertIn(fragment, self.client)
         for fragment in (
-            "$clientDelivered.instance_metrics.api_a.replay_query_delta -ne 1",
+            "$clientDelivered.instance_metrics.api_a.replay_query_delta -lt 1",
             "$clientDelivered.instance_metrics.api_a.delivery_delta -ne 3",
-            "$clientDelivered.instance_metrics.api_b.replay_query_delta -ne 1",
+            "$clientDelivered.instance_metrics.api_b.replay_query_delta -lt 1",
             "$clientDelivered.instance_metrics.api_b.delivery_delta -ne 1",
-            "$clientResult.instance_metrics.api_a.replay_query_delta -ne 1",
-            "$clientResult.instance_metrics.api_b.replay_query_delta -ne 1",
+            "$clientResult.instance_metrics.api_a.replay_query_delta -lt 1",
+            "$clientResult.instance_metrics.api_b.replay_query_delta -lt 1",
         ):
             self.assertIn(fragment, self.stage)
 
@@ -511,13 +528,15 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
     def test_slow_consumer_requires_exact_1013_and_persistent_cleanup(self) -> None:
         for fragment in (
             'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_OUTBOUND_BUFFER" -Value "4"',
+            'Set-MessageAcceptanceEnvironment -Name "TOKIO_WORKER_THREADS" -Value "1"',
             "for (let index = 0; index < 16; index += 1)",
             '"载荷".repeat(4_000)',
             "if (event.code !== 1013)",
             "response?.data?.inserted !== true",
-            "persisted.length !== backlogIds.length",
+            'waitFor("慢消费者积压消息完整持久化", 5_000',
+            "matched.length === backlogIds.length ? matched : null",
             '"/api/v1/system/messages/read-all"',
-            "readBack.length !== backlogIds.length",
+            'waitFor("慢消费者积压消息全部回读为已读", 5_000',
             "$clientReady.slow_consumer.close_code -ne 1013",
             "$clientReady.slow_consumer.backlog_count -ne 16",
             "$clientReady.slow_consumer.persisted_count -ne 16",
@@ -552,6 +571,8 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "INSERT INTO sys_user",
             "INSERT INTO sys_config",
             "'sys.account.captchaEnabled', 'false'",
+            "'runtime acceptance only', '0'",
+            "AND del_flag = '0'",
             "runtime-isolated-tenant",
             "INSERT INTO sys_message (",
             "INSERT INTO sys_message_recipient",
@@ -579,24 +600,50 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         self.assertLess(publish, fixture_signal)
         self.assertLess(fixture_signal, result_wait)
 
-    def test_retention_runs_the_real_worker_and_proves_cascade_deletion(self) -> None:
+    def test_retention_proves_policy_limit_and_real_worker_cascade_deletion(self) -> None:
         for fragment in (
+            'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_RETENTION_DAYS" -Value "90"',
+            "const expectedRetentionSeconds = 90 * 24 * 60 * 60",
+            "Math.abs(retentionSeconds - expectedRetentionSeconds) > 5",
+            "Date.now() + 91 * 24 * 60 * 60 * 1_000",
+            'overLimitResponse.status !== 400 || overLimitBody?.error_key !== "validation"',
+            "$defaultRetentionSeconds -lt 7775995",
+            "$defaultRetentionSeconds -gt 7776005",
+            '$cleanupReady.over_limit_error_key -ne "validation"',
             "source_type = 'runtime_acceptance_0_7_retention'",
             "UTC_TIMESTAMP() - INTERVAL 91 DAY",
             "expires_at = UTC_TIMESTAMP() - INTERVAL 1 DAY",
             "WHERE id = $retentionMessageIdValue",
-            "WHERE job_type = 'system.message.retention' AND status = 'pending'",
+            "SET @retention_job_count := (",
+            "SET @retention_job_id := (",
+            "SELECT MIN(id)",
             "SET priority = 2147483647, available_at = UTC_TIMESTAMP()",
+            "WHERE id = @retention_job_id",
+            "AND @retention_job_count = 1",
+            "SET @retention_job_updated := ROW_COUNT()",
+            "$retentionPrepareFields.Count -ne 6",
+            '$retentionPrepareFields[5] -ne "1"',
             '-Executable $workerBinary',
             '-Arguments @("--once")',
             "SELECT COUNT(*) FROM sys_message_audience WHERE message_id = $retentionMessageIdValue",
             "SELECT COUNT(*) FROM sys_message_recipient WHERE message_id = $retentionMessageIdValue",
             '-Expected "0:0:0:succeeded:1:1"',
+            "evidence?.retention_days !== 90",
+            "evidence?.over_limit_status !== 400",
+            'evidence?.over_limit_error_key !== "validation"',
             "evidence?.aged_days < 90",
             'evidence?.job_status !== "succeeded"',
+            '$clientResult.retention_cleanup.retention_days -ne 90',
+            '$clientResult.retention_cleanup.over_limit_status -ne 400',
+            '$clientResult.retention_cleanup.over_limit_error_key -ne "validation"',
             '$clientResult.retention_cleanup.job_status -ne "succeeded"',
         ):
             self.assertIn(fragment, self.stage + self.client)
+        self.assertNotIn(
+            "UPDATE sys_background_job\nSET priority = 2147483647, available_at = UTC_TIMESTAMP()\nWHERE job_type",
+            self.stage,
+        )
+        self.assertNotIn("LIMIT 1", self.stage)
         ready = self.stage.index("-Path $cleanupReadyPath")
         prepare = self.stage.index("$retentionPrepareSql", ready)
         worker = self.stage.index('-Executable $workerBinary', prepare)

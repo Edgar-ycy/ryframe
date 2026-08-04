@@ -10,6 +10,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ENTRY = ROOT / "scripts" / "runtime_acceptance_0_7.ps1"
 SUPPORT = ROOT / "scripts" / "runtime_acceptance_0_7_support.ps1"
+SUPPORT_SELF_TEST = ROOT / "scripts" / "tests" / "runtime_acceptance_0_7_support_test.ps1"
+STAGE_SCRIPTS = tuple(
+    ROOT / "scripts" / name
+    for name in (
+        "runtime_acceptance_0_7.ps1",
+        "runtime_acceptance_0_7_support.ps1",
+        "runtime_acceptance_0_7_message.ps1",
+        "runtime_acceptance_0_7_replica.ps1",
+        "runtime_acceptance_0_7_otel.ps1",
+    )
+)
 
 
 class RuntimeAcceptanceV07PolicyTest(unittest.TestCase):
@@ -17,6 +28,11 @@ class RuntimeAcceptanceV07PolicyTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.entry = ENTRY.read_text(encoding="utf-8")
         cls.support = SUPPORT.read_text(encoding="utf-8")
+
+    def test_windows_powershell_scripts_remain_ascii_only(self) -> None:
+        for script in STAGE_SCRIPTS:
+            with self.subTest(script=script.name):
+                script.read_text(encoding="utf-8").encode("ascii")
 
     def test_entry_requires_exact_opt_in_before_side_effects(self) -> None:
         confirmation = '$requiredConfirmation = "RUN-RYFRAME-V0-7-ACCEPTANCE"'
@@ -179,7 +195,7 @@ class RuntimeAcceptanceV07PolicyTest(unittest.TestCase):
             self.assertIn(f"function {function_name}", self.support)
 
         for command in (
-            '@("container", "stop", "--time", "10", $containerId)',
+            '@("container", "stop", "--timeout", "10", $containerId)',
             '@("container", "start", $containerId)',
             '@("network", "disconnect", $networkId, $containerId)',
             '@("network", "connect", $networkId, $containerId)',
@@ -226,6 +242,7 @@ class RuntimeAcceptanceV07PolicyTest(unittest.TestCase):
             "$startInfo.UseShellExecute = $false",
             "$startInfo.RedirectStandardOutput = $true",
             "$startInfo.RedirectStandardError = $true",
+            "[AllowEmptyString()]",
             "ConvertTo-RyFrameV07ProcessArgument",
             "$process.StandardOutput.ReadToEndAsync()",
             "$process.StandardError.ReadToEndAsync()",
@@ -234,6 +251,47 @@ class RuntimeAcceptanceV07PolicyTest(unittest.TestCase):
         ):
             self.assertIn(fragment, function_source)
         self.assertNotIn("& $DockerExecutable", self.support)
+
+    def test_support_helpers_run_in_available_powershell(self) -> None:
+        self_test = SUPPORT_SELF_TEST.read_text(encoding="utf-8")
+        for fragment in (
+            'node.Name -eq $functionName',
+            '"ConvertTo-RyFrameV07ProcessArgument"',
+            '"Invoke-RyFrameV07ProcessLines"',
+            '"Write-RyFrameV07MetadataAtomically"',
+            'Write-RyFrameV07MetadataAtomically -Metadata $firstMetadata -Path $metadataPath',
+            'Write-RyFrameV07MetadataAtomically -Metadata $secondMetadata -Path $metadataPath',
+            '"contains spaces"',
+            "'quote \"inside\"'",
+            '"trailing\\"',
+            '$actualArguments[$index] -cne $expectedArguments[$index]',
+        ):
+            self.assertIn(fragment, self_test)
+
+        executable_name = "powershell.exe" if os.name == "nt" else "pwsh"
+        powershell = shutil.which(executable_name)
+        if powershell is None:
+            self.skipTest(f"未找到 {executable_name}，跳过 v0.7 支持函数动态回归")
+
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(SUPPORT_SELF_TEST),
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("v0.7 support self-test passed", output)
 
     def test_cleanup_and_primary_failure_have_deterministic_precedence(self) -> None:
         resolver_start = self.entry.index("function Resolve-RyFrameV07TerminalStatus")
