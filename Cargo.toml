@@ -42,7 +42,7 @@ rand = "0.10"
 rand_core = { version = "0.10" }
 serde = "1"
 serde_json = "1"
-jsonwebtoken = { version = "10.4", default-features = false }
+jsonwebtoken = { version = "11.0", default-features = false }
 #密码哈希
 base64 = "0.22"
 argon2 = "0.5"
