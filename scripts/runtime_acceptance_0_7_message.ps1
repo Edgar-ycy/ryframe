@@ -700,6 +700,7 @@ try {
     Set-MessageAcceptanceEnvironment -Name "APP_OBJECT_STORAGE_REGION" -Value "us-east-1"
     Set-MessageAcceptanceEnvironment -Name "APP_JOBS_MODE" -Value "external"
     Set-MessageAcceptanceEnvironment -Name "APP_AUTH_JWT_SECRET" -Value "ryframe-v07-message-acceptance-jwt-secret-2026"
+    Set-MessageAcceptanceEnvironment -Name "APP_RATE_LIMIT_ENABLED" -Value "false"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_ENABLED" -Value "true"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_TICKET_TTL_SECONDS" -Value "2"
     Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_MAX_CONNECTIONS_PER_USER" -Value "5"

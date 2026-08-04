@@ -243,6 +243,7 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         for fragment in (
             'Set-MessageAcceptanceEnvironment -Name "APP_REDIS_MODE" -Value "optional"',
             'Set-MessageAcceptanceEnvironment -Name "APP_JOBS_MODE" -Value "external"',
+            'Set-MessageAcceptanceEnvironment -Name "APP_RATE_LIMIT_ENABLED" -Value "false"',
             'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_ENABLED" -Value "true"',
             'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_REPLAY_INTERVAL_SECONDS" -Value "3"',
             'Set-MessageAcceptanceEnvironment -Name "APP_MESSAGING_REPLAY_JITTER_SECONDS" -Value "0"',
