@@ -71,6 +71,9 @@ const MINIMUM_PYTHON_VERSION: ToolVersion = ToolVersion {
     patch: 0,
 };
 
+/// 前端仓库完整验证的唯一标准入口。
+const FRONTEND_VERIFY_ARGS: &[&str] = &["check"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FeatureMatrixEntry {
     package: String,
@@ -489,11 +492,7 @@ fn frontend_check(frontend_dir: &Path) -> Result<()> {
 }
 
 fn frontend_verify(frontend_dir: &Path) -> Result<()> {
-    frontend_check(frontend_dir)?;
-    for script in ["test:coverage", "build", "check:bundle", "test:e2e"] {
-        run_pnpm(frontend_dir, &[script])?;
-    }
-    Ok(())
+    run_pnpm(frontend_dir, FRONTEND_VERIFY_ARGS)
 }
 
 fn contract(args: &[String], frontend_dir: &Path) -> Result<()> {
@@ -957,8 +956,8 @@ fn print_help() {
 #[cfg(test)]
 mod tests {
     use super::{
-        FeatureMatrixEntry, ToolVersion, node_engine_satisfies, required_option,
-        validate_feature_registry,
+        FRONTEND_VERIFY_ARGS, FeatureMatrixEntry, ToolVersion, node_engine_satisfies,
+        required_option, root_dir, validate_feature_registry,
     };
 
     fn version(value: &str) -> ToolVersion {
@@ -992,6 +991,20 @@ mod tests {
         assert!(supported >= super::MINIMUM_PYTHON_VERSION);
         assert!(unsupported < super::MINIMUM_PYTHON_VERSION);
         assert!(super::parse_python_version("Python 3.11.0-rc.1").is_err());
+    }
+
+    #[test]
+    fn frontend_verification_uses_the_single_canonical_check_entrypoint() {
+        assert_eq!(FRONTEND_VERIFY_ARGS, &["check"]);
+    }
+
+    #[test]
+    fn readme_joint_entrypoints_are_backed_by_xtask() {
+        let readme =
+            std::fs::read_to_string(root_dir().join("README.md")).expect("README 应可读取");
+
+        assert!(readme.contains("`cargo xtask check`"));
+        assert!(readme.contains("`cargo xtask verify`"));
     }
 
     #[test]
