@@ -5,7 +5,7 @@ use ryframe_middleware::metrics::{
     observe_job_duration, observe_message_ack_latency, record_database_read_fallback,
     record_database_read_selection, record_message_replay_query, record_otel_exporter_failure,
     set_database_node_health, set_job_oldest_ready_age, set_job_queue_depth,
-    set_otel_exporter_degraded,
+    set_message_redis_listener_connected, set_otel_exporter_degraded,
 };
 
 #[test]
@@ -67,6 +67,7 @@ fn operational_metrics_use_bounded_labels() {
     );
     observe_message_ack_latency(Duration::from_millis(10));
     record_message_replay_query("success");
+    set_message_redis_listener_connected(true);
     record_otel_exporter_failure();
     set_otel_exporter_degraded(false);
 
@@ -79,6 +80,7 @@ fn operational_metrics_use_bounded_labels() {
     assert!(text.contains("ryframe_job_duration_seconds"));
     assert!(text.contains("ryframe_message_ack_latency_seconds"));
     assert!(text.contains("ryframe_message_replay_query_total"));
+    assert!(text.contains("ryframe_message_redis_listener_connected 1"));
     assert!(text.contains("ryframe_otel_exporter_failures_total"));
     assert!(text.contains("ryframe_otel_exporter_degraded"));
     assert_eq!(database_read_fallback_total(), fallback_before + 1);

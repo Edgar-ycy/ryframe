@@ -50,7 +50,7 @@ $script:MessageAcceptanceMessages = ConvertFrom-Json @'
   "ProcessStopTimeout": "{0}\u8fdb\u7a0b\u672a\u5728\u505c\u6b62\u671f\u9650\u5185\u9000\u51fa\uff0cPID \u4e3a {1}",
   "Readiness": "{0}\u672a\u5728 {1} \u79d2\u5185\u5c31\u7eea",
   "WaitFile": "\u7b49\u5f85\u8bc1\u636e\u6587\u4ef6\u201c{0}\u201d\u8d85\u65f6",
-  "WaitLog": "{0}\u65e5\u5fd7\u672a\u5728 {1} \u79d2\u5185\u51fa\u73b0\u7b2c {2} \u6b21\u76ee\u6807\u8bb0",
+  "WaitMetric": "{0}\u672a\u5728 {1} \u79d2\u5185\u8fbe\u5230\u9884\u671f\u6307\u6807\u72b6\u6001 {2}",
   "ClientResult": "\u6d88\u606f\u9a8c\u6536\u5ba2\u6237\u7aef\u8bc1\u636e\u4e0d\u7b26\u5408\u9884\u671f\uff1a{0}",
   "ClientFailed": "\u6d88\u606f\u9a8c\u6536\u5ba2\u6237\u7aef\u5931\u8d25\uff0c\u9000\u51fa\u7801\u4e3a {0}\uff1b\u65e5\u5fd7\uff1a{1}\u3001{2}",
   "ClientLabel": "Node \u5ba2\u6237\u7aef",
@@ -64,8 +64,6 @@ $script:MessageAcceptanceMessages = ConvertFrom-Json @'
   "ApiBInterruptedLabel": "API-B Redis \u4e2d\u65ad",
   "ApiARestoredLabel": "API-A Redis \u6062\u590d",
   "ApiBRestoredLabel": "API-B Redis \u6062\u590d",
-  "RedisSubscribed": "\u6d88\u606f WebSocket Redis \u8ba2\u9605\u5df2\u5efa\u7acb",
-  "RedisInterrupted": "\u6d88\u606f WebSocket Redis \u8ba2\u9605\u5df2\u4e2d\u65ad",
   "DockerCleanup": "\u6d88\u606f\u4e2d\u5fc3 Docker \u8d44\u6e90\u6e05\u7406\u5931\u8d25\uff1a{0}",
   "RedisRestore": "Redis \u6545\u969c\u6062\u590d\u5931\u8d25\uff1a{0}",
   "ProcessCleanup": "{0}\u8fdb\u7a0b\u6e05\u7406\u5931\u8d25\uff1a{1}",
@@ -355,39 +353,48 @@ function Wait-MessageAcceptanceReadiness {
     throw ($script:MessageAcceptanceMessages.Readiness -f $Label, $TimeoutSeconds)
 }
 
-function Get-MessageAcceptanceLogCount {
+function Wait-MessageAcceptanceMetric {
     param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Pattern
-    )
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return 0
-    }
-    $content = Get-Content -LiteralPath $Path -Raw -Encoding utf8 -ErrorAction SilentlyContinue
-    if ($null -eq $content) {
-        return 0
-    }
-    return [regex]::Matches($content, [regex]::Escape($Pattern)).Count
-}
-
-function Wait-MessageAcceptanceLogCount {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Pattern,
-        [Parameter(Mandatory = $true)][int]$ExpectedCount,
+        [Parameter(Mandatory = $true)][uri]$Uri,
+        [Parameter(Mandatory = $true)][string]$MetricName,
+        [Parameter(Mandatory = $true)][int]$ExpectedValue,
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][string]$ExpectedExecutable,
         [Parameter(Mandatory = $true)][string]$Label,
         [int]$TimeoutSeconds = 30
     )
 
+    if (
+        $Uri.Scheme -ne "http" `
+        -or $Uri.Host -ne "127.0.0.1" `
+        -or $Uri.AbsolutePath -ne "/api/v1/monitor/metrics" `
+        -or $MetricName -notmatch "^[a-zA-Z_:][a-zA-Z0-9_:]*$"
+    ) {
+        throw ($script:MessageAcceptanceMessages.WaitMetric -f $Label, 0, $ExpectedValue)
+    }
+
+    $expectedText = $ExpectedValue.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $pattern = "(?m)^" + [regex]::Escape($MetricName) + "\s+(-?\d+)\s*$"
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
-        if ((Get-MessageAcceptanceLogCount -Path $Path -Pattern $Pattern) -ge $ExpectedCount) {
-            return
+        [void](Assert-MessageAcceptanceProcess `
+            -Process $Process `
+            -ExpectedExecutable $ExpectedExecutable `
+            -Label $Label)
+        try {
+            $response = Invoke-WebRequest -Uri $Uri.AbsoluteUri -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
+                $match = [regex]::Match([string]$response.Content, $pattern)
+                if ($match.Success -and $match.Groups[1].Value -eq $expectedText) {
+                    return
+                }
+            }
+        }
+        catch {
         }
         Start-Sleep -Milliseconds 250
     }
-    throw ($script:MessageAcceptanceMessages.WaitLog -f $Label, $TimeoutSeconds, $ExpectedCount)
+    throw ($script:MessageAcceptanceMessages.WaitMetric -f $Label, $TimeoutSeconds, $ExpectedValue)
 }
 
 function Wait-MessageAcceptanceFile {
@@ -535,6 +542,7 @@ $metadata = [ordered]@{
     ports = $ports
     redis_fault = [ordered]@{
         method = "docker_stop_start"
+        listener_metric = "ryframe_message_redis_listener_connected"
         interrupted = $false
         restored = $false
     }
@@ -730,10 +738,12 @@ try {
         -Process $apiAProcess `
         -ExpectedExecutable $apiBinary `
         -Label "API-A"
-    Wait-MessageAcceptanceLogCount `
-        -Path $apiAOutput `
-        -Pattern $script:MessageAcceptanceMessages.RedisSubscribed `
-        -ExpectedCount 1 `
+    Wait-MessageAcceptanceMetric `
+        -Uri "http://127.0.0.1:$($ports.api_a)/api/v1/monitor/metrics" `
+        -MetricName "ryframe_message_redis_listener_connected" `
+        -ExpectedValue 1 `
+        -Process $apiAProcess `
+        -ExpectedExecutable $apiBinary `
         -Label "API-A"
 
     Set-MessageAcceptanceEnvironment -Name "APP_APP_PORT" -Value $ports.api_b.ToString()
@@ -749,10 +759,12 @@ try {
         -Process $apiBProcess `
         -ExpectedExecutable $apiBinary `
         -Label "API-B"
-    Wait-MessageAcceptanceLogCount `
-        -Path $apiBOutput `
-        -Pattern $script:MessageAcceptanceMessages.RedisSubscribed `
-        -ExpectedCount 1 `
+    Wait-MessageAcceptanceMetric `
+        -Uri "http://127.0.0.1:$($ports.api_b)/api/v1/monitor/metrics" `
+        -MetricName "ryframe_message_redis_listener_connected" `
+        -ExpectedValue 1 `
+        -Process $apiBProcess `
+        -ExpectedExecutable $apiBinary `
         -Label "API-B"
 
     $clientProcess = Start-MessageAcceptanceProcess `
@@ -892,15 +904,6 @@ SELECT CONCAT(
     $metadata["scenario_evidence"]["tenant_isolation"] = $tenantResult
     Write-RyFrameV07MetadataAtomically -Metadata $metadata -Path $metadataPath
 
-    $apiAInterruptedBefore = Get-MessageAcceptanceLogCount `
-        -Path $apiAOutput -Pattern $script:MessageAcceptanceMessages.RedisInterrupted
-    $apiBInterruptedBefore = Get-MessageAcceptanceLogCount `
-        -Path $apiBOutput -Pattern $script:MessageAcceptanceMessages.RedisInterrupted
-    $apiASubscribedBefore = Get-MessageAcceptanceLogCount `
-        -Path $apiAOutput -Pattern $script:MessageAcceptanceMessages.RedisSubscribed
-    $apiBSubscribedBefore = Get-MessageAcceptanceLogCount `
-        -Path $apiBOutput -Pattern $script:MessageAcceptanceMessages.RedisSubscribed
-
     $redisFault = Stop-RyFrameV07DockerService `
         -ProjectName $ProjectName `
         -OwnershipToken $OwnershipToken `
@@ -908,15 +911,19 @@ SELECT CONCAT(
         -Service "redis" `
         -DockerExecutable $resolvedDockerExecutable `
         -Context $DockerContext
-    Wait-MessageAcceptanceLogCount `
-        -Path $apiAOutput `
-        -Pattern $script:MessageAcceptanceMessages.RedisInterrupted `
-        -ExpectedCount ($apiAInterruptedBefore + 1) `
+    Wait-MessageAcceptanceMetric `
+        -Uri "http://127.0.0.1:$($ports.api_a)/api/v1/monitor/metrics" `
+        -MetricName "ryframe_message_redis_listener_connected" `
+        -ExpectedValue 0 `
+        -Process $apiAProcess `
+        -ExpectedExecutable $apiBinary `
         -Label $script:MessageAcceptanceMessages.ApiAInterruptedLabel
-    Wait-MessageAcceptanceLogCount `
-        -Path $apiBOutput `
-        -Pattern $script:MessageAcceptanceMessages.RedisInterrupted `
-        -ExpectedCount ($apiBInterruptedBefore + 1) `
+    Wait-MessageAcceptanceMetric `
+        -Uri "http://127.0.0.1:$($ports.api_b)/api/v1/monitor/metrics" `
+        -MetricName "ryframe_message_redis_listener_connected" `
+        -ExpectedValue 0 `
+        -Process $apiBProcess `
+        -ExpectedExecutable $apiBinary `
         -Label $script:MessageAcceptanceMessages.ApiBInterruptedLabel
     $metadata["redis_fault"]["interrupted"] = $true
     $metadata["redis_fault"]["interrupted_instance_count"] = 2
@@ -977,16 +984,20 @@ SELECT CONCAT(
         -DockerExecutable $resolvedDockerExecutable `
         -Context $DockerContext
     $redisFault = $null
-    Wait-MessageAcceptanceLogCount `
-        -Path $apiAOutput `
-        -Pattern $script:MessageAcceptanceMessages.RedisSubscribed `
-        -ExpectedCount ($apiASubscribedBefore + 1) `
+    Wait-MessageAcceptanceMetric `
+        -Uri "http://127.0.0.1:$($ports.api_a)/api/v1/monitor/metrics" `
+        -MetricName "ryframe_message_redis_listener_connected" `
+        -ExpectedValue 1 `
+        -Process $apiAProcess `
+        -ExpectedExecutable $apiBinary `
         -Label $script:MessageAcceptanceMessages.ApiARestoredLabel `
         -TimeoutSeconds 40
-    Wait-MessageAcceptanceLogCount `
-        -Path $apiBOutput `
-        -Pattern $script:MessageAcceptanceMessages.RedisSubscribed `
-        -ExpectedCount ($apiBSubscribedBefore + 1) `
+    Wait-MessageAcceptanceMetric `
+        -Uri "http://127.0.0.1:$($ports.api_b)/api/v1/monitor/metrics" `
+        -MetricName "ryframe_message_redis_listener_connected" `
+        -ExpectedValue 1 `
+        -Process $apiBProcess `
+        -ExpectedExecutable $apiBinary `
         -Label $script:MessageAcceptanceMessages.ApiBRestoredLabel `
         -TimeoutSeconds 40
     $metadata["redis_fault"]["restored"] = $true

@@ -268,14 +268,17 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
         self.assertLess(delivered, restore)
         self.assertLess(restore, restored_signal)
         for fragment in (
-            "$apiAInterruptedBefore + 1",
-            "$apiBInterruptedBefore + 1",
-            "$apiASubscribedBefore + 1",
-            "$apiBSubscribedBefore + 1",
+            'listener_metric = "ryframe_message_redis_listener_connected"',
+            '-MetricName "ryframe_message_redis_listener_connected"',
+            "-ExpectedValue 0",
+            "-ExpectedValue 1",
             '$metadata["redis_fault"]["interrupted_instance_count"] = 2',
             '$metadata["redis_fault"]["restored_instance_count"] = 2',
         ):
             self.assertIn(fragment, self.stage)
+        self.assertEqual(self.stage.count("Wait-MessageAcceptanceMetric `"), 6)
+        self.assertNotIn("Wait-MessageAcceptanceLogCount", self.stage)
+        self.assertNotIn("Get-MessageAcceptanceLogCount", self.stage)
         self.assertNotIn("toxiproxy", (self.stage + self.client).lower())
         self.assertNotRegex(self.stage, r'@\("(?:container|network)",\s*"(?:stop|start|disconnect|connect)"')
 

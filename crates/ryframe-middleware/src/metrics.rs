@@ -142,6 +142,11 @@ lazy_static! {
         &["result"],
     )
     .expect("create message_delivery_total");
+    static ref MESSAGE_REDIS_LISTENER_CONNECTED: IntGauge = IntGauge::new(
+        "message_redis_listener_connected",
+        "Whether the message Redis listener is currently connected",
+    )
+    .expect("create message_redis_listener_connected");
     static ref MESSAGE_REPLAY_QUERY_TOTAL: IntCounterVec = IntCounterVec::new(
         Opts::new(
             "message_replay_query_total",
@@ -254,6 +259,7 @@ fn ensure_registered() {
             Box::new(WS_CONNECTIONS.clone()),
             Box::new(WS_TICKETS_TOTAL.clone()),
             Box::new(MESSAGE_DELIVERY_TOTAL.clone()),
+            Box::new(MESSAGE_REDIS_LISTENER_CONNECTED.clone()),
             Box::new(MESSAGE_REPLAY_QUERY_TOTAL.clone()),
             Box::new(MESSAGE_RETENTION_DELETED_TOTAL.clone()),
             Box::new(DB_NODE_UP.clone()),
@@ -383,6 +389,12 @@ pub fn set_ws_connections(connections: usize) {
 pub fn record_message_delivery(result: &str) {
     ensure_registered();
     MESSAGE_DELIVERY_TOTAL.with_label_values(&[result]).inc();
+}
+
+/// 设置当前进程的消息 Redis 监听连接状态。
+pub fn set_message_redis_listener_connected(connected: bool) {
+    ensure_registered();
+    MESSAGE_REDIS_LISTENER_CONNECTED.set(i64::from(connected));
 }
 
 /// 记录共享补拉调度器的一次身份查询，不携带租户、用户或连接标签。

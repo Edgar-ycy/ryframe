@@ -232,6 +232,7 @@ impl MessageHub {
         redis: Option<RedisClient>,
         service: Arc<MessageService>,
     ) -> Option<JoinHandle<()>> {
+        ryframe_middleware::metrics::set_message_redis_listener_connected(false);
         if !self.config.enabled {
             return None;
         }
@@ -242,6 +243,7 @@ impl MessageHub {
             loop {
                 match redis.subscribe(MESSAGE_DISPATCH_REDIS_CHANNEL).await {
                     Ok(subscription) => {
+                        ryframe_middleware::metrics::set_message_redis_listener_connected(true);
                         tracing::info!(
                             channel = MESSAGE_DISPATCH_REDIS_CHANNEL,
                             "消息 WebSocket Redis 订阅已建立"
@@ -261,9 +263,13 @@ impl MessageHub {
                                 tracing::warn!(%error, message_id, "消息在线投递失败，将由收件箱补拉恢复");
                             }
                         }
+                        ryframe_middleware::metrics::set_message_redis_listener_connected(false);
                         tracing::warn!("消息 WebSocket Redis 订阅已中断");
                     }
-                    Err(error) => tracing::warn!(%error, "无法建立消息 WebSocket Redis 订阅"),
+                    Err(error) => {
+                        ryframe_middleware::metrics::set_message_redis_listener_connected(false);
+                        tracing::warn!(%error, "无法建立消息 WebSocket Redis 订阅");
+                    }
                 }
                 tokio::time::sleep(Duration::from_secs(retry_seconds)).await;
                 retry_seconds = retry_seconds.saturating_mul(2).min(30);

@@ -2147,6 +2147,9 @@ def check_messaging_runtime_policy(errors: list[str]) -> None:
     socket_source = (
         ROOT / "crates/ryframe-api/src/message_socket.rs"
     ).read_text(encoding="utf-8")
+    metrics_source = (
+        ROOT / "crates/ryframe-middleware/src/metrics.rs"
+    ).read_text(encoding="utf-8")
     repository_source = (
         ROOT / "crates/ryframe-db/src/repositories/message_repo.rs"
     ).read_text(encoding="utf-8")
@@ -2190,6 +2193,12 @@ def check_messaging_runtime_policy(errors: list[str]) -> None:
         errors.append("message inbox replay performs per-connection duplicate queries")
     if 'record_message_replay_query("success")' not in socket_source:
         errors.append("shared message replay queries are not observable with bounded metrics")
+    if (
+        '"message_redis_listener_connected"' not in metrics_source
+        or socket_source.count("set_message_redis_listener_connected(true)") != 1
+        or socket_source.count("set_message_redis_listener_connected(false)") < 3
+    ):
+        errors.append("message Redis listener state is not observable with a bounded gauge")
 
     publish_start = repository_source.find("pub async fn publish_in_transaction")
     publish_end = repository_source.find("pub async fn inbox", publish_start)
