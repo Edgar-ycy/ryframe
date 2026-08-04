@@ -451,8 +451,10 @@ function Complete-ReplicaAcceptanceThresholdObserver {
         ), $TimeoutSeconds)
     }
     $Process.WaitForExit()
-    if ($Process.ExitCode -ne 0) {
-        throw ($script:ReplicaAcceptanceMessages.ClientFailed -f $Process.ExitCode)
+    $Process.Refresh()
+    $exitCode = [int]$Process.ExitCode
+    if ($exitCode -ne 0) {
+        throw ($script:ReplicaAcceptanceMessages.ClientFailed -f $exitCode)
     }
     if (-not (Test-Path -LiteralPath $EvidencePath -PathType Leaf)) {
         throw ($script:ReplicaAcceptanceMessages.MissingFile -f $EvidencePath)
