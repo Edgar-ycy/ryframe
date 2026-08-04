@@ -86,6 +86,11 @@ impl MigrationTrait for Migration {
                                 .string_len(255)
                                 .null(),
                         )
+                        .col(
+                            ColumnDef::new(Alias::new("tracestate"))
+                                .string_len(512)
+                                .null(),
+                        )
                         .col(ColumnDef::new(Alias::new("last_error")).text().null())
                         .col(
                             ColumnDef::new(Alias::new("created_at"))

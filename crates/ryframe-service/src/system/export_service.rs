@@ -143,6 +143,7 @@ impl ExportService {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let result = async {
             let now = self.background_jobs.database_utc_now(&transaction).await?;
+            let trace_context = crate::trace_context::current_trace_context();
             let job = self
                 .background_jobs
                 .enqueue_in_transaction(
@@ -155,7 +156,8 @@ impl ExportService {
                         available_at: now,
                         max_attempts: self.default_max_attempts,
                         dedupe_key: None,
-                        traceparent: crate::trace_context::current_traceparent(),
+                        traceparent: trace_context.traceparent,
+                        tracestate: trace_context.tracestate,
                     },
                     now,
                 )

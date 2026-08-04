@@ -109,13 +109,12 @@ async fn list_page(
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .map(|page| {
-            Json(ApiPageResponse::new(
+            Json(ApiPageResponse::page(
                 page.records.into_iter().map(MenuVo::from).collect(),
                 page.total,
                 page.page,
                 page.page_size,
                 state.config.pagination.max_page_size,
-                "查询成功",
             ))
         })
 }

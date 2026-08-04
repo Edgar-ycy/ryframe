@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{fs, sync::Mutex, time::SystemTime};
 
 use ryframe_config::{
     AppConfig, AuthConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, DbTlsMode,
@@ -75,6 +75,9 @@ fn messaging_policy_is_typed_overridable_and_validated() {
         std::env::set_var("APP_MESSAGING_MAX_CONNECTIONS_PER_USER", "9");
         std::env::set_var("APP_MESSAGING_OUTBOUND_BUFFER", "512");
         std::env::set_var("APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE", "200000");
+        std::env::set_var("APP_MESSAGING_REPLAY_INTERVAL_SECONDS", "30");
+        std::env::set_var("APP_MESSAGING_REPLAY_JITTER_SECONDS", "10");
+        std::env::set_var("APP_MESSAGING_REPLAY_BATCH_SIZE", "250");
     }
 
     let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
@@ -85,6 +88,9 @@ fn messaging_policy_is_typed_overridable_and_validated() {
     assert_eq!(cfg.messaging.max_connections_per_user, 9);
     assert_eq!(cfg.messaging.outbound_buffer, 512);
     assert_eq!(cfg.messaging.max_recipients_per_message, 200_000);
+    assert_eq!(cfg.messaging.replay_interval_seconds, 30);
+    assert_eq!(cfg.messaging.replay_jitter_seconds, 10);
+    assert_eq!(cfg.messaging.replay_batch_size, 250);
 
     let mut invalid = cfg.clone();
     invalid.messaging.ticket_ttl_seconds = 0;
@@ -100,6 +106,15 @@ fn messaging_policy_is_typed_overridable_and_validated() {
     assert!(invalid.validate().is_err());
     invalid.messaging = cfg.messaging.clone();
     invalid.messaging.max_recipients_per_message = 0;
+    assert!(invalid.validate().is_err());
+    invalid.messaging = cfg.messaging.clone();
+    invalid.messaging.replay_interval_seconds = 0;
+    assert!(invalid.validate().is_err());
+    invalid.messaging = cfg.messaging.clone();
+    invalid.messaging.replay_jitter_seconds = 31;
+    assert!(invalid.validate().is_err());
+    invalid.messaging = cfg.messaging.clone();
+    invalid.messaging.replay_batch_size = 0;
     assert!(invalid.validate().is_err());
     clear_config_env();
 }
@@ -253,6 +268,59 @@ fn test_env_overrides_are_applied_before_validation() {
     );
 
     clear_config_env();
+}
+
+#[test]
+fn file_overrides_load_secrets_and_database_json() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    let jwt_path = write_temp_override_file("jwt", "secret-loaded-from-file-with-32-bytes\r\n");
+    let replicas_path = write_temp_override_file(
+        "replicas",
+        r#"[{"name":"replica-file","host":"127.0.0.2","port":3306,"database":"ryframe","username":"reader","password":"from-json-file","max_connections":5,"min_connections":1}]"#,
+    );
+    unsafe {
+        std::env::set_var("APP_AUTH_JWT_SECRET_FILE", &jwt_path);
+        std::env::set_var("APP_DATABASE_REPLICAS_FILE", &replicas_path);
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let cfg = AppConfig::load(config_dir, Environment::Dev).expect("加载文件型配置覆盖");
+
+    assert_eq!(cfg.auth.jwt_secret, "secret-loaded-from-file-with-32-bytes");
+    assert_eq!(cfg.database.replicas.len(), 1);
+    assert_eq!(cfg.database.replicas[0].name, "replica-file");
+    assert_eq!(
+        cfg.database.replicas[0].connection.password,
+        "from-json-file"
+    );
+
+    clear_config_env();
+    fs::remove_file(jwt_path).expect("删除 JWT 临时配置文件");
+    fs::remove_file(replicas_path).expect("删除副本临时配置文件");
+}
+
+#[test]
+fn direct_and_file_override_sources_are_mutually_exclusive() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    clear_config_env();
+    let jwt_path = write_temp_override_file("conflict", "file-secret-that-must-not-leak");
+    unsafe {
+        std::env::set_var("APP_AUTH_JWT_SECRET", "direct-secret-that-must-not-leak");
+        std::env::set_var("APP_AUTH_JWT_SECRET_FILE", &jwt_path);
+    }
+
+    let config_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config");
+    let error = AppConfig::load(config_dir, Environment::Dev)
+        .expect_err("重复配置来源必须被拒绝")
+        .to_string();
+
+    assert!(error.contains("APP_AUTH_JWT_SECRET"));
+    assert!(error.contains("APP_AUTH_JWT_SECRET_FILE"));
+    assert!(!error.contains("direct-secret"));
+    assert!(!error.contains("file-secret"));
+    clear_config_env();
+    fs::remove_file(jwt_path).expect("删除冲突测试临时配置文件");
 }
 
 #[test]
@@ -665,4 +733,17 @@ fn clear_config_env() {
             std::env::remove_var(key);
         }
     }
+}
+
+fn write_temp_override_file(label: &str, contents: &str) -> std::path::PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("系统时间应晚于 Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "ryframe-config-{label}-{}-{unique}",
+        std::process::id()
+    ));
+    fs::write(&path, contents).expect("写入临时配置文件");
+    path
 }

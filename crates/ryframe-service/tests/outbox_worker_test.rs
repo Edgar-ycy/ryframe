@@ -44,6 +44,7 @@ async fn outbox_worker_publishes_message_event_as_idempotent_background_job() {
                 max_attempts: 3,
                 dedupe_key: Some("message:900000000000001".into()),
                 traceparent: None,
+                tracestate: None,
             },
             now,
         )

@@ -45,7 +45,7 @@ async fn list(
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .map(|page| {
-            Json(ApiPageResponse::new(
+            Json(ApiPageResponse::page(
                 page.records
                     .into_iter()
                     .map(BackgroundJobVo::from)
@@ -54,7 +54,6 @@ async fn list(
                 page.page,
                 page.page_size,
                 state.config.pagination.max_page_size,
-                "查询成功",
             ))
         })
 }
@@ -102,7 +101,7 @@ async fn retry_dead(
         .retry_dead_for_tenant(&current_user, parse_job_id(&id)?)
         .await
         .map_err(ryframe_http::HttpAppError::from)
-        .map(|job| ApiResponse::success_msg("任务已重新投递", job.into()))
+        .map(|job| ApiResponse::success(job.into()))
         .map(Json)
 }
 

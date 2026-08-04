@@ -64,9 +64,7 @@ pub async fn update_profile(
         )
         .await?;
 
-    Ok(Json(ApiResponse::success_no_data_with_msg(
-        "个人信息更新成功",
-    )))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 修改密码
@@ -86,7 +84,7 @@ pub async fn change_password(
         .change_password(&current_user, &req.old_password, &req.new_password)
         .await?;
 
-    Ok(Json(ApiResponse::success_no_data_with_msg("密码修改成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 更新头像（直接接受文件上传）

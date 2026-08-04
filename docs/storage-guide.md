@@ -64,11 +64,13 @@ region = "us-east-1"
 ```text
 APP_OBJECT_STORAGE_BACKEND
 APP_OBJECT_STORAGE_ENDPOINT
-APP_OBJECT_STORAGE_ACCESS_KEY
-APP_OBJECT_STORAGE_SECRET_KEY
+APP_OBJECT_STORAGE_ACCESS_KEY_FILE
+APP_OBJECT_STORAGE_SECRET_KEY_FILE
 APP_OBJECT_STORAGE_USE_SSL
 APP_OBJECT_STORAGE_REGION
 ```
+
+两个 `_FILE` 变量分别指向只包含访问密钥和私密密钥的 Docker secret 文件；不要把凭据直接写入 Compose 环境或仓库。
 
 v0.5 的上传响应只返回受认证的后端下载地址，bucket、普通文件和头像始终保持私有，不提供公共 URL 配置。前端展示头像时必须通过统一 HTTP 客户端携带 access token 下载 Blob，再创建浏览器对象 URL，不能把受保护地址直接绑定到原生 `img.src`。
 

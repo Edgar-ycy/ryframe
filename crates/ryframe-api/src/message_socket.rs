@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, HashSet},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -20,7 +20,7 @@ use ryframe_http::{HttpAppError, HttpResult};
 use ryframe_i18n::{Locale, Localizer};
 use ryframe_kernel::AppError;
 use ryframe_service::system::{
-    MESSAGE_DISPATCH_REDIS_CHANNEL, MessageDelivery, MessageService, WebSocketTicket,
+    MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService, MessageTemplate, WebSocketTicket,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -34,8 +34,7 @@ use crate::{
     state::AppState,
 };
 
-const RESYNC_INTERVAL: Duration = Duration::from_secs(15);
-const RESYNC_BATCH_SIZE: u64 = 100;
+type MessageIdentity = (String, i64);
 
 /// 申请一次性 WebSocket 票据后的 HTTP 响应。
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -48,7 +47,9 @@ pub struct WebSocketTicketResponse {
 #[derive(Clone)]
 pub struct MessageHub {
     connections: Arc<DashMap<String, HubConnection>>,
-    connections_by_identity: Arc<DashMap<(String, i64), HashSet<String>>>,
+    connections_by_identity: Arc<DashMap<MessageIdentity, HashSet<String>>>,
+    replay_trigger: mpsc::Sender<MessageIdentity>,
+    replay_receiver: Arc<Mutex<Option<mpsc::Receiver<MessageIdentity>>>>,
     localizer: Arc<Localizer>,
     config: MessagingConfig,
 }
@@ -64,9 +65,12 @@ struct HubConnection {
 impl MessageHub {
     /// 创建空的本实例连接中心。
     pub fn new(localizer: Arc<Localizer>, config: MessagingConfig) -> Self {
+        let (replay_trigger, replay_receiver) = mpsc::channel(config.outbound_buffer);
         Self {
             connections: Arc::new(DashMap::new()),
             connections_by_identity: Arc::new(DashMap::new()),
+            replay_trigger,
+            replay_receiver: Arc::new(Mutex::new(Some(replay_receiver))),
             localizer,
             config,
         }
@@ -88,7 +92,10 @@ impl MessageHub {
         }
         let id = uuid::Uuid::now_v7().to_string();
         let identity = (ticket.tenant_id.clone(), ticket.user_id);
-        let mut connections = self.connections_by_identity.entry(identity).or_default();
+        let mut connections = self
+            .connections_by_identity
+            .entry(identity.clone())
+            .or_default();
         if connections.len() >= self.config.max_connections_per_user {
             return None;
         }
@@ -104,6 +111,7 @@ impl MessageHub {
         );
         connections.insert(id.clone());
         drop(connections);
+        self.request_replay(identity);
         ryframe_middleware::metrics::set_ws_connections(self.connection_count());
         Some(id)
     }
@@ -131,6 +139,25 @@ impl MessageHub {
             .collect()
     }
 
+    fn online_identities(&self) -> BTreeSet<MessageIdentity> {
+        self.connections_by_identity
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    fn request_replay(&self, identity: MessageIdentity) {
+        match self.replay_trigger.try_send(identity) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::debug!("消息共享补拉触发队列已满，将由周期扫描恢复");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!("消息共享补拉调度器未运行");
+            }
+        }
+    }
+
     fn connection_ids_for_identity(&self, tenant_id: &str, user_id: i64) -> Vec<String> {
         self.connections_by_identity
             .get(&(tenant_id.to_owned(), user_id))
@@ -139,7 +166,7 @@ impl MessageHub {
     }
 
     /// 将持久化消息发送给本实例中属于指定收件人的全部连接。
-    pub fn send_to_user(&self, tenant_id: &str, user_id: i64, record: &MessageDelivery) -> usize {
+    pub fn send_to_user(&self, tenant_id: &str, user_id: i64, template: &MessageTemplate) -> usize {
         let mut delivered = 0;
         let mut disconnected: Vec<String> = Vec::new();
 
@@ -151,7 +178,7 @@ impl MessageHub {
             let sender = connection.sender.clone();
             let shutdown = connection.shutdown.clone();
             drop(connection);
-            let message = render_message(&record.message, &self.localizer, locale);
+            let message = render_message(template, &self.localizer, locale);
             let Ok(payload) = serialize_message_frame(&message) else {
                 tracing::error!(message_id = %message.id, "消息 WebSocket 帧序列化失败");
                 continue;
@@ -194,7 +221,7 @@ impl MessageHub {
             .await?;
         let mut count = 0;
         for record in recipients {
-            count += self.send_to_user(&record.tenant_id, record.user_id, &record);
+            count += self.send_to_user(&record.tenant_id, record.user_id, &record.message);
         }
         Ok(count)
     }
@@ -242,6 +269,103 @@ impl MessageHub {
                 retry_seconds = retry_seconds.saturating_mul(2).min(30);
             }
         }))
+    }
+
+    /// 启动本 API 实例唯一的共享补拉调度器，按租户用户去重查询后向全部连接扇出。
+    pub fn spawn_replay_scheduler(
+        &self,
+        service: Arc<MessageService>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Option<JoinHandle<()>> {
+        if !self.config.enabled {
+            return None;
+        }
+        let mut receiver_guard = self
+            .replay_receiver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut replay_receiver = receiver_guard.take()?;
+        drop(receiver_guard);
+
+        let hub = self.clone();
+        let interval = Duration::from_secs(self.config.replay_interval_seconds);
+        let jitter = replay_startup_jitter(self.config.replay_jitter_seconds);
+        Some(tokio::spawn(async move {
+            if !jitter.is_zero() {
+                tokio::select! {
+                    _ = tokio::time::sleep(jitter) => {}
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let mut scan = tokio::time::interval(interval);
+            scan.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            scan.tick().await;
+            loop {
+                let identities = tokio::select! {
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            break;
+                        }
+                        continue;
+                    }
+                    identity = replay_receiver.recv() => {
+                        let Some(identity) = identity else {
+                            break;
+                        };
+                        let mut identities = BTreeSet::from([identity]);
+                        while let Ok(identity) = replay_receiver.try_recv() {
+                            identities.insert(identity);
+                        }
+                        identities
+                    }
+                    _ = scan.tick() => hub.online_identities(),
+                };
+
+                replay_identities(&hub, &service, &shutdown, identities).await;
+            }
+            tracing::debug!("消息共享补拉调度器已停止");
+        }))
+    }
+}
+
+fn replay_startup_jitter(max_seconds: u64) -> Duration {
+    if max_seconds == 0 {
+        return Duration::ZERO;
+    }
+    let sample = uuid::Uuid::now_v7().as_u128() as u64;
+    Duration::from_secs(sample % (max_seconds + 1))
+}
+
+async fn replay_identities(
+    hub: &MessageHub,
+    service: &MessageService,
+    shutdown: &watch::Receiver<bool>,
+    identities: BTreeSet<MessageIdentity>,
+) {
+    for (tenant_id, user_id) in identities {
+        if *shutdown.borrow() {
+            break;
+        }
+        match service
+            .unacknowledged_for_identity(&tenant_id, user_id, hub.config.replay_batch_size)
+            .await
+        {
+            Ok(page) => {
+                ryframe_middleware::metrics::record_message_replay_query("success");
+                for record in page.records {
+                    hub.send_to_user(&tenant_id, user_id, &record);
+                }
+            }
+            Err(error) => {
+                ryframe_middleware::metrics::record_message_replay_query("error");
+                tracing::warn!(%error, tenant_id, user_id, "消息收件箱共享补拉失败");
+            }
+        }
     }
 }
 
@@ -314,9 +438,12 @@ async fn handle_socket(
 
     let _ = queue_text(
         &outbound,
-        serialize_hello_frame(&connection_id, &ticket.locale),
+        serialize_hello_frame(
+            &connection_id,
+            &ticket.locale,
+            hub.config.replay_interval_seconds,
+        ),
     );
-    replay_unacknowledged(&hub, &service, &ticket, &outbound, &shutdown_sender).await;
 
     let mut send_task = tokio::spawn(async move {
         loop {
@@ -344,40 +471,30 @@ async fn handle_socket(
     });
 
     let outbound_for_receive = outbound.clone();
-    let hub_for_receive = hub.clone();
-    let shutdown_for_receive = shutdown_sender.clone();
     let localizer_for_receive = hub.localizer.clone();
     let locale_for_receive = Locale::parse(&ticket.locale).unwrap_or(Locale::DEFAULT);
     let mut receive_task = tokio::spawn(async move {
-        let mut resync = tokio::time::interval(RESYNC_INTERVAL);
-        resync.tick().await;
         loop {
-            tokio::select! {
-                frame = socket_receiver.next() => match frame {
-                    Some(Ok(Message::Text(text))) => {
-                        handle_client_frame(
-                            &service,
-                            &ticket,
-                            &localizer_for_receive,
-                            locale_for_receive,
-                            &outbound_for_receive,
-                            text.as_str(),
-                        ).await;
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) | Some(Ok(Message::Binary(_))) => {}
-                    Some(Err(error)) => {
-                        tracing::debug!(%error, "消息 WebSocket 接收失败");
-                        break;
-                    }
-                },
-                _ = resync.tick() => replay_unacknowledged(
-                    &hub_for_receive,
-                    &service,
-                    &ticket,
-                    &outbound_for_receive,
-                    &shutdown_for_receive,
-                ).await,
+            match socket_receiver.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    handle_client_frame(
+                        &service,
+                        &ticket,
+                        &localizer_for_receive,
+                        locale_for_receive,
+                        &outbound_for_receive,
+                        text.as_str(),
+                    )
+                    .await;
+                }
+                Some(Ok(Message::Close(_))) | None => break,
+                Some(Ok(Message::Ping(_)))
+                | Some(Ok(Message::Pong(_)))
+                | Some(Ok(Message::Binary(_))) => {}
+                Some(Err(error)) => {
+                    tracing::debug!(%error, "消息 WebSocket 接收失败");
+                    break;
+                }
             }
         }
     });
@@ -390,41 +507,6 @@ async fn handle_socket(
     }
     hub.unregister(&connection_id);
     tracing::debug!(connection_id, "消息 WebSocket 连接已关闭");
-}
-
-async fn replay_unacknowledged(
-    hub: &MessageHub,
-    service: &MessageService,
-    ticket: &WebSocketTicket,
-    outbound: &mpsc::Sender<Message>,
-    shutdown: &watch::Sender<bool>,
-) {
-    match service
-        .unacknowledged_for_identity(&ticket.tenant_id, ticket.user_id, RESYNC_BATCH_SIZE)
-        .await
-    {
-        Ok(page) => {
-            let locale = Locale::parse(&ticket.locale).unwrap_or(Locale::DEFAULT);
-            for message in page.records {
-                let message = render_message(&message, &hub.localizer, locale);
-                match queue_text(outbound, serialize_message_frame(&message)) {
-                    QueueTextResult::Queued => {}
-                    QueueTextResult::Full => {
-                        let _ = shutdown.send(true);
-                        tracing::warn!(
-                            user_id = ticket.user_id,
-                            "WebSocket 补拉遇到慢消费者，已关闭连接"
-                        );
-                        break;
-                    }
-                    QueueTextResult::Closed | QueueTextResult::SerializationFailed => break,
-                }
-            }
-        }
-        Err(error) => {
-            tracing::warn!(%error, user_id = ticket.user_id, "消息收件箱补拉失败");
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -570,7 +652,11 @@ fn queue_text(outbound: &mpsc::Sender<Message>, payload: HttpResult<String>) -> 
     }
 }
 
-fn serialize_hello_frame(connection_id: &str, locale: &str) -> HttpResult<String> {
+fn serialize_hello_frame(
+    connection_id: &str,
+    locale: &str,
+    heartbeat_secs: u64,
+) -> HttpResult<String> {
     #[derive(Serialize)]
     struct Hello<'a> {
         v: u8,
@@ -584,7 +670,7 @@ fn serialize_hello_frame(connection_id: &str, locale: &str) -> HttpResult<String
         v: 1,
         kind: "hello",
         connection_id,
-        heartbeat_secs: RESYNC_INTERVAL.as_secs(),
+        heartbeat_secs,
         locale,
     })
 }
@@ -688,7 +774,7 @@ fn validate_websocket_origin(state: &AppState, headers: &HeaderMap) -> HttpResul
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::BTreeSet, sync::Arc};
 
     use ryframe_config::MessagingConfig;
     use ryframe_i18n::{Locale, Localizer};
@@ -725,14 +811,15 @@ mod tests {
             MessagingConfig::default(),
         );
         let tenant_a_user = ticket("tenant-a", 1);
-        let tenant_b_user = ticket("tenant-b", 2);
+        let tenant_b_user = ticket("tenant-b", 1);
         let first = register(&hub, &tenant_a_user);
         let second = register(&hub, &tenant_a_user);
         let third = register(&hub, &tenant_b_user);
 
-        assert_eq!(hub.online_user_ids(), vec![1, 2]);
+        assert_eq!(hub.online_user_ids(), vec![1]);
+        assert_eq!(hub.online_identities().len(), 2);
         assert_eq!(hub.connection_ids_for_identity("tenant-a", 1).len(), 2);
-        assert_eq!(hub.connection_ids_for_identity("tenant-b", 2).len(), 1);
+        assert_eq!(hub.connection_ids_for_identity("tenant-b", 1).len(), 1);
 
         hub.unregister(&first);
         assert_eq!(hub.connection_ids_for_identity("tenant-a", 1).len(), 1);
@@ -740,6 +827,35 @@ mod tests {
         assert!(hub.connection_ids_for_identity("tenant-a", 1).is_empty());
         hub.unregister(&third);
         assert!(hub.online_user_ids().is_empty());
+    }
+
+    #[test]
+    fn replay_requests_are_deduplicated_by_tenant_identity() {
+        let hub = MessageHub::new(
+            Arc::new(Localizer::embedded().expect("内嵌国际化资源")),
+            MessagingConfig::default(),
+        );
+        let first = ticket("tenant-a", 7);
+        let second = ticket("tenant-b", 7);
+        register(&hub, &first);
+        register(&hub, &first);
+        register(&hub, &second);
+
+        let mut receiver = hub
+            .replay_receiver
+            .lock()
+            .expect("补拉接收器锁")
+            .take()
+            .expect("补拉接收器只获取一次");
+        let mut identities = BTreeSet::new();
+        while let Ok(identity) = receiver.try_recv() {
+            identities.insert(identity);
+        }
+
+        assert_eq!(
+            identities,
+            BTreeSet::from([("tenant-a".into(), 7), ("tenant-b".into(), 7)])
+        );
     }
 
     #[test]

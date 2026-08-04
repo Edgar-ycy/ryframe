@@ -9,6 +9,7 @@ use axum::{
 };
 use futures_util::stream;
 use ryframe_config::UploadLimitsConfig;
+use std::sync::Arc;
 use tower::util::ServiceExt;
 
 fn router() -> Router {
@@ -24,6 +25,13 @@ fn router() -> Router {
         .layer(middleware::from_fn_with_state(
             limits,
             ryframe_middleware::body_limit_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            Arc::new(ryframe_i18n::Localizer::embedded().expect("内嵌国际化资源应有效")),
+            ryframe_middleware::api_response_envelope_middleware,
+        ))
+        .layer(middleware::from_fn(
+            ryframe_middleware::request_id_middleware,
         ))
 }
 
@@ -60,7 +68,11 @@ async fn chunked_body_over_limit_returns_uniform_413() {
     assert_eq!(json["code"], 413);
     assert_eq!(json["message"], "请求体过大");
     assert_eq!(json["data"], serde_json::Value::Null);
-    assert_eq!(json["request_id"], "");
+    assert!(
+        json["request_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
     assert_eq!(json["error_key"], "payload_too_large");
     assert_eq!(json["details"], serde_json::Value::Null);
     assert!(json.get("msg").is_none());

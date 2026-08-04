@@ -215,6 +215,7 @@ async fn record_event_in_transaction(
     let now = OutboxEventRepository.database_utc_now(transaction).await?;
     let payload = serde_json::to_value(event)
         .map_err(|error| AppError::Internal(format!("审计事件序列化失败: {error}")))?;
+    let trace_context = crate::trace_context::current_trace_context();
     OutboxEventRepository
         .record_in_transaction(
             transaction,
@@ -227,7 +228,8 @@ async fn record_event_in_transaction(
                 available_at: now,
                 max_attempts,
                 dedupe_key: Some(event.event_id.clone()),
-                traceparent: crate::trace_context::current_traceparent(),
+                traceparent: trace_context.traceparent,
+                tracestate: trace_context.tracestate,
             },
             now,
         )

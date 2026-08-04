@@ -721,9 +721,7 @@ pub async fn complete_password_reset(
         .user
         .complete_password_reset_request(&req.tenant_id, request_id, &req.token, &req.new_password)
         .await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg(
-        "password reset completed",
-    )))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 获取当前用户信息

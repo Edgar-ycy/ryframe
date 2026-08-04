@@ -39,7 +39,9 @@ docker build \
 `repository@sha256:digest` 写入 `RYFRAME_IMAGE`。`deploy/.env.production.example` 中的值
 仅表示部署方构建产物，不引用 GHCR、GitHub Release 附件或已经删除的发布清单。
 
-`deploy/compose.prod.yml` 仅编排 API、独立迁移进程和独立 Worker，MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。复制 `deploy/.env.production.example` 到部署平台的秘密注入配置，替换所有示例值，并将 TLS 证书文件以 Docker secret 形式挂载；不得把真实密码、令牌、私钥或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，镜像必须采用部署环境构建并审计过的 digest 引用。
+`deploy/compose.prod.yml` 仅编排 API、独立迁移进程和独立 Worker，MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。复制 `deploy/.env.production.example` 到部署平台配置，生成主库密码、数据库副本 JSON、业务数据源 JSON、Redis 密码、对象存储凭据、JWT 密钥和指标 Token 文件，并全部以 Docker secret 只读挂载；没有副本或业务数据源时对应文件内容为 `[]`。不得把真实密码、令牌、私钥、连接 JSON 或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，镜像必须采用部署环境构建并审计过的 digest 引用。
+
+前端不加入后端 Compose。部署平台必须从 `ryframe-vue3` 独立仓库检出发布清单锁定的精确标签和提交，执行冻结锁文件安装与生产构建，再把 `dist/` 作为静态站点独立发布；部署记录同时保存前后端提交 SHA，不能从可变分支或后端工作树临时复制前端产物。
 
 生产配置与 Compose 将 `APP_LOGGER_OUTPUT` 默认设为 `stdout`，API 和 Worker 均由容器平台
 采集、轮转和保留日志，不会在只读根文件系统中创建 `logs/`。只有在已挂载可写持久卷并
@@ -57,9 +59,9 @@ docker build \
   Prometheus/VPN 地址。安全组也应执行同样限制，不能只依赖 Nginx。
 - Nginx 必须覆盖客户端提供的转发头；`APP_PROXY_TRUSTED_CIDRS` 仅包含真实代理地址。
 - `/api/v1/ws` 必须使用 WebSocket 专用反向代理：转发 `Upgrade`，关闭缓冲，并将读取超时设为高于心跳间隔。一次性 ticket 位于查询参数，Nginx、负载均衡器和 CDN 均不得记录完整请求 URI 或 ticket；模板已对该路径关闭访问日志。
-- 生产启用消息中心时必须保持 `APP_REDIS_MODE=required`。默认容量为票据 60 秒、消息保留 90 天、每租户用户单实例 5 条连接、每连接 256 条有界出站队列和单消息最多 100000 名收件人；调整 `APP_MESSAGING_*` 前必须完成连接、内存、数据库写放大和大受众发布压测。
-- `APP_API_DOCS_ENABLED=false`，并在 Nginx 阻断 Swagger/OpenAPI；`APP_MONITOR_METRICS_BEARER_TOKEN`
-  使用独立随机 secret。配置和轮换方法见[值班手册](operations-runbook.md)。
+- 生产启用消息中心时必须保持 `APP_REDIS_MODE=required`。默认容量为票据 60 秒、消息保留 90 天、每租户用户单实例 5 条连接、每连接 256 条有界出站队列和单消息最多 100000 名收件人；共享补拉调度器每 15 秒扫描一次、启动抖动最多 5 秒、每个租户用户每批最多 100 条，查询一次后向该身份的全部连接扇出。调整 `APP_MESSAGING_*` 前必须完成连接、内存、数据库写放大和大受众发布压测。
+- `APP_API_DOCS_ENABLED=false`，并在 Nginx 阻断 Swagger/OpenAPI；`APP_MONITOR_METRICS_BEARER_TOKEN_FILE`
+  指向独立随机 secret 文件。配置和轮换方法见[值班手册](operations-runbook.md)。
 
 ## 3. 传输加密
 

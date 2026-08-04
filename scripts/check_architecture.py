@@ -69,6 +69,7 @@ EXPECTED_DEPENDENCIES = {
         "ryframe-config",
         "ryframe-core",
         "ryframe-http",
+        "ryframe-i18n",
         "ryframe-kernel",
         "ryframe-utils",
     },
@@ -349,7 +350,7 @@ def configured_secret_paths(value: object, path: str = "") -> list[str]:
 
 
 def check_secret_source_policy(errors: list[str]) -> None:
-    """锁定生产 secret 环境注入边界，禁止旧 ENC/AES 兼容实现回流。"""
+    """锁定生产 secret 文件注入边界，禁止旧 ENC/AES 兼容实现回流。"""
     removed_module = ROOT / "crates/ryframe-config/src/config_crypto.rs"
     if removed_module.exists():
         errors.append("removed configuration crypto module exists again")
@@ -385,6 +386,55 @@ def check_secret_source_policy(errors: list[str]) -> None:
             "configuration loading must reject file secrets before environment overrides "
             "and reject removed ENC values afterwards"
         )
+
+    override_spec = (
+        ROOT / "crates/ryframe-config/src/app_config/environment_overrides/spec.rs"
+    ).read_text(encoding="utf-8")
+    override_runtime = (
+        ROOT / "crates/ryframe-config/src/app_config/environment_overrides/mod.rs"
+    ).read_text(encoding="utf-8")
+    file_capable_overrides = {
+        "APP_MONITOR_METRICS_BEARER_TOKEN": "secret",
+        "APP_DATABASE_PASSWORD": "secret",
+        "APP_DATABASE_REPLICAS": "json_file",
+        "APP_DATABASE_SOURCES": "json_file",
+        "APP_AUTH_JWT_SECRET": "secret",
+        "APP_REDIS_PASSWORD": "secret",
+        "APP_OBJECT_STORAGE_ACCESS_KEY": "secret",
+        "APP_OBJECT_STORAGE_SECRET_KEY": "secret",
+    }
+    for name, constructor in file_capable_overrides.items():
+        if not re.search(
+            rf'EnvOverride::{constructor}\(\s*"{re.escape(name)}"',
+            override_spec,
+        ):
+            errors.append(f"sensitive override does not support _FILE input: {name}")
+    for fragment in (
+        'format!("{}_FILE", spec.name)',
+        "direct_value.is_some() && file_path.is_some()",
+        "read_override_file(&file_name, &path)?",
+        "String::from_utf8(bytes)",
+    ):
+        if fragment not in override_runtime:
+            errors.append(f"secret file override guard is missing: {fragment}")
+
+    production_compose = (ROOT / "deploy/compose.prod.yml").read_text(encoding="utf-8")
+    compose_file_overrides = (
+        "APP_DATABASE_PASSWORD_FILE",
+        "APP_DATABASE_REPLICAS_FILE",
+        "APP_DATABASE_SOURCES_FILE",
+        "APP_REDIS_PASSWORD_FILE",
+        "APP_OBJECT_STORAGE_ACCESS_KEY_FILE",
+        "APP_OBJECT_STORAGE_SECRET_KEY_FILE",
+        "APP_AUTH_JWT_SECRET_FILE",
+        "APP_MONITOR_METRICS_BEARER_TOKEN_FILE",
+    )
+    for name in compose_file_overrides:
+        if not re.search(rf"(?m)^\s+{re.escape(name)}:\s+/run/secrets/", production_compose):
+            errors.append(f"production Compose does not use a mounted secret file: {name}")
+    for name in (item.removesuffix("_FILE") for item in compose_file_overrides):
+        if re.search(rf"(?m)^\s+{re.escape(name)}:\s+", production_compose):
+            errors.append(f"production Compose restores direct secret injection: {name}")
 
     for relative_path in ("config/app.toml", "config/app.prod.toml"):
         path = ROOT / relative_path
@@ -674,6 +724,10 @@ def check_compiled_permission_catalog(errors: list[str]) -> None:
             'include!(concat!(env!("OUT_DIR"), "/permission_catalog.rs"))',
             "route_permission_codes",
         ),
+        "crates/ryframe-api/src/openapi.rs": (
+            "permission_catalog_contract",
+            "x-ryframe-permission-catalog",
+        ),
         "crates/ryframe-api/src/handlers/permission_handler.rs": (
             "permission_catalog::route_permission_codes()",
             "sync_route_permissions",
@@ -691,6 +745,30 @@ def check_compiled_permission_catalog(errors: list[str]) -> None:
                     f"compiled permission catalog contract is missing in {relative_path}: "
                     f"{fragment}"
                 )
+
+
+def check_openapi_permission_catalog(
+    document: dict[str, object], errors: list[str]
+) -> None:
+    """确保前端使用的权限目录与编译期路由权限保持同源。"""
+    extension = document.get("x-ryframe-permission-catalog")
+    if not isinstance(extension, dict) or extension.get("version") != 1:
+        errors.append("OpenAPI permission catalog is missing or has an unsupported version")
+        return
+    codes = extension.get("codes")
+    if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
+        errors.append("OpenAPI permission catalog codes must be a string array")
+        return
+    if codes != sorted(set(codes)):
+        errors.append("OpenAPI permission catalog codes must be sorted and unique")
+
+    compiled_codes: set[str] = set()
+    permission_pattern = re.compile(r'#\s*\[\s*perm\s*\(\s*"([^"]+)"\s*\)\s*\]')
+    for root in ("crates/ryframe-api/src", "crates/ryframe-monitor/src"):
+        for path in rust_sources(root):
+            compiled_codes.update(permission_pattern.findall(path.read_text(encoding="utf-8")))
+    if set(codes) != compiled_codes:
+        errors.append("OpenAPI permission catalog does not match compiled route permissions")
 
 
 def menu_route_contract(
@@ -942,6 +1020,7 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
             "checked_in_contract_snapshot_is_current",
             "x-ryframe-menu-routes",
             "x-ryframe-password-policy",
+            "x-ryframe-permission-catalog",
             "query_operation_count >= 21",
             "must document its success response schema",
             "must document its request body",
@@ -1002,6 +1081,7 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
         )
     check_menu_route_sources(menu_route_contract(document, errors), errors)
     check_password_policy(document, errors)
+    check_openapi_permission_catalog(document, errors)
 
 
 def public_dto_conversion_violations(source: str) -> list[str]:
@@ -1372,6 +1452,7 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
             "config.database.sources",
             "DatabaseCluster::with_sources_and_replica_slots(",
             "verify_schema",
+            "ryframe_db_migration::verify(db)",
             "spawn_replica_health_monitor",
         ),
         "crates/ryframe-config/src/object_storage_config.rs": (
@@ -1608,6 +1689,9 @@ def response_envelope_policy_violations(
         "protocol upgrade bypass": "status == StatusCode::SWITCHING_PROTOCOLS",
         "response parts preservation helper": "fn error_response_from_parts(",
         "response parts reuse": "Response::from_parts(parts, Body::from(body))",
+        "injected response localizer": "State(localizer): State<Arc<Localizer>>",
+        "localized response message": "localizer.translate(locale, message_key)",
+        "canonical response language header": "ensure_locale_headers(response.headers_mut(), locale)",
     }
     for label, fragment in required_fragments.items():
         if fragment not in production:
@@ -1619,7 +1703,7 @@ def response_envelope_policy_violations(
         violations.append("response envelope uses unbounded production body buffering")
 
     if not re.search(
-        r"\.layer\(from_fn\(\s*"
+        r"\.layer\(from_fn_with_state\(\s*response_localizer,\s*"
         r"ryframe_middleware::api_response_envelope_middleware,?\s*\)\)",
         app_source,
     ):
@@ -1636,6 +1720,31 @@ def check_response_envelope_boundary(errors: list[str]) -> None:
             app_path.read_text(encoding="utf-8"),
         )
     )
+    response_sources = {
+        "crates/ryframe-http/src/lib.rs": (
+            ROOT / "crates/ryframe-http/src/lib.rs"
+        ).read_text(encoding="utf-8").split("#[cfg(test)]", maxsplit=1)[0],
+        "crates/ryframe-generator/src/template/handler.rs": (
+            ROOT / "crates/ryframe-generator/src/template/handler.rs"
+        ).read_text(encoding="utf-8"),
+    }
+    response_sources.update(
+        {
+            str(path.relative_to(ROOT)): path.read_text(encoding="utf-8")
+            for path in rust_sources("crates/ryframe-api/src")
+        }
+    )
+    for relative_path, source in response_sources.items():
+        for removed_constructor in (
+            "success_msg(",
+            "success_no_data_with_msg(",
+            "ApiPageResponse::new(",
+        ):
+            if removed_constructor in source:
+                errors.append(
+                    f"removed response message constructor returned in {relative_path}: "
+                    f"{removed_constructor}"
+                )
 
 
 def check_release_artifacts(errors: list[str]) -> None:
@@ -2027,6 +2136,9 @@ def check_messaging_runtime_policy(errors: list[str]) -> None:
         "max_connections_per_user",
         "outbound_buffer",
         "max_recipients_per_message",
+        "replay_interval_seconds",
+        "replay_jitter_seconds",
+        "replay_batch_size",
     ):
         if not re.search(rf"\bpub\s+{field}\s*:", config_source):
             errors.append(f"typed messaging configuration is missing field: {field}")
@@ -2035,6 +2147,8 @@ def check_messaging_runtime_policy(errors: list[str]) -> None:
         "WEBSOCKET_TICKET_TTL_SECONDS",
         "DEFAULT_RETENTION_DAYS",
         "CONNECTION_QUEUE_CAPACITY",
+        "RESYNC_INTERVAL",
+        "RESYNC_BATCH_SIZE",
     )
     for name in forbidden_constants:
         if any(name in source for source in (service_source, ticket_source, socket_source)):
@@ -2046,8 +2160,14 @@ def check_messaging_runtime_policy(errors: list[str]) -> None:
         errors.append("message service does not receive and enforce MessagingConfig")
     if "config: MessagingConfig" not in ticket_source or "self.config.ticket_ttl_seconds" not in ticket_source:
         errors.append("WebSocket ticket service does not use configured ticket TTL")
-    if "max_connections_per_user" not in socket_source or ".entry(identity).or_default()" not in socket_source:
+    if "max_connections_per_user" not in socket_source or ".entry(identity.clone())" not in socket_source:
         errors.append("message hub does not atomically enforce the per-identity connection limit")
+    if "spawn_replay_scheduler" not in socket_source or "online_identities" not in socket_source:
+        errors.append("message inbox replay is not owned by a shared identity scheduler")
+    if "let mut resync" in socket_source or socket_source.count("unacknowledged_for_identity") != 1:
+        errors.append("message inbox replay performs per-connection duplicate queries")
+    if 'record_message_replay_query("success")' not in socket_source:
+        errors.append("shared message replay queries are not observable with bounded metrics")
 
     publish_start = repository_source.find("pub async fn publish_in_transaction")
     publish_end = repository_source.find("pub async fn inbox", publish_start)
@@ -2194,6 +2314,61 @@ def check_file_digest_runtime_policy(errors: list[str]) -> None:
             errors.append(f"one-time file maintenance command is incomplete: {fragment}")
 
 
+def check_persisted_trace_context(errors: list[str]) -> None:
+    """保证后台任务和 Outbox 持久化完整的 W3C Trace Context。"""
+    required_fragments = {
+        "crates/ryframe-service/src/trace_context.rs": (
+            "struct PersistedTraceContext",
+            "pub traceparent: Option<String>",
+            "pub tracestate: Option<String>",
+            "fn current_trace_context()",
+            "tracestate: Option<&str>",
+        ),
+        "crates/ryframe-db/src/entities/background_job.rs": (
+            "pub traceparent: Option<String>",
+            "pub tracestate: Option<String>",
+        ),
+        "crates/ryframe-db/src/entities/outbox_event.rs": (
+            "pub traceparent: Option<String>",
+            "pub tracestate: Option<String>",
+        ),
+        "crates/ryframe-db/src/repositories/background_job_repo.rs": (
+            "traceparent: Set(command.traceparent)",
+            "tracestate: Set(command.tracestate)",
+        ),
+        "crates/ryframe-db/src/repositories/outbox_event_repo.rs": (
+            "traceparent: Set(event.traceparent)",
+            "tracestate: Set(event.tracestate)",
+        ),
+        "crates/ryframe-db-migration/src/m20260805_000019_trace_context_state.rs": (
+            'const TRACE_STATE_COLUMN: &str = "tracestate"',
+            ".string_len(512)",
+        ),
+        "crates/ryframe-db-migration/src/schema.rs": (
+            "`traceparent` VARCHAR(255)",
+            "`tracestate` VARCHAR(512)",
+        ),
+        "sql/ryframe_config.sql": (
+            "`traceparent`",
+            "`tracestate`",
+        ),
+    }
+    for relative_path, fragments in required_fragments.items():
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        for fragment in fragments:
+            if fragment not in source:
+                errors.append(
+                    f"persisted trace context is incomplete in {relative_path}: {fragment}"
+                )
+
+    for path in rust_sources("crates/ryframe-service/src"):
+        if "current_traceparent(" in path.read_text(encoding="utf-8"):
+            errors.append(
+                "service restores traceparent-only persistence: "
+                f"{path.relative_to(ROOT)}"
+            )
+
+
 def check_pinned_workflow_actions(errors: list[str]) -> None:
     """禁止工作流重新引入可变的第三方 Action 或容器镜像标签。"""
     uses_pattern = re.compile(r"^\s*(?:-\s+)?uses:\s+([^\s#]+)")
@@ -2247,6 +2422,7 @@ def main() -> int:
     check_messaging_runtime_policy(errors)
     check_logging_retention_policy(errors)
     check_file_digest_runtime_policy(errors)
+    check_persisted_trace_context(errors)
     check_database_and_storage_topology(errors)
     check_api_prefix_contract(errors)
     check_response_envelope_boundary(errors)

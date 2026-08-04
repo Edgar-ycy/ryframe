@@ -204,6 +204,7 @@ impl MessageService {
             .await?;
         if published.inserted {
             let payload = serde_json::json!({ "message_id": published.message.id.to_string() });
+            let trace_context = crate::trace_context::current_trace_context();
             self.outbox
                 .record_in_transaction(
                     &transaction,
@@ -216,7 +217,8 @@ impl MessageService {
                         available_at: now,
                         max_attempts: 20,
                         dedupe_key: Some(format!("message:{}", published.message.id)),
-                        traceparent: crate::trace_context::current_traceparent(),
+                        traceparent: trace_context.traceparent,
+                        tracestate: trace_context.tracestate,
                     },
                     now,
                 )

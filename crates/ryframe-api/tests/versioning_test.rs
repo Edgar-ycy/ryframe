@@ -2,14 +2,19 @@ use axum::{
     Json, Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
-    middleware::from_fn,
+    middleware::{from_fn, from_fn_with_state},
     routing::get,
 };
 use ryframe_api::router::api_version;
 use ryframe_api::versioning::{ApiVersion, VersionedRouter};
 use ryframe_middleware::{api_response_envelope_middleware, request_id_middleware};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tower::ServiceExt;
+
+fn localizer() -> Arc<ryframe_i18n::Localizer> {
+    Arc::new(ryframe_i18n::Localizer::embedded().expect("内嵌国际化资源应有效"))
+}
 
 #[test]
 fn test_api_version_display() {
@@ -92,7 +97,10 @@ async fn test_versioned_router_only_v1_rejects_v2_without_fallback() {
     let router = VersionedRouter::new()
         .with_v1(Router::<()>::new().route("/version-check", get(v1_handler)))
         .into_router()
-        .layer(from_fn(api_response_envelope_middleware))
+        .layer(from_fn_with_state(
+            localizer(),
+            api_response_envelope_middleware,
+        ))
         .layer(from_fn(request_id_middleware));
 
     let v1_response = router
@@ -136,7 +144,10 @@ async fn test_versioned_router_only_v1_rejects_v2_without_fallback() {
 async fn version_endpoint_uses_the_unified_response_contract() {
     let router = Router::new()
         .route("/api/v1/version", get(api_version))
-        .layer(from_fn(api_response_envelope_middleware))
+        .layer(from_fn_with_state(
+            localizer(),
+            api_response_envelope_middleware,
+        ))
         .layer(from_fn(request_id_middleware));
 
     let response = router

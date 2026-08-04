@@ -113,7 +113,7 @@ impl AppConfig {
         config.environment = environment;
         config.snowflake_worker_id = resolve_snowflake_worker_id(environment)?;
 
-        // 生产敏感值只允许由环境变量或外部 secret manager 注入，加载后直接校验最终值。
+        // 生产敏感值只允许由环境变量或 `_FILE` 指向的外部 secret 注入，加载后直接校验最终值。
         config.validate()?;
         if environment.is_production()
             && migration_mode_was_explicit

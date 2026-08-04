@@ -86,7 +86,7 @@ async fn cancel(
         .cancel_for_requester(&current_user, parse_export_id(&id)?)
         .await
         .map_err(ryframe_http::HttpAppError::from)
-        .map(|job| ApiResponse::success_msg("导出任务已取消", job.into()))
+        .map(|job| ApiResponse::success(job.into()))
         .map(Json)
 }
 
@@ -150,7 +150,7 @@ pub(crate) async fn request_export(
         .map_err(ryframe_http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(ApiResponse::success_msg("导出任务已创建", export.into())),
+        Json(ApiResponse::success(export.into())),
     ))
 }
 

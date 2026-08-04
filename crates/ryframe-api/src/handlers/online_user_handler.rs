@@ -48,13 +48,12 @@ pub async fn list_online_users_page(
             page,
         )
         .await?;
-    Ok(Json(ApiPageResponse::new(
+    Ok(Json(ApiPageResponse::page(
         rows.into_iter().map(OnlineUserVo::from).collect(),
         total,
         response_page,
         response_page_size,
         state.config.pagination.max_page_size,
-        "查询成功",
     )))
 }
 
@@ -100,7 +99,5 @@ pub async fn force_logout(
         .remove_user(&current_user.tenant_id, &sid)
         .await;
 
-    Ok(Json(ApiResponse::success_no_data_with_msg(
-        "用户已强制下线",
-    )))
+    Ok(Json(ApiResponse::success_no_data()))
 }

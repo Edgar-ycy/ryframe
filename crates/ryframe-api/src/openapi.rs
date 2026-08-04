@@ -407,6 +407,13 @@ fn api_prefix_contract() -> serde_json::Value {
     })
 }
 
+fn permission_catalog_contract() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "codes": crate::permission_catalog::route_permission_codes(),
+    })
+}
+
 impl utoipa::Modify for ApiDocModifier {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -444,6 +451,10 @@ impl utoipa::Modify for ApiDocModifier {
             .extensions
             .get_or_insert_default()
             .insert("x-ryframe-api-prefix".into(), api_prefix_contract());
+        openapi.extensions.get_or_insert_default().insert(
+            "x-ryframe-permission-catalog".into(),
+            permission_catalog_contract(),
+        );
 
         for (path, item) in &mut openapi.paths.paths {
             set_operation_id(&mut item.get, "get", path);
@@ -696,6 +707,20 @@ mod tests {
         let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
 
         assert_eq!(&document["x-ryframe-api-prefix"], &api_prefix_contract());
+    }
+
+    #[test]
+    fn route_permissions_are_exported_as_a_stable_catalog() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let contract = &document["x-ryframe-permission-catalog"];
+
+        assert_eq!(contract, &permission_catalog_contract());
+        let codes = contract["codes"].as_array().expect("权限目录必须是数组");
+        assert!(codes.len() >= 40, "权限目录覆盖数量异常：{}", codes.len());
+        assert!(codes.windows(2).all(|pair| {
+            pair[0].as_str().expect("权限码必须是字符串")
+                < pair[1].as_str().expect("权限码必须是字符串")
+        }));
     }
 
     #[test]

@@ -95,10 +95,10 @@ APP_DATABASE_HOST
 APP_DATABASE_PORT
 APP_DATABASE_NAME
 APP_DATABASE_USERNAME
-APP_DATABASE_PASSWORD
+APP_DATABASE_PASSWORD_FILE
 ```
 
-全部副本通过 `APP_DATABASE_REPLICAS` JSON 数组一次性覆盖，数组元素与 `[[database.replicas]]` 字段一致：
+`APP_DATABASE_PASSWORD_FILE` 指向只包含主库密码的 UTF-8 secret 文件。全部副本通过 `APP_DATABASE_REPLICAS_FILE` 指向的 JSON 数组文件一次性覆盖，数组元素与 `[[database.replicas]]` 字段一致：
 
 ```json
 [
@@ -115,7 +115,7 @@ APP_DATABASE_PASSWORD
 ]
 ```
 
-业务数据源通过 `APP_DATABASE_SOURCES` JSON 数组覆盖，代码生成器选择通过 `APP_GENERATOR_DATA_SOURCE` 覆盖：
+业务数据源通过 `APP_DATABASE_SOURCES_FILE` 指向的 JSON 数组文件覆盖，代码生成器选择通过 `APP_GENERATOR_DATA_SOURCE` 覆盖：
 
 ```json
 [
@@ -132,7 +132,7 @@ APP_DATABASE_PASSWORD
 ]
 ```
 
-生产密码应由密钥管理或部署环境注入，不得提交到 Git。
+生产密码、副本和业务数据源文件应由密钥管理或部署平台挂载，不得提交到 Git；没有副本或业务数据源时，对应文件写入 `[]`。
 
 ## 3. 目录所有权
 
@@ -297,6 +297,8 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
 ## 9. 迁移与重置
 
 应用启动时只在主库自动运行 `ryframe-db-migration`，完成后校验主库结构。副本以不可路由槽位注册：监督器每 5 秒以 2 秒总超时执行连接/PING/结构校验，连续两次完整成功后才接收最终一致性读取；连续三次网络失败会摘除，结构不一致会立即摘除，并按 5、10、20、40、60 秒上限退避重连。主库就绪探针不等待副本。命名业务数据源只执行连接和健康检查，不执行系统迁移或系统表校验。复制延迟或外部迁移系统必须保证副本结构在应用接流量前就绪。新增结构变更时：
+
+`sys_background_job` 与 `sys_outbox_event` 同时保存可空的 `traceparent` 和 `tracestate`；两列共同构成跨进程 W3C Trace Context，迁移、实体和规范结构指纹必须同步演进。
 
 1. 新增迁移文件并注册到迁移器。
 2. 同步 Entity 和 Repository。

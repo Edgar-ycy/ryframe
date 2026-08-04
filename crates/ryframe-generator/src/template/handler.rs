@@ -60,13 +60,12 @@ async fn list(
         .{snake}
         .find_by_page(&current_user, page_query)
         .await?;
-    Ok(Json(ApiPageResponse::new(
+    Ok(Json(ApiPageResponse::page(
             page.records,
             page.total,
             page.page,
             page.page_size,
             state.config.pagination.max_page_size,
-            "查询成功",
         )))
 }}
 
@@ -145,7 +144,7 @@ async fn remove(
     Path(id): Path<{primary_key_type}>,
 ) -> HttpResult<Json<ApiResponse<()>>> {{
     state.services.{snake}.delete(&current_user, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }}
 "#,
         generator_version = crate::GENERATOR_VERSION,

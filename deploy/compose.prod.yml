@@ -12,7 +12,9 @@ x-ryframe-environment: &ryframe-environment
   APP_DATABASE_PORT: ${APP_DATABASE_PORT:-3306}
   APP_DATABASE_NAME: ${APP_DATABASE_NAME:?必须设置 APP_DATABASE_NAME}
   APP_DATABASE_USERNAME: ${APP_DATABASE_USERNAME:?必须设置 APP_DATABASE_USERNAME}
-  APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?必须设置 APP_DATABASE_PASSWORD}
+  APP_DATABASE_PASSWORD_FILE: /run/secrets/database-password
+  APP_DATABASE_REPLICAS_FILE: /run/secrets/database-replicas
+  APP_DATABASE_SOURCES_FILE: /run/secrets/database-sources
   APP_DATABASE_TLS_MODE: verify_identity
   APP_DATABASE_TLS_CA: /run/secrets/mysql-ca.pem
   APP_DATABASE_TLS_CLIENT_CERT: /run/secrets/mysql-client-cert.pem
@@ -20,18 +22,19 @@ x-ryframe-environment: &ryframe-environment
   APP_REDIS_MODE: required
   APP_REDIS_HOST: ${APP_REDIS_HOST:?必须设置 APP_REDIS_HOST}
   APP_REDIS_PORT: ${APP_REDIS_PORT:-6380}
+  APP_REDIS_PASSWORD_FILE: /run/secrets/redis-password
   APP_REDIS_TLS: "true"
   APP_REDIS_TLS_CA: /run/secrets/redis-ca.pem
   APP_REDIS_TLS_CLIENT_CERT: /run/secrets/redis-client-cert.pem
   APP_REDIS_TLS_CLIENT_KEY: /run/secrets/redis-client-key.pem
   APP_OBJECT_STORAGE_BACKEND: s3
   APP_OBJECT_STORAGE_ENDPOINT: ${APP_OBJECT_STORAGE_ENDPOINT:?必须设置 APP_OBJECT_STORAGE_ENDPOINT}
-  APP_OBJECT_STORAGE_ACCESS_KEY: ${APP_OBJECT_STORAGE_ACCESS_KEY:?必须设置 APP_OBJECT_STORAGE_ACCESS_KEY}
-  APP_OBJECT_STORAGE_SECRET_KEY: ${APP_OBJECT_STORAGE_SECRET_KEY:?必须设置 APP_OBJECT_STORAGE_SECRET_KEY}
+  APP_OBJECT_STORAGE_ACCESS_KEY_FILE: /run/secrets/object-storage-access-key
+  APP_OBJECT_STORAGE_SECRET_KEY_FILE: /run/secrets/object-storage-secret-key
   APP_OBJECT_STORAGE_REGION: ${APP_OBJECT_STORAGE_REGION:-us-east-1}
   APP_OBJECT_STORAGE_USE_SSL: "true"
-  APP_AUTH_JWT_SECRET: ${APP_AUTH_JWT_SECRET:?必须设置 APP_AUTH_JWT_SECRET}
-  APP_MONITOR_METRICS_BEARER_TOKEN: ${APP_MONITOR_METRICS_BEARER_TOKEN:?必须设置 APP_MONITOR_METRICS_BEARER_TOKEN}
+  APP_AUTH_JWT_SECRET_FILE: /run/secrets/auth-jwt-secret
+  APP_MONITOR_METRICS_BEARER_TOKEN_FILE: /run/secrets/metrics-bearer-token
   APP_PROXY_TRUSTED_CIDRS: ${APP_PROXY_TRUSTED_CIDRS:?必须设置受信任代理 CIDR}
   APP_LOGGER_LEVEL: ${APP_LOGGER_LEVEL:-info}
   APP_LOGGER_FORMAT: ${APP_LOGGER_FORMAT:-json}
@@ -43,6 +46,15 @@ x-ryframe-environment: &ryframe-environment
   APP_MESSAGING_MAX_CONNECTIONS_PER_USER: ${APP_MESSAGING_MAX_CONNECTIONS_PER_USER:-5}
   APP_MESSAGING_OUTBOUND_BUFFER: ${APP_MESSAGING_OUTBOUND_BUFFER:-256}
   APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE: ${APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE:-100000}
+  APP_MESSAGING_REPLAY_INTERVAL_SECONDS: ${APP_MESSAGING_REPLAY_INTERVAL_SECONDS:-15}
+  APP_MESSAGING_REPLAY_JITTER_SECONDS: ${APP_MESSAGING_REPLAY_JITTER_SECONDS:-5}
+  APP_MESSAGING_REPLAY_BATCH_SIZE: ${APP_MESSAGING_REPLAY_BATCH_SIZE:-100}
+  APP_TELEMETRY_ENABLED: ${APP_TELEMETRY_ENABLED:-false}
+  APP_TELEMETRY_ENDPOINT: ${APP_TELEMETRY_ENDPOINT:-http://otel-collector.internal.example:4318/v1/traces}
+  APP_TELEMETRY_SERVICE_NAME: ${APP_TELEMETRY_SERVICE_NAME:-ryframe}
+  APP_TELEMETRY_SAMPLE_RATIO: ${APP_TELEMETRY_SAMPLE_RATIO:-0.1}
+  APP_TELEMETRY_EXPORT_TIMEOUT_SECS: ${APP_TELEMETRY_EXPORT_TIMEOUT_SECS:-5}
+  APP_TELEMETRY_MAX_QUEUE_SIZE: ${APP_TELEMETRY_MAX_QUEUE_SIZE:-2048}
 
 x-ryframe-service: &ryframe-service
   image: ${RYFRAME_IMAGE:?必须设置不可变的 RYFRAME_IMAGE 镜像摘要}
@@ -58,6 +70,14 @@ x-ryframe-service: &ryframe-service
     - redis-ca.pem
     - redis-client-cert.pem
     - redis-client-key.pem
+    - redis-password
+    - database-password
+    - database-replicas
+    - database-sources
+    - object-storage-access-key
+    - object-storage-secret-key
+    - auth-jwt-secret
+    - metrics-bearer-token
   networks:
     - backend
 
@@ -129,3 +149,19 @@ secrets:
     file: ${RYFRAME_REDIS_CLIENT_CERT_FILE:?必须设置 Redis 客户端证书文件}
   redis-client-key.pem:
     file: ${RYFRAME_REDIS_CLIENT_KEY_FILE:?必须设置 Redis 客户端私钥文件}
+  redis-password:
+    file: ${RYFRAME_REDIS_PASSWORD_FILE:?必须设置 Redis 密码 secret 文件}
+  database-password:
+    file: ${RYFRAME_DATABASE_PASSWORD_FILE:?必须设置数据库密码 secret 文件}
+  database-replicas:
+    file: ${RYFRAME_DATABASE_REPLICAS_FILE:?必须设置数据库副本 JSON 文件}
+  database-sources:
+    file: ${RYFRAME_DATABASE_SOURCES_FILE:?必须设置业务数据源 JSON 文件}
+  object-storage-access-key:
+    file: ${RYFRAME_OBJECT_STORAGE_ACCESS_KEY_FILE:?必须设置对象存储访问密钥文件}
+  object-storage-secret-key:
+    file: ${RYFRAME_OBJECT_STORAGE_SECRET_KEY_FILE:?必须设置对象存储私密密钥文件}
+  auth-jwt-secret:
+    file: ${RYFRAME_AUTH_JWT_SECRET_FILE:?必须设置 JWT secret 文件}
+  metrics-bearer-token:
+    file: ${RYFRAME_METRICS_BEARER_TOKEN_FILE:?必须设置指标 Bearer Token 文件}

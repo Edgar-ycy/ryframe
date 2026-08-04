@@ -142,14 +142,11 @@ pub(crate) async fn import_users(
             }
         }
 
-        return Ok(Json(ApiResponse::success_msg(
-            "导入完成",
-            UserImportResult {
-                success_count,
-                fail_count: errors.len(),
-                errors,
-            },
-        )));
+        return Ok(Json(ApiResponse::success(UserImportResult {
+            success_count,
+            fail_count: errors.len(),
+            errors,
+        })));
     }
     Err(AppError::Validation("未找到上传的文件".into()).into())
 }

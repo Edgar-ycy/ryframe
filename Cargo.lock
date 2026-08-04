@@ -3548,6 +3548,7 @@ dependencies = [
  "ryframe-config",
  "ryframe-core",
  "ryframe-http",
+ "ryframe-i18n",
  "ryframe-kernel",
  "ryframe-utils",
  "serde",

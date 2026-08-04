@@ -21,6 +21,7 @@ const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_even
     `lease_until` DATETIME DEFAULT NULL,
     `dedupe_key` VARCHAR(191) DEFAULT NULL,
     `traceparent` VARCHAR(255) DEFAULT NULL,
+    `tracestate` VARCHAR(512) DEFAULT NULL,
     `last_error` TEXT DEFAULT NULL,
     `published_at` DATETIME DEFAULT NULL,
     `created_at` DATETIME NOT NULL,

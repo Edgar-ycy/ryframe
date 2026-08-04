@@ -37,13 +37,12 @@ pub(crate) async fn list(
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .map(|page| {
-            Json(ApiPageResponse::new(
+            Json(ApiPageResponse::page(
                 page.records.into_iter().map(UserVo::from).collect(),
                 page.total,
                 page.page,
                 page.page_size,
                 state.config.pagination.max_page_size,
-                "查询成功",
             ))
         })
 }
@@ -194,7 +193,7 @@ pub(crate) async fn replace_roles(
         .user
         .replace_roles(&current_user, id, role_ids)
         .await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("角色分配成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 #[delete("/{id}")]
@@ -209,7 +208,7 @@ pub(crate) async fn remove(
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.user.delete(&current_user, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 #[delete("/batch/{ids}")]
@@ -227,10 +226,8 @@ pub(crate) async fn batch_remove(
     if ids.is_empty() {
         return Err(AppError::Validation("请选择要删除的用户".into()).into());
     }
-    let count = state.services.user.delete_many(&current_user, &ids).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
-        "成功删除 {count} 个用户"
-    ))))
+    state.services.user.delete_many(&current_user, &ids).await?;
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 #[put("/{id}/status")]
@@ -252,5 +249,5 @@ pub(crate) async fn update_status(
         .user
         .update_status(&current_user, id, dto.status)
         .await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("状态修改成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }

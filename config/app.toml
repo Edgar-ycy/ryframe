@@ -84,6 +84,12 @@ max_connections_per_user = 5
 outbound_buffer = 256
 # 单条消息允许固化的最大收件人数。
 max_recipients_per_message = 100000
+# 共享补拉调度器扫描在线身份的间隔（秒）
+replay_interval_seconds = 15
+# 多实例共享补拉调度器的启动抖动上限（秒）
+replay_jitter_seconds = 5
+# 单个租户用户每次补拉的最大消息数
+replay_batch_size = 100
 
 [cors]
 # 允许来源示例：allow_origins = ["https://admin.example.com"]
@@ -159,9 +165,9 @@ local_base_dir = "uploads"
 allow_local_in_production = false
 # RustFS / MinIO / S3 端点
 endpoint = ""
-# 访问密钥（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY 注入）
+# 访问密钥（生产环境通过 APP_OBJECT_STORAGE_ACCESS_KEY_FILE 注入）
 access_key = ""
-# 私密访问密钥（生产环境通过 APP_OBJECT_STORAGE_SECRET_KEY 注入）
+# 私密访问密钥（生产环境通过 APP_OBJECT_STORAGE_SECRET_KEY_FILE 注入）
 secret_key = ""
 # 是否启用 TLS；生产远程存储必须为 true，且 endpoint 必须以 https:// 开头
 use_ssl = false

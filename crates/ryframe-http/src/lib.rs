@@ -7,13 +7,36 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use ryframe_kernel::AppError;
+use ryframe_kernel::{AppError, ErrorCode};
 use serde::Serialize;
 use std::fmt;
 use validator::ValidationErrors;
 
 /// 当前公开 API 的唯一 URL 前缀。
 pub const API_PREFIX: &str = "/api/v1";
+
+/// API 边缘渲染通用成功消息时使用的资源键。
+pub const SUCCESS_MESSAGE_KEY: &str = "common.success";
+
+/// API 边缘渲染分页查询成功消息时使用的资源键。
+pub const QUERY_SUCCESS_MESSAGE_KEY: &str = "common.query";
+
+/// 将稳定错误码映射为同名本地化资源键。
+pub const fn error_message_key(error_code: ErrorCode) -> &'static str {
+    match error_code {
+        ErrorCode::Validation => "error.validation",
+        ErrorCode::Authentication => "error.authentication",
+        ErrorCode::Authorization => "error.authorization",
+        ErrorCode::NotFound => "error.not_found",
+        ErrorCode::Conflict => "error.conflict",
+        ErrorCode::PayloadTooLarge => "error.payload_too_large",
+        ErrorCode::RateLimited => "error.rate_limited",
+        ErrorCode::Database => "error.database",
+        ErrorCode::Config => "error.config",
+        ErrorCode::Internal => "error.internal",
+        ErrorCode::ServiceUnavailable => "error.service_unavailable",
+    }
+}
 
 /// 将不带版本的相对路径连接到唯一公开 API 前缀。
 pub fn api_path(relative_path: &str) -> String {
@@ -59,23 +82,11 @@ pub struct ApiEmptyResponse {
 }
 
 impl ApiEmptyResponse {
-    /// 构造默认消息为“操作成功”的空数据响应。
+    /// 构造由 API 边缘渲染通用成功消息的空数据响应。
     pub fn success_no_data() -> Self {
         Self {
             code: 200,
-            message: "操作成功".into(),
-            data: None,
-            request_id: String::new(),
-            error_key: None,
-            details: None,
-        }
-    }
-
-    /// 构造带自定义消息的空数据响应。
-    pub fn success_no_data_with_msg(message: impl Into<String>) -> Self {
-        Self {
-            code: 200,
-            message: message.into(),
+            message: SUCCESS_MESSAGE_KEY.into(),
             data: None,
             request_id: String::new(),
             error_key: None,
@@ -85,23 +96,11 @@ impl ApiEmptyResponse {
 }
 
 impl<T: Serialize> ApiResponse<T> {
-    /// 构造默认消息为“操作成功”的成功响应。
+    /// 构造由 API 边缘渲染通用成功消息的成功响应。
     pub fn success(data: T) -> Self {
         Self {
             code: 200,
-            message: "操作成功".into(),
-            data: Some(data),
-            request_id: String::new(),
-            error_key: None,
-            details: None,
-        }
-    }
-
-    /// 构造带自定义消息的成功响应。
-    pub fn success_msg(message: impl Into<String>, data: T) -> Self {
-        Self {
-            code: 200,
-            message: message.into(),
+            message: SUCCESS_MESSAGE_KEY.into(),
             data: Some(data),
             request_id: String::new(),
             error_key: None,
@@ -111,23 +110,11 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 impl ApiResponse<()> {
-    /// 构造默认消息且不带数据的成功响应。
+    /// 构造由 API 边缘渲染通用成功消息且不带数据的响应。
     pub fn success_no_data() -> Self {
         Self {
             code: 200,
-            message: "操作成功".into(),
-            data: None,
-            request_id: String::new(),
-            error_key: None,
-            details: None,
-        }
-    }
-
-    /// 构造带自定义消息且不带数据的成功响应。
-    pub fn success_no_data_with_msg(message: impl Into<String>) -> Self {
-        Self {
-            code: 200,
-            message: message.into(),
+            message: SUCCESS_MESSAGE_KEY.into(),
             data: None,
             request_id: String::new(),
             error_key: None,
@@ -173,18 +160,11 @@ pub struct ApiPageResponse<T: Serialize> {
 }
 
 impl<T: Serialize> ApiPageResponse<T> {
-    /// 从分页数据构造带自定义消息的响应。
-    pub fn new(
-        items: Vec<T>,
-        total: u64,
-        page: u64,
-        page_size: u64,
-        max_page_size: u64,
-        message: impl Into<String>,
-    ) -> Self {
+    /// 从分页数据构造由 API 边缘渲染查询成功消息的响应。
+    pub fn page(items: Vec<T>, total: u64, page: u64, page_size: u64, max_page_size: u64) -> Self {
         Self {
             code: 200,
-            message: message.into(),
+            message: QUERY_SUCCESS_MESSAGE_KEY.into(),
             data: PageData {
                 total_pages: total.div_ceil(page_size.max(1)),
                 items,
@@ -197,11 +177,6 @@ impl<T: Serialize> ApiPageResponse<T> {
             error_key: None,
             details: None,
         }
-    }
-
-    /// 从分页数据构造默认消息为“查询成功”的响应。
-    pub fn page(items: Vec<T>, total: u64, page: u64, page_size: u64, max_page_size: u64) -> Self {
-        Self::new(items, total, page, page_size, max_page_size, "查询成功")
     }
 }
 
@@ -242,58 +217,43 @@ pub type HttpResult<T> = Result<T, HttpAppError>;
 impl IntoResponse for HttpAppError {
     fn into_response(self) -> Response {
         let error = self.0;
-        let (status, message, retry_after) = match &error {
-            AppError::Validation(message) => (StatusCode::BAD_REQUEST, message.clone(), None),
-            AppError::Authentication(message) => (StatusCode::UNAUTHORIZED, message.clone(), None),
-            AppError::Authorization(message) => (StatusCode::FORBIDDEN, message.clone(), None),
-            AppError::NotFound(message) => (StatusCode::NOT_FOUND, message.clone(), None),
-            AppError::Conflict(message) => (StatusCode::CONFLICT, message.clone(), None),
-            AppError::PayloadTooLarge(message) => {
-                (StatusCode::PAYLOAD_TOO_LARGE, message.clone(), None)
+        let error_code = error.error_code();
+        let (status, retry_after) = match &error {
+            AppError::Validation(_) => (StatusCode::BAD_REQUEST, None),
+            AppError::Authentication(_) => (StatusCode::UNAUTHORIZED, None),
+            AppError::Authorization(_) => (StatusCode::FORBIDDEN, None),
+            AppError::NotFound(_) => (StatusCode::NOT_FOUND, None),
+            AppError::Conflict(_) => (StatusCode::CONFLICT, None),
+            AppError::PayloadTooLarge(_) => (StatusCode::PAYLOAD_TOO_LARGE, None),
+            AppError::RateLimited(_, retry_after) => {
+                (StatusCode::TOO_MANY_REQUESTS, Some(*retry_after))
             }
-            AppError::RateLimited(message, retry_after) => (
-                StatusCode::TOO_MANY_REQUESTS,
-                message.clone(),
-                Some(*retry_after),
-            ),
             AppError::Database(message) => {
                 tracing::error!(error = %message, "数据库错误");
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "数据库服务暂不可用".to_string(),
-                    None,
-                )
+                (StatusCode::SERVICE_UNAVAILABLE, None)
             }
             AppError::Config(message) => {
                 tracing::error!(error = %message, "配置错误");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    internal_error_message(),
-                    None,
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, None)
             }
             AppError::Internal(message) => {
                 tracing::error!(error = %message, "内部错误");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    internal_error_message(),
-                    None,
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, None)
             }
             AppError::ServiceUnavailable(message) => {
                 tracing::error!(error = %message, "服务暂不可用");
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    service_unavailable_error_message(),
-                    None,
-                )
+                (StatusCode::SERVICE_UNAVAILABLE, None)
             }
         };
 
-        let body = ApiResponse::<()>::fail(status.as_u16(), message, error.error_code().as_str());
+        let body = ApiResponse::<()>::fail(
+            status.as_u16(),
+            error_message_key(error_code),
+            error_code.as_str(),
+        );
         let json = serde_json::to_string(&body)
             .unwrap_or_else(|_| {
-                r#"{"code":500,"message":"序列化错误响应失败","data":null,"request_id":"","error_key":"internal","details":null}"#.into()
+                r#"{"code":500,"message":"error.internal","data":null,"request_id":"","error_key":"internal","details":null}"#.into()
             });
         let mut response = Response::new(axum::body::Body::from(json));
         *response.status_mut() = status;
@@ -317,24 +277,13 @@ pub fn app_error_response(error: AppError) -> Response {
     HttpAppError(error).into_response()
 }
 
-fn internal_error_message() -> String {
-    "服务器内部错误".to_string()
-}
-
-fn service_unavailable_error_message() -> String {
-    "服务暂不可用".to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use axum::response::IntoResponse;
     use ryframe_kernel::AppError;
     use validator::{ValidationError, ValidationErrors};
 
-    use super::{
-        API_PREFIX, HttpAppError, api_path, internal_error_message,
-        service_unavailable_error_message,
-    };
+    use super::{API_PREFIX, HttpAppError, api_path, error_message_key};
 
     #[test]
     fn api_path_uses_the_canonical_prefix() {
@@ -368,20 +317,18 @@ mod tests {
     }
 
     #[test]
-    fn internal_errors_never_expose_details() {
-        let detail = "mysql://user:secret@internal.example/private";
-        let message = internal_error_message();
-
-        assert_eq!(message, "服务器内部错误");
-        assert!(!message.contains(detail));
-    }
-
-    #[test]
-    fn service_unavailable_errors_never_expose_dependency_details() {
-        let detail = "redis://user:secret@internal.example:6379 unavailable";
-        let message = service_unavailable_error_message();
-
-        assert_eq!(message, "服务暂不可用");
-        assert!(!message.contains(detail));
+    fn error_message_keys_are_stable_and_do_not_include_private_details() {
+        for (code, expected) in [
+            (ryframe_kernel::ErrorCode::Validation, "error.validation"),
+            (ryframe_kernel::ErrorCode::Internal, "error.internal"),
+            (
+                ryframe_kernel::ErrorCode::ServiceUnavailable,
+                "error.service_unavailable",
+            ),
+        ] {
+            let key = error_message_key(code);
+            assert_eq!(key, expected);
+            assert!(!key.contains("secret"));
+        }
     }
 }

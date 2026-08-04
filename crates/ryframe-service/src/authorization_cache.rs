@@ -1051,6 +1051,7 @@ fn mirror_event(
     payload: AuthorizationMirrorUpdate,
     available_at: chrono::DateTime<chrono::Utc>,
 ) -> AppResult<RecordOutboxEvent> {
+    let trace_context = crate::trace_context::current_trace_context();
     Ok(RecordOutboxEvent {
         tenant_id: Some(tenant_id.to_owned()),
         event_type: AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE.to_owned(),
@@ -1063,7 +1064,8 @@ fn mirror_event(
         dedupe_key: Some(format!(
             "authorization-mirror:{tenant_id}:{aggregate_type}:{aggregate_id}:{version}"
         )),
-        traceparent: crate::trace_context::current_traceparent(),
+        traceparent: trace_context.traceparent,
+        tracestate: trace_context.tracestate,
     })
 }
 

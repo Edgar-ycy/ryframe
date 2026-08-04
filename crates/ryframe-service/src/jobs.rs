@@ -268,6 +268,7 @@ impl JobQueue {
     pub async fn enqueue_message_retention(&self) -> AppResult<EnqueueBackgroundJobResult> {
         let now = self.database_now().await?;
         let day = now.format("%F").to_string();
+        let trace_context = crate::trace_context::current_trace_context();
         self.repository
             .enqueue(
                 self.database.write(),
@@ -279,7 +280,8 @@ impl JobQueue {
                     available_at: now,
                     max_attempts: 20,
                     dedupe_key: Some(format!("message:retention:{day}")),
-                    traceparent: crate::trace_context::current_traceparent(),
+                    traceparent: trace_context.traceparent,
+                    tracestate: trace_context.tracestate,
                 },
                 now,
             )
@@ -290,6 +292,7 @@ impl JobQueue {
     pub async fn enqueue_export_cleanup(&self) -> AppResult<EnqueueBackgroundJobResult> {
         let now = self.database_now().await?;
         let day = now.format("%F").to_string();
+        let trace_context = crate::trace_context::current_trace_context();
         self.repository
             .enqueue(
                 self.database.write(),
@@ -301,7 +304,8 @@ impl JobQueue {
                     available_at: now,
                     max_attempts: 20,
                     dedupe_key: Some(format!("export:cleanup:{day}")),
-                    traceparent: crate::trace_context::current_traceparent(),
+                    traceparent: trace_context.traceparent,
+                    tracestate: trace_context.tracestate,
                 },
                 now,
             )
@@ -683,6 +687,7 @@ impl JobWorker {
         let span = tracing::info_span!("background_job", job_type = %job.job_type);
         let _ = span.set_parent(crate::trace_context::extract_parent_context(
             job.traceparent.as_deref(),
+            job.tracestate.as_deref(),
         ));
         async {
             let heartbeat_queue = self.queue.clone();
@@ -943,6 +948,7 @@ impl OutboxWorker {
         let span = tracing::info_span!("outbox_event", event_type = %event.event_type);
         let _ = span.set_parent(crate::trace_context::extract_parent_context(
             event.traceparent.as_deref(),
+            event.tracestate.as_deref(),
         ));
         self.run_claimed_event(event, worker_id)
             .instrument(span)
@@ -1031,6 +1037,7 @@ impl OutboxWorker {
                         max_attempts: event.max_attempts,
                         dedupe_key: event.dedupe_key.clone(),
                         traceparent: event.traceparent.clone(),
+                        tracestate: event.tracestate.clone(),
                     },
                     now,
                 )

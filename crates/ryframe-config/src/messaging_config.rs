@@ -16,6 +16,12 @@ pub struct MessagingConfig {
     pub outbound_buffer: usize,
     /// 单条消息允许固化的最大收件人数。
     pub max_recipients_per_message: u64,
+    /// 共享补拉调度器扫描在线身份的间隔，单位为秒。
+    pub replay_interval_seconds: u64,
+    /// 共享补拉调度器的启动抖动上限，单位为秒。
+    pub replay_jitter_seconds: u64,
+    /// 单个租户用户每次补拉的最大消息数。
+    pub replay_batch_size: u64,
 }
 
 impl Default for MessagingConfig {
@@ -27,6 +33,9 @@ impl Default for MessagingConfig {
             max_connections_per_user: 5,
             outbound_buffer: 256,
             max_recipients_per_message: 100_000,
+            replay_interval_seconds: 15,
+            replay_jitter_seconds: 5,
+            replay_batch_size: 100,
         }
     }
 }
@@ -49,6 +58,17 @@ impl MessagingConfig {
         if !(1..=1_000_000).contains(&self.max_recipients_per_message) {
             return Err("messaging.max_recipients_per_message 必须在 1 到 1000000 之间".into());
         }
+        if !(1..=3_600).contains(&self.replay_interval_seconds) {
+            return Err("messaging.replay_interval_seconds 必须在 1 到 3600 之间".into());
+        }
+        if self.replay_jitter_seconds > self.replay_interval_seconds {
+            return Err(
+                "messaging.replay_jitter_seconds 不能大于 messaging.replay_interval_seconds".into(),
+            );
+        }
+        if !(1..=1_000).contains(&self.replay_batch_size) {
+            return Err("messaging.replay_batch_size 必须在 1 到 1000 之间".into());
+        }
         Ok(())
     }
 }
@@ -67,6 +87,9 @@ mod tests {
         assert_eq!(config.max_connections_per_user, 5);
         assert_eq!(config.outbound_buffer, 256);
         assert_eq!(config.max_recipients_per_message, 100_000);
+        assert_eq!(config.replay_interval_seconds, 15);
+        assert_eq!(config.replay_jitter_seconds, 5);
+        assert_eq!(config.replay_batch_size, 100);
         assert!(config.validate().is_ok());
     }
 
@@ -75,6 +98,17 @@ mod tests {
         let config = MessagingConfig {
             enabled: false,
             outbound_buffer: 0,
+            ..MessagingConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn replay_jitter_must_not_exceed_the_scan_interval() {
+        let config = MessagingConfig {
+            replay_interval_seconds: 10,
+            replay_jitter_seconds: 11,
             ..MessagingConfig::default()
         };
 

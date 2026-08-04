@@ -150,7 +150,7 @@ pub async fn remove(
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.permission.delete(&current_user, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 #[post("/sync")]

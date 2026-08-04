@@ -169,6 +169,30 @@ class ArchitectureSecurityTest(unittest.TestCase):
         CHECK_ARCHITECTURE.check_response_envelope_boundary(errors)
         self.assertEqual(errors, [])
 
+    def test_response_envelope_requires_injected_api_edge_localization(self) -> None:
+        response_source = (
+            ROOT / "crates/ryframe-middleware/src/response_envelope.rs"
+        ).read_text(encoding="utf-8")
+        app_source = (ROOT / "crates/ryframe/src/app.rs").read_text(encoding="utf-8")
+        violations = CHECK_ARCHITECTURE.response_envelope_policy_violations(
+            response_source.replace(
+                "localizer.translate(locale, message_key)",
+                "message_key.to_owned()",
+                1,
+            ),
+            app_source,
+        )
+
+        self.assertIn("response envelope is missing localized response message", violations)
+
+    def test_removed_response_message_constructors_cannot_return(self) -> None:
+        errors: list[str] = []
+        CHECK_ARCHITECTURE.check_response_envelope_boundary(errors)
+
+        self.assertFalse(
+            [error for error in errors if "removed response message constructor" in error]
+        )
+
     def test_embedded_swagger_ui_contract_remains_local(self) -> None:
         errors: list[str] = []
         CHECK_ARCHITECTURE.check_embedded_swagger_ui(errors)

@@ -179,16 +179,16 @@ config/app.prod.toml
 | `APP_ENV` | 运行环境：`dev`、`test`、`prod` | `dev` |
 | `SNOWFLAKE_WORKER_ID` | Snowflake 节点 ID（`0..=1023`）；生产环境必填，且每个同时运行的实例必须唯一 | 开发/测试默认 `1` |
 | `APP_CONFIG_DIR` | 配置目录 | `config` |
-| `APP_DATABASE_REPLICAS` | 命名只读副本 JSON 数组 | `[]` |
-| `APP_DATABASE_SOURCES` | 命名业务数据源 JSON 数组 | 按环境配置 |
+| `APP_DATABASE_REPLICAS_FILE` | 命名只读副本 JSON 数组文件 | `[]` |
+| `APP_DATABASE_SOURCES_FILE` | 命名业务数据源 JSON 数组文件 | 按环境配置 |
 | `APP_GENERATOR_DATA_SOURCE` | 代码生成器读取的数据源名 | `primary` |
-| `APP_AUTH_JWT_SECRET` | JWT 签名密钥；生产环境必须随机生成且至少 32 字节 | 开发配置值 |
+| `APP_AUTH_JWT_SECRET_FILE` | JWT 签名密钥文件；生产环境必须随机生成且至少 32 字节 | 开发配置值 |
 | `APP_REDIS_MODE` | `required`、`optional` 或 `disabled`；生产固定 required | `optional` |
 | `APP_REDIS_TLS` | Redis 是否使用证书校验的 `rediss://`；远程生产 Redis 必须启用 | `false` |
 | `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；远程生产数据库使用 `verify_identity` | `disabled` |
 | `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
 | `APP_API_DOCS_ENABLED` | 是否暴露运行时 Swagger/OpenAPI；生产必须关闭 | `true` |
-| `APP_MONITOR_METRICS_BEARER_TOKEN` | Prometheus 专用 Bearer Token；生产至少 32 字节 | 空 |
+| `APP_MONITOR_METRICS_BEARER_TOKEN_FILE` | Prometheus 专用 Bearer Token 文件；生产至少 32 字节 | 空 |
 | `APP_OBJECT_STORAGE_BACKEND` | `local`、`rustfs`、`minio` 或 `s3` | 按环境配置 |
 | `APP_OBJECT_STORAGE_ENDPOINT` | RustFS/MinIO/S3 API 地址 | 按环境配置 |
 | `APP_OBJECT_STORAGE_USE_SSL` | 远程对象存储是否使用 TLS；生产还要求 `https://` endpoint | `false` |
@@ -200,7 +200,7 @@ config/app.prod.toml
 | `APP_TELEMETRY_EXPORT_TIMEOUT_SECS` | 单次 OTLP 导出最大等待秒数 | `5` |
 | `APP_TELEMETRY_MAX_QUEUE_SIZE` | 批量导出前允许暂存的最大 Span 数 | `2048` |
 
-生产环境不要把密钥、数据库密码、对象存储凭据写入仓库，建议通过环境变量或部署平台注入。
+生产 Compose 通过 `APP_*_FILE` 读取 Docker secret；文件必须是 UTF-8，末尾的一个换行会被移除。同一配置不能同时设置直接值和 `_FILE`。不要把密钥、数据库密码、对象存储凭据或副本连接 JSON 写入仓库。
 配置在启动时完成合并和严格校验；当前不提供配置密文解密，任何使用旧 `ENC[...]` 格式的值都会被拒绝。配置文件或环境变量变化后必须重启进程才会生效。
 容器镜像默认使用 `APP_ENV=prod`，启动时必须通过 `docker run -e SNOWFLAKE_WORKER_ID=<唯一节点号> ...` 或编排平台注入节点 ID；滚动发布期间新旧实例也不能复用同一个值。Snowflake 遇到时钟回拨或单毫秒序列耗尽会立即返回可重试的 503，不会等待或生成逻辑未来时间；由于时间戳高水位不跨重启持久化，同一 worker ID 只能在物理时间超过其最后生成时间后复用。
 生产环境的数据库、Redis 和对象存储如果跨主机，必须启用证书校验的 TLS；多实例部署应使用 RustFS/MinIO/S3，本地存储只允许单实例或经过验证的共享持久卷。详细要求见[生产部署基线](docs/production-deployment.md)。

@@ -16,6 +16,7 @@ pub fn build_app(
     cors_config: &CorsConfig,
 ) -> AppResult<Router> {
     let trusted_proxies = state.trusted_proxies.clone();
+    let response_localizer = state.localizer.clone();
     let upload_limits = state.config.upload.clone();
     let telemetry_enabled = state.config.telemetry.enabled;
     let rate_limit_state_for_api = rate_limit_state.clone();
@@ -62,7 +63,8 @@ pub fn build_app(
         .merge(business)
         .merge(probes)
         .layer(ryframe_middleware::cors_layer(cors_config)?)
-        .layer(from_fn(
+        .layer(from_fn_with_state(
+            response_localizer,
             ryframe_middleware::api_response_envelope_middleware,
         ))
         .layer(ryframe_middleware::compression_layer())

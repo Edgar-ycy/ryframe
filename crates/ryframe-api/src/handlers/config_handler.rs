@@ -47,13 +47,12 @@ async fn list(
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .map(|p| {
-            Json(ApiPageResponse::new(
+            Json(ApiPageResponse::page(
                 p.records.into_iter().map(ConfigVo::from).collect(),
                 p.total,
                 p.page,
                 p.page_size,
                 state.config.pagination.max_page_size,
-                "查询成功",
             ))
         })
 }
@@ -135,7 +134,7 @@ async fn remove(
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.config.delete(&current_user, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 根据参数键名查询参数值
@@ -170,10 +169,8 @@ async fn refresh_cache(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    let deleted = state.services.config.clear_cache(&current_user).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
-        "已清除 {deleted} 个缓存"
-    ))))
+    state.services.config.clear_cache(&current_user).await?;
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 创建参数配置异步导出任务。

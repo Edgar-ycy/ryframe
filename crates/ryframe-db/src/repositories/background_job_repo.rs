@@ -30,6 +30,7 @@ pub struct EnqueueBackgroundJob {
     pub max_attempts: i32,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
 }
 
 /// 幂等入队操作的结果。
@@ -150,6 +151,7 @@ impl BackgroundJobRepository {
             lease_until: Set(None),
             dedupe_key: Set(command.dedupe_key),
             traceparent: Set(command.traceparent),
+            tracestate: Set(command.tracestate),
             last_error: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
@@ -732,6 +734,15 @@ fn validate_enqueue_command(command: &EnqueueBackgroundJob) -> AppResult<()> {
             "background job traceparent must not exceed 255 bytes".into(),
         ));
     }
+    if command
+        .tracestate
+        .as_deref()
+        .is_some_and(|value| value.len() > 512)
+    {
+        return Err(AppError::Validation(
+            "background job tracestate must not exceed 512 bytes".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -810,6 +821,7 @@ mod tests {
             lease_until: Some(now + chrono::Duration::minutes(1)),
             dedupe_key: Some("message:7".into()),
             traceparent: None,
+            tracestate: None,
             last_error: None,
             created_at: now,
             updated_at: now,
@@ -858,11 +870,16 @@ mod tests {
             max_attempts: 0,
             dedupe_key: None,
             traceparent: None,
+            tracestate: None,
         };
         assert!(validate_enqueue_command(&job).is_err());
 
         job.max_attempts = 3;
         job.dedupe_key = Some(String::new());
+        assert!(validate_enqueue_command(&job).is_err());
+
+        job.dedupe_key = None;
+        job.tracestate = Some("x".repeat(513));
         assert!(validate_enqueue_command(&job).is_err());
     }
 
@@ -923,6 +940,7 @@ mod tests {
                     max_attempts: 3,
                     dedupe_key: existing.dedupe_key.clone(),
                     traceparent: None,
+                    tracestate: None,
                 },
                 now,
             )

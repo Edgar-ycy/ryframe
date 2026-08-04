@@ -68,7 +68,7 @@ async fn list_types(
         .dict
         .find_types_by_page(&current_user, filter.into_service_params(page))
         .await?;
-    Ok(Json(ApiPageResponse::new(
+    Ok(Json(ApiPageResponse::page(
         page_result
             .records
             .into_iter()
@@ -78,7 +78,6 @@ async fn list_types(
         page_result.page,
         page_result.page_size,
         state.config.pagination.max_page_size,
-        "查询成功",
     )))
 }
 
@@ -139,7 +138,7 @@ async fn delete_type(
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.dict.delete_type(&current_user, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -269,7 +268,7 @@ async fn delete_data(
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     state.services.dict.delete_data(&current_user, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 创建字典类型异步导出任务。

@@ -28,6 +28,7 @@ mod m20260803_000015_authorization_snapshot;
 mod m20260803_000016_cache_namespace_versions;
 mod m20260803_000017_file_digest_finalization;
 mod m20260803_000018_audit_operation_outbox;
+mod m20260805_000019_trace_context_state;
 mod schema;
 mod seeder;
 
@@ -74,6 +75,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260803_000016_cache_namespace_versions::Migration),
             Box::new(m20260803_000017_file_digest_finalization::Migration),
             Box::new(m20260803_000018_audit_operation_outbox::Migration),
+            Box::new(m20260805_000019_trace_context_state::Migration),
         ]
     }
 }
@@ -215,7 +217,7 @@ mod tests {
     use super::Migrator;
 
     #[test]
-    fn audit_operation_outbox_migration_is_the_latest_registry_entry() {
+    fn trace_context_state_migration_is_the_latest_registry_entry() {
         let names = Migrator::migrations()
             .into_iter()
             .map(|migration| migration.name().to_owned())
@@ -223,12 +225,12 @@ mod tests {
 
         assert_eq!(
             names.last().map(String::as_str),
-            Some("m20260803_000018_audit_operation_outbox")
+            Some("m20260805_000019_trace_context_state")
         );
         assert_eq!(
             names
                 .iter()
-                .filter(|name| name.as_str() == "m20260803_000018_audit_operation_outbox")
+                .filter(|name| name.as_str() == "m20260805_000019_trace_context_state")
                 .count(),
             1
         );
@@ -241,6 +243,11 @@ mod tests {
             .position(|name| name == "m20260803_000018_audit_operation_outbox")
             .unwrap();
         assert_eq!(audit_index, digest_index + 1);
+        let trace_state_index = names
+            .iter()
+            .position(|name| name == "m20260805_000019_trace_context_state")
+            .unwrap();
+        assert_eq!(trace_state_index, audit_index + 1);
     }
 
     #[test]

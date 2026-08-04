@@ -117,13 +117,12 @@ async fn list(
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .map(|p| {
-            Json(ApiPageResponse::new(
+            Json(ApiPageResponse::page(
                 p.records.into_iter().map(RoleVo::from).collect(),
                 p.total,
                 p.page,
                 p.page_size,
                 state.config.pagination.max_page_size,
-                "查询成功",
             ))
         })
 }
@@ -208,7 +207,7 @@ async fn remove(
 ) -> HttpResult<Json<ApiResponse<()>>> {
     ensure_can_operate_role(&state, &current_user, id).await?;
     state.services.role.delete(&current_user, id).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("删除成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 批量删除角色
@@ -233,11 +232,8 @@ async fn batch_remove(
         ensure_can_operate_role(&state, &current_user, *id).await?;
     }
 
-    let count = state.services.role.delete_many(&current_user, &ids).await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg(format!(
-        "成功删除 {} 个角色",
-        count
-    ))))
+    state.services.role.delete_many(&current_user, &ids).await?;
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 创建角色异步导出任务。
@@ -284,7 +280,7 @@ async fn replace_permissions(
         .role
         .assign_permissions(&current_user, id, perm_ids)
         .await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg("权限分配成功")))
+    Ok(Json(ApiResponse::success_no_data()))
 }
 
 /// 查询角色已分配的权限ID列表
@@ -329,7 +325,5 @@ async fn replace_data_scope(
         .role
         .replace_data_scope(&current_user, id, &dto.data_scope, dept_ids)
         .await?;
-    Ok(Json(ApiResponse::success_no_data_with_msg(
-        "数据权限更新成功",
-    )))
+    Ok(Json(ApiResponse::success_no_data()))
 }

@@ -11,7 +11,7 @@
 - `APP_API_DOCS_ENABLED=false` 是生产强制配置；Nginx 还会对 Swagger UI 和 OpenAPI
   JSON 返回 `404`。需要排查契约时使用仓库中的 `openapi/openapi.json`，不要临时对公网
   开启运行时文档。
-- `APP_MONITOR_METRICS_BEARER_TOKEN` 必须由密钥管理系统注入，至少 32 字节，独立于
+- `APP_MONITOR_METRICS_BEARER_TOKEN_FILE` 必须指向密钥管理系统挂载的 UTF-8 secret 文件，内容至少 32 字节，独立于
   用户 JWT 密钥并定期轮换。Nginx 仅允许 Prometheus/VPN 网段访问 metrics 路径，应用
   再校验 Bearer Token。
 - `/livez` 可用于进程存活探测；后台任务会检查关键依赖，`/readyz` 只读取内存快照，
@@ -145,13 +145,19 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 消息。消息中心运行边界统一来自 `[messaging]`；可使用 `APP_MESSAGING_ENABLED`、
 `APP_MESSAGING_TICKET_TTL_SECONDS`、`APP_MESSAGING_RETENTION_DAYS`、
 `APP_MESSAGING_MAX_CONNECTIONS_PER_USER`、`APP_MESSAGING_OUTBOUND_BUFFER` 和
-`APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE` 覆盖，修改后必须重启 API 与 Worker。
+`APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE` 覆盖；共享补拉使用
+`APP_MESSAGING_REPLAY_INTERVAL_SECONDS`、`APP_MESSAGING_REPLAY_JITTER_SECONDS` 和
+`APP_MESSAGING_REPLAY_BATCH_SIZE`。修改后必须重启 API 与 Worker。
 
 达到每用户连接上限时先排查客户端重复建连和退避策略，不要直接放大容量；慢消费者会以
 WebSocket `1013` 关闭，连接数超限使用策略关闭。发布被收件人数上限拒绝时，事务不会留下
 消息或部分收件箱快照；应缩小受众、拆分业务消息或在完成容量评估后调整上限。生产启用
 消息中心时 Redis 必须为 `required`，关闭消息中心会同时停止票据、实时订阅和消息任务，
 不能把它当作仅关闭 WebSocket 的开关。
+
+`ryframe_message_replay_query_total{result="success|error"}` 只按有界结果记录共享补拉查询。
+同一租户用户建立多个连接时，查询增量应按身份而非连接数增长；异常放大通常表示客户端
+反复建连、周期过短或共享调度器退化，不能靠继续增大数据库连接池掩盖。
 
 ### OpenTelemetry 导出器
 
@@ -164,6 +170,10 @@ OTel 故障日志只使用固定的 `failure_stage=initialization|export|shutdow
 租户、用户或请求标识等动态标签，避免泄露连接信息并控制基数。退出时 flush 的总等待上限固定
 为 5 秒；本地可运行 `cargo test -p ryframe-middleware telemetry`，使用不响应的回环地址验证导出
 失败前后业务与 `/readyz` 均保持可用、运行期计数递增且关闭不会越过时限。
+
+后台任务和 Outbox 会同时持久化 W3C `traceparent` 与 `tracestate`，Worker 领取后恢复为远端父
+上下文。排查链路断裂时应同时核对 `sys_background_job`、`sys_outbox_event` 的两列与 Collector
+收到的父子关系；不得只复制 `traceparent` 后手工执行任务，否则会丢失供应商链路状态。
 
 ### 应用日志输出与保留
 

@@ -3,6 +3,7 @@ pub(super) struct EnvOverride {
     pub(super) name: &'static str,
     pub(super) path: &'static [&'static str],
     pub(super) value_type: EnvValueType,
+    pub(super) allow_file: bool,
 }
 
 impl EnvOverride {
@@ -26,8 +27,12 @@ impl EnvOverride {
         Self::new(name, path, EnvValueType::StringArray)
     }
 
-    const fn json(name: &'static str, path: &'static [&'static str]) -> Self {
-        Self::new(name, path, EnvValueType::Json)
+    const fn secret(name: &'static str, path: &'static [&'static str]) -> Self {
+        Self::new_with_file(name, path, EnvValueType::String)
+    }
+
+    const fn json_file(name: &'static str, path: &'static [&'static str]) -> Self {
+        Self::new_with_file(name, path, EnvValueType::Json)
     }
 
     const fn new(
@@ -39,6 +44,20 @@ impl EnvOverride {
             name,
             path,
             value_type,
+            allow_file: false,
+        }
+    }
+
+    const fn new_with_file(
+        name: &'static str,
+        path: &'static [&'static str],
+        value_type: EnvValueType,
+    ) -> Self {
+        Self {
+            name,
+            path,
+            value_type,
+            allow_file: true,
         }
     }
 }
@@ -58,7 +77,7 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_APP_HOST", &["app", "host"]),
     EnvOverride::integer("APP_APP_PORT", &["app", "port"]),
     EnvOverride::boolean("APP_API_DOCS_ENABLED", &["api_docs", "enabled"]),
-    EnvOverride::string(
+    EnvOverride::secret(
         "APP_MONITOR_METRICS_BEARER_TOKEN",
         &["monitor", "metrics_bearer_token"],
     ),
@@ -117,6 +136,18 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE",
         &["messaging", "max_recipients_per_message"],
     ),
+    EnvOverride::integer(
+        "APP_MESSAGING_REPLAY_INTERVAL_SECONDS",
+        &["messaging", "replay_interval_seconds"],
+    ),
+    EnvOverride::integer(
+        "APP_MESSAGING_REPLAY_JITTER_SECONDS",
+        &["messaging", "replay_jitter_seconds"],
+    ),
+    EnvOverride::integer(
+        "APP_MESSAGING_REPLAY_BATCH_SIZE",
+        &["messaging", "replay_batch_size"],
+    ),
     EnvOverride::string("APP_DATABASE_HOST", &["database", "primary", "host"]),
     EnvOverride::integer("APP_DATABASE_PORT", &["database", "primary", "port"]),
     EnvOverride::string("APP_DATABASE_NAME", &["database", "primary", "database"]),
@@ -124,7 +155,7 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_DATABASE_USERNAME",
         &["database", "primary", "username"],
     ),
-    EnvOverride::string(
+    EnvOverride::secret(
         "APP_DATABASE_PASSWORD",
         &["database", "primary", "password"],
     ),
@@ -165,10 +196,10 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_DATABASE_TLS_CLIENT_KEY",
         &["database", "primary", "tls_client_key"],
     ),
-    EnvOverride::json("APP_DATABASE_REPLICAS", &["database", "replicas"]),
-    EnvOverride::json("APP_DATABASE_SOURCES", &["database", "sources"]),
+    EnvOverride::json_file("APP_DATABASE_REPLICAS", &["database", "replicas"]),
+    EnvOverride::json_file("APP_DATABASE_SOURCES", &["database", "sources"]),
     EnvOverride::string("APP_GENERATOR_DATA_SOURCE", &["generator", "data_source"]),
-    EnvOverride::string("APP_AUTH_JWT_SECRET", &["auth", "jwt_secret"]),
+    EnvOverride::secret("APP_AUTH_JWT_SECRET", &["auth", "jwt_secret"]),
     EnvOverride::string(
         "APP_AUTH_ACCESS_TOKEN_EXPIRE",
         &["auth", "access_token_expire"],
@@ -188,7 +219,7 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_REDIS_MODE", &["redis", "mode"]),
     EnvOverride::string("APP_REDIS_HOST", &["redis", "host"]),
     EnvOverride::integer("APP_REDIS_PORT", &["redis", "port"]),
-    EnvOverride::string("APP_REDIS_PASSWORD", &["redis", "password"]),
+    EnvOverride::secret("APP_REDIS_PASSWORD", &["redis", "password"]),
     EnvOverride::integer("APP_REDIS_DATABASE", &["redis", "database"]),
     EnvOverride::integer("APP_REDIS_MAX_POOL_SIZE", &["redis", "max_pool_size"]),
     EnvOverride::integer("APP_REDIS_TIMEOUT_SECS", &["redis", "timeout_secs"]),
@@ -259,11 +290,11 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_OBJECT_STORAGE_ENDPOINT",
         &["object_storage", "endpoint"],
     ),
-    EnvOverride::string(
+    EnvOverride::secret(
         "APP_OBJECT_STORAGE_ACCESS_KEY",
         &["object_storage", "access_key"],
     ),
-    EnvOverride::string(
+    EnvOverride::secret(
         "APP_OBJECT_STORAGE_SECRET_KEY",
         &["object_storage", "secret_key"],
     ),

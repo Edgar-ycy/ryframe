@@ -82,6 +82,10 @@ async fn main() -> Result<(), AppError> {
     let message_listener = state
         .message_hub
         .spawn_redis_listener(redis.client.clone(), services.message.clone());
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let mut message_replay_scheduler = state
+        .message_hub
+        .spawn_replay_scheduler(services.message.clone(), shutdown_receiver.clone());
     let router = app::build_app(state, limit.rate_limit_state, &config.cors)?;
 
     let addr = format!("{}:{}", config.app.host, config.app.port);
@@ -90,7 +94,6 @@ async fn main() -> Result<(), AppError> {
         .map_err(|error| AppError::Internal(format!("failed to bind {addr}: {error}")))?;
     tracing::info!(address = %addr, "HTTP server started");
 
-    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let mut readiness_monitor = boot::readiness::spawn(
         readiness_database,
         readiness_redis,
@@ -197,6 +200,14 @@ async fn main() -> Result<(), AppError> {
     {
         tracing::warn!("后台就绪探测未在宽限期内停止");
         readiness_monitor.abort();
+    }
+    if let Some(scheduler) = message_replay_scheduler.as_mut()
+        && tokio::time::timeout(std::time::Duration::from_secs(5), &mut *scheduler)
+            .await
+            .is_err()
+    {
+        tracing::warn!("消息共享补拉调度器未在宽限期内停止");
+        scheduler.abort();
     }
     replica_health_monitor.abort();
     if let Some(listener) = message_listener {

@@ -26,6 +26,7 @@ pub struct RecordOutboxEvent {
     pub max_attempts: i32,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
 }
 
 /// Outbox 投递失败后的状态转换结果。
@@ -92,6 +93,7 @@ impl OutboxEventRepository {
             lease_until: Set(None),
             dedupe_key: Set(event.dedupe_key),
             traceparent: Set(event.traceparent),
+            tracestate: Set(event.tracestate),
             last_error: Set(None),
             published_at: Set(None),
             created_at: Set(now),
@@ -363,6 +365,24 @@ fn validate_event(event: &RecordOutboxEvent) -> AppResult<()> {
             "dedupe_key 长度必须介于 1 和 191 之间".into(),
         ));
     }
+    if event
+        .traceparent
+        .as_deref()
+        .is_some_and(|value| value.len() > 255)
+    {
+        return Err(AppError::Validation(
+            "Outbox traceparent 不能超过 255 字节".into(),
+        ));
+    }
+    if event
+        .tracestate
+        .as_deref()
+        .is_some_and(|value| value.len() > 512)
+    {
+        return Err(AppError::Validation(
+            "Outbox tracestate 不能超过 512 字节".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -410,7 +430,9 @@ mod tests {
 
     use crate::entities::outbox_event;
 
-    use super::{OutboxEventRepository, OutboxFailureDisposition, RecordOutboxEvent};
+    use super::{
+        OutboxEventRepository, OutboxFailureDisposition, RecordOutboxEvent, validate_event,
+    };
 
     fn running_event(
         now: chrono::DateTime<Utc>,
@@ -432,6 +454,7 @@ mod tests {
             lease_until: Some(now + chrono::Duration::minutes(1)),
             dedupe_key: Some("message:7".into()),
             traceparent: None,
+            tracestate: None,
             last_error: None,
             published_at: None,
             created_at: now,
@@ -450,7 +473,20 @@ mod tests {
             max_attempts: 3,
             dedupe_key: Some("message:7".into()),
             traceparent: None,
+            tracestate: None,
         }
+    }
+
+    #[test]
+    fn record_validation_rejects_oversized_trace_context() {
+        let now = Utc::now();
+        let mut event = record_command(now);
+        event.traceparent = Some("x".repeat(256));
+        assert!(validate_event(&event).is_err());
+
+        event.traceparent = None;
+        event.tracestate = Some("x".repeat(513));
+        assert!(validate_event(&event).is_err());
     }
 
     #[tokio::test]

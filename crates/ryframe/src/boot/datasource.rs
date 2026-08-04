@@ -72,9 +72,9 @@ pub async fn connect(config: &AppConfig) -> Result<DatabaseCluster, AppError> {
     ))
 }
 
-/// 校验主库结构。滚动迁移期间副本可能滞后，健康检查通过前不得参与路由。
+/// 校验主库迁移账本与结构。滚动迁移期间副本可能滞后，健康检查通过前不得参与路由。
 pub async fn verify_schema(cluster: &DatabaseCluster) -> Result<(), AppError> {
-    verify_tables("primary", cluster.write()).await
+    verify_database_node("primary", cluster.write()).await
 }
 
 /// 持续探测副本，但不将其纳入就绪判定。返回的句柄由应用进程持有，并在优雅退出时
@@ -233,21 +233,22 @@ async fn validate_replica(
     ryframe_db::connection::ping(connection)
         .await
         .map_err(ReplicaProbeFailure::Connectivity)?;
-    verify_tables(name, connection)
+    verify_database_node(name, connection)
         .await
         .map_err(ReplicaProbeFailure::Schema)
 }
 
-/// 按当前迁移结构校验列、索引和外键。
-async fn verify_tables(node: &str, db: &DatabaseConnection) -> Result<(), AppError> {
-    ryframe_db_migration::verify_current_schema(db)
-        .await
-        .map_err(|error| {
-            AppError::Internal(format!(
-                "database node {node} schema verification failed: {error}"
-            ))
-        })?;
-    tracing::info!(node, "database schema fingerprint verified");
+/// 按当前迁移账本校验列、索引和外键，账本落后时同样拒绝路由。
+async fn verify_database_node(node: &str, db: &DatabaseConnection) -> Result<(), AppError> {
+    ryframe_db_migration::verify(db).await.map_err(|error| {
+        AppError::Internal(format!(
+            "database node {node} migration and schema verification failed: {error}"
+        ))
+    })?;
+    tracing::info!(
+        node,
+        "database migration ledger and schema fingerprint verified"
+    );
     Ok(())
 }
 

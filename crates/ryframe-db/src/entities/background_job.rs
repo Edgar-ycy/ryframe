@@ -24,6 +24,7 @@ pub struct Model {
     pub lease_until: Option<DateTime<Utc>>,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

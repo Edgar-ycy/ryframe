@@ -49,10 +49,7 @@ pub(crate) async fn request_password_reset(
         ),
         expires_at: outcome.request.expires_at.to_rfc3339(),
     };
-    Ok(Json(ApiResponse::success_msg(
-        "password reset request created",
-        response,
-    )))
+    Ok(Json(ApiResponse::success(response)))
 }
 
 fn request_audit_ip(

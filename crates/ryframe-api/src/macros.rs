@@ -146,9 +146,7 @@ macro_rules! detail_body {
 macro_rules! remove_body {
     ($state:ident, $actor:ident, $id:ident, $service:ident) => {{
         $state.services.$service.delete(&$actor, $id).await?;
-        Ok(axum::Json(
-            ryframe_http::ApiResponse::success_no_data_with_msg("删除成功"),
-        ))
+        Ok(axum::Json(ryframe_http::ApiResponse::success_no_data()))
     }};
 }
 

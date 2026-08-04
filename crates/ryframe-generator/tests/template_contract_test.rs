@@ -74,6 +74,11 @@ fn generated_templates_follow_application_boundaries() {
     assert!(handler.contains("current_user: RequestPrincipal"));
     assert!(handler.contains("query.into_parts(&state.config.pagination)?"));
     assert!(handler.contains(".find_by_page(&current_user, page_query)"));
+    assert!(handler.contains("ApiPageResponse::page("));
+    assert!(handler.contains("ApiResponse::success_no_data()"));
+    assert!(!handler.contains("ApiPageResponse::new("));
+    assert!(!handler.contains("success_no_data_with_msg"));
+    assert!(!handler.contains("success_msg("));
     assert!(handler.contains(".services\n        .widget"));
     assert!(!handler.contains("sea_orm"));
     assert!(!handler.contains("state.db"));
@@ -120,7 +125,7 @@ fn generated_template_output_matches_golden_hashes() {
         ("repository", 8_747_761_093_218_540_013),
         ("dto", 4_473_523_187_890_384_743),
         ("service", 15_461_582_683_693_356_993),
-        ("handler", 8_694_351_410_098_486_555),
+        ("handler", 2_730_592_103_631_573_311),
     ];
     assert_eq!(actual, expected);
 }

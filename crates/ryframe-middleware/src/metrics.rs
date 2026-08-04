@@ -142,6 +142,14 @@ lazy_static! {
         &["result"],
     )
     .expect("create message_delivery_total");
+    static ref MESSAGE_REPLAY_QUERY_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "message_replay_query_total",
+            "Shared inbox replay queries by bounded result",
+        ),
+        &["result"],
+    )
+    .expect("create message_replay_query_total");
     static ref MESSAGE_RETENTION_DELETED_TOTAL: IntCounter = IntCounter::new(
         "message_retention_deleted_total",
         "Expired message records removed by retention jobs",
@@ -246,6 +254,7 @@ fn ensure_registered() {
             Box::new(WS_CONNECTIONS.clone()),
             Box::new(WS_TICKETS_TOTAL.clone()),
             Box::new(MESSAGE_DELIVERY_TOTAL.clone()),
+            Box::new(MESSAGE_REPLAY_QUERY_TOTAL.clone()),
             Box::new(MESSAGE_RETENTION_DELETED_TOTAL.clone()),
             Box::new(DB_NODE_UP.clone()),
             Box::new(DB_READ_SELECTION_TOTAL.clone()),
@@ -374,6 +383,14 @@ pub fn set_ws_connections(connections: usize) {
 pub fn record_message_delivery(result: &str) {
     ensure_registered();
     MESSAGE_DELIVERY_TOTAL.with_label_values(&[result]).inc();
+}
+
+/// 记录共享补拉调度器的一次身份查询，不携带租户、用户或连接标签。
+pub fn record_message_replay_query(result: &'static str) {
+    ensure_registered();
+    MESSAGE_REPLAY_QUERY_TOTAL
+        .with_label_values(&[result])
+        .inc();
 }
 
 /// 累加消息保留任务删除的到期记录数。
@@ -560,5 +577,12 @@ mod tests {
             .expect("construct an unmatched request");
 
         assert_eq!(metric_route(&request), UNMATCHED_ROUTE);
+    }
+
+    #[test]
+    fn shared_message_replay_query_metric_uses_bounded_results() {
+        record_message_replay_query("success");
+
+        assert!(metrics_text().contains("message_replay_query_total{result=\"success\"}"));
     }
 }

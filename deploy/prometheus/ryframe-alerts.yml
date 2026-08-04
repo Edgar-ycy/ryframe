@@ -155,6 +155,17 @@ groups:
           description: "More than five message deliveries were dropped for slow or closed consumers on {{ $labels.instance }}."
           runbook: "docs/operations-runbook.md#消息中心投递"
 
+      - alert: RyFrameMessageReplayQueryFailures
+        expr: sum by (instance) (increase(ryframe_message_replay_query_total{result="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame shared message replay query is failing"
+          description: "The shared inbox replay scheduler cannot query pending messages on {{ $labels.instance }}."
+          runbook: "docs/operations-runbook.md#消息中心投递"
+
       - alert: RyFrameOtlpExporterDegraded
         expr: max by (instance) (ryframe_otel_exporter_degraded) == 1
         for: 5m
