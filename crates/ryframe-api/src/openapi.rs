@@ -530,12 +530,12 @@ mod tests {
         let mut query_operation_count = 0;
 
         assert!(
-            paths.len() >= 89,
+            paths.len() >= 97,
             "OpenAPI path coverage unexpectedly shrank: found {}",
             paths.len()
         );
         assert!(
-            schemas.len() >= 150,
+            schemas.len() >= 188,
             "OpenAPI schema coverage unexpectedly shrank: found {}",
             schemas.len()
         );
@@ -637,6 +637,38 @@ mod tests {
             query_operation_count >= 21,
             "OpenAPI query parameter coverage unexpectedly shrank: found {query_operation_count}"
         );
+    }
+
+    #[test]
+    fn path_id_parameters_use_string_wire_format() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let paths = document["paths"].as_object().unwrap();
+        let mut checked = 0;
+
+        for (path, item) in paths {
+            for method in ["get", "post", "put", "delete", "patch"] {
+                let Some(operation) = item.get(method) else {
+                    continue;
+                };
+                let parameters = operation["parameters"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                for parameter in parameters {
+                    let name = parameter["name"].as_str().unwrap_or_default();
+                    if parameter["in"] != "path" || !(name == "id" || name.ends_with("_id")) {
+                        continue;
+                    }
+                    checked += 1;
+                    assert_eq!(
+                        parameter["schema"]["type"], "string",
+                        "{method} {path} 的路径 ID 必须按字符串传输"
+                    );
+                }
+            }
+        }
+
+        assert_eq!(checked, 42, "OpenAPI 路径 ID 覆盖数量发生变化");
     }
 
     #[test]

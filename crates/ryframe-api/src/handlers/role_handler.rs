@@ -132,7 +132,7 @@ async fn list(
 #[get("/{id}")]
 #[perm("system:role:list")]
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}", tag = "角色管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "角色详情", body = ApiResponse<RoleVo>)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "角色详情", body = ApiResponse<RoleVo>)), security(("bearer" = [])))]
 async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -171,7 +171,7 @@ async fn create(
 #[put("/{id}")]
 #[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}", tag = "角色管理",
-    params(("id" = i64, Path)), request_body = UpdateRoleDto,
+    params(("id" = String, Path)), request_body = UpdateRoleDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<RoleVo>)), security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
@@ -200,7 +200,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:role:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/{id}", tag = "角色管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -267,7 +267,7 @@ async fn request_role_export(
 #[put("/{id}/permissions")]
 #[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
-    params(("id" = i64, Path)), request_body = ReplaceRolePermissionsDto,
+    params(("id" = String, Path)), request_body = ReplaceRolePermissionsDto,
     responses((status = 200, description = "权限分配成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn replace_permissions(
@@ -291,7 +291,7 @@ async fn replace_permissions(
 #[get("/{id}/permissions")]
 #[perm("system:role:list")]
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     responses((status = 200, description = "角色权限ID列表", body = ApiResponse<Vec<String>>)),
     security(("bearer" = [])))]
 async fn get_role_perms(
@@ -312,7 +312,7 @@ async fn get_role_perms(
 #[put("/{id}/data-scope")]
 #[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/data-scope", tag = "角色管理",
-    params(("id" = i64, Path)), request_body = ReplaceRoleDataScopeDto,
+    params(("id" = String, Path)), request_body = ReplaceRoleDataScopeDto,
     responses((status = 200, description = "数据权限更新成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn replace_data_scope(

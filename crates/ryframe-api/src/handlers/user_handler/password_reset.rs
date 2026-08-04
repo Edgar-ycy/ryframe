@@ -18,7 +18,7 @@ use crate::{
 #[post("/{id}/password-reset-requests")]
 #[perm("system:user:edit")]
 #[utoipa::path(post, path = "/api/v1/system/users/{id}/password-reset-requests", tag = "用户管理",
-    params(("id" = i64, Path, description = "用户ID")),
+    params(("id" = String, Path, description = "用户ID")),
     request_body = PasswordResetRequestDto,
     responses((status = 200, description = "密码重置请求已发起", body = ApiResponse<PasswordResetRequestResponse>)),
     security(("bearer" = [])))]

@@ -106,7 +106,7 @@ async fn create_type(
 #[put("/types/{id}")]
 #[perm("system:dict:edit")]
 #[utoipa::path(put, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     request_body = UpdateDictTypeDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<DictTypeVo>)),
     security(("bearer" = [])))]
@@ -130,7 +130,7 @@ async fn update_type(
 #[delete("/types/{id}")]
 #[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn delete_type(
@@ -229,7 +229,7 @@ async fn create_data(
 #[put("/data/{id}")]
 #[perm("system:dict:edit")]
 #[utoipa::path(put, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     request_body = UpdateDictDataDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<DictDataVo>)),
     security(("bearer" = [])))]
@@ -260,7 +260,7 @@ async fn update_data(
 #[delete("/data/{id}")]
 #[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn delete_data(

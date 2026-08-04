@@ -57,7 +57,7 @@ pub async fn tree(
 #[get("/{id}")]
 #[perm("system:perm:list")]
 #[utoipa::path(get, path = "/api/v1/system/perms/{id}", tag = "权限管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "权限详情", body = ApiResponse<PermissionVo>)),
+    params(("id" = String, Path)), responses((status = 200, description = "权限详情", body = ApiResponse<PermissionVo>)),
     security(("bearer" = [])))]
 pub async fn detail(
     State(state): State<AppState>,
@@ -109,7 +109,7 @@ pub async fn create(
 #[put("/{id}")]
 #[perm("system:perm:edit")]
 #[utoipa::path(put, path = "/api/v1/system/perms/{id}", tag = "权限管理",
-    params(("id" = i64, Path)), request_body = UpdatePermissionDto,
+    params(("id" = String, Path)), request_body = UpdatePermissionDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<PermissionVo>)), security(("bearer" = [])))]
 pub async fn update(
     State(state): State<AppState>,
@@ -142,7 +142,7 @@ pub async fn update(
 #[delete("/{id}")]
 #[perm("system:perm:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/perms/{id}", tag = "权限管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub async fn remove(
     State(state): State<AppState>,

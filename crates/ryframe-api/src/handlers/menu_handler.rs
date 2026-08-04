@@ -158,7 +158,7 @@ async fn create(
 #[put("/{id}")]
 #[perm("system:menu:edit")]
 #[utoipa::path(put, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
-    params(("id" = i64, Path)), request_body = UpdateMenuDto,
+    params(("id" = String, Path)), request_body = UpdateMenuDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<MenuVo>)), security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
@@ -196,7 +196,7 @@ async fn update(
 #[get("/{id}")]
 #[perm("system:menu:list")]
 #[utoipa::path(get, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     responses((status = 200, description = "菜单详情", body = ApiResponse<MenuVo>)),
     security(("bearer" = [])))]
 async fn detail(
@@ -217,7 +217,7 @@ async fn detail(
 #[delete("/{id}")]
 #[perm("system:menu:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

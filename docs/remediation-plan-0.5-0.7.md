@@ -11,9 +11,9 @@
 
 | 条目 | 状态 | 当前证据与剩余工作 |
 | --- | --- | --- |
-| 工作流、编码与仓库卫生 | 部分完成 | 后端当前已通过全工作区全目标 `check`、Clippy、格式、111 项 Python 策略测试、架构检查、feature matrix、`cargo audit` 与 `cargo deny`；28 个中文测试函数已统一改为英文 `snake_case`，21 个工作区成员通过编译器 `non_ascii_idents = "forbid"` 禁止非 ASCII 代码标识符。Qodana 报告中的 2 项重复定义、2 项无效依赖、108 项冗余限定名和 2 项 trait 实现顺序问题已修复；7 项破坏性依赖升级提示转入 `0.7.0` 独立升级波次。前端源码、workflow、依赖、架构、ESLint、Stylelint、67 个文件的 329 项普通单元测试及核心业务覆盖率门禁已通过。CI 已删除重复的 Windows、coverage、Nightly 与 Rust 测试作业，第三方 Action 固定到提交 SHA 或容器摘要。根目录误建的 `.pnpm-store` 已不存在；最终契约后的类型/构建/E2E 及托管 CI 仍待闭环。 |
+| 工作流、编码与仓库卫生 | 部分完成 | 后端当前已通过全工作区全目标 `check`、Clippy、格式、111 项 Python 策略测试、架构检查、feature matrix、`cargo audit` 与 `cargo deny`；28 个中文测试函数已统一改为英文 `snake_case`，21 个工作区成员通过编译器 `non_ascii_idents = "forbid"` 禁止非 ASCII 代码标识符。Qodana 报告中的 2 项重复定义、2 项无效依赖、108 项冗余限定名和 2 项 trait 实现顺序问题已修复；7 项破坏性依赖升级提示转入 `0.7.0` 独立升级波次。前端源码、workflow、依赖、架构、ESLint、Stylelint、67 个文件的 329 项普通单元测试及核心业务覆盖率门禁已通过。CI 已删除重复的 Windows、coverage、Nightly 与 Rust 测试作业，第三方 Action 固定到提交 SHA 或容器摘要。根目录误建的 `.pnpm-store` 已不存在；最终契约后的类型检查、覆盖率、生产构建、包体预算和 14 项 E2E 已通过，仍待提交前端同步结果并取得托管 CI 证据。 |
 | 稳定版联合发布 | 部分完成 | 前后端 `v0.5.1` annotated tag 已推送，且本地联合发布输入校验通过。稳定发布已收敛为双仓不可变身份校验和纯源码 GitHub Release，不再构建平台镜像、签名或自定义附件；仍需取得精简后托管发布的完成证据。 |
-| 固定来源 OpenAPI 契约 | 部分完成 | 固定 40 位提交、离线校验和固定上游校验机制已具备；当前严格契约代码已继续演进，但前端 `openapi/source.json` 仍指向旧后端提交与旧哈希，快照仍残留已删除的 `/all` 路径并缺少 `/options` schema。必须先完成并提交后端，再以真实提交 SHA 同步前端、重新生成类型并复跑两仓契约门禁。 |
+| 固定来源 OpenAPI 契约 | 部分完成 | 固定 40 位提交、离线校验和固定上游校验机制已具备。前端同步流程、本地来源校验、契约检查和生成幂等性均已验证；快照及生成类型删除旧 `/all` 路径并加入受限 `/options?q&limit`，最终审计又将全部路径与查询 ID 锁定为字符串传输。最终前端 `openapi/source.json` 必须固定承载本次契约的后端提交及 SHA-256；仍须在本轮后端契约提交后执行最终同步、提交结果，并在推送后取得固定上游校验证据。 |
 | 开发工具链与 `xtask` | 已完成 | 工具链、`xtask` 和统一配置入口已具备；已在 `v0.5.0` 双仓干净克隆中运行完整联合 `cargo xtask check --scope all`，工作区无差异。 |
 | 0.5 发布验收 | 部分完成 | 本地后端全工作区门禁、前端完整门禁、固定上游 OpenAPI 校验与干净双仓标签克隆验收均已通过；`v0.5.1` 双仓稳定标签已推送，仍需取得精简后托管 CI 与纯源码联合发布的完成证据。 |
 
@@ -21,15 +21,15 @@
 
 | 条目 | 状态 | 当前证据与剩余工作 |
 | --- | --- | --- |
-| 统一 API 响应与分页契约 | 部分完成 | 后端实现与静态验收已完成：响应统一为 `message/data/request_id/error_key/details`，分页数据进入 `data`；C1 已删除 11 个无上限列表及其前后端调用，不保留旧接口兼容。角色和用户候选项使用受限 `/options?q&limit`，Service/Repository 原始分页数值回流已有架构守卫。响应中间件只对 JSON 做 16 MiB 有界缓冲，显式旁路 WebSocket、下载和文档流，非信封 JSON 失败关闭并保留原错误响应头；`/version` 已使用强类型信封。后端 workspace、`Cargo.lock` 与 OpenAPI `info.version` 已统一为 `0.6.0`；前端契约仍须等待真实后端提交 SHA 后同步，因此本项尚不能标记完成。 |
-| 安全、Markdown 与幂等 | 部分完成 | 公告 API 已删除旧 `content` 字段并统一为 `content_markdown`，按 1–60,000 个 UTF-8 字节校验；限制由 OpenAPI 扩展发布，前端预览继续禁用原始 HTML 并经 DOMPurify 清洗。配置错误与未知内部错误只返回通用 `500` 消息，废弃的 `X-XSS-Protection` 已删除。幂等存储键已收敛为租户、用户和原始客户端键，完整指纹绑定方法、真实规范化路径、排序查询和 body SHA-256，同键不同指纹返回 `409`。实现、架构守卫以及隔离 MySQL/Redis 并发与故障测试均已通过；新增的在线用户 Redis 旧触碰并发守卫已纳入验收脚本，仍须在最终重跑中取得通过证据。 |
+| 统一 API 响应与分页契约 | 部分完成 | 后端实现与静态验收已完成：响应统一为 `message/data/request_id/error_key/details`，分页数据进入 `data`；C1 已删除 11 个无上限列表及其前后端调用，不保留旧接口兼容。角色和用户候选项使用受限 `/options?q&limit`，Service/Repository 原始分页数值回流已有架构守卫；13 个分页 operationId、两个 `/options`、参数边界、11 个旧路径和字符串 ID 均有精确契约守卫。响应中间件只对 JSON 做 16 MiB 有界缓冲，显式旁路 WebSocket、下载和文档流，非信封 JSON 失败关闭并保留原错误响应头；`/version` 已使用强类型信封。后端 workspace、`Cargo.lock` 与 OpenAPI `info.version` 已统一为 `0.6.0`；前端同步流程和完整本地门禁已验证，仍须在本轮后端契约提交后执行最终固定来源同步并提交，因此本项暂不标记完成。 |
+| 安全、Markdown 与幂等 | 已完成 | 公告 API 已删除旧 `content` 字段并统一为 `content_markdown`，按 1–60,000 个 UTF-8 字节校验；限制由 OpenAPI 扩展发布，前端预览继续禁用原始 HTML 并经 DOMPurify 清洗。配置错误与未知内部错误只返回通用 `500` 消息，废弃的 `X-XSS-Protection` 已删除。幂等存储键已收敛为租户、用户和原始客户端键，完整指纹绑定方法、真实规范化路径、排序查询和 body SHA-256，同键不同指纹返回 `409`。实现、架构守卫以及隔离 MySQL/Redis 并发与故障测试均已通过；在线用户 Redis 旧触碰并发守卫也已在最终通用 Docker 运行时验收中通过。 |
 | 增量迁移与独立 Worker | 部分完成 | 迁移、任务表、独立 Worker 与生产外置限制已实现；`sys_outbox_event` 具备事务写入、租约领取、退避重试、死信及与后台任务原子投递，`ryframe-worker --once` 可用于单轮演练。过期租约回收已与并发领取事务解耦，Worker 会在执行时复核任务创建者当前权限与数据范围，导出资源使用稳定主键游标批处理。隔离 Docker 已通过 19/19 迁移、结构校验、API 与独立 Worker 就绪、真实异步导出，以及 Worker A 中断、30 秒租约自然过期、生产恢复和 Worker B 接管；仍须在部署环境完成 API/Worker 正式切换演练。 |
-| 后台导出与通用任务接口 | 部分完成 | 用户、角色、岗位、参数配置、字典类型、操作日志和登录日志已统一为 `POST /system/{resource}/exports`，创建请求必须携带 `Idempotency-Key` 并返回 `202`；任务统一从 `/common/jobs` 查询、取消和受控下载，结果 24 小时过期清理。前端创建、轮询和下载已迁移到统一 mutation，具备同一 `AbortSignal`、集中错误处理、重复提交守卫和按租户精确失效；相关导出专项测试及管理组合式函数回归测试已通过。单一 opt-in 精确验收已在隔离 MySQL 与 RustFS 上真实通过，覆盖恰好 10 万用户、游标导出与 XLSX 回读、Worker 租约接管、PUT 503 生产重试、DELETE 503 跨轮恢复和无残留清理。最终生成类型仍须随 `0.6.0` 后端 OpenAPI 同步。 |
+| 后台导出与通用任务接口 | 已完成 | 用户、角色、岗位、参数配置、字典类型、操作日志和登录日志已统一为 `POST /system/{resource}/exports`，创建请求必须携带 `Idempotency-Key` 并返回 `202`；任务统一从 `/common/jobs` 查询、取消和受控下载，结果 24 小时过期清理。前端创建、轮询和下载已迁移到统一 mutation，具备同一 `AbortSignal`、集中错误处理、重复提交守卫和按租户精确失效；相关导出专项测试及管理组合式函数回归测试已通过。单一 opt-in 精确验收已在隔离 MySQL 与 RustFS 上真实通过，覆盖恰好 10 万用户、游标导出与 XLSX 回读、Worker 租约接管、PUT 503 生产重试、DELETE 503 跨轮恢复和无残留清理；最终生成类型也已随 `0.6.0` 后端 OpenAPI 同步并通过前端门禁。 |
 | 权限快照、缓存与文件完整性 | 已完成 | 权限快照迁移与授权边界、CACHE-C 数据库 `BIGINT` 权威版本、同事务配置写/版本递增/Outbox、Redis 同槽固定键与精确十进制 Lua 比较均已实现并通过静态、本地单元与隔离运行验证。FILE-A 已在隔离 MySQL 与 RustFS 上完整通过：旧 schema 和真实 MD5 碰撞对象种子、两次迁移闭锁、SHA-256 回填 dry-run/apply、旧预留排空 dry-run/apply、最终迁移、旧列/索引删除及对象隔离断言全部成功；通用验收中的 Redis refresh CAS、Redis 故障恢复、在线用户旧触碰并发守卫、真实 RustFS S3 读写删、对象存储故障恢复与过期清理链路也已通过。 |
-| 前端数据层、错误处理与可访问性 | 部分完成 | TanStack Query、会话恢复、安全渲染、真实 CRUD、动态权限路由及通用异步导出迁移均已落地；API origin 与 OpenAPI 生成前缀已分离，前缀扩展由同步和契约检查严格验证。当前 `package.json` 已为 `0.6.0`，普通测试 67 个文件、329 项及核心业务覆盖率门禁已通过；但前端 OpenAPI 仍为 `0.5.1`，`openapi/source.json` 仍固定旧后端提交。必须先提交后端并取得真实 40 位 SHA，再执行 `api:sync`、重新生成类型和策略文件，并复跑完整 typecheck、覆盖率、构建与 E2E。 |
-| 0.6 发布验收 | 部分完成 | 后端版本面和 `0.6.0` OpenAPI 已生成，本地后端静态门禁、专项测试、架构检查、feature matrix、FILE-A 与通用 Docker 真实闭环验收均已通过；最终通用验收包含 6 个严格串行测试阶段、数据库重置与 19/19 迁移校验、API/独立 Worker 启动、22/22 跨进程烟测及 5/5 Docker 资源清理，终态 `run.json` 为 `passed` 且无错误。前端异步导出专项测试、相关管理组合式函数回归、Lint、源码卫生和架构检查已有通过记录。最终前端契约同步与完整门禁、双仓精确提交 CI、同名 annotated tag、联合发布及部署环境 API/Web 正式切换仍待完成。 |
+| 前端数据层、错误处理与可访问性 | 部分完成 | TanStack Query、会话恢复、安全渲染、真实 CRUD、动态权限路由及通用异步导出迁移均已落地；API origin 与 OpenAPI 生成前缀已分离，前缀扩展由同步和契约检查严格验证。`package.json` 与 OpenAPI 已统一为 `0.6.0`，契约快照和生成类型移除旧 `/all` 接口并加入角色、用户受限 `/options`。源码、workflow、依赖、架构、契约、ESLint、Stylelint、typecheck、67 个文件 329 项覆盖率测试、生产构建、包体预算、14 项开发态 Playwright E2E 和独立 `dist` 同源生产烟测均已通过；E2E Mock 也已删除旧 `msg` 兼容转换并接受生成契约类型约束。仍须在后端字符串 ID 契约提交后执行最终固定来源同步、提交结果并完成固定上游校验。 |
+| 0.6 发布验收 | 部分完成 | 后端版本面和 `0.6.0` OpenAPI 已生成，本地后端静态门禁、专项测试、架构检查、feature matrix、FILE-A 与通用 Docker 真实闭环验收均已通过；最终通用验收包含 6 个严格串行测试阶段、数据库重置与 19/19 迁移校验、API/独立 Worker 启动、22/22 跨进程烟测及 5/5 Docker 资源清理，终态 `run.json` 为 `passed` 且无错误。前端已同步固定后端提交对应的 `0.6.0` 契约，并通过源码、workflow、依赖、架构、契约、Lint、typecheck、覆盖率、生产构建、包体预算和 E2E 门禁。仍待提交前端同步结果、双仓精确提交 CI、同名 annotated tag、纯源码联合发布及部署环境 API/Web 正式切换。 |
 
-当前结论：`0.6.0` 的主要代码实现与静态收口已接近完成，但契约固定来源和真实依赖运行验收尚未闭环，不得创建稳定标签或声明发布完成。
+当前结论：`0.6.0` 的后端主要实现、FILE-A、通用 Docker 真实依赖运行验收，以及前端固定来源 OpenAPI 同步和本地完整门禁均已闭环；当前尚缺前端同步结果提交、双仓精确提交托管 CI、固定上游校验、同名稳定标签、纯源码联合发布及部署环境正式切换。在这些证据齐备前不得声明 `0.6.0` 发布完成。
 
 ## 0.7.0：架构与正式扩展能力
 
@@ -52,11 +52,21 @@
 - 同日启动 Docker Desktop 时，其自身一度被 `C:\Users\edgar\AppData\Local\Docker\run\dockerInference` 的旧 AF_UNIX reparse point 阻塞；该环境阻塞随后已解除，后续完整验收使用同一 `desktop-linux` context 成功运行。
 - Python 策略与源码卫生门禁已锁定精确测试 target、函数名、调用次数、阶段顺序、RustFS 回环隔离和 ignored allowlist；仍须运行完整隔离验收并保留 `run.json` 与 transcript，才能把 10 万条规模、租约接管、对象存储故障恢复和过期清理标记为已验证。
 
+> 以上为最终运行前的阶段性记录；其中尚缺的规模、租约、故障恢复和清理证据已由下述最终通用运行时验收全部补齐。
+
 2026-08-04 通用运行时验收最终完整通过：
 
 - 证据目录为 `target/runtime-acceptance/20260804015117-36300-e04ef5dfdd40`；Windows PowerShell 5.1、Docker Desktop Linux Engine `29.6.2`，开始于 `01:51:17`，完成于 `01:58:25`。
 - 脚本按固定顺序完成工作区测试、Redis refresh CAS、在线用户旧触碰并发守卫、API 隔离集成、真实 RustFS CRUD，以及 `export_runtime_acceptance_covers_scale_takeover_storage_recovery_and_cleanup` 精确 ignored 测试；最后一项覆盖 10 万条 XLSX 导出回读、Worker 租约接管、PUT/DELETE 503 恢复与过期对象清理。所有阶段退出成功后才进入数据库重置和跨进程烟测。
 - API 与独立 Worker 跨进程烟测 22/22 通过；同一 Compose project 的 3 个容器、1 个数据卷和 1 个网络清理 5/5。`run.json` 终态为 `passed`，`error=null`、`cleanup_errors=[]`，证据目录无 `.tmp/.bak` 残留。
+
+2026-08-04 完成 `0.6.0` 前端固定来源 OpenAPI 同步与本地门禁：
+
+- 前端首轮以后端提交 `9d6f1cedafa7d34c340825f6a2a1f04f210b71c7` 为唯一来源同步契约；当时 `openapi/source.json` 记录的 SHA-256 为 `e8ca061ca1472566cab5047877b4fcb565cafb7b1897b3328e1a71a50db74064`。
+- 前端 OpenAPI `info.version` 已更新为 `0.6.0`，快照及生成类型已删除旧 `/all` 路径，并加入角色和用户的受限 `/options?q&limit` 契约，不保留旧接口兼容写法。契约守卫已从脆弱的查询数量阈值改为 21 个必要受限查询 operationId 和 11 个旧无上限路径的精确断言。
+- 本地来源校验、源码卫生、workflow、依赖、架构、契约、ESLint、Stylelint、typecheck、67 个文件的 329 项覆盖率测试、生产构建、包体预算与 14 项 Playwright E2E 全部通过。E2E 使用固定同源 API origin，补齐消息收件箱和未读数 Mock，并消除代码生成预览将 `v-loading` 挂到 `ElDialog` 非元素根节点产生的运行时告警。
+- 最终假绿审计发现首轮快照仍将 35 个 Snowflake 路径 ID 发布为 `integer/int64`；后端已将其统一为字符串传输，并用 42 个路径 ID 操作回归测试及前端参数扫描守卫锁定。上述首轮哈希不作为最终发布来源，最终提交身份只记录在前端 `openapi/source.json` 和发布清单中。
+- 同步结果尚未提交；后端提交推送前也无法取得 `api:check:upstream` 的固定上游验证，因此这些远程证据仍保留为发布前置条件。
 
 2026-08-04 Qodana 与代码标识符静态收口：
 
@@ -80,6 +90,8 @@
 - 通用验收第二次运行已借助 `--no-fail-fast` 执行完全部工作区测试目标，仅剩重复创建 `sys_outbox_event`、分页 doctest 返回类型及 AutoFill doctest 未初始化 Snowflake 三项失败；三项均已按当前契约修复，全工作区 doctest 已在本地复跑通过。通用脚本后续 Redis、RustFS、迁移及 API/Worker 烟测仍须再次完整运行。
 - 通用验收第三次运行已通过全部工作区测试与 doctest、真实 MySQL 仓储/服务/迁移测试、Redis refresh CAS、Redis 故障恢复、RustFS S3 读写删、数据库重置、19/19 迁移账本和最终结构校验；API 与独立 Worker 跨进程烟测为 21/22，通过后的 Docker 容器、网络和数据卷清理为 5/5。唯一失败项的上传实际返回 HTTP 200，原因为烟测仍读取已删除的 `file_info`；现已改为精确校验 `file_id/file_name/file_path/file_url` 平铺结构并直接使用同源 `file_url` 下载，同时将遗漏的在线用户 Redis `stale_touch` 测试纳入第 5 个运行时专项阶段。取得最终全绿日志前仍不将通用运行时验收标记完成。
 - 通用验收的 `run.json` 已补齐 `starting/running/failed/cleanup_failed/passed` 终态，使用同目录临时文件原子替换；主流程失败优先保留原始错误，成功提示只会在进程、Compose、环境和日志收尾且终态 `run.json` 提交成功后输出，提交后的辅助文件清理失败仅告警。该新版终态证据仍须随下一次真实运行验证，不能用旧格式的三次记录反向证明。
+
+> 上述条目记录的是 2026-08-03 的中间失败和修复过程，其中所述“仍须重新运行”均已由 2026-08-04 最终完整通过的通用运行时验收满足。
 
 2026-07-29 已在独立 Docker 测试服务上完成以下验证：
 

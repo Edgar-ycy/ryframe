@@ -75,7 +75,7 @@ pub(crate) async fn options(
 #[get("/{id}")]
 #[perm("system:user:list")]
 #[utoipa::path(get, path = "/api/v1/system/users/{id}", tag = "用户管理",
-    params(("id" = i64, Path, description = "用户ID")),
+    params(("id" = String, Path, description = "用户ID")),
     responses((status = 200, description = "用户详情", body = ApiResponse<UserDetailVo>)),
     security(("bearer" = [])))]
 pub(crate) async fn detail(
@@ -128,7 +128,7 @@ pub(crate) async fn create(
 #[put("/{id}")]
 #[perm("system:user:edit")]
 #[utoipa::path(put, path = "/api/v1/system/users/{id}", tag = "用户管理",
-    params(("id" = i64, Path, description = "用户ID")),
+    params(("id" = String, Path, description = "用户ID")),
     request_body = UpdateUserDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<UserVo>)),
     security(("bearer" = [])))]
@@ -161,7 +161,7 @@ pub(crate) async fn update(
 #[put("/{id}/roles")]
 #[perm("system:user:edit")]
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/roles", tag = "用户管理",
-    params(("id" = i64, Path, description = "用户ID")),
+    params(("id" = String, Path, description = "用户ID")),
     request_body = ReplaceUserRolesDto,
     responses((status = 200, description = "角色分配成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
@@ -200,7 +200,7 @@ pub(crate) async fn replace_roles(
 #[delete("/{id}")]
 #[perm("system:user:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/users/{id}", tag = "用户管理",
-    params(("id" = i64, Path, description = "用户ID")),
+    params(("id" = String, Path, description = "用户ID")),
     responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn remove(
@@ -236,7 +236,7 @@ pub(crate) async fn batch_remove(
 #[put("/{id}/status")]
 #[perm("system:user:edit")]
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/status", tag = "用户管理",
-    params(("id" = i64, Path, description = "用户ID")),
+    params(("id" = String, Path, description = "用户ID")),
     request_body = UpdateUserStatusDto,
     responses((status = 200, description = "状态修改成功", body = ryframe_http::ApiEmptyResponse)),
     security(("bearer" = [])))]

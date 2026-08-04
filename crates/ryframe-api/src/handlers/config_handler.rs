@@ -62,7 +62,7 @@ async fn list(
 #[get("/{id}")]
 #[perm("system:config:list")]
 #[utoipa::path(get, path = "/api/v1/system/configs/{id}", tag = "参数配置",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     responses((status = 200, description = "配置详情", body = ApiResponse<ConfigVo>)),
     security(("bearer" = [])))]
 async fn detail(
@@ -106,7 +106,7 @@ async fn create(
 #[put("/{id}")]
 #[perm("system:config:edit")]
 #[utoipa::path(put, path = "/api/v1/system/configs/{id}", tag = "参数配置",
-    params(("id" = i64, Path)), request_body = UpdateConfigDto,
+    params(("id" = String, Path)), request_body = UpdateConfigDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<ConfigVo>)), security(("bearer" = [])))]
 async fn update(
     State(state): State<AppState>,
@@ -128,7 +128,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:config:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/{id}", tag = "参数配置",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

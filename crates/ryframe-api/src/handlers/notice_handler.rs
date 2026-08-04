@@ -82,7 +82,7 @@ async fn list(
 #[get("/{id}")]
 #[perm("system:notice:list")]
 #[utoipa::path(get, path = "/api/v1/system/notices/{id}", tag = "通知公告",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     responses((status = 200, description = "通知详情", body = ApiResponse<NoticeVo>)),
     security(("bearer" = [])))]
 async fn detail(
@@ -122,7 +122,7 @@ async fn create(
 #[put("/{id}")]
 #[perm("system:notice:edit")]
 #[utoipa::path(put, path = "/api/v1/system/notices/{id}", tag = "通知公告",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     request_body = UpdateNoticeDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<NoticeVo>)),
     security(("bearer" = [])))]
@@ -155,7 +155,7 @@ async fn update(
 #[post("/{id}/publish-message")]
 #[perm("system:message:publish")]
 #[utoipa::path(post, path = "/api/v1/system/notices/{id}/publish-message", tag = "通知公告",
-    params(("id" = i64, Path)),
+    params(("id" = String, Path)),
     responses((status = 200, description = "消息中心发布结果", body = ApiResponse<PublishedMessageVo>)),
     security(("bearer" = [])))]
 async fn publish_to_message_center(
@@ -216,7 +216,7 @@ async fn publish_to_message_center(
 #[delete("/{id}")]
 #[perm("system:notice:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/notices/{id}", tag = "通知公告",
-    params(("id" = i64, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
