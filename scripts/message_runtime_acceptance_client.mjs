@@ -483,7 +483,11 @@ async function publishLiteralMessage(
     }),
   });
   const messageId = String(response?.data?.message?.id ?? "");
-  if (!/^\d+$/.test(messageId) || response?.data?.recipient_count !== 1) {
+  if (
+    !/^\d+$/.test(messageId)
+    || response?.data?.recipient_count !== 1
+    || response?.data?.inserted !== true
+  ) {
     fail(`发布验收消息失败：${JSON.stringify(response?.data)}`);
   }
   return messageId;
@@ -526,16 +530,30 @@ async function assertSlowConsumer(apiBase, token, userId, marker) {
   }
   const grant = await issueTicket(apiBase, token, "zh-CN");
   const close = await waitForSlowConsumerClose(apiBase, grant.ticket);
+  const beforeRead = await inboxRecords(apiBase, token);
+  const persisted = beforeRead.filter((record) => backlogIds.includes(record?.id));
+  if (persisted.length !== backlogIds.length) {
+    fail(`慢消费者积压消息未完整持久化：${persisted.length}/${backlogIds.length}`);
+  }
   const marked = await requestJson(apiBase, "/api/v1/system/messages/read-all", {
     method: "PUT",
     headers: authHeaders(token, "zh-CN"),
   });
-  if (!Number.isInteger(marked?.data) || marked.data < backlogIds.length) {
-    fail(`慢消费者夹具没有全部持久化为已读：${JSON.stringify(marked)}`);
+  if (!Number.isInteger(marked?.data) || marked.data < 0) {
+    fail(`慢消费者积压清理响应无效：${JSON.stringify(marked)}`);
+  }
+  const afterRead = await inboxRecords(apiBase, token);
+  const readBack = afterRead.filter(
+    (record) => backlogIds.includes(record?.id) && record?.read_at && record?.acked_at,
+  );
+  if (readBack.length !== backlogIds.length) {
+    fail(`慢消费者积压消息未全部回读为已读：${readBack.length}/${backlogIds.length}`);
   }
   return {
     close_code: close.code,
     backlog_count: backlogIds.length,
+    persisted_count: persisted.length,
+    read_back_count: readBack.length,
     marked_read_count: marked.data,
   };
 }
@@ -831,7 +849,7 @@ async function assertInboxRendering(apiBase, token, messageId, locale, expectedT
   return matched[0];
 }
 
-async function inboxRecord(apiBase, token, messageId, tenantId = "system") {
+async function inboxRecords(apiBase, token, tenantId = "system") {
   const response = await requestJson(
     apiBase,
     "/api/v1/system/messages?limit=100",
@@ -839,6 +857,11 @@ async function inboxRecord(apiBase, token, messageId, tenantId = "system") {
   );
   const records = response?.data?.records;
   if (!Array.isArray(records)) fail("收件箱响应缺少 records");
+  return records;
+}
+
+async function inboxRecord(apiBase, token, messageId, tenantId = "system") {
+  const records = await inboxRecords(apiBase, token, tenantId);
   const matched = records.filter((record) => record?.id === messageId);
   if (matched.length > 1) fail(`收件箱中的消息 ${messageId} 出现重复记录`);
   return matched[0] ?? null;

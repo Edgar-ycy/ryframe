@@ -796,8 +796,10 @@ try {
         -or $clientReady.ticket_guards.rejected_origin_preserved_ticket -ne $true `
         -or $clientReady.ticket_guards.replay_status -ne 401 `
         -or $clientReady.slow_consumer.close_code -ne 1013 `
-        -or $clientReady.slow_consumer.backlog_count -lt 16 `
-        -or $clientReady.slow_consumer.marked_read_count -lt 16 `
+        -or $clientReady.slow_consumer.backlog_count -ne 16 `
+        -or $clientReady.slow_consumer.persisted_count -ne 16 `
+        -or $clientReady.slow_consumer.read_back_count -ne 16 `
+        -or $clientReady.slow_consumer.marked_read_count -lt 0 `
         -or $clientReady.offline_reconnect.disconnected_instance -ne "api_a" `
         -or $clientReady.offline_reconnect.reconnected_instance -ne "api_b" `
         -or $clientReady.offline_reconnect.published_while_offline -ne $true `

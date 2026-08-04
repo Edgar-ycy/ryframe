@@ -513,11 +513,14 @@ class MessageRuntimeAcceptancePolicyTest(unittest.TestCase):
             "for (let index = 0; index < 16; index += 1)",
             '"载荷".repeat(4_000)',
             "if (event.code !== 1013)",
+            "response?.data?.inserted !== true",
+            "persisted.length !== backlogIds.length",
             '"/api/v1/system/messages/read-all"',
-            "marked.data < backlogIds.length",
+            "readBack.length !== backlogIds.length",
             "$clientReady.slow_consumer.close_code -ne 1013",
-            "$clientReady.slow_consumer.backlog_count -lt 16",
-            "$clientReady.slow_consumer.marked_read_count -lt 16",
+            "$clientReady.slow_consumer.backlog_count -ne 16",
+            "$clientReady.slow_consumer.persisted_count -ne 16",
+            "$clientReady.slow_consumer.read_back_count -ne 16",
         ):
             self.assertIn(fragment, self.stage + self.client)
 
