@@ -108,8 +108,16 @@ jobs:
         with:
           tool: cargo-audit
 
+      # rkyv 0.7.46 是 rust_decimal 未启用的可选依赖；若它进入实际构建图，则禁止继续忽略该漏洞。
+      - name: Verify conditional rkyv audit exception
+        run: |
+          if cargo tree --locked --workspace --target all --invert rkyv@0.7.46 2>/dev/null | grep -Fxq 'rkyv v0.7.46'; then
+            echo "::error::rkyv 0.7.46 已进入实际构建依赖图，必须先升级再通过安全审计"
+            exit 1
+          fi
+
       - name: Run cargo audit
-        run: cargo audit --deny warnings
+        run: cargo audit --deny warnings --ignore RUSTSEC-2026-0235
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf

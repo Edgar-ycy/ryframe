@@ -1838,6 +1838,16 @@ def check_release_governance(errors: list[str]) -> None:
         errors.append("scheduled CI must retain the dependency security job")
     elif "\n    if:" in security_job[1].split("\n    steps:\n", maxsplit=1)[0]:
         errors.append("dependency security job must remain unconditional for weekly schedules")
+    inactive_rkyv_guard = (
+        "cargo tree --locked --workspace --target all --invert rkyv@0.7.46"
+    )
+    conditional_rkyv_audit = (
+        "cargo audit --deny warnings --ignore RUSTSEC-2026-0235"
+    )
+    if ci.count(inactive_rkyv_guard) != 1:
+        errors.append("CI 必须确认被忽略的 rkyv 版本仍未进入实际构建图")
+    if ci.count(conditional_rkyv_audit) != 1:
+        errors.append("CI 必须显式保留已经审查的 rkyv advisory 例外")
     if "RUSTDOCFLAGS" in ci:
         errors.append("CI must not configure rustdoc flags without a documentation gate")
     smoke_contract_test = "node deploy/tests/smoke-test.test.js"
