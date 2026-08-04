@@ -757,7 +757,7 @@ function Get-OtelAcceptanceJsonDocuments {
     if ($depth -ne 0 -or $insideString -or $documents.Count -eq 0) {
         throw ($script:OtelAcceptanceMessages.TraceJson -f $Path)
     }
-    return @($documents)
+    return $documents.ToArray()
 }
 
 function ConvertTo-OtelAcceptanceAttributeMap {
@@ -839,7 +839,7 @@ function Get-OtelAcceptanceSpans {
     if ($spans.Count -eq 0) {
         throw ($script:OtelAcceptanceMessages.TraceAssertion -f $script:OtelAcceptanceMessages.EmptySpans)
     }
-    return @($spans)
+    return $spans.ToArray()
 }
 
 function Test-OtelAcceptanceDescendant {

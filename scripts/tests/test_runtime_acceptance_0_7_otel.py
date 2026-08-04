@@ -333,6 +333,12 @@ class RuntimeAcceptanceV07OtelPolicyTest(unittest.TestCase):
         self.assertLess(log_capture, cleanup)
         self.assertLess(trace_capture, cleanup)
 
+    def test_generic_evidence_lists_use_powershell_5_compatible_conversion(self) -> None:
+        self.assertIn("return $documents.ToArray()", self.script)
+        self.assertIn("return $spans.ToArray()", self.script)
+        self.assertNotIn("return @($documents)", self.script)
+        self.assertNotIn("return @($spans)", self.script)
+
     def test_runtime_messages_decode_to_chinese(self) -> None:
         match = re.search(r"ConvertFrom-Json @'\n(.*?)\n'@", self.script, re.DOTALL)
         self.assertIsNotNone(match)
