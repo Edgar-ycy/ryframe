@@ -13,6 +13,7 @@
 ### Changed
 
 - HTTP 成功、错误、消息协议与后台任务语义统一使用完整中英文资源；语言协商、`Content-Language` 和 `Vary: Accept-Language` 在当前契约内闭环，不保留旧固定中文响应分支。
+- 消息 WebSocket 连接只有在 hello 帧成功进入有界发送队列后才可投递并触发补拉；ACK 持久化前采用至少一次投递，客户端按 message ID 做逻辑合并，ACK 持久化后的新连接必须跨完整补拉周期保持零投递，不再把原始帧 exactly-once 作为错误协议假设。
 - OTel 跨进程传播同时持久化并恢复 `traceparent` 与 `tracestate`；API、独立 Worker 和 Outbox 使用同一链路上下文，并对 Collector 中断实行有界失败和恢复导出。
 - 读副本健康选择显式采用连续探测阈值；失败前两次继续路由、第三次摘除，恢复第一次仍保持摘除、第二次才重新加入，不提供旧即时切换写法。
 - 幂等 Redis 键命名空间单向升级为 `ryframe:v0.7:idempotency:`，不读取或双写 v0.6 键。
@@ -27,7 +28,7 @@
 ### Validation
 
 - 本地门禁覆盖全工作区格式、架构、Clippy、`cargo check --workspace --all-targets`、工作区库与二进制测试、OpenAPI 快照和 v0.7 运行验收策略测试；依赖真实 MySQL/Redis 的行为由隔离 Docker 验收覆盖。
-- 稳定发布继续仅输出 GitHub 自动生成的源码 ZIP/TAR，不构建或签名任何平台镜像，也不上传 SBOM、发布清单或其他自定义附件。
+- 稳定发布继续仅输出 GitHub 自动生成的源码 ZIP/TAR，不构建或签名任何平台镜像，也不上传 SBOM 或其他自定义附件。
 
 ## [v0.6.0] - 2026-08-03
 

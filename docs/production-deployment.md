@@ -1,6 +1,6 @@
 # 生产部署基线
 
-> 最后核对：2026-08-03
+> 最后核对：2026-08-05
 
 本文档给出 RyFrame 生产环境的最低安全和可靠性基线。示例配置必须按实际域名、网段、
 证书和容量修改，不能原样作为生产凭据或网络策略。
@@ -33,15 +33,15 @@ docker build \
   --file deploy/Dockerfile .
 ```
 
-稳定发布工作流只发布 GitHub 自动生成的源码快照，不构建或分发任何平台镜像。生产镜像必须由部署环境从同一稳定标签的源码独立构建、扫描并记录不可变摘要；升级 Rust 或 Debian 后必须重新运行全量测试、迁移/恢复演练和容量基准。
+稳定发布工作流只发布 GitHub 自动生成的源码快照，不构建或分发任何平台镜像。生产镜像必须由部署环境从同一 annotated tag 解引用出的精确提交独立构建、扫描并记录不可变摘要；升级 Rust 或 Debian 后必须重新运行全量测试、迁移/恢复演练和容量基准。
 
 部署环境完成构建和扫描后，应将镜像推送到自身受控的内部仓库，并把
 `repository@sha256:digest` 写入 `RYFRAME_IMAGE`。`deploy/.env.production.example` 中的值
-仅表示部署方构建产物，不引用 GHCR、GitHub Release 附件或已经删除的发布清单。
+仅表示部署方构建产物，不引用 GHCR 或任何 GitHub Release 自定义附件。
 
 `deploy/compose.prod.yml` 仅编排 API、独立迁移进程和独立 Worker，MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。复制 `deploy/.env.production.example` 到部署平台配置，生成主库密码、数据库副本 JSON、业务数据源 JSON、Redis 密码、对象存储凭据、JWT 密钥和指标 Token 文件，并全部以 Docker secret 只读挂载；没有副本或业务数据源时对应文件内容为 `[]`。不得把真实密码、令牌、私钥、连接 JSON 或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，镜像必须采用部署环境构建并审计过的 digest 引用。
 
-前端不加入后端 Compose。部署平台必须从 `ryframe-vue3` 独立仓库检出发布清单锁定的精确标签和提交，执行冻结锁文件安装与生产构建，再把 `dist/` 作为静态站点独立发布；部署记录同时保存前后端提交 SHA，不能从可变分支或后端工作树临时复制前端产物。
+前端不加入后端 Compose。部署平台必须从 `ryframe-vue3` 独立仓库检出与后端同名的 annotated tag，核验并记录该 tag object ID 及其解引用出的完整 40 位提交，再执行冻结锁文件安装与生产构建并把 `dist/` 作为静态站点独立发布；部署记录同时保存前后端 tag object ID 与提交 SHA，不能从可变分支或后端工作树临时复制前端产物。
 
 生产配置与 Compose 将 `APP_LOGGER_OUTPUT` 默认设为 `stdout`，API 和 Worker 均由容器平台
 采集、轮转和保留日志，不会在只读根文件系统中创建 `logs/`。只有在已挂载可写持久卷并

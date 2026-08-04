@@ -141,8 +141,11 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 ### 消息中心投递
 
 区分慢消费者与已关闭连接：前者检查客户端消费、网络和连接数，后者确认是否为正常断线
-重连。持久化收件箱会补拉未确认消息，排障期间不得手工写入 `acked_at`，以免掩盖未送达
-消息。消息中心运行边界统一来自 `[messaging]`；可使用 `APP_MESSAGING_ENABLED`、
+重连。新连接必须先收到 hello，服务端才能把该连接标记为可投递并触发收件箱补拉；消息先于
+hello 表示协议顺序异常。持久化收件箱在 ACK 落库前提供至少一次投递，因此客户端必须按
+message ID 做逻辑合并，ACK 前出现同 ID 的多个原始帧本身不等于消息重复入账。服务端确认
+ACK 已持久化后，新连接跨完整补拉周期仍收到该 ID 才属于故障。排障期间不得手工写入
+`acked_at`，以免掩盖未送达消息。消息中心运行边界统一来自 `[messaging]`；可使用 `APP_MESSAGING_ENABLED`、
 `APP_MESSAGING_TICKET_TTL_SECONDS`、`APP_MESSAGING_RETENTION_DAYS`、
 `APP_MESSAGING_MAX_CONNECTIONS_PER_USER`、`APP_MESSAGING_OUTBOUND_BUFFER` 和
 `APP_MESSAGING_MAX_RECIPIENTS_PER_MESSAGE` 覆盖；共享补拉使用

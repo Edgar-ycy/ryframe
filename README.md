@@ -101,6 +101,8 @@ python scripts/check_architecture.py
 .\scripts\runtime_acceptance.ps1
 # 在独立旧库与 RustFS 中执行 FILE-A 单向迁移闭环验收
 .\scripts\file_a_acceptance.ps1
+# 从最终干净提交串行执行 v0.7 消息中心、读副本与 OTel Docker 验收
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime_acceptance_0_7.ps1 -ConfirmRun RUN-RYFRAME-V0-7-ACCEPTANCE
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
 # 部署环境按需从稳定标签源码构建 Linux 可执行文件
@@ -110,7 +112,8 @@ cross build --release --target x86_64-unknown-linux-gnu
 托管后端 CI 在 Linux 上执行格式、源码卫生、架构与权限门禁、工作流和部署静态校验，
 并只通过一次全目标 Clippy 编译工作区；依赖安全审计在独立作业执行。OpenAPI 与 MySQL
 快照由开发者在本地生成并检入，托管 CI 不再为快照重复编译；稳定版 Release 也不重复
-编译或测试，只接受两仓精确提交已成功完成各自 push CI 的证据。
+编译或测试，只接受两仓同名 annotated tag 解引用出的精确提交已成功完成各自 push CI 的
+证据；GitHub Release 不生成额外交付身份文件，也不上传自定义附件。
 
 ## 重置数据库
 
@@ -206,7 +209,7 @@ config/app.prod.toml
 生产环境的数据库、Redis 和对象存储如果跨主机，必须启用证书校验的 TLS；多实例部署应使用 RustFS/MinIO/S3，本地存储只允许单实例或经过验证的共享持久卷。详细要求见[生产部署基线](docs/production-deployment.md)。
 
 GitHub 稳定版 Release 只保留平台自动生成的源码 ZIP/TAR，不构建或分发可执行文件、前端
-构建产物、容器镜像、SBOM、签名或发布清单。部署环境必须从稳定标签源码独立构建、扫描并
+构建产物、容器镜像、SBOM、签名或其他自定义附件。部署环境必须从稳定标签源码独立构建、扫描并
 固定自身产物摘要。
 
 ## 文档

@@ -40,9 +40,9 @@
 | Crate 边界与最小依赖 | 已完成 | `kernel`、`i18n`、`excel`、`mail` 等拆分已存在，旧公共兼容包已删除。API 拥有全部公开 DTO 并对 Service 模型做穷尽所有权转换；Service、Generator、Utils 运行依赖已移除 Utoipa。`config/feature-matrix.json` 是最小/最大 feature 组合唯一注册表，CI 校验元数据，本地 `cargo xtask feature-matrix` 执行完整编译。 |
 | 依赖升级与生态收敛 | 已完成 | Qodana 登记的五个可安全推进项均已分波完成：提交 `d5d41cc` 升级 `rust_xlsxwriter`，`60b8fd2` 升级 `validator`，`526730d` 升级 `tower-http`，`d466452` 升级 `jsonwebtoken`，`31e2879` 升级 `syn`。`base64 0.23` 默认 SIMD `unsafe` 且会与依赖树中的 `0.22` 并存，`password-hash 0.6` 又缺少兼容的稳定版 `argon2` 依赖族；二者已明确延期至稳定生态收敛后再处理，不作为当前 `0.7.0` 阻断项。仓库继续保留 `NewCrateVersionAvailable` 检查，不以全局禁用方式掩盖后续提示。 |
 | i18n、OTel、URL 版本与读副本 | 待核验 | 双语 HTTP/消息/任务语义、语言协商、响应语言头、版本化 URL、只读就绪快照、OTel 跨进程 `traceparent/tracestate` 与读副本连续探测阈值均已实现。可重复验收脚本已覆盖真实 Collector 父子链路、Collector 中断恢复、连续三次失败摘除、两次成功恢复、Strong 主库固定和 schema 落后排除；等待从干净 `0.7.0` 提交执行正式 Docker 验收。 |
-| 通用消息中心 | 待核验 | 消息表、票据、持久化收件箱、ack/read、前端连接、强类型容量与生命周期、事务收件人固化均已完成。双实例验收脚本已覆盖断线补拉、跨完整补拉周期去重、ticket 过期与重放、错误 Origin、Redis 故障、1013 慢消费者、90 天清理和租户隔离；等待从干净 `0.7.0` 提交执行正式 Docker 验收。 |
-| 源码发布与生产 Compose | 已完成 | GitHub Release 只保留平台自动生成的源码 ZIP/TAR，不分发镜像或自定义附件；OCI 多架构镜像、SBOM、Cosign 与 GHCR 已按用户决定移出范围。生产 Compose 已分离 API、迁移、独立 Worker 和外部托管依赖。部署环境从稳定标签构建、扫描、固化摘要及切换回滚属于外部上线职责，不是仓库发布阻断项。 |
-| 0.7 发布验收 | 待核验 | 版本、OpenAPI、运行时实现和单一可重复验收入口已收口；策略测试已覆盖证据、防误清理、防 PID 复用、完整环境恢复和镜像身份。仍须从最终干净后端提交完整运行三个 Docker 子阶段，再以该 40 位提交同步前端并通过双仓门禁。 |
+| 通用消息中心 | 待核验 | 消息表、票据、持久化收件箱、ack/read、前端连接、强类型容量与生命周期、事务收件人固化均已完成。协议明确要求 hello 成功入队后连接才可投递；ACK 持久化前采用至少一次投递，客户端按 message ID 做逻辑合并，ACK 持久化后的新连接必须跨完整补拉周期保持零投递。双实例验收脚本还覆盖 ticket 过期与重放、错误 Origin、Redis 故障、1013 慢消费者、90 天清理和租户隔离；当前仍等待从最终干净 `0.7.0` 提交执行正式 Docker 验收，不据此虚报通过。 |
+| 源码发布与生产 Compose | 已完成 | GitHub Release 只保留平台自动生成的源码 ZIP/TAR，不分发镜像或自定义附件；联合发布身份由两仓同名 annotated tag object 及其解引用出的精确提交锁定，不依赖额外交付身份文件。OCI 多架构镜像、SBOM、Cosign 与 GHCR 已按用户决定移出范围。生产 Compose 已分离 API、迁移、独立 Worker 和外部托管依赖。部署环境从稳定标签构建、扫描、固化摘要及切换回滚属于外部上线职责，不是仓库发布阻断项。 |
+| 0.7 发布验收 | 待核验 | 版本、OpenAPI、运行时实现和单一可重复验收入口已收口；策略测试已覆盖证据、防误清理、防 PID 复用、完整环境恢复和镜像身份。仍须从最终干净后端提交执行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime_acceptance_0_7.ps1 -ConfirmRun RUN-RYFRAME-V0-7-ACCEPTANCE`，完整通过消息、读副本与 OTel 三个 Docker 子阶段，再以该 40 位提交同步前端并通过双仓门禁。 |
 
 ## 最近本地验收记录
 
@@ -68,7 +68,7 @@
 - 前端首轮以后端提交 `9d6f1cedafa7d34c340825f6a2a1f04f210b71c7` 为唯一来源同步契约；当时 `openapi/source.json` 记录的 SHA-256 为 `e8ca061ca1472566cab5047877b4fcb565cafb7b1897b3328e1a71a50db74064`。
 - 前端 OpenAPI `info.version` 已更新为 `0.6.0`，快照及生成类型已删除旧 `/all` 路径，并加入角色和用户的受限 `/options?q&limit` 契约，不保留旧接口兼容写法。契约守卫已从脆弱的查询数量阈值改为 21 个必要受限查询 operationId 和 11 个旧无上限路径的精确断言。
 - 本地来源校验、源码卫生、workflow、依赖、架构、契约、ESLint、Stylelint、typecheck、67 个文件的 329 项覆盖率测试、生产构建、包体预算与 14 项 Playwright E2E 全部通过。E2E 使用固定同源 API origin，补齐消息收件箱和未读数 Mock，并消除代码生成预览将 `v-loading` 挂到 `ElDialog` 非元素根节点产生的运行时告警。
-- 最终假绿审计发现首轮快照仍将 35 个 Snowflake 路径 ID 发布为 `integer/int64`；后端已将其统一为字符串传输，并用 42 个路径 ID 操作回归测试及前端参数扫描守卫锁定。上述首轮哈希不作为最终发布来源，最终提交身份只记录在前端 `openapi/source.json` 和发布清单中。
+- 最终假绿审计发现首轮快照仍将 35 个 Snowflake 路径 ID 发布为 `integer/int64`；后端已将其统一为字符串传输，并用 42 个路径 ID 操作回归测试及前端参数扫描守卫锁定。上述首轮哈希不作为最终发布来源；最终契约来源记录在前端 `openapi/source.json`，发布身份由两仓 annotated tag object 及其解引用出的精确提交锁定，不依赖额外交付身份文件。
 - 同步结果尚未提交；后端提交推送前也无法取得 `api:check:upstream` 的固定上游验证，因此这些远程证据仍保留为发布前置条件。
 
 2026-08-04 Qodana 与代码标识符静态收口：
