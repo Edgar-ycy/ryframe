@@ -44,7 +44,7 @@ docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_K
 cargo run
 ```
 
-首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。日常联合检查使用 `cargo xtask check`；提交前需要完整验证时使用 `cargo xtask verify`。两者都可附加 `--scope backend` 或 `--scope frontend` 缩小范围。Cargo feature 必须在 `config/feature-matrix.json` 登记最小与最大组合，并在本地运行 `cargo xtask feature-matrix`；CI 只校验注册表元数据，不重复编译矩阵。`file-maintenance` 只用于一次性历史文件校验，常规 API 和 Worker 不会启用它。
+首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。联合生产检查使用 `cargo xtask check`，可附加 `--scope backend` 或 `--scope frontend` 缩小范围。Cargo feature 必须在 `config/feature-matrix.json` 登记最小与最大组合，并在本地运行 `cargo xtask feature-matrix`；CI 只校验注册表元数据，不重复编译矩阵。稳定发布前使用 `cargo xtask release-verify` 校验双仓库版本、提交和发布元数据。`file-maintenance` 只用于一次性历史文件校验，常规 API 和 Worker 不会启用它。
 
 `xtask` 会在后端 `target/corepack-bin/` 中创建临时 Corepack shim，并从前端的 `packageManager` 字段读取固定的 pnpm 版本；该目录是本机构建缓存，不应提交。
 
