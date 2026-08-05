@@ -55,7 +55,7 @@ ryframe/
 │   ├── ryframe-monitor/     # 监控 (健康检查/服务器信息)
 │   ├── ryframe-service/     # 业务服务层
 │   └── ryframe-storage/     # 对象存储端口与本地/S3 实现
-├── config/                  # 配置文件 (dev/prod/test)
+├── config/                  # 配置文件 (dev/prod)
 ├── sql/                     # 由 Migrator 生成和 CI 校验的只读 MySQL 快照
 ├── locales/                 # 国际化资源 (zh-CN / en-US)
 └── docs/                    # 项目文档
@@ -80,10 +80,8 @@ cargo fmt --all -- --check
 # Clippy 检查（零警告）
 cargo clippy --workspace --lib --bins -- -D warnings
 
-# 编译检查（含 tests/benches/examples）
+# 生产代码编译检查
 cargo check --workspace --lib --bins
-
-# 运行测试
 
 # 文档检查
 cargo doc --workspace --no-deps --document-private-items

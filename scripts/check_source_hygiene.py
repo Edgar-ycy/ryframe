@@ -21,14 +21,15 @@ EXCLUDED_DIRS = {
     "tests",
     "ryframe-vue3",
 }
-LOCAL_TEST_FILE_PATHS = {
+TEST_ONLY_FILE_PATHS = {
     "config/app.test.toml",
     "docker-compose.test.yml",
     "scripts/file_a_acceptance.ps1",
     "scripts/message_runtime_acceptance_client.mjs",
     "scripts/replica_runtime_acceptance_client.mjs",
 }
-LOCAL_TEST_DIRECTORY_NAMES = {".local-tests", "benches", "src-tests", "tests"}
+TEST_ONLY_DIRECTORY_NAMES = {"__tests__", "benches", "e2e", "src-tests", "tests"}
+LOCAL_TEST_DIRECTORY_NAME = ".local-tests"
 TEXT_SUFFIXES = {
     ".cjs",
     ".conf",
@@ -153,7 +154,7 @@ def source_files() -> list[Path]:
             path = base / name
             relative = path.relative_to(ROOT).as_posix()
             if (
-                relative in LOCAL_TEST_FILE_PATHS
+                relative in TEST_ONLY_FILE_PATHS
                 or relative.startswith("scripts/runtime_acceptance")
             ):
                 continue
@@ -162,16 +163,53 @@ def source_files() -> list[Path]:
     return sorted(files)
 
 
-def is_local_test_asset(relative: str) -> bool:
-    """判断路径是否属于只能留在本机的测试资产。"""
+def is_test_asset_path(relative: str) -> bool:
+    """判断路径是否属于测试、基准或验收资产。"""
+    parts = PurePosixPath(relative).parts
+    name = parts[-1] if parts else ""
     return (
-        relative in LOCAL_TEST_FILE_PATHS
+        relative in TEST_ONLY_FILE_PATHS
         or relative.startswith("scripts/runtime_acceptance")
-        or any(
-            directory in LOCAL_TEST_DIRECTORY_NAMES
-            for directory in PurePosixPath(relative).parts
+        or any(directory in TEST_ONLY_DIRECTORY_NAMES for directory in parts)
+        or LOCAL_TEST_DIRECTORY_NAME in parts
+        or (
+            relative.startswith("scripts/")
+            and name.startswith("test_")
         )
     )
+
+
+def misplaced_local_test_assets() -> list[str]:
+    """返回位于常规工作区、而非 `.local-tests` 的本地验证资产。"""
+    ignored_directories = {
+        ".git",
+        LOCAL_TEST_DIRECTORY_NAME,
+        ".pnpm-store",
+        "target",
+        "ryframe-vue3",
+    }
+    assets: list[str] = []
+
+    for directory, directories, names in os.walk(ROOT):
+        base = Path(directory)
+        retained_directories: list[str] = []
+        for name in directories:
+            if name in ignored_directories:
+                continue
+            candidate = base / name
+            relative = candidate.relative_to(ROOT).as_posix()
+            if name in TEST_ONLY_DIRECTORY_NAMES:
+                assets.append(relative)
+                continue
+            retained_directories.append(name)
+        directories[:] = retained_directories
+
+        for name in names:
+            relative = (base / name).relative_to(ROOT).as_posix()
+            if is_test_asset_path(relative):
+                assets.append(relative)
+
+    return sorted(set(assets))
 
 
 def tracked_local_test_assets() -> list[str]:
@@ -186,7 +224,7 @@ def tracked_local_test_assets() -> list[str]:
         for raw in result.stdout.split(b"\0")
         if raw
         for relative in [raw.decode("utf-8")]
-        if is_local_test_asset(relative)
+        if is_test_asset_path(relative)
     )
 
 
@@ -419,6 +457,11 @@ def main() -> int:
     if (ROOT / ".pnpm-store").exists():
         errors.append(
             ".pnpm-store: frontend pnpm commands must run from ryframe-vue3"
+        )
+
+    for relative in misplaced_local_test_assets():
+        errors.append(
+            f"{relative}: local verification assets must be moved under .local-tests"
         )
 
     try:

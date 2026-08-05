@@ -158,7 +158,6 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 ```text
 config/app.toml
 config/app.dev.toml
-config/app.test.toml
 config/app.prod.toml
 ```
 
@@ -166,8 +165,8 @@ config/app.prod.toml
 
 | 变量 | 说明 | 默认值 |
 | --- | --- | --- |
-| `APP_ENV` | 运行环境：`dev`、`test`、`prod` | `dev` |
-| `SNOWFLAKE_WORKER_ID` | Snowflake 节点 ID（`0..=1023`）；生产环境必填，且每个同时运行的实例必须唯一 | 开发/测试默认 `1` |
+| `APP_ENV` | 运行环境：`dev`、`prod` | `dev` |
+| `SNOWFLAKE_WORKER_ID` | Snowflake 节点 ID（`0..=1023`）；生产环境必填，且每个同时运行的实例必须唯一 | 开发环境默认 `1` |
 | `APP_CONFIG_DIR` | 配置目录 | `config` |
 | `APP_DATABASE_REPLICAS_FILE` | 命名只读副本 JSON 数组文件 | `[]` |
 | `APP_DATABASE_SOURCES_FILE` | 命名业务数据源 JSON 数组文件 | 按环境配置 |
