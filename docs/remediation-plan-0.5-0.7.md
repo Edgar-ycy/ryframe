@@ -42,13 +42,19 @@
 | i18n、OTel、URL 版本与读副本 | 已完成 | 双语 HTTP/消息/任务语义、语言协商、响应语言头、版本化 URL、只读就绪快照、OTel 跨进程 `traceparent/tracestate` 与读副本连续探测阈值均已实现。正式 Docker 验收已从干净提交完成真实 Collector 父子链路、API→Worker/Outbox 上下文传播、MySQL/Redis/RustFS 依赖子链、Collector 中断与恢复，以及连续三次失败摘除、两次成功恢复、Strong 主库固定和 schema 落后排除；所有断言通过且无证据采集或清理错误。 |
 | 通用消息中心 | 已完成 | 消息表、票据、持久化收件箱、ack/read、前端连接、强类型容量与生命周期、事务收件人固化均已完成。协议明确要求 hello 成功入队后连接才可投递；ACK 持久化前采用至少一次投递，客户端按 message ID 做逻辑合并，ACK 持久化后的新连接必须跨完整补拉周期保持零投递。消息与收件箱的 8 个时间列已统一为 `DATETIME(6)`，避免数据库微秒时钟被舍入到未来一秒；前向迁移、既有库升级测试、基线、SQL 快照和测试夹具均已对齐。正式双实例 Docker 验收已通过 ticket 过期与重放、错误 Origin、Redis 故障补拉与双实例恢复、1013 慢消费者、ACK 零重投、90 天清理和租户隔离，证据终态为 `passed`。 |
 | 源码发布与生产 Compose | 已完成 | GitHub Release 只保留平台自动生成的源码 ZIP/TAR，不分发镜像或自定义附件；联合发布身份由两仓同名 annotated tag object 及其解引用出的精确提交锁定，不依赖额外交付身份文件。OCI 多架构镜像、SBOM、Cosign 与 GHCR 已按用户决定移出范围。生产 Compose 已分离 API、迁移、独立 Worker 和外部托管依赖。部署环境从稳定标签构建、扫描、固化摘要及切换回滚属于外部上线职责，不是仓库发布阻断项。 |
-| 0.7 发布验收 | 部分完成 | 后端版本、OpenAPI、运行时实现、策略门禁和单一可重复验收入口均已收口；消息、读副本与 OTel 三个正式 Docker 子阶段已从干净提交完整通过，原子证据和资源清理均无错误。三阶段端口分配已删除会释放 Windows 临时端口的重复 `bind(0)` 实现，统一使用非临时范围候选和真实回环绑定校验，避免 Worker 出站连接复用待启动 API 端口。剩余发布前置仅为：在文档收口后的最终后端提交上复跑门禁与正式验收，以该 40 位提交同步前端固定来源 OpenAPI 与生成类型，将前端版本和变更日志统一为 `0.7.0`，完成双仓本地门禁和精确提交 CI，再创建同名 annotated tag 并验证纯源码 Release。 |
+| 0.7 发布验收 | 已完成 | 后端版本、OpenAPI、运行时实现、策略门禁和单一可重复验收入口均已收口；消息、读副本与 OTel 三个正式 Docker 子阶段已在最终干净后端提交 `126b66429cdaa934765c4ca4b3cbb2eed28b944f` 上完整通过，原子证据、资源清理和 Docker 残留检查均无错误。前端以该完整提交为固定来源同步 `0.7.0` OpenAPI 并通过完整本地门禁，双仓精确提交 CI 全绿。同名 annotated tag 已分别锁定后端提交 `126b66429cdaa934765c4ca4b3cbb2eed28b944f` 与前端提交 `7482089e3bde9ac18f8dc17f73eabe6ac19e775d`；联合 Release 工作流成功发布非草稿、非预发布的纯源码稳定版，自定义附件数量为 0。 |
 
-## 最近本地验收记录
+## 最近验收与发布记录
+
+2026-08-05 `v0.7.0` 纯源码稳定发布完成：
+
+- 后端 annotated tag object 为 `4a4acb93b91ed7ce704749c79ac87bc0e9746d6c`，解引用到提交 `126b66429cdaa934765c4ca4b3cbb2eed28b944f`；前端 annotated tag object 为 `aaa722be509cb4b4a61ecd2fd86be5cb7827c422`，解引用到提交 `7482089e3bde9ac18f8dc17f73eabe6ac19e775d`。
+- 两个精确提交的 CI 均为全绿；本地 `validate_release.py` 联合校验确认双仓版本、Changelog 注释、OpenAPI 字节哈希和固定来源提交完全一致。
+- [Release 工作流](https://github.com/Edgar-ycy/ryframe/actions/runs/30968240223) 成功完成联合源码校验与纯源码发布，耗时 38 秒；[RyFrame v0.7.0](https://github.com/Edgar-ycy/ryframe/releases/tag/v0.7.0) 为非草稿、非预发布，GitHub API 返回的自定义附件数量为 0，仅保留平台生成的 ZIP/TAR 源码归档。
 
 2026-08-05 `0.7.0` 三阶段正式 Docker 运行验收完整通过：
 
-- 证据目录为 `target/runtime-acceptance-0-7/20260805065041-10360-f09c11d3b453`；主 `run.json` 绑定干净后端提交 `be94ca7217d5188aa502d9cf8e65f74cc71d43f6`，消息、读副本与 OTel 三个阶段均为 `passed`。
+- 最终发布证据目录为 `target/runtime-acceptance-0-7/20260805073934-4132-771e5c3265bd`；主 `run.json` 绑定干净后端提交 `126b66429cdaa934765c4ca4b3cbb2eed28b944f`，消息、读副本与 OTel 三个阶段均为 `passed`。
 - 消息阶段完成双实例票据、Origin、慢消费者、离线补拉、ACK 零重投、租户隔离、Redis 中断恢复和 90 天保留清理；读副本阶段完成连续失败摘除、连续成功恢复、Strong 主库路由与迁移账本滞后拒绝。
 - OTel 阶段验证外部父链、API→Worker/Outbox 跨进程上下文、MySQL/Redis/RustFS 依赖子链和 Collector 中断恢复；所有断言通过，API 与 Worker 均观测到导出失败后恢复，业务与就绪状态未受影响。
 - 主阶段与三个子阶段的 `cleanup_errors` 均为空，OTel `evidence_capture_errors` 为空；按本次 Compose project 精确查询，容器、网络和数据卷残留均为 0。
@@ -112,12 +118,12 @@
 - `v0.5.0` 后端与前端已分别从干净克隆完成后端全工作区构建、前端锁定依赖安装、OpenAPI 契约、类型与生产构建，以及联合 `cargo xtask check --scope all`；两仓均未产生版本控制差异。
 - 本机若有其他项目占用默认测试端口，应使用 `RYFRAME_TEST_MYSQL_PORT`、`RYFRAME_TEST_REDIS_PORT` 和 Compose 端口覆盖启动独立的 RyFrame 测试服务；完整 `RYFRAME_TEST_MYSQL_ADMIN_URL` 仍可用于远程或自定义 MySQL，禁止复用或改动其他项目容器。
 
-`v0.6.0` 的双仓精确提交托管 CI、同名稳定标签和纯源码联合发布已经完成。以下事项仍必须在已授权的托管或生产环境执行，不能由本地代码提交替代：托管 OTel 导出器故障演练，以及生产源码构建、扫描、摘要固化、迁移切换和回滚演练。
+`v0.7.0` 的双仓精确提交 CI、同名稳定标签和纯源码联合发布已经完成。以下事项仍必须在已授权的托管或生产环境执行，不能由本地代码提交替代：托管 OTel 导出器故障演练，以及生产源码构建、扫描、摘要固化、迁移切换和回滚演练；这些属于外部上线职责，不改变本整改计划已经完成的结论。
 
-## 执行顺序
+## 执行结果
 
-1. `0.6.0` 的双仓契约、稳定标签、精确提交 CI 和纯源码联合发布已经收口。
+1. `0.5.x` 与 `0.6.0` 的双仓契约、稳定标签、精确提交 CI 和纯源码联合发布已经收口。
 2. `0.7.0` 的依赖、架构、i18n、OTel、读副本、消息中心、版本面与可重复验收入口已经完成代码收口。
-3. 消息、读副本和 OTel 三阶段 Docker 验收已从干净后端提交完整通过；文档收口后在最终提交上复跑同一入口，固定最终发布证据。
-4. 以最终后端完整提交同步前端固定来源 OpenAPI 与生成契约，将前端 `package.json` 和 `CHANGELOG.md` 收口到 `0.7.0`，完成双仓本地门禁、提交和精确提交 CI。
-5. 创建双仓同名 annotated tag 并验证 `0.7.0` 纯源码 Release；授权生产环境另行完成源码构建、扫描、摘要固化、迁移切换和回滚演练。
+3. 消息、读副本和 OTel 三阶段 Docker 验收已在最终干净后端提交 `126b66429cdaa934765c4ca4b3cbb2eed28b944f` 上完整通过并固定发布证据。
+4. 前端已从该后端提交同步固定来源 OpenAPI 与生成契约，`package.json`、OpenAPI 和 Changelog 均收口到 `0.7.0`；双仓本地门禁、提交和精确提交 CI 均已通过。
+5. 双仓同名 annotated tag 与 `v0.7.0` 纯源码 Release 已完成并验证；授权生产环境的源码构建、扫描、摘要固化、迁移切换和回滚演练继续作为外部上线职责执行。
