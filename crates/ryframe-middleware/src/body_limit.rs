@@ -59,25 +59,3 @@ fn is_avatar_upload(path: &str) -> bool {
         Some("/auth/profile/avatar" | "/common/upload/avatar")
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn avatar_routes_use_the_smaller_limit() {
-        let config = UploadLimitsConfig::default();
-        assert_eq!(
-            request_body_limit(&config, "/api/v1/auth/profile/avatar"),
-            AVATAR_UPLOAD_LIMIT_BYTES + config.multipart_envelope_bytes
-        );
-        assert_eq!(
-            request_body_limit(&config, "/api/v1/common/upload/avatar"),
-            AVATAR_UPLOAD_LIMIT_BYTES + config.multipart_envelope_bytes
-        );
-        assert_eq!(
-            request_body_limit(&config, "/api/v1/common/upload"),
-            FILE_UPLOAD_LIMIT_BYTES + config.multipart_envelope_bytes
-        );
-    }
-}

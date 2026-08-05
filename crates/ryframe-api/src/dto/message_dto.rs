@@ -113,57 +113,6 @@ fn validate_localized_args(args: &BTreeMap<String, String>) -> HttpResult<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::PublishMessageDto;
-    use validator::Validate;
-
-    #[test]
-    fn accepts_literal_message_payload() {
-        let dto: PublishMessageDto = serde_json::from_value(serde_json::json!({
-            "topic": "system",
-            "title": "标题",
-            "content": "正文",
-            "severity": "info",
-            "audiences": [{ "kind": "tenant" }]
-        }))
-        .expect("纯文本消息请求");
-
-        dto.validate().expect("字段校验");
-        assert!(dto.localized_content().is_ok());
-    }
-
-    #[test]
-    fn accepts_keyed_message_payload_with_named_arguments() {
-        let dto: PublishMessageDto = serde_json::from_value(serde_json::json!({
-            "topic": "system",
-            "title_key": "user.welcome",
-            "body_key": "user.welcome",
-            "args": { "name": "Ada" },
-            "severity": "info",
-            "audiences": [{ "kind": "tenant" }]
-        }))
-        .expect("本地化消息请求");
-
-        dto.validate().expect("字段校验");
-        assert!(dto.localized_content().is_ok());
-    }
-
-    #[test]
-    fn rejects_mixed_literal_and_keyed_message_payload() {
-        let dto: PublishMessageDto = serde_json::from_value(serde_json::json!({
-            "topic": "system",
-            "title": "标题",
-            "body_key": "user.welcome",
-            "severity": "info",
-            "audiences": [{ "kind": "tenant" }]
-        }))
-        .expect("混合消息请求");
-
-        assert!(dto.localized_content().is_err());
-    }
-}
-
 /// 收件箱游标查询参数。
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]

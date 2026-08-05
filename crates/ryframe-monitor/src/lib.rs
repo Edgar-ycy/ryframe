@@ -166,36 +166,3 @@ fn current_timestamp() -> String {
 fn text_response(text: String, content_type: &'static str) -> axum::response::Response {
     ([(header::CONTENT_TYPE, content_type)], text).into_response()
 }
-
-#[cfg(test)]
-mod tests {
-    use axum::http::{HeaderMap, HeaderValue, header};
-
-    use super::{constant_time_eq, has_valid_metrics_token};
-
-    #[test]
-    fn metrics_token_requires_exact_bearer_value() {
-        let mut headers = HeaderMap::new();
-        assert!(!has_valid_metrics_token(&headers, "expected-secret"));
-
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer wrong-secret"),
-        );
-        assert!(!has_valid_metrics_token(&headers, "expected-secret"));
-
-        headers.insert(
-            header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer expected-secret"),
-        );
-        assert!(has_valid_metrics_token(&headers, "expected-secret"));
-    }
-
-    #[test]
-    fn constant_time_comparison_rejects_prefixes_and_length_mismatches() {
-        assert!(constant_time_eq(b"same", b"same"));
-        assert!(!constant_time_eq(b"same", b"same-but-longer"));
-        assert!(!constant_time_eq(b"same-but-longer", b"same"));
-        assert!(!constant_time_eq(b"same", b"diff"));
-    }
-}

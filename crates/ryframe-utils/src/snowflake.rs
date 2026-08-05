@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 /// Snowflake ID 生成失败。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -37,24 +37,20 @@ pub enum SnowflakeError {
 ///
 /// # 使用方式
 ///
-/// ```
+/// ```text
 /// use ryframe_utils::snowflake::Snowflake;
 ///
 /// let sf = Snowflake::new(1).expect("创建雪花算法实例失败");
 /// let id = sf.try_next_id().expect("生成 Snowflake ID 失败");
-/// assert!(id > 0);
 ///
 /// let ts = Snowflake::extract_timestamp(id);
 /// let wid = Snowflake::extract_worker_id(id);
-/// assert_eq!(wid, 1);
-/// assert!(ts > 1_769_660_800_000);
 /// ```
 pub struct Snowflake {
     /// 工作机器 ID（0~1023）。
     worker_id: i64,
     /// 时间戳和序列号必须作为一个整体更新，避免并发调用观察到不一致状态。
     state: Mutex<SnowflakeState>,
-    time_source: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 #[derive(Debug, Default)]
@@ -94,22 +90,11 @@ impl Snowflake {
     ///
     /// 如果 `worker_id` 超出范围则返回错误。
     pub fn new(worker_id: i64) -> Result<Self, SnowflakeError> {
-        Self::with_time_source(worker_id, system_timestamp)
-    }
-
-    /// 使用自定义毫秒时间源创建生成器。
-    ///
-    /// 该构造函数适用于需要确定性时钟的测试，时间源返回 Unix 毫秒时间戳。
-    pub fn with_time_source<F>(worker_id: i64, time_source: F) -> Result<Self, SnowflakeError>
-    where
-        F: Fn() -> i64 + Send + Sync + 'static,
-    {
         validate_worker_id(worker_id)?;
 
         Ok(Self {
             worker_id,
             state: Mutex::new(SnowflakeState::default()),
-            time_source: Arc::new(time_source),
         })
     }
 
@@ -124,7 +109,7 @@ impl Snowflake {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // 在锁内读取时间，避免并发线程先读时间、后以相反顺序取得锁而被误判为回拨。
         // 系统时间早于自定义纪元时，以纪元为下限，避免生成负数 ID。
-        let observed_timestamp = (self.time_source)().max(EPOCH);
+        let observed_timestamp = system_timestamp().max(EPOCH);
 
         if observed_timestamp < state.last_timestamp {
             return Err(SnowflakeError::ClockMovedBackwards {

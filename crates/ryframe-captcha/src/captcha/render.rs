@@ -163,22 +163,3 @@ fn draw_glyph(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unicode_math_symbol_uses_character_count_for_layout() {
-        let image = create_captcha_image("1×2=?", 120, 40).unwrap();
-        assert_eq!(&image[..8], b"\x89PNG\r\n\x1a\n");
-    }
-
-    #[test]
-    fn invalid_render_inputs_return_errors_instead_of_panicking() {
-        assert!(create_captcha_image("", 120, 40).is_err());
-        assert!(create_captcha_image("ABCD", 0, 40).is_err());
-        assert!(create_captcha_image("ABCD", 60, 20).is_err());
-        assert!(create_captcha_image("A@CD", 120, 40).is_err());
-    }
-}

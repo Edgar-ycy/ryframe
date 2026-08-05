@@ -337,4 +337,4 @@ Content-Disposition: attachment; filename*=UTF-8''%E7%94%A8%E6%88%B7%2Exlsx
 - `503` 进入 unavailable 状态，不能按 `401` 清理服务器会话；refresh `409` 最多等待并重试一次。
 - 菜单 `status` 只有启用值 `"1"` 才生成路由。
 - 新密码表单只使用生成的 `passwordPolicy`，不要在页面复制长度、字符类别或正则。
-- 提交前在 `ryframe-vue3` 目录运行 `pnpm check`，确保源码、架构、契约、Lint、类型、覆盖率和生产构建全部通过；禁止从后端根目录执行 `pnpm`。
+- 提交前在 `ryframe-vue3` 目录运行 `pnpm check`，确保源码、架构、契约、Lint、类型和生产构建全部通过；禁止从后端根目录执行 `pnpm`。

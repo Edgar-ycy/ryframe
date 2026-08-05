@@ -32,7 +32,7 @@ git push origin "refs/tags/$release_tag"
 
 ## 2. 上线前准备
 
-1. 从后端干净提交运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime_acceptance_0_7.ps1 -ConfirmRun RUN-RYFRAME-V0-7-ACCEPTANCE`，确认消息中心、读副本与 OTel 三个阶段全部为 `passed`，总证据和子阶段证据均无 `error` 或 `cleanup_errors`，且 Docker project 无残留资源。
+1. 在受控部署环境完成消息中心、读副本与 OTel 的运行演练，确认留存证据无错误、清理问题或残留资源。
 2. 确认后端和前端 `main` 均已通过各自 CI，版本、OpenAPI 和生成类型一致。
 3. 使用部署环境自有的备份工具备份 MySQL 与对象存储，校验备份摘要，并在隔离环境完成恢复演练；仓库不提供 `deploy.sh`，不得把不存在的脚本作为发布前置条件。
 4. 备份旧配置；以 `deploy/redis/redis.conf` 为基线确认生产 Redis 开启 AOF 持久化并使用 `noeviction`，同时配置部署环境专属的 TLS、网络边界和 ACL。
@@ -62,7 +62,7 @@ required Redis 和必要对象存储，独立 Worker 只要求 MySQL 与 require
 联合发布工作流本身不重复编译、测试或生成 OpenAPI/MySQL 快照；它只接受前后端精确提交
 已有成功 push CI 的证据，并校验检入契约和不可变 Git 身份。
 
-前端精确提交的独立 CI 负责以下阈值：session/auth/HTTP client 的 lines/functions/statements 不低于 90%、branches 不低于 80%；全部手写 TS/Vue 的前三项不低于 60%、branches 不低于 50%。生成文件和声明文件不计入覆盖率。首屏 gzip JS 不超过 350 KiB、CSS 不超过 100 KiB，单个异步原始 JS chunk 不超过 500 KiB。
+前端精确提交的独立 CI 执行源码卫生、依赖与架构守卫、Lint、类型检查、生产构建和包体限制。首屏 gzip JS 不超过 350 KiB、CSS 不超过 100 KiB，单个异步原始 JS chunk 不超过 500 KiB。
 
 ## 4. 发布物与可复现性
 

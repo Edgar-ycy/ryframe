@@ -25,14 +25,5 @@ http = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
 
-[dev-dependencies]
-criterion = { workspace = true }
-ryframe-utils = { path = "../ryframe-utils" }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
-
-[[bench]]
-name = "core_bench"
-harness = false
-
 [lints]
 workspace = true

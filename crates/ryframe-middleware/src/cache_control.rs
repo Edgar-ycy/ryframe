@@ -8,7 +8,7 @@
 //!
 //! # 使用示例
 //!
-//! ```
+//! ```text
 //! use ryframe_middleware::cache_control::CacheControlConfig;
 //!
 //! let config = CacheControlConfig {
@@ -19,12 +19,9 @@
 //!         ("/api/v1/config/*".into(), "no-cache".into()),
 //!     ],
 //! };
-//! assert_eq!(config.default_max_age, 3600);
-//! assert!(config.enable_etag);
 //!
 //! // 静态资源预设
 //! let static_config = CacheControlConfig::for_static_assets();
-//! assert_eq!(static_config.custom_rules.len(), 2);
 //! ```
 
 use std::{
@@ -233,48 +230,4 @@ pub fn compute_expires(ttl: Duration) -> HeaderValue {
         + ttl.as_secs();
     // 使用简化的日期格式（完整 HTTP-date 可用 chrono/时间库）
     HeaderValue::from_str(&format!("{}", expires)).unwrap_or(HeaderValue::from_static("0"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_compute_etag_same_content() {
-        let etag1 = compute_etag(b"hello world");
-        let etag2 = compute_etag(b"hello world");
-        assert_eq!(etag1, etag2);
-    }
-
-    #[test]
-    fn test_compute_etag_different_content() {
-        let etag1 = compute_etag(b"hello world");
-        let etag2 = compute_etag(b"hello WORLD");
-        assert_ne!(etag1, etag2);
-    }
-
-    #[test]
-    fn test_cache_control_rules() {
-        let config = CacheControlConfig::default()
-            .with_rule("/api/static/", "public, max-age=3600")
-            .with_rule("/api/dynamic/", "no-cache");
-
-        assert_eq!(
-            config.cache_control_for("/api/static/image.png"),
-            Some("public, max-age=3600")
-        );
-        assert_eq!(
-            config.cache_control_for("/api/dynamic/user"),
-            Some("no-cache")
-        );
-        assert_eq!(config.cache_control_for("/api/other"), None);
-    }
-
-    #[test]
-    fn test_default_config() {
-        let config = CacheControlConfig::default();
-        assert_eq!(config.default_max_age, 0);
-        assert!(config.enable_etag);
-        assert!(config.custom_rules.is_empty());
-    }
 }

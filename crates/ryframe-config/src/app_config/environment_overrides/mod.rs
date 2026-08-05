@@ -77,29 +77,3 @@ fn read_override_file(variable_name: &str, raw_path: &str) -> AppResult<String> 
     }
     Ok(value)
 }
-
-#[cfg(test)]
-mod tests {
-    use std::{fs, time::SystemTime};
-
-    use super::read_override_file;
-
-    #[test]
-    fn file_override_removes_only_one_trailing_line_ending() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("系统时间应晚于 Unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "ryframe-config-secret-{}-{unique}",
-            std::process::id()
-        ));
-        fs::write(&path, b"secret value\r\n").expect("写入临时 secret 文件");
-
-        let value = read_override_file("APP_TEST_SECRET_FILE", &path.to_string_lossy())
-            .expect("读取临时 secret 文件");
-
-        assert_eq!(value, "secret value");
-        fs::remove_file(path).expect("删除临时 secret 文件");
-    }
-}

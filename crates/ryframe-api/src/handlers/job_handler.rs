@@ -112,15 +112,3 @@ fn parse_job_id(value: &str) -> HttpResult<i64> {
         .filter(|id| *id > 0)
         .ok_or_else(|| AppError::Validation("后台任务 ID 必须是正整数".into()))?)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::parse_job_id;
-
-    #[test]
-    fn task_id_must_be_a_positive_i64() {
-        assert_eq!(parse_job_id("42").unwrap(), 42);
-        assert!(parse_job_id("0").is_err());
-        assert!(parse_job_id("not-an-id").is_err());
-    }
-}

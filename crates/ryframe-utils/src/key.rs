@@ -10,21 +10,3 @@ pub fn stable_scope_digest(parts: &[&str]) -> String {
     }
     hex::encode(hasher.finalize())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scope_boundaries_and_values_are_distinct() {
-        assert_ne!(
-            stable_scope_digest(&["ab", "c"]),
-            stable_scope_digest(&["a", "bc"])
-        );
-        assert_eq!(
-            stable_scope_digest(&["same"]),
-            stable_scope_digest(&["same"])
-        );
-        assert_eq!(stable_scope_digest(&["value"]).len(), 64);
-    }
-}

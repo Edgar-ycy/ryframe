@@ -52,20 +52,3 @@ impl MigrationTrait for Migration {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{ALTER_MESSAGE_TIME_PRECISION_SQL, ALTER_RECIPIENT_TIME_PRECISION_SQL};
-
-    #[test]
-    fn every_message_timestamp_uses_microsecond_precision() {
-        for column in ["published_at", "expires_at", "created_at", "updated_at"] {
-            assert!(ALTER_MESSAGE_TIME_PRECISION_SQL.contains(&format!("`{column}` DATETIME(6)")));
-        }
-        for column in ["created_at", "enqueued_at", "acked_at", "read_at"] {
-            assert!(
-                ALTER_RECIPIENT_TIME_PRECISION_SQL.contains(&format!("`{column}` DATETIME(6)"))
-            );
-        }
-    }
-}

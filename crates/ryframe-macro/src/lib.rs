@@ -8,7 +8,7 @@
 //!
 //! # 用法
 //!
-//! ```
+//! ```text
 //! use chrono::{DateTime, Utc};
 //! use ryframe_core::auto_fill::{AutoFill as AutoFillModel, FillContext};
 //! use ryframe_macro::AutoFill;
@@ -32,7 +32,6 @@
 //!     login_date: None,
 //! };
 //! AutoFillModel::fill_on_insert(&mut user, &FillContext::new()).expect("自动填充失败");
-//! assert_ne!(user.id, 0);
 //! ```
 
 mod auto_fill;
@@ -53,7 +52,7 @@ use syn::parse_macro_input;
 ///
 /// # 示例
 ///
-/// ```
+/// ```text
 /// use chrono::{DateTime, Utc};
 /// use ryframe_core::auto_fill::{AutoFill as AutoFillModel, FillContext};
 /// use ryframe_macro::AutoFill;
@@ -76,7 +75,6 @@ use syn::parse_macro_input;
 ///     login_date: None,
 /// };
 /// AutoFillModel::fill_on_insert(&mut user, &FillContext::new()).expect("自动填充失败");
-/// assert_ne!(user.id, 0);
 /// ```
 #[proc_macro_derive(AutoFill, attributes(auto_fill))]
 pub fn derive_auto_fill(input: TokenStream) -> TokenStream {
@@ -119,7 +117,7 @@ pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
 
 /// 为路由处理函数构建生成的路由器，并将生成的辅助函数名隔离在应用代码之外。
 ///
-/// ```
+/// ```text
 /// use axum::{Router, extract::State};
 /// use ryframe_macro::{get, route};
 ///

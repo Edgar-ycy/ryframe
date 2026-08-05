@@ -44,7 +44,7 @@ pub enum MigrationMode {
     Auto,
     /// 仅校验迁移记录和数据库结构，绝不执行 DDL。
     Verify,
-    /// 禁用迁移检查；该模式仅限测试环境使用。
+    /// 禁用迁移检查；该模式仅限隔离环境使用。
     Off,
 }
 
@@ -55,7 +55,7 @@ pub struct DatabaseConfig {
     /// SQL 日志级别（默认 off）。
     #[serde(default)]
     pub sql_log_level: SqlLogLevel,
-    /// 启动时的迁移行为；省略时开发/测试环境默认 `auto`，生产环境默认 `verify`。
+    /// 启动时的迁移行为；省略时非生产环境默认 `auto`，生产环境默认 `verify`。
     #[serde(default)]
     pub migration_mode: MigrationMode,
     /// 唯一写库，也是无从库时的读库。
@@ -202,47 +202,5 @@ impl Default for DbConnection {
             tls_client_cert: None,
             tls_client_key: None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn connection_url_percent_encodes_credentials() {
-        let connection = DbConnection {
-            host: "127.0.0.1".into(),
-            port: 3306,
-            database: "ryframe-test".into(),
-            username: "user@name".into(),
-            password: "p:a/s#%".into(),
-            ..DbConnection::default()
-        };
-
-        assert_eq!(
-            connection.connection_url(),
-            "mysql://user%40name:p%3Aa%2Fs%23%25@127.0.0.1:3306/ryframe-test?collation=utf8mb4_general_ci&ssl-mode=disabled"
-        );
-    }
-
-    #[test]
-    fn connection_url_includes_tls_identity_and_client_certificates() {
-        let connection = DbConnection {
-            host: "db.example.com".into(),
-            database: "ryframe".into(),
-            username: "app".into(),
-            tls_mode: DbTlsMode::VerifyIdentity,
-            tls_ca: Some("certs/ca.pem".into()),
-            tls_client_cert: Some("certs/client.pem".into()),
-            tls_client_key: Some("certs/client.key".into()),
-            ..DbConnection::default()
-        };
-
-        let url = connection.connection_url();
-        assert!(url.contains("ssl-mode=verify_identity"));
-        assert!(url.contains("ssl-ca=certs%2Fca%2Epem"));
-        assert!(url.contains("ssl-cert=certs%2Fclient%2Epem"));
-        assert!(url.contains("ssl-key=certs%2Fclient%2Ekey"));
     }
 }

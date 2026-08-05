@@ -110,7 +110,7 @@ impl EmailSender {
     /// 发送 HTML 邮件
     ///
     /// # 示例
-    /// ```
+    /// ```text
     /// use ryframe_mail::{EmailSender, EmailConfig};
     ///
     /// let config = EmailConfig::default();

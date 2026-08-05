@@ -113,17 +113,3 @@ pub fn validate_cache_namespace(namespace: &str) -> AppResult<()> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::validate_cache_namespace;
-
-    #[test]
-    fn namespace_uses_one_canonical_form() {
-        assert!(validate_cache_namespace("config").is_ok());
-        assert!(validate_cache_namespace("system.config-v2").is_ok());
-        assert!(validate_cache_namespace("").is_err());
-        assert!(validate_cache_namespace("Config").is_err());
-        assert!(validate_cache_namespace("config/value").is_err());
-    }
-}

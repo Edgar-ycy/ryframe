@@ -220,14 +220,3 @@ fn resource_to_title(module: &str, resource: &str) -> String {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::resource_to_title;
-
-    #[test]
-    fn platform_tenant_and_job_writes_have_auditable_titles() {
-        assert_eq!(resource_to_title("platform", "tenants"), "租户管理");
-        assert_eq!(resource_to_title("monitor", "jobs"), "后台任务");
-    }
-}

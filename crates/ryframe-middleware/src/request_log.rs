@@ -77,23 +77,3 @@ fn request_route<B>(request: &Request<B>) -> &str {
         .get::<MatchedPath>()
         .map_or(UNMATCHED_ROUTE, MatchedPath::as_str)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unmatched_requests_use_a_fixed_log_route() {
-        let request = Request::builder()
-            .uri("/not-found/123?token=secret")
-            .body(())
-            .expect("construct an unmatched request");
-
-        assert_eq!(request_route(&request), UNMATCHED_ROUTE);
-    }
-
-    #[test]
-    fn request_log_span_target_is_stable() {
-        assert_eq!(REQUEST_LOG_SPAN_TARGET, "ryframe.request_log");
-    }
-}

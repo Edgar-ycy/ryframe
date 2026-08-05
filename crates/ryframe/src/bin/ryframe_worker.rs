@@ -62,7 +62,7 @@ async fn main() -> Result<(), AppError> {
             .await
             .map_err(|error| AppError::Database(format!("数据库迁移校验失败: {error}")))?,
         MigrationMode::Off => {
-            tracing::warn!("测试环境已关闭数据库迁移校验");
+            tracing::warn!("隔离环境已关闭数据库迁移校验");
         }
     }
     ryframe_db_migration::verify_current_schema(database.write())

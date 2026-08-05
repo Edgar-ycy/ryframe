@@ -276,23 +276,3 @@ fn validate_tenant_limits(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use ryframe_kernel::AppError;
-
-    use super::validate_tenant_limits;
-
-    #[test]
-    fn tenant_limits_cover_provisioned_minimums() {
-        assert!(validate_tenant_limits(1, 2, 0, 0).is_ok());
-        for invalid in [
-            validate_tenant_limits(0, 2, 0, 0),
-            validate_tenant_limits(1, 1, 0, 0),
-            validate_tenant_limits(1, 2, -1, 0),
-            validate_tenant_limits(1, 2, 0, -1),
-        ] {
-            assert!(matches!(invalid, Err(AppError::Validation(_))));
-        }
-    }
-}

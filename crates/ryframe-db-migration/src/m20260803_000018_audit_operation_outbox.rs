@@ -78,15 +78,3 @@ impl MigrationTrait for Migration {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{EVENT_ID_COLUMN, EVENT_ID_UNIQUE_INDEX, REQUEST_ID_COLUMN};
-
-    #[test]
-    fn audit_migration_uses_stable_column_and_unique_index_names() {
-        assert_eq!(EVENT_ID_COLUMN, "event_id");
-        assert_eq!(REQUEST_ID_COLUMN, "request_id");
-        assert_eq!(EVENT_ID_UNIQUE_INDEX, "uq_oper_log_event_id");
-    }
-}

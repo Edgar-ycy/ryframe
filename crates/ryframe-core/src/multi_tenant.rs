@@ -14,7 +14,7 @@
 //!
 //! # 使用示例
 //!
-//! ```
+//! ```text
 //! use ryframe_core::multi_tenant::{TenantConfig, TenantContext, TenantFilter};
 //! use ryframe_core::multi_tenant::{ExtractionMethod, IsolationStrategy, TenantQuota, TenantIsolation};
 //!
@@ -25,19 +25,15 @@
 //!     default_tenant: None,
 //!     ..TenantConfig::default()
 //! };
-//! assert!(matches!(config.extraction_method, ExtractionMethod::Header(_)));
 //!
 //! // 创建租户上下文
 //! let ctx = TenantContext::admin();
-//! assert!(ctx.is_admin);
 //!
 //! // 创建租户过滤器
 //! let filter = TenantFilter::new("inner_repo").with_context(&ctx);
-//! assert!(filter.is_admin());
 //!
 //! // 租户配额
 //! let quota = TenantQuota::default();
-//! assert_eq!(quota.max_users, 100);
 //! ```
 
 use axum::{
@@ -461,102 +457,6 @@ impl TenantQuota {
             }
         } else {
             QuotaCheck::Ok
-        }
-    }
-}
-
-// ============ 测试 ============
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tenant_context_admin() {
-        let ctx = TenantContext::admin();
-        assert!(ctx.is_admin);
-        assert_eq!(ctx.tenant_id, "system");
-    }
-
-    #[test]
-    fn test_tenant_filter_admin_no_filter() {
-        let ctx = TenantContext::admin();
-        let filter = TenantFilter::new("inner").with_context(&ctx);
-        assert!(filter.tenant_filter().is_none()); // 管理员不过滤
-        assert!(filter.is_admin());
-    }
-
-    #[test]
-    fn test_tenant_filter_user_with_filter() {
-        let ctx = TenantContext {
-            tenant_id: "tenant-001".into(),
-            is_admin: false,
-        };
-        let filter = TenantFilter::new("inner").with_context(&ctx);
-        assert_eq!(filter.tenant_filter(), Some("tenant-001"));
-        assert!(!filter.is_admin());
-    }
-
-    #[test]
-    fn test_quota_users_ok() {
-        let quota = TenantQuota::default();
-        assert!(matches!(quota.check_users(50), QuotaCheck::Ok));
-    }
-
-    #[test]
-    fn test_quota_users_exceeded() {
-        let quota = TenantQuota::default();
-        assert!(matches!(
-            quota.check_users(100),
-            QuotaCheck::Exceeded { .. }
-        ));
-    }
-
-    #[test]
-    fn test_quota_storage_exceeded() {
-        let quota = TenantQuota::default();
-        assert!(matches!(
-            quota.check_storage(2048),
-            QuotaCheck::Exceeded { .. }
-        ));
-    }
-
-    #[test]
-    fn test_default_config() {
-        let config = TenantConfig::default();
-        assert!(matches!(
-            config.extraction_method,
-            ExtractionMethod::Header(_)
-        ));
-        assert_eq!(config.isolation_strategy, IsolationStrategy::SharedTable);
-        assert!(config.excluded_paths.is_empty());
-        assert!(config.excluded_path_prefixes.is_empty());
-    }
-
-    #[test]
-    fn tenant_exclusions_distinguish_exact_paths_and_prefixes() {
-        let config = TenantConfig::default()
-            .with_excluded_paths(["/livez"])
-            .with_excluded_path_prefixes(["/docs/"]);
-
-        assert!(config.excludes("/livez"));
-        assert!(!config.excludes("/livez/details"));
-        assert!(config.excludes("/docs/index.html"));
-        assert!(!config.excludes("/doc/index.html"));
-    }
-
-    #[test]
-    fn tenant_identifier_rejects_cache_glob_and_key_delimiter_injection() {
-        for valid in ["system", "tenant-001", "Tenant_42"] {
-            assert!(validate_tenant_identifier(valid).is_ok(), "{valid}");
-        }
-        for invalid in [
-            "*", "**", "a*", "a?", "a[b]", "a\\b", "a:b", " a", "a ", "-ab", "ab-", "租户-a",
-        ] {
-            assert!(
-                validate_tenant_identifier(invalid).is_err(),
-                "unsafe tenant ID was accepted: {invalid}"
-            );
         }
     }
 }

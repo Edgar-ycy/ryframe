@@ -33,14 +33,5 @@ uuid = { workspace = true, features = ["v4"] }
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 
-[dev-dependencies]
-axum = { workspace = true }
-opentelemetry_sdk = { workspace = true, features = ["testing"] }
-tracing-subscriber = { workspace = true, features = ["registry"] }
-reqwest = { workspace = true }
-tokio = { workspace = true, features = ["macros", "net", "rt", "test-util"] }
-sea-orm = { workspace = true, features = ["mock"] }
-tempfile = { workspace = true }
-
 [lints]
 workspace = true

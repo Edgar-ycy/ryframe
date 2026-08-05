@@ -274,8 +274,7 @@ def cargo_manifest_findings() -> set[Finding]:
 
 
 def deployment_findings() -> set[Finding]:
-    paths = [ROOT / "docker-compose.test.yml"]
-    paths.extend(sorted((ROOT / "deploy").rglob("Dockerfile*")))
+    paths = sorted((ROOT / "deploy").rglob("Dockerfile*"))
     paths.extend(sorted((ROOT / ".github" / "workflows").glob("*.yml")))
     paths.extend(sorted((ROOT / ".github" / "workflows").glob("*.yaml")))
 

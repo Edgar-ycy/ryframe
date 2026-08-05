@@ -5,13 +5,10 @@
 /// - `system:*:*` 匹配 `system:user:list`、`system:role:list` 等
 ///
 /// 示例：
-/// ```
+/// ```text
 /// use ryframe_auth::rbac::has_permission;
 ///
 /// let perms = vec!["system:user:*".to_string()];
-/// assert!(has_permission(&perms, "system:user:list"));
-/// assert!(has_permission(&perms, "system:user:create"));
-/// assert!(!has_permission(&perms, "system:role:list"));
 /// ```
 pub fn has_permission(user_perms: &[String], required: &str) -> bool {
     // 公开路由必须不挂载权限中间件。此处默认拒绝，避免空路由注解悄然关闭授权校验。

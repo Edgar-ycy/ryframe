@@ -48,7 +48,7 @@ async fn main() -> Result<(), AppError> {
                 AppError::Database(format!("database migration verification failed: {error}"))
             })?,
         MigrationMode::Off => {
-            tracing::warn!("database migration checks are disabled for the test environment");
+            tracing::warn!("database migration checks are disabled for the isolated environment");
         }
     }
     boot::datasource::verify_schema(&database).await?;
@@ -163,7 +163,7 @@ async fn main() -> Result<(), AppError> {
             Vec::new()
         }
         JobWorkerMode::Disabled => {
-            tracing::warn!("后台任务 Worker 已禁用，仅应在测试环境使用");
+            tracing::warn!("后台任务 Worker 已禁用，仅应在隔离环境使用");
             Vec::new()
         }
     };

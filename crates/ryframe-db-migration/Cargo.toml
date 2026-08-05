@@ -11,9 +11,5 @@ sea-orm-migration = { workspace = true }
 async-trait = { workspace = true }
 ryframe-utils = { path = "../ryframe-utils" }
 
-[dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
-sea-orm = { workspace = true }
-
 [lints]
 workspace = true

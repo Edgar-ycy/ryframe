@@ -8,6 +8,17 @@ uploads/
 *.pdb
 __pycache__/
 *.pyc
+.local-tests/
+scripts/tests/
+crates/**/tests/
+crates/**/benches/
+deploy/tests/
+config/app.test.toml
+docker-compose.test.yml
+scripts/file_a_acceptance.ps1
+scripts/runtime_acceptance*.ps1
+scripts/runtime_acceptance*.compose.yml
+scripts/*runtime_acceptance*_client.mjs
 **/mutants.out*/
 .idea/
 .claude

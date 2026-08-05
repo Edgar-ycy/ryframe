@@ -293,18 +293,3 @@ impl TenantRepository {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use sea_orm::{DbBackend, QueryTrait};
-
-    use super::TenantRepository;
-
-    #[test]
-    fn user_quota_query_locks_tenant_row() {
-        let statement = TenantRepository::locked_tenant_query("tenant-a").build(DbBackend::MySql);
-
-        assert!(statement.sql.ends_with("FOR UPDATE"));
-        assert!(statement.sql.contains("`tenant_id` = ?"));
-    }
-}

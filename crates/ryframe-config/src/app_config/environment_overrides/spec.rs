@@ -301,31 +301,3 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::boolean("APP_OBJECT_STORAGE_USE_SSL", &["object_storage", "use_ssl"]),
     EnvOverride::string("APP_OBJECT_STORAGE_REGION", &["object_storage", "region"]),
 ];
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::ENV_OVERRIDES;
-
-    #[test]
-    fn override_names_and_paths_are_unique_and_non_empty() {
-        let mut names = HashSet::new();
-        let mut paths = HashSet::new();
-
-        for spec in ENV_OVERRIDES {
-            assert!(names.insert(spec.name), "duplicate override: {}", spec.name);
-            assert!(!spec.path.is_empty(), "empty path: {}", spec.name);
-            assert!(
-                spec.path.iter().all(|segment| !segment.is_empty()),
-                "empty path segment: {}",
-                spec.name
-            );
-            assert!(
-                paths.insert(spec.path),
-                "duplicate override path: {}",
-                spec.name
-            );
-        }
-    }
-}

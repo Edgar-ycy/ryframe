@@ -171,8 +171,8 @@ WebSocket `1013` 关闭，连接数超限使用策略关闭。发布被收件人
 
 OTel 故障日志只使用固定的 `failure_stage=initialization|export|shutdown`，指标不携带 endpoint、
 租户、用户或请求标识等动态标签，避免泄露连接信息并控制基数。退出时 flush 的总等待上限固定
-为 5 秒；本地可运行 `cargo test -p ryframe-middleware telemetry`，使用不响应的回环地址验证导出
-失败前后业务与 `/readyz` 均保持可用、运行期计数递增且关闭不会越过时限。
+为 5 秒；应在受控环境验证导出失败前后业务与 `/readyz` 均保持可用、运行期计数递增且关闭
+不会越过时限。
 
 后台任务和 Outbox 会同时持久化 W3C `traceparent` 与 `tracestate`，Worker 领取后恢复为远端父
 上下文。排查链路断裂时应同时核对 `sys_background_job`、`sys_outbox_event` 的两列与 Collector

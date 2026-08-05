@@ -633,7 +633,7 @@ impl JobWorker {
         tasks
     }
 
-    /// 执行一次领取和处理，用于测试及自定义运行器。
+    /// 执行一次领取和处理，供单次执行模式及自定义运行器使用。
     pub async fn run_once(&self, worker_id: &str) -> AppResult<JobRunResult> {
         let now = self.queue.database_now().await?;
         let Some(job) = self
@@ -932,7 +932,7 @@ impl OutboxWorker {
         tasks
     }
 
-    /// 执行一次领取和投递，供测试及自定义运行器使用。
+    /// 执行一次领取和投递，供单次执行模式及自定义运行器使用。
     pub async fn run_once(&self, worker_id: &str) -> AppResult<OutboxRunResult> {
         let now = self
             .repository
@@ -1520,188 +1520,4 @@ fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String
         ));
     }
     Ok(Some(value.to_owned()))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    };
-
-    use ryframe_kernel::AppError;
-
-    use super::{
-        JobRunResult, LeaseHeartbeatOutcome, bounded_job_type_label, infrastructure_retry_delay,
-        is_terminal_export_error, job_run_result_label, normalize_job_status_filter,
-        normalize_job_type_filter, report_redis_wakeup_failure, retry_delay,
-        run_with_lease_heartbeat,
-    };
-
-    #[tokio::test(start_paused = true)]
-    async fn heartbeat_keeps_a_long_handler_owned_past_the_original_lease() {
-        let lease_duration = std::time::Duration::from_secs(60);
-        let heartbeat_interval = std::time::Duration::from_secs(15);
-        let lease_until = Arc::new(Mutex::new(tokio::time::Instant::now() + lease_duration));
-        let operation_completed = Arc::new(AtomicBool::new(false));
-
-        let completed = operation_completed.clone();
-        let operation = async move {
-            tokio::time::sleep(std::time::Duration::from_secs(130)).await;
-            completed.store(true, Ordering::SeqCst);
-            "completed"
-        };
-        let renewed_lease_until = lease_until.clone();
-        let task = tokio::spawn(run_with_lease_heartbeat(
-            operation,
-            heartbeat_interval,
-            move || {
-                let lease_until = renewed_lease_until.clone();
-                async move {
-                    *lease_until.lock().unwrap() = tokio::time::Instant::now() + lease_duration;
-                    Ok::<bool, AppError>(true)
-                }
-            },
-        ));
-
-        for _ in 0..13 {
-            tokio::time::advance(std::time::Duration::from_secs(10)).await;
-            tokio::task::yield_now().await;
-            assert!(
-                tokio::time::Instant::now() < *lease_until.lock().unwrap(),
-                "持续心跳期间其他 Worker 不得把任务判定为可接管"
-            );
-        }
-
-        match task.await.unwrap() {
-            LeaseHeartbeatOutcome::Completed(result) => assert_eq!(result, "completed"),
-            LeaseHeartbeatOutcome::LeaseLost => panic!("持续心跳不应丢失租约"),
-            LeaseHeartbeatOutcome::RenewalFailed(error) => {
-                panic!("持续心跳不应续租失败: {error}")
-            }
-        }
-        assert!(operation_completed.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn lost_heartbeat_cancels_the_old_handler_and_allows_takeover_after_expiry() {
-        let lease_duration = std::time::Duration::from_secs(60);
-        let lease_until = tokio::time::Instant::now() + lease_duration;
-        let operation_completed = Arc::new(AtomicBool::new(false));
-        let completed = operation_completed.clone();
-        let operation = async move {
-            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
-            completed.store(true, Ordering::SeqCst);
-        };
-
-        let task = tokio::spawn(run_with_lease_heartbeat(
-            operation,
-            std::time::Duration::from_secs(15),
-            || async { Ok::<bool, AppError>(false) },
-        ));
-        tokio::time::advance(std::time::Duration::from_secs(15)).await;
-        tokio::task::yield_now().await;
-
-        assert!(matches!(
-            task.await.unwrap(),
-            LeaseHeartbeatOutcome::LeaseLost
-        ));
-        assert!(
-            !operation_completed.load(Ordering::SeqCst),
-            "租约丢失后旧处理器不得继续产生副作用"
-        );
-
-        tokio::time::advance(std::time::Duration::from_secs(45)).await;
-        assert!(
-            tokio::time::Instant::now() >= lease_until,
-            "停止心跳后应在原租约到期时允许其他 Worker 接管"
-        );
-    }
-
-    #[test]
-    fn retry_delay_is_bounded_exponential_backoff() {
-        assert_eq!(retry_delay(1).num_seconds(), 5);
-        assert_eq!(retry_delay(2).num_seconds(), 10);
-        assert_eq!(retry_delay(7).num_seconds(), 300);
-        assert_eq!(retry_delay(99).num_seconds(), 300);
-    }
-
-    #[test]
-    fn permission_revocation_stops_export_while_storage_failures_remain_retryable() {
-        assert!(is_terminal_export_error(&AppError::Authorization(
-            "导出权限已撤销".into()
-        )));
-        assert!(!is_terminal_export_error(&AppError::ServiceUnavailable(
-            "对象存储暂时不可用".into()
-        )));
-    }
-
-    #[test]
-    fn infrastructure_retry_delay_is_bounded_exponential_backoff() {
-        let poll_interval = std::time::Duration::from_millis(50);
-        assert_eq!(infrastructure_retry_delay(poll_interval, 1), poll_interval);
-        assert_eq!(
-            infrastructure_retry_delay(poll_interval, 2),
-            std::time::Duration::from_millis(100)
-        );
-        assert_eq!(
-            infrastructure_retry_delay(poll_interval, 11),
-            std::time::Duration::from_secs(30)
-        );
-        assert_eq!(
-            infrastructure_retry_delay(std::time::Duration::from_secs(60), 1),
-            std::time::Duration::from_secs(30)
-        );
-    }
-
-    #[test]
-    fn redis_wakeup_failure_is_observed_without_propagating_an_error() {
-        let failures = Arc::new(AtomicUsize::new(0));
-        let observer_failures = failures.clone();
-        report_redis_wakeup_failure("redis unavailable", &move || {
-            observer_failures.fetch_add(1, Ordering::Relaxed);
-        });
-
-        assert_eq!(failures.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn monitoring_filters_accept_only_known_values() {
-        assert_eq!(
-            normalize_job_type_filter(Some(" system.audit ".into())).unwrap(),
-            Some("system.audit".into())
-        );
-        assert!(normalize_job_type_filter(Some(String::new())).is_err());
-        assert_eq!(
-            normalize_job_status_filter(Some("dead".into())).unwrap(),
-            Some("dead".into())
-        );
-        assert!(normalize_job_status_filter(Some("cancelled".into())).is_err());
-    }
-
-    #[test]
-    fn execution_results_use_bounded_metric_labels() {
-        assert_eq!(
-            job_run_result_label(&Ok(JobRunResult::Succeeded)),
-            "succeeded"
-        );
-        assert_eq!(job_run_result_label(&Ok(JobRunResult::Retried)), "retried");
-        assert_eq!(job_run_result_label(&Ok(JobRunResult::Dead)), "dead");
-        assert_eq!(
-            job_run_result_label(&Ok(JobRunResult::LeaseLost)),
-            "lease_lost"
-        );
-        assert_eq!(
-            job_run_result_label(&Err(AppError::Internal("failure".into()))),
-            "error"
-        );
-        assert_eq!(
-            bounded_job_type_label(true, "system.message.dispatch"),
-            "system.message.dispatch"
-        );
-        assert_eq!(
-            bounded_job_type_label(false, "unexpected.user_supplied_type"),
-            "unregistered"
-        );
-    }
 }

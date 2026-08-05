@@ -28,16 +28,5 @@ chrono = {workspace = true,features = ["serde"]}
 rand = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 
-[dev-dependencies]
-criterion = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
-sea-orm = { workspace = true, features = ["mock"] }
-opentelemetry_sdk = { workspace = true, features = ["testing"] }
-tracing-opentelemetry = { workspace = true }
-
-[[bench]]
-name = "db_bench"
-harness = false
-
 [lints]
 workspace = true

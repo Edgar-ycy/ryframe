@@ -126,27 +126,14 @@ cleanup grace 至少为 5 分钟，并且不小于存储实现声明的“取消
 
 普通文件上限为 10 MiB，头像上限为 5 MiB，上传超时为 120 秒。Nginx、Axum 请求体、multipart 和业务校验使用同一配置，固定长度或 chunked 超限都返回 `413`。
 
-## 5. 测试与 CI
+## 5. 构建与静态门禁
 
-本地适配器和签名测试：
-
-```bash
-cargo test -p ryframe-storage
-cargo test -p ryframe-service --test file_service_test
-```
-
-已经启动 RustFS 后，可显式运行外部集成测试：
-
-```bash
-cargo test -p ryframe-storage --test object_storage_test test_s3_integration_put_get_delete -- --ignored --exact
-```
-
-托管后端 CI 不启动 RustFS，也不运行对象存储集成测试，避免重复编译和依赖外部运行环境。适配器写入、读取、删除以及受保护下载的逐字节比较，必须在本地或受控验收环境按上述命令执行并保留结果。
+托管后端 CI 不启动 RustFS，也不运行测试或验收脚本，避免重复编译和依赖外部运行环境。对象存储变更必须通过生产构建、配置校验、OpenAPI 契约和架构守卫；维护者的本地验证资产不纳入 Git。
 
 ## 6. 二次开发规则
 
 - 新业务只依赖 `Arc<dyn ObjectStorage>` 或拥有它的领域 Service，不直接构造 RustFS/S3 客户端。
 - bucket 必须是明确的业务常量；对象 key 必须保持相对路径，禁止 `..`、反斜杠和空路径段。
 - 对象与数据库同时变化时，由 Service 定义补偿或事务外一致性策略。
-- 新后端必须在组合根注册、配置校验、运行时监控、单元测试和 CI 中同时闭环。
+- 新后端必须在组合根注册、配置校验、运行时监控和静态门禁中同时闭环。
 - 不在 Repository 生成公开 URL，不在 Handler 读取对象存储配置。

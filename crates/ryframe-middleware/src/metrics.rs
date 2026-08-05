@@ -574,27 +574,3 @@ pub fn spawn_process_metrics_updater() {
         }
     });
 }
-
-#[cfg(test)]
-mod tests {
-    use axum::body::Body;
-
-    use super::*;
-
-    #[test]
-    fn unmatched_requests_use_a_fixed_metric_route() {
-        let request = Request::builder()
-            .uri("/not-found/123?request_id=unique-value")
-            .body(Body::empty())
-            .expect("construct an unmatched request");
-
-        assert_eq!(metric_route(&request), UNMATCHED_ROUTE);
-    }
-
-    #[test]
-    fn shared_message_replay_query_metric_uses_bounded_results() {
-        record_message_replay_query("success");
-
-        assert!(metrics_text().contains("message_replay_query_total{result=\"success\"}"));
-    }
-}

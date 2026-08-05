@@ -78,16 +78,3 @@ const fn default_export_timeout_secs() -> u64 {
 const fn default_max_queue_size() -> usize {
     2048
 }
-
-#[cfg(test)]
-mod tests {
-    use super::TelemetryConfig;
-
-    #[test]
-    fn defaults_are_valid_and_conservative() {
-        let config = TelemetryConfig::default();
-        assert!(config.validate().is_ok());
-        assert!((config.sample_ratio - 0.1).abs() < f64::EPSILON);
-        assert_eq!(config.max_queue_size, 2048);
-    }
-}

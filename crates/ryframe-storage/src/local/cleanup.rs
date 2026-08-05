@@ -20,20 +20,6 @@ struct BucketCleanupState {
     rerun_requested: bool,
     last_completed: Option<Instant>,
     next_due: Option<Instant>,
-    #[cfg(test)]
-    started_runs: u64,
-    #[cfg(test)]
-    completed_runs: u64,
-    #[cfg(test)]
-    max_run_scanned: usize,
-    #[cfg(test)]
-    max_run_removed: usize,
-    #[cfg(test)]
-    total_scanned: usize,
-    #[cfg(test)]
-    total_removed: usize,
-    #[cfg(test)]
-    total_directories_opened: usize,
 }
 
 #[derive(Debug, Default)]
@@ -62,49 +48,24 @@ impl CleanupSchedule {
             return false;
         }
         state.in_progress = true;
-        #[cfg(test)]
-        {
-            state.started_runs += 1;
-        }
         true
     }
 
     fn finish_run(
         &self,
         bucket: &str,
-        report: Option<&CleanupReport>,
+        _report: Option<&CleanupReport>,
         cursor_has_more: bool,
     ) -> NextCleanupRun {
-        #[cfg(not(test))]
-        let _ = report;
         let completed_at = Instant::now();
         let mut buckets = self.buckets();
         let state = buckets.entry(bucket.to_owned()).or_default();
-        #[cfg(test)]
-        {
-            state.completed_runs += 1;
-            if let Some(report) = report {
-                state.max_run_scanned = state.max_run_scanned.max(report.scanned_entries);
-                state.max_run_removed = state.max_run_removed.max(report.removed_files);
-                state.total_scanned += report.scanned_entries;
-                state.total_removed += report.removed_files;
-                state.total_directories_opened += report.directories_opened;
-            }
-        }
 
         if cursor_has_more {
-            #[cfg(test)]
-            {
-                state.started_runs += 1;
-            }
             return NextCleanupRun::Continue;
         }
         if state.rerun_requested {
             state.rerun_requested = false;
-            #[cfg(test)]
-            {
-                state.started_runs += 1;
-            }
             return NextCleanupRun::Restart;
         }
 
@@ -126,36 +87,6 @@ impl CleanupSchedule {
         state.next_due = completed_at
             .checked_add(CLEANUP_INTERVAL)
             .or(Some(completed_at));
-    }
-
-    #[cfg(test)]
-    pub(super) fn test_run_metrics(&self, bucket: &str) -> (usize, usize, usize, usize, usize) {
-        let buckets = self.buckets();
-        let Some(state) = buckets.get(bucket) else {
-            return (0, 0, 0, 0, 0);
-        };
-        (
-            state.max_run_scanned,
-            state.max_run_removed,
-            state.total_scanned,
-            state.total_removed,
-            state.total_directories_opened,
-        )
-    }
-
-    #[cfg(test)]
-    pub(super) fn test_snapshot(&self, bucket: &str) -> (bool, u64, u64, bool, bool) {
-        let buckets = self.buckets();
-        let Some(state) = buckets.get(bucket) else {
-            return (false, 0, 0, false, false);
-        };
-        (
-            state.in_progress,
-            state.started_runs,
-            state.completed_runs,
-            state.last_completed.is_some(),
-            state.next_due.is_some(),
-        )
     }
 }
 
@@ -336,14 +267,8 @@ struct CleanupRunOutcome {
 }
 
 impl LocalObjectStorage {
-    #[cfg(not(test))]
     fn staging_stale_after(&self) -> Duration {
         STAGING_STALE_AFTER
-    }
-
-    #[cfg(test)]
-    fn staging_stale_after(&self) -> Duration {
-        self.test_stale_after.unwrap_or(STAGING_STALE_AFTER)
     }
 
     pub(super) fn trigger_staging_cleanup(&self, bucket: &str, force: bool) {
@@ -442,19 +367,6 @@ impl LocalObjectStorage {
             now,
             stale_after,
         })
-    }
-
-    #[cfg(test)]
-    pub(super) async fn cleanup_staging_directory_at(
-        &self,
-        bucket: &str,
-        now: SystemTime,
-        stale_after: Duration,
-    ) -> StorageResult<CleanupReport> {
-        let cursor = self.open_cleanup_cursor(bucket, now, stale_after).await?;
-        self.cleanup_staging_run(cursor)
-            .await
-            .map(|outcome| outcome.report)
     }
 
     async fn cleanup_staging_run(

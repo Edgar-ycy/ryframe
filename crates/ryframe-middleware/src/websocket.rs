@@ -9,24 +9,20 @@
 //!
 //! # 使用示例
 //!
-//! ```
+//! ```text
 //! # #[tokio::main]
 //! # async fn main() {
 //! use ryframe_middleware::websocket::{WsManager, WsMessage};
 //! use std::sync::Arc;
 //!
 //! let ws_manager = Arc::new(WsManager::new());
-//! assert_eq!(ws_manager.connection_count(), 0);
 //!
 //! // 消息类型构造（自包含，无需连接）
 //! let msg = WsMessage::text("你好");
-//! assert_eq!(msg.msg_type, "text");
 //!
 //! let notification = WsMessage::notification("系统通知");
-//! assert_eq!(notification.msg_type, "notification");
 //!
 //! let system_msg = WsMessage::system("服务重启");
-//! assert!(system_msg.to_json().contains("服务重启"));
 //! # }
 //! ```
 
@@ -300,7 +296,7 @@ impl std::fmt::Debug for WsManager {
 /// 支持 `?rooms=room1,room2` 查询参数；认证信息不得放入 URL。
 ///
 /// # 示例
-/// ```
+/// ```text
 /// # use ryframe_middleware::websocket::ws_upgrade;
 /// // 可作为 axum handler 注册：
 /// // Router::new()

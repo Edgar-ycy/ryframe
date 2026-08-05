@@ -48,7 +48,7 @@ pub struct AuthState {
 /// 从 `Authorization` 请求头提取 `Bearer` 令牌，验证 JWT 签名和有效期，
 /// 检查令牌黑名单（支持 JWT 主动撤销），并将 JWT 声明注入请求扩展。
 /// 需要在 Router 上注册：
-/// ```
+/// ```text
 /// # use ryframe_auth::middleware::auth_middleware;
 /// // Router::new().route_layer(middleware::from_fn_with_state(auth_state, auth_middleware))
 /// ```
@@ -143,7 +143,7 @@ type PermissionFuture = Pin<Box<dyn Future<Output = Result<Response, Response>> 
 /// 权限守卫中间件工厂
 ///
 /// 使用方式（路由级，无需状态）：
-/// ```
+/// ```text
 /// # use ryframe_auth::middleware::require_permission;
 /// // .route("/users", get(list_users).route_layer(middleware::from_fn(
 /// //     require_permission("system:user:list"),

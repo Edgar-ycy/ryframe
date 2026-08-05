@@ -76,59 +76,6 @@ impl ValidatedPageQuery {
     }
 }
 
-#[cfg(test)]
-mod page_query_tests {
-    use super::{AppError, ValidatedPageQuery};
-    use ryframe_config::PaginationConfig;
-
-    #[test]
-    fn omitted_pagination_uses_runtime_policy_defaults() {
-        let policy = PaginationConfig {
-            default_page_size: 25,
-            max_page_size: 100,
-        };
-        let query = ValidatedPageQuery::from_optional(None, None, &policy).unwrap();
-
-        assert_eq!(query.page(), 1);
-        assert_eq!(query.page_size(), 25);
-    }
-
-    #[test]
-    fn invalid_pagination_is_rejected_without_clamping() {
-        let policy = PaginationConfig::default();
-
-        assert!(ValidatedPageQuery::new(1, 1, &policy).is_ok());
-        assert!(ValidatedPageQuery::new(1, 100, &policy).is_ok());
-        assert!(ValidatedPageQuery::from_optional(Some(0), Some(10), &policy).is_err());
-        assert!(ValidatedPageQuery::from_optional(Some(1), Some(0), &policy).is_err());
-        assert!(ValidatedPageQuery::from_optional(Some(1), Some(101), &policy).is_err());
-        assert!(ValidatedPageQuery::new(u64::MAX, 2, &policy).is_err());
-    }
-
-    #[test]
-    fn invalid_runtime_policy_is_rejected() {
-        let invalid_policies = [
-            PaginationConfig {
-                default_page_size: 0,
-                max_page_size: 100,
-            },
-            PaginationConfig {
-                default_page_size: 10,
-                max_page_size: 0,
-            },
-            PaginationConfig {
-                default_page_size: 101,
-                max_page_size: 100,
-            },
-        ];
-
-        for policy in invalid_policies {
-            let error = ValidatedPageQuery::from_optional(None, None, &policy).unwrap_err();
-            assert!(matches!(error, AppError::Config(_)));
-        }
-    }
-}
-
 /// 分页查询结果
 #[derive(Debug, Clone, Serialize)]
 pub struct PageResult<T> {

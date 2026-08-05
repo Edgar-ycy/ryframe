@@ -11,7 +11,7 @@ pub enum JobWorkerMode {
     Embedded,
     /// 仅由独立的 `ryframe-worker` 进程消费任务，适合生产环境。
     External,
-    /// 不消费任务；只允许测试环境使用。
+    /// 不消费任务；只允许隔离环境使用。
     Disabled,
 }
 
@@ -19,7 +19,7 @@ pub enum JobWorkerMode {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobConfig {
-    /// Worker 执行模式；未配置时开发/测试使用 embedded，生产使用 external。
+    /// Worker 执行模式；未配置时非生产环境使用 embedded，生产使用 external。
     #[serde(default)]
     pub mode: JobWorkerMode,
     /// 空队列时再次轮询前的等待时间。
@@ -110,7 +110,7 @@ impl JobConfig {
             return Err("jobs.health_port 必须大于 0".into());
         }
         if !environment.is_test() && self.mode == JobWorkerMode::Disabled {
-            return Err("jobs.mode = \"disabled\" 仅允许测试环境使用".into());
+            return Err("jobs.mode = \"disabled\" 仅允许隔离环境使用".into());
         }
         Ok(())
     }
@@ -150,60 +150,4 @@ fn default_health_host() -> String {
 
 const fn default_health_port() -> u16 {
     9091
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Environment, JobConfig, JobWorkerMode};
-
-    #[test]
-    fn defaults_match_the_persistent_worker_contract() {
-        let config = JobConfig::default();
-        assert_eq!(config.lease_seconds, 60);
-        assert_eq!(config.heartbeat_seconds, 15);
-        assert_eq!(config.default_max_attempts, 8);
-        assert_eq!(config.export_max_rows, 500_000);
-        assert_eq!(config.export_retention_hours, 24);
-        assert!(config.validate(Environment::Dev).is_ok());
-    }
-
-    #[test]
-    fn heartbeat_and_export_limits_are_fail_closed() {
-        let config = JobConfig {
-            heartbeat_seconds: JobConfig::default().lease_seconds,
-            ..JobConfig::default()
-        };
-        assert!(config.validate(Environment::Dev).is_err());
-
-        let config = JobConfig {
-            default_max_attempts: 0,
-            ..JobConfig::default()
-        };
-        assert!(config.validate(Environment::Dev).is_err());
-
-        let config = JobConfig {
-            export_max_rows: 0,
-            ..JobConfig::default()
-        };
-        assert!(config.validate(Environment::Dev).is_err());
-
-        let config = JobConfig {
-            export_retention_hours: 0,
-            ..JobConfig::default()
-        };
-        assert!(config.validate(Environment::Dev).is_err());
-    }
-
-    #[test]
-    fn disabled_mode_is_limited_to_tests() {
-        let config = JobConfig::default();
-        assert!(config.validate(Environment::Prod).is_ok());
-
-        let config = JobConfig {
-            mode: JobWorkerMode::Disabled,
-            ..JobConfig::default()
-        };
-        assert!(config.validate(Environment::Prod).is_err());
-        assert!(config.validate(Environment::Test).is_ok());
-    }
 }

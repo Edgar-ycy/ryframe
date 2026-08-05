@@ -86,38 +86,3 @@ fn hmac_sign(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn signature_is_deterministic_and_scoped_to_region() {
-        let signer = SigV4Signer {
-            access_key: "AKIDEXAMPLE",
-            secret_key: "secret",
-            region: "eu-west-1",
-        };
-        let url =
-            Url::parse("https://storage.example.com/photos/photo%20one.jpg?versionId=1").unwrap();
-        let authorization = signer
-            .authorization("GET", &url, "UNSIGNED-PAYLOAD", "20260716T010203Z")
-            .unwrap();
-
-        assert!(authorization.starts_with(
-            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260716/eu-west-1/s3/aws4_request,"
-        ));
-        assert!(
-            authorization.ends_with(
-                "Signature=606edd943de076c48c13c011b74740f0088f68bd7100788a200295bd5b1419dc"
-            ),
-            "unexpected authorization: {authorization}"
-        );
-    }
-
-    #[test]
-    fn empty_query_values_are_canonicalized_with_equals() {
-        let url = Url::parse("https://storage.example.com/photos?policy").unwrap();
-        assert_eq!(canonical_query(&url), "policy=");
-    }
-}

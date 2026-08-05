@@ -40,13 +40,5 @@ futures-util = { workspace = true }
 sha2 = { workspace = true }
 sysinfo = { workspace = true }
 
-[dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync"] }
-criterion = { workspace = true }
-
-[[bench]]
-name = "middleware_bench"
-harness = false
-
 [lints]
 workspace = true

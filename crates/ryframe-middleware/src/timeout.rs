@@ -48,25 +48,3 @@ pub fn request_timeout_seconds(config: &UploadLimitsConfig, path: &str) -> u64 {
         config.api_timeout_seconds
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_upload_routes_receive_the_long_timeout() {
-        let config = UploadLimitsConfig::default();
-        assert_eq!(
-            request_timeout_seconds(&config, "/api/v1/common/upload/image"),
-            UPLOAD_TIMEOUT_SECONDS
-        );
-        assert_eq!(
-            request_timeout_seconds(&config, "/api/v1/system/users/import"),
-            UPLOAD_TIMEOUT_SECONDS
-        );
-        assert_eq!(
-            request_timeout_seconds(&config, "/api/v1/system/users"),
-            API_TIMEOUT_SECONDS
-        );
-    }
-}

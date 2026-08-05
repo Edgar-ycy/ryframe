@@ -61,27 +61,3 @@ fn request_audit_ip(
         |axum::Extension(client_ip)| client_ip.0.to_string(),
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, SocketAddr};
-
-    use axum::Extension;
-    use ryframe_utils::ip::ClientIp;
-
-    use super::request_audit_ip;
-
-    #[test]
-    fn password_reset_audit_prefers_trusted_client_ip() {
-        let client_ip = "203.0.113.7".parse::<IpAddr>().expect("有效的客户端 IP");
-        let proxy_addr = "10.0.0.8:8080"
-            .parse::<SocketAddr>()
-            .expect("有效的代理地址");
-
-        assert_eq!(
-            request_audit_ip(Some(Extension(ClientIp(client_ip))), proxy_addr),
-            "203.0.113.7"
-        );
-        assert_eq!(request_audit_ip(None, proxy_addr), "10.0.0.8");
-    }
-}

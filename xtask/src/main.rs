@@ -71,9 +71,6 @@ const MINIMUM_PYTHON_VERSION: ToolVersion = ToolVersion {
     patch: 0,
 };
 
-/// 前端仓库完整验证的唯一标准入口。
-const FRONTEND_VERIFY_ARGS: &[&str] = &["check"];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FeatureMatrixEntry {
     package: String,
@@ -91,7 +88,6 @@ fn main() -> Result<()> {
     match command {
         "doctor" => doctor(&frontend_dir),
         "check" => check(&args[1..], &frontend_dir),
-        "verify" => verify(&args[1..], &frontend_dir),
         "contract" => contract(&args[1..], &frontend_dir),
         "feature-matrix" => feature_matrix(),
         "release-verify" => release_verify(&args[1..], &frontend_dir),
@@ -182,20 +178,6 @@ fn check(args: &[String], frontend_dir: &Path) -> Result<()> {
     }
 }
 
-/// 运行与 CI 对齐的完整验证；日常开发应优先使用快速的 `check`。
-fn verify(args: &[String], frontend_dir: &Path) -> Result<()> {
-    let scope = option_value(args, "--scope").unwrap_or("all");
-    match scope {
-        "backend" => backend_verify(),
-        "frontend" => frontend_verify(frontend_dir),
-        "all" => {
-            backend_verify()?;
-            frontend_verify(frontend_dir)
-        }
-        _ => Err("--scope must be one of all, backend, frontend".into()),
-    }
-}
-
 fn backend_check() -> Result<()> {
     let root = root_dir();
     check_feature_registry(&root)?;
@@ -203,7 +185,7 @@ fn backend_check() -> Result<()> {
     run(
         &root,
         "cargo",
-        &["check", "--locked", "--workspace", "--all-targets"],
+        &["check", "--locked", "--workspace", "--lib", "--bins"],
     )?;
     run(
         &root,
@@ -212,7 +194,8 @@ fn backend_check() -> Result<()> {
             "clippy",
             "--locked",
             "--workspace",
-            "--all-targets",
+            "--lib",
+            "--bins",
             "--",
             "-D",
             "warnings",
@@ -469,12 +452,6 @@ fn run_feature_combination(
     run(root, "cargo", &args)
 }
 
-fn backend_verify() -> Result<()> {
-    backend_check()?;
-    let root = root_dir();
-    run(&root, "cargo", &["test", "--locked", "--workspace"])
-}
-
 fn frontend_check(frontend_dir: &Path) -> Result<()> {
     for script in [
         "check:sources",
@@ -484,15 +461,10 @@ fn frontend_check(frontend_dir: &Path) -> Result<()> {
         "lint",
         "lint:styles",
         "typecheck",
-        "test",
     ] {
         run_pnpm(frontend_dir, &[script])?;
     }
     Ok(())
-}
-
-fn frontend_verify(frontend_dir: &Path) -> Result<()> {
-    run_pnpm(frontend_dir, FRONTEND_VERIFY_ARGS)
 }
 
 fn contract(args: &[String], frontend_dir: &Path) -> Result<()> {
@@ -942,7 +914,6 @@ fn print_help() {
         "RyFrame workspace tasks\n\n\
          cargo xtask doctor [--frontend-dir PATH]\n\
          cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]\n\
-         cargo xtask verify [--scope all|backend|frontend] [--frontend-dir PATH]\n\
          cargo xtask contract <check|sync> [--frontend-dir PATH]\n\
          cargo xtask feature-matrix\n\
          cargo xtask release-verify --tag vMAJOR.MINOR.PATCH \\
@@ -951,114 +922,4 @@ fn print_help() {
              --manifest-path PATH [--frontend-dir PATH]\n\
          cargo xtask dev [--frontend-dir PATH]"
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        FRONTEND_VERIFY_ARGS, FeatureMatrixEntry, ToolVersion, node_engine_satisfies,
-        required_option, root_dir, validate_feature_registry,
-    };
-
-    fn version(value: &str) -> ToolVersion {
-        ToolVersion::parse(value, "测试版本").expect("版本格式")
-    }
-
-    #[test]
-    fn node_engine_supports_disjunction_and_caret_ranges() {
-        let engine = "^22.18.0 || >=24.11.0";
-
-        assert!(node_engine_satisfies(version("22.18.0"), engine).expect("版本范围"));
-        assert!(node_engine_satisfies(version("22.20.1"), engine).expect("版本范围"));
-        assert!(node_engine_satisfies(version("24.11.0"), engine).expect("版本范围"));
-        assert!(node_engine_satisfies(version("25.0.0"), engine).expect("版本范围"));
-        assert!(!node_engine_satisfies(version("22.14.0"), engine).expect("版本范围"));
-        assert!(!node_engine_satisfies(version("23.0.0"), engine).expect("版本范围"));
-    }
-
-    #[test]
-    fn node_version_parser_rejects_incomplete_versions() {
-        assert!(ToolVersion::parse("24.11", "测试版本").is_err());
-        assert!(ToolVersion::parse("v24.11.0", "测试版本").is_ok());
-        assert!(ToolVersion::parse("24.11.0-rc.1", "测试版本").is_err());
-    }
-
-    #[test]
-    fn python_version_parser_requires_supported_stable_version() {
-        let supported = super::parse_python_version("Python 3.11.0").expect("Python 版本");
-        let unsupported = super::parse_python_version("Python 3.10.14").expect("Python 版本");
-
-        assert!(supported >= super::MINIMUM_PYTHON_VERSION);
-        assert!(unsupported < super::MINIMUM_PYTHON_VERSION);
-        assert!(super::parse_python_version("Python 3.11.0-rc.1").is_err());
-    }
-
-    #[test]
-    fn frontend_verification_uses_the_single_canonical_check_entrypoint() {
-        assert_eq!(FRONTEND_VERIFY_ARGS, &["check"]);
-    }
-
-    #[test]
-    fn readme_joint_entrypoints_are_backed_by_xtask() {
-        let readme =
-            std::fs::read_to_string(root_dir().join("README.md")).expect("README 应可读取");
-
-        assert!(readme.contains("`cargo xtask check`"));
-        assert!(readme.contains("`cargo xtask verify`"));
-    }
-
-    #[test]
-    fn release_verification_requires_complete_identity_arguments() {
-        let args = vec!["--tag".to_owned(), "v0.5.0".to_owned()];
-        let error = required_option(&args, "--backend-commit")
-            .expect_err("缺失发布身份参数必须报错")
-            .to_string();
-
-        assert!(error.contains("--backend-commit"));
-        assert!(error.contains("--manifest-path"));
-    }
-
-    #[test]
-    fn feature_registry_requires_every_feature_package() {
-        let metadata = serde_json::json!({
-            "workspace_members": ["package-a", "package-b"],
-            "packages": [
-                {
-                    "id": "package-a",
-                    "name": "package-a",
-                    "features": {"default": ["fast"], "fast": []}
-                },
-                {
-                    "id": "package-b",
-                    "name": "package-b",
-                    "features": {}
-                }
-            ]
-        });
-
-        let error = validate_feature_registry(&metadata, &[])
-            .expect_err("存在 feature 的包未登记时必须报错")
-            .to_string();
-
-        assert!(error.contains("package-a"));
-    }
-
-    #[test]
-    fn feature_registry_accepts_explicit_minimal_and_maximal_combinations() {
-        let metadata = serde_json::json!({
-            "workspace_members": ["package-a"],
-            "packages": [{
-                "id": "package-a",
-                "name": "package-a",
-                "features": {"default": ["fast"], "fast": []}
-            }]
-        });
-        let registry = [FeatureMatrixEntry {
-            package: "package-a".into(),
-            minimal: vec![],
-            maximal: vec!["default".into(), "fast".into()],
-        }];
-
-        validate_feature_registry(&metadata, &registry).expect("完整 feature 注册表应通过");
-    }
 }

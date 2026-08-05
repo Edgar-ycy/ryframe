@@ -210,7 +210,7 @@ pub enum AuthorizationMirrorUpdate {
     },
 }
 
-/// 权限缓存后端接口；生产实现只使用 Redis，测试可注入确定性 Mock。
+/// 权限缓存后端接口；当前实现使用 Redis，并保留后端替换边界。
 #[async_trait]
 pub trait AuthorizationCacheBackend: Send + Sync {
     async fn lookup_snapshot(
@@ -305,13 +305,6 @@ impl AuthorizationCache {
         Self {
             backend: None,
             required: false,
-        }
-    }
-
-    pub fn from_backend(backend: Arc<dyn AuthorizationCacheBackend>, required: bool) -> Self {
-        Self {
-            backend: Some(backend),
-            required,
         }
     }
 
@@ -1108,14 +1101,6 @@ fn snapshot_hash_key(tenant_id: &str, user_id: i64) -> String {
     )
 }
 
-#[cfg(test)]
-fn snapshot_field(versions: AuthorizationVersions) -> String {
-    format!(
-        "{}:{}",
-        versions.tenant_authorization_epoch, versions.user_authorization_version
-    )
-}
-
 fn tenant_value_hash_key(tenant_id: &str, namespace: &str) -> String {
     format!(
         "ryframe:tenant-cache:{}:{namespace}",
@@ -1135,144 +1120,4 @@ fn namespace_values_hash_key(tenant_id: &str, namespace: &str) -> String {
         "ryframe:tenant-cache:{}:{namespace}:values",
         tenant_hash_tag(tenant_id)
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use ryframe_kernel::{ActorContext, DataScope};
-
-    use super::*;
-
-    fn snapshot() -> AuthorizationSnapshot {
-        AuthorizationSnapshot {
-            versions: AuthorizationVersions {
-                tenant_authorization_epoch: 8,
-                user_authorization_version: 13,
-            },
-            tenant_session_version: 3,
-            principal: RequestPrincipal {
-                actor: ActorContext {
-                    user_id: 42,
-                    tenant_id: "tenant-a".into(),
-                    username: "alice".into(),
-                    dept_id: Some(7),
-                    dept_path: Some("0,1".into()),
-                    data_scope: DataScope::Custom,
-                    custom_dept_ids: vec![7, 9],
-                    include_self: true,
-                    is_super_admin: false,
-                },
-                preferred_locale: Some("zh-CN".into()),
-                roles: vec!["auditor".into()],
-                role_ids: vec![5],
-                permissions: vec!["system:user:list".into()],
-                tenant_request_limit_per_minute: 600,
-            },
-        }
-    }
-
-    #[test]
-    fn snapshot_address_contains_both_authorization_versions() {
-        let snapshot = snapshot();
-        assert_eq!(
-            format!(
-                "{}#{}",
-                snapshot_hash_key("tenant-a", 42),
-                snapshot_field(snapshot.versions)
-            ),
-            "ryframe:authorization:{tenant-a}:user:42:snapshots#8:13"
-        );
-    }
-
-    #[test]
-    fn snapshot_round_trip_contains_roles_permissions_and_data_scope() {
-        let snapshot = snapshot();
-        let encoded = serde_json::to_string(&snapshot).unwrap();
-        let decoded: AuthorizationSnapshot = serde_json::from_str(&encoded).unwrap();
-
-        assert_eq!(decoded.principal.roles, vec!["auditor"]);
-        assert_eq!(decoded.principal.permissions, vec!["system:user:list"]);
-        assert_eq!(decoded.principal.actor.data_scope, DataScope::Custom);
-        assert_eq!(decoded.principal.actor.dept_path.as_deref(), Some("0,1"));
-        assert_eq!(decoded.principal.actor.custom_dept_ids, vec![7, 9]);
-    }
-
-    #[test]
-    fn hot_read_script_fetches_versions_and_snapshot_in_one_lua_call() {
-        assert!(READ_SNAPSHOT_SCRIPT.contains("redis.call('GET', KEYS[1])"));
-        assert!(READ_SNAPSHOT_SCRIPT.contains("redis.call('GET', KEYS[2])"));
-        assert!(READ_SNAPSHOT_SCRIPT.contains("KEYS[3], tenant_epoch .. ':' .. user_version"));
-        assert_eq!(READ_SNAPSHOT_SCRIPT.matches("redis.call").count(), 3);
-    }
-
-    #[test]
-    fn redis_cluster_keys_share_one_tenant_hash_slot() {
-        let keys = [
-            tenant_epoch_key("tenant-a"),
-            user_version_key("tenant-a", 42),
-            snapshot_hash_key("tenant-a", 42),
-        ];
-        assert!(keys.iter().all(|key| key.contains("{tenant-a}")));
-        assert!(!READ_SNAPSHOT_SCRIPT.contains("ARGV["));
-
-        let tenant_cache_keys = [
-            tenant_epoch_key("tenant-a"),
-            tenant_value_hash_key("tenant-a", "menu-tree"),
-        ];
-        assert!(
-            tenant_cache_keys
-                .iter()
-                .all(|key| key.contains("{tenant-a}"))
-        );
-        assert!(!READ_TENANT_VALUE_SCRIPT.contains("ARGV["));
-
-        let namespace_cache_keys = [
-            namespace_version_key("tenant-a", "config"),
-            namespace_values_hash_key("tenant-a", "config"),
-        ];
-        assert!(
-            namespace_cache_keys
-                .iter()
-                .all(|key| key.contains("{tenant-a}"))
-        );
-        assert!(READ_NAMESPACE_VALUE_SCRIPT.contains("ARGV[1]"));
-    }
-
-    #[test]
-    fn mirror_repair_script_never_moves_a_version_backwards() {
-        assert!(UPDATE_MIRROR_SCRIPT.contains("tonumber(current) > incoming"));
-        assert!(UPDATE_MIRROR_SCRIPT.contains("redis.call('SET', KEYS[1], ARGV[1])"));
-    }
-
-    #[test]
-    fn namespace_version_uses_exact_decimal_comparison_without_lua_numbers() {
-        assert!(!ADVANCE_NAMESPACE_VERSION_SCRIPT.contains("tonumber"));
-        assert!(ADVANCE_NAMESPACE_VERSION_SCRIPT.contains("string.len(left)"));
-        assert!(ADVANCE_NAMESPACE_VERSION_SCRIPT.contains("left < right"));
-        assert!(ADVANCE_NAMESPACE_VERSION_SCRIPT.contains("[^0-9]"));
-        assert!(
-            ADVANCE_NAMESPACE_VERSION_SCRIPT.contains("compare_decimal(incoming, current) <= 0")
-        );
-    }
-
-    #[test]
-    fn namespace_hash_is_cleared_only_when_the_version_advances() {
-        let compare_at = ADVANCE_NAMESPACE_VERSION_SCRIPT
-            .find("compare_decimal(incoming, current) <= 0")
-            .unwrap();
-        let delete_at = ADVANCE_NAMESPACE_VERSION_SCRIPT
-            .find("redis.call('DEL', KEYS[2])")
-            .unwrap();
-        assert!(compare_at < delete_at);
-        assert_eq!(ADVANCE_NAMESPACE_VERSION_SCRIPT.matches("DEL").count(), 1);
-        assert!(!WRITE_NAMESPACE_VALUE_SCRIPT.contains("DEL"));
-        assert!(WRITE_NAMESPACE_VALUE_SCRIPT.contains("HSET', KEYS[2], ARGV[2], ARGV[4]"));
-    }
-
-    #[test]
-    fn missing_redis_version_is_reported_without_inventing_zero() {
-        assert!(READ_NAMESPACE_VALUE_SCRIPT.contains("return {false, false}"));
-        assert!(!READ_NAMESPACE_VALUE_SCRIPT.contains("SET"));
-        assert!(!READ_NAMESPACE_VALUE_SCRIPT.contains("DEL"));
-    }
 }

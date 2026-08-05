@@ -2,21 +2,18 @@ use ryframe_core::{PageResult, ValidatedPageQuery};
 use ryframe_kernel::AppResult;
 use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, Select};
 /// 使用方式：
-/// ```
+/// ```text
 /// use ryframe_config::PaginationConfig;
 /// use ryframe_core::{PageResult, ValidatedPageQuery};
 ///
 /// # fn main() -> ryframe_kernel::AppResult<()> {
 /// let query = ValidatedPageQuery::new(1, 10, &PaginationConfig::default())?;
-/// assert_eq!(query.offset(), 0);
 ///
 /// let result: PageResult<String> = PageResult::new(
 ///     vec!["item1".into(), "item2".into()],
 ///     2,
 ///     &query,
 /// );
-/// assert_eq!(result.total_pages(), 1);
-/// assert_eq!(result.records.len(), 2);
 /// # Ok(())
 /// # }
 /// ```

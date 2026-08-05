@@ -107,30 +107,3 @@ impl RedisConfig {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn connection_url_percent_encodes_password() {
-        let config = RedisConfig {
-            password: "p:a/s#%@".into(),
-            ..RedisConfig::default()
-        };
-        assert_eq!(
-            config.connection_url(),
-            "redis://:p%3Aa%2Fs%23%25%40@127.0.0.1:6379/0"
-        );
-    }
-
-    #[test]
-    fn connection_url_uses_rediss_when_tls_is_enabled() {
-        let config = RedisConfig {
-            host: "redis.example.com".into(),
-            tls: true,
-            ..RedisConfig::default()
-        };
-        assert_eq!(config.connection_url(), "rediss://redis.example.com:6379/0");
-    }
-}

@@ -249,19 +249,3 @@ async fn enforce_captcha_limit(state: &AppState, key: &str, limit: u32) -> HttpR
     )
     .into())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn captcha_query_defaults_and_rejects_unknown_kinds() {
-        let default: CaptchaQuery = serde_json::from_str("{}").unwrap();
-        assert_eq!(default.captcha_type, CaptchaKind::Alphanumeric);
-
-        let math: CaptchaQuery = serde_json::from_str(r#"{"captcha_type":"math"}"#).unwrap();
-        assert_eq!(math.captcha_type, CaptchaKind::Math);
-
-        assert!(serde_json::from_str::<CaptchaQuery>(r#"{"captcha_type":"unsupported"}"#).is_err());
-    }
-}

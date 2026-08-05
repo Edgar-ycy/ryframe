@@ -24,12 +24,5 @@ uuid = { workspace = true, features = ["v4"] }
 tracing = { workspace = true }
 lazy_static = { workspace = true }
 
-[dev-dependencies]
-criterion = { workspace = true }
-
-[[bench]]
-name = "auth_bench"
-harness = false
-
 [lints]
 workspace = true

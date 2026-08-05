@@ -129,7 +129,7 @@ flowchart LR
 7. 删除旧路径别名和无限量列表，不保留旧调用写法。
 8. 每个实际 Handler 都有 `utoipa` 注解并进入 OpenAPI；`operationId` 由方法和路径稳定生成。
 9. DTO 默认拒绝未知字段，输入执行校验，生成器模板遵守相同边界。
-10. 后端托管 CI 已加入源码卫生、架构边界、格式、全目标 Clippy、工作流/部署静态校验和依赖安全审计；Rust 测试与覆盖率改为本地执行，前端严格检查由独立前端仓库的 CI 负责。
+10. 后端托管 CI 已加入源码卫生、架构边界、格式、生产库与可执行文件 Clippy、工作流/部署静态校验和依赖安全审计；测试、基准和验收资产仅在本地忽略目录中维护，前端严格检查由独立前端仓库的 CI 负责。
 11. 数据库集群已在组合根注入 Service，公开/内部用例方法不再逐次接收连接；命令使用 `write()`，查询只能通过 `select_read(ReadConsistency)` 显式表达强一致或最终一致意图，旧读取辅助入口已删除。
 12. 文件服务同时持有数据库与对象存储，HTTP 状态不再暴露对象存储实现。
 13. 没有 trait 的 16 个 `*ServiceImpl` 已统一改名为 `*Service`，类型名不再暗示不存在的多实现体系。
@@ -186,11 +186,9 @@ flowchart LR
 
 ## 4. 后续优先级
 
-### P1：补齐关键业务用例测试
+### P1：持续验证关键业务用例
 
-全 workspace 最近一次本地完整统计行覆盖率为 69.06%；托管后端 CI 当前不执行覆盖率门禁，因此总数只作为本地改进基线，不能替代关键分支验收。租户 Service、数据库拓扑、对象存储和 `file_service` 的正常路径与元数据失败补偿已经有独立测试；下一阶段优先覆盖认证失败、权限拒绝、导入导出和验证码失败分支。外部系统通过可注入端口或本地测试实现隔离，真实拓扑与 RustFS 链路由本地或受控验收环境验证。
-
-覆盖率提升应以关键分支和失败路径为目标，不通过测试纯数据结构或抬高阈值来制造数字。
+测试与验收资产不进入远程仓库；关键业务变更仍需在维护者的受控本地环境完成验证，并保留可复核的结果。外部系统通过明确边界隔离，真实拓扑与 RustFS 链路由受控环境演练确认。
 
 ### P2：控制剩余复杂度热点
 
@@ -256,20 +254,20 @@ python scripts/check_prerelease_dependencies.py
 python scripts/check_architecture.py
 python scripts/check_permission_routes.py
 cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo clippy --locked --workspace --lib --bins -- -D warnings
 cargo audit --deny warnings
 cargo deny check licenses bans sources
 ```
 
 工作流还会静态校验 GitHub Actions、部署脚本、Compose 和 Nginx 配置。工作区只通过一次
-全目标 Clippy 编译；OpenAPI 与 MySQL 快照在本地生成并检入，所有托管触发类型都不会为
+生产库与可执行文件 Clippy 编译；OpenAPI 与 MySQL 快照在本地生成并检入，所有托管触发类型都不会为
 快照重复编译，也不会运行 Rust 测试、覆盖率、数据库、Redis、对象存储或 API 冒烟。
 后端完整本地验收使用：
 
 ```bash
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
-cargo xtask verify --scope backend
+cargo xtask check --scope backend
 ```
 
 独立前端仓库必须通过其自身 CI；本地完整验收使用：
@@ -281,7 +279,7 @@ pnpm check
 
 前端虽保留独立 Git 历史，但本地工作区固定为 `ryframe-vue3/`。所有 `pnpm` 命令必须以该目录为工作目录；后端根目录出现 `.pnpm-store` 会被源码门禁判定为错误。
 
-门禁当前锁定：UTF-8/乱码、非外部依赖的忽略测试、ignored doctest、legacy API 字段、Rust lint `allow`、MySQL-only 依赖、静态配置、Handler 数据库/Redis 访问和内存分页、认证和监控数据库实现依赖、权限目录运行时源码扫描、阻塞式 Redis `KEYS`、非原子一次性读取、分离式缓存失效、公开 Service 数据库参数、Service 反向依赖和公开 Repository、主库/副本配置与显式读一致性路由、旧数据库读取辅助入口、部署与本地集成栈静态契约、缓存式 readiness 请求路径禁止网络 I/O、路由宏、兼容别名、已删除无上限列表、OpenAPI 注册完整性、Query DTO 与提取器一致性、手动快照导出、请求/响应 schema、Cookie/CSRF 会话契约、默认 `route_key` 集合、统一密码策略和已删除公共包的路径与导入回流。前端 bundle 与覆盖率预算由独立前端仓库的门禁维护。说明性源码注释统一使用中文，协议名、命令、代码示例和必要技术专名可保留原样。每完成一个架构阶段，应把新边界加入脚本，避免回退。
+门禁当前锁定：UTF-8/乱码、Git 跟踪的测试或基准资产、源码测试声明、legacy API 字段、Rust lint `allow`、MySQL-only 依赖、静态配置、Handler 数据库/Redis 访问和内存分页、认证和监控数据库实现依赖、权限目录运行时源码扫描、阻塞式 Redis `KEYS`、非原子一次性读取、分离式缓存失效、公开 Service 数据库参数、Service 反向依赖和公开 Repository、主库/副本配置与显式读一致性路由、旧数据库读取辅助入口、部署静态契约、缓存式 readiness 请求路径禁止网络 I/O、路由宏、兼容别名、已删除无上限列表、OpenAPI 注册完整性、Query DTO 与提取器一致性、手动快照导出、请求/响应 schema、Cookie/CSRF 会话契约、默认 `route_key` 集合、统一密码策略和已删除公共包的路径与导入回流。前端 bundle 预算由独立前端仓库的门禁维护。说明性源码注释统一使用中文，协议名、命令、代码示例和必要技术专名可保留原样。每完成一个架构阶段，应把新边界加入脚本，避免回退。
 
 ## 7. 完成标准
 

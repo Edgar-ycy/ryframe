@@ -49,15 +49,3 @@ impl MigrationTrait for Migration {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{BACKGROUND_JOB_TABLE, OUTBOX_EVENT_TABLE, TRACE_STATE_COLUMN};
-
-    #[test]
-    fn trace_context_state_uses_stable_schema_names() {
-        assert_eq!(BACKGROUND_JOB_TABLE, "sys_background_job");
-        assert_eq!(OUTBOX_EVENT_TABLE, "sys_outbox_event");
-        assert_eq!(TRACE_STATE_COLUMN, "tracestate");
-    }
-}

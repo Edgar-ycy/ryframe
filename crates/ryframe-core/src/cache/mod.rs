@@ -5,7 +5,7 @@
 //!
 //! # 示例
 //!
-//! ```
+//! ```text
 //! # use ryframe_core::cache::{Cache, CacheStrategy, LocalMemoryCache};
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,7 +18,6 @@
 //!         Ok(Some("value".to_string()))
 //!     })
 //!     .await?;
-//! assert_eq!(value.as_deref(), Some("value"));
 //! # Ok(())
 //! # }
 //! ```

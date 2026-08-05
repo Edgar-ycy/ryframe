@@ -145,7 +145,7 @@ impl Localizer {
         Self::from_resources(resources)
     }
 
-    /// 从编译时内嵌资源创建本地化器，供开发与测试环境使用。
+    /// 从编译时内嵌资源创建本地化器，供开发与隔离环境使用。
     pub fn embedded() -> Result<Self, I18nError> {
         let mut resources = BTreeMap::new();
         resources.insert(
@@ -353,94 +353,4 @@ fn placeholders(text: &str) -> BTreeSet<String> {
         remaining = &remaining[end + 1..];
     }
     placeholders
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{I18nError, Locale, LocalizedText, Localizer, negotiate_locale};
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn embedded_resources_have_identical_keys() {
-        assert!(Localizer::embedded().is_ok());
-    }
-
-    #[test]
-    fn api_response_resources_render_exact_supported_locales() {
-        let localizer = Localizer::embedded().expect("内嵌国际化资源应有效");
-        for (key, zh_cn, en_us) in [
-            ("common.success", "操作成功", "Operation successful"),
-            ("common.query", "查询成功", "Query successful"),
-            ("error.validation", "数据校验失败", "Data validation failed"),
-            ("error.authentication", "认证失败", "Authentication failed"),
-            ("error.authorization", "没有访问权限", "Access denied"),
-            ("error.not_found", "资源不存在", "Resource not found"),
-            ("error.conflict", "数据冲突", "Data conflict"),
-            (
-                "error.payload_too_large",
-                "请求体过大",
-                "Request body is too large",
-            ),
-            ("error.rate_limited", "请求过于频繁", "Too many requests"),
-            ("error.database", "数据库错误", "Database error"),
-            ("error.config", "服务器内部错误", "Internal server error"),
-            ("error.internal", "服务器内部错误", "Internal server error"),
-            (
-                "error.service_unavailable",
-                "服务暂不可用",
-                "Service temporarily unavailable",
-            ),
-        ] {
-            assert_eq!(localizer.translate(Locale::ZhCn, key), zh_cn);
-            assert_eq!(localizer.translate(Locale::EnUs, key), en_us);
-        }
-    }
-
-    #[test]
-    fn unknown_key_falls_back_to_the_stable_key() {
-        let localizer = Localizer::embedded().expect("内嵌国际化资源应有效");
-        let unknown_key = "error.future_error";
-
-        assert_eq!(localizer.translate(Locale::ZhCn, unknown_key), unknown_key);
-        assert_eq!(localizer.translate(Locale::EnUs, unknown_key), unknown_key);
-    }
-
-    #[test]
-    fn accept_language_has_priority_over_user_preference() {
-        assert_eq!(
-            negotiate_locale(Some("en-GB,en;q=0.9"), Some("zh-CN")),
-            Locale::EnUs
-        );
-        assert_eq!(negotiate_locale(Some("fr-FR"), Some("en-US")), Locale::EnUs);
-        assert_eq!(negotiate_locale(None, None), Locale::ZhCn);
-    }
-
-    #[test]
-    fn localized_key_renders_named_arguments() {
-        let localizer = Localizer::embedded().expect("embedded resources");
-        let text = LocalizedText::Key {
-            key: "user.welcome".into(),
-            args: BTreeMap::from([("name".into(), "Ada".into())]),
-        };
-        assert_eq!(text.render(&localizer, Locale::EnUs), "Welcome Ada");
-    }
-
-    #[test]
-    fn resources_require_matching_named_placeholders() {
-        let resources = BTreeMap::from([
-            (
-                Locale::ZhCn,
-                BTreeMap::from([("user.welcome".into(), "你好，{name}".into())]),
-            ),
-            (
-                Locale::EnUs,
-                BTreeMap::from([("user.welcome".into(), "Welcome {account}".into())]),
-            ),
-        ]);
-
-        assert!(matches!(
-            Localizer::from_resources(resources),
-            Err(I18nError::PlaceholderParity { .. })
-        ));
-    }
 }

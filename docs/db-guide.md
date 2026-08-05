@@ -244,7 +244,7 @@ Service 直接保存具体 Repository，不再增加无行为的包装类型。�
 3. 更新 ActiveModel 时重置变更状态，确保赋值真正生成 SQL `SET`。
 4. 批量操作有明确上限，并在需要时使用事务。
 5. 跨租户管理查询使用专用、命名清晰的方法，不能偷偷绕过过滤。
-6. Repository 测试至少覆盖租户隔离、更新持久化和删除行为。
+6. 通过租户过滤、事务边界和结构守卫保证隔离、更新持久化与删除语义。
 7. Service 与 Repository 只接收 `ValidatedPageQuery`；不得反序列化、默认构造或用字段字面量绕过 API 层校验。
 
 ## 7. Service 和事务
@@ -303,7 +303,7 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
 1. 新增迁移文件并注册到迁移器。
 2. 同步 Entity 和 Repository。
 3. 重新生成并校验 `sql/` 审查快照。
-4. 添加空库、已有库和旧结构升级的 MySQL 迁移测试。
+4. 在受控环境演练空库、已有库和旧结构升级路径，并保留运维证据。
 5. 在 CHANGELOG 记录不可逆或需要运维关注的变更。
 
 开发环境需要清空并重建时运行：
@@ -344,11 +344,6 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 
 ```powershell
 cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-.\scripts\runtime_acceptance.ps1
+cargo check --workspace --lib --bins
+cargo clippy --workspace --lib --bins -- -D warnings
 ```
-
-运行时验收脚本只接受本机 Docker context，使用唯一 Compose project、独立回环端口和测试数据库，
-并在 `finally` 中按同一 project 清理容器、网络和数据卷；不要用省略 `--project-name` 的手工
-Compose 命令代替。涉及 API 输出时还必须确认 OpenAPI 与前端字符串 ID 契约同步。

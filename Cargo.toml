@@ -84,7 +84,6 @@ zip = { version = "8.6", default-features = false, features = [
 ] }
 prometheus = "0.14"
 lazy_static = "1"
-criterion = { version = "0.8", default-features = false }
 futures-util = "0.3"
 # OpenTelemetry 链路追踪
 opentelemetry = { version = "0.32", features = ["trace"] }
@@ -115,7 +114,3 @@ sqlx = { path = "vendor/sqlx-mysql-only" }
 
 [profile.dev]
 opt-level = 1
-
-[profile.test]
-opt-level = 1
-debug = 0

@@ -7,7 +7,7 @@ use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
 ///
 /// 使用方式：
 ///
-/// ```
+/// ```text
 /// use ryframe_db::transaction::Transaction;
 /// use ryframe_kernel::AppResult;
 /// use sea_orm::DatabaseTransaction;

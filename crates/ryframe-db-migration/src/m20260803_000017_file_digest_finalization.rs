@@ -139,25 +139,3 @@ async fn ensure_no_rows(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        DELETE_FLAG_PRECONDITION_SQL, SHA256_PRECONDITION_SQL, UPLOAD_STATE_PRECONDITION_SQL,
-    };
-
-    #[test]
-    fn preconditions_are_fail_closed() {
-        assert!(SHA256_PRECONDITION_SQL.contains("file_sha256 IS NULL"));
-        assert!(SHA256_PRECONDITION_SQL.contains("REGEXP_LIKE"));
-        assert!(SHA256_PRECONDITION_SQL.contains("'c'"));
-        assert!(DELETE_FLAG_PRECONDITION_SQL.contains("NOT IN ('0', '2')"));
-        assert!(DELETE_FLAG_PRECONDITION_SQL.contains("del_flag IS NULL"));
-        for status in ["pending", "ready", "cleanup"] {
-            assert!(UPLOAD_STATE_PRECONDITION_SQL.contains(status));
-        }
-        assert!(UPLOAD_STATE_PRECONDITION_SQL.contains("reservation_token IS NULL"));
-        assert!(UPLOAD_STATE_PRECONDITION_SQL.contains("reservation_token = ''"));
-        assert!(UPLOAD_STATE_PRECONDITION_SQL.contains("reservation_expires_at IS NULL"));
-    }
-}

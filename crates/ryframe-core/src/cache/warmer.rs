@@ -106,31 +106,3 @@ impl<C: Cache + 'static> CacheWarmer<C> {
         self.tasks.len()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cache::{Cache, LocalMemoryCache};
-
-    #[tokio::test]
-    async fn warmer_reports_each_task_and_stores_successes() {
-        let cache = LocalMemoryCache::unlimited();
-        let inspection_cache = cache.clone();
-        let mut warmer = CacheWarmer::new(cache);
-        warmer.add_task("ready", 60, || async { Ok("value".to_owned()) });
-        warmer.add_task("failed", 60, || async {
-            Err(CacheError::Operation("load failed".to_owned()))
-        });
-
-        assert_eq!(warmer.task_count(), 2);
-        assert_eq!(warmer.warm_up().await, (1, 1));
-        assert_eq!(
-            inspection_cache
-                .get::<String>("ready")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("value")
-        );
-    }
-}

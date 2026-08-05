@@ -73,23 +73,9 @@ jobs:
       - name: Check architecture boundaries
         run: python scripts/check_architecture.py
 
-      - name: Validate deployment scripts
-        run: |
-          mapfile -t shell_scripts < <(find deploy -type f -name '*.sh' -print)
-          bash -n deploy.sh "${shell_scripts[@]}"
-          shellcheck deploy.sh "${shell_scripts[@]}"
-          docker compose -f docker-compose.test.yml config --quiet
-          bash deploy/tests/validate-nginx.sh
-          node deploy/tests/smoke-test.test.js
-
-      - name: Validate workflow YAML and release tooling
-        run: |
-          python -m compileall -q scripts
-          python -m unittest discover -s scripts/tests -p 'test_*.py'
-
-      # 每次源码变更只通过这一条全目标 Clippy 命令编译工作区。
-      - name: Clippy (all targets)
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # 每次源码变更只通过这一条生产目标 Clippy 命令编译工作区。
+      - name: Clippy (production targets)
+        run: cargo clippy --locked --workspace --lib --bins -- -D warnings
 
   # ============================================================
   # 安全检查

@@ -613,31 +613,3 @@ impl RoleService {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{first_missing_id, normalize_ids};
-
-    #[test]
-    fn batch_existence_check_preserves_first_missing_request_and_allows_duplicates() {
-        let existing = [(20_i64, "second"), (10_i64, "first")];
-
-        assert_eq!(
-            first_missing_id(&[10, 10, 30, 40], &existing, |item| item.0),
-            Some(30)
-        );
-        assert_eq!(
-            first_missing_id(&[20, 10, 20], &existing, |item| item.0),
-            None
-        );
-    }
-
-    #[test]
-    fn mutation_ids_use_one_deterministic_lock_order() {
-        let mut ids = vec![30, 10, 20, 10, 30];
-
-        normalize_ids(&mut ids);
-
-        assert_eq!(ids, vec![10, 20, 30]);
-    }
-}

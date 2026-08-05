@@ -51,19 +51,6 @@ cargo run -p ryframe --features file-maintenance --bin ryframe-file-maintenance 
 `--batch-size` 允许范围为 1–1000，默认 100。`--start-after` 只用于根据日志中的游标恢复
 扫描；命令结束前仍会全局检查剩余记录，因此不会把跳过的数据误报为完成。
 
-## 隔离验收
-
-正式维护前，先在本机隔离环境完整演练旧库升级：
-
-```powershell
-.\scripts\file_a_acceptance.ps1
-```
-
-该脚本只接受本机 Docker context，动态创建唯一 Compose project、数据库、存储桶和回环端口；
-它会导入固定的 v0.4.2 夹具，写入一对真实 MD5 碰撞对象，依次验证两次迁移闭锁、两类
-`dry-run/apply`、最终 `status/verify`，并保留本次证据目录。该入口只用于测试凭据和临时
-资源，不能接收或复用生产数据库、生产存储桶或远程 Docker context。
-
 ## 完成判定
 
 只有同时满足以下条件，才可执行最终数据库迁移并部署新运行时：
@@ -72,4 +59,4 @@ cargo run -p ryframe --features file-maintenance --bin ryframe-file-maintenance 
 2. 旧上传预留清理 `remaining=0`；
 3. 旧 API 与 Worker 已停止，期间没有重新创建旧状态记录；
 4. 最终迁移已删除旧 MD5 索引与列、将 SHA-256 收紧为非空，并建立新的摘要索引；
-5. 新 API 与 Worker 的架构守卫、编译和文件链路测试全部通过。
+5. 新 API 与 Worker 的架构守卫、编译和文件链路校验全部通过。

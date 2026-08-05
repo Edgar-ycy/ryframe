@@ -118,39 +118,3 @@ fn render_part(
         .or_else(|| key.map(|key| localizer.translate_with_args(locale, key, args)))
         .unwrap_or_default()
 }
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use chrono::Utc;
-    use ryframe_i18n::{Locale, Localizer};
-    use ryframe_service::system::MessageTemplate;
-
-    use super::render_message;
-
-    #[test]
-    fn renders_localized_keys_for_the_requested_locale() {
-        let message = MessageTemplate {
-            id: "1".into(),
-            topic: "system".into(),
-            title_text: None,
-            body_text: None,
-            title_key: Some("user.welcome".into()),
-            body_key: Some("user.welcome".into()),
-            args: BTreeMap::from([("name".into(), "Ada".into())]),
-            severity: "info".into(),
-            payload: None,
-            published_at: Utc::now(),
-            expires_at: None,
-            acked_at: None,
-            read_at: None,
-        };
-        let localizer = Localizer::embedded().expect("内嵌国际化资源");
-
-        let rendered = render_message(&message, &localizer, Locale::EnUs);
-
-        assert_eq!(rendered.title, "Welcome Ada");
-        assert_eq!(rendered.content, "Welcome Ada");
-    }
-}

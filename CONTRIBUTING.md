@@ -8,7 +8,7 @@
 
 - **Rust**：由 `rust-toolchain.toml` 固定的 1.97.1（[rustup](https://rustup.rs/) 会自动选择）
 - **Python**：3.11+（用于质量门禁和发布校验脚本）
-- **数据库**：MySQL 8.4；数据库集成测试要求 Docker
+- **数据库**：MySQL 8.4；本地开发和部署演练可使用 Docker
 - **Redis**：生产会话、撤销、幂等和分布式锁的强制依赖
 
 ### 快速开始
@@ -19,14 +19,12 @@ git clone <repo-url> && cd ryframe
 
 # 2. 安装代码质量工具
 rustup component add clippy rustfmt
-cargo install cargo-nextest cargo-llvm-cov cargo-audit
+cargo install cargo-audit
 
-# 3. 启动固定版本的 MySQL、Redis 和对象存储测试栈
-docker compose -f docker-compose.test.yml up -d --wait
 
-# 4. 编辑 config/app.dev.toml；应用启动时由 Rust Migrator 初始化空库
+# 3. 编辑 config/app.dev.toml；应用启动时由 Rust Migrator 初始化空库
 
-# 5. 启动开发服务器
+# 4. 启动开发服务器
 cargo run
 ```
 
@@ -71,7 +69,7 @@ ryframe/
 - 所有公共 API 需添加文档注释（`///`）
 - 所有新增或修改的说明性注释、文档注释使用中文；协议名、命令、代码示例和必要技术专有名词可保留原样
 - **禁止使用 `unsafe` 代码块**
-- 测试代码放在各 crate 的 `tests/` 目录下
+- 生产源码不得包含测试模块、测试属性、doctest 或基准目标
 
 ### 提交前检查
 
@@ -80,13 +78,12 @@ ryframe/
 cargo fmt --all -- --check
 
 # Clippy 检查（零警告）
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --lib --bins -- -D warnings
 
 # 编译检查（含 tests/benches/examples）
-cargo check --workspace --all-targets
+cargo check --workspace --lib --bins
 
 # 运行测试
-cargo nextest run --workspace
 
 # 文档检查
 cargo doc --workspace --no-deps --document-private-items
@@ -97,13 +94,11 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 当修改结构体定义（新增/删除/重命名字段）或配置结构体时，必须执行以下步骤：
 
-1. **全局搜索构造点**：使用 `cargo check --workspace --all-targets` 编译整个项目
+1. **全局搜索构造点**：使用 `cargo check --workspace --lib --bins` 编译生产目标
 2. **检查以下位置**：
    - `src/` 中的生产代码
-   - `tests/` 中的测试代码（测试文件中的结构体初始化也需补全新字段）
-   - `benches/` 中的基准测试
    - `examples/` 中的示例代码
-3. **配置结构体**：优先为配置结构体实现 `Default` trait，让测试用 `..Default::default()` 自动填充
+3. **配置结构体**：为可选字段提供明确默认值，并在配置校验中覆盖边界条件
 4. **AutoFill 规则**：新增 `FillSource` 变体时，确保 proc macro 的 `auto_fill.rs` 中 match 分支覆盖完整
 5. **API 文档**：数据模型变更后同步更新 `openapi.rs` 和 `docs/api-guide.md`
 
@@ -117,11 +112,10 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 feat(auth): 添加 JWT 刷新令牌功能
 fix(db): 修复分页查询空结果时的错误
 docs(readme): 更新部署文档
-test(service): 补全菜单服务单元测试
 refactor(core): 重构缓存抽象层
 ```
 
-常用 type：`feat` `fix` `docs` `test` `refactor` `perf` `chore` `ci`
+常用 type：`feat` `fix` `docs` `refactor` `perf` `chore` `ci`
 
 ## 架构约定
 
@@ -148,24 +142,9 @@ Handler → Service → Repository → Database
 - 数据库固定为 MySQL；数据库特定语义集中在迁移、Repository 和生成器边界
 - 配置只在启动时加载、解密和校验，任何配置变更都要求重启进程
 
-## 测试
+## 本地验证资产
 
-```bash
-# 运行所有测试
-docker compose -f docker-compose.test.yml up -d --wait
-cargo nextest run --workspace
-
-# 运行特定 crate 测试
-cargo nextest run -p ryframe-service
-
-# 覆盖率报告
-cargo llvm-cov --workspace --html
-
-# 测试完成后清理容器和临时卷
-docker compose -f docker-compose.test.yml down --volumes
-```
-
-测试文件命名：`tests/{module}_test.rs`，对应 `src/{module}.rs`。
+测试、基准和验收资产仅保留在维护者本机的忽略目录中，不纳入 Git、提交或 CI。仓库只保留生产源码、静态门禁和构建验证。
 
 ## 问题反馈
 

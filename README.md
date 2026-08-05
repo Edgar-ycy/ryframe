@@ -87,22 +87,15 @@ pnpm build
 
 ## 常用命令
 
-以下命令用于本地开发与完整验收；GitHub 后端 CI 不运行 `cargo test`，测试与覆盖率只在
-本地执行：
+以下命令用于本地开发与生产构建验证。测试、基准和验收资产只保留在维护者本机的忽略目录，
+不纳入 Git、提交或 CI：
 
 ```powershell
-cargo check --workspace --all-targets
+cargo check --workspace --lib --bins
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --lib --bins -- -D warnings
 python scripts/check_source_hygiene.py
 python scripts/check_architecture.py
-# 在唯一 Docker project 中执行 MySQL、Redis、RustFS、独立 Worker 与 API 的完整本地验收
-.\scripts\runtime_acceptance.ps1
-# 在独立旧库与 RustFS 中执行 FILE-A 单向迁移闭环验收
-.\scripts\file_a_acceptance.ps1
-# 从最终干净提交串行执行 v0.7 消息中心、读副本与 OTel Docker 验收
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\runtime_acceptance_0_7.ps1 -ConfirmRun RUN-RYFRAME-V0-7-ACCEPTANCE
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
 # 部署环境按需从稳定标签源码构建 Linux 可执行文件
@@ -110,7 +103,7 @@ cross build --release --target x86_64-unknown-linux-gnu
 ```
 
 托管后端 CI 在 Linux 上执行格式、源码卫生、架构与权限门禁、工作流和部署静态校验，
-并只通过一次全目标 Clippy 编译工作区；依赖安全审计在独立作业执行。OpenAPI 与 MySQL
+并只通过一次生产库和可执行文件的 Clippy 编译；依赖安全审计在独立作业执行。OpenAPI 与 MySQL
 快照由开发者在本地生成并检入，托管 CI 不再为快照重复编译；稳定版 Release 也不重复
 编译或测试，只接受两仓同名 annotated tag 解引用出的精确提交已成功完成各自 push CI 的
 证据；GitHub Release 不生成额外交付身份文件，也不上传自定义附件。
@@ -122,12 +115,6 @@ $env:APP_ENV = "dev"
 cargo run -p ryframe --bin ryframe-db-reset -- `
   --database ryframe_config `
   --confirm-reset RESET-RYFRAME-DATABASE
-```
-
-如果安装了 `cargo-nextest`，推荐使用：
-
-```bash
-cargo nextest run --workspace
 ```
 
 ## 目录结构

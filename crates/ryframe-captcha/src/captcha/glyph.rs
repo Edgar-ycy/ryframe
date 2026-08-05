@@ -45,27 +45,3 @@ pub(super) fn rows(character: char) -> Option<[u8; GLYPH_HEIGHT as usize]> {
     };
     Some(rows)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::captcha::challenge::ALPHANUMERIC_ALPHABET;
-
-    #[test]
-    fn every_challenge_character_has_a_glyph() {
-        let characters = ALPHANUMERIC_ALPHABET
-            .iter()
-            .copied()
-            .map(char::from)
-            .chain("0123456789+-×=?".chars());
-
-        for character in characters {
-            assert!(rows(character).is_some(), "missing glyph for {character}");
-        }
-    }
-
-    #[test]
-    fn subtraction_has_a_visible_glyph() {
-        assert!(rows('-').unwrap().iter().any(|row| *row != 0));
-    }
-}

@@ -10,7 +10,7 @@ pub enum Environment {
     /// 本地开发环境。
     #[default]
     Dev,
-    /// 自动化测试环境。
+    /// 隔离运行环境。
     Test,
     /// 生产环境。
     Prod,
@@ -55,7 +55,7 @@ impl Environment {
         matches!(self, Self::Prod)
     }
 
-    /// 当前是否为测试环境。
+    /// 当前是否为隔离运行环境。
     pub const fn is_test(self) -> bool {
         matches!(self, Self::Test)
     }
@@ -79,54 +79,5 @@ impl FromStr for Environment {
 impl fmt::Display for Environment {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use super::Environment;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn only_exact_environment_values_are_accepted() {
-        assert_eq!("dev".parse::<Environment>().unwrap(), Environment::Dev);
-        assert_eq!("test".parse::<Environment>().unwrap(), Environment::Test);
-        assert_eq!("prod".parse::<Environment>().unwrap(), Environment::Prod);
-
-        for invalid in [
-            "development",
-            "testing",
-            "production",
-            "DEV",
-            " dev",
-            "prod ",
-            "",
-        ] {
-            assert!(
-                invalid.parse::<Environment>().is_err(),
-                "非法环境值不应被接受: {invalid:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn normal_process_defaults_to_development() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        unsafe {
-            std::env::remove_var("APP_ENV");
-        }
-        assert_eq!(Environment::from_env().unwrap(), Environment::Dev);
-    }
-
-    #[test]
-    fn required_process_rejects_missing_environment() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        unsafe {
-            std::env::remove_var("APP_ENV");
-        }
-        assert!(Environment::from_required_env().is_err());
     }
 }

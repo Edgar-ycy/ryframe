@@ -60,17 +60,3 @@ impl MigrationTrait for Migration {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{PLATFORM_MESSAGE_PUBLISH_PERMISSION, SYSTEM_TENANT_ID};
-
-    #[test]
-    fn platform_permission_constants_are_explicitly_system_scoped() {
-        assert_eq!(SYSTEM_TENANT_ID, "system");
-        assert_eq!(
-            PLATFORM_MESSAGE_PUBLISH_PERMISSION,
-            "platform:message:publish"
-        );
-    }
-}

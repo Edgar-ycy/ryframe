@@ -44,14 +44,5 @@ futures-util = { workspace = true }
 [build-dependencies]
 syn = { workspace = true }
 
-[dev-dependencies]
-tempfile = { workspace = true }
-ryframe-db = { path = "../ryframe-db" }
-ryframe-storage = { path = "../ryframe-storage" }
-tower = { workspace = true, features = ["util"] }
-tokio = { workspace = true, features = ["macros", "rt"] }
-sea-orm = { workspace = true }
-redis = { workspace = true }
-
 [lints]
 workspace = true

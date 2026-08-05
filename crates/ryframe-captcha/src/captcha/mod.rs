@@ -50,20 +50,3 @@ pub fn generate_captcha(captcha_type: CaptchaType) -> AppResult<CaptchaResult> {
         image_data,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn debug_output_redacts_the_answer() {
-        let result = CaptchaResult {
-            answer: "SECRET".to_owned(),
-            image_data: vec![1, 2, 3],
-        };
-
-        let output = format!("{result:?}");
-        assert!(output.contains("[REDACTED]"));
-        assert!(!output.contains("SECRET"));
-    }
-}

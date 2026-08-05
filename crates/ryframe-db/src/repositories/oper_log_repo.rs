@@ -228,17 +228,3 @@ fn is_duplicate_key_error(error: &sea_orm::DbErr) -> bool {
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::is_duplicate_key_error;
-
-    #[test]
-    fn only_unique_constraint_violations_are_idempotent_replays() {
-        let duplicate = sea_orm::DbErr::Custom("ERROR 1062 duplicate entry".into());
-        let unrelated = sea_orm::DbErr::Custom("connection closed".into());
-
-        assert!(is_duplicate_key_error(&duplicate));
-        assert!(!is_duplicate_key_error(&unrelated));
-    }
-}

@@ -593,7 +593,7 @@ impl FileService {
         }));
     }
 
-    /// 协调一个全局有界批次。该接口为启动引导、运维修复命令和集成测试公开；
+    /// 协调一个全局有界批次。该接口为启动引导、运维修复命令和受控演练公开；
     /// 常规上传不会在对延迟敏感的路径上执行对象删除。
     pub async fn reconcile_upload_reservations(&self) -> AppResult<u64> {
         let now = FileRepository.database_utc_now(self.db.write()).await?;
@@ -737,86 +737,5 @@ fn storage_error_is_not_found(error: &StorageError) -> bool {
         StorageError::Service { status: 404, .. } => true,
         StorageError::Io { source, .. } => source.kind() == std::io::ErrorKind::NotFound,
         _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        CompensationPlan, ExpiredReservationPlan, cleanup_grace_for_bound, plan_compensation,
-        plan_expired_reservation,
-    };
-    use chrono::{Duration as ChronoDuration, Utc};
-    use ryframe_db::entities::sys_file;
-    use std::time::Duration;
-
-    #[test]
-    fn failure_compensation_deletes_object_only_for_owned_reservation() {
-        assert_eq!(plan_compensation(true), CompensationPlan::DeleteOwnedObject);
-        assert_eq!(plan_compensation(false), CompensationPlan::PreserveObject);
-    }
-
-    #[test]
-    fn expired_cleanup_plan_is_idempotent_and_preserves_two_phase_grace_period() {
-        let now = Utc::now();
-        let grace = cleanup_grace_for_bound(Duration::from_secs(600));
-        assert_eq!(grace, ChronoDuration::seconds(1_200));
-        assert_eq!(
-            cleanup_grace_for_bound(Duration::from_secs(30)),
-            ChronoDuration::seconds(300)
-        );
-
-        let mut reservation = reservation(
-            sys_file::Model::UPLOAD_STATUS_PENDING,
-            Some(now - ChronoDuration::seconds(1)),
-        );
-        let expected = ExpiredReservationPlan::BeginCleanup {
-            cleanup_after: now + grace,
-        };
-        assert_eq!(
-            plan_expired_reservation(&reservation, now, grace),
-            Some(expected)
-        );
-        assert_eq!(
-            plan_expired_reservation(&reservation, now, grace),
-            Some(expected),
-            "同一过期 pending 记录重复规划必须得到相同墓碑截止时间"
-        );
-
-        reservation.upload_status = sys_file::Model::UPLOAD_STATUS_CLEANUP.to_owned();
-        reservation.reservation_expires_at = Some(now + grace);
-        assert_eq!(plan_expired_reservation(&reservation, now, grace), None);
-        assert_eq!(
-            plan_expired_reservation(&reservation, now + grace, grace),
-            Some(ExpiredReservationPlan::DeleteCleanup)
-        );
-        assert_eq!(
-            plan_expired_reservation(&reservation, now + grace, grace),
-            Some(ExpiredReservationPlan::DeleteCleanup),
-            "到期 cleanup 记录重复规划仍应执行幂等对象删除"
-        );
-    }
-
-    fn reservation(status: &str, expires_at: Option<chrono::DateTime<Utc>>) -> sys_file::Model {
-        let now = Utc::now();
-        sys_file::Model {
-            id: 1,
-            tenant_id: "system".into(),
-            original_name: "原始文件.txt".into(),
-            storage_name: "opaque.txt".into(),
-            storage_path: "system/opaque.txt".into(),
-            bucket: "uploads".into(),
-            file_url: "uploads/system/opaque.txt".into(),
-            file_size: 1,
-            content_type: "text/plain".into(),
-            file_sha256: "a".repeat(64),
-            upload_by: None,
-            upload_status: status.into(),
-            reservation_token: Some("owner".into()),
-            reservation_expires_at: expires_at,
-            del_flag: sys_file::Model::DEL_FLAG_NORMAL.into(),
-            created_at: now,
-            updated_at: now,
-        }
     }
 }

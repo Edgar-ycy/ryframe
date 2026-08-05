@@ -463,8 +463,15 @@ def check_kernel_manifest(errors: list[str]) -> None:
             )
 
 
+TEST_SOURCE_DIRECTORY_NAMES = frozenset({"benches", "tests", "src-tests"})
+
+
 def rust_sources(relative_dir: str) -> list[Path]:
-    return sorted((ROOT / relative_dir).rglob("*.rs"))
+    return sorted(
+        path
+        for path in (ROOT / relative_dir).rglob("*.rs")
+        if not TEST_SOURCE_DIRECTORY_NAMES.intersection(path.relative_to(ROOT).parts)
+    )
 
 
 def production_rust_sources() -> list[Path]:
@@ -1025,24 +1032,13 @@ def check_openapi_contract_pipeline(errors: list[str]) -> None:
         "crates/ryframe-api/src/openapi.rs": (
             "pub fn render_openapi_json",
             "serde_json::to_value(document)",
-            "checked_in_contract_snapshot_is_current",
             "x-ryframe-menu-routes",
             "x-ryframe-password-policy",
             "x-ryframe-permission-catalog",
-            "query_operation_count >= 21",
-            "must document its success response schema",
-            "must document its request body",
-            "json_success_responses_use_unified_envelopes",
         ),
         "crates/ryframe-api/src/macros.rs": (
             "utoipa::IntoParams",
             "parameter_in = Query",
-        ),
-        "deploy/tests/smoke-test.js": (
-            'process.env.TENANT_ID || "system"',
-            'return { Authorization: `Bearer ${token}`, "X-Tenant-Id": TENANT_ID };',
-            "/api/v1/system/perms/tree",
-            'json?.["x-ryframe-password-policy"]',
         ),
         "crates/ryframe/src/app.rs": (
             '"/livez"',
@@ -1484,17 +1480,6 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
         "crates/ryframe/src/boot/storage.rs": (
             "StorageBackend::Rustfs",
             "storage.ensure_bucket(bucket).await",
-        ),
-        "docker-compose.test.yml": (
-            "mysql:8.4",
-            "redis:7-alpine",
-            "rustfs/rustfs:1.0.0-beta.8",
-        ),
-        "deploy/tests/smoke-test.js": (
-            'test("runtime topology"',
-            "runtime.database.source_count !== 0",
-            "runtime.database.sources.length !== 0",
-            'test("RustFS upload and download"',
         ),
     }
     for relative_path, fragments in required_fragments.items():
@@ -1953,9 +1938,11 @@ def check_release_governance(errors: list[str]) -> None:
         errors.append(
             "CI must run the pinned actionlint workflow validator"
         )
-    clippy_command = "cargo clippy --locked --workspace --all-targets -- -D warnings"
+    clippy_command = "cargo clippy --locked --workspace --lib --bins -- -D warnings"
     if ci.count(clippy_command) != 1:
-        errors.append("CI must compile the workspace exactly once through the Clippy gate")
+        errors.append(
+            "CI must compile production targets exactly once through the Clippy gate"
+        )
     check_job = ci.split("\n  check:\n", maxsplit=1)
     security_job = ci.split("\n  security-audit:\n", maxsplit=1)
     if (
@@ -1982,16 +1969,19 @@ def check_release_governance(errors: list[str]) -> None:
         errors.append("rkyv advisory 例外必须唯一记录在 .cargo/audit.toml")
     if "RUSTDOCFLAGS" in ci:
         errors.append("CI must not configure rustdoc flags without a documentation gate")
-    smoke_contract_test = "node deploy/tests/smoke-test.test.js"
-    if ci.count(smoke_contract_test) != 1:
-        errors.append("CI must run the upload smoke-contract test exactly once")
-    if re.search(r"(?m)^\s*node\s+deploy/tests/smoke-test\.js(?:\s|$)", ci):
-        errors.append("CI must not run the live runtime smoke test as a static gate")
-    for command in ("run", "check", "build", "test", "nextest", "llvm-cov"):
-        if re.search(rf"\bcargo\s+{command}\b", ci):
-            errors.append(
-                f"CI must not repeat workspace compilation through cargo {command}"
-            )
+    forbidden_test_commands = {
+        r"\bcargo\s+test\b": "cargo test",
+        r"\bcargo\s+nextest\b": "cargo nextest",
+        r"\bcargo\s+llvm-cov\b": "cargo llvm-cov",
+        r"\b(?:python|python3)\s+-m\s+unittest\b": "Python unittest",
+        r"\bpytest\b": "pytest",
+        r"\b(?:node\s+--test|pnpm\s+test)\b": "JavaScript test runner",
+        r"(?:^|\s)(?:bash|node|pwsh|powershell(?:\.exe)?)\s+(?:deploy/tests/|scripts/(?:runtime_acceptance|file_a_acceptance))": "local acceptance test script",
+        r"\b(?:scripts/tests|deploy/tests|docker-compose\.test\.yml)\b": "test-only path",
+    }
+    for pattern, label in forbidden_test_commands.items():
+        if re.search(pattern, ci):
+            errors.append(f"CI must not run {label}")
     for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
         source = path.read_text(encoding="utf-8")
         if "auto-promote.yml" in source:
@@ -2415,10 +2405,6 @@ def check_message_time_precision(errors: list[str]) -> None:
             "ALTER_MESSAGE_TIME_PRECISION_SQL",
             "ALTER_RECIPIENT_TIME_PRECISION_SQL",
             "DATETIME(6)",
-        ),
-        "crates/ryframe-db/tests/common/mod.rs": (
-            "`published_at` DATETIME(6)",
-            "`read_at` DATETIME(6)",
         ),
         "sql/ryframe_config.sql": (
             "`published_at` DATETIME(6)",

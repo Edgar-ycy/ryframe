@@ -63,7 +63,7 @@ impl RateLimiter {
         }
     }
 
-    /// 创建仅用于开发与测试环境的内存固定窗口限流器。
+    /// 创建仅用于开发与隔离环境的内存固定窗口限流器。
     pub fn new_in_memory(capacity: u32, window_secs: u64) -> Self {
         Self {
             mode: RateLimiterMode::InMemory {

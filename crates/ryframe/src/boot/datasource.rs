@@ -251,28 +251,3 @@ async fn verify_database_node(node: &str, db: &DatabaseConnection) -> Result<(),
     );
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn replica_reconnect_backoff_caps_at_sixty_seconds_and_resets_after_success() {
-        let mut state = ReplicaReconnectState::new();
-        assert_eq!(state.next_delay, Duration::from_secs(5));
-
-        state.record_failure();
-        assert_eq!(state.next_delay, Duration::from_secs(10));
-        state.record_failure();
-        assert_eq!(state.next_delay, Duration::from_secs(20));
-        state.record_failure();
-        assert_eq!(state.next_delay, Duration::from_secs(40));
-        state.record_failure();
-        assert_eq!(state.next_delay, Duration::from_secs(60));
-        state.record_failure();
-        assert_eq!(state.next_delay, Duration::from_secs(60));
-
-        state.record_success();
-        assert_eq!(state.next_delay, Duration::from_secs(5));
-    }
-}

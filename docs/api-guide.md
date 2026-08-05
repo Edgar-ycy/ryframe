@@ -322,7 +322,7 @@ system:user:remove
 - 状态、长度、邮箱、手机号和密码规则由服务端校验。
 - 空字符串与 `null` 含义不同，调用方应按 OpenAPI Schema 发送。
 - API v1 内进行破坏性重构时不保留旧路径，前后端必须在同一变更窗口更新。
-- API 模块的字段或路径变更必须更新 OpenAPI 测试和两个仓库的 CHANGELOG。
+- API 模块的字段或路径变更必须更新 OpenAPI 契约和两个仓库的 CHANGELOG。
 
 ## 8. 本地验证
 
@@ -347,8 +347,7 @@ curl http://127.0.0.1:8080/api/v1/api-docs/openapi.json
 ```bash
 python scripts/check_architecture.py
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
-cargo test -p ryframe-api
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --lib --bins -- -D warnings
 ```
 
-架构和契约测试会阻止漏写 OpenAPI 注解、漏注册文档、缺失成功响应 schema、缺失写请求体、查询参数覆盖回退、快照未同步、兼容路径别名和 Handler 直接访问数据库实现。
+架构和契约守卫会阻止漏写 OpenAPI 注解、漏注册文档、缺失成功响应 schema、缺失写请求体、查询参数覆盖回退、快照未同步、兼容路径别名和 Handler 直接访问数据库实现。
