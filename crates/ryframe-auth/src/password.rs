@@ -1,5 +1,8 @@
-use argon2::Argon2;
-use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng};
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt, SaltString},
+};
+use rand::RngExt as _;
 use ryframe_kernel::{AppError, AppResult};
 
 lazy_static::lazy_static! {
@@ -28,7 +31,10 @@ pub fn hash(password: &str) -> AppResult<String> {
             MAX_PASSWORD_LENGTH
         )));
     }
-    let salt = SaltString::generate(&mut OsRng);
+    let mut salt_bytes = [0_u8; Salt::RECOMMENDED_LENGTH];
+    rand::rng().fill(&mut salt_bytes);
+    let salt = SaltString::encode_b64(&salt_bytes)
+        .map_err(|error| AppError::Internal(format!("密码盐生成失败: {error}")))?;
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map(|h| h.to_string())

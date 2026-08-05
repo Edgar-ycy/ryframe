@@ -36,7 +36,6 @@ regex = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 tracing = { workspace = true }
-http-body-util = { workspace = true }
 percent-encoding = { workspace = true }
 dashmap = { workspace = true }
 futures-util = { workspace = true }

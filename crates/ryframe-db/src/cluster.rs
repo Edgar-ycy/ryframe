@@ -212,7 +212,7 @@ impl ReplicaNode {
 
 fn increment_streak(streak: &AtomicUsize) -> usize {
     streak
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             Some(current.saturating_add(1))
         })
         .unwrap_or(usize::MAX)

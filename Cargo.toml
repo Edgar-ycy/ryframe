@@ -44,9 +44,8 @@ serde = "1"
 serde_json = "1"
 jsonwebtoken = { version = "11.0", default-features = false }
 #密码哈希
-base64 = "0.22"
+base64 = "0.23"
 argon2 = "0.5"
-password-hash = { version = "0.5", features = ["getrandom"] }
 toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3" }
@@ -75,8 +74,6 @@ utoipa-swagger-ui = { version = "9.0.2", default-features = false, features = ["
 redis = { version = "1.4", features = ["tokio-rustls-comp", "connection-manager"] }
 
 regex = "1"
-http-body-util = "0.1"
-tower = { version = "0.5" }
 tower-http = { version = "0.7" }
 dashmap = "6"
 zip = { version = "8.6", default-features = false, features = [
