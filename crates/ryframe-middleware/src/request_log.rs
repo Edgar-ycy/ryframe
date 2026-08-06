@@ -3,16 +3,63 @@
 //! 记录每个 HTTP 请求的 method + path + status + latency，
 //! 自动对敏感查询参数和请求头进行脱敏。
 
-use axum::{extract::MatchedPath, http::Request};
+use std::fmt;
+
+use axum::{
+    extract::MatchedPath,
+    http::{Request, Response, StatusCode},
+};
+use ryframe_http::ExpectedServiceUnavailableResponse;
 use tower_http::{
     LatencyUnit,
-    classify::{ServerErrorsAsFailures, SharedClassifier},
+    classify::{
+        ClassifiedResponse, ClassifyResponse, NeverClassifyEos, ServerErrorsFailureClass,
+        SharedClassifier,
+    },
     trace::{DefaultOnFailure, DefaultOnResponse, MakeSpan, TraceLayer},
 };
 
 pub(crate) const REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
 
 const UNMATCHED_ROUTE: &str = "/unmatched";
+
+/// 请求日志的失败分类器。
+///
+/// 已由依赖状态边界确认的预期 503 会携带内部响应扩展。它们仍然是客户端可见的
+/// 503，也会计入 HTTP 指标，但不再触发 tower-http 的 `on_failure` ERROR；其余
+/// 5xx 和服务执行错误仍按失败处理。
+#[derive(Clone, Debug, Default)]
+pub struct RequestLogFailureClassifier;
+
+impl ClassifyResponse for RequestLogFailureClassifier {
+    type FailureClass = ServerErrorsFailureClass;
+    type ClassifyEos = NeverClassifyEos<Self::FailureClass>;
+
+    fn classify_response<B>(
+        self,
+        response: &Response<B>,
+    ) -> ClassifiedResponse<Self::FailureClass, Self::ClassifyEos> {
+        let status = response.status();
+        let expected_service_unavailable = status == StatusCode::SERVICE_UNAVAILABLE
+            && response
+                .extensions()
+                .get::<ExpectedServiceUnavailableResponse>()
+                .is_some();
+
+        if status.is_server_error() && !expected_service_unavailable {
+            ClassifiedResponse::Ready(Err(ServerErrorsFailureClass::StatusCode(status)))
+        } else {
+            ClassifiedResponse::Ready(Ok(()))
+        }
+    }
+
+    fn classify_error<E>(self, error: &E) -> Self::FailureClass
+    where
+        E: fmt::Display + 'static,
+    {
+        ServerErrorsFailureClass::Error(error.to_string())
+    }
+}
 
 /// 请求日志中间件工厂
 ///
@@ -21,16 +68,18 @@ const UNMATCHED_ROUTE: &str = "/unmatched";
 /// - 延迟
 /// - 请求 ID
 /// - 敏感 query 参数自动脱敏
-pub fn request_log_layer() -> TraceLayer<SharedClassifier<ServerErrorsAsFailures>> {
-    TraceLayer::new_for_http()
+pub fn request_log_layer() -> TraceLayer<SharedClassifier<RequestLogFailureClassifier>> {
+    TraceLayer::new(SharedClassifier::new(RequestLogFailureClassifier))
 }
 
 /// 扩展的请求日志层（使用路由模板）
 ///
 /// 使用 `make_span_with` 将路由模板记录到 Span 中；未匹配请求使用固定值。
-pub fn request_log_layer_with_masking()
--> TraceLayer<SharedClassifier<ServerErrorsAsFailures>, impl MakeSpan<axum::body::Body> + Clone> {
-    TraceLayer::new_for_http()
+pub fn request_log_layer_with_masking() -> TraceLayer<
+    SharedClassifier<RequestLogFailureClassifier>,
+    impl MakeSpan<axum::body::Body> + Clone,
+> {
+    TraceLayer::new(SharedClassifier::new(RequestLogFailureClassifier))
         .make_span_with(|request: &Request<axum::body::Body>| {
             let method = request.method().to_string();
             // 请求 Span 不携带原始 URI；未匹配路由也必须使用固定值，

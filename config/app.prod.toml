@@ -4,6 +4,11 @@
 [api_docs]
 enabled = false
 
+[database]
+# 生产默认关闭 SQL 日志；仅在受控短时排障窗口临时启用。
+sql_log_level = "off"
+sql_slow_threshold_ms = 200
+
 [cors]
 allow_origins = [
     "https://ryframe.ryfac.com",

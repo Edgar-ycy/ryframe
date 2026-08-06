@@ -9,6 +9,8 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 100,
+            "minItems": 1,
             "type": "array"
           }
         },
@@ -2401,47 +2403,47 @@
           "data": {
             "properties": {
               "cpu_cores": {
-                "description": "CPU 核心数",
+                "description": "CPU 核心数。",
                 "minimum": 0,
                 "type": "integer"
               },
               "cpu_usage": {
-                "description": "CPU 使用率（百分比）",
+                "description": "CPU 使用率（百分比）。",
                 "format": "float",
                 "type": "number"
               },
               "hostname": {
-                "description": "主机名",
+                "description": "主机名。",
                 "type": "string"
               },
               "memory_usage": {
-                "description": "内存使用率（百分比）",
+                "description": "内存使用率（百分比）。",
                 "format": "float",
                 "type": "number"
               },
               "os": {
-                "description": "操作系统",
+                "description": "操作系统。",
                 "type": "string"
               },
               "pid": {
-                "description": "Rust 不使用 JVM。\n进程 PID",
+                "description": "进程 PID。",
                 "format": "int32",
                 "minimum": 0,
                 "type": "integer"
               },
               "total_memory": {
-                "description": "总内存（GB）",
+                "description": "总内存（GB）。",
                 "format": "double",
                 "type": "number"
               },
               "uptime": {
-                "description": "运行时长（秒）",
+                "description": "系统运行时长（秒）。",
                 "format": "int64",
                 "minimum": 0,
                 "type": "integer"
               },
               "used_memory": {
-                "description": "已用内存（GB）",
+                "description": "已用内存（GB）。",
                 "format": "double",
                 "type": "number"
               }
@@ -4929,6 +4931,24 @@
         "required": [
           "status",
           "timestamp"
+        ],
+        "type": "object"
+      },
+      "DeleteMessagesDto": {
+        "additionalProperties": false,
+        "description": "批量删除消息请求。",
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
         ],
         "type": "object"
       },
@@ -7931,47 +7951,47 @@
       "ServerInfo": {
         "properties": {
           "cpu_cores": {
-            "description": "CPU 核心数",
+            "description": "CPU 核心数。",
             "minimum": 0,
             "type": "integer"
           },
           "cpu_usage": {
-            "description": "CPU 使用率（百分比）",
+            "description": "CPU 使用率（百分比）。",
             "format": "float",
             "type": "number"
           },
           "hostname": {
-            "description": "主机名",
+            "description": "主机名。",
             "type": "string"
           },
           "memory_usage": {
-            "description": "内存使用率（百分比）",
+            "description": "内存使用率（百分比）。",
             "format": "float",
             "type": "number"
           },
           "os": {
-            "description": "操作系统",
+            "description": "操作系统。",
             "type": "string"
           },
           "pid": {
-            "description": "Rust 不使用 JVM。\n进程 PID",
+            "description": "进程 PID。",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
           },
           "total_memory": {
-            "description": "总内存（GB）",
+            "description": "总内存（GB）。",
             "format": "double",
             "type": "number"
           },
           "uptime": {
-            "description": "运行时长（秒）",
+            "description": "系统运行时长（秒）。",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
           },
           "used_memory": {
-            "description": "已用内存（GB）",
+            "description": "已用内存（GB）。",
             "format": "double",
             "type": "number"
           }
@@ -9382,7 +9402,15 @@
             "description": "未认证"
           },
           "503": {
-            "description": "Redis 不可用"
+            "description": "Redis 不可用；显式禁用时返回 Retry-After: 60",
+            "headers": {
+              "Retry-After": {
+                "description": "仅 Redis 显式禁用时为 60 秒",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -11668,6 +11696,42 @@
           }
         ],
         "summary": "批量确认已接收的消息。",
+        "tags": [
+          "消息中心"
+        ]
+      }
+    },
+    "/api/v1/system/messages/delete": {
+      "post": {
+        "operationId": "post_system_messages_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteMessagesDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_u64"
+                }
+              }
+            },
+            "description": "实际删除数量"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "软删除当前用户收到的消息。",
         "tags": [
           "消息中心"
         ]

@@ -664,8 +664,71 @@ fn expected_schema() -> Result<ExpectedSchema, DbErr> {
             index += 1;
         }
     }
+    add_post_baseline_columns(&mut schema);
+    add_post_baseline_indexes(&mut schema);
     add_post_baseline_constraints(&mut schema);
     Ok(schema)
+}
+
+/// 补充由增量迁移添加、不能追写到历史基线中的规范列。
+fn add_post_baseline_columns(schema: &mut ExpectedSchema) {
+    schema.columns.insert(
+        ("sys_message_recipient".into(), "deleted_at".into()),
+        ExpectedColumn {
+            column_type: "datetime(6)".into(),
+            nullable: true,
+            default: None,
+            extra: String::new(),
+            character_set: None,
+            collation: None,
+            generation_expression: String::new(),
+        },
+    );
+}
+
+/// 用增量迁移已验证的收件箱索引替换历史基线中的旧索引声明。
+fn add_post_baseline_indexes(schema: &mut ExpectedSchema) {
+    let table = "sys_message_recipient".to_owned();
+    schema
+        .indexes
+        .remove(&(table.clone(), "idx_message_recipient_inbox".into()));
+    schema
+        .indexes
+        .remove(&(table.clone(), "idx_message_recipient_ack".into()));
+    for (name, columns) in [
+        (
+            "idx_message_recipient_visible",
+            vec!["tenant_id", "user_id", "deleted_at", "message_id"],
+        ),
+        (
+            "idx_message_recipient_unread",
+            vec![
+                "tenant_id",
+                "user_id",
+                "deleted_at",
+                "read_at",
+                "message_id",
+            ],
+        ),
+        (
+            "idx_message_recipient_unacked",
+            vec![
+                "tenant_id",
+                "user_id",
+                "deleted_at",
+                "acked_at",
+                "message_id",
+            ],
+        ),
+    ] {
+        schema.indexes.insert(
+            (table.clone(), name.into()),
+            ExpectedIndex {
+                unique: false,
+                columns: columns.into_iter().map(str::to_owned).collect(),
+            },
+        );
+    }
 }
 
 /// 补充必须在基线表创建完成后才能添加的跨表约束。

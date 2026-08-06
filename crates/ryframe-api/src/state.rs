@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_auth::middleware::AuthState;
-use ryframe_config::AppConfig;
+use ryframe_config::{AppConfig, RedisMode};
 use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_i18n::Localizer;
 use ryframe_middleware::RateLimiter;
@@ -59,4 +59,19 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub trusted_proxies: TrustedProxySet,
     pub runtime: RuntimeComponents,
+}
+
+impl AppState {
+    /// 判断 WebSocket 票据依赖是否因配置显式关闭而不可用。
+    ///
+    /// HTTP handler 只依赖该窄化判断，不直接读取 Redis 客户端，避免把基础设施
+    /// 细节扩散到接口适配层。可选 Redis 的运行时故障不会被视为预期状态。
+    pub(crate) fn websocket_ticket_redis_is_explicitly_disabled(&self) -> bool {
+        self.redis.is_none()
+            && self
+                .config
+                .redis
+                .as_ref()
+                .is_none_or(|config| config.mode == RedisMode::Disabled)
+    }
 }

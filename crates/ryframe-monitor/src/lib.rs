@@ -14,7 +14,7 @@ use ryframe_core::{DatabaseMonitor, RedisClient};
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};
 use serde::Serialize;
-pub use server_info::ServerInfo;
+pub use server_info::{ServerInfo, ServerInfoSampler};
 use utoipa::ToSchema;
 
 pub use cache_monitor::{CacheInfo, CacheKeysInfo, RedisMemoryInfo, RedisServerInfo};
@@ -34,6 +34,7 @@ pub struct MonitorState {
     pub redis: Option<RedisClient>,
     pub readiness: DependencyHealthCache,
     pub metrics_bearer_token: Arc<str>,
+    pub server_info: ServerInfoSampler,
 }
 
 /// 公开指标路由。进程和依赖探针位于根应用路由的 `/livez` 与
@@ -62,11 +63,9 @@ pub fn protected_monitor_router(state: MonitorState) -> axum::Router {
     responses((status = 200, description = "服务器 CPU、内存、磁盘信息", body = ApiResponse<ServerInfo>)),
     security(("bearer" = [])))]
 pub async fn server_info_handler(
-    State(_state): State<MonitorState>,
+    State(state): State<MonitorState>,
 ) -> HttpResult<Json<ApiResponse<ServerInfo>>> {
-    Ok(Json(ApiResponse::success(
-        ServerInfo::collect_async().await?,
-    )))
+    Ok(Json(ApiResponse::success(state.server_info.latest())))
 }
 
 #[get("/cache")]

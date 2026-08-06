@@ -82,6 +82,10 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         &["monitor", "metrics_bearer_token"],
     ),
     EnvOverride::string("APP_DATABASE_SQL_LOG_LEVEL", &["database", "sql_log_level"]),
+    EnvOverride::integer(
+        "APP_DATABASE_SQL_SLOW_THRESHOLD_MS",
+        &["database", "sql_slow_threshold_ms"],
+    ),
     EnvOverride::string(
         "APP_DATABASE_MIGRATION_MODE",
         &["database", "migration_mode"],

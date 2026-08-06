@@ -153,6 +153,7 @@ use utoipa::OpenApi;
         crate::handlers::message_handler::unread_count,
         crate::handlers::message_handler::publish,
         crate::handlers::message_handler::acknowledge,
+        crate::handlers::message_handler::delete_messages,
         crate::handlers::message_handler::mark_read,
         crate::handlers::message_handler::mark_all_read,
         // 操作日志

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use ryframe_config::{AppConfig, LoggerFormat, LoggerOutput};
-use ryframe_db::{DbSpanLayer, SqlLogLayer};
+use ryframe_db::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 use ryframe_kernel::AppError;
 use ryframe_middleware::telemetry::init_tracer_provider;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -11,6 +11,8 @@ use tracing_subscriber::{
 
 /// 日志 Guard，保证滚动文件 writer 不被提前 Drop
 pub struct LoggerGuard {
+    // 字段按声明顺序销毁，SQL 线程会先排空，再关闭共享的非阻塞 writer。
+    _sql_log_worker: SqlLogGuard,
     _worker: Option<tracing_appender::non_blocking::WorkerGuard>,
 }
 
@@ -29,8 +31,11 @@ pub fn init(
 
     let is_json = config.logger.format == LoggerFormat::Json;
     let sql_log_level = config.database.sql_log_level;
+    let sql_slow_threshold_ms = config.database.sql_slow_threshold_ms;
+    let (sql_log_layer, sql_log_guard) =
+        SqlLogLayer::with_guard(sql_log_level, sql_slow_threshold_ms);
 
-    // 阻止 sqlx 查询事件到达 fmt 层（由 SqlLogLayer 单独格式化输出）
+    // 原始 SQLx 事件由 SqlLogLayer 转换为 ryframe.sql 结构化事件，避免重复输出。
     let sqlx_filter = FilterFn::new(|meta| meta.target() != "sqlx::query");
 
     // 初始化链路追踪（在 subscriber 构建之前）
@@ -60,7 +65,7 @@ pub fn init(
             tracing_subscriber::registry()
                 .with(fmt_layer)
                 .with(DbSpanLayer::new())
-                .with(SqlLogLayer::new(sql_log_level, 0))
+                .with(sql_log_layer)
         } else {
             let fmt_layer = fmt::layer()
                 .with_writer(non_blocking)
@@ -70,17 +75,27 @@ pub fn init(
             tracing_subscriber::registry()
                 .with(fmt_layer)
                 .with(DbSpanLayer::new())
-                .with(SqlLogLayer::new(sql_log_level, 0))
+                .with(sql_log_layer)
         };
 
         if let Some(otel) = otel_layer {
-            subscriber.with(otel).with(env_filter).init();
+            // 数据库 SQL 文本仅写入受 SQL 日志级别控制的本地日志；
+            // OpenTelemetry 只保留 DbSpanLayer 创建的无 SQL 数据库 span。
+            subscriber
+                .with(otel.with_filter(FilterFn::new(|meta| {
+                    !matches!(meta.target(), "sqlx::query" | "ryframe.sql")
+                })))
+                .with(env_filter)
+                .init();
         } else {
             subscriber.with(env_filter).init();
         }
 
+        report_sql_logging_config(config);
+
         Ok((
             LoggerGuard {
+                _sql_log_worker: sql_log_guard,
                 _worker: Some(guard),
             },
             telemetry_guard,
@@ -92,22 +107,56 @@ pub fn init(
             tracing_subscriber::registry()
                 .with(fmt_layer)
                 .with(DbSpanLayer::new())
-                .with(SqlLogLayer::new(sql_log_level, 0))
+                .with(sql_log_layer)
         } else {
             let fmt_layer = fmt::layer().with_filter(sqlx_filter).boxed();
             tracing_subscriber::registry()
                 .with(fmt_layer)
                 .with(DbSpanLayer::new())
-                .with(SqlLogLayer::new(sql_log_level, 0))
+                .with(sql_log_layer)
         };
 
         if let Some(otel) = otel_layer {
-            subscriber.with(otel).with(env_filter).init();
+            // 数据库 SQL 文本仅写入受 SQL 日志级别控制的本地日志；
+            // OpenTelemetry 只保留 DbSpanLayer 创建的无 SQL 数据库 span。
+            subscriber
+                .with(otel.with_filter(FilterFn::new(|meta| {
+                    !matches!(meta.target(), "sqlx::query" | "ryframe.sql")
+                })))
+                .with(env_filter)
+                .init();
         } else {
             subscriber.with(env_filter).init();
         }
 
-        Ok((LoggerGuard { _worker: None }, telemetry_guard))
+        report_sql_logging_config(config);
+
+        Ok((
+            LoggerGuard {
+                _sql_log_worker: sql_log_guard,
+                _worker: None,
+            },
+            telemetry_guard,
+        ))
+    }
+}
+
+fn report_sql_logging_config(config: &AppConfig) {
+    tracing::info!(
+        mode = ?config.database.sql_log_level,
+        slow_threshold_ms = config.database.sql_slow_threshold_ms,
+        "SQL 日志配置已加载"
+    );
+    if config.environment.is_production()
+        && matches!(
+            config.database.sql_log_level,
+            ryframe_config::SqlLogLevel::Summary | ryframe_config::SqlLogLevel::Full
+        )
+    {
+        tracing::warn!(
+            mode = ?config.database.sql_log_level,
+            "生产环境已启用详细 SQL 日志，请仅在短时排障期间使用"
+        );
     }
 }
 

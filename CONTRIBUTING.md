@@ -44,7 +44,6 @@ ryframe/
 │   ├── ryframe-utils/       # 雪花 ID、脱敏、差异与文件处理工具
 │   ├── ryframe-captcha/     # 验证码生成与图像渲染
 │   ├── ryframe-excel/       # Excel 导入导出
-│   ├── ryframe-mail/        # 邮件发送适配
 │   ├── ryframe-config/      # 配置管理 (多环境 TOML)
 │   ├── ryframe-core/        # 基础设施 (缓存/Redis/锁/熔断)
 │   ├── ryframe-db/          # 数据访问层 (entities/repositories)
@@ -135,7 +134,7 @@ Handler → Service → Repository → Database
 
 - 错误统一使用 `AppResult<T>` / `AppError`
 - 分页上限 `MAX_PAGE_SIZE = 1000`
-- 软删除使用 `del_flag` 字段（`"0"` = 正常，`"2"` = 已删除）
+- 业务实体通常使用 `del_flag` 字段（`"0"` = 正常，`"2"` = 已删除）；`sys_message_recipient` 为保证每位收件人的独立删除状态，使用 `deleted_at`，所有收件箱查询都必须显式过滤该字段
 - 主键使用 Snowflake ID（`snowflake::try_next_snowflake_id()?`），生成失败必须沿 `AppResult` 传播
 - 数据库固定为 MySQL；数据库特定语义集中在迁移、Repository 和生成器边界
 - 配置只在启动时加载、解密和校验，任何配置变更都要求重启进程

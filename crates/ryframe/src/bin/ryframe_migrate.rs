@@ -15,9 +15,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     ryframe_utils::snowflake::initialize(config.snowflake_worker_id)?;
-    let database = ryframe_db::connection::connect_with_level(
+    let database = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
         config.database.sql_log_level,
+        config.database.sql_slow_threshold_ms,
     )
     .await?;
 

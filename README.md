@@ -134,7 +134,6 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 │   ├── ryframe-utils/        # 雪花 ID、脱敏、差异与文件处理等通用工具
 │   ├── ryframe-captcha/      # 验证码生成与图像渲染
 │   ├── ryframe-excel/        # Excel 导入导出
-│   ├── ryframe-mail/         # 邮件发送适配
 │   ├── ryframe-core/         # 分页、缓存、租户上下文、分布式锁与熔断
 │   ├── ryframe-config/       # 配置加载与环境覆盖
 │   ├── ryframe-middleware/   # 通用中间件
@@ -170,6 +169,8 @@ config/app.prod.toml
 | `APP_CONFIG_DIR` | 配置目录 | `config` |
 | `APP_DATABASE_REPLICAS_FILE` | 命名只读副本 JSON 数组文件 | `[]` |
 | `APP_DATABASE_SOURCES_FILE` | 命名业务数据源 JSON 数组文件 | 按环境配置 |
+| `APP_DATABASE_SQL_LOG_LEVEL` | SQL 日志模式：`off`、`slow`、`summary`、`full`；生产常态必须为 `off` | 开发 `slow`，生产 `off` |
+| `APP_DATABASE_SQL_SLOW_THRESHOLD_MS` | 慢 SQL 阈值（毫秒，`1..=60000`） | `200` |
 | `APP_GENERATOR_DATA_SOURCE` | 代码生成器读取的数据源名 | `primary` |
 | `APP_AUTH_JWT_SECRET_FILE` | JWT 签名密钥文件；生产环境必须随机生成且至少 32 字节 | 开发配置值 |
 | `APP_REDIS_MODE` | `required`、`optional` 或 `disabled`；生产固定 required | `optional` |

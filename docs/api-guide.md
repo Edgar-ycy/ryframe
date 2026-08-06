@@ -245,6 +245,7 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 | `/api/v1/system/configs` | 参数配置 | `/key/{key}`、`DELETE /cache`、`/exports` |
 | `/api/v1/system/dict` | 字典 | `/types`、`/data`、`/data/type/{dict_type}`、`/types/exports` |
 | `/api/v1/system/notices` | 通知公告 | `POST /{id}/publish-message` |
+| `/api/v1/system/messages` | 消息中心 | `/unread-count`、`POST /ack`、`POST /delete`、`PUT /{id}/read`、`PUT /read-all` |
 | `/api/v1/system/operlogs` | 操作日志 | `/exports` |
 | `/api/v1/system/loginlogs` | 登录日志 | `/exports` |
 | `/api/v1/system/online` | 在线用户 | `DELETE /{sid}`；`sid` 精确表示一个设备会话 |
@@ -256,6 +257,13 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 | `/api/v1/monitor` | 监控 | `/metrics`、`/server`、`/cache`、`/db-pool`、`/runtime`；探针位于根路径 `/livez`、`/readyz` |
 
 公告创建、更新和响应只使用 `content_markdown`，不接受旧 `content` 字段。Markdown 原文按 UTF-8 字节校验，允许 1–60,000 字节；限制由 OpenAPI 的 `x-ryframe-notice-policy` 发布，前端不得复制常量。
+
+消息中心的 `acked_at` 代表客户端已实际收到消息，客户端通过 WebSocket 或收件箱补拉后自动
+调用 `POST /api/v1/system/messages/ack`；它不是人工操作。用户打开详情时才调用
+`PUT /api/v1/system/messages/{id}/read`，服务端同时保证该记录已送达。用户可以用
+`POST /api/v1/system/messages/delete` 提交 1–100 个字符串 ID 删除自己的收件箱记录；重复
+删除幂等，跨租户、跨用户和不存在的 ID 不会影响其他数据。公告和通知正文均为 Markdown
+原文，客户端必须禁用原始 HTML 并在渲染前净化输出。
 
 ### 当前用户菜单
 

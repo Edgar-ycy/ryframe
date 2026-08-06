@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ryframe_core::{DatabaseMonitor, RedisClient};
-use ryframe_monitor::DependencyHealthCache;
+use ryframe_monitor::{DependencyHealthCache, DependencyStatus};
 use ryframe_service::system::FileService;
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -48,6 +48,7 @@ async fn probe_once(
     file_service: Option<&FileService>,
     cache: &DependencyHealthCache,
 ) {
+    let previous = cache.snapshot();
     let mysql = tokio::time::timeout(PROBE_TIMEOUT, database.ping());
     let redis = tokio::time::timeout(PROBE_TIMEOUT, async {
         match redis {
@@ -70,6 +71,18 @@ async fn probe_once(
     let redis_reachable = matches!(redis_result, Ok(true));
 
     cache.update(mysql_ok, redis_reachable, object_storage_ok);
+    let current = cache.snapshot();
+    report_dependency_status("mysql", previous.mysql, current.mysql);
+    if cache.redis_required() {
+        report_dependency_status("redis", previous.redis, current.redis);
+    }
+    if cache.object_storage_required() {
+        report_dependency_status(
+            "object_storage",
+            previous.object_storage,
+            current.object_storage,
+        );
+    }
     if !mysql_ok {
         ryframe_middleware::metrics::record_readiness_failure("mysql");
     }
@@ -79,5 +92,51 @@ async fn probe_once(
     ryframe_middleware::metrics::set_redis_degraded_state("readiness", !redis_reachable);
     if !object_storage_ok && cache.object_storage_required() {
         ryframe_middleware::metrics::record_readiness_failure("object_storage");
+    }
+}
+
+/// 仅在状态变化时提高日志级别，避免健康探测在依赖稳定时持续刷屏。
+fn report_dependency_status(
+    dependency: &'static str,
+    previous: DependencyStatus,
+    current: DependencyStatus,
+) {
+    if previous == current {
+        tracing::debug!(dependency, status = current.as_str(), "就绪依赖状态未变化");
+        return;
+    }
+
+    match current {
+        DependencyStatus::Up => {
+            let message = if previous == DependencyStatus::Unknown {
+                "就绪依赖探测已就绪"
+            } else {
+                "就绪依赖已恢复"
+            };
+            tracing::info!(
+                dependency,
+                previous_status = previous.as_str(),
+                status = current.as_str(),
+                "{message}"
+            );
+        }
+        DependencyStatus::Down => {
+            tracing::warn!(
+                dependency,
+                previous_status = previous.as_str(),
+                status = current.as_str(),
+                "就绪依赖不可用"
+            );
+        }
+        DependencyStatus::Unknown
+        | DependencyStatus::OptionalDegraded
+        | DependencyStatus::NotRequired => {
+            tracing::debug!(
+                dependency,
+                previous_status = previous.as_str(),
+                status = current.as_str(),
+                "就绪依赖状态已更新"
+            );
+        }
     }
 }

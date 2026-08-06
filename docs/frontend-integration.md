@@ -282,6 +282,18 @@ DELETE /system/roles/batch/1,2
 
 后端 64 位 ID 在 JSON 契约中统一使用 `string`，前端展示、路由参数和提交数据不得转为 JavaScript `number`。
 
+## 消息中心
+
+消息收件箱使用 `GET /system/messages`，未读数使用 `GET /system/messages/unread-count`。客户端
+从 WebSocket 帧或收件箱补拉成功取得消息后，应批量调用 `POST /system/messages/ack`；送达状态
+不是供用户点击的按钮。点击标题或“查看”后先展示详情，再异步调用
+`PUT /system/messages/{id}/read`，失败时保留未读状态并提示用户重试。
+
+公告和通知的正文均以 Markdown 原文传输。前端必须关闭原始 HTML，并使用现有的 Markdown
+解析器与净化器渲染，不能将内容直接插入 `v-html`。删除当前用户自己的收件记录使用
+`POST /system/messages/delete`，请求体为 `{"ids":["消息 ID"]}`，一次 1–100 个字符串 ID；成功后
+移除对应缓存并同步未读数。删除不影响其他收件人，也不能让已删除记录重新被补拉或重放。
+
 ## 上传、下载与导出
 
 上传文件使用 `multipart/form-data`，不要手动设置 JSON `Content-Type`。普通文件上限 10 MiB、头像上限 5 MiB，上传超时 120 秒；上传接口均需登录，并会执行大小、扩展名、魔数、SHA-256 去重、对象存储写入和操作日志记录：

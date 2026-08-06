@@ -30,6 +30,9 @@ mod process_logging;
 #[path = "../boot/readiness.rs"]
 mod process_readiness;
 
+/// Worker 进程在收到关闭信号后的全部后台任务总宽限时间。
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     ryframe_service::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
@@ -45,9 +48,10 @@ async fn main() -> Result<(), AppError> {
     let (_logger_guard, _telemetry_guard) = process_logging::init(&config)?;
     ryframe_middleware::metrics::spawn_process_metrics_updater();
 
-    let primary = ryframe_db::connection::connect_with_level(
+    let primary = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
         config.database.sql_log_level,
+        config.database.sql_slow_threshold_ms,
     )
     .await?;
     ryframe_db::connection::ping(&primary).await?;
@@ -164,9 +168,9 @@ async fn main() -> Result<(), AppError> {
     shutdown_signal(shutdown_sender.clone()).await;
     let _ = shutdown_sender.send(true);
 
-    let worker_shutdown_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
     for task in &mut worker_tasks {
-        if tokio::time::timeout_at(worker_shutdown_deadline, &mut *task)
+        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
             .await
             .is_err()
         {
@@ -174,16 +178,15 @@ async fn main() -> Result<(), AppError> {
             task.abort();
         }
     }
-    if tokio::time::timeout(Duration::from_secs(5), &mut retention_scheduler)
+    if tokio::time::timeout_at(shutdown_deadline, &mut retention_scheduler)
         .await
         .is_err()
     {
         tracing::warn!("消息保留调度器未在宽限期内停止");
         retention_scheduler.abort();
     }
-    let health_shutdown_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     for task in &mut health_tasks {
-        if tokio::time::timeout_at(health_shutdown_deadline, &mut *task)
+        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
             .await
             .is_err()
         {
@@ -364,7 +367,7 @@ async fn connect_redis_for_worker(config: &AppConfig) -> Result<Option<RedisClie
     }
 }
 
-/// 等待 Ctrl+C 或 Unix 的 SIGTERM，并通知所有消费循环退出。
+/// 等待 Ctrl+C、Unix 的 SIGTERM 或 Windows 的 Ctrl+Break，并通知所有消费循环退出。
 async fn shutdown_signal(shutdown_sender: watch::Sender<bool>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
@@ -373,19 +376,27 @@ async fn shutdown_signal(shutdown_sender: watch::Sender<bool>) {
     };
 
     #[cfg(unix)]
-    let terminate = async {
+    let platform_shutdown = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("无法安装 SIGTERM 信号处理器")
             .recv()
             .await;
     };
 
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    #[cfg(windows)]
+    let platform_shutdown = async {
+        tokio::signal::windows::ctrl_break()
+            .expect("无法安装 Ctrl+Break 信号处理器")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(any(unix, windows)))]
+    let platform_shutdown = std::future::pending::<()>();
 
     tokio::select! {
         _ = ctrl_c => {}
-        _ = terminate => {}
+        _ = platform_shutdown => {}
     }
 
     tracing::info!("收到关闭信号，正在停止后台任务 Worker");

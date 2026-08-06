@@ -16,8 +16,10 @@ enabled = true
 metrics_bearer_token = ""
 
 [database]
-# SQL 日志级别: off(关闭) / summary(SQL+耗时+行数) / full(含完整SQL)
+# SQL 日志模式: off(关闭) / slow(仅慢 SQL) / summary(摘要) / full(完整参数化 SQL)
 sql_log_level = "off"
+# 慢 SQL 判定阈值（毫秒）。
+sql_slow_threshold_ms = 200
 # 未设置时，开发/测试环境的 migration_mode 默认为 auto，生产环境默认为 verify。
 # 生产 DDL 应由独立的 `ryframe-migrate up` 部署任务执行。
 

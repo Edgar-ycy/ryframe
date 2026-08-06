@@ -48,6 +48,11 @@ docker build \
 明确需要进程内文件滚动时才能改为 `file`；此时使用 `APP_LOGGER_RETENTION_DAYS` 设置
 1–3650 个按日滚动文件的上限，并把平台侧与应用侧保留策略一并纳入容量告警。
 
+生产的 `APP_DATABASE_SQL_LOG_LEVEL` 默认必须为 `off`，`APP_DATABASE_SQL_SLOW_THRESHOLD_MS`
+默认 200。只有在记录开始、结束和负责人后的短时排障窗口，才可以改为 `slow`、`summary`
+或 `full`；`summary` 与 `full` 会在启动时输出安全警告。无论模式如何，日志和 OpenTelemetry
+均不得记录绑定参数、密码、令牌或连接串；OpenTelemetry 数据库 span 不记录原始 SQL。
+
 ## 2. 网络与入口
 
 - 仅 Nginx/负载均衡器暴露 443；应用 8080、MySQL、Redis 和对象存储 API 只在受控

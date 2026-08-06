@@ -35,7 +35,6 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-futures-util = { workspace = true }
 sha2 = { workspace = true }
 sysinfo = { workspace = true }
 

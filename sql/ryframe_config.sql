@@ -493,9 +493,11 @@ CREATE TABLE IF NOT EXISTS `sys_message_recipient` (
     `enqueued_at` DATETIME(6) DEFAULT NULL COMMENT '已推送时间',
     `acked_at` DATETIME(6) DEFAULT NULL COMMENT '已确认时间',
     `read_at` DATETIME(6) DEFAULT NULL COMMENT '已读时间',
+    `deleted_at` DATETIME(6) DEFAULT NULL COMMENT '收件人删除时间',
     PRIMARY KEY (`message_id`, `user_id`),
-    KEY `idx_message_recipient_inbox` (`tenant_id`, `user_id`, `read_at`, `created_at`, `message_id`),
-    KEY `idx_message_recipient_ack` (`tenant_id`, `user_id`, `acked_at`, `message_id`),
+    KEY `idx_message_recipient_visible` (`tenant_id`, `user_id`, `deleted_at`, `message_id` DESC),
+    KEY `idx_message_recipient_unread` (`tenant_id`, `user_id`, `deleted_at`, `read_at`, `message_id` DESC),
+    KEY `idx_message_recipient_unacked` (`tenant_id`, `user_id`, `deleted_at`, `acked_at`, `message_id` DESC),
     CONSTRAINT `fk_message_recipient_message`
         FOREIGN KEY (`message_id`) REFERENCES `sys_message` (`id`)
         ON UPDATE CASCADE ON DELETE CASCADE

@@ -9,13 +9,22 @@ use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Sta
 ///
 /// RyFrame v0.5 起仅支持 MySQL 8.4。
 pub async fn connect(config: &DbConnection) -> AppResult<DatabaseConnection> {
-    connect_with_level(config, SqlLogLevel::Off).await
+    connect_with_sql_logging(config, SqlLogLevel::Off, 200).await
 }
 
 /// 根据数据库配置 + SQL 日志级别创建连接池
 pub async fn connect_with_level(
     config: &DbConnection,
     sql_log_level: SqlLogLevel,
+) -> AppResult<DatabaseConnection> {
+    connect_with_sql_logging(config, sql_log_level, 200).await
+}
+
+/// 根据数据库配置和完整 SQL 日志设置创建连接池。
+pub async fn connect_with_sql_logging(
+    config: &DbConnection,
+    sql_log_level: SqlLogLevel,
+    slow_threshold_ms: u64,
 ) -> AppResult<DatabaseConnection> {
     let url = config.connection_url();
 
@@ -28,7 +37,7 @@ pub async fn connect_with_level(
         .connect_timeout(Duration::from_secs(config.connect_timeout_secs));
 
     // 根据配置控制 SQL 日志输出
-    configure_sql_logging(&mut opt, sql_log_level);
+    configure_sql_logging(&mut opt, sql_log_level, slow_threshold_ms);
 
     Database::connect(opt)
         .await
@@ -36,15 +45,27 @@ pub async fn connect_with_level(
 }
 
 /// 根据 SqlLogLevel 配置 sqlx 日志
-fn configure_sql_logging(opt: &mut ConnectOptions, level: SqlLogLevel) {
+fn configure_sql_logging(opt: &mut ConnectOptions, level: SqlLogLevel, slow_threshold_ms: u64) {
+    opt.record_stmt_in_spans(false);
     match level {
         SqlLogLevel::Off => {
             opt.sqlx_logging(false);
         }
+        SqlLogLevel::Slow => {
+            opt.sqlx_logging(true);
+            opt.sqlx_logging_level(LevelFilter::Off);
+            opt.sqlx_slow_statements_logging_settings(
+                LevelFilter::Warn,
+                Duration::from_millis(slow_threshold_ms),
+            );
+        }
         SqlLogLevel::Summary | SqlLogLevel::Full => {
-            // 启用 sqlx 日志，由 SqlLogLayer 统一格式化
             opt.sqlx_logging(true);
             opt.sqlx_logging_level(LevelFilter::Info);
+            opt.sqlx_slow_statements_logging_settings(
+                LevelFilter::Warn,
+                Duration::from_millis(slow_threshold_ms),
+            );
         }
     }
 }

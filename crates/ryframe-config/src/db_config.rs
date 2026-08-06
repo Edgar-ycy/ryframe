@@ -29,6 +29,8 @@ pub enum SqlLogLevel {
     /// 关闭 SQL 日志
     #[default]
     Off,
+    /// 仅输出超过配置阈值的慢 SQL。
+    Slow,
     /// 仅输出 SQL 语句 + 耗时 + 返回行数
     Summary,
     /// 完整输出（含结果行数详情）
@@ -49,12 +51,15 @@ pub enum MigrationMode {
 }
 
 /// 数据库拓扑配置。
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     /// SQL 日志级别（默认 off）。
     #[serde(default)]
     pub sql_log_level: SqlLogLevel,
+    /// 慢 SQL 判定阈值（毫秒），默认 200。
+    #[serde(default = "default_sql_slow_threshold_ms")]
+    pub sql_slow_threshold_ms: u64,
     /// 启动时的迁移行为；省略时非生产环境默认 `auto`，生产环境默认 `verify`。
     #[serde(default)]
     pub migration_mode: MigrationMode,
@@ -66,6 +71,33 @@ pub struct DatabaseConfig {
     /// 可选命名业务数据源；必须由具体用例显式选择。
     #[serde(default)]
     pub sources: Vec<DatabaseSourceConfig>,
+}
+
+impl DatabaseConfig {
+    /// 校验数据库日志相关配置。
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=60_000).contains(&self.sql_slow_threshold_ms) {
+            return Err("database.sql_slow_threshold_ms 必须在 1 到 60000 之间".into());
+        }
+        Ok(())
+    }
+}
+
+fn default_sql_slow_threshold_ms() -> u64 {
+    200
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            sql_log_level: SqlLogLevel::Off,
+            sql_slow_threshold_ms: default_sql_slow_threshold_ms(),
+            migration_mode: MigrationMode::default(),
+            primary: DbConnection::default(),
+            replicas: Vec::new(),
+            sources: Vec::new(),
+        }
+    }
 }
 
 /// 一个命名只读副本。

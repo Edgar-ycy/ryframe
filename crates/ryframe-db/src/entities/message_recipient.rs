@@ -15,6 +15,7 @@ pub struct Model {
     pub enqueued_at: Option<DateTime<Utc>>,
     pub acked_at: Option<DateTime<Utc>>,
     pub read_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

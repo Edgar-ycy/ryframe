@@ -8,16 +8,32 @@ use ryframe_i18n::Localizer;
 use ryframe_middleware::RateLimiter;
 use ryframe_utils::ip::TrustedProxySet;
 
-/// 将所有已初始化的组件聚合为 AppState
-pub fn assemble(
-    database: DatabaseCluster,
-    config: Arc<AppConfig>,
-    localizer: Arc<Localizer>,
-    redis_client: Option<RedisClient>,
-    token_blacklist: TokenBlacklist,
-    services: AppServices,
-    limiter: Arc<RateLimiter>,
-) -> ryframe_api::AppState {
+/// 组装 API 状态前已经就绪的依赖。
+///
+/// 使用单个输入结构保持组合根的依赖关系显式，避免随着基础设施增加让函数参数失控。
+pub struct AppStateAssembly {
+    pub database: DatabaseCluster,
+    pub config: Arc<AppConfig>,
+    pub localizer: Arc<Localizer>,
+    pub redis_client: Option<RedisClient>,
+    pub token_blacklist: TokenBlacklist,
+    pub services: AppServices,
+    pub limiter: Arc<RateLimiter>,
+    pub server_info: ryframe_monitor::ServerInfoSampler,
+}
+
+/// 将所有已初始化的组件聚合为 AppState。
+pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
+    let AppStateAssembly {
+        database,
+        config,
+        localizer,
+        redis_client,
+        token_blacklist,
+        services,
+        limiter,
+        server_info,
+    } = assembly;
     let trusted_proxies = TrustedProxySet::new(&config.proxy.trusted_cidrs)
         .expect("proxy CIDRs were validated during configuration loading");
     let principal_resolver = services.auth.clone();
@@ -40,6 +56,7 @@ pub fn assemble(
             super::readiness::CACHE_MAX_AGE,
         ),
         metrics_bearer_token: Arc::from(config.monitor.metrics_bearer_token.as_str()),
+        server_info,
     };
 
     ryframe_api::AppState {

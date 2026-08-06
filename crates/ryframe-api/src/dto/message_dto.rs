@@ -127,6 +127,16 @@ pub struct MessageInboxQuery {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AcknowledgeMessagesDto {
+    #[schema(min_items = 1, max_items = 100)]
     #[validate(length(min = 1, max = 100, message = "一次最多确认 100 条消息"))]
+    pub ids: Vec<String>,
+}
+
+/// 批量删除消息请求。
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteMessagesDto {
+    #[schema(min_items = 1, max_items = 100)]
+    #[validate(length(min = 1, max = 100, message = "一次最多删除 100 条消息"))]
     pub ids: Vec<String>,
 }

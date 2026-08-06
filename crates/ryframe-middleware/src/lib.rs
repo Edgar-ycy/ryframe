@@ -11,7 +11,6 @@ pub mod response_envelope;
 pub mod security_headers;
 pub mod telemetry;
 pub mod timeout;
-pub mod websocket;
 
 pub use body_limit::body_limit_middleware;
 pub use cache_control::{CacheControlConfig, cache_control_middleware};

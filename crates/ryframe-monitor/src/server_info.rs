@@ -1,74 +1,138 @@
-use serde::Serialize;
-use sysinfo::System;
-use utoipa::ToSchema;
+use std::{thread, time::Duration};
 
 use ryframe_kernel::{AppError, AppResult};
+use serde::Serialize;
+use sysinfo::System;
+use tokio::sync::watch;
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, ToSchema)]
+const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct ServerInfo {
-    /// 操作系统
+    /// 操作系统。
     pub os: String,
-    /// 主机名
+    /// 主机名。
     pub hostname: String,
-    /// CPU 核心数
+    /// CPU 核心数。
     pub cpu_cores: usize,
-    /// CPU 使用率（百分比）
+    /// CPU 使用率（百分比）。
     pub cpu_usage: f32,
-    /// 总内存（GB）
+    /// 总内存（GB）。
     pub total_memory: f64,
-    /// 已用内存（GB）
+    /// 已用内存（GB）。
     pub used_memory: f64,
-    /// 内存使用率（百分比）
+    /// 内存使用率（百分比）。
     pub memory_usage: f32,
-    /// Rust 不使用 JVM。
-    /// 进程 PID
+    /// 进程 PID。
     pub pid: u32,
-    /// 运行时长（秒）
+    /// 系统运行时长（秒）。
     pub uptime: u64,
 }
 
-impl ServerInfo {
-    /// 在不阻塞异步运行时工作线程的情况下采集服务器指标。
-    pub async fn collect_async() -> AppResult<Self> {
-        tokio::task::spawn_blocking(Self::collect)
+/// 进程级服务器信息快照读取器。
+#[derive(Clone)]
+pub struct ServerInfoSampler {
+    receiver: watch::Receiver<ServerInfo>,
+}
+
+impl ServerInfoSampler {
+    /// 启动复用同一个 `System` 的后台采样器，并在返回前完成首个有效样本。
+    pub async fn spawn(
+        shutdown: watch::Receiver<bool>,
+    ) -> AppResult<(Self, tokio::task::JoinHandle<()>)> {
+        let collector = tokio::task::spawn_blocking(ServerInfoCollector::initialize)
             .await
-            .map_err(|error| {
-                AppError::Internal(format!(
-                    "server information collection task failed: {error}"
-                ))
-            })
+            .map_err(|error| AppError::Internal(format!("服务器信息初始化任务失败: {error}")))?;
+        let initial = collector.snapshot();
+        let (sender, receiver) = watch::channel(initial);
+        let handle = tokio::task::spawn_blocking(move || {
+            run_sampler(collector, sender, shutdown);
+        });
+        Ok((Self { receiver }, handle))
     }
 
-    pub fn collect() -> Self {
-        let mut sys = System::new_all();
-        sys.refresh_all();
+    /// 返回最近一次完整采样结果，不在请求线程中刷新系统信息。
+    pub fn latest(&self) -> ServerInfo {
+        self.receiver.borrow().clone()
+    }
+}
 
-        // 需要两次刷新以获取真实 CPU 使用率差值
-        // sysinfo::MINIMUM_CPU_UPDATE_INTERVAL 是获取准确数据的最小间隔
-        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-        sys.refresh_cpu_all();
+struct ServerInfoCollector {
+    system: System,
+    os: String,
+    hostname: String,
+    cpu_cores: usize,
+    pid: u32,
+}
 
-        let total_mem = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
-        let used_mem = sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
-        let cpu_cores = sys.cpus().len();
-        // sysinfo 0.39 中 global_cpu_usage() 直接返回百分比值（0-100）
-        let cpu_usage = sys.global_cpu_usage();
-        let cpu_percent = (cpu_usage as f64 * 100.0).round() as f32 / 100.0;
-
+impl ServerInfoCollector {
+    fn initialize() -> Self {
+        let mut system = System::new_all();
+        system.refresh_all();
+        thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        system.refresh_cpu_all();
         Self {
-            os: std::env::consts::OS.to_string(),
+            cpu_cores: system.cpus().len(),
+            system,
+            os: std::env::consts::OS.to_owned(),
             hostname: System::host_name().unwrap_or_default(),
-            cpu_cores,
-            cpu_usage: cpu_percent,
-            total_memory: (total_mem * 100.0).round() / 100.0,
-            used_memory: (used_mem * 100.0).round() / 100.0,
-            memory_usage: if total_mem > 0.0 {
-                ((used_mem / total_mem) * 10000.0).round() as f32 / 100.0
-            } else {
-                0.0_f32
-            },
             pid: std::process::id(),
+        }
+    }
+
+    fn refresh(&mut self) {
+        self.system.refresh_memory();
+        self.system.refresh_cpu_all();
+    }
+
+    fn snapshot(&self) -> ServerInfo {
+        let total_memory = bytes_to_gigabytes(self.system.total_memory());
+        let used_memory = bytes_to_gigabytes(self.system.used_memory());
+        let memory_usage = if total_memory > 0.0 {
+            round_percent(used_memory / total_memory * 100.0)
+        } else {
+            0.0
+        };
+        ServerInfo {
+            os: self.os.clone(),
+            hostname: self.hostname.clone(),
+            cpu_cores: self.cpu_cores,
+            cpu_usage: round_percent(f64::from(self.system.global_cpu_usage())),
+            total_memory: round_two_decimals(total_memory),
+            used_memory: round_two_decimals(used_memory),
+            memory_usage,
+            pid: self.pid,
             uptime: System::uptime(),
         }
     }
+}
+
+fn run_sampler(
+    mut collector: ServerInfoCollector,
+    sender: watch::Sender<ServerInfo>,
+    shutdown: watch::Receiver<bool>,
+) {
+    while !*shutdown.borrow() {
+        thread::sleep(SAMPLE_INTERVAL);
+        if *shutdown.borrow() {
+            break;
+        }
+        collector.refresh();
+        if sender.send(collector.snapshot()).is_err() {
+            break;
+        }
+    }
+}
+
+fn bytes_to_gigabytes(value: u64) -> f64 {
+    value as f64 / 1024.0 / 1024.0 / 1024.0
+}
+
+fn round_two_decimals(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+fn round_percent(value: f64) -> f32 {
+    round_two_decimals(value) as f32
 }

@@ -11,7 +11,7 @@ pub use cluster::{
     DatabaseReadSelectionReason, ReadConsistency, SelectedDatabase,
 };
 pub use database_monitor::SeaOrmDatabaseMonitor;
-pub use sql_logger::{DbSpanLayer, SqlLogLayer};
+pub use sql_logger::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 pub mod transaction;
 
 // 便捷导出

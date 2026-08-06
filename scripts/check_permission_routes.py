@@ -29,6 +29,7 @@ AUTHENTICATED_ONLY_ROUTES = {
     ("message_handler.rs", "/"),
     ("message_handler.rs", "/unread-count"),
     ("message_handler.rs", "/ack"),
+    ("message_handler.rs", "/delete"),
     ("message_handler.rs", "/{id}/read"),
     ("message_handler.rs", "/read-all"),
     # 导出任务仅允许创建者操作自身任务，服务层会复核租户、申请人和资源权限，

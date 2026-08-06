@@ -1,6 +1,6 @@
 # 数据库开发指南
 
-> 最后核对：2026-07-26
+> 最后核对：2026-08-06
 
 ## 1. 技术和边界
 
@@ -29,7 +29,8 @@
 
 ```toml
 [database]
-sql_log_level = "off" # off | summary | full
+sql_log_level = "off" # off | slow | summary | full
+sql_slow_threshold_ms = 200
 
 [database.primary]
 host = "127.0.0.1"
@@ -65,6 +66,39 @@ max_connections = 10
 min_connections = 1
 ```
 
+SQL 日志统一走应用的 text/JSON writer、文件滚动和非阻塞写入管线，不会直接写入
+`stdout` 或 `stderr`。`off` 完全关闭 SQL 事件；`slow` 仅以 `WARN` 输出达到阈值的
+语句；`summary` 输出全部摘要；`full` 才输出完整参数化 SQL。所有模式均不记录绑定参数
+值，生产环境默认保持 `off`；只有短时排障才应临时启用 `summary` 或 `full`。慢 SQL
+阈值由 `APP_DATABASE_SQL_SLOW_THRESHOLD_MS` 覆盖，日志模式由
+`APP_DATABASE_SQL_LOG_LEVEL` 覆盖；生产显式启用 `summary` 或 `full` 时进程会输出一次
+安全警告。记录会携带操作名、耗时、阈值、慢查询标记及可关联的请求、租户、用户或任务
+上下文；OpenTelemetry 数据库 span 不包含原始 SQL 或绑定参数。
+
+消息收件箱的索引必须先由慢 SQL 日志收集候选语句，再在脱敏后的代表性数据上执行
+`EXPLAIN ANALYZE`。候选索引为 `(tenant_id, user_id, deleted_at, message_id DESC)`、
+`(tenant_id, user_id, deleted_at, read_at, message_id DESC)` 和
+`(tenant_id, user_id, deleted_at, acked_at, message_id DESC)`；只有执行耗时或扫描行数至少
+改善 30% 时，才允许把对应索引加入迁移。没有这份执行计划证据时不得仅凭代码中的过滤条件
+创建索引，也不得改变后台任务领取查询既有的优先级和创建时间排序语义。
+
+2026-08-07 已在隔离的 MySQL 8.0.41 实例上完成上述验证。数据集包含 20 万条消息和 100 万条
+收件记录，覆盖 2 个租户、500 个用户，每条消息 5 个收件人；目标用户样本中约 20% 已软删除、
+45% 未读、25% 未确认。每条查询预热后采集 21 次，中位耗时和 `EXPLAIN ANALYZE` 结果如下：
+
+| 查询 | 原索引中位耗时 | 新索引中位耗时 | 耗时改善 | 实际索引扫描行数 | 决策 |
+|---|---:|---:|---:|---:|---|
+| 普通收件箱 | 2.340 ms | 0.571 ms | 75.62% | 800 → 51 | 加入迁移 |
+| 未读收件箱 | 1.521 ms | 0.574 ms | 62.25% | 360 → 51 | 加入迁移 |
+| 未确认收件箱 | 0.706 ms | 0.616 ms | 12.71% | 85 → 51（改善 40%） | 加入迁移 |
+
+三组候选均满足“耗时或扫描行数至少改善 30%”。增量迁移因此安装
+`idx_message_recipient_visible`、`idx_message_recipient_unread` 和
+`idx_message_recipient_unacked`，并移除已被实际查询完整替代的旧收件箱、确认索引；回滚时会先恢复
+旧索引，再撤销新索引和 `deleted_at` 列。后台任务领取索引及排序语义未发生变化。
+移除旧索引后的最终组合再次测得普通、未读、未确认查询中位耗时分别为 0.544 ms、
+0.565 ms 和 0.517 ms，三条执行计划均只扫描 51 条收件索引记录。
+
 每个副本名称必须非空且唯一。副本省略的超时字段使用与主库相同的默认值，但主机、端口、库名、账号和连接池仍应显式配置。
 
 命名业务数据源使用 `[[database.sources]]`。名称不能为保留值 `primary`，也不能与副本重名：
@@ -96,6 +130,8 @@ APP_DATABASE_PORT
 APP_DATABASE_NAME
 APP_DATABASE_USERNAME
 APP_DATABASE_PASSWORD_FILE
+APP_DATABASE_SQL_LOG_LEVEL
+APP_DATABASE_SQL_SLOW_THRESHOLD_MS
 ```
 
 `APP_DATABASE_PASSWORD_FILE` 指向只包含主库密码的 UTF-8 secret 文件。全部副本通过 `APP_DATABASE_REPLICAS_FILE` 指向的 JSON 数组文件一次性覆盖，数组元素与 `[[database.replicas]]` 字段一致：
@@ -204,7 +240,7 @@ pub struct Model {
 
 - Snowflake ID 在应用侧生成，不能依赖数据库自增。
 - 所有租户业务表必须包含 `tenant_id`。
-- 需要软删除的表使用统一 `del_flag` 常量。
+- 需要软删除的业务实体通常使用统一 `del_flag` 常量；`sys_message_recipient` 例外，使用 `deleted_at` 保存当前收件人的独立删除时间，所有收件箱查询必须显式过滤该字段。
 - 时间统一存储 UTC，展示时由前端做时区转换。
 - Entity 不派生或承诺 API 所需的序列化形状；HTTP ID 必须在 Output 中转为字符串。
 

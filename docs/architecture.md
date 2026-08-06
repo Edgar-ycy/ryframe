@@ -52,7 +52,6 @@ GET /api/v1/api-docs/openapi.json
 | `ryframe-utils` | 雪花 ID、脱敏、数据差异、客户端信息与文件处理等通用工具 |
 | `ryframe-captcha` | 验证码题目生成与图像渲染 |
 | `ryframe-excel` | Excel 导入导出 |
-| `ryframe-mail` | 邮件发送适配 |
 | `ryframe-macro` | 路由、权限、Repository 等过程宏 |
 
 当前没有为尚未闭环的能力保留空壳。未消费的事件总线、消息队列、任务队列、gRPC、硬编码功能开关和 task-local 动态切库已经删除。数据库拓扑明确区分同结构只读副本与命名业务数据源；业务数据源只有存在具体消费者、配置、监控和测试时才能加入。
@@ -73,6 +72,10 @@ API 与独立 Worker 共用唯一日志初始化实现。`stdout` 不创建本�
 容器编排的默认值；显式选择 `file` 时才创建 `logs/`，按 UTC 日期每天滚动，并把文件总数
 限制在 `logger.retention_days`。日志级别、格式、输出目标和 1–3650 天的保留数量均在启动
 前完成强类型解析与校验。
+
+SQL 事件也经过同一 writer：`off` 不生成 SQL 日志，`slow` 仅记录达到阈值的语句，
+`summary` 输出摘要，`full` 才输出完整参数化 SQL。原始 SQL 不进入 OpenTelemetry 数据库
+span，任何模式都不记录绑定参数值；数据库日志继承 HTTP、后台任务或 Outbox 的关联上下文。
 
 具体数据库、Redis 和对象存储实现只能在组合根选择。Handler 或 Service 不得读取环境变量并自行创建基础设施连接。
 
@@ -173,11 +176,13 @@ flowchart LR
 51. 幂等只应用于认证后的 system/platform 写请求；存储键仅隔离租户、用户和原始 `Idempotency-Key`，完整指纹绑定方法、真实规范化路径、排序后的查询参数和 body SHA-256。同主体同键同指纹才允许回放，任一请求语义不同均返回 `409`；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
 52. 稳定发布只接受位于 `main` 的 `vMAJOR.MINOR.PATCH` annotated tag，前后端必须同标签同版本，且 annotation 与各自 CHANGELOG 完整版本章节一致；发布前再次锁定两仓 tag object ID 与完整 commit SHA。后端是唯一联合发布主控：它校验前端仓库和精确 commit、两份 OpenAPI 的 SHA-256，以及两仓精确提交均已有成功的 push CI，然后生成合并发布说明。稳定版 Release 不构建容器、不上传自定义附件，只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照；交付身份直接来自 annotated tag object 及其解引用出的精确提交，两仓均禁止 Nightly 和其他预发布工作流。
 53. 未签名的 `X-Nonce` / `X-Timestamp` 防重放抽象已移除：它从未进入路由或配置，且客户端自报双头不能验证请求主体或内容。浏览器写请求继续使用 HTTPS、Bearer/权限、签名 CSRF、refresh CAS，以及主体作用域键与方法、真实规范化路径、排序查询、body SHA-256 组成的幂等指纹；架构门禁禁止旧裸头契约回流，机器客户端持有者证明必须另行采用可验证消息签名。
-54. 领域类型、HTTP 响应适配、国际化、通用工具、验证码、Excel 和邮件能力已拆分为独立 crate；业务层返回 `ryframe-kernel::AppError/AppResult`，API 边界仅通过 `ryframe-http::HttpAppError/HttpResult` 做单向 HTTP 适配，不再保留重复错误枚举或双向转换。
+54. 领域类型、HTTP 响应适配、国际化、通用工具、验证码和 Excel 能力已拆分为独立 crate；废弃邮件 crate 与其依赖均已删除。业务层返回 `ryframe-kernel::AppError/AppResult`，API 边界仅通过 `ryframe-http::HttpAppError/HttpResult` 做单向 HTTP 适配，不再保留重复错误枚举或双向转换。
 55. 旧公共兼容包已从工作区、源码和文档中完全删除；调用方必须直接依赖领域核心、HTTP、国际化或具体功能 crate，架构门禁会阻止旧包路径回流。
 56. 语言资源由 `ryframe-i18n::Localizer` 显式注入应用状态，启动时校验 `zh-CN` 与 `en-US` 键集一致；REST 响应协商语言并返回 `Content-Language`，同时合并 `Vary: Accept-Language`，用户偏好可持久化。
 57. 数据库迁移支持 `auto`、`verify` 和 `off` 模式；生产可先使用 `ryframe-migrate` 独立验证/执行迁移，再启动 API。持久化后台任务使用租约、退避和死信状态，开发可内嵌、生产可使用独立 `ryframe-worker`。
 58. 消息中心在主库事务内写入消息、受众、收件人快照和派发任务；收件人使用 `INSERT … SELECT` 从启用用户集合直接固化，不在 Rust 内加载租户用户全集，并以 `max_recipients_per_message + 1` 检测超限后回滚。消息及收件箱的全部时间列使用 `DATETIME(6)`，与 `UTC_TIMESTAMP(6)` 数据库时钟保持相同精度，禁止恢复会把后半秒舍入到未来一秒的无小数精度列。`MessagingConfig` 由组合根显式注入 Service 与本实例连接中心，统一控制总开关、一次性 ticket 有效期、保留期、每用户连接上限、有界出站队列和单消息收件人数；同一租户用户的连接上限通过并发安全索引原子执行。一次性 WebSocket ticket 经 Redis 原子消费，收件箱、确认、已读和公告显式发布均复用同一服务边界。WebSocket 连接必须先将 hello 帧成功放入有界发送队列，之后才能标记为可投递并触发补拉；ACK 持久化前，实时唤醒与周期补拉共同提供至少一次投递，客户端必须按 message ID 做逻辑合并，不承诺原始帧 exactly-once。ACK 持久化后，新连接跨完整补拉周期必须保持该消息零投递。关闭消息中心后对应 REST、票据、WebSocket、Redis 订阅和消息任务入口不再运行。
+`acked_at` 表示客户端实际收到消息后的自动送达确认；`read_at` 只在用户打开详情后写入，已读必然已送达。`deleted_at` 是当前收件人的软删除标记，不影响主消息、发送者或其他收件人；已删除记录不得进入列表、未读数、重放、补拉、送达确认或已读更新。
+
 59. 架构门禁已把新 crate 依赖基线、内核禁止依赖和已删除公共包的路径禁用纳入自动检查，防止分层迁移在后续开发中回退。
 60. 公告 API 只使用 `content_markdown` 传输 Markdown 原文，旧 `content` 字段会被拒绝；1–60,000 个 UTF-8 字节的限制由后端 OpenAPI `x-ryframe-notice-policy` 发布，前端同步生成策略并按同一字节口径校验。
 61. 统一响应信封覆盖所有 `/api` 路径，未知 API 版本和无版本业务路径返回相同 JSON `404`；响应只能使用 `message/data/request_id/error_key/details`，旧 `msg/rows/total` 顶层字段会被拒绝。

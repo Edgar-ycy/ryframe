@@ -19,6 +19,8 @@ x-ryframe-environment: &ryframe-environment
   APP_DATABASE_TLS_CA: /run/secrets/mysql-ca.pem
   APP_DATABASE_TLS_CLIENT_CERT: /run/secrets/mysql-client-cert.pem
   APP_DATABASE_TLS_CLIENT_KEY: /run/secrets/mysql-client-key.pem
+  APP_DATABASE_SQL_LOG_LEVEL: ${APP_DATABASE_SQL_LOG_LEVEL:-off}
+  APP_DATABASE_SQL_SLOW_THRESHOLD_MS: ${APP_DATABASE_SQL_SLOW_THRESHOLD_MS:-200}
   APP_REDIS_MODE: required
   APP_REDIS_HOST: ${APP_REDIS_HOST:?必须设置 APP_REDIS_HOST}
   APP_REDIS_PORT: ${APP_REDIS_PORT:-6380}
@@ -89,7 +91,8 @@ services:
     command: ["up"]
     environment:
       <<: *ryframe-environment
-      APP_DATABASE_MIGRATION_MODE: off
+      # 独立迁移二进制负责执行 DDL；API 与 Worker 仍使用 verify。
+      APP_DATABASE_MIGRATION_MODE: auto
 
   api:
     <<: *ryframe-service

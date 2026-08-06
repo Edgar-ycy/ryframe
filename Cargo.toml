@@ -5,7 +5,7 @@ members = [
     "crates/ryframe",
     "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-http", "crates/ryframe-i18n", "crates/ryframe-kernel", "crates/ryframe-middleware", "crates/ryframe-service",
     "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro", "crates/ryframe-storage",
-    "crates/ryframe-utils", "crates/ryframe-captcha", "crates/ryframe-excel", "crates/ryframe-mail",
+    "crates/ryframe-utils", "crates/ryframe-captcha", "crates/ryframe-excel",
     "xtask",
 ]
 resolver = "3"
@@ -88,8 +88,6 @@ opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.32", features = ["http-proto"] }
 opentelemetry-semantic-conventions = { version = "0.32" }
 tracing-opentelemetry = "0.33"
-# SMTP 邮件发送
-lettre = { version = "0.11", default-features = false, features = ["builder", "rustls-tls", "smtp-transport", "tokio1", "tokio1-rustls"] }
 # gRPC 传输支持
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

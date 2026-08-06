@@ -7,9 +7,9 @@ host = "0.0.0.0"
 port = 8080
 
 [database]
-# 开发环境输出 SQL 摘要日志
-# off = 关闭 | summary = SQL+耗时+行数 | full = 含完整SQL
-sql_log_level = "full"
+# 开发环境默认只输出慢 SQL；排障时可临时切换为 summary 或 full。
+sql_log_level = "slow"
+sql_slow_threshold_ms = 200
 
 # 开发环境数据库连接
 [database.primary]

@@ -106,9 +106,10 @@ async fn main() -> Result<(), DynError> {
         .into());
     }
 
-    let database = ryframe_db::connection::connect_with_level(
+    let database = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
         config.database.sql_log_level,
+        config.database.sql_slow_threshold_ms,
     )
     .await?;
     verify_connected_database(&database, &arguments.expected_database).await?;

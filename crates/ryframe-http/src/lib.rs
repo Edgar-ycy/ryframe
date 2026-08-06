@@ -21,6 +21,23 @@ pub const SUCCESS_MESSAGE_KEY: &str = "common.success";
 /// API 边缘渲染分页查询成功消息时使用的资源键。
 pub const QUERY_SUCCESS_MESSAGE_KEY: &str = "common.query";
 
+/// 标记已由依赖状态边界确认的预期 503 响应。
+///
+/// 该标记只保存在响应扩展中，不会写入响应头或响应体。请求日志层据此保留
+/// 状态码与指标，但不会把配置导致的预期不可用重复记录为请求失败。
+#[derive(Clone, Copy, Debug)]
+pub struct ExpectedServiceUnavailableResponse;
+
+/// 为已确认的预期服务不可用响应添加内部日志标记。
+///
+/// 调用方必须已在依赖状态边界记录实际故障或禁用状态；HTTP 边界只负责把
+/// 错误转换为稳定的 API 响应，不能在每个请求上重复输出 ERROR。
+pub fn mark_expected_service_unavailable(response: &mut Response) {
+    response
+        .extensions_mut()
+        .insert(ExpectedServiceUnavailableResponse);
+}
+
 /// 将稳定错误码映射为同名本地化资源键。
 pub const fn error_message_key(error_code: ErrorCode) -> &'static str {
     match error_code {
@@ -240,10 +257,9 @@ impl IntoResponse for HttpAppError {
                 tracing::error!(error = %message, "内部错误");
                 (StatusCode::INTERNAL_SERVER_ERROR, None)
             }
-            AppError::ServiceUnavailable(message) => {
-                tracing::error!(error = %message, "服务暂不可用");
-                (StatusCode::SERVICE_UNAVAILABLE, None)
-            }
+            // 依赖故障或显式禁用的日志应由拥有该依赖状态的边界负责；此处仅做
+            // HTTP 映射，避免同一个 503 在每个请求上重复输出 ERROR。
+            AppError::ServiceUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, None),
         };
 
         let body = ApiResponse::<()>::fail(

@@ -1,7 +1,7 @@
 mod app;
 mod boot;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
 use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode};
 use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
@@ -12,7 +12,10 @@ use ryframe_service::{
     JobQueue, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, OutboxWorker,
     spawn_message_retention_scheduler,
 };
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
+
+/// API 进程在收到关闭信号后的全部后台任务总宽限时间。
+const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -56,6 +59,7 @@ async fn main() -> Result<(), AppError> {
         database.clone(),
         config.database.replicas.clone(),
         config.database.sql_log_level,
+        config.database.sql_slow_threshold_ms,
     );
 
     let config_arc = Arc::new(config.clone());
@@ -66,15 +70,20 @@ async fn main() -> Result<(), AppError> {
     install_job_metrics(&services.job_queue);
     let limit = boot::limiter::init(&config, &redis.client)?;
 
-    let state = boot::app_state::assemble(
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let (server_info, mut server_info_sampler) =
+        ryframe_monitor::ServerInfoSampler::spawn(shutdown_receiver.clone()).await?;
+    let state = boot::app_state::assemble(boot::app_state::AppStateAssembly {
         database,
-        config_arc,
+        config: config_arc,
         localizer,
-        redis.client.clone(),
-        redis.token_blacklist,
-        services.clone(),
-        limit.limiter.clone(),
-    );
+        redis_client: redis.client.clone(),
+        token_blacklist: redis.token_blacklist,
+        services: services.clone(),
+        limiter: limit.limiter.clone(),
+        server_info,
+    });
+    let message_hub = state.message_hub.clone();
     let readiness_database = state.monitor.database.clone();
     let readiness_redis = state.monitor.redis.clone();
     let readiness_file_service = state.services.file.clone();
@@ -82,7 +91,6 @@ async fn main() -> Result<(), AppError> {
     let message_listener = state
         .message_hub
         .spawn_redis_listener(redis.client.clone(), services.message.clone());
-    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let mut message_replay_scheduler = state
         .message_hub
         .spawn_replay_scheduler(services.message.clone(), shutdown_receiver.clone());
@@ -168,18 +176,48 @@ async fn main() -> Result<(), AppError> {
         }
     };
 
-    let result = axum::serve(
-        listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal(shutdown_sender.clone()))
-    .await
-    .map_err(|error| AppError::Internal(format!("HTTP server stopped unexpectedly: {error}")));
+    let (shutdown_deadline_sender, mut shutdown_deadline_receiver) = oneshot::channel();
+    let (result, shutdown_deadline) = {
+        let server = axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal(
+            shutdown_sender.clone(),
+            message_hub.clone(),
+            shutdown_deadline_sender,
+        ))
+        .into_future();
+        tokio::pin!(server);
 
+        tokio::select! {
+            server_result = &mut server => (
+                server_result.map_err(|error| {
+                    AppError::Internal(format!("HTTP server stopped unexpectedly: {error}"))
+                }),
+                tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD,
+            ),
+            received_deadline = &mut shutdown_deadline_receiver => {
+                let shutdown_deadline = received_deadline
+                    .unwrap_or_else(|_| tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD);
+                let result = match tokio::time::timeout_at(shutdown_deadline, &mut server).await {
+                    Ok(server_result) => server_result.map_err(|error| {
+                        AppError::Internal(format!("HTTP server stopped unexpectedly: {error}"))
+                    }),
+                    Err(_) => {
+                        tracing::warn!("HTTP 服务未在总宽限时间内停止，已取消等待");
+                        Ok(())
+                    }
+                };
+                (result, shutdown_deadline)
+            }
+        }
+    };
+
+    message_hub.shutdown_all();
     let _ = shutdown_sender.send(true);
-    let worker_shutdown_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     for task in &mut worker_tasks {
-        if tokio::time::timeout_at(worker_shutdown_deadline, &mut *task)
+        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
             .await
             .is_err()
         {
@@ -187,22 +225,29 @@ async fn main() -> Result<(), AppError> {
             task.abort();
         }
     }
-    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut retention_scheduler)
+    if tokio::time::timeout_at(shutdown_deadline, &mut retention_scheduler)
         .await
         .is_err()
     {
         tracing::warn!("消息保留调度器未在宽限期内停止");
         retention_scheduler.abort();
     }
-    if tokio::time::timeout(std::time::Duration::from_secs(5), &mut readiness_monitor)
+    if tokio::time::timeout_at(shutdown_deadline, &mut readiness_monitor)
         .await
         .is_err()
     {
         tracing::warn!("后台就绪探测未在宽限期内停止");
         readiness_monitor.abort();
     }
+    if tokio::time::timeout_at(shutdown_deadline, &mut server_info_sampler)
+        .await
+        .is_err()
+    {
+        tracing::warn!("服务器信息采样器未在宽限期内停止");
+        server_info_sampler.abort();
+    }
     if let Some(scheduler) = message_replay_scheduler.as_mut()
-        && tokio::time::timeout(std::time::Duration::from_secs(5), &mut *scheduler)
+        && tokio::time::timeout_at(shutdown_deadline, &mut *scheduler)
             .await
             .is_err()
     {
@@ -217,7 +262,11 @@ async fn main() -> Result<(), AppError> {
     result
 }
 
-async fn shutdown_signal(shutdown_sender: watch::Sender<bool>) {
+async fn shutdown_signal(
+    shutdown_sender: watch::Sender<bool>,
+    message_hub: Arc<ryframe_api::message_socket::MessageHub>,
+    shutdown_deadline_sender: oneshot::Sender<tokio::time::Instant>,
+) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -225,23 +274,34 @@ async fn shutdown_signal(shutdown_sender: watch::Sender<bool>) {
     };
 
     #[cfg(unix)]
-    let terminate = async {
+    let platform_shutdown = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("failed to install SIGTERM handler")
             .recv()
             .await;
     };
 
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    #[cfg(windows)]
+    let platform_shutdown = async {
+        tokio::signal::windows::ctrl_break()
+            .expect("failed to install Ctrl+Break handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(any(unix, windows)))]
+    let platform_shutdown = std::future::pending::<()>();
 
     tokio::select! {
         _ = ctrl_c => {},
-        _ = terminate => {},
+        _ = platform_shutdown => {},
     }
 
-    tracing::info!("shutdown signal received");
+    let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
+    let _ = shutdown_deadline_sender.send(shutdown_deadline);
+    message_hub.shutdown_all();
     let _ = shutdown_sender.send(true);
+    tracing::info!("shutdown signal received");
 }
 
 /// 在应用边界将底层数据库事件绑定到 Prometheus 指标。

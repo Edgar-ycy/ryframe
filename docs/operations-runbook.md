@@ -1,6 +1,6 @@
 # 生产监控与值班手册
 
-> 最后核对：2026-07-25
+> 最后核对：2026-08-06
 
 本文档定义 RyFrame 生产环境的最低监控、告警和处置要求。告警规则模板位于
 `deploy/prometheus/ryframe-alerts.yml`。模板中的阈值是初始值，上线后应依据容量测试
@@ -152,6 +152,12 @@ ACK 已持久化后，新连接跨完整补拉周期仍收到该 ID 才属于故
 `APP_MESSAGING_REPLAY_INTERVAL_SECONDS`、`APP_MESSAGING_REPLAY_JITTER_SECONDS` 和
 `APP_MESSAGING_REPLAY_BATCH_SIZE`。修改后必须重启 API 与 Worker。
 
+`acked_at` 是接收后自动写入的送达时间，`read_at` 仅在用户打开详情后写入，已读记录必须同时
+已送达。`deleted_at` 仅软删除当前收件人的记录，不删除主消息或其他用户的收件箱；不要通过
+数据库手工修改这三个字段。用户批量删除走 `POST /api/v1/system/messages/delete`，每次最多 100
+个字符串 ID；重复调用预期返回 0，不应被当成失败。删除后仍出现在未读数、补拉或 WebSocket
+重放中，才属于需要排查的隔离或查询条件故障。
+
 达到每用户连接上限时先排查客户端重复建连和退避策略，不要直接放大容量；慢消费者会以
 WebSocket `1013` 关闭，连接数超限使用策略关闭。发布被收件人数上限拒绝时，事务不会留下
 消息或部分收件箱快照；应缩小受众、拆分业务消息或在完成容量评估后调整上限。生产启用
@@ -161,6 +167,20 @@ WebSocket `1013` 关闭，连接数超限使用策略关闭。发布被收件人
 `ryframe_message_replay_query_total{result="success|error"}` 只按有界结果记录共享补拉查询。
 同一租户用户建立多个连接时，查询增量应按身份而非连接数增长；异常放大通常表示客户端
 反复建连、周期过短或共享调度器退化，不能靠继续增大数据库连接池掩盖。
+
+### API 与 Worker 优雅关闭
+
+API 和独立 Worker 的全局关闭宽限均为 5 秒。Unix 进程支持 Ctrl+C 和 SIGTERM；Windows
+控制台进程支持 Ctrl+C 和 Ctrl+Break。Windows 服务包装器或发布脚本应先发送控制台关闭
+事件并等待进程自行退出，不得用 `taskkill /F` 的结果冒充优雅关闭；只有超过平台总宽限后才
+允许执行强制终止。正常关闭必须同时满足退出码为 0、出现应用关闭日志，并且从信号送达到
+进程完全退出不超过 5 秒。
+
+2026-08-07 在隔离数据库、Redis 禁用和本地对象存储环境中，以独立 Windows 进程组发送真实
+`CTRL_BREAK_EVENT` 完成验收：包含内置 Job Worker、Outbox、消息保留、就绪探测和服务器采样器
+的 API 在 989.725 ms 内退出；独立 Worker 连同健康服务在 69.703 ms 内退出。两个进程退出码均
+为 0，并分别写出关闭信号和停止完成日志。该验收不能由 `Stop-Process` 或直接调用内部关闭函数
+替代。
 
 ### OpenTelemetry 导出器
 
@@ -190,6 +210,13 @@ API 与独立 Worker 使用相同的日志配置。生产容器默认
 文件；API 和 Worker 都必须拥有目录写权限。容器内启用文件模式前必须挂载可写持久卷，
 否则只读根文件系统会使进程拒绝启动。修改任一 `APP_LOGGER_*` 配置后需重启对应进程；
 排障时不得手工删除仍在保留窗口内的日志。
+
+数据库 SQL 日志由 `APP_DATABASE_SQL_LOG_LEVEL` 和
+`APP_DATABASE_SQL_SLOW_THRESHOLD_MS` 控制。常态保持 `off`；`slow` 只输出达到阈值的 WARN，
+`summary` 输出所有摘要，`full` 输出完整参数化 SQL。临时启用 `summary` 或 `full` 前记录负责
+人和停止时间，恢复后立即切回 `off`。每条 SQL 只应生成一条最终记录；日志可关联请求、租户、
+用户或任务，但不得出现绑定参数值、密码、令牌或连接串。连续空轮询、正常心跳、健康成功和
+无工作量清理是 DEBUG，不应在 INFO/WARN 持续刷屏。
 
 ### 磁盘容量
 

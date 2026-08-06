@@ -166,6 +166,7 @@ impl AppConfig {
         if self.app.port == 0 {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
+        self.database.validate().map_err(AppError::Config)?;
         validate_database_connection(
             "database.primary",
             &self.database.primary,

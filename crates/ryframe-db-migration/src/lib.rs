@@ -30,6 +30,7 @@ mod m20260803_000017_file_digest_finalization;
 mod m20260803_000018_audit_operation_outbox;
 mod m20260805_000019_trace_context_state;
 mod m20260805_000020_message_time_precision;
+mod m20260806_000021_message_recipient_soft_delete;
 mod schema;
 mod seeder;
 
@@ -78,6 +79,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260803_000018_audit_operation_outbox::Migration),
             Box::new(m20260805_000019_trace_context_state::Migration),
             Box::new(m20260805_000020_message_time_precision::Migration),
+            Box::new(m20260806_000021_message_recipient_soft_delete::Migration),
         ]
     }
 }

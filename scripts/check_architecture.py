@@ -14,6 +14,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def module_source(relative_path: str) -> str:
+    """读取 Rust 门面及其同名子模块，支持职责拆分后继续校验完整契约。"""
+    module_path = ROOT / relative_path
+    sources = [module_path]
+    module_directory = module_path.with_suffix("")
+    if module_directory.is_dir():
+        sources.extend(sorted(module_directory.rglob("*.rs")))
+    return "\n".join(path.read_text(encoding="utf-8") for path in sources)
+
 EXPECTED_DEPENDENCIES = {
     "ryframe": {
         "ryframe-api",
@@ -63,7 +73,6 @@ EXPECTED_DEPENDENCIES = {
     "ryframe-i18n": set(),
     "ryframe-kernel": set(),
     "ryframe-macro": {"ryframe-core"},
-    "ryframe-mail": set(),
     "ryframe-middleware": {
         "ryframe-auth",
         "ryframe-config",
@@ -106,7 +115,6 @@ KERNEL_FORBIDDEN_DEPENDENCIES = (
     "image",
     "calamine",
     "rust_xlsxwriter",
-    "lettre",
     "reqwest",
     "tokio",
     "ryframe-common",
@@ -114,7 +122,6 @@ KERNEL_FORBIDDEN_DEPENDENCIES = (
     "ryframe-utils",
     "ryframe-captcha",
     "ryframe-excel",
-    "ryframe-mail",
     "ryframe-api",
     "ryframe-auth",
     "ryframe-config",
@@ -308,6 +315,31 @@ def check_removed_common_crate(errors: list[str]) -> None:
                 "Rust source imports removed ryframe-common: "
                 f"{path.relative_to(ROOT)}"
             )
+
+
+def check_removed_mail_and_websocket_surfaces(errors: list[str]) -> None:
+    """禁止废弃邮件 crate 与通用 WebSocket 表面重新出现。"""
+    removed_mail_path = ROOT / "crates/ryframe-mail"
+    if removed_mail_path.exists():
+        errors.append("removed crate path exists again: crates/ryframe-mail")
+
+    manifest_paths = [ROOT / "Cargo.toml", *sorted((ROOT / "crates").glob("*/Cargo.toml"))]
+    for path in manifest_paths:
+        source = path.read_text(encoding="utf-8")
+        for dependency in ("ryframe-mail", "lettre"):
+            if re.search(rf"\b{re.escape(dependency)}\b", source):
+                errors.append(
+                    f"manifest references removed {dependency}: {path.relative_to(ROOT)}"
+                )
+
+    websocket_module = ROOT / "crates/ryframe-middleware/src/websocket.rs"
+    if websocket_module.exists():
+        errors.append("deprecated middleware WebSocket module exists again")
+    middleware_lib = (ROOT / "crates/ryframe-middleware/src/lib.rs").read_text(
+        encoding="utf-8"
+    )
+    if re.search(r"(?m)^\s*pub\s+mod\s+websocket\s*;", middleware_lib):
+        errors.append("middleware re-exports the deprecated WebSocket module")
 
 
 REMOVED_CONFIG_CRYPTO_SYMBOL = re.compile(
@@ -554,7 +586,7 @@ def check_removed_oper_log_job(errors: list[str]) -> None:
     }
     errors.extend(removed_oper_log_job_violations(sources))
 
-    jobs_source = sources["crates/ryframe-service/src/jobs.rs"]
+    jobs_source = module_source("crates/ryframe-service/src/jobs.rs")
     middleware_source = sources["crates/ryframe-api/src/oper_log_middleware.rs"]
     if "AUDIT_OPERATION_OUTBOX_EVENT_TYPE" not in jobs_source:
         errors.append("Outbox Worker does not consume audit.operation events")
@@ -1483,7 +1515,7 @@ def check_database_and_storage_topology(errors: list[str]) -> None:
         ),
     }
     for relative_path, fragments in required_fragments.items():
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        source = module_source(relative_path)
         for fragment in fragments:
             if fragment not in source:
                 errors.append(
@@ -1565,7 +1597,7 @@ def check_embedded_swagger_ui(errors: list[str]) -> None:
         ),
     }
     for relative_path, fragments in required_fragments.items():
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        source = module_source(relative_path)
         for fragment in fragments:
             if fragment not in source:
                 errors.append(
@@ -1573,7 +1605,7 @@ def check_embedded_swagger_ui(errors: list[str]) -> None:
                 )
 
     router_path = "crates/ryframe-api/src/router.rs"
-    router_source = (ROOT / router_path).read_text(encoding="utf-8")
+    router_source = module_source(router_path)
     router_production = router_source.split("#[cfg(test)]", maxsplit=1)[0]
     for fragment in ("cdn.jsdelivr.net", "http://", "https://", "SwaggerUIBundle({", "Redirect"):
         if fragment in router_production:
@@ -2128,21 +2160,19 @@ def check_messaging_runtime_policy(errors: list[str]) -> None:
     app_config_source = (
         ROOT / "crates/ryframe-config/src/app_config.rs"
     ).read_text(encoding="utf-8")
-    service_source = (
-        ROOT / "crates/ryframe-service/src/system/message_service.rs"
-    ).read_text(encoding="utf-8")
+    service_source = module_source(
+        "crates/ryframe-service/src/system/message_service.rs"
+    )
     ticket_source = (
         ROOT / "crates/ryframe-service/src/system/websocket_ticket_service.rs"
     ).read_text(encoding="utf-8")
-    socket_source = (
-        ROOT / "crates/ryframe-api/src/message_socket.rs"
-    ).read_text(encoding="utf-8")
+    socket_source = module_source("crates/ryframe-api/src/message_socket.rs")
     metrics_source = (
         ROOT / "crates/ryframe-middleware/src/metrics.rs"
     ).read_text(encoding="utf-8")
-    repository_source = (
-        ROOT / "crates/ryframe-db/src/repositories/message_repo.rs"
-    ).read_text(encoding="utf-8")
+    repository_source = module_source(
+        "crates/ryframe-db/src/repositories/message_repo.rs"
+    )
 
     for field in (
         "enabled",
@@ -2459,6 +2489,7 @@ def main() -> int:
     check_dependency_graph(errors)
     check_feature_registry(errors)
     check_removed_common_crate(errors)
+    check_removed_mail_and_websocket_surfaces(errors)
     check_secret_source_policy(errors)
     check_kernel_manifest(errors)
     check_unsigned_replay_contract(errors)

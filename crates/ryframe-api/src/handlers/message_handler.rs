@@ -10,7 +10,9 @@ use ryframe_service::system::{MessageAudienceKind, MessageAudienceSelector, Publ
 use validator::Validate;
 
 use crate::{
-    dto::message_dto::{AcknowledgeMessagesDto, MessageInboxQuery, PublishMessageDto},
+    dto::message_dto::{
+        AcknowledgeMessagesDto, DeleteMessagesDto, MessageInboxQuery, PublishMessageDto,
+    },
     message_presenter::{
         MessageInboxPage, PublishedMessageVo, into_message_text, render_inbox, render_published,
     },
@@ -29,6 +31,7 @@ pub fn message_router(state: AppState) -> Router {
         .merge(route!(unread_count))
         .merge(route!(publish))
         .merge(route!(acknowledge))
+        .merge(route!(delete_messages))
         .merge(route!(mark_read))
         .merge(route!(mark_all_read))
         .with_state(state)
@@ -160,6 +163,33 @@ async fn acknowledge(
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .inspect(|_| ryframe_middleware::metrics::observe_message_ack_latency(started.elapsed()))
+        .map(ApiResponse::success)
+        .map(Json)
+}
+
+/// 软删除当前用户收到的消息。
+#[post("/delete")]
+#[utoipa::path(post, path = "/api/v1/system/messages/delete", tag = "消息中心",
+    request_body = DeleteMessagesDto,
+    responses((status = 200, description = "实际删除数量", body = ApiResponse<u64>)),
+    security(("bearer" = [])))]
+async fn delete_messages(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    Json(dto): Json<DeleteMessagesDto>,
+) -> HttpResult<Json<ApiResponse<u64>>> {
+    dto.validate()?;
+    let ids = dto
+        .ids
+        .iter()
+        .map(|id| parse_id(id, "ids"))
+        .collect::<HttpResult<Vec<_>>>()?;
+    state
+        .services
+        .message
+        .delete(&current_user, &ids)
+        .await
+        .map_err(ryframe_http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
 }
