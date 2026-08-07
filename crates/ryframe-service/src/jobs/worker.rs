@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as StdDuration};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    sync::Arc,
+    time::{Duration as StdDuration, SystemTime, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
 use chrono::Duration;
@@ -93,6 +98,8 @@ pub struct JobWorker {
     lease_duration: Duration,
     heartbeat_interval: StdDuration,
     poll_interval: StdDuration,
+    max_idle_poll_interval: StdDuration,
+    lease_recovery_interval: StdDuration,
     concurrency: usize,
 }
 
@@ -112,6 +119,8 @@ impl JobWorker {
             lease_duration: Duration::seconds(lease_seconds),
             heartbeat_interval: StdDuration::from_secs(config.heartbeat_seconds),
             poll_interval: StdDuration::from_millis(config.poll_interval_ms),
+            max_idle_poll_interval: StdDuration::from_millis(config.max_idle_poll_interval_ms),
+            lease_recovery_interval: StdDuration::from_secs(config.lease_recovery_interval_seconds),
             concurrency: config.concurrency,
         })
     }
@@ -364,6 +373,7 @@ impl JobWorker {
     async fn run_until_shutdown(&self, worker_id: String, mut shutdown: watch::Receiver<bool>) {
         tracing::info!(worker_id = %worker_id, "后台任务 Worker 已启动");
         let mut consecutive_infrastructure_failures = 0_u32;
+        let mut idle_wait = self.poll_interval;
         loop {
             if *shutdown.borrow() {
                 break;
@@ -375,8 +385,10 @@ impl JobWorker {
                         tracing::info!(worker_id = %worker_id, "后台任务 Worker 基础设施调用已恢复");
                     }
                     consecutive_infrastructure_failures = 0;
+                    idle_wait =
+                        next_idle_wait(idle_wait, self.poll_interval, self.max_idle_poll_interval);
                     tokio::select! {
-                        _ = time::sleep(self.poll_interval) => {}
+                        _ = time::sleep(jittered_delay(idle_wait)) => {}
                         changed = shutdown.changed() => {
                             if changed.is_err() || *shutdown.borrow() {
                                 break;
@@ -389,6 +401,7 @@ impl JobWorker {
                         tracing::info!(worker_id = %worker_id, "后台任务 Worker 基础设施调用已恢复");
                     }
                     consecutive_infrastructure_failures = 0;
+                    idle_wait = self.poll_interval;
                     tracing::warn!(worker_id = %worker_id, "后台任务租约已失效，忽略本次处理结果");
                 }
                 Ok(_) => {
@@ -396,6 +409,7 @@ impl JobWorker {
                         tracing::info!(worker_id = %worker_id, "后台任务 Worker 基础设施调用已恢复");
                     }
                     consecutive_infrastructure_failures = 0;
+                    idle_wait = self.poll_interval;
                 }
                 Err(error) => {
                     consecutive_infrastructure_failures =
@@ -456,7 +470,7 @@ impl JobWorker {
                 }
             }
             tokio::select! {
-                _ = time::sleep(self.poll_interval) => {}
+                _ = time::sleep(self.lease_recovery_interval) => {}
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
                         break;
@@ -500,4 +514,33 @@ pub(super) fn infrastructure_retry_delay(
     let exponent = consecutive_failures.saturating_sub(1).min(30);
     let multiplier = 1_u32 << exponent;
     poll_interval.saturating_mul(multiplier).min(MAX_DELAY)
+}
+
+fn next_idle_wait(
+    current: StdDuration,
+    min_interval: StdDuration,
+    max_interval: StdDuration,
+) -> StdDuration {
+    if current >= max_interval {
+        return max_interval;
+    }
+    std::cmp::min(
+        max_interval,
+        std::cmp::max(min_interval, current.saturating_mul(2)),
+    )
+}
+
+fn jittered_delay(base: StdDuration) -> StdDuration {
+    let base_ms = base.as_millis().max(1) as i64;
+    let jitter = base_ms / 5; // ±20%
+    if jitter == 0 {
+        return base;
+    }
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|time| i64::from(time.subsec_nanos()))
+        .unwrap_or(0);
+    let offset = (seed.rem_euclid(2 * jitter + 1)) - jitter;
+    let actual = base_ms.saturating_add(offset).max(1);
+    StdDuration::from_millis(actual as u64)
 }

@@ -102,7 +102,7 @@ fn report_dependency_status(
     current: DependencyStatus,
 ) {
     if previous == current {
-        tracing::debug!(dependency, status = current.as_str(), "就绪依赖状态未变化");
+        tracing::trace!(dependency, status = current.as_str(), "就绪依赖状态未变化");
         return;
     }
 

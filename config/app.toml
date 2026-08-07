@@ -146,8 +146,10 @@ max_page_size = 100
 # 后台任务：开发环境由 Web 进程内置 Worker 消费；生产环境默认改为 external，
 # 并由独立的 `ryframe-worker` 进程运行。
 poll_interval_ms = 500
+max_idle_poll_interval_ms = 5000
 lease_seconds = 60
 heartbeat_seconds = 15
+lease_recovery_interval_seconds = 15
 default_max_attempts = 8
 export_max_rows = 500000
 export_retention_hours = 24

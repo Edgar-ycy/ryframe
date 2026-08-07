@@ -25,6 +25,9 @@ pub struct JobConfig {
     /// 空队列时再次轮询前的等待时间。
     #[serde(default = "default_poll_interval_ms")]
     pub poll_interval_ms: u64,
+    /// 空闲退避时的最大轮询间隔（毫秒）。未设置时默认使用 `5000`。
+    #[serde(default = "default_max_idle_poll_interval_ms")]
+    pub max_idle_poll_interval_ms: u64,
     /// 单次领取任务后的租约时长。
     #[serde(default = "default_lease_seconds")]
     pub lease_seconds: u64,
@@ -52,6 +55,9 @@ pub struct JobConfig {
     /// 独立 Worker 健康探针与指标端口。
     #[serde(default = "default_health_port")]
     pub health_port: u16,
+    /// 租约恢复循环间隔（秒）。未设置时默认使用 `15`。
+    #[serde(default = "default_lease_recovery_interval_seconds")]
+    pub lease_recovery_interval_seconds: u64,
 }
 
 impl Default for JobConfig {
@@ -59,6 +65,7 @@ impl Default for JobConfig {
         Self {
             mode: JobWorkerMode::Embedded,
             poll_interval_ms: default_poll_interval_ms(),
+            max_idle_poll_interval_ms: default_max_idle_poll_interval_ms(),
             lease_seconds: default_lease_seconds(),
             heartbeat_seconds: default_heartbeat_seconds(),
             default_max_attempts: default_max_attempts(),
@@ -68,6 +75,7 @@ impl Default for JobConfig {
             worker_id: None,
             health_host: default_health_host(),
             health_port: default_health_port(),
+            lease_recovery_interval_seconds: default_lease_recovery_interval_seconds(),
         }
     }
 }
@@ -77,6 +85,13 @@ impl JobConfig {
     pub fn validate(&self, environment: Environment) -> Result<(), String> {
         if self.poll_interval_ms < 50 || self.poll_interval_ms > 60_000 {
             return Err("jobs.poll_interval_ms 必须在 50 到 60000 之间".into());
+        }
+        if self.max_idle_poll_interval_ms < self.poll_interval_ms
+            || self.max_idle_poll_interval_ms > 60_000
+        {
+            return Err(
+                "jobs.max_idle_poll_interval_ms 必须在 poll_interval_ms 到 60000 之间".into(),
+            );
         }
         if self.lease_seconds == 0 || self.lease_seconds > 3_600 {
             return Err("jobs.lease_seconds 必须在 1 到 3600 之间".into());
@@ -109,6 +124,10 @@ impl JobConfig {
         if self.health_port == 0 {
             return Err("jobs.health_port 必须大于 0".into());
         }
+        if self.lease_recovery_interval_seconds == 0 || self.lease_recovery_interval_seconds > 3_600
+        {
+            return Err("jobs.lease_recovery_interval_seconds 必须在 1 到 3600 之间".into());
+        }
         if !environment.is_test() && self.mode == JobWorkerMode::Disabled {
             return Err("jobs.mode = \"disabled\" 仅允许隔离环境使用".into());
         }
@@ -118,6 +137,10 @@ impl JobConfig {
 
 const fn default_poll_interval_ms() -> u64 {
     500
+}
+
+const fn default_max_idle_poll_interval_ms() -> u64 {
+    5000
 }
 
 const fn default_lease_seconds() -> u64 {
@@ -150,4 +173,8 @@ fn default_health_host() -> String {
 
 const fn default_health_port() -> u16 {
     9091
+}
+
+const fn default_lease_recovery_interval_seconds() -> u64 {
+    15
 }

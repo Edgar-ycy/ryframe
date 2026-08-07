@@ -92,6 +92,10 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     ),
     EnvOverride::string("APP_JOBS_MODE", &["jobs", "mode"]),
     EnvOverride::integer("APP_JOBS_POLL_INTERVAL_MS", &["jobs", "poll_interval_ms"]),
+    EnvOverride::integer(
+        "APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS",
+        &["jobs", "max_idle_poll_interval_ms"],
+    ),
     EnvOverride::integer("APP_JOBS_LEASE_SECONDS", &["jobs", "lease_seconds"]),
     EnvOverride::integer("APP_JOBS_HEARTBEAT_SECONDS", &["jobs", "heartbeat_seconds"]),
     EnvOverride::integer(
@@ -107,6 +111,10 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_JOBS_WORKER_ID", &["jobs", "worker_id"]),
     EnvOverride::string("APP_JOBS_HEALTH_HOST", &["jobs", "health_host"]),
     EnvOverride::integer("APP_JOBS_HEALTH_PORT", &["jobs", "health_port"]),
+    EnvOverride::integer(
+        "APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS",
+        &["jobs", "lease_recovery_interval_seconds"],
+    ),
     EnvOverride::boolean("APP_TELEMETRY_ENABLED", &["telemetry", "enabled"]),
     EnvOverride::string("APP_TELEMETRY_ENDPOINT", &["telemetry", "endpoint"]),
     EnvOverride::string("APP_TELEMETRY_SERVICE_NAME", &["telemetry", "service_name"]),

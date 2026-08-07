@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration as StdDuration};
+use std::{
+    sync::Arc,
+    time::{Duration as StdDuration, SystemTime, UNIX_EPOCH},
+};
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_config::JobConfig;
@@ -40,6 +43,8 @@ pub struct OutboxWorker {
     worker_prefix: String,
     lease_duration: Duration,
     poll_interval: StdDuration,
+    max_idle_poll_interval: StdDuration,
+    lease_recovery_interval: StdDuration,
     concurrency: usize,
     authorization_cache: AuthorizationCache,
     audit_service: Option<Arc<OperLogService>>,
@@ -59,6 +64,8 @@ impl OutboxWorker {
                 .unwrap_or_else(|| "ryframe-outbox".into()),
             lease_duration: Duration::seconds(lease_seconds),
             poll_interval: StdDuration::from_millis(config.poll_interval_ms),
+            max_idle_poll_interval: StdDuration::from_millis(config.max_idle_poll_interval_ms),
+            lease_recovery_interval: StdDuration::from_secs(config.lease_recovery_interval_seconds),
             concurrency: config.concurrency,
             authorization_cache: AuthorizationCache::disabled(),
             audit_service: None,
@@ -379,6 +386,7 @@ impl OutboxWorker {
     async fn run_until_shutdown(&self, worker_id: String, mut shutdown: watch::Receiver<bool>) {
         tracing::info!(worker_id = %worker_id, "Outbox Worker 已启动");
         let mut consecutive_infrastructure_failures = 0_u32;
+        let mut idle_wait = self.poll_interval;
         loop {
             if *shutdown.borrow() {
                 break;
@@ -389,8 +397,10 @@ impl OutboxWorker {
                         tracing::info!(worker_id = %worker_id, "Outbox Worker 基础设施调用已恢复");
                     }
                     consecutive_infrastructure_failures = 0;
+                    idle_wait =
+                        next_idle_wait(idle_wait, self.poll_interval, self.max_idle_poll_interval);
                     tokio::select! {
-                        _ = time::sleep(self.poll_interval) => {}
+                        _ = time::sleep(jittered_delay(idle_wait)) => {}
                         changed = shutdown.changed() => {
                             if changed.is_err() || *shutdown.borrow() {
                                 break;
@@ -403,6 +413,7 @@ impl OutboxWorker {
                         tracing::info!(worker_id = %worker_id, "Outbox Worker 基础设施调用已恢复");
                     }
                     consecutive_infrastructure_failures = 0;
+                    idle_wait = self.poll_interval;
                     tracing::warn!(worker_id = %worker_id, "Outbox 事件租约已失效，忽略本次投递结果");
                 }
                 Ok(_) => {
@@ -410,6 +421,7 @@ impl OutboxWorker {
                         tracing::info!(worker_id = %worker_id, "Outbox Worker 基础设施调用已恢复");
                     }
                     consecutive_infrastructure_failures = 0;
+                    idle_wait = self.poll_interval;
                 }
                 Err(error) => {
                     consecutive_infrastructure_failures =
@@ -480,7 +492,7 @@ impl OutboxWorker {
                 }
             }
             tokio::select! {
-                _ = time::sleep(self.poll_interval) => {}
+                _ = time::sleep(self.lease_recovery_interval) => {}
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
                         break;
@@ -489,4 +501,33 @@ impl OutboxWorker {
             }
         }
     }
+}
+
+fn next_idle_wait(
+    current: StdDuration,
+    min_interval: StdDuration,
+    max_interval: StdDuration,
+) -> StdDuration {
+    if current >= max_interval {
+        return max_interval;
+    }
+    std::cmp::max(
+        min_interval,
+        std::cmp::min(max_interval, current.saturating_mul(2)),
+    )
+}
+
+fn jittered_delay(base: StdDuration) -> StdDuration {
+    let base_ms = base.as_millis().max(1) as i64;
+    let jitter = base_ms / 5; // ±20%
+    if jitter == 0 {
+        return base;
+    }
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|time| i64::from(time.subsec_nanos()))
+        .unwrap_or(0);
+    let offset = (seed.rem_euclid(2 * jitter + 1)) - jitter;
+    let actual = base_ms.saturating_add(offset).max(1);
+    StdDuration::from_millis(actual as u64)
 }
