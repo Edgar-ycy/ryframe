@@ -10,7 +10,6 @@ description = "RyFrame 传输无关的领域核心类型"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-thiserror = { workspace = true }
 validator = { workspace = true }
 
 [lints]

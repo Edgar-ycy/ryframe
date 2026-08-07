@@ -50,31 +50,41 @@ impl fmt::Display for ErrorCode {
 /// 与传输协议无关的应用错误。
 ///
 /// HTTP 状态码、响应信封与日志脱敏应由边缘适配层处理，领域层仅表达失败语义及细节。
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum AppError {
-    #[error("参数校验失败: {0}")]
     Validation(String),
-    #[error("认证失败: {0}")]
     Authentication(String),
-    #[error("权限不足: {0}")]
     Authorization(String),
-    #[error("资源不存在: {0}")]
     NotFound(String),
-    #[error("数据冲突: {0}")]
     Conflict(String),
-    #[error("请求体过大: {0}")]
     PayloadTooLarge(String),
-    #[error("请求过于频繁: {0}")]
     RateLimited(String, u64),
-    #[error("数据库错误: {0}")]
     Database(String),
-    #[error("配置错误: {0}")]
     Config(String),
-    #[error("内部错误: {0}")]
     Internal(String),
-    #[error("服务暂不可用: {0}")]
     ServiceUnavailable(String),
 }
+
+impl fmt::Display for AppError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let category = match self {
+            Self::Validation(_) => "参数校验失败",
+            Self::Authentication(_) => "认证失败",
+            Self::Authorization(_) => "权限不足",
+            Self::NotFound(_) => "资源不存在",
+            Self::Conflict(_) => "数据冲突",
+            Self::PayloadTooLarge(_) => "请求体过大",
+            Self::RateLimited(_, _) => "请求过于频繁",
+            Self::Database(_) => "数据库错误",
+            Self::Config(_) => "配置错误",
+            Self::Internal(_) => "内部错误",
+            Self::ServiceUnavailable(_) => "服务暂不可用",
+        };
+        write!(formatter, "{category}: {}", self.message())
+    }
+}
+
+impl std::error::Error for AppError {}
 
 impl AppError {
     /// 返回错误对应的稳定领域错误码。

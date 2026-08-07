@@ -3298,7 +3298,6 @@ name = "ryframe-kernel"
 version = "0.7.0"
 dependencies = [
  "serde",
- "thiserror 2.0.18",
  "validator",
 ]
 
@@ -3317,7 +3316,6 @@ name = "ryframe-middleware"
 version = "0.7.0"
 dependencies = [
  "axum",
- "chrono",
  "dashmap",
  "http",
  "lazy_static",

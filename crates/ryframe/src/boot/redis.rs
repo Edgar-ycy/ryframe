@@ -1,3 +1,4 @@
+use redis::RedisError;
 use ryframe_config::{Environment, RedisConfig, RedisMode};
 use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_kernel::{AppError, AppResult};
@@ -88,6 +89,6 @@ async fn verify_production_policy(redis: &RedisClient) -> AppResult<()> {
     Ok(())
 }
 
-fn redis_policy_error(error: redis::RedisError) -> AppError {
+fn redis_policy_error(error: RedisError) -> AppError {
     AppError::Config(format!("unable to verify production Redis policy: {error}"))
 }

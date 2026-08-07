@@ -42,8 +42,10 @@ impl SqlxEventFields {
 }
 
 impl Visit for SqlxEventFields {
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.record_text(field.name(), value.to_owned());
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        if field.name() == "elapsed_secs" {
+            self.elapsed_secs = Some(value);
+        }
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
@@ -54,10 +56,8 @@ impl Visit for SqlxEventFields {
         }
     }
 
-    fn record_f64(&mut self, field: &Field, value: f64) {
-        if field.name() == "elapsed_secs" {
-            self.elapsed_secs = Some(value);
-        }
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record_text(field.name(), value.to_owned());
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
