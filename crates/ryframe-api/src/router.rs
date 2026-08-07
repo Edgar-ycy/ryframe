@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path, Request, State},
+    extract::{Extension, Path, Request, State},
     http::{HeaderValue, StatusCode, header, header::RETRY_AFTER},
     middleware,
     middleware::{Next, from_fn_with_state},
@@ -32,7 +32,7 @@ use crate::{
         message_handler, notice_handler, online_user_handler, oper_log_handler, permission_handler,
         post_handler, profile_handler, role_handler, user_handler,
     },
-    oper_log_middleware::{OperLogMiddlewareState, oper_log_middleware},
+    oper_log_middleware::{AuditMode, OperLogMiddlewareState, oper_log_middleware},
     request_locale::request_locale_middleware,
     state::AppState,
 };
@@ -156,18 +156,27 @@ pub fn auth_router(state: AppState) -> Router {
             post(auth_handler::complete_password_reset),
         );
 
-    // 受保护路由
-    // .layer() 从后往前执行：auth（外层先执行）→ oper_log（内层后执行）→ handler
-    let protected = protect(
-        Router::new()
-            .route("/me", get_route(auth_handler::me))
-            .route("/ws-ticket", post(auth_handler::websocket_ticket))
-            .layer(from_fn_with_state(
-                oper_log_state.clone(),
-                oper_log_middleware,
-            )),
-        &state,
-    );
+    // 当前用户信息是只读技术端点，显式跳过通用操作审计。
+    let skipped_protected = Router::new()
+        .route("/me", get_route(auth_handler::me))
+        .layer(from_fn_with_state(
+            oper_log_state.clone(),
+            oper_log_middleware,
+        ))
+        .layer(Extension(AuditMode::Skip));
+
+    // WebSocket ticket 只写入 Redis，显式允许审计事件使用独立 Outbox 事务。
+    // 后注册的 Extension 位于操作审计中间件外层，确保策略在中间件执行前可见。
+    let independent_protected = Router::new()
+        .route("/ws-ticket", post(auth_handler::websocket_ticket))
+        .layer(from_fn_with_state(
+            oper_log_state.clone(),
+            oper_log_middleware,
+        ))
+        .layer(Extension(AuditMode::Independent));
+
+    // protect() 位于最外层，执行顺序为 auth → 审计策略 → oper_log → handler。
+    let protected = protect(skipped_protected.merge(independent_protected), &state);
 
     // 个人资料路由（认证 + 操作日志，中间件在此统一注册）
     // profile_router 不再内嵌 .with_state()

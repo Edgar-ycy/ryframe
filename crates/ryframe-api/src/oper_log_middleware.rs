@@ -19,6 +19,24 @@ use ryframe_service::{
 use ryframe_utils::ip::ClientIp;
 use uuid::Uuid;
 
+/// 写请求使用的操作审计事务策略。
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum AuditMode {
+    /// 数据库业务写入必须在同一事务中提交审计 Outbox。
+    #[default]
+    Transactional,
+    /// Redis、对象存储或外部系统写入允许使用独立短事务记录审计。
+    Independent,
+    /// 只读或纯技术端点不生成通用操作审计。
+    Skip,
+}
+
+impl AuditMode {
+    fn requires_transaction(self) -> bool {
+        matches!(self, Self::Transactional)
+    }
+}
+
 /// 操作日志中间件状态
 #[derive(Clone)]
 pub struct OperLogMiddlewareState {
@@ -42,6 +60,14 @@ pub async fn oper_log_middleware(
     next: Next,
 ) -> Response {
     let method = request.method().clone();
+    let audit_mode = request
+        .extensions()
+        .get::<AuditMode>()
+        .copied()
+        .unwrap_or_default();
+    if matches!(audit_mode, AuditMode::Skip) {
+        return next.run(request).await;
+    }
 
     // 仅对写操作记录日志
     let should_log = matches!(
@@ -124,9 +150,9 @@ pub async fn oper_log_middleware(
     // 业务事务已经原子提交 Outbox 时无需重复写入；其他路径使用独立短事务。
     // 审计故障只记录指标与错误日志，绝不覆盖原始业务响应。
     if !(is_success && context.transaction_committed()) {
-        if is_success && !context.transaction_bound() {
+        if is_success && audit_mode.requires_transaction() && !context.transaction_bound() {
             ryframe_service::record_audit_failure("transaction_unbound");
-            tracing::warn!("写请求尚未接入业务事务审计绑定，使用独立 Outbox 事务");
+            tracing::warn!("事务型写请求尚未接入业务事务审计绑定，使用独立 Outbox 事务");
         }
         let event = context.event(status, error_msg);
         if let Err(error) = state.outbox.record(&event).await {
@@ -135,6 +161,7 @@ pub async fn oper_log_middleware(
                 error = %error,
                 event_id = %event.event_id,
                 request_id = %event.request_id,
+                audit_mode = ?audit_mode,
                 "操作审计 Outbox 持久化失败"
             );
         }

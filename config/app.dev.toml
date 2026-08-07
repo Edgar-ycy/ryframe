@@ -61,4 +61,4 @@ allow_origins = [
 trusted_cidrs = []
 
 [logger]
-level = "debug"
+level = "info"
