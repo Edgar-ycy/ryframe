@@ -179,14 +179,14 @@ flowchart LR
 54. 领域类型、HTTP 响应适配、国际化、通用工具、验证码和 Excel 能力已拆分为独立 crate；废弃邮件 crate 与其依赖均已删除。业务层返回 `ryframe-kernel::AppError/AppResult`，API 边界仅通过 `ryframe-http::HttpAppError/HttpResult` 做单向 HTTP 适配，不再保留重复错误枚举或双向转换。
 55. 旧公共兼容包已从工作区、源码和文档中完全删除；调用方必须直接依赖领域核心、HTTP、国际化或具体功能 crate，架构门禁会阻止旧包路径回流。
 56. 语言资源由 `ryframe-i18n::Localizer` 显式注入应用状态，启动时校验 `zh-CN` 与 `en-US` 键集一致；REST 响应协商语言并返回 `Content-Language`，同时合并 `Vary: Accept-Language`，用户偏好可持久化。
-57. 数据库迁移支持 `auto`、`verify` 和 `off` 模式；生产可先使用 `ryframe-migrate` 独立验证/执行迁移，再启动 API。持久化后台任务使用租约、退避和死信状态，开发可内嵌、生产可使用独立 `ryframe-worker`。
+57. 数据库迁移支持 `auto`、`verify` 和 `off` 模式；生产可先使用 `ryframe-migrate` 独立验证/执行迁移，再启动 API。持久化后台任务使用租约、死信和空闲退避，开发可内嵌、生产可使用独立 `ryframe-worker`。MySQL 是任务与 Outbox 的唯一可靠事实来源；每个进程最多一个 Redis `ryframe:jobs:wakeup` 订阅循环，进程内/Redis 提示只提前结束等待，丢失、重复或订阅故障均由数据库轮询兜底。空闲等待从 `poll_interval_ms` 起按 2 倍和 ±20% 抖动增长至 `max_idle_poll_interval_ms`，租约恢复按独立的 `lease_recovery_interval_seconds` 周期运行。
 58. 消息中心在主库事务内写入消息、受众、收件人快照和派发任务；收件人使用 `INSERT … SELECT` 从启用用户集合直接固化，不在 Rust 内加载租户用户全集，并以 `max_recipients_per_message + 1` 检测超限后回滚。消息及收件箱的全部时间列使用 `DATETIME(6)`，与 `UTC_TIMESTAMP(6)` 数据库时钟保持相同精度，禁止恢复会把后半秒舍入到未来一秒的无小数精度列。`MessagingConfig` 由组合根显式注入 Service 与本实例连接中心，统一控制总开关、一次性 ticket 有效期、保留期、每用户连接上限、有界出站队列和单消息收件人数；同一租户用户的连接上限通过并发安全索引原子执行。一次性 WebSocket ticket 经 Redis 原子消费，收件箱、确认、已读和公告显式发布均复用同一服务边界。WebSocket 连接必须先将 hello 帧成功放入有界发送队列，之后才能标记为可投递并触发补拉；ACK 持久化前，实时唤醒与周期补拉共同提供至少一次投递，客户端必须按 message ID 做逻辑合并，不承诺原始帧 exactly-once。ACK 持久化后，新连接跨完整补拉周期必须保持该消息零投递。关闭消息中心后对应 REST、票据、WebSocket、Redis 订阅和消息任务入口不再运行。
 `acked_at` 表示客户端实际收到消息后的自动送达确认；`read_at` 只在用户打开详情后写入，已读必然已送达。`deleted_at` 是当前收件人的软删除标记，不影响主消息、发送者或其他收件人；已删除记录不得进入列表、未读数、重放、补拉、送达确认或已读更新。
 
 59. 架构门禁已把新 crate 依赖基线、内核禁止依赖和已删除公共包的路径禁用纳入自动检查，防止分层迁移在后续开发中回退。
 60. 公告 API 只使用 `content_markdown` 传输 Markdown 原文，旧 `content` 字段会被拒绝；1–60,000 个 UTF-8 字节的限制由后端 OpenAPI `x-ryframe-notice-policy` 发布，前端同步生成策略并按同一字节口径校验。
 61. 统一响应信封覆盖所有 `/api` 路径，未知 API 版本和无版本业务路径返回相同 JSON `404`；响应只能使用 `message/data/request_id/error_key/details`，旧 `msg/rows/total` 顶层字段会被拒绝。
-62. Swagger UI 使用与 utoipa 5 匹配的 Rust crate 在编译期内嵌全部静态资源，不依赖 CDN、外部校验器、内联初始化脚本或兼容重定向。全局 CSP 的脚本源仅允许同源且不启用 `unsafe-eval`；Swagger UI 页面只针对运行时内联样式放宽 `style-src`，生产仍强制关闭运行时文档。
+62. Swagger UI 使用与 utoipa 5 匹配的 Rust crate 在编译期内嵌全部静态资源，不依赖 CDN、外部校验器、内联初始化脚本或兼容重定向。根包默认启用的 `runtime-swagger-ui` feature 仅服务开发和受控测试；生产构建通过 `--no-default-features` 删除整组静态资源。全局 CSP 的脚本源仅允许同源且不启用 `unsafe-eval`；Swagger UI 页面只针对运行时内联样式放宽 `style-src`。无该 feature 却设置 `api_docs.enabled=true` 时，API 必须在连接外部依赖前明确失败，OpenAPI 代码生成与检入契约不受影响。
 63. Service 直接保存具体 Repository，已删除不产生日志的仓储包装层；`DatabaseCluster` 只保留单主库或显式副本槽位构造入口，架构门禁禁止旧包装与隐式集群构造函数回流。
 
 ## 4. 后续优先级

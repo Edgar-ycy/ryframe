@@ -15,6 +15,7 @@ pub fn build_app(
     rate_limit_state: RateLimitState,
     cors_config: &CorsConfig,
 ) -> AppResult<Router> {
+    ryframe_api::validate_runtime_features(&state.config)?;
     let trusted_proxies = state.trusted_proxies.clone();
     let response_localizer = state.localizer.clone();
     let upload_limits = state.config.upload.clone();

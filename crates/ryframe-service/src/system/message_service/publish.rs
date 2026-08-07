@@ -107,6 +107,9 @@ impl MessageService {
                 .await?;
         }
         crate::commit_current_audit(transaction).await?;
+        if published.inserted {
+            self.queue.notify_outbox().await;
+        }
 
         Ok(PublishedMessage {
             message: MessageTemplate::from_published(&published.message),

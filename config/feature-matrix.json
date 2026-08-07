@@ -6,7 +6,15 @@
       "minimal": [],
       "maximal": [
         "default",
-        "file-maintenance"
+        "file-maintenance",
+        "runtime-swagger-ui"
+      ]
+    },
+    {
+      "package": "ryframe-api",
+      "minimal": [],
+      "maximal": [
+        "runtime-swagger-ui"
       ]
     },
     {

@@ -1,3 +1,6 @@
+use ryframe_config::AppConfig;
+use ryframe_kernel::{AppError, AppResult};
+
 pub mod dto;
 mod handler_utils;
 pub mod handlers;
@@ -21,3 +24,15 @@ pub use request_locale::RequestLocale;
 pub use router::{api_router, auth_router};
 pub use state::{AppServices, AppState};
 pub use versioning::{ApiVersion, VersionedRouter};
+
+pub const RUNTIME_SWAGGER_UI_AVAILABLE: bool = cfg!(feature = "runtime-swagger-ui");
+
+/// 校验配置要求的运行时组件已经随当前二进制编译。
+pub fn validate_runtime_features(config: &AppConfig) -> AppResult<()> {
+    if config.api_docs.enabled && !RUNTIME_SWAGGER_UI_AVAILABLE {
+        return Err(AppError::Config(
+            "api_docs.enabled = true 时必须启用 runtime-swagger-ui feature".into(),
+        ));
+    }
+    Ok(())
+}

@@ -1,9 +1,19 @@
 use std::sync::Arc;
 
+use crate::{
+    handlers::{
+        auth_handler, captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
+        export_handler, generator_handler, job_handler, login_log_handler, menu_handler,
+        message_handler, notice_handler, online_user_handler, oper_log_handler, permission_handler,
+        post_handler, profile_handler, role_handler, user_handler,
+    },
+    oper_log_middleware::{AuditMode, OperLogMiddlewareState, oper_log_middleware},
+    request_locale::request_locale_middleware,
+    state::AppState,
+};
 use axum::{
     Json, Router,
-    body::Body,
-    extract::{Extension, Path, Request, State},
+    extract::{Extension, Request, State},
     http::{HeaderValue, StatusCode, header, header::RETRY_AFTER},
     middleware,
     middleware::{Next, from_fn_with_state},
@@ -23,19 +33,6 @@ use ryframe_middleware::{
 use ryframe_service::system::OnlineUserService;
 use serde::Serialize;
 use utoipa::ToSchema;
-use utoipa_swagger_ui::{Config as SwaggerUiConfig, serve as serve_swagger_ui};
-
-use crate::{
-    handlers::{
-        auth_handler, captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
-        export_handler, generator_handler, job_handler, login_log_handler, menu_handler,
-        message_handler, notice_handler, online_user_handler, oper_log_handler, permission_handler,
-        post_handler, profile_handler, role_handler, user_handler,
-    },
-    oper_log_middleware::{AuditMode, OperLogMiddlewareState, oper_log_middleware},
-    request_locale::request_locale_middleware,
-    state::AppState,
-};
 
 #[derive(Clone)]
 struct AuthenticatedTenantRateLimitState {
@@ -284,12 +281,14 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .route("/version", get_route(api_version));
 
     if state.config.api_docs.enabled {
-        router = router
-            .route(
-                "/api-docs/openapi.json",
-                get_route(crate::openapi::openapi_json),
-            )
-            .merge(swagger_ui_router());
+        router = router.route(
+            "/api-docs/openapi.json",
+            get_route(crate::openapi::openapi_json),
+        );
+        #[cfg(feature = "runtime-swagger-ui")]
+        {
+            router = router.merge(swagger_ui_router());
+        }
     }
     router.layer(middleware::from_fn(request_locale_middleware))
 }
@@ -297,10 +296,12 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 mod groups;
 #[path = "router/runtime_status.rs"]
 mod runtime_probe;
+#[cfg(feature = "runtime-swagger-ui")]
 mod swagger;
 
 use groups::{common_router, monitor_router, system_router, tools_router};
 use runtime_probe::RuntimeStatus;
+#[cfg(feature = "runtime-swagger-ui")]
 use swagger::swagger_ui_router;
 
 #[get("/runtime")]

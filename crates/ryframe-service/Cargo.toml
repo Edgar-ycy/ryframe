@@ -19,6 +19,8 @@ ryframe-generator = { path = "../ryframe-generator" }
 ryframe-excel = { path = "../ryframe-excel" }
 ryframe-storage = { path = "../ryframe-storage" }
 async-trait = { workspace = true }
+futures-util = { workspace = true }
+redis = { workspace = true }
 base64 = { workspace = true }
 zip = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }

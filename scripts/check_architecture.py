@@ -407,9 +407,7 @@ def check_secret_source_policy(errors: list[str]) -> None:
                 f"{path.relative_to(ROOT)}"
             )
 
-    app_config = (
-        ROOT / "crates/ryframe-config/src/app_config.rs"
-    ).read_text(encoding="utf-8")
+    app_config = module_source("crates/ryframe-config/src/app_config.rs")
     file_guard = app_config.find("reject_production_file_secrets(&table)?;")
     environment_override = app_config.find("apply_env_overrides(&mut table)?;")
     removed_encoding_guard = app_config.find("reject_removed_secret_encoding(&table)?;")
@@ -1194,9 +1192,7 @@ def check_public_dto_boundary(errors: list[str]) -> None:
                 f"{path.relative_to(ROOT)}"
             )
 
-    public_dto_source = (
-        ROOT / "crates/ryframe-api/src/dto/public_dto.rs"
-    ).read_text(encoding="utf-8")
+    public_dto_source = module_source("crates/ryframe-api/src/dto/public_dto.rs")
     errors.extend(public_dto_conversion_violations(public_dto_source))
 
     service_file_source = (
@@ -1574,16 +1570,33 @@ def check_embedded_swagger_ui(errors: list[str]) -> None:
             'utoipa-swagger-ui = { version = "9.0.2", default-features = false, features = ["vendored"] }',
         ),
         "crates/ryframe-api/Cargo.toml": (
-            "utoipa-swagger-ui = { workspace = true }",
+            'runtime-swagger-ui = ["dep:utoipa-swagger-ui"]',
+            "utoipa-swagger-ui = { workspace = true, optional = true }",
+        ),
+        "crates/ryframe/Cargo.toml": (
+            'default = ["runtime-swagger-ui"]',
+            'runtime-swagger-ui = ["ryframe-api/runtime-swagger-ui"]',
         ),
         "crates/ryframe-api/src/router.rs": (
             '.route("/swagger-ui", get_route(swagger_ui_index))',
             '.route("/swagger-ui/{*asset}", get_route(swagger_ui_asset))',
+            '#[cfg(feature = "runtime-swagger-ui")]',
             "serve as serve_swagger_ui",
             'validator_url("none")',
             "fn swagger_ui_base_element() -> String",
             'format!("<base href=\\\"{}/swagger-ui/\\\">", API_PREFIX)',
             'SwaggerUiConfig::from(api_path("api-docs/openapi.json"))',
+        ),
+        "crates/ryframe-api/src/lib.rs": (
+            "pub const RUNTIME_SWAGGER_UI_AVAILABLE: bool = cfg!(feature = \"runtime-swagger-ui\");",
+            "if config.api_docs.enabled && !RUNTIME_SWAGGER_UI_AVAILABLE",
+            "api_docs.enabled = true 时必须启用 runtime-swagger-ui feature",
+        ),
+        "crates/ryframe/src/main.rs": (
+            "ryframe_api::validate_runtime_features(&config)?;",
+        ),
+        "crates/ryframe/src/app.rs": (
+            "ryframe_api::validate_runtime_features(&state.config)?;",
         ),
         "crates/ryframe-middleware/src/security_headers.rs": (
             "script-src 'self';",
@@ -1670,7 +1683,7 @@ def check_api_prefix_contract(errors: list[str]) -> None:
         ),
     }
     for relative_path, fragments in required_fragments.items():
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        source = module_source(relative_path)
         for fragment in fragments:
             if fragment not in source:
                 errors.append(
@@ -1901,6 +1914,9 @@ def check_release_artifacts(errors: list[str]) -> None:
         "image: ${RYFRAME_IMAGE:?",
         "APP_DATABASE_MIGRATION_MODE: verify",
         "APP_JOBS_MODE: external",
+        "APP_JOBS_POLL_INTERVAL_MS: ${APP_JOBS_POLL_INTERVAL_MS:-500}",
+        "APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS: ${APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS:-5000}",
+        "APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS: ${APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS:-15}",
         "SNOWFLAKE_WORKER_ID:",
         "read_only: true",
         "internal: true",
@@ -2157,9 +2173,7 @@ def check_messaging_runtime_policy(errors: list[str]) -> None:
     config_source = (
         ROOT / "crates/ryframe-config/src/messaging_config.rs"
     ).read_text(encoding="utf-8")
-    app_config_source = (
-        ROOT / "crates/ryframe-config/src/app_config.rs"
-    ).read_text(encoding="utf-8")
+    app_config_source = module_source("crates/ryframe-config/src/app_config.rs")
     service_source = module_source(
         "crates/ryframe-service/src/system/message_service.rs"
     )
@@ -2405,7 +2419,7 @@ def check_persisted_trace_context(errors: list[str]) -> None:
         ),
     }
     for relative_path, fragments in required_fragments.items():
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        source = module_source(relative_path)
         for fragment in fragments:
             if fragment not in source:
                 errors.append(

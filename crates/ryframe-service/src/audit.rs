@@ -12,6 +12,7 @@ use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
+use crate::jobs::JobQueue;
 use crate::system::{OperLogStatus, RecordOperLogCommand};
 
 /// 操作审计事件在事务 Outbox 中使用的稳定类型标识。
@@ -175,6 +176,7 @@ pub async fn commit_current_audit(transaction: DatabaseTransaction) -> AppResult
 pub struct AuditOutbox {
     database: DatabaseCluster,
     max_attempts: i32,
+    job_queue: Option<Arc<JobQueue>>,
 }
 
 impl AuditOutbox {
@@ -182,7 +184,14 @@ impl AuditOutbox {
         Self {
             database,
             max_attempts: default_max_attempts.clamp(1, OUTBOX_MAX_ATTEMPTS),
+            job_queue: None,
         }
+    }
+
+    /// 连接共享队列，使独立 Outbox 事务提交后可以发送可选唤醒提示。
+    pub fn with_job_queue(mut self, job_queue: Arc<JobQueue>) -> Self {
+        self.job_queue = Some(job_queue);
+        self
     }
 
     /// 使用独立短事务持久化审计事件，响应成功与否均不会依赖内存任务。
@@ -195,7 +204,13 @@ impl AuditOutbox {
             .map_err(database_error)?;
         let result = record_event_in_transaction(&transaction, event, self.max_attempts).await;
         match result {
-            Ok(()) => transaction.commit().await.map_err(database_error),
+            Ok(()) => {
+                transaction.commit().await.map_err(database_error)?;
+                if let Some(job_queue) = &self.job_queue {
+                    job_queue.notify_outbox().await;
+                }
+                Ok(())
+            }
             Err(error) => {
                 let _ = transaction.rollback().await;
                 Err(error)

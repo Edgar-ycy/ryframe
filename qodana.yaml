@@ -1,45 +1,46 @@
 #-------------------------------------------------------------------------------#
-#                         Qodana 代码分析配置                                    #
-#             配置文档：https://www.jetbrains.com/help/qodana/qodana-yaml.html   #
+#               Qodana analysis is configured by qodana.yaml file               #
+#             https://www.jetbrains.com/help/qodana/qodana-yaml.html            #
 #-------------------------------------------------------------------------------#
 
 #################################################################################
-#         警告：不要在此文件中存放敏感信息，其内容会进入 Qodana 报告。           #
+#              WARNING: Do not store sensitive information in this file,        #
+#               as its contents will be included in the Qodana report.          #
 #################################################################################
 version: "1.0"
 
-# 指定代码分析使用的检查配置。
+#Specify inspection profile for code analysis
 profile:
   name: qodana.starter
 
-# 按需启用额外检查项。
-# include: # 启用列表
-#   - name: <SomeEnabledInspectionId> # 检查项标识
+#Enable inspections
+#include:
+#  - name: <SomeEnabledInspectionId>
 
-# 按需禁用检查项或限定排除路径。
-# exclude: # 禁用列表
-#   - name: <SomeDisabledInspectionId> # 检查项标识
-#     paths: # 排除路径列表
-#       - <path/where/not/run/inspection> # 不执行检查的路径
+#Disable inspections
+#exclude:
+#  - name: <SomeDisabledInspectionId>
+#    paths:
+#      - <path/where/not/run/inspection>
 
-# 在 Qodana 执行前运行准备命令，仅应用于 CI/CD 流水线。
-# bootstrap: sh ./prepare-qodana.sh # 准备脚本示例
+#Execute shell command before Qodana execution (Applied in CI/CD pipeline)
+#bootstrap: sh ./prepare-qodana.sh
 
-# 在 Qodana 执行前安装 IDE 插件，仅应用于 CI/CD 流水线。
-# plugins: # 插件列表
-#   - id: <plugin.id> # 插件标识可在 https://plugins.jetbrains.com 查询
+#Install IDE plugins before Qodana execution (Applied in CI/CD pipeline)
+#plugins:
+#  - id: <plugin.id> #(plugin id can be found at https://plugins.jetbrains.com)
 
-# 质量门禁任一条件不满足时，CI/CD 流水线将失败。
-# severityThresholds 用于配置不同问题严重级别的最大数量。
-# testCoverageThresholds 用于配置项目整体与新增代码的最低覆盖率。
-# 代码覆盖率功能仅在 Ultimate 和 Ultimate Plus 方案中提供。
-# failureConditions: # 失败条件
-#   severityThresholds: # 严重级别阈值
-#     any: 15 # 全部问题上限
-#     critical: 5 # 严重问题上限
-#   testCoverageThresholds: # 测试覆盖率阈值
-#     fresh: 70 # 新增代码最低覆盖率
-#     total: 50 # 项目整体最低覆盖率
+# Quality gate. Will fail the CI/CD pipeline if any condition is not met
+# severityThresholds - configures maximum thresholds for different problem severities
+# testCoverageThresholds - configures minimum code coverage on a whole project and newly added code
+# Code Coverage is available in Ultimate and Ultimate Plus plans
+#failureConditions:
+#  severityThresholds:
+#    any: 15
+#    critical: 5
+#  testCoverageThresholds:
+#    fresh: 70
+#    total: 50
 
-# 使用 Qodana for Rust 的官方 EAP 分析器；本仓库暂不新增 Qodana CI 作业。
-linter: jetbrains/qodana-rust:2026.1-eap
+#Specify Qodana linter for analysis (Applied in CI/CD pipeline)
+linter: jetbrains/qodana-<linter>:2026.2

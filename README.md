@@ -56,6 +56,10 @@ cargo run
 - Swagger UI：`http://localhost:8080/api/v1/swagger-ui`
 - Prometheus：`http://localhost:8080/api/v1/monitor/metrics`
 
+`cargo run` 默认启用 `runtime-swagger-ui`，因此本机开发可以访问上述 Swagger UI。生产镜像和
+手工生产构建必须使用 `--no-default-features`，以便不把内嵌 Swagger UI 静态资源带入 API
+二进制；此时 `APP_API_DOCS_ENABLED` 必须保持为 `false`。
+
 `/readyz` 只读取后台任务最近一次依赖探测的内存快照，不在请求路径执行 SQL、Redis
 或对象存储网络调用；快照过期或必要依赖不可用时返回 `503`。
 
@@ -98,8 +102,8 @@ python scripts/check_source_hygiene.py
 python scripts/check_architecture.py
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
-# 部署环境按需从稳定标签源码构建 Linux 可执行文件
-cross build --release --target x86_64-unknown-linux-gnu
+# 部署环境按需从稳定标签源码构建不含 Swagger UI 的 Linux API 可执行文件
+cross build --release --no-default-features --target x86_64-unknown-linux-gnu -p ryframe --bin ryframe
 ```
 
 托管后端 CI 在 Linux 上执行格式、源码卫生、架构与权限门禁、工作流和部署静态校验，
@@ -175,6 +179,10 @@ config/app.prod.toml
 | `APP_AUTH_JWT_SECRET_FILE` | JWT 签名密钥文件；生产环境必须随机生成且至少 32 字节 | 开发配置值 |
 | `APP_REDIS_MODE` | `required`、`optional` 或 `disabled`；生产固定 required | `optional` |
 | `APP_REDIS_TLS` | Redis 是否使用证书校验的 `rediss://`；远程生产 Redis 必须启用 | `false` |
+| `APP_JOBS_MODE` | 后台任务执行模式；生产固定 `external` | 开发 `embedded`，生产 `external` |
+| `APP_JOBS_POLL_INTERVAL_MS` | 空队列轮询的最小等待（`50..=60000`）；领取任务、收到唤醒或手动重试后会重置到该值 | `500` |
+| `APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS` | 连续空闲时按 2 倍退避的上限，必须位于最小等待到 `60000` 毫秒之间 | `5000` |
+| `APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS` | 过期任务和 Outbox 租约恢复的独立周期（`1..=3600`） | `15` |
 | `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；远程生产数据库使用 `verify_identity` | `disabled` |
 | `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
 | `APP_API_DOCS_ENABLED` | 是否暴露运行时 Swagger/OpenAPI；生产必须关闭 | `true` |

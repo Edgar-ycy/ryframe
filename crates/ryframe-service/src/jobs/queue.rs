@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
+use ryframe_core::RedisClient;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, DatabaseCluster,
@@ -14,7 +15,10 @@ use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 use tokio::{sync::watch, task::JoinHandle, time};
 
-use super::metrics::JobMetricsObserver;
+use super::{
+    metrics::JobMetricsObserver,
+    wakeup::{QueueWakeup, WakeupQueue},
+};
 use crate::system::{EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
 
 /// 后台任务分页列表的业务查询参数。
@@ -97,16 +101,25 @@ pub struct JobQueue {
     database: DatabaseCluster,
     repository: Arc<BackgroundJobRepository>,
     metrics_observer: Arc<RwLock<Option<Arc<dyn JobMetricsObserver>>>>,
+    wakeup: Arc<QueueWakeup>,
 }
 
 impl JobQueue {
     /// 使用主库构造任务队列。所有领取、状态迁移和入队都必须走主库。
     pub fn new(database: DatabaseCluster) -> Self {
+        let metrics_observer = Arc::new(RwLock::new(None));
         Self {
             database,
             repository: Arc::new(BackgroundJobRepository),
-            metrics_observer: Arc::new(RwLock::new(None)),
+            wakeup: Arc::new(QueueWakeup::new(None, metrics_observer.clone())),
+            metrics_observer,
         }
+    }
+
+    /// 配置可选 Redis 唤醒提示；未配置 Redis 时仍保留本进程本地唤醒。
+    pub fn with_wakeup_redis(mut self, redis: Option<RedisClient>) -> Self {
+        self.wakeup = Arc::new(QueueWakeup::new(redis, self.metrics_observer.clone()));
+        self
     }
 
     /// 安装应用层提供的任务指标观察者。
@@ -129,26 +142,17 @@ impl JobQueue {
         let Some(observer) = self.metrics_observer() else {
             return Ok(());
         };
-        let now = self.database_now().await?;
-        for job_type in job_types {
-            let filter = BackgroundJobFilter {
-                job_type: Some(job_type),
-                ..Default::default()
-            };
-            let stats = self
-                .repository
-                .stats_filtered(self.primary(), filter.clone(), now)
-                .await?;
-            observer.set_queue_depth(job_type, "pending", stats.pending);
-            observer.set_queue_depth(job_type, "running", stats.running);
-            observer.set_queue_depth(job_type, "dead", stats.dead);
-            observer.set_queue_depth(job_type, "ready", stats.ready);
-            let oldest_ready_age = self
-                .repository
-                .oldest_ready_age(self.primary(), filter, now)
-                .await?
-                .unwrap_or_default();
-            observer.set_oldest_ready_age(job_type, oldest_ready_age);
+        for stats in self
+            .repository
+            .stats_for_types(self.primary(), job_types)
+            .await?
+        {
+            observer.set_queue_depth(&stats.job_type, "pending", stats.pending);
+            observer.set_queue_depth(&stats.job_type, "running", stats.running);
+            observer.set_queue_depth(&stats.job_type, "dead", stats.dead);
+            observer.set_queue_depth(&stats.job_type, "ready", stats.ready);
+            observer
+                .set_oldest_ready_age(&stats.job_type, stats.oldest_ready_age.unwrap_or_default());
         }
         Ok(())
     }
@@ -175,12 +179,18 @@ impl JobQueue {
         command: EnqueueBackgroundJob,
     ) -> AppResult<EnqueueBackgroundJobResult> {
         let now = self.database_now().await?;
-        self.repository
+        let result = self
+            .repository
             .enqueue(self.database.write(), command, now)
-            .await
+            .await?;
+        self.notify_background_jobs().await;
+        Ok(result)
     }
 
     /// 在既有业务事务中写入任务，保证业务数据和任务记录一起提交或回滚。
+    ///
+    /// 调用方在提交成功后应调用 notify_background_jobs；该提示只缩短等待时间，
+    /// 任务可靠性仍由数据库轮询和租约机制保证。
     pub async fn enqueue_in_transaction(
         &self,
         transaction: &DatabaseTransaction,
@@ -197,7 +207,8 @@ impl JobQueue {
         let now = self.database_now().await?;
         let day = now.format("%F").to_string();
         let trace_context = crate::trace_context::current_trace_context();
-        self.repository
+        let result = self
+            .repository
             .enqueue(
                 self.database.write(),
                 EnqueueBackgroundJob {
@@ -213,7 +224,9 @@ impl JobQueue {
                 },
                 now,
             )
-            .await
+            .await?;
+        self.notify_background_jobs().await;
+        Ok(result)
     }
 
     /// 按 UTC 自然日幂等写入一次导出结果清理任务。
@@ -221,7 +234,8 @@ impl JobQueue {
         let now = self.database_now().await?;
         let day = now.format("%F").to_string();
         let trace_context = crate::trace_context::current_trace_context();
-        self.repository
+        let result = self
+            .repository
             .enqueue(
                 self.database.write(),
                 EnqueueBackgroundJob {
@@ -237,7 +251,9 @@ impl JobQueue {
                 },
                 now,
             )
-            .await
+            .await?;
+        self.notify_background_jobs().await;
+        Ok(result)
     }
 
     /// 查询当前租户的后台任务；任务类型和状态均为精确匹配。
@@ -323,6 +339,7 @@ impl JobQueue {
                 "后台任务状态已变化，请刷新后重试".into(),
             ));
         }
+        self.notify_background_jobs().await;
 
         self.repository
             .find_by_id_for_tenant(self.primary(), tenant_id, job_id)
@@ -359,6 +376,37 @@ impl JobQueue {
 
     pub(super) fn primary(&self) -> &sea_orm::DatabaseConnection {
         self.database.write()
+    }
+
+    /// 在任务已成功提交后向本地与可选 Redis 等待者发送提示。
+    pub async fn notify_background_jobs(&self) {
+        self.wakeup.notify(WakeupQueue::BackgroundJob).await;
+    }
+
+    /// 在 Outbox 记录已成功提交后向本地与可选 Redis 等待者发送提示。
+    pub async fn notify_outbox(&self) {
+        self.wakeup.notify(WakeupQueue::Outbox).await;
+    }
+
+    pub(super) fn subscribe_background_job_wakeups(&self) -> watch::Receiver<u64> {
+        self.wakeup.subscribe(WakeupQueue::BackgroundJob)
+    }
+
+    pub(super) fn subscribe_outbox_wakeups(&self) -> watch::Receiver<u64> {
+        self.wakeup.subscribe(WakeupQueue::Outbox)
+    }
+
+    pub(super) fn spawn_wakeup_listener(
+        &self,
+        shutdown: watch::Receiver<bool>,
+    ) -> Option<JoinHandle<()>> {
+        self.wakeup.spawn_redis_listener(shutdown)
+    }
+
+    pub(super) fn record_claim_attempt(&self, queue: &'static str, result: &'static str) {
+        if let Some(observer) = self.metrics_observer() {
+            observer.record_claim_attempt(queue, result);
+        }
     }
 }
 

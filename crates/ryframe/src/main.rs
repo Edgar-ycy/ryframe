@@ -23,9 +23,13 @@ async fn main() -> Result<(), AppError> {
         ryframe_middleware::metrics::record_redis_degraded,
     );
     ryframe_service::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
+    ryframe_service::set_authorization_cache_lookup_hook(
+        ryframe_middleware::metrics::record_authorization_cache_lookup,
+    );
 
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
+    ryframe_api::validate_runtime_features(&config)?;
     ryframe_utils::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     let localizer = Arc::new(
@@ -330,5 +334,9 @@ fn install_job_metrics(queue: &JobQueue) {
         Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
         Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
         Arc::new(ryframe_middleware::metrics::observe_job_duration),
+        Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
+        Arc::new(ryframe_middleware::metrics::record_job_wakeup),
+        Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
+        Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
     )));
 }

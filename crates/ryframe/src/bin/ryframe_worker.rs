@@ -36,6 +36,9 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     ryframe_service::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
+    ryframe_service::set_authorization_cache_lookup_hook(
+        ryframe_middleware::metrics::record_authorization_cache_lookup,
+    );
     let run_once = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
         [] => false,
         [command] if command == "--once" => true,
@@ -84,7 +87,7 @@ async fn main() -> Result<(), AppError> {
     );
     let object_storage = connect_storage_for_worker(&config).await?;
 
-    let queue = Arc::new(JobQueue::new(database.clone()));
+    let queue = Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis.clone()));
     install_job_metrics(&queue);
     let oper_log = Arc::new(OperLogService::new(database.clone()));
     let message = Arc::new(MessageService::new(
@@ -96,12 +99,10 @@ async fn main() -> Result<(), AppError> {
         database.clone(),
         authorization_cache.clone(),
     ));
-    let export = Arc::new(ExportService::new(
-        database.clone(),
-        user,
-        object_storage,
-        &config.jobs,
-    ));
+    let export = Arc::new(
+        ExportService::new(database.clone(), user, object_storage, &config.jobs)
+            .with_job_queue(queue.clone()),
+    );
     let worker = JobWorker::new(queue.clone(), &config.jobs)?
         .with_handler(Arc::new(ExportJobHandler::new(export.clone())))?
         .with_handler(Arc::new(ExportCleanupJobHandler::new(export.clone())))?;
@@ -429,5 +430,9 @@ fn install_job_metrics(queue: &JobQueue) {
         Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
         Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
         Arc::new(ryframe_middleware::metrics::observe_job_duration),
+        Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
+        Arc::new(ryframe_middleware::metrics::record_job_wakeup),
+        Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
+        Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
     )));
 }

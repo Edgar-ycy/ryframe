@@ -151,6 +151,10 @@ impl JobWorker {
             })
             .collect::<Vec<_>>();
 
+        if let Some(listener) = self.queue.spawn_wakeup_listener(shutdown.clone()) {
+            tasks.push(listener);
+        }
+
         if self.queue.has_metrics_observer() && !self.handlers.is_empty() {
             let queue = self.queue.clone();
             let job_types = self.handlers.keys().cloned().collect::<Vec<_>>();
@@ -194,14 +198,34 @@ impl JobWorker {
 
     /// 执行一次领取和处理，供单次执行模式及自定义运行器使用。
     pub async fn run_once(&self, worker_id: &str) -> AppResult<JobRunResult> {
-        let now = self.queue.database_now().await?;
-        let Some(job) = self
+        let now = match self.queue.database_now().await {
+            Ok(now) => now,
+            Err(error) => {
+                self.queue.record_claim_attempt("background_job", "error");
+                return Err(error);
+            }
+        };
+        let claimed = match self
             .queue
             .repository()
             .claim_next(self.queue.primary(), worker_id, self.lease_duration, now)
-            .await?
-        else {
-            return Ok(JobRunResult::Idle);
+            .await
+        {
+            Ok(claimed) => claimed,
+            Err(error) => {
+                self.queue.record_claim_attempt("background_job", "error");
+                return Err(error);
+            }
+        };
+        let job = match claimed {
+            Some(job) => {
+                self.queue.record_claim_attempt("background_job", "claimed");
+                job
+            }
+            None => {
+                self.queue.record_claim_attempt("background_job", "idle");
+                return Ok(JobRunResult::Idle);
+            }
         };
 
         let job_type = job.job_type.clone();
@@ -374,6 +398,7 @@ impl JobWorker {
         tracing::info!(worker_id = %worker_id, "后台任务 Worker 已启动");
         let mut consecutive_infrastructure_failures = 0_u32;
         let mut idle_wait = self.poll_interval;
+        let mut wakeups = self.queue.subscribe_background_job_wakeups();
         loop {
             if *shutdown.borrow() {
                 break;
@@ -393,6 +418,12 @@ impl JobWorker {
                             if changed.is_err() || *shutdown.borrow() {
                                 break;
                             }
+                        }
+                        changed = wakeups.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            idle_wait = self.poll_interval;
                         }
                     }
                 }
@@ -532,7 +563,7 @@ fn next_idle_wait(
 
 fn jittered_delay(base: StdDuration) -> StdDuration {
     let base_ms = base.as_millis().max(1) as i64;
-    let jitter = base_ms / 5; // ±20%
+    let jitter = base_ms / 5; // 固定加入 ±20% 抖动。
     if jitter == 0 {
         return base;
     }

@@ -10,11 +10,13 @@ GET /api/v1/api-docs/openapi.json
 GET /api/v1/swagger-ui
 ```
 
-Swagger UI 的 HTML、CSS、JavaScript、字体和图标均由 Rust crate 在编译期内嵌，浏览器不会从 CDN 或其他外部站点加载资源。`/api/v1/swagger-ui` 是唯一页面入口，不提供尾斜杠或 `index.html` 兼容路由；静态资源位于 `/api/v1/swagger-ui/{asset}`。文档页面的 CSP 保持 `script-src 'self'`，仅因 Swagger UI 运行时组件使用内联样式而对该 HTML 响应设置 `style-src 'self' 'unsafe-inline'`。
+Swagger UI 的 HTML、CSS、JavaScript、字体和图标均由 Rust crate 在编译期内嵌，浏览器不会从 CDN 或其他外部站点加载资源。根包的默认 `runtime-swagger-ui` feature 只为开发和受控测试启用该资源；`/api/v1/swagger-ui` 是唯一页面入口，不提供尾斜杠或 `index.html` 兼容路由；静态资源位于 `/api/v1/swagger-ui/{asset}`。文档页面的 CSP 保持 `script-src 'self'`，仅因 Swagger UI 运行时组件使用内联样式而对该 HTML 响应设置 `style-src 'self' 'unsafe-inline'`。
 
 以上运行时文档只用于开发和受控测试环境。生产配置强制
-`APP_API_DOCS_ENABLED=false`，公网 Nginx 也应返回 `404`；生产排查使用仓库中经过
-CI 校验的 `openapi/openapi.json`。
+`APP_API_DOCS_ENABLED=false`，生产构建使用 `cargo build --release --no-default-features`
+（或等价的镜像构建命令）排除整个 Swagger UI 资源；公网 Nginx 也应返回 `404`。未编译
+`runtime-swagger-ui` 时若设置 `APP_API_DOCS_ENABLED=true`，API 会在连接 MySQL、Redis 或
+对象存储之前明确启动失败。生产排查使用仓库中经过 CI 校验的 `openapi/openapi.json`。
 
 ## 1. 基础约定
 

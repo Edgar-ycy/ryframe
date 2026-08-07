@@ -23,8 +23,8 @@ pub mod tenant_repo;
 pub mod user_repo;
 
 pub use background_job_repo::{
-    BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, EnqueueBackgroundJob,
-    EnqueueBackgroundJobResult, ExpiredLeaseRecovery, JobFailureDisposition,
+    BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
+    EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExpiredLeaseRecovery, JobFailureDisposition,
 };
 pub use cache_namespace_version_repo::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, validate_cache_namespace,

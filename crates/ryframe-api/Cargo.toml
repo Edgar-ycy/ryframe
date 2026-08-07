@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[features]
+runtime-swagger-ui = ["dep:utoipa-swagger-ui"]
+
 [dependencies]
 ryframe-http = { path = "../ryframe-http", features = ["openapi"] }
 ryframe-kernel = { path = "../ryframe-kernel" }
@@ -34,7 +37,7 @@ uuid = { workspace = true, features = ["v4", "v7"] }
 base64 = { workspace = true }
 regex = { workspace = true }
 utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
 tracing = { workspace = true }
 percent-encoding = { workspace = true }
 dashmap = { workspace = true }

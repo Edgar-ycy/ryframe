@@ -15,6 +15,7 @@ pub use authorization_cache::{
     AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AUTHORIZATION_SNAPSHOT_TTL_SECS, AuthorizationCache,
     AuthorizationCacheBackend, AuthorizationCacheLookup, AuthorizationMirrorUpdate,
     AuthorizationSnapshot, AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,
+    set_authorization_cache_lookup_hook,
 };
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,

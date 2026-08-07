@@ -9,7 +9,8 @@
 
 `deploy/Dockerfile` 使用显式 Rust patch 版本和 Debian major 版本，并通过 BuildKit
 缓存 Cargo registry、git checkout 和 `target`。缓存只影响构建速度，最终二进制会复制
-到普通镜像层，不依赖构建机缓存：
+到普通镜像层，不依赖构建机缓存。Dockerfile 的生产构建固定使用
+`--no-default-features`，因此 API 镜像不包含只用于开发/受控测试的 Swagger UI 静态资源：
 
 ```bash
 DOCKER_BUILDKIT=1 docker build \

@@ -208,6 +208,46 @@ lazy_static! {
         &["type", "result"],
     )
     .expect("create job_duration_seconds");
+    static ref JOB_CLAIM_ATTEMPTS_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "job_claim_attempts_total",
+            "Persistent queue claim attempts by queue and bounded result",
+        ),
+        &["queue", "result"],
+    )
+    .expect("create job_claim_attempts_total");
+    static ref JOB_WAKEUP_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "job_wakeup_total",
+            "Local and Redis queue wakeup outcomes by bounded transport and result",
+        ),
+        &["queue", "transport", "result"],
+    )
+    .expect("create job_wakeup_total");
+    static ref JOB_WAKEUP_LISTENER_UP: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "job_wakeup_listener_up",
+            "Whether the current process Redis wakeup listener is connected",
+        ),
+        &["queue"],
+    )
+    .expect("create job_wakeup_listener_up");
+    static ref JOB_WAKEUP_PROTOCOL_ERRORS_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "job_wakeup_protocol_errors_total",
+            "Ignored Redis wakeup payloads by bounded validation result",
+        ),
+        &["result"],
+    )
+    .expect("create job_wakeup_protocol_errors_total");
+    static ref AUTHORIZATION_CACHE_LOOKUPS_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "authorization_cache_lookups_total",
+            "Authorization cache lookup outcomes by bounded scope and result",
+        ),
+        &["scope", "result"],
+    )
+    .expect("create authorization_cache_lookups_total");
     static ref MESSAGE_ACK_LATENCY_SECONDS: Histogram = Histogram::with_opts(
         HistogramOpts::new(
             "message_ack_latency_seconds",
@@ -268,6 +308,11 @@ fn ensure_registered() {
             Box::new(JOB_QUEUE_DEPTH.clone()),
             Box::new(JOB_OLDEST_READY_AGE_SECONDS.clone()),
             Box::new(JOB_DURATION_SECONDS.clone()),
+            Box::new(JOB_CLAIM_ATTEMPTS_TOTAL.clone()),
+            Box::new(JOB_WAKEUP_TOTAL.clone()),
+            Box::new(JOB_WAKEUP_LISTENER_UP.clone()),
+            Box::new(JOB_WAKEUP_PROTOCOL_ERRORS_TOTAL.clone()),
+            Box::new(AUTHORIZATION_CACHE_LOOKUPS_TOTAL.clone()),
             Box::new(MESSAGE_ACK_LATENCY_SECONDS.clone()),
             Box::new(OTEL_EXPORTER_FAILURES_TOTAL.clone()),
             Box::new(OTEL_EXPORTER_RUNTIME_FAILURES_TOTAL.clone()),
@@ -479,6 +524,46 @@ pub fn observe_job_duration(job_type: &str, result: &'static str, duration: std:
     JOB_DURATION_SECONDS
         .with_label_values(&[job_type, result])
         .observe(duration.as_secs_f64());
+}
+
+/// 记录一次后台任务或 Outbox 的领取尝试。
+pub fn record_job_claim_attempt(queue: &'static str, result: &'static str) {
+    ensure_registered();
+    JOB_CLAIM_ATTEMPTS_TOTAL
+        .with_label_values(&[queue, result])
+        .inc();
+}
+
+/// 记录一次本地或 Redis 队列唤醒提示的结果。
+pub fn record_job_wakeup(queue: &'static str, transport: &'static str, result: &'static str) {
+    ensure_registered();
+    JOB_WAKEUP_TOTAL
+        .with_label_values(&[queue, transport, result])
+        .inc();
+}
+
+/// 设置本进程 Redis 队列唤醒订阅连接状态。
+pub fn set_job_wakeup_listener_up(queue: &'static str, up: bool) {
+    ensure_registered();
+    JOB_WAKEUP_LISTENER_UP
+        .with_label_values(&[queue])
+        .set(i64::from(up));
+}
+
+/// 记录一个被忽略的 Redis 队列唤醒协议负载。
+pub fn record_job_wakeup_protocol_error(result: &'static str) {
+    ensure_registered();
+    JOB_WAKEUP_PROTOCOL_ERRORS_TOTAL
+        .with_label_values(&[result])
+        .inc();
+}
+
+/// 记录一次授权缓存读取结果；范围和结果均由调用方使用固定枚举。
+pub fn record_authorization_cache_lookup(scope: &'static str, result: &'static str) {
+    ensure_registered();
+    AUTHORIZATION_CACHE_LOOKUPS_TOTAL
+        .with_label_values(&[scope, result])
+        .inc();
 }
 
 /// 记录一次成功的消息确认操作耗时。

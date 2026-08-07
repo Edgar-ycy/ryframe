@@ -14,7 +14,7 @@ RUN --mount=type=cache,id=ryframe-cargo-registry,target=/usr/local/cargo/registr
     --mount=type=cache,id=ryframe-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=ryframe-target,target=/workspace/target,sharing=locked \
     RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
-    cargo build --locked --release -p ryframe \
+    cargo build --locked --release --no-default-features -p ryframe \
     --bin ryframe --bin ryframe-migrate --bin ryframe-worker \
     && install --directory /workspace/out \
     && install --mode=0755 /workspace/target/release/ryframe /workspace/out/ryframe \

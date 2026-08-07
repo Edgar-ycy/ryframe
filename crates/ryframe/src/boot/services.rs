@@ -73,11 +73,12 @@ pub async fn build_all(
     let dict = Arc::new(DictService::new(database.clone(), redis_client.clone()));
     let notice = Arc::new(NoticeService::new(database.clone()));
     let oper_log = Arc::new(OperLogService::new(database.clone()));
-    let audit_outbox = Arc::new(AuditOutbox::new(
-        database.clone(),
-        config.jobs.default_max_attempts,
-    ));
-    let job_queue = Arc::new(JobQueue::new(database.clone()));
+    let job_queue =
+        Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis_client.clone()));
+    let audit_outbox = Arc::new(
+        AuditOutbox::new(database.clone(), config.jobs.default_max_attempts)
+            .with_job_queue(job_queue.clone()),
+    );
     let message = Arc::new(MessageService::new(
         database.clone(),
         job_queue.clone(),
@@ -110,12 +111,10 @@ pub async fn build_all(
     let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
     let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
     file.spawn_upload_janitor();
-    let export = Arc::new(ExportService::new(
-        database.clone(),
-        user.clone(),
-        object_storage,
-        &config.jobs,
-    ));
+    let export = Arc::new(
+        ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
+            .with_job_queue(job_queue.clone()),
+    );
 
     let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
         Arc::new(OnlineUserService::new_redis(redis.clone()))

@@ -138,6 +138,24 @@ Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并
 任务必须检查 `last_error`、关联业务数据和幂等性后才能人工重试；不要通过直接修改任务
 状态或确认时间来清除告警。
 
+MySQL 始终是后台任务和 Outbox 的唯一可靠事实来源。`ryframe:jobs:wakeup` Redis Pub/Sub
+频道以及进程内通知只用于提前结束等待；提示丢失、重复、未知负载或 Redis 订阅中断时，Worker
+仍会经数据库轮询领取任务，不能把 `job_wakeup_listener_up=0` 直接判定为任务丢失。订阅会按
+1、2、4、8、16、30 秒退避重连；首次异常为 WARN，持续异常为 DEBUG，恢复为 INFO。
+
+`APP_JOBS_POLL_INTERVAL_MS` 是最小空闲等待，而不是固定轮询间隔。连续空闲以 2 倍增长并在
+`APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS` 封顶，每次等待附加固定 ±20% 抖动；领取任务、收到唤醒和
+人工重试都会立即重置。基础设施错误继续使用独立的最长 30 秒错误退避。过期租约恢复不跟随
+空闲等待，而是按 `APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS` 独立运行；调整任一 `APP_JOBS_*`
+值后必须同时重启 API 与 Worker。
+
+排障时结合 `job_claim_attempts_total{queue,result}`、
+`job_wakeup_total{queue,transport,result}`、`job_wakeup_listener_up{queue}`、
+`job_wakeup_protocol_errors_total{result}` 观察领取、唤醒和协议错误；这些标签均为固定低基数枚举。
+授权缓存使用 `authorization_cache_lookups_total{scope,result}`，其中 scope 仅为
+`snapshot`、`tenant`、`namespace`，result 仅为 `hit`、`miss`、`bypass`、`fallback`、`error`。不得
+向任一指标标签添加租户、用户、任务 ID 或 Redis 错误文本。
+
 ### 消息中心投递
 
 区分慢消费者与已关闭连接：前者检查客户端消费、网络和连接数，后者确认是否为正常断线

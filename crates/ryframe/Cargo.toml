@@ -18,7 +18,7 @@ ryframe-db = { path = "../ryframe-db" }
 ryframe-db-migration = { path = "../ryframe-db-migration" }
 ryframe-core = { path = "../ryframe-core" }
 ryframe-service = { path = "../ryframe-service" }
-ryframe-api = { path = "../ryframe-api" }
+ryframe-api = { path = "../ryframe-api", default-features = false }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-monitor = { path = "../ryframe-monitor" }
@@ -36,7 +36,8 @@ hex = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["runtime-swagger-ui"]
+runtime-swagger-ui = ["ryframe-api/runtime-swagger-ui"]
 # 一次性文件维护工具必须显式启用，常规 API、Worker 和迁移命令不会携带旧 MD5 实现。
 file-maintenance = ["dep:md5", "dep:sha2", "dep:hex", "dep:chrono"]
 

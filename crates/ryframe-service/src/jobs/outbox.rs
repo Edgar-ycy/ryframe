@@ -97,6 +97,9 @@ impl OutboxWorker {
                 })
             })
             .collect::<Vec<_>>();
+        if let Some(listener) = self.queue.spawn_wakeup_listener(shutdown.clone()) {
+            tasks.push(listener);
+        }
         let worker = self.clone();
         tasks.push(tokio::spawn(async move {
             worker.recover_expired_leases_until_shutdown(shutdown).await;
@@ -106,16 +109,30 @@ impl OutboxWorker {
 
     /// 执行一次领取和投递，供单次执行模式及自定义运行器使用。
     pub async fn run_once(&self, worker_id: &str) -> AppResult<OutboxRunResult> {
-        let now = self
-            .repository
-            .database_utc_now(self.queue.primary())
-            .await?;
-        let Some(event) = self
+        let now = match self.repository.database_utc_now(self.queue.primary()).await {
+            Ok(now) => now,
+            Err(error) => {
+                self.queue.record_claim_attempt("outbox", "error");
+                return Err(error);
+            }
+        };
+        let event = match self
             .repository
             .claim_next(self.queue.primary(), worker_id, self.lease_duration, now)
-            .await?
-        else {
-            return Ok(OutboxRunResult::Idle);
+            .await
+        {
+            Ok(Some(event)) => {
+                self.queue.record_claim_attempt("outbox", "claimed");
+                event
+            }
+            Ok(None) => {
+                self.queue.record_claim_attempt("outbox", "idle");
+                return Ok(OutboxRunResult::Idle);
+            }
+            Err(error) => {
+                self.queue.record_claim_attempt("outbox", "error");
+                return Err(error);
+            }
         };
         let span = tracing::info_span!("outbox_event", event_type = %event.event_type);
         let _ = span.set_parent(crate::trace_context::extract_parent_context(
@@ -248,6 +265,7 @@ impl OutboxWorker {
                     .commit()
                     .await
                     .map_err(|error| AppError::Database(error.to_string()))?;
+                self.queue.notify_background_jobs().await;
                 Ok(true)
             }
             Ok(false) => {
@@ -387,6 +405,7 @@ impl OutboxWorker {
         tracing::info!(worker_id = %worker_id, "Outbox Worker 已启动");
         let mut consecutive_infrastructure_failures = 0_u32;
         let mut idle_wait = self.poll_interval;
+        let mut wakeups = self.queue.subscribe_outbox_wakeups();
         loop {
             if *shutdown.borrow() {
                 break;
@@ -405,6 +424,12 @@ impl OutboxWorker {
                             if changed.is_err() || *shutdown.borrow() {
                                 break;
                             }
+                        }
+                        changed = wakeups.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            idle_wait = self.poll_interval;
                         }
                     }
                 }
@@ -519,7 +544,7 @@ fn next_idle_wait(
 
 fn jittered_delay(base: StdDuration) -> StdDuration {
     let base_ms = base.as_millis().max(1) as i64;
-    let jitter = base_ms / 5; // ±20%
+    let jitter = base_ms / 5; // 固定加入 ±20% 抖动。
     if jitter == 0 {
         return base;
     }

@@ -2,6 +2,7 @@ mod handlers;
 mod metrics;
 mod outbox;
 mod queue;
+mod wakeup;
 mod worker;
 
 pub use handlers::{
