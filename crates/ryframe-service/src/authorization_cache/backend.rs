@@ -12,6 +12,7 @@ use super::*;
 #[derive(Clone)]
 pub struct AuthorizationCache {
     backend: Option<Arc<dyn AuthorizationCacheBackend>>,
+    redis: Option<RedisClient>,
     required: bool,
 }
 
@@ -27,11 +28,12 @@ impl fmt::Debug for AuthorizationCache {
 
 impl AuthorizationCache {
     pub fn new(redis: Option<RedisClient>, mode: RedisMode) -> Self {
-        let backend = redis.map(|redis| {
+        let backend = redis.clone().map(|redis| {
             Arc::new(RedisAuthorizationCacheBackend { redis }) as Arc<dyn AuthorizationCacheBackend>
         });
         Self {
             backend,
+            redis,
             required: mode.is_required(),
         }
     }
@@ -39,6 +41,7 @@ impl AuthorizationCache {
     pub fn disabled() -> Self {
         Self {
             backend: None,
+            redis: None,
             required: false,
         }
     }
@@ -134,13 +137,16 @@ impl AuthorizationCache {
                 Ok(())
             };
         };
-        self.handle_mirror_result(
-            backend
-                .update_tenant_epoch(tenant_id, authorization_epoch)
-                .await,
-            tenant_id,
-            None,
-        )
+        let mirror_result = backend
+            .update_tenant_epoch(tenant_id, authorization_epoch)
+            .await;
+        let mirror_updated = mirror_result.is_ok();
+        self.handle_mirror_result(mirror_result, tenant_id, None)?;
+        if mirror_updated {
+            self.publish_authorization_changed(tenant_id, authorization_epoch)
+                .await;
+        }
+        Ok(())
     }
 
     pub async fn sync_namespace_version(
@@ -201,7 +207,12 @@ impl AuthorizationCache {
         backend
             .update_tenant_epoch(tenant_id, authorization_epoch)
             .await
-            .map_err(|error| AppError::ServiceUnavailable(format!("修复租户授权版本失败: {error}")))
+            .map_err(|error| {
+                AppError::ServiceUnavailable(format!("修复租户授权版本失败: {error}"))
+            })?;
+        self.publish_authorization_changed(tenant_id, authorization_epoch)
+            .await;
+        Ok(())
     }
 
     /// Outbox Worker 使用严格模式修复镜像；脚本只允许版本单调前进。
@@ -395,6 +406,30 @@ impl AuthorizationCache {
                 tracing::warn!(tenant_id, namespace, item, %error, "独立租户缓存写入失败");
                 Ok(false)
             }
+        }
+    }
+
+    async fn publish_authorization_changed(&self, tenant_id: &str, authorization_epoch: i32) {
+        let Some(redis) = &self.redis else {
+            return;
+        };
+        let event = AuthorizationChangedEvent {
+            tenant_id: tenant_id.to_owned(),
+            authorization_epoch,
+        };
+        let payload = match serde_json::to_string(&event) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::error!(tenant_id, authorization_epoch, %error, "授权变化事件序列化失败");
+                return;
+            }
+        };
+        if let Err(error) = redis
+            .publish(AUTHORIZATION_CHANGED_REDIS_CHANNEL, payload)
+            .await
+        {
+            // 实时通知是界面加速通道；授权快照和后续响应头仍负责最终一致性。
+            tracing::warn!(tenant_id, authorization_epoch, %error, "授权变化实时通知发布失败");
         }
     }
 

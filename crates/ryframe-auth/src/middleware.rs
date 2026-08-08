@@ -6,6 +6,7 @@ use std::{
 
 use axum::{
     extract::{Request, State},
+    http::{HeaderName, HeaderValue},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::MethodRouter,
@@ -126,10 +127,17 @@ pub async fn auth_middleware(
     span.record("user.id", principal.user_id);
     span.record("user.name", principal.username.as_str());
 
+    let authorization_epoch = principal.tenant_authorization_epoch;
     request.extensions_mut().insert(tenant_context.clone());
     request.extensions_mut().insert(principal);
     request.extensions_mut().insert(claims);
-    Ok(with_tenant_context(tenant_context, next.run(request)).await)
+    let mut response = with_tenant_context(tenant_context, next.run(request)).await;
+    if let Ok(value) = HeaderValue::from_str(&authorization_epoch.to_string()) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("x-authorization-epoch"), value);
+    }
+    Ok(response)
 }
 
 /// 从请求头提取 `Bearer` 令牌

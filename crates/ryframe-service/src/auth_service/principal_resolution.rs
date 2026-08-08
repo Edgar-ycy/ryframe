@@ -191,6 +191,7 @@ fn build_authorization_snapshot(
                 include_self: data_scope.include_self,
                 is_super_admin,
             },
+            tenant_authorization_epoch: identity.tenant.authorization_epoch,
             preferred_locale: user.preferred_locale.clone(),
             roles,
             role_ids,
@@ -217,7 +218,7 @@ fn validate_mirrored_user_version(
 fn principal_from_snapshot(
     claims: &Claims,
     expected_user_id: i64,
-    snapshot: AuthorizationSnapshot,
+    mut snapshot: AuthorizationSnapshot,
 ) -> AppResult<RequestPrincipal> {
     if snapshot.principal.actor.tenant_id != claims.tenant_id
         || snapshot.principal.actor.user_id != expected_user_id
@@ -230,5 +231,7 @@ fn principal_from_snapshot(
             "租户会话已失效，请重新登录".into(),
         ));
     }
+    // 兼容升级前已写入 Redis、尚未过期且不含该展示字段的授权快照。
+    snapshot.principal.tenant_authorization_epoch = snapshot.versions.tenant_authorization_epoch;
     Ok(snapshot.principal)
 }

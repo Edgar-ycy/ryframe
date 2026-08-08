@@ -185,6 +185,21 @@ impl RedisClient {
         .await
     }
 
+    /// 建立专用 Pub/Sub 连接并订阅多个频道。
+    pub async fn subscribe_many(
+        &self,
+        channels: &[&str],
+    ) -> Result<redis::aio::PubSub, redis::RedisError> {
+        trace_redis_operation(RedisOperation::Subscribe, async {
+            let mut subscription = self.client.get_async_pubsub().await?;
+            for channel in channels {
+                subscription.subscribe(*channel).await?;
+            }
+            Ok(subscription)
+        })
+        .await
+    }
+
     // ========== 便捷方法 ==========
 
     /// 执行 `SET key value`（无过期时间）。

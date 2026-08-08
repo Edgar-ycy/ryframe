@@ -1,11 +1,13 @@
 use std::sync::OnceLock;
 mod backend;
+mod event;
 mod keyspace;
 mod mirror;
 mod redis_backend;
 mod types;
 
 pub use backend::AuthorizationCache;
+pub use event::{AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangedEvent};
 pub use types::{
     AuthorizationCacheBackend, AuthorizationCacheLookup, AuthorizationMirrorUpdate,
     AuthorizationSnapshot, AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,

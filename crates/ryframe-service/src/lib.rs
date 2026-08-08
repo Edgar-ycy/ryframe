@@ -12,8 +12,9 @@ pub use audit::{
 };
 pub use auth_service::{AuthService, LoginResult, UserInfo};
 pub use authorization_cache::{
-    AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AUTHORIZATION_SNAPSHOT_TTL_SECS, AuthorizationCache,
-    AuthorizationCacheBackend, AuthorizationCacheLookup, AuthorizationMirrorUpdate,
+    AUTHORIZATION_CHANGED_REDIS_CHANNEL, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE,
+    AUTHORIZATION_SNAPSHOT_TTL_SECS, AuthorizationCache, AuthorizationCacheBackend,
+    AuthorizationCacheLookup, AuthorizationChangedEvent, AuthorizationMirrorUpdate,
     AuthorizationSnapshot, AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,
     set_authorization_cache_lookup_hook,
 };

@@ -237,6 +237,18 @@ tools.gen          -> /tools/gen
 
 新增页面菜单时，需要先在前端 page registry 注册 `route_key`；后端 `sys_menu` 维护菜单结构、`route_key` 和 `perm_id`。默认菜单 route-key 集合通过 OpenAPI 的 `x-ryframe-menu-routes` 扩展发布；后端 CI 重新生成并比对该契约，前端 CI 会拒绝缺失、额外或菜单类型不一致的注册项。
 
+### 动态授权刷新
+
+角色权限、权限目录、菜单、部门或数据范围变化时，后端提升租户授权纪元。正常在线状态下，消息 WebSocket 会收到以下控制帧：
+
+```json
+{"v":1,"type":"authorization_changed","authorization_epoch":42}
+```
+
+所有受保护的 HTTP 响应还会携带 `X-Authorization-Epoch`；该响应头已加入 CORS 暴露列表，用于 WebSocket 断线或 Pub/Sub 瞬时丢失时的最终一致性校准。前端只处理高于已观察值的纪元，并把并发通知合并为一次刷新：重新获取 `/auth/me` 和 `/system/menus/current`、更新 Pinia 权限、重建动态路由、使 `v-perm` 按钮响应式显隐，并使当前租户的服务端查询缓存失效。
+
+授权刷新不清除 access token、不要求重新登录，也不执行整页刷新。仍可访问的当前页面和标签页继续保留；已失权标签页被移除，当前页面失权时跳转到 `/403`。前端显隐只负责体验，后端在每个请求中解析最新授权主体并执行最终权限校验。
+
 ## 常用模块路径
 
 前端 API 模块和后端路径建议保持以下对应关系：
@@ -293,6 +305,8 @@ DELETE /system/roles/batch/1,2
 解析器与净化器渲染，不能将内容直接插入 `v-html`。删除当前用户自己的收件记录使用
 `POST /system/messages/delete`，请求体为 `{"ids":["消息 ID"]}`，一次 1–100 个字符串 ID；成功后
 移除对应缓存并同步未读数。删除不影响其他收件人，也不能让已删除记录重新被补拉或重放。
+
+同一条 WebSocket 连接还承载 `authorization_changed` 控制帧。该帧不是收件箱消息，不写入消息表、不参与 ACK、未读数或消息补拉；客户端只使用其中的授权纪元触发上述动态授权刷新。
 
 ## 上传、下载与导出
 

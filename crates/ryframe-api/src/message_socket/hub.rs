@@ -1,4 +1,7 @@
-use super::frame::{QueueTextResult, queue_text, serialize_hello_frame, serialize_message_frame};
+use super::frame::{
+    QueueTextResult, queue_text, serialize_authorization_changed_frame, serialize_hello_frame,
+    serialize_message_frame,
+};
 use super::*;
 
 type MessageIdentity = (String, i64);
@@ -255,6 +258,50 @@ impl MessageHub {
         delivered
     }
 
+    /// 向本实例中同一租户的全部在线连接广播授权纪元变化。
+    pub fn send_authorization_changed(&self, tenant_id: &str, authorization_epoch: i32) -> usize {
+        let payload = match serialize_authorization_changed_frame(authorization_epoch) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::error!(tenant_id, authorization_epoch, %error, "授权变化 WebSocket 帧序列化失败");
+                return 0;
+            }
+        };
+        let recipients = self
+            .connections
+            .iter()
+            .filter(|connection| {
+                connection.tenant_id == tenant_id && connection.ready.load(Ordering::Acquire)
+            })
+            .map(|connection| {
+                (
+                    connection.key().clone(),
+                    connection.sender.clone(),
+                    connection.shutdown.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut delivered = 0;
+        let mut disconnected = Vec::new();
+        for (connection_id, sender, shutdown) in recipients {
+            match sender.try_send(Message::Text(payload.clone().into())) {
+                Ok(()) => delivered += 1,
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    let _ = shutdown.send(true);
+                    disconnected.push(connection_id.clone());
+                    tracing::warn!(connection_id, "授权变化通知遇到慢消费者，已关闭连接");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    disconnected.push(connection_id);
+                }
+            }
+        }
+        for connection_id in disconnected {
+            self.unregister(&connection_id);
+        }
+        delivered
+    }
+
     /// 处理 Redis 唤醒后的一条消息；收件人和正文始终从 MySQL 快照读取。
     pub async fn deliver_message(
         &self,
@@ -291,7 +338,13 @@ impl MessageHub {
             let mut retry_seconds = 1_u64;
             let mut degraded = false;
             loop {
-                match redis.subscribe(MESSAGE_DISPATCH_REDIS_CHANNEL).await {
+                match redis
+                    .subscribe_many(&[
+                        MESSAGE_DISPATCH_REDIS_CHANNEL,
+                        AUTHORIZATION_CHANGED_REDIS_CHANNEL,
+                    ])
+                    .await
+                {
                     Ok(subscription) => {
                         ryframe_middleware::metrics::set_message_redis_listener_connected(true);
                         if degraded {
@@ -309,10 +362,26 @@ impl MessageHub {
                         retry_seconds = 1;
                         let mut messages = subscription.into_on_message();
                         while let Some(raw) = messages.next().await {
+                            let channel = raw.get_channel_name().to_owned();
                             let Ok(payload) = raw.get_payload::<String>() else {
                                 tracing::warn!("收到无法解析的消息唤醒负载");
                                 continue;
                             };
+                            if channel == AUTHORIZATION_CHANGED_REDIS_CHANNEL {
+                                match serde_json::from_str::<AuthorizationChangedEvent>(&payload) {
+                                    Ok(event)
+                                        if !event.tenant_id.trim().is_empty()
+                                            && event.authorization_epoch > 0 =>
+                                    {
+                                        hub.send_authorization_changed(
+                                            &event.tenant_id,
+                                            event.authorization_epoch,
+                                        );
+                                    }
+                                    _ => tracing::warn!("收到无效的授权变化实时通知"),
+                                }
+                                continue;
+                            }
                             let Ok(message_id) = payload.parse::<i64>() else {
                                 tracing::warn!("收到无效的消息唤醒标识");
                                 continue;

@@ -188,6 +188,7 @@ flowchart LR
 61. 统一响应信封覆盖所有 `/api` 路径，未知 API 版本和无版本业务路径返回相同 JSON `404`；响应只能使用 `message/data/request_id/error_key/details`，旧 `msg/rows/total` 顶层字段会被拒绝。
 62. Swagger UI 使用与 utoipa 5 匹配的 Rust crate 在编译期内嵌全部静态资源，不依赖 CDN、外部校验器、内联初始化脚本或兼容重定向。根包默认启用的 `runtime-swagger-ui` feature 仅服务开发和受控测试；生产构建通过 `--no-default-features` 删除整组静态资源。全局 CSP 的脚本源仅允许同源且不启用 `unsafe-eval`；Swagger UI 页面只针对运行时内联样式放宽 `style-src`。无该 feature 却设置 `api_docs.enabled=true` 时，API 必须在连接外部依赖前明确失败，OpenAPI 代码生成与检入契约不受影响。
 63. Service 直接保存具体 Repository，已删除不产生日志的仓储包装层；`DatabaseCluster` 只保留单主库或显式副本槽位构造入口，不再公开旧包装与隐式集群构造函数。
+64. 租户授权规则变化在事务内提升 `authorization_epoch`，提交后先同步 Redis 镜像，再向 `ryframe:authorization:changed` 发布只含租户和纪元的轻量事件。各 API 实例复用消息 WebSocket 向该租户在线连接发送 `authorization_changed` 控制帧；该帧不持久化、不参与消息 ACK。认证中间件同时在受保护响应写入 `X-Authorization-Epoch`，前端只接受单调前进的纪元并合并刷新 `/auth/me`、当前菜单、动态路由和租户查询缓存。实时事件仅加速界面收敛，服务端逐请求主体解析和权限守卫始终是安全边界。
 
 ## 4. 后续优先级
 

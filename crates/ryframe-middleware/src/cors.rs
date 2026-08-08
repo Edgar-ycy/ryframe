@@ -56,6 +56,7 @@ pub fn cors_layer(config: &CorsConfig) -> AppResult<CorsLayer> {
             http::header::RETRY_AFTER,
             http::HeaderName::from_static("x-request-id"),
             http::HeaderName::from_static("x-idempotency-replay"),
+            http::HeaderName::from_static("x-authorization-epoch"),
         ])
         .allow_credentials(true)
         .max_age(std::time::Duration::from_secs(3600));

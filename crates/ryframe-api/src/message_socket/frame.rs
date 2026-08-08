@@ -184,6 +184,23 @@ pub(super) fn serialize_message_frame(message: &MessageVo) -> HttpResult<String>
     })
 }
 
+pub(super) fn serialize_authorization_changed_frame(
+    authorization_epoch: i32,
+) -> HttpResult<String> {
+    #[derive(Serialize)]
+    struct AuthorizationChanged {
+        v: u8,
+        #[serde(rename = "type")]
+        kind: &'static str,
+        authorization_epoch: i32,
+    }
+    serialize_frame(&AuthorizationChanged {
+        v: 1,
+        kind: "authorization_changed",
+        authorization_epoch,
+    })
+}
+
 fn serialize_ack_frame(ids: &[String]) -> HttpResult<String> {
     #[derive(Serialize)]
     struct Ack<'a> {

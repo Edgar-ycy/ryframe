@@ -25,6 +25,7 @@ use ryframe_kernel::AppError;
 use ryframe_service::system::{
     MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService, MessageTemplate, WebSocketTicket,
 };
+use ryframe_service::{AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangedEvent};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{mpsc, watch},
