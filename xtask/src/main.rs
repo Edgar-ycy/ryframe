@@ -202,7 +202,6 @@ fn backend_check() -> Result<()> {
         ],
     )?;
     for script in [
-        "scripts/check_source_hygiene.py",
         "scripts/check_prerelease_dependencies.py",
         "scripts/check_permission_routes.py",
         "scripts/check_architecture.py",

@@ -254,7 +254,6 @@ state
 托管后端 CI 在 Linux 上执行以下核心门禁：
 
 ```bash
-python scripts/check_source_hygiene.py
 python scripts/check_prerelease_dependencies.py
 python scripts/check_architecture.py
 python scripts/check_permission_routes.py

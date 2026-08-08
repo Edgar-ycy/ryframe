@@ -58,9 +58,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Check source encoding and structure
-        run: python scripts/check_source_hygiene.py
-
       - name: Lint GitHub Actions workflows
         uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
 

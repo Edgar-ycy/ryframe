@@ -380,7 +380,6 @@
 
 ### Validation
 
-- `python scripts/check_source_hygiene.py`
 - `python scripts/check_architecture.py`
 - `cargo fmt --all -- --check`
 - `python scripts/check_permission_routes.py`
