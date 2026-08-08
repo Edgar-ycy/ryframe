@@ -42,6 +42,10 @@ docker build \
 
 `deploy/compose.prod.yml` 仅编排 API、独立迁移进程和独立 Worker，MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。复制 `deploy/.env.production.example` 到部署平台配置，生成主库密码、数据库副本 JSON、业务数据源 JSON、Redis 密码、对象存储凭据、JWT 密钥和指标 Token 文件，并全部以 Docker secret 只读挂载；没有副本或业务数据源时对应文件内容为 `[]`。不得把真实密码、令牌、私钥、连接 JSON 或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，镜像必须采用部署环境构建并审计过的 digest 引用。
 
+Compose 默认使用只读根文件系统、删除全部 Linux capability、启用 `no-new-privileges`、限制
+每个容器最多 256 个进程，并给停止流程保留 15 秒优雅退出时间。CPU、内存和更严格的进程
+配额必须按部署平台的容量测试结果设置，不能把示例值直接当作所有环境的资源预算。
+
 前端不加入后端 Compose。部署平台必须从 `ryframe-vue3` 独立仓库检出与后端同名的 annotated tag，核验并记录该 tag object ID 及其解引用出的完整 40 位提交，再执行冻结锁文件安装与生产构建并把 `dist/` 作为静态站点独立发布；部署记录同时保存前后端 tag object ID 与提交 SHA，不能从可变分支或后端工作树临时复制前端产物。
 
 生产配置与 Compose 将 `APP_LOGGER_OUTPUT` 默认设为 `stdout`，API 和 Worker 均由容器平台
@@ -107,7 +111,9 @@ MySQL/Redis 的服务地址必须与证书身份匹配。禁止通过关闭主�
 
 使用 `local` 时必须显式设置 `APP_OBJECT_STORAGE_ALLOW_LOCAL_IN_PRODUCTION=true`，
 这是风险确认而不是一致性保证。容器的 `/var/lib/ryframe/uploads` 必须绑定持久卷并
-纳入容量、快照、恢复和跨故障域规划；未挂载持久卷时容器重建会造成文件不可用。
+纳入容量、快照、恢复和跨故障域规划；未挂载持久卷时容器重建会造成文件不可用。通用生产
+镜像不声明匿名 `VOLUME`，默认 Compose 也不挂载上传目录；启用本地后端的部署必须在 API 与
+Worker 服务上显式配置同一个具名卷或经过验证的共享挂载，避免 Docker 隐式创建失管卷。
 
 滚动/蓝绿部署期间，新旧实例必须看到同一对象集合。无法证明共享文件系统语义时，
 必须改用 S3 兼容后端。

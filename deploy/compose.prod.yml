@@ -65,6 +65,12 @@ x-ryframe-service: &ryframe-service
   image: ${RYFRAME_IMAGE:?必须设置不可变的 RYFRAME_IMAGE 镜像摘要}
   restart: unless-stopped
   read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  stop_grace_period: 15s
   tmpfs:
     - /tmp:mode=1777,noexec,nosuid,size=64m
   environment: *ryframe-environment

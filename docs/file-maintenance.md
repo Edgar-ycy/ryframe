@@ -59,4 +59,4 @@ cargo run -p ryframe --features file-maintenance --bin ryframe-file-maintenance 
 2. 旧上传预留清理 `remaining=0`；
 3. 旧 API 与 Worker 已停止，期间没有重新创建旧状态记录；
 4. 最终迁移已删除旧 MD5 索引与列、将 SHA-256 收紧为非空，并建立新的摘要索引；
-5. 新 API 与 Worker 的架构守卫、编译和文件链路校验全部通过。
+5. 新 API 与 Worker 的生产目标编译、契约快照和文件链路校验全部通过。

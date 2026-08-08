@@ -235,7 +235,7 @@ monitor.db-pool    -> /monitor/db-pool
 tools.gen          -> /tools/gen
 ```
 
-新增页面菜单时，需要先在前端 page registry 注册 `route_key`；后端 `sys_menu` 维护菜单结构、`route_key` 和 `perm_id`。默认菜单 route-key 集合通过 OpenAPI 的 `x-ryframe-menu-routes` 扩展发布，前后端 CI 会拒绝缺失、额外或菜单类型不一致的注册项。
+新增页面菜单时，需要先在前端 page registry 注册 `route_key`；后端 `sys_menu` 维护菜单结构、`route_key` 和 `perm_id`。默认菜单 route-key 集合通过 OpenAPI 的 `x-ryframe-menu-routes` 扩展发布；后端 CI 重新生成并比对该契约，前端 CI 会拒绝缺失、额外或菜单类型不一致的注册项。
 
 ## 常用模块路径
 

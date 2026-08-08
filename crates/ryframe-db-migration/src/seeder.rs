@@ -29,7 +29,9 @@ pub fn mysql_snapshot_sql() -> String {
          -- 仅供审阅：部署和重置工具不得执行此文件。\n\
          -- 重新生成命令：cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
     );
-    for statement in ddl_statements() {
+    for statement in ddl_statements()
+        .map(crate::m20260806_000021_message_recipient_soft_delete::current_snapshot_statement)
+    {
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }

@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    future::Future,
-    sync::Arc,
-    time::{Duration as StdDuration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as StdDuration};
 
 use async_trait::async_trait;
 use chrono::Duration;
@@ -15,7 +10,10 @@ use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
-use super::queue::JobQueue;
+use super::{
+    backoff::{jittered_delay, next_idle_wait},
+    queue::JobQueue,
+};
 
 /// 任务处理器。实现必须具备幂等性，因为 Worker 提供至少一次投递语义。
 ///
@@ -545,33 +543,4 @@ pub(super) fn infrastructure_retry_delay(
     let exponent = consecutive_failures.saturating_sub(1).min(30);
     let multiplier = 1_u32 << exponent;
     poll_interval.saturating_mul(multiplier).min(MAX_DELAY)
-}
-
-fn next_idle_wait(
-    current: StdDuration,
-    min_interval: StdDuration,
-    max_interval: StdDuration,
-) -> StdDuration {
-    if current >= max_interval {
-        return max_interval;
-    }
-    std::cmp::min(
-        max_interval,
-        std::cmp::max(min_interval, current.saturating_mul(2)),
-    )
-}
-
-fn jittered_delay(base: StdDuration) -> StdDuration {
-    let base_ms = base.as_millis().max(1) as i64;
-    let jitter = base_ms / 5; // 固定加入 ±20% 抖动。
-    if jitter == 0 {
-        return base;
-    }
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|time| i64::from(time.subsec_nanos()))
-        .unwrap_or(0);
-    let offset = (seed.rem_euclid(2 * jitter + 1)) - jitter;
-    let actual = base_ms.saturating_add(offset).max(1);
-    StdDuration::from_millis(actual as u64)
 }

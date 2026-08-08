@@ -16,7 +16,7 @@ Swagger UI 的 HTML、CSS、JavaScript、字体和图标均由 Rust crate 在编
 `APP_API_DOCS_ENABLED=false`，生产构建使用 `cargo build --release --no-default-features`
 （或等价的镜像构建命令）排除整个 Swagger UI 资源；公网 Nginx 也应返回 `404`。未编译
 `runtime-swagger-ui` 时若设置 `APP_API_DOCS_ENABLED=true`，API 会在连接 MySQL、Redis 或
-对象存储之前明确启动失败。生产排查使用仓库中经过 CI 校验的 `openapi/openapi.json`。
+对象存储之前明确启动失败。生产排查使用仓库中由 CI 重新生成并精确比对的 `openapi/openapi.json`。
 
 ## 1. 基础约定
 

@@ -8,6 +8,36 @@ const VISIBLE_INDEX: &str = "idx_message_recipient_visible";
 const UNREAD_INDEX: &str = "idx_message_recipient_unread";
 const UNACKED_INDEX: &str = "idx_message_recipient_unacked";
 
+const CURRENT_SNAPSHOT_TABLE_SQL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_message_recipient` (
+    `message_id` BIGINT NOT NULL COMMENT '消息ID',
+    `user_id` BIGINT NOT NULL COMMENT '收件用户ID',
+    `tenant_id` VARCHAR(64) NOT NULL COMMENT '租户标识',
+    `created_at` DATETIME(6) NOT NULL COMMENT '收件记录创建时间',
+    `enqueued_at` DATETIME(6) DEFAULT NULL COMMENT '已推送时间',
+    `acked_at` DATETIME(6) DEFAULT NULL COMMENT '已确认时间',
+    `read_at` DATETIME(6) DEFAULT NULL COMMENT '已读时间',
+    `deleted_at` DATETIME(6) DEFAULT NULL COMMENT '收件人删除时间',
+    PRIMARY KEY (`message_id`, `user_id`),
+    KEY `idx_message_recipient_visible` (`tenant_id`, `user_id`, `deleted_at`, `message_id` DESC),
+    KEY `idx_message_recipient_unread` (`tenant_id`, `user_id`, `deleted_at`, `read_at`, `message_id` DESC),
+    KEY `idx_message_recipient_unacked` (`tenant_id`, `user_id`, `deleted_at`, `acked_at`, `message_id` DESC),
+    CONSTRAINT `fk_message_recipient_message`
+        FOREIGN KEY (`message_id`) REFERENCES `sys_message` (`id`)
+        ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='消息收件箱表'"####;
+
+/// 将历史基线中的收件箱建表语句映射为执行完本迁移后的当前快照。
+pub(crate) fn current_snapshot_statement(statement: &'static str) -> &'static str {
+    if statement
+        .trim_start()
+        .starts_with("CREATE TABLE IF NOT EXISTS `sys_message_recipient`")
+    {
+        CURRENT_SNAPSHOT_TABLE_SQL
+    } else {
+        statement
+    }
+}
+
 /// 增加收件人级软删除，并安装已通过代表性数据执行计划验证的收件箱索引。
 #[derive(DeriveMigrationName)]
 pub struct Migration;

@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration as StdDuration, SystemTime, UNIX_EPOCH},
-};
+use std::{sync::Arc, time::Duration as StdDuration};
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_config::JobConfig;
@@ -15,6 +12,7 @@ use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
+use super::backoff::{jittered_delay, next_idle_wait};
 use super::worker::{infrastructure_retry_delay, retry_delay};
 use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
 use crate::system::{MESSAGE_DISPATCH_JOB_TYPE, OperLogService};
@@ -526,33 +524,4 @@ impl OutboxWorker {
             }
         }
     }
-}
-
-fn next_idle_wait(
-    current: StdDuration,
-    min_interval: StdDuration,
-    max_interval: StdDuration,
-) -> StdDuration {
-    if current >= max_interval {
-        return max_interval;
-    }
-    std::cmp::max(
-        min_interval,
-        std::cmp::min(max_interval, current.saturating_mul(2)),
-    )
-}
-
-fn jittered_delay(base: StdDuration) -> StdDuration {
-    let base_ms = base.as_millis().max(1) as i64;
-    let jitter = base_ms / 5; // 固定加入 ±20% 抖动。
-    if jitter == 0 {
-        return base;
-    }
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|time| i64::from(time.subsec_nanos()))
-        .unwrap_or(0);
-    let offset = (seed.rem_euclid(2 * jitter + 1)) - jitter;
-    let actual = base_ms.saturating_add(offset).max(1);
-    StdDuration::from_millis(actual as u64)
 }

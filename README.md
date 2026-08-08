@@ -44,7 +44,7 @@ docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_K
 cargo run
 ```
 
-首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。联合生产检查使用 `cargo xtask check`，可附加 `--scope backend` 或 `--scope frontend` 缩小范围。Cargo feature 必须在 `config/feature-matrix.json` 登记最小与最大组合，并在本地运行 `cargo xtask feature-matrix`；CI 只校验注册表元数据，不重复编译矩阵。稳定发布前使用 `cargo xtask release-verify` 校验双仓库版本、提交和发布元数据。`file-maintenance` 只用于一次性历史文件校验，常规 API 和 Worker 不会启用它。
+首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。联合生产检查使用 `cargo xtask check`，可附加 `--scope backend` 或 `--scope frontend` 缩小范围。Cargo feature 必须在 `config/feature-matrix.json` 登记最小与最大组合，并在本地或发布验收环境运行 `cargo xtask feature-matrix`；日常 CI 不重复编译特性矩阵。稳定发布前使用 `cargo xtask release-verify` 校验双仓库版本、提交和发布元数据。`file-maintenance` 只用于一次性历史文件校验，常规 API 和 Worker 不会启用它。
 
 `xtask` 会在后端 `target/corepack-bin/` 中创建临时 Corepack shim，并从前端的 `packageManager` 字段读取固定的 pnpm 版本；该目录是本机构建缓存，不应提交。
 
@@ -104,10 +104,10 @@ cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ry
 cross build --release --no-default-features --target x86_64-unknown-linux-gnu -p ryframe --bin ryframe
 ```
 
-托管后端 CI 在 Linux 上执行格式、源码卫生、架构与权限门禁、工作流和部署静态校验，
-并只通过一次生产库和可执行文件的 Clippy 编译；依赖安全审计在独立作业执行。OpenAPI 与 MySQL
-快照由开发者在本地生成并检入，托管 CI 不再为快照重复编译；稳定版 Release 也不重复
-编译或测试，只接受两仓同名 annotated tag 解引用出的精确提交已成功完成各自 push CI 的
+托管后端 CI 在 Linux 上执行格式、工作流、预发布依赖与权限绑定检查，并只通过一次生产库和
+可执行文件的 Clippy 编译；随后复用编译缓存重新生成 OpenAPI 与 MySQL 快照并做精确差异比较，
+依赖安全审计在独立作业执行。稳定版 Release 不重复编译或测试，只接受两仓同名 annotated tag
+解引用出的精确提交已成功完成各自 push CI 的
 证据；GitHub Release 不生成额外交付身份文件，也不上传自定义附件。
 
 ## 重置数据库
@@ -146,7 +146,7 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 ├── config/                   # app.toml 与环境配置
 ├── docs/                     # 使用指南与架构文档
 ├── openapi/openapi.json      # 本地生成、联合发布比对的规范 API 快照
-├── scripts/                  # 源码、权限和架构门禁
+├── scripts/                  # 依赖、权限与发布校验工具
 ├── locales/                  # 国际化资源
 ├── sql/                      # Migrator 在本地生成的只读 MySQL 快照
 └── deploy/                   # 部署相关资源

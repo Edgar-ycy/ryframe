@@ -62,7 +62,7 @@ required Redis 和必要对象存储，独立 Worker 只要求 MySQL 与 require
 联合发布工作流本身不重复编译、测试或生成 OpenAPI/MySQL 快照；它只接受前后端精确提交
 已有成功 push CI 的证据，并校验检入契约和不可变 Git 身份。
 
-前端精确提交的独立 CI 执行源码卫生、依赖与架构守卫、Lint、类型检查、生产构建和包体限制。首屏 gzip JS 不超过 350 KiB、CSS 不超过 100 KiB，单个异步原始 JS chunk 不超过 500 KiB。
+前端精确提交的独立 CI 执行工作流、依赖与 API 契约检查、Lint、类型检查、生产构建和包体限制。首屏 gzip JS 不超过 350 KiB、CSS 不超过 100 KiB，单个异步原始 JS chunk 不超过 500 KiB。
 
 ## 4. 发布物与可复现性
 

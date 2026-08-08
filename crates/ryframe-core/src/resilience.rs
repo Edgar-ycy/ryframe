@@ -182,11 +182,30 @@ impl CircuitBreaker {
         Self::new(5, 30, 3)
     }
 
+    /// 获取状态写锁；锁中毒时按保守策略恢复为 Open 状态。
+    fn status_guard(&self) -> std::sync::RwLockWriteGuard<'_, CircuitStatus> {
+        match self.status.write() {
+            Ok(status) => status,
+            Err(poisoned) => {
+                warn!("熔断器状态锁已中毒，按 Open 状态恢复");
+                let mut status = poisoned.into_inner();
+                status.state = CircuitState::Open;
+                status.changed_at = Instant::now();
+                status.half_open_success = 0;
+                status.half_open_in_flight = 0;
+                self.failure_count
+                    .store(self.failure_threshold, Ordering::SeqCst);
+                self.status.clear_poison();
+                status
+            }
+        }
+    }
+
     /// 检查是否可以尝试执行操作
     ///
     /// 返回 `true` 表示允许执行，`false` 表示熔断中
     pub fn allow_request(&self) -> bool {
-        let mut status = self.status.write().unwrap();
+        let mut status = self.status_guard();
         match status.state {
             CircuitState::Closed => true,
             CircuitState::HalfOpen => {
@@ -218,7 +237,7 @@ impl CircuitBreaker {
 
     /// 记录操作成功
     pub fn record_success(&self) {
-        let mut status = self.status.write().unwrap();
+        let mut status = self.status_guard();
         match status.state {
             CircuitState::Closed => {
                 self.failure_count.store(0, Ordering::SeqCst);
@@ -250,7 +269,7 @@ impl CircuitBreaker {
 
     /// 记录操作失败
     pub fn record_failure(&self) {
-        let mut status = self.status.write().unwrap();
+        let mut status = self.status_guard();
         match status.state {
             CircuitState::Closed => {
                 let count = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -281,6 +300,6 @@ impl CircuitBreaker {
 
     /// 获取当前状态
     pub fn current_state(&self) -> CircuitState {
-        self.status.read().unwrap().state
+        self.status_guard().state
     }
 }

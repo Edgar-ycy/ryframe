@@ -43,7 +43,6 @@ ENV APP_ENV=prod \
     APP_CONFIG_DIR=/opt/ryframe/config \
     APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads
 EXPOSE 8080
-VOLUME ["/var/lib/ryframe/uploads"]
 USER ryframe
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
