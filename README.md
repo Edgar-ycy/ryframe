@@ -98,7 +98,6 @@ pnpm build
 cargo check --workspace --lib --bins
 cargo fmt --all -- --check
 cargo clippy --workspace --lib --bins -- -D warnings
-python scripts/check_architecture.py
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
 # 部署环境按需从稳定标签源码构建不含 Swagger UI 的 Linux API 可执行文件

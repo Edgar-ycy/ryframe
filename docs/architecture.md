@@ -255,7 +255,6 @@ state
 
 ```bash
 python scripts/check_prerelease_dependencies.py
-python scripts/check_architecture.py
 python scripts/check_permission_routes.py
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --lib --bins -- -D warnings

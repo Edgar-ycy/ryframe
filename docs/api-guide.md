@@ -355,7 +355,6 @@ curl http://127.0.0.1:8080/api/v1/api-docs/openapi.json
 提交 API 变更前运行：
 
 ```bash
-python scripts/check_architecture.py
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo clippy --workspace --lib --bins -- -D warnings
 ```

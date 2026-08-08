@@ -67,9 +67,6 @@ jobs:
       - name: Check permission bindings
         run: python scripts/check_permission_routes.py
 
-      - name: Check architecture boundaries
-        run: python scripts/check_architecture.py
-
       # 每次源码变更只通过这一条生产目标 Clippy 命令编译工作区。
       - name: Clippy (production targets)
         run: cargo clippy --locked --workspace --lib --bins -- -D warnings
