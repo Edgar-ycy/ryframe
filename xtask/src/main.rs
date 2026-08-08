@@ -451,18 +451,7 @@ fn run_feature_combination(
 }
 
 fn frontend_check(frontend_dir: &Path) -> Result<()> {
-    for script in [
-        "check:sources",
-        "check:dependencies",
-        "check:architecture",
-        "api:check",
-        "lint",
-        "lint:styles",
-        "typecheck",
-    ] {
-        run_pnpm(frontend_dir, &[script])?;
-    }
-    Ok(())
+    run_pnpm(frontend_dir, &["check"])
 }
 
 fn contract(args: &[String], frontend_dir: &Path) -> Result<()> {
