@@ -385,6 +385,8 @@ const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("monitor.runtime", "C"),
     ("monitor.cache", "C"),
     ("monitor.db-pool", "C"),
+    ("monitor.jobs", "C"),
+    ("monitor.schedules", "C"),
     ("tools.gen", "C"),
 ];
 

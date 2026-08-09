@@ -4482,9 +4482,8 @@
           },
           "schedule_id": {
             "description": "按来源计划 ID 精确过滤。",
-            "format": "int64",
             "type": [
-              "integer",
+              "string",
               "null"
             ]
           },
@@ -10952,8 +10951,7 @@
             "name": "schedule_id",
             "required": false,
             "schema": {
-              "format": "int64",
-              "type": "integer"
+              "type": "string"
             }
           },
           {
@@ -15851,6 +15849,14 @@
       {
         "menu_type": "C",
         "route_key": "monitor.db-pool"
+      },
+      {
+        "menu_type": "C",
+        "route_key": "monitor.jobs"
+      },
+      {
+        "menu_type": "C",
+        "route_key": "monitor.schedules"
       },
       {
         "menu_type": "C",

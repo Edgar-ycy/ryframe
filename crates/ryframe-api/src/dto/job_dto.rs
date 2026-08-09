@@ -17,7 +17,7 @@ pub struct BackgroundJobPageQuery {
     #[param(minimum = 1)]
     pub page_size: Option<u64>,
     /// 按来源计划 ID 精确过滤。
-    pub schedule_id: Option<i64>,
+    pub schedule_id: Option<String>,
     /// 按任务类型精确过滤。
     pub job_type: Option<String>,
     /// 按状态精确过滤：pending、running、succeeded 或 dead。

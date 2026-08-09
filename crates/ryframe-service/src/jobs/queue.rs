@@ -25,7 +25,7 @@ use crate::system::{EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
 #[derive(Clone, Debug)]
 pub struct BackgroundJobListParams {
     pub page: ValidatedPageQuery,
-    pub schedule_id: Option<i64>,
+    pub schedule_id: Option<String>,
     pub job_type: Option<String>,
     pub status: Option<String>,
 }
@@ -506,11 +506,17 @@ fn normalize_job_type_filter(value: Option<String>) -> AppResult<Option<String>>
     Ok(Some(value.to_owned()))
 }
 
-fn normalize_schedule_id_filter(value: Option<i64>) -> AppResult<Option<i64>> {
-    if value.is_some_and(|id| id <= 0) {
-        return Err(AppError::Validation("来源计划 ID 必须是正整数".into()));
-    }
-    Ok(value)
+fn normalize_schedule_id_filter(value: Option<String>) -> AppResult<Option<i64>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    let schedule_id = value
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id > 0)
+        .ok_or_else(|| AppError::Validation("来源计划 ID 必须是正整数".into()))?;
+    Ok(Some(schedule_id))
 }
 
 fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String>> {
