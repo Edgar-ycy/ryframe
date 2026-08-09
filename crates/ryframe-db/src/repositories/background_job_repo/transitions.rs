@@ -231,10 +231,11 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
+        include_platform: bool,
         job_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let result = Self::retry_dead_query(tenant_id, job_id, now)
+        let result = Self::retry_dead_query(tenant_id, include_platform, job_id, now)
             .exec(db)
             .await
             .map_err(database_error)?;
@@ -252,10 +253,11 @@ impl BackgroundJobRepository {
 
     fn retry_dead_query(
         tenant_id: &str,
+        include_platform: bool,
         job_id: i64,
         now: DateTime<Utc>,
     ) -> sea_orm::UpdateMany<background_job::Entity> {
-        background_job::Entity::update_many()
+        let query = background_job::Entity::update_many()
             .col_expr(
                 background_job::Column::Status,
                 Expr::value(background_job::Model::STATUS_PENDING),
@@ -276,8 +278,16 @@ impl BackgroundJobRepository {
                 Expr::value(Option::<DateTime<Utc>>::None),
             )
             .filter(background_job::Column::Id.eq(job_id))
-            .filter(background_job::Column::TenantId.eq(tenant_id))
-            .filter(background_job::Column::Status.eq(background_job::Model::STATUS_DEAD))
+            .filter(background_job::Column::Status.eq(background_job::Model::STATUS_DEAD));
+        if include_platform {
+            query.filter(
+                sea_orm::Condition::any()
+                    .add(background_job::Column::TenantId.eq(tenant_id))
+                    .add(background_job::Column::TenantId.is_null()),
+            )
+        } else {
+            query.filter(background_job::Column::TenantId.eq(tenant_id))
+        }
     }
 
     fn expired_lease_dead_query(now: DateTime<Utc>) -> sea_orm::UpdateMany<background_job::Entity> {

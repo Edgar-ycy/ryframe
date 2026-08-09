@@ -183,6 +183,72 @@
         ],
         "type": "object"
       },
+      "ApiPageResponse_JobScheduleExecutionVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_JobScheduleExecutionVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiPageResponse_JobScheduleVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_JobScheduleVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiPageResponse_LoginInfoVo": {
         "description": "统一分页 API 响应结构。",
         "properties": {
@@ -778,9 +844,29 @@
                 "format": "int32",
                 "type": "integer"
               },
+              "max_runtime_seconds": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
               "priority": {
                 "format": "int32",
                 "type": "integer"
+              },
+              "schedule_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scheduled_for": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "type": "string"
@@ -1530,6 +1616,261 @@
               "id",
               "resource",
               "status",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_JobScheduleExecutionVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "background_job_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "background_job_status": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "handler_key": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string"
+              },
+              "schedule_id": {
+                "type": "string"
+              },
+              "schedule_name": {
+                "type": "string"
+              },
+              "scheduled_for": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "trigger_kind": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "schedule_id",
+              "schedule_name",
+              "handler_key",
+              "trigger_kind",
+              "scheduled_for",
+              "outcome",
+              "created_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_JobSchedulePreview": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "occurrences": {
+                "items": {
+                  "$ref": "#/components/schemas/JobScheduleOccurrence"
+                },
+                "type": "array"
+              },
+              "timezone": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timezone",
+              "occurrences"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_JobScheduleVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "concurrency_policy": {
+                "type": "string"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "cron_expression": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "handler_key": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "last_run_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "max_runtime_seconds": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "misfire_policy": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "next_run_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "timezone": {
+                "type": "string"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "version": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "handler_key",
+              "cron_expression",
+              "timezone",
+              "enabled",
+              "misfire_policy",
+              "concurrency_policy",
+              "max_runtime_seconds",
+              "version",
               "created_at",
               "updated_at"
             ],
@@ -3626,6 +3967,71 @@
         ],
         "type": "object"
       },
+      "ApiResponse_Vec_ScheduleTargetVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "properties": {
+                "available": {
+                  "type": "boolean"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "handler_key": {
+                  "type": "string"
+                },
+                "job_type": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "handler_key",
+                "display_name",
+                "scope",
+                "job_type",
+                "available"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_Vec_String": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -4074,6 +4480,14 @@
               "null"
             ]
           },
+          "schedule_id": {
+            "description": "按来源计划 ID 精确过滤。",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "status": {
             "description": "按状态精确过滤：pending、running、succeeded 或 dead。",
             "type": [
@@ -4185,9 +4599,29 @@
             "format": "int32",
             "type": "integer"
           },
+          "max_runtime_seconds": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "priority": {
             "format": "int32",
             "type": "integer"
+          },
+          "schedule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scheduled_for": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "status": {
             "type": "string"
@@ -4475,6 +4909,13 @@
           "new_password"
         ],
         "type": "object"
+      },
+      "ConcurrencyPolicyDto": {
+        "enum": [
+          "forbid",
+          "allow"
+        ],
+        "type": "string"
       },
       "ConfigVo": {
         "description": "参数配置响应。",
@@ -4783,6 +5224,43 @@
         "required": [
           "name",
           "code"
+        ],
+        "type": "object"
+      },
+      "CreateScheduleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "concurrency_policy": {
+            "$ref": "#/components/schemas/ConcurrencyPolicyDto"
+          },
+          "cron_expression": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "handler_key": {
+            "type": "string"
+          },
+          "max_runtime_seconds": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "misfire_policy": {
+            "$ref": "#/components/schemas/MisfirePolicyDto"
+          },
+          "name": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "handler_key",
+          "cron_expression",
+          "timezone"
         ],
         "type": "object"
       },
@@ -5340,6 +5818,172 @@
         ],
         "type": "object"
       },
+      "JobScheduleExecutionVo": {
+        "properties": {
+          "background_job_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "background_job_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handler_key": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "schedule_id": {
+            "type": "string"
+          },
+          "schedule_name": {
+            "type": "string"
+          },
+          "scheduled_for": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "trigger_kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "schedule_id",
+          "schedule_name",
+          "handler_key",
+          "trigger_kind",
+          "scheduled_for",
+          "outcome",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "JobScheduleOccurrence": {
+        "properties": {
+          "schedule_time": {
+            "type": "string"
+          },
+          "utc": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "utc",
+          "schedule_time"
+        ],
+        "type": "object"
+      },
+      "JobSchedulePreview": {
+        "properties": {
+          "occurrences": {
+            "items": {
+              "$ref": "#/components/schemas/JobScheduleOccurrence"
+            },
+            "type": "array"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "timezone",
+          "occurrences"
+        ],
+        "type": "object"
+      },
+      "JobScheduleVo": {
+        "properties": {
+          "concurrency_policy": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cron_expression": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "handler_key": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_run_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_runtime_seconds": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "misfire_policy": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_run_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "handler_key",
+          "cron_expression",
+          "timezone",
+          "enabled",
+          "misfire_policy",
+          "concurrency_policy",
+          "max_runtime_seconds",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "LivenessResponse": {
         "properties": {
           "status": {
@@ -5743,6 +6387,13 @@
         ],
         "type": "object"
       },
+      "MisfirePolicyDto": {
+        "enum": [
+          "skip",
+          "fire_once"
+        ],
+        "type": "string"
+      },
       "NoticeVo": {
         "description": "通知公告响应。",
         "properties": {
@@ -6067,9 +6718,29 @@
                   "format": "int32",
                   "type": "integer"
                 },
+                "max_runtime_seconds": {
+                  "format": "int32",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
                 "priority": {
                   "format": "int32",
                   "type": "integer"
+                },
+                "schedule_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "scheduled_for": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "status": {
                   "type": "string"
@@ -6331,6 +7002,222 @@
                 "code",
                 "status",
                 "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_JobScheduleExecutionVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "background_job_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "background_job_status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "handler_key": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string"
+                },
+                "schedule_id": {
+                  "type": "string"
+                },
+                "schedule_name": {
+                  "type": "string"
+                },
+                "scheduled_for": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "trigger_kind": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "schedule_id",
+                "schedule_name",
+                "handler_key",
+                "trigger_kind",
+                "scheduled_for",
+                "outcome",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_JobScheduleVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "concurrency_policy": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "cron_expression": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "handler_key": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "last_run_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "max_runtime_seconds": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "misfire_policy": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "next_run_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "version": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "handler_key",
+                "cron_expression",
+                "timezone",
+                "enabled",
+                "misfire_policy",
+                "concurrency_policy",
+                "max_runtime_seconds",
+                "version",
+                "created_at",
+                "updated_at"
               ],
               "type": "object"
             },
@@ -7948,6 +8835,142 @@
         ],
         "type": "object"
       },
+      "ScheduleExecutionPageQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "background_job_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "trigger_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SchedulePageQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "handler_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SchedulePreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cron_expression": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cron_expression",
+          "timezone"
+        ],
+        "type": "object"
+      },
+      "ScheduleTargetVo": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "handler_key": {
+            "type": "string"
+          },
+          "job_type": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "handler_key",
+          "display_name",
+          "scope",
+          "job_type",
+          "available"
+        ],
+        "type": "object"
+      },
+      "ScheduleVersionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
       "ServerInfo": {
         "properties": {
           "cpu_cores": {
@@ -8379,6 +9402,69 @@
         "required": [
           "name",
           "status"
+        ],
+        "type": "object"
+      },
+      "UpdateScheduleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "concurrency_policy": {
+            "$ref": "#/components/schemas/ConcurrencyPolicyDto"
+          },
+          "cron_expression": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "handler_key": {
+            "type": "string"
+          },
+          "max_runtime_seconds": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "misfire_policy": {
+            "$ref": "#/components/schemas/MisfirePolicyDto"
+          },
+          "name": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "name",
+          "handler_key",
+          "cron_expression",
+          "timezone",
+          "enabled",
+          "misfire_policy",
+          "concurrency_policy",
+          "max_runtime_seconds"
+        ],
+        "type": "object"
+      },
+      "UpdateScheduleStatusRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "enabled"
         ],
         "type": "object"
       },
@@ -9861,6 +10947,16 @@
             }
           },
           {
+            "description": "按来源计划 ID 精确过滤。",
+            "in": "query",
+            "name": "schedule_id",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
             "description": "按任务类型精确过滤。",
             "in": "query",
             "name": "job_type",
@@ -10016,6 +11112,495 @@
         ],
         "tags": [
           "服务器监控"
+        ]
+      }
+    },
+    "/api/v1/monitor/schedules": {
+      "get": {
+        "operationId": "get_monitor_schedules",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "handler_key",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "enabled",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_JobScheduleVo"
+                }
+              }
+            },
+            "description": "定时任务列表"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      },
+      "post": {
+        "operationId": "post_monitor_schedules",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_JobScheduleVo"
+                }
+              }
+            },
+            "description": "定时任务已创建"
+          },
+          "400": {
+            "description": "输入无效"
+          },
+          "403": {
+            "description": "目标范围越权"
+          },
+          "409": {
+            "description": "启用数量超过租户限制"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      }
+    },
+    "/api/v1/monitor/schedules/preview": {
+      "post": {
+        "operationId": "post_monitor_schedules_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_JobSchedulePreview"
+                }
+              }
+            },
+            "description": "未来五次执行时间"
+          },
+          "400": {
+            "description": "Cron 表达式或时区无效"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      }
+    },
+    "/api/v1/monitor/schedules/targets": {
+      "get": {
+        "operationId": "get_monitor_schedules_targets",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_ScheduleTargetVo"
+                }
+              }
+            },
+            "description": "当前租户可见的调度目标"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      }
+    },
+    "/api/v1/monitor/schedules/{id}": {
+      "delete": {
+        "operationId": "delete_monitor_schedules_by_id",
+        "parameters": [
+          {
+            "description": "定时任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleVersionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "定时任务已软删除"
+          },
+          "409": {
+            "description": "版本冲突"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      },
+      "get": {
+        "operationId": "get_monitor_schedules_by_id",
+        "parameters": [
+          {
+            "description": "定时任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_JobScheduleVo"
+                }
+              }
+            },
+            "description": "定时任务详情"
+          },
+          "404": {
+            "description": "记录不可见或不存在"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      },
+      "put": {
+        "operationId": "put_monitor_schedules_by_id",
+        "parameters": [
+          {
+            "description": "定时任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_JobScheduleVo"
+                }
+              }
+            },
+            "description": "定时任务已更新"
+          },
+          "404": {
+            "description": "记录不可见或不存在"
+          },
+          "409": {
+            "description": "版本冲突或启用数量超限"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      }
+    },
+    "/api/v1/monitor/schedules/{id}/executions": {
+      "get": {
+        "operationId": "get_monitor_schedules_by_id_executions",
+        "parameters": [
+          {
+            "description": "定时任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "trigger_kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "background_job_status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_JobScheduleExecutionVo"
+                }
+              }
+            },
+            "description": "计划执行历史"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      }
+    },
+    "/api/v1/monitor/schedules/{id}/run": {
+      "post": {
+        "operationId": "post_monitor_schedules_by_id_run",
+        "parameters": [
+          {
+            "description": "定时任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "立即执行幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_JobScheduleExecutionVo"
+                }
+              }
+            },
+            "description": "任务已入队"
+          },
+          "409": {
+            "description": "禁止并发冲突"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
+        ]
+      }
+    },
+    "/api/v1/monitor/schedules/{id}/status": {
+      "put": {
+        "operationId": "put_monitor_schedules_by_id_status",
+        "parameters": [
+          {
+            "description": "定时任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateScheduleStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_JobScheduleVo"
+                }
+              }
+            },
+            "description": "启停状态已更新"
+          },
+          "409": {
+            "description": "版本冲突或启用数量超限"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "定时任务"
         ]
       }
     },
@@ -14153,6 +15738,10 @@
       "name": "后台任务"
     },
     {
+      "description": "管理租户隔离的 Cron 计划、立即执行和执行历史。",
+      "name": "定时任务"
+    },
+    {
       "description": "/metrics(Prometheus) 公开；进程与依赖探针分别使用根路径 /livez、/readyz；/server、/cache、/db-pool、/runtime 需认证。",
       "name": "服务器监控"
     },
@@ -14299,6 +15888,11 @@
       "monitor:online:force-logout",
       "monitor:online:list",
       "monitor:runtime:list",
+      "monitor:schedule:add",
+      "monitor:schedule:edit",
+      "monitor:schedule:list",
+      "monitor:schedule:remove",
+      "monitor:schedule:run",
       "monitor:server:list",
       "system:config:add",
       "system:config:edit",

@@ -149,6 +149,18 @@ MySQL 始终是后台任务和 Outbox 的唯一可靠事实来源。`ryframe:job
 空闲等待，而是按 `APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS` 独立运行；调整任一 `APP_JOBS_*`
 值后必须同时重启 API 与 Worker。
 
+Cron 调度同样只以 MySQL 为可靠事实来源。`jobs.mode=embedded` 时由 API 扫描，
+`jobs.mode=external` 时只由 `ryframe-worker` 扫描，`disabled` 不扫描；`ryframe-worker --once`
+会先扫描一批到期计划，再执行单次 Outbox 和任务消费。扫描间隔、批量大小和单租户启用上限
+分别由 `APP_JOBS_SCHEDULER_POLL_INTERVAL_MS`、`APP_JOBS_SCHEDULER_BATCH_SIZE` 和
+`APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT` 控制。多实例通过 `FOR UPDATE SKIP LOCKED` 与
+`schedule_id + fire_key` 唯一键去重，禁止把 Redis 唤醒是否成功当作计划是否触发的判断依据。
+
+计划时间统一以 UTC 保存，Cron 使用“秒 分 时 日 月 周 年”七段格式，秒字段只允许 `0`，
+年字段只允许 `*`，时区必须是 IANA 名称。排障时结合
+`job_schedule_scan_total{result}`、`job_schedule_trigger_total{outcome}` 与
+`job_schedule_lag_seconds`；这些指标不允许增加租户、计划、任务、表达式或错误文本标签。
+
 排障时结合 `job_claim_attempts_total{queue,result}`、
 `job_wakeup_total{queue,transport,result}`、`job_wakeup_listener_up{queue}`、
 `job_wakeup_protocol_errors_total{result}` 观察领取、唤醒和协议错误；这些标签均为固定低基数枚举。

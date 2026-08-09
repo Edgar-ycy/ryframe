@@ -30,6 +30,9 @@ impl ExportService {
                     &transaction,
                     EnqueueBackgroundJob {
                         tenant_id: Some(tenant_id.to_owned()),
+                        schedule_id: None,
+                        scheduled_for: Some(now),
+                        max_runtime_seconds: None,
                         job_type: EXPORT_JOB_TYPE.to_owned(),
                         payload: serde_json::json!({ "resource": command.resource }),
                         priority: 5,

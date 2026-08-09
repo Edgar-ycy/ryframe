@@ -181,6 +181,9 @@ config/app.prod.toml
 | `APP_JOBS_POLL_INTERVAL_MS` | 空队列轮询的最小等待（`50..=60000`）；领取任务、收到唤醒或手动重试后会重置到该值 | `500` |
 | `APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS` | 连续空闲时按 2 倍退避的上限，必须位于最小等待到 `60000` 毫秒之间 | `5000` |
 | `APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS` | 过期任务和 Outbox 租约恢复的独立周期（`1..=3600`） | `15` |
+| `APP_JOBS_SCHEDULER_POLL_INTERVAL_MS` | 到期 Cron 计划的数据库扫描间隔（`250..=60000`） | `1000` |
+| `APP_JOBS_SCHEDULER_BATCH_SIZE` | 单轮最多领取的到期计划数量（`1..=1000`） | `100` |
+| `APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT` | 单租户最多启用的计划数量（`1..=10000`） | `100` |
 | `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；远程生产数据库使用 `verify_identity` | `disabled` |
 | `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
 | `APP_API_DOCS_ENABLED` | 是否暴露运行时 Swagger/OpenAPI；生产必须关闭 | `true` |

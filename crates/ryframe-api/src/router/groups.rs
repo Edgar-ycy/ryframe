@@ -8,6 +8,7 @@ pub(super) fn monitor_router(
     let protected = ryframe_monitor::protected_monitor_router(monitor_state)
         .merge(route!(runtime_status).with_state(state.clone()))
         .merge(job_handler::job_router(state.clone()))
+        .merge(schedule_handler::schedule_router(state.clone()))
         .layer(from_fn_with_state(
             OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
             oper_log_middleware,

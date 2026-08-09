@@ -3,8 +3,8 @@ use std::time::Duration as StdDuration;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait, QueryFilter,
-    QueryOrder, QueryResult, Statement, Value, sea_query::Expr,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait,
+    QueryFilter, QueryOrder, QueryResult, Statement, Value, sea_query::Expr,
 };
 
 use crate::entities::background_job;
@@ -251,7 +251,18 @@ impl BackgroundJobRepository {
     fn filtered_query(filter: BackgroundJobFilter<'_>) -> sea_orm::Select<background_job::Entity> {
         let mut select = background_job::Entity::find();
         if let Some(tenant_id) = filter.tenant_id {
-            select = select.filter(background_job::Column::TenantId.eq(tenant_id));
+            select = if filter.include_platform {
+                select.filter(
+                    Condition::any()
+                        .add(background_job::Column::TenantId.eq(tenant_id))
+                        .add(background_job::Column::TenantId.is_null()),
+                )
+            } else {
+                select.filter(background_job::Column::TenantId.eq(tenant_id))
+            };
+        }
+        if let Some(schedule_id) = filter.schedule_id {
+            select = select.filter(background_job::Column::ScheduleId.eq(schedule_id));
         }
         if let Some(job_type) = filter.job_type {
             select = select.filter(background_job::Column::JobType.eq(job_type));
@@ -264,11 +275,19 @@ impl BackgroundJobRepository {
 }
 
 fn queue_stats_filter(filter: BackgroundJobFilter<'_>) -> (String, Vec<Value>) {
-    let mut conditions = Vec::with_capacity(3);
-    let mut values = Vec::with_capacity(3);
+    let mut conditions = Vec::with_capacity(5);
+    let mut values = Vec::with_capacity(4);
     if let Some(tenant_id) = filter.tenant_id {
-        conditions.push("`tenant_id` = ?");
+        conditions.push(if filter.include_platform {
+            "(`tenant_id` = ? OR `tenant_id` IS NULL)"
+        } else {
+            "`tenant_id` = ?"
+        });
         values.push(Value::from(tenant_id.to_owned()));
+    }
+    if let Some(schedule_id) = filter.schedule_id {
+        conditions.push("`schedule_id` = ?");
+        values.push(Value::from(schedule_id));
     }
     if let Some(job_type) = filter.job_type {
         conditions.push("`job_type` = ?");

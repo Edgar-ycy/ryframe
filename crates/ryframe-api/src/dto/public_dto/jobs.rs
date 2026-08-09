@@ -12,6 +12,9 @@ use ryframe_service::{
 #[derive(Debug, Serialize, ToSchema)]
 pub struct BackgroundJobVo {
     pub id: String,
+    pub schedule_id: Option<String>,
+    pub scheduled_for: Option<DateTime<Utc>>,
+    pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub status: String,
     pub priority: i32,
@@ -31,6 +34,9 @@ impl From<ServiceBackgroundJobVo> for BackgroundJobVo {
     fn from(value: ServiceBackgroundJobVo) -> Self {
         let ServiceBackgroundJobVo {
             id,
+            schedule_id,
+            scheduled_for,
+            max_runtime_seconds,
             job_type,
             status,
             priority,
@@ -47,6 +53,9 @@ impl From<ServiceBackgroundJobVo> for BackgroundJobVo {
         } = value;
         Self {
             id,
+            schedule_id,
+            scheduled_for,
+            max_runtime_seconds,
             job_type,
             status,
             priority,

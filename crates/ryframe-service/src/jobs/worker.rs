@@ -285,10 +285,23 @@ impl JobWorker {
             let heartbeat_worker_id = worker_id.to_owned();
             let heartbeat_job_id = job.id;
             let lease_duration = self.lease_duration;
-            let handler_result = match run_with_lease_heartbeat(
-                handler.handle(&job),
-                self.heartbeat_interval,
-                move || {
+            let operation = async {
+                if let Some(seconds) = job.max_runtime_seconds {
+                    let seconds = u64::try_from(seconds)
+                        .map_err(|_| AppError::Internal("计划任务最大运行时长不是正整数".into()))?;
+                    match time::timeout(StdDuration::from_secs(seconds), handler.handle(&job)).await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(AppError::ServiceUnavailable(format!(
+                            "计划任务执行超过最大运行时长 {seconds} 秒"
+                        ))),
+                    }
+                } else {
+                    handler.handle(&job).await
+                }
+            };
+            let handler_result =
+                match run_with_lease_heartbeat(operation, self.heartbeat_interval, move || {
                     let queue = heartbeat_queue.clone();
                     let worker_id = heartbeat_worker_id.clone();
                     async move {
@@ -304,29 +317,28 @@ impl JobWorker {
                             )
                             .await
                     }
-                },
-            )
-            .await
-            {
-                LeaseHeartbeatOutcome::Completed(result) => result,
-                LeaseHeartbeatOutcome::LeaseLost => {
-                    tracing::warn!(
-                        job_id = job.id,
-                        worker_id,
-                        "后台任务租约已失效，处理器已取消且不会提交最终状态"
-                    );
-                    return Ok(JobRunResult::LeaseLost);
-                }
-                LeaseHeartbeatOutcome::RenewalFailed(error) => {
-                    tracing::warn!(
-                        %error,
-                        job_id = job.id,
-                        worker_id,
-                        "后台任务续租失败，处理器已取消且不会提交最终状态"
-                    );
-                    return Ok(JobRunResult::LeaseLost);
-                }
-            };
+                })
+                .await
+                {
+                    LeaseHeartbeatOutcome::Completed(result) => result,
+                    LeaseHeartbeatOutcome::LeaseLost => {
+                        tracing::warn!(
+                            job_id = job.id,
+                            worker_id,
+                            "后台任务租约已失效，处理器已取消且不会提交最终状态"
+                        );
+                        return Ok(JobRunResult::LeaseLost);
+                    }
+                    LeaseHeartbeatOutcome::RenewalFailed(error) => {
+                        tracing::warn!(
+                            %error,
+                            job_id = job.id,
+                            worker_id,
+                            "后台任务续租失败，处理器已取消且不会提交最终状态"
+                        );
+                        return Ok(JobRunResult::LeaseLost);
+                    }
+                };
 
             match handler_result {
                 Ok(()) => {

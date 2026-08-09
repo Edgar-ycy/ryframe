@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, QueryFilter, Statement,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
+    DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, Statement,
 };
 
 use crate::entities::background_job;
@@ -75,6 +75,9 @@ impl BackgroundJobRepository {
         let active = background_job::ActiveModel {
             id: Set(snowflake::try_next_snowflake_id()?),
             tenant_id: Set(command.tenant_id),
+            schedule_id: Set(command.schedule_id),
+            scheduled_for: Set(command.scheduled_for),
+            max_runtime_seconds: Set(command.max_runtime_seconds),
             job_type: Set(command.job_type),
             payload: Set(command.payload),
             status: Set(background_job::Model::STATUS_PENDING.to_owned()),
@@ -140,13 +143,20 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
+        include_platform: bool,
         id: i64,
     ) -> AppResult<Option<background_job::Model>> {
-        background_job::Entity::find_by_id(id)
-            .filter(background_job::Column::TenantId.eq(tenant_id))
-            .one(db)
-            .await
-            .map_err(database_error)
+        let query = background_job::Entity::find_by_id(id);
+        let query = if include_platform {
+            query.filter(
+                Condition::any()
+                    .add(background_job::Column::TenantId.eq(tenant_id))
+                    .add(background_job::Column::TenantId.is_null()),
+            )
+        } else {
+            query.filter(background_job::Column::TenantId.eq(tenant_id))
+        };
+        query.one(db).await.map_err(database_error)
     }
 
     pub async fn find_by_dedupe_key(
@@ -190,6 +200,14 @@ fn validate_enqueue_command(command: &EnqueueBackgroundJob) -> AppResult<()> {
     if command.max_attempts > 100 {
         return Err(AppError::Validation(
             "background job max_attempts must not exceed 100".into(),
+        ));
+    }
+    if command
+        .max_runtime_seconds
+        .is_some_and(|seconds| !(1..=86_400).contains(&seconds))
+    {
+        return Err(AppError::Validation(
+            "计划任务最大运行时长必须在 1 到 86400 秒之间".into(),
         ));
     }
     if command

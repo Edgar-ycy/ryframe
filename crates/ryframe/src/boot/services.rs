@@ -6,7 +6,8 @@ use ryframe_core::RedisClient;
 use ryframe_db::DatabaseCluster;
 use ryframe_kernel::AppError;
 use ryframe_service::{
-    AuditOutbox, AuthService, AuthorizationCache, JobQueue,
+    AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
+    ScheduledJobTargetRegistry,
     system::{
         CaptchaStore, ConfigService, DeptService, DictService, ExportService, FileService,
         GeneratorService, LoginInfoService, MenuService, MessageService, NoticeService,
@@ -75,6 +76,13 @@ pub async fn build_all(
     let oper_log = Arc::new(OperLogService::new(database.clone()));
     let job_queue =
         Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis_client.clone()));
+    let schedule_targets = ScheduledJobTargetRegistry::built_in(config.messaging.enabled)?;
+    let job_schedules = Arc::new(JobScheduleService::new(
+        database.clone(),
+        job_queue.clone(),
+        schedule_targets,
+        &config.jobs,
+    ));
     let audit_outbox = Arc::new(
         AuditOutbox::new(database.clone(), config.jobs.default_max_attempts)
             .with_job_queue(job_queue.clone()),
@@ -147,6 +155,7 @@ pub async fn build_all(
         oper_log,
         audit_outbox,
         job_queue,
+        job_schedules,
         login_info,
         generator,
         profile,

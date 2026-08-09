@@ -5,7 +5,7 @@ use crate::{
         auth_handler, captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
         export_handler, generator_handler, job_handler, login_log_handler, menu_handler,
         message_handler, notice_handler, online_user_handler, oper_log_handler, permission_handler,
-        post_handler, profile_handler, role_handler, user_handler,
+        post_handler, profile_handler, role_handler, schedule_handler, user_handler,
     },
     oper_log_middleware::{AuditMode, OperLogMiddlewareState, oper_log_middleware},
     request_locale::request_locale_middleware,

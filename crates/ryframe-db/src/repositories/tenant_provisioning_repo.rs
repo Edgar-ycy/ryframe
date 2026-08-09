@@ -211,6 +211,8 @@ impl TenantProvisioningRepository {
         let mut role_permissions = Vec::new();
         for source in system_permissions {
             let id = snowflake::try_next_snowflake_id()?;
+            let auto_assign = !source.code.starts_with("monitor:job:")
+                && !source.code.starts_with("monitor:schedule:");
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| permission_ids.get(&parent_id).copied());
@@ -231,20 +233,22 @@ impl TenantProvisioningRepository {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
 
-            role_permissions.push(role_permission::ActiveModel {
-                tenant_id: ActiveValue::Set(tenant_id.clone()),
-                role_id: ActiveValue::Set(admin_role_id),
-                perm_id: ActiveValue::Set(id),
-            });
-            if source.code.ends_with(":query")
-                || source.code.ends_with(":list")
-                || source.code.ends_with(":view")
-            {
+            if auto_assign {
                 role_permissions.push(role_permission::ActiveModel {
                     tenant_id: ActiveValue::Set(tenant_id.clone()),
-                    role_id: ActiveValue::Set(user_role_id),
+                    role_id: ActiveValue::Set(admin_role_id),
                     perm_id: ActiveValue::Set(id),
                 });
+                if source.code.ends_with(":query")
+                    || source.code.ends_with(":list")
+                    || source.code.ends_with(":view")
+                {
+                    role_permissions.push(role_permission::ActiveModel {
+                        tenant_id: ActiveValue::Set(tenant_id.clone()),
+                        role_id: ActiveValue::Set(user_role_id),
+                        perm_id: ActiveValue::Set(id),
+                    });
+                }
             }
             permission_ids.insert(source.id, id);
         }

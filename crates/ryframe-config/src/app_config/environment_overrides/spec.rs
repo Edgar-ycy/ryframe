@@ -115,6 +115,18 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS",
         &["jobs", "lease_recovery_interval_seconds"],
     ),
+    EnvOverride::integer(
+        "APP_JOBS_SCHEDULER_POLL_INTERVAL_MS",
+        &["jobs", "scheduler_poll_interval_ms"],
+    ),
+    EnvOverride::integer(
+        "APP_JOBS_SCHEDULER_BATCH_SIZE",
+        &["jobs", "scheduler_batch_size"],
+    ),
+    EnvOverride::integer(
+        "APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT",
+        &["jobs", "max_enabled_schedules_per_tenant"],
+    ),
     EnvOverride::boolean("APP_TELEMETRY_ENABLED", &["telemetry", "enabled"]),
     EnvOverride::string("APP_TELEMETRY_ENDPOINT", &["telemetry", "endpoint"]),
     EnvOverride::string("APP_TELEMETRY_SERVICE_NAME", &["telemetry", "service_name"]),

@@ -10,7 +10,6 @@ use ryframe_kernel::AppError;
 use ryframe_service::{
     AuthorizationCache, CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler,
     JobQueue, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, OutboxWorker,
-    spawn_message_retention_scheduler,
 };
 use tokio::sync::{oneshot, watch};
 
@@ -113,11 +112,6 @@ async fn main() -> Result<(), AppError> {
         readiness_cache,
         shutdown_receiver.clone(),
     );
-    let mut retention_scheduler = spawn_message_retention_scheduler(
-        services.job_queue.clone(),
-        config.messaging.enabled,
-        shutdown_receiver.clone(),
-    );
     let mut worker_tasks = match config.jobs.mode {
         JobWorkerMode::Embedded => {
             let worker = JobWorker::new(services.job_queue.clone(), &config.jobs)?
@@ -154,6 +148,12 @@ async fn main() -> Result<(), AppError> {
                 "已启动内置后台任务 Worker"
             );
             let mut tasks = worker.spawn(shutdown_receiver.clone());
+            tasks.push(
+                services
+                    .job_schedules
+                    .clone()
+                    .spawn(shutdown_receiver.clone()),
+            );
             let authorization_cache = AuthorizationCache::new(
                 redis.client.clone(),
                 config
@@ -228,13 +228,6 @@ async fn main() -> Result<(), AppError> {
             tracing::warn!("后台任务 Worker 未在总宽限时间内退出，已中止");
             task.abort();
         }
-    }
-    if tokio::time::timeout_at(shutdown_deadline, &mut retention_scheduler)
-        .await
-        .is_err()
-    {
-        tracing::warn!("消息保留调度器未在宽限期内停止");
-        retention_scheduler.abort();
     }
     if tokio::time::timeout_at(shutdown_deadline, &mut readiness_monitor)
         .await
@@ -330,13 +323,20 @@ fn install_database_metrics(database: &DatabaseCluster) {
 
 /// 在应用边界将后台任务队列事件绑定到 Prometheus 指标。
 fn install_job_metrics(queue: &JobQueue) {
-    queue.set_metrics_observer(Arc::new(CallbackJobMetricsObserver::new(
-        Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
-        Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
-        Arc::new(ryframe_middleware::metrics::observe_job_duration),
-        Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
-        Arc::new(ryframe_middleware::metrics::record_job_wakeup),
-        Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
-        Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
-    )));
+    queue.set_metrics_observer(Arc::new(
+        CallbackJobMetricsObserver::new(
+            Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
+            Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
+            Arc::new(ryframe_middleware::metrics::observe_job_duration),
+            Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
+            Arc::new(ryframe_middleware::metrics::record_job_wakeup),
+            Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
+            Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
+        )
+        .with_schedule_callbacks(
+            Arc::new(ryframe_middleware::metrics::record_job_schedule_scan),
+            Arc::new(ryframe_middleware::metrics::record_job_schedule_trigger),
+            Arc::new(ryframe_middleware::metrics::observe_job_schedule_lag),
+        ),
+    ));
 }

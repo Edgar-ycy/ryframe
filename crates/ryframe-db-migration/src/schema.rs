@@ -966,6 +966,8 @@ fn is_upgrade_table(table: &str) -> bool {
     matches!(
         table,
         "sys_background_job"
+            | "sys_job_schedule"
+            | "sys_job_schedule_execution"
             | "sys_cache_namespace_version"
             | "sys_outbox_event"
             | "sys_export_job"

@@ -189,6 +189,7 @@ flowchart LR
 62. Swagger UI 使用与 utoipa 5 匹配的 Rust crate 在编译期内嵌全部静态资源，不依赖 CDN、外部校验器、内联初始化脚本或兼容重定向。根包默认启用的 `runtime-swagger-ui` feature 仅服务开发和受控测试；生产构建通过 `--no-default-features` 删除整组静态资源。全局 CSP 的脚本源仅允许同源且不启用 `unsafe-eval`；Swagger UI 页面只针对运行时内联样式放宽 `style-src`。无该 feature 却设置 `api_docs.enabled=true` 时，API 必须在连接外部依赖前明确失败，OpenAPI 代码生成与检入契约不受影响。
 63. Service 直接保存具体 Repository，已删除不产生日志的仓储包装层；`DatabaseCluster` 只保留单主库或显式副本槽位构造入口，不再公开旧包装与隐式集群构造函数。
 64. 租户授权规则变化在事务内提升 `authorization_epoch`，提交后先同步 Redis 镜像，再向 `ryframe:authorization:changed` 发布只含租户和纪元的轻量事件。各 API 实例复用消息 WebSocket 向该租户在线连接发送 `authorization_changed` 控制帧；该帧不持久化、不参与消息 ACK。认证中间件同时在受保护响应写入 `X-Authorization-Epoch`，前端只接受单调前进的纪元并合并刷新 `/auth/me`、当前菜单、动态路由和租户查询缓存。实时事件仅加速界面收敛，服务端逐请求主体解析和权限守卫始终是安全边界。
+65. 可配置 Cron 计划、触发历史和计划来源任务都持久化在 MySQL；调度器按数据库时钟使用 `FOR UPDATE SKIP LOCKED` 领取到期计划，并以 `(schedule_id, fire_key)` 作为最终去重边界。后端注册表是唯一目标白名单，管理端不能提交函数、命令、URL 或任意任务载荷。Redis 和本地通知仅在入队事务提交后降低 Worker 等待延迟，不参与调度正确性。
 
 ## 4. 后续优先级
 

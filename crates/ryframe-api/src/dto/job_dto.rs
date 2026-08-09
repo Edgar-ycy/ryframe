@@ -16,6 +16,8 @@ pub struct BackgroundJobPageQuery {
     /// 每页记录数；上限由 `pagination.max_page_size` 决定。
     #[param(minimum = 1)]
     pub page_size: Option<u64>,
+    /// 按来源计划 ID 精确过滤。
+    pub schedule_id: Option<i64>,
     /// 按任务类型精确过滤。
     pub job_type: Option<String>,
     /// 按状态精确过滤：pending、running、succeeded 或 dead。
@@ -29,6 +31,7 @@ impl BackgroundJobPageQuery {
     ) -> HttpResult<BackgroundJobListParams> {
         Ok(BackgroundJobListParams {
             page: ValidatedPageQuery::from_optional(self.page, self.page_size, policy)?,
+            schedule_id: self.schedule_id,
             job_type: self.job_type,
             status: self.status,
         })

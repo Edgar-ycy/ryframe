@@ -18,6 +18,7 @@ where
             .await?;
     }
     crate::m20260726_000010_message_job_permissions::seed_permissions(db).await?;
+    crate::m20260809_000022_job_schedules::seed_schedule_management(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }
@@ -214,6 +215,7 @@ fn seed_identity_columns(table: &str) -> Option<&'static [&'static str]> {
         "sys_dict_data" => Some(&["id", "type_code", "value"]),
         "sys_user_role" => Some(&["user_id", "role_id"]),
         "sys_role_permission" => Some(&["role_id", "perm_id"]),
+        "sys_job_schedule" => Some(&["id"]),
         _ => None,
     }
 }

@@ -25,6 +25,7 @@ use crate::system::{EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
 #[derive(Clone, Debug)]
 pub struct BackgroundJobListParams {
     pub page: ValidatedPageQuery,
+    pub schedule_id: Option<i64>,
     pub job_type: Option<String>,
     pub status: Option<String>,
 }
@@ -35,6 +36,9 @@ pub struct BackgroundJobListParams {
 #[derive(Clone, Debug, Serialize)]
 pub struct BackgroundJobVo {
     pub id: String,
+    pub schedule_id: Option<String>,
+    pub scheduled_for: Option<DateTime<Utc>>,
+    pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub status: String,
     pub priority: i32,
@@ -54,6 +58,9 @@ impl From<background_job::Model> for BackgroundJobVo {
     fn from(job: background_job::Model) -> Self {
         Self {
             id: job.id.to_string(),
+            schedule_id: job.schedule_id.map(|id| id.to_string()),
+            scheduled_for: job.scheduled_for,
+            max_runtime_seconds: job.max_runtime_seconds,
             job_type: job.job_type,
             status: job.status,
             priority: job.priority,
@@ -213,6 +220,9 @@ impl JobQueue {
                 self.database.write(),
                 EnqueueBackgroundJob {
                     tenant_id: None,
+                    schedule_id: None,
+                    scheduled_for: Some(now),
+                    max_runtime_seconds: None,
                     job_type: MESSAGE_RETENTION_JOB_TYPE.to_owned(),
                     payload: serde_json::json!({ "run_date": day }),
                     priority: -10,
@@ -240,6 +250,9 @@ impl JobQueue {
                 self.database.write(),
                 EnqueueBackgroundJob {
                     tenant_id: None,
+                    schedule_id: None,
+                    scheduled_for: Some(now),
+                    max_runtime_seconds: None,
                     job_type: EXPORT_CLEANUP_JOB_TYPE.to_owned(),
                     payload: serde_json::json!({ "run_date": day }),
                     priority: -10,
@@ -263,14 +276,18 @@ impl JobQueue {
         params: BackgroundJobListParams,
     ) -> AppResult<PageResult<BackgroundJobVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
+        let include_platform = tenant_id == "system";
         let job_type = normalize_job_type_filter(params.job_type)?;
         let status = normalize_job_status_filter(params.status)?;
+        let schedule_id = normalize_schedule_id_filter(params.schedule_id)?;
         let page = self
             .repository
             .list(
                 self.primary(),
                 BackgroundJobFilter {
                     tenant_id: Some(tenant_id),
+                    include_platform,
+                    schedule_id,
                     job_type: job_type.as_deref(),
                     status: status.as_deref(),
                 },
@@ -296,12 +313,14 @@ impl JobQueue {
         actor: &ActorContext,
     ) -> AppResult<BackgroundJobQueueStats> {
         let tenant_id = crate::validated_tenant_id(actor)?;
+        let include_platform = tenant_id == "system";
         let now = self.database_now().await?;
         self.repository
             .stats_filtered(
                 self.primary(),
                 BackgroundJobFilter {
                     tenant_id: Some(tenant_id),
+                    include_platform,
                     ..Default::default()
                 },
                 now,
@@ -320,9 +339,10 @@ impl JobQueue {
             return Err(AppError::Validation("后台任务 ID 必须是正整数".into()));
         }
         let tenant_id = crate::validated_tenant_id(actor)?;
+        let include_platform = tenant_id == "system";
         let existing = self
             .repository
-            .find_by_id_for_tenant(self.primary(), tenant_id, job_id)
+            .find_by_id_for_tenant(self.primary(), tenant_id, include_platform, job_id)
             .await?
             .ok_or_else(|| AppError::NotFound("后台任务不存在或不属于当前租户".into()))?;
         if existing.status != background_job::Model::STATUS_DEAD {
@@ -332,7 +352,7 @@ impl JobQueue {
         let now = self.database_now().await?;
         let retried = self
             .repository
-            .retry_dead(self.primary(), tenant_id, job_id, now)
+            .retry_dead(self.primary(), tenant_id, include_platform, job_id, now)
             .await?;
         if !retried {
             return Err(AppError::Conflict(
@@ -342,7 +362,7 @@ impl JobQueue {
         self.notify_background_jobs().await;
 
         self.repository
-            .find_by_id_for_tenant(self.primary(), tenant_id, job_id)
+            .find_by_id_for_tenant(self.primary(), tenant_id, include_platform, job_id)
             .await?
             .map(BackgroundJobVo::from)
             .ok_or_else(|| AppError::Internal("后台任务重试后无法读取".into()))
@@ -408,6 +428,24 @@ impl JobQueue {
             observer.record_claim_attempt(queue, result);
         }
     }
+
+    pub(super) fn record_schedule_scan(&self, result: &'static str) {
+        if let Some(observer) = self.metrics_observer() {
+            observer.record_schedule_scan(result);
+        }
+    }
+
+    pub(super) fn record_schedule_trigger(&self, outcome: &'static str) {
+        if let Some(observer) = self.metrics_observer() {
+            observer.record_schedule_trigger(outcome);
+        }
+    }
+
+    pub(super) fn observe_schedule_lag(&self, lag: StdDuration) {
+        if let Some(observer) = self.metrics_observer() {
+            observer.observe_schedule_lag(lag);
+        }
+    }
 }
 
 /// 在启动时及每个 UTC 自然日创建消息保留与导出结果清理任务。
@@ -466,6 +504,13 @@ fn normalize_job_type_filter(value: Option<String>) -> AppResult<Option<String>>
         ));
     }
     Ok(Some(value.to_owned()))
+}
+
+fn normalize_schedule_id_filter(value: Option<i64>) -> AppResult<Option<i64>> {
+    if value.is_some_and(|id| id <= 0) {
+        return Err(AppError::Validation("来源计划 ID 必须是正整数".into()));
+    }
+    Ok(value)
 }
 
 fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String>> {

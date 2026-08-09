@@ -11,6 +11,9 @@ use crate::entities::background_job;
 #[derive(Clone, Debug)]
 pub struct EnqueueBackgroundJob {
     pub tenant_id: Option<String>,
+    pub schedule_id: Option<i64>,
+    pub scheduled_for: Option<DateTime<Utc>>,
+    pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub payload: Value,
     pub priority: i32,
@@ -38,6 +41,8 @@ pub struct ExpiredLeaseRecovery {
 #[derive(Clone, Debug, Default)]
 pub struct BackgroundJobFilter<'a> {
     pub tenant_id: Option<&'a str>,
+    pub include_platform: bool,
+    pub schedule_id: Option<i64>,
     pub job_type: Option<&'a str>,
     pub status: Option<&'a str>,
 }

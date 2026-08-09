@@ -20,9 +20,13 @@ pub use authorization_cache::{
 };
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
-    ExportCleanupJobHandler, ExportJobHandler, JobHandler, JobMetricsObserver, JobQueue,
-    JobRunResult, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler,
-    OutboxRunResult, OutboxWorker, spawn_message_retention_scheduler,
+    CreateJobSchedule, ExportCleanupJobHandler, ExportJobHandler, JobHandler, JobMetricsObserver,
+    JobQueue, JobRunResult, JobScheduleExecutionListParams, JobScheduleExecutionVo,
+    JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview, JobScheduleService,
+    JobScheduleVo, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler,
+    OutboxRunResult, OutboxWorker, ScheduledJobContext, ScheduledJobTarget,
+    ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
+    UpdateJobSchedule, spawn_message_retention_scheduler,
 };
 
 use ryframe_kernel::{ActorContext, AppResult};

@@ -58,6 +58,15 @@ pub struct JobConfig {
     /// 租约恢复循环间隔（秒）。未设置时默认使用 `15`。
     #[serde(default = "default_lease_recovery_interval_seconds")]
     pub lease_recovery_interval_seconds: u64,
+    /// 到期计划扫描间隔（毫秒）。
+    #[serde(default = "default_scheduler_poll_interval_ms")]
+    pub scheduler_poll_interval_ms: u64,
+    /// 单轮最多领取的到期计划数量。
+    #[serde(default = "default_scheduler_batch_size")]
+    pub scheduler_batch_size: usize,
+    /// 单个租户允许启用的最大计划数量。
+    #[serde(default = "default_max_enabled_schedules_per_tenant")]
+    pub max_enabled_schedules_per_tenant: usize,
 }
 
 impl Default for JobConfig {
@@ -76,6 +85,9 @@ impl Default for JobConfig {
             health_host: default_health_host(),
             health_port: default_health_port(),
             lease_recovery_interval_seconds: default_lease_recovery_interval_seconds(),
+            scheduler_poll_interval_ms: default_scheduler_poll_interval_ms(),
+            scheduler_batch_size: default_scheduler_batch_size(),
+            max_enabled_schedules_per_tenant: default_max_enabled_schedules_per_tenant(),
         }
     }
 }
@@ -128,6 +140,15 @@ impl JobConfig {
         {
             return Err("jobs.lease_recovery_interval_seconds 必须在 1 到 3600 之间".into());
         }
+        if !(250..=60_000).contains(&self.scheduler_poll_interval_ms) {
+            return Err("jobs.scheduler_poll_interval_ms 必须在 250 到 60000 之间".into());
+        }
+        if !(1..=1_000).contains(&self.scheduler_batch_size) {
+            return Err("jobs.scheduler_batch_size 必须在 1 到 1000 之间".into());
+        }
+        if !(1..=10_000).contains(&self.max_enabled_schedules_per_tenant) {
+            return Err("jobs.max_enabled_schedules_per_tenant 必须在 1 到 10000 之间".into());
+        }
         if !environment.is_test() && self.mode == JobWorkerMode::Disabled {
             return Err("jobs.mode = \"disabled\" 仅允许隔离环境使用".into());
         }
@@ -177,4 +198,16 @@ const fn default_health_port() -> u16 {
 
 const fn default_lease_recovery_interval_seconds() -> u64 {
     15
+}
+
+const fn default_scheduler_poll_interval_ms() -> u64 {
+    1000
+}
+
+const fn default_scheduler_batch_size() -> usize {
+    100
+}
+
+const fn default_max_enabled_schedules_per_tenant() -> usize {
+    100
 }

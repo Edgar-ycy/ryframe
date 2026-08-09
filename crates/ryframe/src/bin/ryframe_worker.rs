@@ -18,8 +18,8 @@ use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
 use ryframe_kernel::AppError;
 use ryframe_service::{
     AuthorizationCache, CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler,
-    JobQueue, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, OutboxWorker,
-    spawn_message_retention_scheduler,
+    JobQueue, JobScheduleService, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler,
+    OutboxWorker, ScheduledJobTargetRegistry,
     system::{EXPORT_BUCKET, ExportService, MessageService, OperLogService, UserService},
 };
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
@@ -124,24 +124,32 @@ async fn main() -> Result<(), AppError> {
     } else {
         worker
     };
+    let schedule_targets = ScheduledJobTargetRegistry::built_in(config.messaging.enabled)?;
+    let schedules = Arc::new(JobScheduleService::new(
+        database.clone(),
+        queue.clone(),
+        schedule_targets,
+        &config.jobs,
+    ));
 
     if run_once {
+        let scheduled = schedules.scan_due_once().await?;
         let outbox_worker = OutboxWorker::new(queue, &config.jobs)?
             .with_authorization_cache(authorization_cache.clone())
             .with_audit_service(oper_log.clone());
         let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
         let job_result = worker.run_once("ryframe-worker-once-job").await?;
-        tracing::info!(?outbox_result, ?job_result, "Worker 单次运行已完成");
+        tracing::info!(
+            scheduled,
+            ?outbox_result,
+            ?job_result,
+            "Worker 单次运行已完成"
+        );
         _telemetry_guard.shutdown();
         return Ok(());
     }
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let mut retention_scheduler = spawn_message_retention_scheduler(
-        queue.clone(),
-        config.messaging.enabled,
-        shutdown_receiver.clone(),
-    );
     let mut health_tasks = start_health_server(
         database,
         redis,
@@ -156,6 +164,7 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
     let mut worker_tasks = worker.spawn(shutdown_receiver.clone());
+    worker_tasks.push(schedules.spawn(shutdown_receiver.clone()));
     worker_tasks.extend(
         OutboxWorker::new(queue.clone(), &config.jobs)?
             .with_authorization_cache(authorization_cache)
@@ -178,13 +187,6 @@ async fn main() -> Result<(), AppError> {
             tracing::warn!("后台任务 Worker 未在总宽限时间内退出，已中止");
             task.abort();
         }
-    }
-    if tokio::time::timeout_at(shutdown_deadline, &mut retention_scheduler)
-        .await
-        .is_err()
-    {
-        tracing::warn!("消息保留调度器未在宽限期内停止");
-        retention_scheduler.abort();
     }
     for task in &mut health_tasks {
         if tokio::time::timeout_at(shutdown_deadline, &mut *task)
@@ -426,13 +428,20 @@ fn install_database_metrics(database: &DatabaseCluster) {
 
 /// 在 Worker 进程边界将后台任务事件绑定到 Prometheus 指标。
 fn install_job_metrics(queue: &JobQueue) {
-    queue.set_metrics_observer(Arc::new(CallbackJobMetricsObserver::new(
-        Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
-        Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
-        Arc::new(ryframe_middleware::metrics::observe_job_duration),
-        Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
-        Arc::new(ryframe_middleware::metrics::record_job_wakeup),
-        Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
-        Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
-    )));
+    queue.set_metrics_observer(Arc::new(
+        CallbackJobMetricsObserver::new(
+            Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
+            Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
+            Arc::new(ryframe_middleware::metrics::observe_job_duration),
+            Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
+            Arc::new(ryframe_middleware::metrics::record_job_wakeup),
+            Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
+            Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
+        )
+        .with_schedule_callbacks(
+            Arc::new(ryframe_middleware::metrics::record_job_schedule_scan),
+            Arc::new(ryframe_middleware::metrics::record_job_schedule_trigger),
+            Arc::new(ryframe_middleware::metrics::observe_job_schedule_lag),
+        ),
+    ));
 }

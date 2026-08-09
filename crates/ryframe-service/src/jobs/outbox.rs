@@ -240,6 +240,9 @@ impl OutboxWorker {
                     &transaction,
                     EnqueueBackgroundJob {
                         tenant_id: event.tenant_id.clone(),
+                        schedule_id: None,
+                        scheduled_for: Some(now),
+                        max_runtime_seconds: None,
                         job_type: job_type.to_owned(),
                         payload: event.payload.clone(),
                         priority: 10,

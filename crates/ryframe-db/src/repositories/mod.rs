@@ -8,6 +8,7 @@ pub mod dept_repo;
 pub mod dict_repo;
 pub mod export_job_repo;
 pub mod file_repo;
+pub mod job_schedule_repo;
 mod login_info_repo;
 pub mod menu_repo;
 pub mod message_repo;
@@ -34,6 +35,7 @@ pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeFilter, DictTypeRepository};
 pub use export_job_repo::{CreateExportJob, ExportJobRepository, MarkExportJobSucceeded};
 pub use file_repo::FileRepository;
+pub use job_schedule_repo::{JobScheduleExecutionFilter, JobScheduleFilter, JobScheduleRepository};
 pub use login_info_repo::{LoginInfoFilter, LoginInfoRepository};
 pub use menu_repo::{MenuFilter, MenuRepository};
 pub use message_repo::{

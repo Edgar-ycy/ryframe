@@ -13,6 +13,9 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: i64,
     pub tenant_id: Option<String>,
+    pub schedule_id: Option<i64>,
+    pub scheduled_for: Option<DateTime<Utc>>,
+    pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub payload: Json,
     pub status: String,

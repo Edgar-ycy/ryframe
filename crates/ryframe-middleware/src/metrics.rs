@@ -240,6 +240,32 @@ lazy_static! {
         &["result"],
     )
     .expect("create job_wakeup_protocol_errors_total");
+    static ref JOB_SCHEDULE_SCAN_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "job_schedule_scan_total",
+            "Database-backed schedule scans by bounded result",
+        ),
+        &["result"],
+    )
+    .expect("create job_schedule_scan_total");
+    static ref JOB_SCHEDULE_TRIGGER_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "job_schedule_trigger_total",
+            "Schedule trigger attempts by bounded outcome",
+        ),
+        &["outcome"],
+    )
+    .expect("create job_schedule_trigger_total");
+    static ref JOB_SCHEDULE_LAG_SECONDS: Histogram = Histogram::with_opts(
+        HistogramOpts::new(
+            "job_schedule_lag_seconds",
+            "Delay between a scheduled UTC fire time and database claim time",
+        )
+        .buckets(vec![
+            0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0, 60.0, 300.0
+        ]),
+    )
+    .expect("create job_schedule_lag_seconds");
     static ref AUTHORIZATION_CACHE_LOOKUPS_TOTAL: IntCounterVec = IntCounterVec::new(
         Opts::new(
             "authorization_cache_lookups_total",
@@ -312,6 +338,9 @@ fn ensure_registered() {
             Box::new(JOB_WAKEUP_TOTAL.clone()),
             Box::new(JOB_WAKEUP_LISTENER_UP.clone()),
             Box::new(JOB_WAKEUP_PROTOCOL_ERRORS_TOTAL.clone()),
+            Box::new(JOB_SCHEDULE_SCAN_TOTAL.clone()),
+            Box::new(JOB_SCHEDULE_TRIGGER_TOTAL.clone()),
+            Box::new(JOB_SCHEDULE_LAG_SECONDS.clone()),
             Box::new(AUTHORIZATION_CACHE_LOOKUPS_TOTAL.clone()),
             Box::new(MESSAGE_ACK_LATENCY_SECONDS.clone()),
             Box::new(OTEL_EXPORTER_FAILURES_TOTAL.clone()),
@@ -556,6 +585,26 @@ pub fn record_job_wakeup_protocol_error(result: &'static str) {
     JOB_WAKEUP_PROTOCOL_ERRORS_TOTAL
         .with_label_values(&[result])
         .inc();
+}
+
+/// 记录数据库调度扫描结果。
+pub fn record_job_schedule_scan(result: &'static str) {
+    ensure_registered();
+    JOB_SCHEDULE_SCAN_TOTAL.with_label_values(&[result]).inc();
+}
+
+/// 记录低基数调度触发结果。
+pub fn record_job_schedule_trigger(outcome: &'static str) {
+    ensure_registered();
+    JOB_SCHEDULE_TRIGGER_TOTAL
+        .with_label_values(&[outcome])
+        .inc();
+}
+
+/// 记录调度领取相对计划时间的延迟。
+pub fn observe_job_schedule_lag(lag: std::time::Duration) {
+    ensure_registered();
+    JOB_SCHEDULE_LAG_SECONDS.observe(lag.as_secs_f64());
 }
 
 /// 记录一次授权缓存读取结果；范围和结果均由调用方使用固定枚举。
