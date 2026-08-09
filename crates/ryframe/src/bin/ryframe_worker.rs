@@ -12,7 +12,9 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use ryframe_config::{AppConfig, Environment, MigrationMode, RedisMode, StorageBackend};
+use ryframe_config::{
+    AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode, StorageBackend,
+};
 use ryframe_core::RedisClient;
 use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
 use ryframe_kernel::AppError;
@@ -46,6 +48,11 @@ async fn main() -> Result<(), AppError> {
     };
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
+    if config.jobs.mode != JobWorkerMode::External {
+        return Err(AppError::Config(
+            "ryframe-worker 仅在 jobs.mode = \"external\" 时运行；embedded 由 API 进程消费，disabled 不消费任务".into(),
+        ));
+    }
     ryframe_utils::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     let (_logger_guard, _telemetry_guard) = process_logging::init(&config)?;

@@ -150,8 +150,9 @@ MySQL 始终是后台任务和 Outbox 的唯一可靠事实来源。`ryframe:job
 值后必须同时重启 API 与 Worker。
 
 Cron 调度同样只以 MySQL 为可靠事实来源。`jobs.mode=embedded` 时由 API 扫描，
-`jobs.mode=external` 时只由 `ryframe-worker` 扫描，`disabled` 不扫描；`ryframe-worker --once`
-会先扫描一批到期计划，再执行单次 Outbox 和任务消费。扫描间隔、批量大小和单租户启用上限
+`jobs.mode=external` 时只由 `ryframe-worker` 扫描，`disabled` 不扫描；`ryframe-worker`
+仅接受 `jobs.mode=external`，包括 `--once`。`ryframe-worker --once` 会先扫描一批到期计划，
+再执行单次 Outbox 和任务消费。扫描间隔、批量大小和单租户启用上限
 分别由 `APP_JOBS_SCHEDULER_POLL_INTERVAL_MS`、`APP_JOBS_SCHEDULER_BATCH_SIZE` 和
 `APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT` 控制。多实例通过 `FOR UPDATE SKIP LOCKED` 与
 `schedule_id + fire_key` 唯一键去重，禁止把 Redis 唤醒是否成功当作计划是否触发的判断依据。
