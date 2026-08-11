@@ -41,6 +41,29 @@ impl TenantRepository {
         Ok(())
     }
 
+    /// 在租户行锁下为一整批新用户预留配额。
+    pub async fn ensure_user_quota_for_batch_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        incoming: usize,
+    ) -> AppResult<()> {
+        let tenant = self.lock_tenant_in_txn(txn, tenant_id).await?;
+        let count = user::Entity::find()
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .count(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let incoming =
+            u64::try_from(incoming).map_err(|_| AppError::Validation("导入批次过大".into()))?;
+        let limit = u64::try_from(tenant.max_users).unwrap_or_default();
+        if count.saturating_add(incoming) > limit {
+            return Err(AppError::Validation("批量导入将超过租户最大用户数".into()));
+        }
+        Ok(())
+    }
+
     /// 为在 `txn` 中执行的配额敏感操作锁定租户行。
     ///
     /// 每个调用方都必须将配额检查及对应插入保留在同一事务中，使所有资源预留共享

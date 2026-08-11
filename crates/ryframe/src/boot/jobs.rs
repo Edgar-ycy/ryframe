@@ -7,13 +7,18 @@ use ryframe_service::{
     CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
     JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, ScheduleMetricsObserver,
     ScheduledJobTargetRegistry,
-    system::{ExportService, MessageService},
+    system::{
+        DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
+        UserImportJobHandler, UserImportService,
+    },
 };
 
 /// 构造内置后台任务处理器所需的业务服务。
 pub struct JobWorkerDependencies {
     pub export: Arc<ExportService>,
     pub message: Arc<MessageService>,
+    pub data_retention: Arc<DataRetentionService>,
+    pub user_import: Arc<UserImportService>,
     pub redis: Option<RedisClient>,
     pub messaging_enabled: bool,
 }
@@ -26,7 +31,13 @@ pub fn build_job_worker(
 ) -> AppResult<JobWorker> {
     let worker = JobWorker::new(queue, config)?
         .with_handler(Arc::new(ExportJobHandler::new(dependencies.export.clone())))?
-        .with_handler(Arc::new(ExportCleanupJobHandler::new(dependencies.export)))?;
+        .with_handler(Arc::new(ExportCleanupJobHandler::new(dependencies.export)))?
+        .with_handler(Arc::new(DataRetentionJobHandler::new(
+            dependencies.data_retention,
+        )))?
+        .with_handler(Arc::new(UserImportJobHandler::new(
+            dependencies.user_import,
+        )))?;
     if !dependencies.messaging_enabled {
         return Ok(worker);
     }

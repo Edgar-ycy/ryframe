@@ -205,6 +205,12 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 | `sys_notice` | 通知公告 |
 | `sys_tenant` | 租户状态、配额与 `authorization_epoch` 授权规则版本 |
 | `sys_file` | 上传文件元数据 |
+| `sys_background_job` | 持久化后台任务、租约、重试、死信和计划来源 |
+| `sys_outbox_event` | 事务性 Outbox 投递状态 |
+| `sys_job_schedule`、`sys_job_schedule_execution` | Cron 计划与不可变执行历史 |
+| `sys_data_retention_run` | 数据保留策略快照、删除计数和运行结果 |
+| `sys_user_import_job` | 异步用户导入进度、游标、文件引用和终态 |
+| `sys_user_import_row_result` | 用户导入跳过与失败行；成功行只累计计数 |
 | `password_reset_requests` | 一次性密码重置请求 |
 
 ### 关联与日志表
@@ -218,6 +224,8 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 | `sys_login_info` | 登录日志 |
 
 关联表对真实父记录建立外键并按业务需要级联删除。软删除实体间的关系由 Service 校验，避免数据库级联绕过审计和业务规则。
+
+数据保留、异步导入和租户趋势使用专门的复合索引。清理查询以终态时间和稳定 ID 分批，趋势查询以 `tenant_id + 时间 + 状态/结果` 聚合；新增或调整索引前必须在代表性数据上保存 `EXPLAIN` 证据。导入历史到期时，`sys_user_import_row_result` 通过外键级联删除；导入文件对象和 `sys_file` 元数据由 FileService 安全删除，不得用裸 SQL 绕过对象清理。
 
 ## 5. Entity 约定
 

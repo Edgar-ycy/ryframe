@@ -1,6 +1,7 @@
 pub mod background_job;
 pub mod cache_namespace_version;
 pub mod config;
+pub mod data_retention_run;
 pub mod dept;
 pub mod dict_data;
 pub mod dict_type;
@@ -24,11 +25,14 @@ pub mod role_permission;
 pub mod sys_file;
 pub mod tenant;
 pub mod user;
+pub mod user_import_job;
+pub mod user_import_row_result;
 pub mod user_role;
 
 pub use background_job::Entity as BackgroundJobEntity;
 pub use cache_namespace_version::Entity as CacheNamespaceVersionEntity;
 pub use config::Entity as ConfigEntity;
+pub use data_retention_run::Entity as DataRetentionRunEntity;
 pub use dept::Entity as DeptEntity;
 pub use export_job::Entity as ExportJobEntity;
 pub use job_schedule::Entity as JobScheduleEntity;
@@ -42,3 +46,5 @@ pub use role::Entity as RoleEntity;
 pub use sys_file::Entity as SysFileEntity;
 pub use tenant::Entity as TenantEntity;
 pub use user::Entity as UserEntity;
+pub use user_import_job::Entity as UserImportJobEntity;
+pub use user_import_row_result::Entity as UserImportRowResultEntity;

@@ -117,6 +117,39 @@
         ],
         "type": "object"
       },
+      "ApiPageResponse_DataRetentionRunVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_DataRetentionRunVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiPageResponse_DeptVo": {
         "description": "统一分页 API 响应结构。",
         "properties": {
@@ -513,6 +546,72 @@
         ],
         "type": "object"
       },
+      "ApiPageResponse_UserImportJobVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_UserImportJobVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiPageResponse_UserImportRowVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_UserImportRowVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiPageResponse_UserVo": {
         "description": "统一分页 API 响应结构。",
         "properties": {
@@ -580,6 +679,101 @@
               "source_commit",
               "api_prefix",
               "endpoints"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_AuthorizationDiagnosticVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "calculated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "data_scope": {
+                "$ref": "#/components/schemas/AuthorizationDiagnosticDataScopeVo"
+              },
+              "dynamic_refresh": {
+                "$ref": "#/components/schemas/AuthorizationDiagnosticRefreshVo"
+              },
+              "menus": {
+                "items": {
+                  "$ref": "#/components/schemas/AuthorizationDiagnosticMenuVo"
+                },
+                "type": "array"
+              },
+              "permissions": {
+                "items": {
+                  "$ref": "#/components/schemas/AuthorizationDiagnosticPermissionVo"
+                },
+                "type": "array"
+              },
+              "roles": {
+                "items": {
+                  "$ref": "#/components/schemas/AuthorizationDiagnosticRoleVo"
+                },
+                "type": "array"
+              },
+              "tenant": {
+                "$ref": "#/components/schemas/AuthorizationDiagnosticTenantVo"
+              },
+              "user": {
+                "$ref": "#/components/schemas/AuthorizationDiagnosticUserVo"
+              },
+              "versions": {
+                "$ref": "#/components/schemas/AuthorizationDiagnosticVersionVo"
+              },
+              "warnings": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "calculated_at",
+              "user",
+              "tenant",
+              "roles",
+              "permissions",
+              "menus",
+              "data_scope",
+              "versions",
+              "dynamic_refresh",
+              "warnings"
             ],
             "type": "object"
           },
@@ -1232,6 +1426,236 @@
             "required": [
               "csrf_token",
               "expires_in"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_DataRetentionOverview": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "calculated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "cutoffs": {
+                "items": {
+                  "$ref": "#/components/schemas/DataRetentionCutoff"
+                },
+                "type": "array"
+              },
+              "policy": {
+                "$ref": "#/components/schemas/DataRetentionPolicy"
+              }
+            },
+            "required": [
+              "calculated_at",
+              "policy",
+              "cutoffs"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_DataRetentionPreview": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "calculated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "cutoffs": {
+                "items": {
+                  "$ref": "#/components/schemas/DataRetentionCutoff"
+                },
+                "type": "array"
+              },
+              "eligible_counts": {
+                "additionalProperties": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "policy": {
+                "$ref": "#/components/schemas/DataRetentionPolicy"
+              }
+            },
+            "required": [
+              "calculated_at",
+              "policy",
+              "cutoffs",
+              "eligible_counts"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_DataRetentionRunVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "background_job_id": {
+                "type": "string"
+              },
+              "completed_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "deleted_counts": {},
+              "eligible_counts": {},
+              "error_summary": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "policy_snapshot": {},
+              "remaining_counts": {},
+              "requested_by": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "started_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string"
+              },
+              "trigger_kind": {
+                "type": "string"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "background_job_id",
+              "trigger_kind",
+              "status",
+              "policy_snapshot",
+              "eligible_counts",
+              "deleted_counts",
+              "remaining_counts",
+              "created_at",
+              "updated_at"
             ],
             "type": "object"
           },
@@ -2092,6 +2516,133 @@
             },
             "required": [
               "records"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_MonitorOverviewTrendsVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "bucket_seconds": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "buckets": {
+                "items": {
+                  "$ref": "#/components/schemas/MonitorOverviewTrendBucketVo"
+                },
+                "type": "array"
+              },
+              "calculated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "range": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "calculated_at",
+              "range",
+              "bucket_seconds",
+              "buckets"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_MonitorOverviewVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "calculated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "database_pool": {
+                "$ref": "#/components/schemas/MonitorOverviewDatabasePoolVo"
+              },
+              "dependencies": {
+                "$ref": "#/components/schemas/MonitorOverviewDependenciesVo"
+              },
+              "jobs": {
+                "$ref": "#/components/schemas/MonitorOverviewJobsVo"
+              },
+              "system": {
+                "$ref": "#/components/schemas/MonitorOverviewSystemVo"
+              }
+            },
+            "required": [
+              "calculated_at",
+              "dependencies",
+              "system",
+              "database_pool",
+              "jobs"
             ],
             "type": "object"
           },
@@ -3020,7 +3571,7 @@
         ],
         "type": "object"
       },
-      "ApiResponse_UserImportResult": {
+      "ApiResponse_UserImportJobVo": {
         "description": "统一 API 响应结构。",
         "properties": {
           "code": {
@@ -3031,25 +3582,95 @@
           },
           "data": {
             "properties": {
-              "errors": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
+              "background_job_id": {
+                "type": "string"
               },
-              "fail_count": {
-                "minimum": 0,
+              "cancel_requested": {
+                "type": "boolean"
+              },
+              "completed_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "duplicate_policy": {
+                "type": "string"
+              },
+              "failure_count": {
+                "format": "int32",
                 "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "last_error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processed_rows": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "report_available": {
+                "type": "boolean"
+              },
+              "requester_user_id": {
+                "type": "string"
+              },
+              "skipped_count": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "source_name": {
+                "type": "string"
+              },
+              "started_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string"
               },
               "success_count": {
-                "minimum": 0,
+                "format": "int32",
                 "type": "integer"
+              },
+              "total_rows": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": "string"
               }
             },
             "required": [
+              "id",
+              "requester_user_id",
+              "background_job_id",
+              "source_name",
+              "duplicate_policy",
+              "status",
+              "total_rows",
+              "processed_rows",
               "success_count",
-              "fail_count",
-              "errors"
+              "skipped_count",
+              "failure_count",
+              "cancel_requested",
+              "report_available",
+              "created_at",
+              "updated_at"
             ],
             "type": "object"
           },
@@ -4449,6 +5070,379 @@
         ],
         "type": "object"
       },
+      "AuthorizationDiagnosticDataScopeSourceVo": {
+        "properties": {
+          "role_code": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_code",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticDataScopeVo": {
+        "properties": {
+          "custom_departments": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorizationDiagnosticDepartmentVo"
+            },
+            "type": "array"
+          },
+          "department_path": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorizationDiagnosticDepartmentVo"
+            },
+            "type": "array"
+          },
+          "include_self": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorizationDiagnosticDataScopeSourceVo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "scope",
+          "include_self",
+          "department_path",
+          "custom_departments",
+          "sources"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticDepartmentVo": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticMenuVo": {
+        "properties": {
+          "accessible": {
+            "type": "boolean"
+          },
+          "configured_visible": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "inaccessible_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permission_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "route_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "visible_in_navigation": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "configured_visible",
+          "accessible",
+          "visible_in_navigation"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticPermissionVo": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "effective": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source_roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "code",
+          "source_roles",
+          "effective"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticRefreshVo": {
+        "properties": {
+          "response_header_epoch_fallback_available": {
+            "type": "boolean"
+          },
+          "websocket_notification_available": {
+            "type": "boolean"
+          },
+          "websocket_online_state_asserted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "websocket_notification_available",
+          "response_header_epoch_fallback_available",
+          "websocket_online_state_asserted"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticRoleVo": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "data_scope": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_super": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "participates": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "code",
+          "status",
+          "data_scope",
+          "is_super",
+          "participates"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticTenantVo": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "expire_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "name",
+          "status",
+          "available"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticUserVo": {
+        "properties": {
+          "dept_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dept_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "final_access_enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "nickname",
+          "status",
+          "enabled",
+          "final_access_enabled"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticVersionVo": {
+        "properties": {
+          "cache_status": {
+            "type": "string"
+          },
+          "cached_tenant_authorization_epoch": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cached_user_authorization_version": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tenant_authorization_epoch": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "user_authorization_version": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tenant_authorization_epoch",
+          "user_authorization_version",
+          "cache_status"
+        ],
+        "type": "object"
+      },
+      "AuthorizationDiagnosticVo": {
+        "properties": {
+          "calculated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "data_scope": {
+            "$ref": "#/components/schemas/AuthorizationDiagnosticDataScopeVo"
+          },
+          "dynamic_refresh": {
+            "$ref": "#/components/schemas/AuthorizationDiagnosticRefreshVo"
+          },
+          "menus": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorizationDiagnosticMenuVo"
+            },
+            "type": "array"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorizationDiagnosticPermissionVo"
+            },
+            "type": "array"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorizationDiagnosticRoleVo"
+            },
+            "type": "array"
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/AuthorizationDiagnosticTenantVo"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AuthorizationDiagnosticUserVo"
+          },
+          "versions": {
+            "$ref": "#/components/schemas/AuthorizationDiagnosticVersionVo"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "calculated_at",
+          "user",
+          "tenant",
+          "roles",
+          "permissions",
+          "menus",
+          "data_scope",
+          "versions",
+          "dynamic_refresh",
+          "warnings"
+        ],
+        "type": "object"
+      },
       "AvatarResponse": {
         "properties": {
           "avatar_url": {
@@ -5398,6 +6392,226 @@
         ],
         "type": "object"
       },
+      "DataRetentionCutoff": {
+        "properties": {
+          "before": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource",
+          "before"
+        ],
+        "type": "object"
+      },
+      "DataRetentionOverview": {
+        "properties": {
+          "calculated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cutoffs": {
+            "items": {
+              "$ref": "#/components/schemas/DataRetentionCutoff"
+            },
+            "type": "array"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/DataRetentionPolicy"
+          }
+        },
+        "required": [
+          "calculated_at",
+          "policy",
+          "cutoffs"
+        ],
+        "type": "object"
+      },
+      "DataRetentionPolicy": {
+        "properties": {
+          "background_job_succeeded_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cleanup_batch_size": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dead_background_jobs_permanent": {
+            "type": "boolean"
+          },
+          "dead_outbox_events_permanent": {
+            "type": "boolean"
+          },
+          "export_job_history_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "login_log_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_rows_per_resource_per_run": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation_log_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outbox_published_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retention_run_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_execution_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "user_import_artifact_hours": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "user_import_history_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cleanup_batch_size",
+          "max_rows_per_resource_per_run",
+          "background_job_succeeded_days",
+          "outbox_published_days",
+          "schedule_execution_days",
+          "export_job_history_days",
+          "operation_log_days",
+          "login_log_days",
+          "user_import_history_days",
+          "user_import_artifact_hours",
+          "retention_run_days",
+          "dead_background_jobs_permanent",
+          "dead_outbox_events_permanent"
+        ],
+        "type": "object"
+      },
+      "DataRetentionPreview": {
+        "properties": {
+          "calculated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "cutoffs": {
+            "items": {
+              "$ref": "#/components/schemas/DataRetentionCutoff"
+            },
+            "type": "array"
+          },
+          "eligible_counts": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/DataRetentionPolicy"
+          }
+        },
+        "required": [
+          "calculated_at",
+          "policy",
+          "cutoffs",
+          "eligible_counts"
+        ],
+        "type": "object"
+      },
+      "DataRetentionRunVo": {
+        "properties": {
+          "background_job_id": {
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted_counts": {},
+          "eligible_counts": {},
+          "error_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "policy_snapshot": {},
+          "remaining_counts": {},
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "trigger_kind": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "background_job_id",
+          "trigger_kind",
+          "status",
+          "policy_snapshot",
+          "eligible_counts",
+          "deleted_counts",
+          "remaining_counts",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "DbPoolInfo": {
         "properties": {
           "active_connections": {
@@ -5615,6 +6829,11 @@
           "status",
           "created_at"
         ],
+        "type": "object"
+      },
+      "EmptyRequestDto": {
+        "additionalProperties": false,
+        "description": "不携带业务字段的写操作请求体。",
         "type": "object"
       },
       "ExportJobVo": {
@@ -6407,6 +7626,313 @@
         ],
         "type": "string"
       },
+      "MonitorOverviewDatabasePoolVo": {
+        "properties": {
+          "active_connections": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "MonitorOverviewDependenciesVo": {
+        "properties": {
+          "database": {
+            "$ref": "#/components/schemas/MonitorOverviewDependencyVo"
+          },
+          "messaging": {
+            "$ref": "#/components/schemas/MonitorOverviewDependencyVo"
+          },
+          "object_storage": {
+            "$ref": "#/components/schemas/MonitorOverviewDependencyVo"
+          },
+          "redis": {
+            "$ref": "#/components/schemas/MonitorOverviewDependencyVo"
+          }
+        },
+        "required": [
+          "database",
+          "redis",
+          "object_storage",
+          "messaging"
+        ],
+        "type": "object"
+      },
+      "MonitorOverviewDependencyVo": {
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "configured"
+        ],
+        "type": "object"
+      },
+      "MonitorOverviewJobsVo": {
+        "properties": {
+          "dead": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enabled_schedules": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "pending": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ready": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "running": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_lag_seconds": {
+            "format": "double",
+            "type": "number"
+          },
+          "scheduler_enabled": {
+            "type": "boolean"
+          },
+          "succeeded": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mode",
+          "scheduler_enabled",
+          "total",
+          "ready",
+          "pending",
+          "running",
+          "succeeded",
+          "dead",
+          "enabled_schedules",
+          "schedule_lag_seconds"
+        ],
+        "type": "object"
+      },
+      "MonitorOverviewSystemVo": {
+        "properties": {
+          "cpu_cores": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cpu_usage": {
+            "format": "float",
+            "type": "number"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "memory_usage": {
+            "format": "float",
+            "type": "number"
+          },
+          "os": {
+            "type": "string"
+          },
+          "process_id": {
+            "type": "string"
+          },
+          "process_status": {
+            "type": "string"
+          },
+          "total_memory_gb": {
+            "format": "double",
+            "type": "number"
+          },
+          "uptime_seconds": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "used_memory_gb": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "os",
+          "hostname",
+          "cpu_cores",
+          "cpu_usage",
+          "total_memory_gb",
+          "used_memory_gb",
+          "memory_usage",
+          "process_id",
+          "uptime_seconds",
+          "process_status"
+        ],
+        "type": "object"
+      },
+      "MonitorOverviewTrendBucketVo": {
+        "properties": {
+          "background_jobs_created": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "login_failure": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "login_success": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation_failure": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation_success": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_enqueued": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_invalid_configuration": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_skipped_concurrency": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_skipped_misfire": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_target_unavailable": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "started_at",
+          "background_jobs_created",
+          "schedule_enqueued",
+          "schedule_skipped_misfire",
+          "schedule_skipped_concurrency",
+          "schedule_target_unavailable",
+          "schedule_invalid_configuration",
+          "login_success",
+          "login_failure",
+          "operation_success",
+          "operation_failure"
+        ],
+        "type": "object"
+      },
+      "MonitorOverviewTrendsVo": {
+        "properties": {
+          "bucket_seconds": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/MonitorOverviewTrendBucketVo"
+            },
+            "type": "array"
+          },
+          "calculated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "range": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "calculated_at",
+          "range",
+          "bucket_seconds",
+          "buckets"
+        ],
+        "type": "object"
+      },
+      "MonitorOverviewVo": {
+        "properties": {
+          "calculated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "database_pool": {
+            "$ref": "#/components/schemas/MonitorOverviewDatabasePoolVo"
+          },
+          "dependencies": {
+            "$ref": "#/components/schemas/MonitorOverviewDependenciesVo"
+          },
+          "jobs": {
+            "$ref": "#/components/schemas/MonitorOverviewJobsVo"
+          },
+          "system": {
+            "$ref": "#/components/schemas/MonitorOverviewSystemVo"
+          }
+        },
+        "required": [
+          "calculated_at",
+          "dependencies",
+          "system",
+          "database_pool",
+          "jobs"
+        ],
+        "type": "object"
+      },
       "NoticeVo": {
         "description": "通知公告响应。",
         "properties": {
@@ -6670,6 +8196,15 @@
         ],
         "type": "object"
       },
+      "OverviewTrendQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "range": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "PageData_BackgroundJobVo": {
         "description": "分页接口的业务数据。",
         "properties": {
@@ -6850,6 +8385,115 @@
                 "key",
                 "value",
                 "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_DataRetentionRunVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "background_job_id": {
+                  "type": "string"
+                },
+                "completed_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "deleted_counts": {},
+                "eligible_counts": {},
+                "error_summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "policy_snapshot": {},
+                "remaining_counts": {},
+                "requested_by": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "started_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                },
+                "trigger_kind": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "background_job_id",
+                "trigger_kind",
+                "status",
+                "policy_snapshot",
+                "eligible_counts",
+                "deleted_counts",
+                "remaining_counts",
+                "created_at",
+                "updated_at"
               ],
               "type": "object"
             },
@@ -8021,6 +9665,217 @@
         ],
         "type": "object"
       },
+      "PageData_UserImportJobVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "background_job_id": {
+                  "type": "string"
+                },
+                "cancel_requested": {
+                  "type": "boolean"
+                },
+                "completed_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "duplicate_policy": {
+                  "type": "string"
+                },
+                "failure_count": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "last_error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "processed_rows": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "report_available": {
+                  "type": "boolean"
+                },
+                "requester_user_id": {
+                  "type": "string"
+                },
+                "skipped_count": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "source_name": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                },
+                "success_count": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "total_rows": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "requester_user_id",
+                "background_job_id",
+                "source_name",
+                "duplicate_policy",
+                "status",
+                "total_rows",
+                "processed_rows",
+                "success_count",
+                "skipped_count",
+                "failure_count",
+                "cancel_requested",
+                "report_available",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_UserImportRowVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string"
+                },
+                "row_number": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "username": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "row_number",
+                "username",
+                "outcome",
+                "code",
+                "message",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
       "PageData_UserVo": {
         "description": "分页接口的业务数据。",
         "properties": {
@@ -8570,6 +10425,29 @@
               "type": "string"
             },
             "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "RetentionRunPageQuery": {
+        "additionalProperties": false,
+        "description": "数据保留运行记录分页参数。",
+        "properties": {
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -9678,27 +11556,195 @@
         },
         "type": "object"
       },
-      "UserImportResult": {
+      "UserImportJobVo": {
         "properties": {
-          "errors": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
+          "background_job_id": {
+            "type": "string"
           },
-          "fail_count": {
-            "minimum": 0,
+          "cancel_requested": {
+            "type": "boolean"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duplicate_policy": {
+            "type": "string"
+          },
+          "failure_count": {
+            "format": "int32",
             "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed_rows": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "report_available": {
+            "type": "boolean"
+          },
+          "requester_user_id": {
+            "type": "string"
+          },
+          "skipped_count": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
           },
           "success_count": {
-            "minimum": 0,
+            "format": "int32",
             "type": "integer"
+          },
+          "total_rows": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
           }
         },
         "required": [
+          "id",
+          "requester_user_id",
+          "background_job_id",
+          "source_name",
+          "duplicate_policy",
+          "status",
+          "total_rows",
+          "processed_rows",
           "success_count",
-          "fail_count",
-          "errors"
+          "skipped_count",
+          "failure_count",
+          "cancel_requested",
+          "report_available",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "UserImportPageQuery": {
+        "additionalProperties": false,
+        "description": "用户导入任务分页查询。",
+        "properties": {
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UserImportRowPageQuery": {
+        "additionalProperties": false,
+        "description": "用户导入异常行分页查询。",
+        "properties": {
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UserImportRowVo": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "row_number": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "row_number",
+          "username",
+          "outcome",
+          "code",
+          "message",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "UserImportUploadForm": {
+        "description": "OpenAPI 中的严格单文件上传表单。",
+        "properties": {
+          "file": {
+            "format": "binary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
         ],
         "type": "object"
       },
@@ -11121,6 +13167,219 @@
         ]
       }
     },
+    "/api/v1/monitor/overview": {
+      "get": {
+        "operationId": "get_monitor_overview",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MonitorOverviewVo"
+                }
+              }
+            },
+            "description": "当前租户运维快照"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "运维总览"
+        ]
+      }
+    },
+    "/api/v1/monitor/overview/trends": {
+      "get": {
+        "operationId": "get_monitor_overview_trends",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MonitorOverviewTrendsVo"
+                }
+              }
+            },
+            "description": "当前租户补零后的 UTC 趋势桶"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "运维总览"
+        ]
+      }
+    },
+    "/api/v1/monitor/retention": {
+      "get": {
+        "operationId": "get_monitor_retention",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DataRetentionOverview"
+                }
+              }
+            },
+            "description": "当前有效保留策略"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "数据保留"
+        ]
+      }
+    },
+    "/api/v1/monitor/retention/preview": {
+      "post": {
+        "operationId": "post_monitor_retention_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DataRetentionPreview"
+                }
+              }
+            },
+            "description": "预计可清理数量"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "数据保留"
+        ]
+      }
+    },
+    "/api/v1/monitor/retention/run": {
+      "post": {
+        "operationId": "post_monitor_retention_run",
+        "parameters": [
+          {
+            "description": "人工清理幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DataRetentionRunVo"
+                }
+              }
+            },
+            "description": "清理任务已入队"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "数据保留"
+        ]
+      }
+    },
+    "/api/v1/monitor/retention/runs": {
+      "get": {
+        "operationId": "get_monitor_retention_runs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_DataRetentionRunVo"
+                }
+              }
+            },
+            "description": "数据保留运行记录"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "数据保留"
+        ]
+      }
+    },
     "/api/v1/monitor/runtime": {
       "get": {
         "operationId": "get_monitor_runtime",
@@ -11805,6 +14064,42 @@
         ],
         "tags": [
           "租户管理"
+        ]
+      }
+    },
+    "/api/v1/system/authorization-diagnostics/users/{id}": {
+      "get": {
+        "operationId": "get_system_authorization_diagnostics_users_by_id",
+        "parameters": [
+          {
+            "description": "目标用户ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AuthorizationDiagnosticVo"
+                }
+              }
+            },
+            "description": "主库授权诊断结果"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "权限诊断"
         ]
       }
     },
@@ -14893,6 +17188,284 @@
         ]
       }
     },
+    "/api/v1/system/user-imports": {
+      "get": {
+        "operationId": "get_system_user_imports",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_UserImportJobVo"
+                }
+              }
+            },
+            "description": "用户导入任务列表"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "用户导入"
+        ]
+      },
+      "post": {
+        "operationId": "post_system_user_imports",
+        "parameters": [
+          {
+            "description": "用户导入幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/UserImportUploadForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UserImportJobVo"
+                }
+              }
+            },
+            "description": "用户导入任务已创建"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "用户导入"
+        ]
+      }
+    },
+    "/api/v1/system/user-imports/{id}": {
+      "get": {
+        "operationId": "get_system_user_imports_by_id",
+        "parameters": [
+          {
+            "description": "用户导入任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UserImportJobVo"
+                }
+              }
+            },
+            "description": "用户导入任务详情"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "用户导入"
+        ]
+      }
+    },
+    "/api/v1/system/user-imports/{id}/cancel": {
+      "post": {
+        "operationId": "post_system_user_imports_by_id_cancel",
+        "parameters": [
+          {
+            "description": "用户导入任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_UserImportJobVo"
+                }
+              }
+            },
+            "description": "已申请取消用户导入"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "用户导入"
+        ]
+      }
+    },
+    "/api/v1/system/user-imports/{id}/report": {
+      "get": {
+        "operationId": "get_system_user_imports_by_id_report",
+        "parameters": [
+          {
+            "description": "用户导入任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "用户导入错误报告"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "用户导入"
+        ]
+      }
+    },
+    "/api/v1/system/user-imports/{id}/rows": {
+      "get": {
+        "operationId": "get_system_user_imports_by_id_rows",
+        "parameters": [
+          {
+            "description": "用户导入任务 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_UserImportRowVo"
+                }
+              }
+            },
+            "description": "用户导入异常行"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "用户导入"
+        ]
+      }
+    },
     "/api/v1/system/users": {
       "get": {
         "operationId": "get_system_users",
@@ -15085,41 +17658,6 @@
           }
         ],
         "summary": "创建用户异步导出任务，实际文件由 Worker 生成并保存到对象存储。",
-        "tags": [
-          "用户管理"
-        ]
-      }
-    },
-    "/api/v1/system/users/import": {
-      "post": {
-        "operationId": "post_system_users_import",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/FileUploadForm"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_UserImportResult"
-                }
-              }
-            },
-            "description": "导入用户"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
         "tags": [
           "用户管理"
         ]
@@ -15717,6 +18255,14 @@
       "name": "用户管理"
     },
     {
+      "description": "可恢复、可取消的异步用户导入和错误报告。",
+      "name": "用户导入"
+    },
+    {
+      "description": "从主库重算目标用户授权，并展示角色、权限、菜单、数据范围和缓存版本状态。",
+      "name": "权限诊断"
+    },
+    {
       "description": "角色 CRUD、权限分配(role_permission)、数据权限设置(data_scope + sys_role_dept)。",
       "name": "角色管理"
     },
@@ -15767,6 +18313,14 @@
     {
       "description": "查看当前租户的持久化任务队列状态，并人工重试死信任务。",
       "name": "后台任务"
+    },
+    {
+      "description": "严格按当前租户聚合依赖状态、任务状态和固定时间桶趋势。",
+      "name": "运维总览"
+    },
+    {
+      "description": "预览并运行系统租户的数据生命周期清理。",
+      "name": "数据保留"
     },
     {
       "description": "管理租户隔离的 Cron 计划、立即执行和执行历史。",
@@ -15857,6 +18411,10 @@
       },
       {
         "menu_type": "C",
+        "route_key": "system.authorization-diagnostics"
+      },
+      {
+        "menu_type": "C",
         "route_key": "system.operlog"
       },
       {
@@ -15893,6 +18451,14 @@
       },
       {
         "menu_type": "C",
+        "route_key": "monitor.retention"
+      },
+      {
+        "menu_type": "C",
+        "route_key": "monitor.overview"
+      },
+      {
+        "menu_type": "C",
         "route_key": "tools.gen"
       }
     ],
@@ -15926,6 +18492,9 @@
       "monitor:job:retry",
       "monitor:online:force-logout",
       "monitor:online:list",
+      "monitor:overview:list",
+      "monitor:retention:list",
+      "monitor:retention:run",
       "monitor:runtime:list",
       "monitor:schedule:add",
       "monitor:schedule:edit",
@@ -15933,6 +18502,7 @@
       "monitor:schedule:remove",
       "monitor:schedule:run",
       "monitor:server:list",
+      "system:authorization-diagnostic:list",
       "system:config:add",
       "system:config:edit",
       "system:config:export",
@@ -15975,6 +18545,9 @@
       "system:role:export",
       "system:role:list",
       "system:role:remove",
+      "system:user-import:add",
+      "system:user-import:cancel",
+      "system:user-import:list",
       "system:user:add",
       "system:user:edit",
       "system:user:export",

@@ -28,7 +28,8 @@ const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_even
     UNIQUE KEY `uq_outbox_event_dedupe` (`event_type`, `dedupe_key`),
     KEY `idx_outbox_event_claim` (`status`, `available_at`, `id`),
     KEY `idx_outbox_event_lease` (`status`, `lease_until`),
-    KEY `idx_outbox_event_aggregate` (`aggregate_type`, `aggregate_id`, `created_at`)
+    KEY `idx_outbox_event_aggregate` (`aggregate_type`, `aggregate_id`, `created_at`),
+    KEY `idx_outbox_event_retention` (`status`, `published_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
 
 const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_export_job` (
@@ -52,7 +53,8 @@ const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_export_job` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_export_job_background` (`background_job_id`),
     KEY `idx_export_job_requester` (`tenant_id`, `requester_id`, `created_at`),
-    KEY `idx_export_job_expiry` (`status`, `expires_at`)
+    KEY `idx_export_job_expiry` (`status`, `expires_at`),
+    KEY `idx_export_job_history` (`status`, `completed_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -968,6 +970,9 @@ fn is_upgrade_table(table: &str) -> bool {
         "sys_background_job"
             | "sys_job_schedule"
             | "sys_job_schedule_execution"
+            | "sys_data_retention_run"
+            | "sys_user_import_job"
+            | "sys_user_import_row_result"
             | "sys_cache_namespace_version"
             | "sys_outbox_event"
             | "sys_export_job"
@@ -1006,6 +1011,18 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
             "sys_menu",
             "idx_perm_id" | "idx_menu_tenant_perm" | "idx_menu_tenant_route"
         ) | ("sys_user", "idx_user_avatar_file")
+            | (
+                "sys_background_job",
+                "idx_bg_job_retention" | "idx_bg_job_tenant_created_status"
+            )
+            | ("sys_outbox_event", "idx_outbox_event_retention")
+            | (
+                "sys_job_schedule_execution",
+                "idx_job_schedule_execution_retention" | "idx_job_schedule_execution_trend"
+            )
+            | ("sys_export_job", "idx_export_job_history")
+            | ("sys_oper_log", "idx_oper_log_tenant_time_status")
+            | ("sys_login_info", "idx_login_info_tenant_time_status")
             | ("sys_login_info" | "sys_oper_log", "idx_tenant_id")
             | ("sys_oper_log", "uq_oper_log_event_id")
             | ("password_reset_requests", "idx_password_reset_tenant")

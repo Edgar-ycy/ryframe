@@ -166,6 +166,28 @@ health_port = 9091
 # 嵌入模式示例：mode = "embedded"
 # 工作进程 ID 示例：worker_id = "worker-a"
 
+[data_retention]
+# 分级保留只清理明确进入成功或已发布终态的数据；后台任务和 Outbox 死信永久保留。
+cleanup_batch_size = 500
+max_rows_per_resource_per_run = 50000
+background_job_succeeded_days = 30
+outbox_published_days = 30
+schedule_execution_days = 180
+export_job_history_days = 180
+operation_log_days = 180
+login_log_days = 180
+user_import_history_days = 180
+user_import_artifact_hours = 168
+retention_run_days = 730
+
+[user_import]
+# 异步用户导入的文件、行数、批次与密码哈希并发上限。
+max_file_bytes = 10485760
+max_rows = 20000
+batch_size = 100
+max_active_per_tenant = 1
+hash_parallelism = 2
+
 [object_storage]
 # 存储后端: local（本地）| rustfs（RustFS）| minio（MinIO）| s3（兼容 S3）
 backend = "local"

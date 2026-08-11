@@ -7,7 +7,9 @@ pub(super) fn monitor_router(
     let public = ryframe_monitor::public_monitor_router(monitor_state.clone());
     let mut protected = ryframe_monitor::protected_monitor_router(monitor_state)
         .merge(route!(runtime_status).with_state(state.clone()))
-        .merge(job_handler::job_router(state.clone()));
+        .merge(overview_handler::overview_router(state.clone()))
+        .merge(job_handler::job_router(state.clone()))
+        .merge(retention_handler::retention_router(state.clone()));
     if state.config.jobs.scheduler_enabled {
         protected = protected.merge(schedule_handler::schedule_router(state.clone()));
     }
@@ -34,7 +36,15 @@ pub(super) fn system_router(
     idempotency_state: IdempotencyState,
 ) -> Router {
     let router = Router::new()
+        .nest(
+            "/authorization-diagnostics",
+            authorization_diagnostic_handler::authorization_diagnostic_router(state.clone()),
+        )
         .nest("/users", user_handler::user_router(state.clone()))
+        .nest(
+            "/user-imports",
+            user_import_handler::user_import_router(state.clone()),
+        )
         .nest("/roles", role_handler::role_router(state.clone()))
         .nest(
             "/perms",

@@ -20,7 +20,10 @@ use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
 use ryframe_kernel::AppError;
 use ryframe_service::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
-    system::{EXPORT_BUCKET, ExportService, MessageService, OperLogService, UserService},
+    system::{
+        DataRetentionService, EXPORT_BUCKET, ExportService, FileService, IMPORT_BUCKET,
+        MessageService, OperLogService, UserImportService, UserService,
+    },
 };
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
 use tokio::sync::watch;
@@ -106,16 +109,33 @@ async fn main() -> Result<(), AppError> {
         database.clone(),
         authorization_cache.clone(),
     ));
+    let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
+    file.spawn_upload_janitor();
     let export = Arc::new(
-        ExportService::new(database.clone(), user, object_storage, &config.jobs)
+        ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
             .with_job_queue(queue.clone()),
     );
+    let data_retention = Arc::new(DataRetentionService::new(
+        database.clone(),
+        queue.clone(),
+        file.clone(),
+        config.data_retention.clone(),
+    ));
+    let user_import = Arc::new(UserImportService::new(
+        database.clone(),
+        queue.clone(),
+        user,
+        file,
+        config.user_import.clone(),
+    ));
     let worker = process_jobs::build_job_worker(
         queue.clone(),
         &config.jobs,
         process_jobs::JobWorkerDependencies {
             export: export.clone(),
             message: message.clone(),
+            data_retention,
+            user_import,
             redis: redis.clone(),
             messaging_enabled: config.messaging.enabled,
         },
@@ -345,12 +365,11 @@ async fn connect_storage_for_worker(
             .map_err(|error| AppError::Config(error.to_string()))?,
         ),
     };
-    storage
-        .ensure_bucket(EXPORT_BUCKET)
-        .await
-        .map_err(|error| {
-            AppError::ServiceUnavailable(format!("Worker 导出对象存储不可用: {error}"))
+    for bucket in [EXPORT_BUCKET, IMPORT_BUCKET] {
+        storage.ensure_bucket(bucket).await.map_err(|error| {
+            AppError::ServiceUnavailable(format!("Worker 对象存储不可用: {error}"))
         })?;
+    }
     Ok(storage)
 }
 

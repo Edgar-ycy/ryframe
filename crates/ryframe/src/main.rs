@@ -117,6 +117,8 @@ async fn main() -> Result<(), AppError> {
                 boot::jobs::JobWorkerDependencies {
                     export: services.export.clone(),
                     message: services.message.clone(),
+                    data_retention: services.data_retention.clone(),
+                    user_import: services.user_import.clone(),
                     redis: redis.client.clone(),
                     messaging_enabled: config.messaging.enabled,
                 },

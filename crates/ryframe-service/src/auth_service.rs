@@ -3,12 +3,10 @@ use std::sync::Arc;
 use ryframe_config::AppConfig;
 use ryframe_core::{RedisClient, RefreshSessionStore};
 use ryframe_db::DatabaseCluster;
-use ryframe_db::{
-    DeptRepository, PermissionRepository, RoleRepository, UserRepository, entities::user,
-};
+use ryframe_db::{DeptRepository, UserRepository, entities::user};
 use serde::Serialize;
 
-use crate::AuthorizationCache;
+use crate::{AuthorizationCache, AuthorizationResolver};
 
 mod brute_force;
 mod identity;
@@ -67,9 +65,8 @@ impl From<&user::Model> for UserInfo {
 pub struct AuthService {
     db: DatabaseCluster,
     user_repo: UserRepository,
-    role_repo: RoleRepository,
-    perm_repo: PermissionRepository,
     dept_repo: DeptRepository,
+    authorization_resolver: AuthorizationResolver,
     config: Arc<AppConfig>,
     /// Redis 客户端（用于 refresh family 与登录暴力破解防护，可空）
     redis: Option<RedisClient>,
@@ -89,9 +86,8 @@ impl AuthService {
         Self {
             db,
             user_repo: UserRepository,
-            role_repo: RoleRepository,
-            perm_repo: PermissionRepository,
             dept_repo: DeptRepository,
+            authorization_resolver: AuthorizationResolver::new(),
             config,
             redis,
             refresh_sessions,

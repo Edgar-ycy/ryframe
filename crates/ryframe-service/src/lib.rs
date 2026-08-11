@@ -1,6 +1,7 @@
 mod audit;
 mod auth_service;
 mod authorization_cache;
+mod authorization_resolver;
 pub mod jobs;
 pub mod system;
 mod trace_context;
@@ -18,6 +19,7 @@ pub use authorization_cache::{
     AuthorizationSnapshot, AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,
     set_authorization_cache_lookup_hook,
 };
+pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
 #[allow(deprecated)]
 pub use jobs::spawn_message_retention_scheduler;
 pub use jobs::{

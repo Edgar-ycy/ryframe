@@ -185,6 +185,22 @@ config/app.prod.toml
 | `APP_JOBS_SCHEDULER_POLL_INTERVAL_MS` | 到期 Cron 计划的数据库扫描间隔（`250..=60000`） | `1000` |
 | `APP_JOBS_SCHEDULER_BATCH_SIZE` | 单轮最多领取的到期计划数量（`1..=1000`） | `100` |
 | `APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT` | 单租户最多启用的计划数量（`1..=10000`） | `100` |
+| `APP_DATA_RETENTION_CLEANUP_BATCH_SIZE` | 数据保留单批清理数量（`100..=5000`） | `500` |
+| `APP_DATA_RETENTION_MAX_ROWS_PER_RESOURCE_PER_RUN` | 每个资源单次运行最多删除数量 | `50000` |
+| `APP_DATA_RETENTION_BACKGROUND_JOB_SUCCEEDED_DAYS` | 成功后台任务保留天数；死信永久保留 | `30` |
+| `APP_DATA_RETENTION_OUTBOX_PUBLISHED_DAYS` | 已发布 Outbox 保留天数；死信永久保留 | `30` |
+| `APP_DATA_RETENTION_SCHEDULE_EXECUTION_DAYS` | 定时任务执行历史保留天数 | `180` |
+| `APP_DATA_RETENTION_EXPORT_JOB_HISTORY_DAYS` | 导出任务历史保留天数 | `180` |
+| `APP_DATA_RETENTION_OPERATION_LOG_DAYS` | 操作日志保留天数 | `180` |
+| `APP_DATA_RETENTION_LOGIN_LOG_DAYS` | 登录日志保留天数 | `180` |
+| `APP_DATA_RETENTION_USER_IMPORT_HISTORY_DAYS` | 用户导入历史保留天数 | `180` |
+| `APP_DATA_RETENTION_USER_IMPORT_ARTIFACT_HOURS` | 用户导入源文件和错误报告保留小时数 | `168` |
+| `APP_DATA_RETENTION_RETENTION_RUN_DAYS` | 数据保留运行记录保留天数 | `730` |
+| `APP_USER_IMPORT_MAX_FILE_BYTES` | 异步用户导入文件上限，且不能超过通用上传上限 | `10485760` |
+| `APP_USER_IMPORT_MAX_ROWS` | 单个用户导入最大数据行数 | `20000` |
+| `APP_USER_IMPORT_BATCH_SIZE` | 用户导入每批提交行数 | `100` |
+| `APP_USER_IMPORT_MAX_ACTIVE_PER_TENANT` | 单租户同时处于等待或运行状态的导入数 | `1` |
+| `APP_USER_IMPORT_HASH_PARALLELISM` | 单进程 Argon2 哈希并行上限 | `2` |
 | `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；默认要求加密连接，远程生产数据库使用 `verify_identity` | `required` |
 | `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
 | `APP_API_DOCS_ENABLED` | 是否暴露运行时 Swagger/OpenAPI；生产必须关闭 | `true` |
@@ -202,6 +218,8 @@ config/app.prod.toml
 
 定时任务的可视化创建、七段 Cron 约束、运行开关和后期删除步骤见
 [定时任务使用与维护](docs/job-scheduling.md)。
+数据保留的永久删除边界、异步用户导入、权限诊断和租户运维总览见
+[数据生命周期、异步导入与运维诊断](docs/data-lifecycle.md)。
 
 生产 Compose 通过 `APP_*_FILE` 读取 Docker secret；文件必须是 UTF-8，末尾的一个换行会被移除。同一配置不能同时设置直接值和 `_FILE`。不要把密钥、数据库密码、对象存储凭据或副本连接 JSON 写入仓库。
 配置在启动时完成合并和严格校验；当前不提供配置密文解密，任何使用旧 `ENC[...]` 格式的值都会被拒绝。配置文件或环境变量变化后必须重启进程才会生效。
@@ -223,6 +241,7 @@ GitHub 稳定版 Release 只保留平台自动生成的源码 ZIP/TAR，不构�
 - [前端集成指南](docs/frontend-integration.md)
 - [生产部署基线](docs/production-deployment.md)
 - [生产监控与值班手册](docs/operations-runbook.md)
+- [数据生命周期、异步导入与运维诊断](docs/data-lifecycle.md)
 - [容量测试与验收标准](docs/capacity-guide.md)
 - [稳定发布与回滚指南](docs/release-guide.md)
 

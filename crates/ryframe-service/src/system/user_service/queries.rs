@@ -1,14 +1,27 @@
 use std::collections::HashMap;
 
 use ryframe_core::{Repository, repository::PageResult};
-use ryframe_db::{ReadConsistency, TenantRepository, UserFilter, entities::role};
-use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope, DataScopeContext};
+use ryframe_db::{
+    ReadConsistency, TenantRepository, UserFilter,
+    entities::{role, tenant, user},
+};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::super::{OptionItem, OptionList};
 use super::{RoleBriefVo, UserDetailVo, UserListParams, UserService, UserVo};
+
+/// 从主库重新计算的当前授权结果，供长时间后台任务和诊断接口共用。
+pub(crate) struct CurrentAuthorization {
+    pub actor: ActorContext,
+    pub tenant: tenant::Model,
+    pub user: user::Model,
+    pub roles: Vec<role::Model>,
+    pub permission_codes: Vec<String>,
+    pub fingerprint: String,
+}
 
 impl UserService {
     /// 以稳定的主键游标分批读取可导出的用户，避免大页码查询在并发写入时产生重复或遗漏。
@@ -67,132 +80,90 @@ impl UserService {
         user_id: i64,
         permission_code: &str,
     ) -> AppResult<(ActorContext, String)> {
+        let authorization = self
+            .resolve_current_authorization(tenant_id, user_id, permission_code)
+            .await?;
+        Ok((authorization.actor, authorization.fingerprint))
+    }
+
+    /// 从主库重新计算指定用户的账号、角色、权限和最终数据范围。
+    pub(crate) async fn resolve_current_authorization(
+        &self,
+        tenant_id: &str,
+        user_id: i64,
+        permission_code: &str,
+    ) -> AppResult<CurrentAuthorization> {
         if permission_code.trim().is_empty() {
             return Err(AppError::Validation("权限代码不能为空".into()));
         }
+        let authorization = self
+            .calculate_current_authorization(tenant_id, user_id)
+            .await?;
+        if !authorization.tenant.is_available(chrono::Utc::now()) {
+            return Err(AppError::Authorization(
+                "操作申请人的租户已停用或到期".into(),
+            ));
+        }
+        if !authorization.user.is_enabled() {
+            return Err(AppError::Authorization("操作申请人的账号已停用".into()));
+        }
+        if !authorization.actor.is_super_admin
+            && !ryframe_auth::rbac::has_permission(&authorization.permission_codes, permission_code)
+        {
+            return Err(AppError::Authorization("操作申请人的权限已被撤销".into()));
+        }
+
+        Ok(authorization)
+    }
+
+    /// 从主库计算授权，不因目标账号或租户停用而提前失败，供只读诊断展示使用。
+    pub(crate) async fn calculate_current_authorization(
+        &self,
+        tenant_id: &str,
+        user_id: i64,
+    ) -> AppResult<CurrentAuthorization> {
         let db = self.db.write();
-        let tenant = TenantRepository.ensure_available(db, tenant_id).await?;
+        let tenant = TenantRepository
+            .find_by_tenant_id(db, tenant_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let user = self
             .user_repo
             .find_by_id(db, tenant_id, user_id)
             .await?
-            .ok_or_else(|| AppError::Authorization("导出申请人已不存在".into()))?;
-        if !user.is_enabled() {
-            return Err(AppError::Authorization("导出申请人的账号已停用".into()));
-        }
-
-        let mut roles = self
-            .role_repo
-            .find_user_roles(db, tenant_id, user_id)
+            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+        let resolved = self
+            .authorization_resolver
+            .resolve(db, tenant_id, &user)
             .await?;
-        roles.sort_unstable_by_key(|role| role.id);
-        let is_super_admin = roles.iter().any(|role| role.is_super == 1);
-        let role_ids = roles.iter().map(|role| role.id).collect::<Vec<_>>();
-        let mut permission_codes = self
-            .perm_repo
-            .find_role_perms(db, tenant_id, &role_ids)
-            .await?
-            .into_iter()
-            .map(|permission| permission.code)
-            .collect::<Vec<_>>();
-        permission_codes.sort_unstable();
-        permission_codes.dedup();
-        if !is_super_admin
-            && !ryframe_auth::rbac::has_permission(&permission_codes, permission_code)
-        {
-            return Err(AppError::Authorization("导出申请人的权限已被撤销".into()));
-        }
+        let is_super_admin = resolved.roles.iter().any(|role| role.is_super == 1);
 
-        let data_scope = self
-            .resolve_current_export_data_scope(db, tenant_id, user_id, user.dept_id, &roles)
-            .await?;
         let actor = ActorContext {
             user_id,
             tenant_id: tenant_id.to_owned(),
-            username: user.username,
+            username: user.username.clone(),
             dept_id: user.dept_id,
-            dept_path: data_scope.ancestors.clone(),
-            data_scope: data_scope.scope,
-            custom_dept_ids: data_scope.custom_dept_ids,
-            include_self: data_scope.include_self,
+            dept_path: resolved.data_scope.ancestors.clone(),
+            data_scope: resolved.data_scope.scope.clone(),
+            custom_dept_ids: resolved.data_scope.custom_dept_ids.clone(),
+            include_self: resolved.data_scope.include_self,
             is_super_admin,
         };
         let fingerprint = calculate_export_authorization_fingerprint(
             tenant.authorization_epoch,
             user.authorization_version,
             &actor,
-            &roles,
-            &permission_codes,
+            &resolved.roles,
+            &resolved.permission_codes,
         )?;
-        Ok((actor, fingerprint))
-    }
-
-    async fn resolve_current_export_data_scope(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        user_id: i64,
-        dept_id: Option<i64>,
-        roles: &[role::Model],
-    ) -> AppResult<DataScopeContext> {
-        if roles.iter().any(|role| role.is_super == 1) {
-            return Ok(DataScopeContext::super_admin(user_id));
-        }
-        let ancestors = match dept_id {
-            Some(dept_id) => Some(
-                self.dept_repo
-                    .find_by_id(db, tenant_id, dept_id)
-                    .await?
-                    .ok_or_else(|| AppError::Authorization("导出申请人的部门已不存在".into()))?
-                    .ancestors,
-            ),
-            None => None,
-        };
-        let custom_role_ids = roles
-            .iter()
-            .filter(|role| role.data_scope == role::Model::DATA_SCOPE_CUSTOM)
-            .map(|role| role.id)
-            .collect::<Vec<_>>();
-        let custom_dept_ids = self
-            .role_repo
-            .find_roles_dept_ids(db, tenant_id, &custom_role_ids)
-            .await?;
-        let mut scopes = Vec::with_capacity(roles.len());
-        for role in roles {
-            let scope = DataScope::from_db_value(&role.data_scope);
-            let scope_dept_ids = match scope {
-                DataScope::Custom => custom_dept_ids.clone(),
-                DataScope::Dept => dept_id.into_iter().collect(),
-                DataScope::DeptAndChildren => match dept_id {
-                    Some(dept_id) => {
-                        self.dept_repo
-                            .find_child_dept_ids(db, tenant_id, dept_id)
-                            .await?
-                    }
-                    None => Vec::new(),
-                },
-                DataScope::All | DataScope::SelfOnly => Vec::new(),
-            };
-            scopes.push(DataScopeContext {
-                scope,
-                user_id,
-                dept_id,
-                ancestors: ancestors.clone(),
-                custom_dept_ids: scope_dept_ids,
-                include_self: false,
-            });
-        }
-        if scopes.is_empty() {
-            return Ok(DataScopeContext {
-                scope: DataScope::SelfOnly,
-                user_id,
-                dept_id,
-                ancestors,
-                custom_dept_ids: Vec::new(),
-                include_self: true,
-            });
-        }
-        Ok(DataScopeContext::merge(scopes))
+        Ok(CurrentAuthorization {
+            actor,
+            tenant,
+            user,
+            roles: resolved.roles,
+            permission_codes: resolved.permission_codes,
+            fingerprint,
+        })
     }
 
     /// 按数据库当前状态重新校验申请人的账号和权限。

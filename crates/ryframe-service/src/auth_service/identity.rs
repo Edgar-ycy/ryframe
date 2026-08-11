@@ -121,18 +121,20 @@ impl AuthService {
         tenant_id: &str,
         user_id: i64,
     ) -> AppResult<AuthorizationProfile> {
-        let roles = self
-            .role_repo
-            .find_user_roles(db, tenant_id, user_id)
+        let user = self
+            .user_repo
+            .find_by_id(db, tenant_id, user_id)
+            .await?
+            .ok_or_else(|| AppError::Authentication("用户不存在".into()))?;
+        let resolved = self
+            .authorization_resolver
+            .resolve(db, tenant_id, &user)
             .await?;
-        let is_super_admin = roles.iter().any(|role| role.is_super == 1);
-        let permissions = if is_super_admin {
-            vec!["*:*:*".to_owned()]
-        } else {
-            self.load_permission_codes_on(db, tenant_id, &roles).await?
-        };
 
-        Ok(AuthorizationProfile { roles, permissions })
+        Ok(AuthorizationProfile {
+            roles: resolved.roles,
+            permissions: resolved.permission_codes,
+        })
     }
 
     pub(super) async fn build_user_info(
@@ -158,24 +160,5 @@ impl AuthService {
             .collect();
         user_info.perms = authorization.permissions.clone();
         Ok(user_info)
-    }
-
-    async fn load_permission_codes_on(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        roles: &[role::Model],
-    ) -> AppResult<Vec<String>> {
-        let role_ids = roles.iter().map(|role| role.id).collect::<Vec<_>>();
-        let mut codes = self
-            .perm_repo
-            .find_role_perms(db, tenant_id, &role_ids)
-            .await?
-            .into_iter()
-            .map(|permission| permission.code)
-            .collect::<Vec<_>>();
-        codes.sort();
-        codes.dedup();
-        Ok(codes)
     }
 }

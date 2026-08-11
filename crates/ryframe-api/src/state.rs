@@ -9,10 +9,11 @@ use ryframe_monitor::MonitorState;
 use ryframe_service::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
     system::{
-        CaptchaStore, ConfigService, DeptService, DictService, ExportService, FileService,
-        GeneratorService, LoginInfoService, MenuService, MessageService, NoticeService,
-        OnlineUserService, OperLogService, PermissionService, PostService, ProfileService,
-        RoleService, TenantService, UserService, WebSocketTicketService,
+        AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
+        DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
+        MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
+        OverviewService, PermissionService, PostService, ProfileService, RoleService,
+        TenantService, UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_utils::ip::TrustedProxySet;
@@ -39,6 +40,10 @@ pub struct AppServices {
     pub audit_outbox: Arc<AuditOutbox>,
     pub job_queue: Arc<JobQueue>,
     pub job_schedules: Option<Arc<JobScheduleService>>,
+    pub data_retention: Arc<DataRetentionService>,
+    pub user_import: Arc<UserImportService>,
+    pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,
+    pub overview: Arc<OverviewService>,
     pub login_info: Arc<LoginInfoService>,
     pub generator: Arc<GeneratorService>,
     pub profile: Arc<ProfileService>,

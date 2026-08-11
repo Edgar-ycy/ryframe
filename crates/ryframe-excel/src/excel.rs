@@ -9,7 +9,23 @@ use crate::{AppError, AppResult};
 /// Excel 导入工具
 pub struct ExcelImporter;
 
+/// 保留 Excel 原始行号的逐行解析结果。
+pub struct ExcelImportRow<T> {
+    pub row_number: usize,
+    pub value: Result<T, String>,
+}
+
 impl ExcelImporter {
+    /// 校验字节内容确实是包含工作表的 XLSX 工作簿，不解析业务行。
+    pub fn validate_xlsx(bytes: &[u8]) -> AppResult<()> {
+        let cursor = Cursor::new(bytes);
+        let mut workbook = Xlsx::new(cursor)
+            .map_err(|error| AppError::Validation(format!("文件内容不是有效的 XLSX: {error}")))?;
+        Self::range_from_sheet_names(&mut workbook, None)
+            .map_err(|error| AppError::Validation(format!("XLSX 工作表无效: {error}")))?;
+        Ok(())
+    }
+
     /// 从文件读取 Excel 数据
     pub fn read_from_file<P: AsRef<std::path::Path>, T: DeserializeOwned>(
         path: P,
@@ -33,6 +49,18 @@ impl ExcelImporter {
 
         let range = Self::range_from_sheet_names(&mut workbook, sheet_name)?;
         Self::parse_range(&range)
+    }
+
+    /// 从首个工作表逐行解析，同时保留无法反序列化的行供异步导入报告。
+    pub fn read_rows_from_bytes<T: DeserializeOwned>(
+        bytes: &[u8],
+        sheet_name: Option<&str>,
+    ) -> AppResult<Vec<ExcelImportRow<T>>> {
+        let cursor = Cursor::new(bytes);
+        let mut workbook = Xlsx::new(cursor)
+            .map_err(|error| AppError::Validation(format!("解析 Excel 数据失败: {error}")))?;
+        let range = Self::range_from_sheet_names(&mut workbook, sheet_name)?;
+        Self::parse_rows(&range)
     }
 
     /// 获取目标工作表范围
@@ -63,6 +91,15 @@ impl ExcelImporter {
 
     /// 解析工作表数据
     fn parse_range<T: DeserializeOwned>(range: &calamine::Range<Data>) -> AppResult<Vec<T>> {
+        Self::parse_rows(range)?
+            .into_iter()
+            .map(|row| row.value.map_err(AppError::Validation))
+            .collect()
+    }
+
+    fn parse_rows<T: DeserializeOwned>(
+        range: &calamine::Range<Data>,
+    ) -> AppResult<Vec<ExcelImportRow<T>>> {
         let mut results = Vec::new();
         let mut headers = Vec::new();
         let mut row_no = 0usize;
@@ -89,9 +126,12 @@ impl ExcelImporter {
                 .map_err(|e| AppError::Internal(format!("序列化失败: {}", e)))?;
 
             let value = serde_json::from_value(json)
-                .map_err(|e| AppError::Validation(format!("解析第 {} 行失败: {}", row_no, e)))?;
+                .map_err(|error| format!("解析第 {row_no} 行失败: {error}"));
 
-            results.push(value);
+            results.push(ExcelImportRow {
+                row_number: row_no,
+                value,
+            });
         }
 
         Ok(results)

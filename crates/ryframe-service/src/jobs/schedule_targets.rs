@@ -5,7 +5,7 @@ use ryframe_db::EnqueueBackgroundJob;
 use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
 
-use crate::system::{EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
+use crate::system::{DATA_RETENTION_JOB_TYPE, EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
 
 /// 调度目标允许的租户范围。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -105,9 +105,46 @@ impl ScheduledJobTargetRegistry {
     pub fn built_in(message_center_enabled: bool) -> AppResult<Self> {
         Self::new()
             .with_target(Arc::new(ExportCleanupTarget))?
+            .with_target(Arc::new(DataRetentionTarget))?
             .with_target(Arc::new(MessageRetentionTarget {
                 available: message_center_enabled,
             }))
+    }
+}
+
+struct DataRetentionTarget;
+
+impl ScheduledJobTarget for DataRetentionTarget {
+    fn handler_key(&self) -> &'static str {
+        "system.data_retention_cleanup"
+    }
+
+    fn display_name(&self) -> &'static str {
+        "数据保留清理"
+    }
+
+    fn scope(&self) -> ScheduledJobTargetScope {
+        ScheduledJobTargetScope::System
+    }
+
+    fn job_type(&self) -> &'static str {
+        DATA_RETENTION_JOB_TYPE
+    }
+
+    fn available(&self) -> bool {
+        true
+    }
+
+    fn priority(&self) -> i32 {
+        -20
+    }
+
+    fn max_attempts(&self) -> i32 {
+        20
+    }
+
+    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueBackgroundJob> {
+        build_system_cleanup_job(self, context)
     }
 }
 

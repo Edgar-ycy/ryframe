@@ -6,4 +6,4 @@ pub use ryframe_kernel::{AppError, AppResult};
 
 mod excel;
 
-pub use excel::{ExcelExporter, ExcelImporter};
+pub use excel::{ExcelExporter, ExcelImportRow, ExcelImporter};

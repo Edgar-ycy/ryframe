@@ -9,6 +9,7 @@ use ryframe_utils::file_upload::{
     UploadConfig, compress_image, generate_storage_filename, get_content_type, validate_extension,
     validate_file_signature,
 };
+use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 
 mod upload_reservation;
@@ -37,6 +38,9 @@ pub const UPLOAD_BUCKET: &str = "uploads";
 
 /// Avatar 专用 bucket 名称
 pub const AVATAR_BUCKET: &str = "avatar";
+
+/// 用户导入源文件与错误报告专用私有 bucket 名称。
+pub const IMPORT_BUCKET: &str = "imports";
 
 pub struct UploadCommand<'a> {
     pub original_name: String,
@@ -131,7 +135,7 @@ impl FileService {
 
     /// 校验是否可使用已配置的凭据连接存储后端。
     pub async fn check_storage(&self) -> AppResult<()> {
-        for bucket in [UPLOAD_BUCKET, AVATAR_BUCKET] {
+        for bucket in [UPLOAD_BUCKET, AVATAR_BUCKET, IMPORT_BUCKET] {
             self.storage
                 .readiness_check(bucket)
                 .await
@@ -153,6 +157,30 @@ impl FileService {
         command: UploadCommand<'_>,
     ) -> AppResult<UploadResponse> {
         let tenant_id = crate::validated_tenant_id(actor)?;
+        self.upload_for_tenant(tenant_id, &actor.username, command)
+            .await
+    }
+
+    /// 由后台任务上传受控的内部文件，不接受客户端指定租户或 bucket。
+    pub(crate) async fn upload_internal(
+        &self,
+        tenant_id: &str,
+        uploaded_by: &str,
+        command: UploadCommand<'_>,
+    ) -> AppResult<UploadResponse> {
+        if tenant_id.is_empty() || tenant_id.len() > 64 {
+            return Err(AppError::Validation("内部文件租户标识无效".into()));
+        }
+        self.upload_for_tenant(tenant_id, uploaded_by, command)
+            .await
+    }
+
+    async fn upload_for_tenant(
+        &self,
+        tenant_id: &str,
+        uploaded_by: &str,
+        command: UploadCommand<'_>,
+    ) -> AppResult<UploadResponse> {
         let UploadCommand {
             original_name,
             data,
@@ -204,7 +232,7 @@ impl FileService {
                 .map_err(|_| AppError::PayloadTooLarge("文件大小超出数据库范围".into()))?,
             content_type: content_type.clone(),
             file_sha256: file_sha256.clone(),
-            upload_by: Some(actor.username.clone()),
+            upload_by: Some(uploaded_by.to_owned()),
             upload_status: sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
             reservation_token: Some(reservation_token),
             // 在预留事务内、等待租户行锁结束后，使用主数据库时钟设置。
@@ -279,6 +307,102 @@ impl FileService {
             original_name: file.original_name,
             content_type: file.content_type,
         })
+    }
+
+    /// 按稳定文件 ID 下载当前租户的受控文件，并校验 bucket 边界。
+    pub async fn download_by_id(
+        &self,
+        actor: &ActorContext,
+        file_id: i64,
+        expected_bucket: &str,
+    ) -> AppResult<DownloadedFile> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        self.download_by_id_for_tenant(tenant_id, file_id, expected_bucket)
+            .await
+    }
+
+    /// 供后台任务按租户和稳定文件 ID 读取私有文件。
+    pub(crate) async fn download_internal(
+        &self,
+        tenant_id: &str,
+        file_id: i64,
+        expected_bucket: &str,
+    ) -> AppResult<DownloadedFile> {
+        self.download_by_id_for_tenant(tenant_id, file_id, expected_bucket)
+            .await
+    }
+
+    async fn download_by_id_for_tenant(
+        &self,
+        tenant_id: &str,
+        file_id: i64,
+        expected_bucket: &str,
+    ) -> AppResult<DownloadedFile> {
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
+        let file = FileRepository
+            .find_by_id_any_status(&db, tenant_id, file_id)
+            .await?
+            .filter(|file| {
+                file.bucket == expected_bucket
+                    && file.upload_status == sys_file::Model::UPLOAD_STATUS_READY
+            })
+            .ok_or_else(|| AppError::NotFound("文件不存在或已过期".into()))?;
+        let data = self
+            .storage
+            .get(&file.bucket, &file.storage_path)
+            .await
+            .map_err(map_storage_read_error)?;
+        Ok(DownloadedFile {
+            data,
+            original_name: file.original_name,
+            content_type: file.content_type,
+        })
+    }
+
+    /// 删除后台任务管理的内部文件对象及元数据；重复删除保持幂等。
+    pub(crate) async fn delete_internal(
+        &self,
+        tenant_id: &str,
+        file_id: i64,
+        expected_bucket: &str,
+    ) -> AppResult<bool> {
+        let Some(file) = FileRepository
+            .find_by_id_any_status(self.db.write(), tenant_id, file_id)
+            .await?
+        else {
+            return Ok(false);
+        };
+        if file.bucket != expected_bucket {
+            return Err(AppError::Authorization("内部文件存储边界不匹配".into()));
+        }
+        self.storage
+            .delete(&file.bucket, &file.storage_path)
+            .await
+            .map_err(map_storage_write_error)?;
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        match FileRepository
+            .delete_in_txn(&transaction, tenant_id, file_id)
+            .await
+        {
+            Ok(()) => transaction
+                .commit()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?,
+            Err(AppError::NotFound(_)) => {
+                transaction
+                    .rollback()
+                    .await
+                    .map_err(|error| AppError::Database(error.to_string()))?;
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(true)
     }
 
     fn upload_response_for_existing(existing: sys_file::Model) -> UploadResponse {

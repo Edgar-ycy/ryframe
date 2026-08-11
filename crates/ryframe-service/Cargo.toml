@@ -34,6 +34,7 @@ tracing = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+validator = { workspace = true, features = ["derive"] }
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 

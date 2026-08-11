@@ -19,6 +19,7 @@ where
     }
     crate::m20260726_000010_message_job_permissions::seed_permissions(db).await?;
     crate::m20260809_000022_job_schedules::seed_schedule_management(db).await?;
+    crate::m20260811_000024_data_lifecycle::seed_lifecycle_management(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }

@@ -320,6 +320,7 @@ CREATE TABLE IF NOT EXISTS `sys_oper_log` (
     UNIQUE KEY `uq_oper_log_event_id` (`event_id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_oper_time` (`oper_time`),
+    KEY `idx_oper_log_tenant_time_status` (`tenant_id`, `oper_time`, `status`),
     KEY `idx_business_type` (`business_type`),
     CONSTRAINT `fk_sys_oper_log_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
@@ -340,6 +341,7 @@ CREATE TABLE IF NOT EXISTS `sys_login_info` (
     PRIMARY KEY (`id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_login_time` (`login_time`),
+    KEY `idx_login_info_tenant_time_status` (`tenant_id`, `login_time`, `status`),
     KEY `idx_user_name` (`user_name`),
     CONSTRAINT `fk_sys_login_info_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
@@ -450,7 +452,9 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
     KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
     KEY `idx_bg_job_lease` (`status`, `lease_until`),
     KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`),
-    KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`)
+    KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`),
+    KEY `idx_bg_job_retention` (`status`, `completed_at`, `id`),
+    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务';
 
 CREATE TABLE IF NOT EXISTS `sys_job_schedule` (
@@ -490,7 +494,9 @@ CREATE TABLE IF NOT EXISTS `sys_job_schedule_execution` (
     `created_at` DATETIME(6) NOT NULL COMMENT '创建时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_job_schedule_fire` (`schedule_id`, `fire_key`),
-    KEY `idx_job_schedule_execution_history` (`tenant_id`, `schedule_id`, `created_at`)
+    KEY `idx_job_schedule_execution_history` (`tenant_id`, `schedule_id`, `created_at`),
+    KEY `idx_job_schedule_execution_retention` (`created_at`, `id`),
+    KEY `idx_job_schedule_execution_trend` (`tenant_id`, `created_at`, `outcome`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务调度执行历史';
 
 CREATE TABLE IF NOT EXISTS `sys_message` (
@@ -546,6 +552,75 @@ CREATE TABLE IF NOT EXISTS `sys_message_recipient` (
         FOREIGN KEY (`message_id`) REFERENCES `sys_message` (`id`)
         ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='消息收件箱表';
+
+CREATE TABLE IF NOT EXISTS `sys_data_retention_run` (
+            `id` BIGINT NOT NULL,
+            `background_job_id` BIGINT NOT NULL,
+            `trigger_kind` VARCHAR(16) NOT NULL,
+            `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+            `policy_snapshot` JSON NOT NULL,
+            `eligible_counts` JSON NOT NULL,
+            `deleted_counts` JSON NOT NULL,
+            `remaining_counts` JSON NOT NULL,
+            `requested_by` BIGINT DEFAULT NULL,
+            `error_summary` TEXT DEFAULT NULL,
+            `started_at` DATETIME(6) DEFAULT NULL,
+            `completed_at` DATETIME(6) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_retention_run_background_job` (`background_job_id`),
+            KEY `idx_retention_run_created` (`created_at`, `id`),
+            KEY `idx_retention_run_history` (`status`, `completed_at`, `id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='数据保留运行记录';
+
+CREATE TABLE IF NOT EXISTS `sys_user_import_job` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `requester_user_id` BIGINT NOT NULL,
+            `background_job_id` BIGINT NOT NULL,
+            `idempotency_key_hash` CHAR(64) NOT NULL,
+            `source_file_id` BIGINT NOT NULL,
+            `source_name_snapshot` VARCHAR(255) NOT NULL,
+            `source_sha256` CHAR(64) NOT NULL,
+            `duplicate_policy` VARCHAR(24) NOT NULL DEFAULT 'skip_existing',
+            `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+            `total_rows` INT NOT NULL DEFAULT 0,
+            `processed_rows` INT NOT NULL DEFAULT 0,
+            `success_count` INT NOT NULL DEFAULT 0,
+            `skipped_count` INT NOT NULL DEFAULT 0,
+            `failure_count` INT NOT NULL DEFAULT 0,
+            `cancel_requested` TINYINT(1) NOT NULL DEFAULT 0,
+            `error_report_file_id` BIGINT DEFAULT NULL,
+            `last_error` TEXT DEFAULT NULL,
+            `started_at` DATETIME(6) DEFAULT NULL,
+            `completed_at` DATETIME(6) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_user_import_idempotency` (`tenant_id`, `idempotency_key_hash`),
+            UNIQUE KEY `uq_user_import_background_job` (`background_job_id`),
+            KEY `idx_user_import_tenant_status` (`tenant_id`, `status`, `created_at`),
+            KEY `idx_user_import_history` (`completed_at`, `id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='异步用户导入任务';
+
+CREATE TABLE IF NOT EXISTS `sys_user_import_row_result` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `import_job_id` BIGINT NOT NULL,
+            `row_number` INT NOT NULL,
+            `username_snapshot` VARCHAR(64) NOT NULL,
+            `outcome` VARCHAR(16) NOT NULL,
+            `code` VARCHAR(64) NOT NULL,
+            `message` VARCHAR(500) NOT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_user_import_row` (`import_job_id`, `row_number`),
+            KEY `idx_user_import_row_tenant` (`tenant_id`, `import_job_id`, `row_number`),
+            CONSTRAINT `fk_user_import_row_job`
+                FOREIGN KEY (`import_job_id`) REFERENCES `sys_user_import_job` (`id`)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户导入异常行结果';
 
 -- 幂等初始化数据（生产环境用户默认锁定）。
 

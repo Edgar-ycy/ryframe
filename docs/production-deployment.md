@@ -127,8 +127,13 @@ Worker 服务上显式配置同一个具名卷或经过验证的共享挂载，�
 - 并发建立超过 `APP_MESSAGING_MAX_CONNECTIONS_PER_USER` 的同租户用户连接会被拒绝；慢消费者以 `1013` 关闭，大受众发布超过配置上限时整笔事务回滚且无部分收件人记录。
 - Prometheus 从允许网段携带 Bearer Token 抓取成功；公网或无 Token 请求被拒绝。
 - MySQL/Redis/对象存储 TLS 证书校验成功，数据库迁移和隔离库恢复演练通过。
+- API 与 Worker 使用相同的 `APP_DATA_RETENTION_*` 和 `APP_USER_IMPORT_*`；用户导入私有 bucket 对两类进程都可读写。
+- 先部署迁移，再部署已经注册 `system.user.import` 和数据保留处理器的新 Worker，然后部署 API，最后发布前端；不得先让新 API 向旧 Worker 入队未知任务。
+- 在系统租户执行数据保留预览，逐项核对截止时间和候选数量；确认默认计划只在下一个 `03:30 UTC` 执行，未因升级立即删除历史。
 - 告警规则加载成功，Alertmanager 测试通知到达；备份与证书指标有实际数据。
 - 容量验收通过并保留报告；滚动部署各实例 Snowflake worker ID 唯一。
 
 完整发布顺序见[发布与回滚指南](release-guide.md)，运行时处置见
 [生产监控与值班手册](operations-runbook.md)。
+数据保留、异步导入、权限诊断和租户总览的上线边界见
+[数据生命周期、异步导入与运维诊断](data-lifecycle.md)。

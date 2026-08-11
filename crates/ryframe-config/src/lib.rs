@@ -1,6 +1,7 @@
 mod app_config;
 mod auth_config;
 mod cors_config;
+mod data_retention_config;
 mod db_config;
 mod environment;
 mod exposure_config;
@@ -14,10 +15,12 @@ mod rate_limit_config;
 mod redis_config;
 mod runtime_config;
 mod telemetry_config;
+mod user_import_config;
 
 pub use app_config::AppSettings;
 pub use auth_config::AuthConfig;
 pub use cors_config::CorsConfig;
+pub use data_retention_config::DataRetentionConfig;
 pub use db_config::{
     DatabaseConfig, DatabaseReplicaConfig, DatabaseSourceConfig, DbConnection, DbTlsMode,
     MigrationMode, SqlLogLevel,
@@ -34,5 +37,6 @@ pub use rate_limit_config::RateLimitConfig;
 pub use redis_config::{RedisConfig, RedisMode};
 pub use runtime_config::{ProxyConfig, UploadLimitsConfig};
 pub use telemetry_config::TelemetryConfig;
+pub use user_import_config::UserImportConfig;
 
 pub use crate::app_config::AppConfig;

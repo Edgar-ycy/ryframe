@@ -6,14 +6,14 @@ mod roles;
 use ryframe_core::repository::ValidatedPageQuery;
 use ryframe_db::DatabaseCluster;
 use ryframe_db::{
-    DeptRepository, PermissionRepository, RoleRepository, UserRepository,
+    DeptRepository, RoleRepository, UserRepository,
     entities::{password_reset_request, role, user},
 };
 use ryframe_kernel::AppResult;
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 
-use crate::AuthorizationCache;
+use crate::{AuthorizationCache, AuthorizationResolver};
 
 pub const USER_STATUS_NORMAL: &str = user::Model::STATUS_NORMAL;
 
@@ -86,8 +86,8 @@ pub struct UserService {
     db: DatabaseCluster,
     user_repo: UserRepository,
     role_repo: RoleRepository,
-    perm_repo: PermissionRepository,
     dept_repo: DeptRepository,
+    authorization_resolver: AuthorizationResolver,
     authorization_cache: AuthorizationCache,
 }
 
@@ -135,8 +135,8 @@ impl UserService {
             db,
             user_repo: UserRepository,
             role_repo: RoleRepository,
-            perm_repo: PermissionRepository,
             dept_repo: DeptRepository,
+            authorization_resolver: AuthorizationResolver::new(),
             authorization_cache,
         }
     }

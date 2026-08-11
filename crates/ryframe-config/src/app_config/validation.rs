@@ -117,6 +117,10 @@ impl AppConfig {
         self.jobs
             .validate(self.environment)
             .map_err(AppError::Config)?;
+        self.data_retention.validate().map_err(AppError::Config)?;
+        self.user_import
+            .validate(self.upload.file_max_bytes)
+            .map_err(AppError::Config)?;
         self.telemetry.validate().map_err(AppError::Config)?;
         self.messaging.validate().map_err(AppError::Config)?;
         let access_ttl =

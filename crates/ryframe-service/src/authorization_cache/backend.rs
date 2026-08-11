@@ -93,6 +93,21 @@ impl AuthorizationCache {
         }
     }
 
+    /// 为只读诊断返回 Redis 的原始版本镜像状态。
+    ///
+    /// 该入口不会执行 optional 模式的主库回退，也不会把错误伪装成缓存未命中；调用方
+    /// 只能展示版本号，不能返回完整授权快照。
+    pub async fn inspect_snapshot(
+        &self,
+        tenant_id: &str,
+        user_id: i64,
+    ) -> Result<Option<AuthorizationCacheLookup>, String> {
+        let Some(backend) = &self.backend else {
+            return Ok(None);
+        };
+        backend.lookup_snapshot(tenant_id, user_id).await.map(Some)
+    }
+
     pub async fn store_snapshot(&self, snapshot: &AuthorizationSnapshot) -> AppResult<bool> {
         let Some(backend) = &self.backend else {
             return if self.required {

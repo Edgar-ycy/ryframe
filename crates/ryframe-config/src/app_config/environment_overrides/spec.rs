@@ -128,6 +128,64 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT",
         &["jobs", "max_enabled_schedules_per_tenant"],
     ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_CLEANUP_BATCH_SIZE",
+        &["data_retention", "cleanup_batch_size"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_MAX_ROWS_PER_RESOURCE_PER_RUN",
+        &["data_retention", "max_rows_per_resource_per_run"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_BACKGROUND_JOB_SUCCEEDED_DAYS",
+        &["data_retention", "background_job_succeeded_days"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_OUTBOX_PUBLISHED_DAYS",
+        &["data_retention", "outbox_published_days"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_SCHEDULE_EXECUTION_DAYS",
+        &["data_retention", "schedule_execution_days"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_EXPORT_JOB_HISTORY_DAYS",
+        &["data_retention", "export_job_history_days"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_OPERATION_LOG_DAYS",
+        &["data_retention", "operation_log_days"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_LOGIN_LOG_DAYS",
+        &["data_retention", "login_log_days"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_USER_IMPORT_HISTORY_DAYS",
+        &["data_retention", "user_import_history_days"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_USER_IMPORT_ARTIFACT_HOURS",
+        &["data_retention", "user_import_artifact_hours"],
+    ),
+    EnvOverride::integer(
+        "APP_DATA_RETENTION_RETENTION_RUN_DAYS",
+        &["data_retention", "retention_run_days"],
+    ),
+    EnvOverride::integer(
+        "APP_USER_IMPORT_MAX_FILE_BYTES",
+        &["user_import", "max_file_bytes"],
+    ),
+    EnvOverride::integer("APP_USER_IMPORT_MAX_ROWS", &["user_import", "max_rows"]),
+    EnvOverride::integer("APP_USER_IMPORT_BATCH_SIZE", &["user_import", "batch_size"]),
+    EnvOverride::integer(
+        "APP_USER_IMPORT_MAX_ACTIVE_PER_TENANT",
+        &["user_import", "max_active_per_tenant"],
+    ),
+    EnvOverride::integer(
+        "APP_USER_IMPORT_HASH_PARALLELISM",
+        &["user_import", "hash_parallelism"],
+    ),
     EnvOverride::boolean("APP_TELEMETRY_ENABLED", &["telemetry", "enabled"]),
     EnvOverride::string("APP_TELEMETRY_ENDPOINT", &["telemetry", "endpoint"]),
     EnvOverride::string("APP_TELEMETRY_SERVICE_NAME", &["telemetry", "service_name"]),

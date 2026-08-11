@@ -3210,6 +3210,7 @@ dependencies = [
  "cookie",
  "dashmap",
  "futures-util",
+ "hex",
  "percent-encoding",
  "regex",
  "ryframe-auth",
@@ -3227,6 +3228,7 @@ dependencies = [
  "ryframe-utils",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "syn 3.0.3",
  "tokio",
  "tracing",
@@ -3476,6 +3478,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "uuid",
+ "validator",
  "zip 8.6.0",
 ]
 

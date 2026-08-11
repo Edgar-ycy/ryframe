@@ -92,6 +92,22 @@ impl Repository<menu::Model, i64> for MenuRepository {
 }
 
 impl MenuRepository {
+    /// 查询诊断页面需要的完整菜单目录，包含停用节点但排除软删除记录。
+    pub async fn find_all_for_diagnostics(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+    ) -> AppResult<Vec<menu::Model>> {
+        menu::Entity::find()
+            .filter(menu::Column::TenantId.eq(tenant_id))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .order_by_asc(menu::Column::Sort)
+            .order_by_asc(menu::Column::Id)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn find_by_id_for_update(
         &self,
         transaction: &DatabaseTransaction,

@@ -190,6 +190,7 @@ flowchart LR
 63. Service 直接保存具体 Repository，已删除不产生日志的仓储包装层；`DatabaseCluster` 只保留单主库或显式副本槽位构造入口，不再公开旧包装与隐式集群构造函数。
 64. 租户授权规则变化在事务内提升 `authorization_epoch`，提交后先同步 Redis 镜像，再向 `ryframe:authorization:changed` 发布只含租户和纪元的轻量事件。各 API 实例复用消息 WebSocket 向该租户在线连接发送 `authorization_changed` 控制帧；该帧不持久化、不参与消息 ACK。认证中间件同时在受保护响应写入 `X-Authorization-Epoch`，前端只接受单调前进的纪元并合并刷新 `/auth/me`、当前菜单、动态路由和租户查询缓存。实时事件仅加速界面收敛，服务端逐请求主体解析和权限守卫始终是安全边界。
 65. 可配置 Cron 计划、触发历史和计划来源任务都持久化在 MySQL；调度器按数据库时钟使用 `FOR UPDATE SKIP LOCKED` 领取到期计划，并以 `(schedule_id, fire_key)` 作为最终去重边界。后端注册表是唯一目标白名单，管理端不能提交函数、命令、URL 或任意任务载荷。依赖方向固定为“Cron 调度 → 后台任务队列”，`JobQueue`、`JobWorker`、Outbox、租约、重试和死信不得反向依赖计划、表达式、时区、目标注册表或执行历史。旧每日清理入口只存在于可删除的 Cron 兼容模块。`scheduler_enabled` 关闭后不构造调度服务、不注册路由或启动扫描，但普通任务及已入队计划任务仍可继续消费。Redis 和本地通知仅在入队事务提交后降低 Worker 等待延迟，不参与调度正确性。
+66. 数据生命周期由独立 `DataRetentionService` 执行，Cron 和人工入口只负责入队通用后台任务；死信与活动记录不进入自动清理。异步用户导入只在任务载荷中保存导入 ID，源文件、游标、进度和异常行以 MySQL 与私有对象存储为事实来源。登录、请求主体、长时间操作与只读诊断共用授权解析器，避免产生第二套角色、权限和数据范围规则。运维趋势直接从 MySQL 按当前租户聚合，不代理 Prometheus，也不向系统租户暴露其他普通租户数据。
 
 ## 4. 后续优先级
 

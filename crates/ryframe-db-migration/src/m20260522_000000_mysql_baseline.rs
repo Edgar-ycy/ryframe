@@ -387,6 +387,7 @@ VALUES ('system', 'config', 0)"####,
     UNIQUE KEY `uq_oper_log_event_id` (`event_id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_oper_time` (`oper_time`),
+    KEY `idx_oper_log_tenant_time_status` (`tenant_id`, `oper_time`, `status`),
     KEY `idx_business_type` (`business_type`),
     CONSTRAINT `fk_sys_oper_log_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
@@ -406,6 +407,7 @@ VALUES ('system', 'config', 0)"####,
     PRIMARY KEY (`id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_login_time` (`login_time`),
+    KEY `idx_login_info_tenant_time_status` (`tenant_id`, `login_time`, `status`),
     KEY `idx_user_name` (`user_name`),
     CONSTRAINT `fk_sys_login_info_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
@@ -511,7 +513,9 @@ VALUES ('system', 'config', 0)"####,
     KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
     KEY `idx_bg_job_lease` (`status`, `lease_until`),
     KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`),
-    KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`)
+    KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`),
+    KEY `idx_bg_job_retention` (`status`, `completed_at`, `id`),
+    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务'"####,
     r####"CREATE TABLE IF NOT EXISTS `sys_job_schedule` (
     `id` BIGINT NOT NULL COMMENT '计划ID',
@@ -549,7 +553,9 @@ VALUES ('system', 'config', 0)"####,
     `created_at` DATETIME(6) NOT NULL COMMENT '创建时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_job_schedule_fire` (`schedule_id`, `fire_key`),
-    KEY `idx_job_schedule_execution_history` (`tenant_id`, `schedule_id`, `created_at`)
+    KEY `idx_job_schedule_execution_history` (`tenant_id`, `schedule_id`, `created_at`),
+    KEY `idx_job_schedule_execution_retention` (`created_at`, `id`),
+    KEY `idx_job_schedule_execution_trend` (`tenant_id`, `created_at`, `outcome`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务调度执行历史'"####,
     r####"CREATE TABLE IF NOT EXISTS `sys_message` (
     `id` BIGINT NOT NULL COMMENT '消息ID',
@@ -893,6 +899,7 @@ pub(crate) fn ddl_statements() -> impl Iterator<Item = &'static str> {
         .iter()
         .copied()
         .filter(|statement| !is_seed_statement(statement))
+        .chain(crate::m20260811_000024_data_lifecycle::lifecycle_table_statements())
 }
 
 pub(crate) fn seed_statements() -> impl Iterator<Item = &'static str> {

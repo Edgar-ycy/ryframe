@@ -8,10 +8,11 @@ use ryframe_kernel::AppError;
 use ryframe_service::{
     AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
     system::{
-        CaptchaStore, ConfigService, DeptService, DictService, ExportService, FileService,
-        GeneratorService, LoginInfoService, MenuService, MessageService, NoticeService,
-        OnlineUserService, OperLogService, PermissionService, PostService, ProfileService,
-        RoleService, TenantService, UserService, WebSocketTicketService,
+        AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
+        DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
+        MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
+        OverviewService, PermissionService, PostService, ProfileService, RoleService,
+        TenantService, UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_storage::ObjectStorage;
@@ -73,8 +74,34 @@ pub async fn build_all(
     let dict = Arc::new(DictService::new(database.clone(), redis_client.clone()));
     let notice = Arc::new(NoticeService::new(database.clone()));
     let oper_log = Arc::new(OperLogService::new(database.clone()));
+    let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
+    file.spawn_upload_janitor();
     let job_queue =
         Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis_client.clone()));
+    let data_retention = Arc::new(DataRetentionService::new(
+        database.clone(),
+        job_queue.clone(),
+        file.clone(),
+        config.data_retention.clone(),
+    ));
+    let user_import = Arc::new(UserImportService::new(
+        database.clone(),
+        job_queue.clone(),
+        user.clone(),
+        file.clone(),
+        config.user_import.clone(),
+    ));
+    let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
+        database.clone(),
+        user.clone(),
+        authorization_cache.clone(),
+        config.messaging.enabled && redis_client.is_some(),
+    ));
+    let overview = Arc::new(OverviewService::new(
+        database.clone(),
+        job_queue.clone(),
+        &config.jobs,
+    ));
     let job_schedules = if config.jobs.scheduler_enabled {
         let schedule_targets = super::jobs::build_schedule_targets(config.messaging.enabled)?;
         Some(Arc::new(
@@ -123,8 +150,6 @@ pub async fn build_all(
     ));
 
     let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
-    let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
-    file.spawn_upload_janitor();
     let export = Arc::new(
         ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
             .with_job_queue(job_queue.clone()),
@@ -162,6 +187,10 @@ pub async fn build_all(
         audit_outbox,
         job_queue,
         job_schedules,
+        data_retention,
+        user_import,
+        authorization_diagnostic,
+        overview,
         login_info,
         generator,
         profile,

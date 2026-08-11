@@ -238,7 +238,9 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 
 | 前缀 | 模块 | 额外动作 |
 | --- | --- | --- |
-| `/api/v1/system/users` | 用户 | `/options`、`PUT /{id}/roles`、`PUT /{id}/status`、`/batch/{ids}`、导入导出和重置请求 |
+| `/api/v1/system/users` | 用户 | `/options`、`PUT /{id}/roles`、`PUT /{id}/status`、`/batch/{ids}`、导入模板、导出和重置请求 |
+| `/api/v1/system/user-imports` | 异步用户导入 | 幂等创建、列表、详情、取消、异常行和错误报告 |
+| `/api/v1/system/authorization-diagnostics` | 权限诊断 | `GET /users/{id}` 从主库重算用户最终授权 |
 | `/api/v1/system/roles` | 角色 | `/options`、`GET/PUT /{id}/permissions`、`PUT /{id}/data-scope` |
 | `/api/v1/system/perms` | 权限 | `/tree`、`/sync` |
 | `/api/v1/system/menus` | 菜单 | `/tree`、`/current` |
@@ -256,7 +258,7 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 | `/api/v1/tools/gen` | 代码生成 | `/tables`、`/preview`、`/generate`、`/download` |
 | `/api/v1/common/upload` | 文件上传 | `/image`、`/avatar` |
 | `/api/v1/common/file` | 文件 | `/download` |
-| `/api/v1/monitor` | 监控 | `/metrics`、`/server`、`/cache`、`/db-pool`、`/runtime`；探针位于根路径 `/livez`、`/readyz` |
+| `/api/v1/monitor` | 监控 | `/overview`、`/overview/trends`、`/retention`、`/jobs`、`/schedules`、`/metrics`、`/server`、`/cache`、`/db-pool`、`/runtime`；探针位于根路径 `/livez`、`/readyz` |
 
 公告创建、更新和响应只使用 `content_markdown`，不接受旧 `content` 字段。Markdown 原文按 UTF-8 字节校验，允许 1–60,000 字节；限制由 OpenAPI 的 `x-ryframe-notice-policy` 发布，前端不得复制常量。
 
@@ -276,6 +278,26 @@ GET /api/v1/system/menus/current
 ```
 
 后端只返回稳定 `route_key`、菜单元数据和权限。前端必须通过本地页面注册表解析 `route_key`，不得执行服务端下发的任意组件路径。
+
+### 异步用户导入
+
+旧同步路径 `POST /api/v1/system/users/import` 已删除。创建导入改为：
+
+```text
+POST /api/v1/system/user-imports
+```
+
+请求必须携带 `Idempotency-Key`，并使用 `multipart/form-data` 上传唯一的 `file` 字段。只接受真实 `.xlsx` 文件；默认上限为 10 MiB、20,000 行，同租户默认只允许一个等待或运行中的任务。创建成功返回 `202`。客户端通过列表、详情和异常行接口查询进度，使用 `POST /{id}/cancel` 申请在批次边界取消，并在报告就绪后通过 `GET /{id}/report` 下载私有 Excel 报告。
+
+重复用户名固定跳过且不更新已有资料。新用户处于待激活状态且不自动分配角色。导入是部分成功操作，取消、申请人停用或撤权不会回滚已经提交的批次。源文件、任务载荷、错误报告和行数据不得写入客户端日志或操作审计参数。
+
+### 数据保留、权限诊断和运维总览
+
+数据保留接口只允许 `system` 租户访问。`POST /api/v1/monitor/retention/preview` 只统计候选记录；`POST /api/v1/monitor/retention/run` 是永久硬删除后台任务的幂等入队入口，必须先由管理员核对预览结果。普通租户不能通过总览或保留接口读取其他租户明细。
+
+权限诊断使用 `GET /api/v1/system/authorization-diagnostics/users/{id}`，只读展示调用者当前数据范围内用户的角色、权限来源、菜单、最终数据范围和版本同步状态。Redis 不可用时主库诊断仍可返回，不提供提权、修改纪元或清缓存入口。
+
+运维总览使用 `GET /api/v1/monitor/overview` 和 `GET /api/v1/monitor/overview/trends?range=6h|24h|7d`。趋势严格按当前租户聚合；系统租户只额外包含无租户的平台后台任务，不会统计其他普通租户。详细运行边界见[数据生命周期、异步导入与运维诊断](data-lifecycle.md)。
 
 ### 角色分配
 

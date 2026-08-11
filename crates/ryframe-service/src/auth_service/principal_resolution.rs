@@ -1,16 +1,11 @@
 use async_trait::async_trait;
 use ryframe_auth::{PrincipalResolver, RequestPrincipal, jwt::Claims};
-use ryframe_core::Repository;
-use ryframe_db::{ReadConsistency, entities::role};
-use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope, DataScopeContext};
-use sea_orm::DatabaseConnection;
+use ryframe_db::ReadConsistency;
+use ryframe_kernel::{ActorContext, AppError, AppResult};
 
-use crate::{AuthorizationSnapshot, AuthorizationVersions};
+use crate::{AuthorizationSnapshot, AuthorizationVersions, ResolvedAuthorization};
 
-use super::{
-    AuthService,
-    identity::{AuthorizationProfile, ValidatedIdentity},
-};
+use super::{AuthService, identity::ValidatedIdentity};
 
 #[async_trait]
 impl PrincipalResolver for AuthService {
@@ -65,104 +60,21 @@ impl AuthService {
             .validate_token_identity_on(&selected.connection, claims)
             .await?;
         let authorization = self
-            .load_authorization_profile_on(
+            .authorization_resolver
+            .resolve(
                 &selected.connection,
                 &identity.user.tenant_id,
-                identity.user.id,
-            )
-            .await?;
-        let data_scope = self
-            .resolve_data_scope_on(
-                &selected.connection,
-                &identity.user.tenant_id,
-                identity.user.id,
-                identity.user.dept_id,
-                &authorization.roles,
+                &identity.user,
             )
             .await?;
 
-        Ok(build_authorization_snapshot(
-            &identity,
-            authorization,
-            data_scope,
-        ))
-    }
-
-    async fn resolve_data_scope_on(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        user_id: i64,
-        dept_id: Option<i64>,
-        roles: &[role::Model],
-    ) -> AppResult<DataScopeContext> {
-        if roles.iter().any(|role| role.is_super == 1) {
-            return Ok(DataScopeContext::super_admin(user_id));
-        }
-
-        let ancestors = match dept_id {
-            Some(dept_id) => self
-                .dept_repo
-                .find_by_id(db, tenant_id, dept_id)
-                .await?
-                .map(|dept| dept.ancestors),
-            None => None,
-        };
-        let custom_role_ids = roles
-            .iter()
-            .filter(|role| role.data_scope == role::Model::DATA_SCOPE_CUSTOM)
-            .map(|role| role.id)
-            .collect::<Vec<_>>();
-        let custom_dept_ids = self
-            .role_repo
-            .find_roles_dept_ids(db, tenant_id, &custom_role_ids)
-            .await?;
-        let mut scopes = Vec::with_capacity(roles.len());
-
-        for role in roles {
-            let scope = DataScope::from_db_value(&role.data_scope);
-            let scope_dept_ids = match scope {
-                DataScope::Custom => custom_dept_ids.clone(),
-                DataScope::Dept => dept_id.into_iter().collect(),
-                DataScope::DeptAndChildren => match dept_id {
-                    Some(dept_id) => {
-                        self.dept_repo
-                            .find_child_dept_ids(db, tenant_id, dept_id)
-                            .await?
-                    }
-                    None => Vec::new(),
-                },
-                DataScope::All | DataScope::SelfOnly => Vec::new(),
-            };
-            scopes.push(DataScopeContext {
-                scope,
-                user_id,
-                dept_id,
-                ancestors: ancestors.clone(),
-                custom_dept_ids: scope_dept_ids,
-                include_self: false,
-            });
-        }
-
-        if scopes.is_empty() {
-            return Ok(DataScopeContext {
-                scope: DataScope::SelfOnly,
-                user_id,
-                dept_id,
-                ancestors,
-                custom_dept_ids: Vec::new(),
-                include_self: true,
-            });
-        }
-
-        Ok(DataScopeContext::merge(scopes))
+        Ok(build_authorization_snapshot(&identity, authorization))
     }
 }
 
 fn build_authorization_snapshot(
     identity: &ValidatedIdentity,
-    authorization: AuthorizationProfile,
-    data_scope: DataScopeContext,
+    authorization: ResolvedAuthorization,
 ) -> AuthorizationSnapshot {
     let user = &identity.user;
     let is_super_admin = authorization.roles.iter().any(|role| role.is_super == 1);
@@ -185,17 +97,17 @@ fn build_authorization_snapshot(
                 tenant_id: user.tenant_id.clone(),
                 username: user.username.clone(),
                 dept_id: user.dept_id,
-                dept_path: data_scope.ancestors.clone(),
-                data_scope: data_scope.scope,
-                custom_dept_ids: data_scope.custom_dept_ids,
-                include_self: data_scope.include_self,
+                dept_path: authorization.data_scope.ancestors.clone(),
+                data_scope: authorization.data_scope.scope,
+                custom_dept_ids: authorization.data_scope.custom_dept_ids,
+                include_self: authorization.data_scope.include_self,
                 is_super_admin,
             },
             tenant_authorization_epoch: identity.tenant.authorization_epoch,
             preferred_locale: user.preferred_locale.clone(),
             roles,
             role_ids,
-            permissions: authorization.permissions,
+            permissions: authorization.permission_codes,
             tenant_request_limit_per_minute: identity.tenant.max_requests_per_min.max(1) as u32,
         },
     }

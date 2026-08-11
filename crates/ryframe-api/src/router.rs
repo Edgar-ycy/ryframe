@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use crate::{
     handlers::{
-        auth_handler, captcha_handler, common_handler, config_handler, dept_handler, dict_handler,
-        export_handler, generator_handler, job_handler, login_log_handler, menu_handler,
-        message_handler, notice_handler, online_user_handler, oper_log_handler, permission_handler,
-        post_handler, profile_handler, role_handler, schedule_handler, user_handler,
+        auth_handler, authorization_diagnostic_handler, captcha_handler, common_handler,
+        config_handler, dept_handler, dict_handler, export_handler, generator_handler, job_handler,
+        login_log_handler, menu_handler, message_handler, notice_handler, online_user_handler,
+        oper_log_handler, overview_handler, permission_handler, post_handler, profile_handler,
+        retention_handler, role_handler, schedule_handler, user_handler, user_import_handler,
     },
     oper_log_middleware::{AuditMode, OperLogMiddlewareState, oper_log_middleware},
     request_locale::request_locale_middleware,

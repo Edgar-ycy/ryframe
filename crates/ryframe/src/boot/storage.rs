@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_config::{AppConfig, StorageBackend};
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_service::system::{AVATAR_BUCKET, EXPORT_BUCKET, UPLOAD_BUCKET};
+use ryframe_service::system::{AVATAR_BUCKET, EXPORT_BUCKET, IMPORT_BUCKET, UPLOAD_BUCKET};
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
 
 /// 初始化对象存储，并在启动阶段验证连接、凭据和业务桶。
@@ -22,7 +22,7 @@ pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
         ),
     };
 
-    for bucket in [UPLOAD_BUCKET, AVATAR_BUCKET, EXPORT_BUCKET] {
+    for bucket in [UPLOAD_BUCKET, AVATAR_BUCKET, EXPORT_BUCKET, IMPORT_BUCKET] {
         storage.ensure_bucket(bucket).await.map_err(|error| {
             AppError::Internal(format!(
                 "{} 对象存储检查失败（bucket={bucket}）: {error}",

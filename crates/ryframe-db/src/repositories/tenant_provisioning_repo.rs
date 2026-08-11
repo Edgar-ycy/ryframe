@@ -65,7 +65,11 @@ impl TenantProvisioningRepository {
             .order_by_asc(menu::Column::Id)
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .into_iter()
+            // 数据保留是全平台硬删除能力，只能存在于 system 租户。
+            .filter(|menu| menu.route_key.as_deref() != Some("monitor.retention"))
+            .collect::<Vec<_>>();
         let system_posts = post::Entity::find()
             .filter(post::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
@@ -105,6 +109,7 @@ impl TenantProvisioningRepository {
             .filter(permission::Column::Code.not_like("tenant:%"))
             // 平台权限只能保留在 system 租户，绝不能随租户模板授予新租户管理员。
             .filter(permission::Column::Code.not_like(format!("{PLATFORM_PERMISSION_PREFIX}%")))
+            .filter(permission::Column::Code.not_like("monitor:retention:%"))
             .order_by_asc(permission::Column::Id)
             .all(transaction)
             .await
@@ -212,7 +217,10 @@ impl TenantProvisioningRepository {
         for source in system_permissions {
             let id = snowflake::try_next_snowflake_id()?;
             let auto_assign = !source.code.starts_with("monitor:job:")
-                && !source.code.starts_with("monitor:schedule:");
+                && !source.code.starts_with("monitor:schedule:")
+                && source.code != "monitor:overview:list"
+                && !source.code.starts_with("system:user-import:")
+                && source.code != "system:authorization-diagnostic:list";
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| permission_ids.get(&parent_id).copied());

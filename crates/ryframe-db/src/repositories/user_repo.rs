@@ -79,6 +79,20 @@ impl UserRepository {
             .filter(user::Column::TenantId.eq(tenant_id))
     }
 
+    /// 仅用于在进入租户范围查询前区分跨租户访问和当前租户内不存在。
+    pub async fn find_tenant_id_by_id(
+        &self,
+        db: &DatabaseConnection,
+        id: i64,
+    ) -> AppResult<Option<String>> {
+        user::Entity::find_by_id(id)
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .one(db)
+            .await
+            .map(|user| user.map(|user| user.tenant_id))
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     fn apply_filters(
         mut select: Select<user::Entity>,
         filter: &UserFilter<'_>,
@@ -206,6 +220,46 @@ impl UserRepository {
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    pub async fn find_existing_usernames_in_txn(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        usernames: &[String],
+    ) -> AppResult<Vec<String>> {
+        if usernames.is_empty() {
+            return Ok(Vec::new());
+        }
+        user::Entity::find()
+            .select_only()
+            .column(user::Column::Username)
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .filter(user::Column::Username.is_in(usernames.iter().cloned()))
+            .into_tuple::<String>()
+            .all(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    pub async fn insert_many_in_txn(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        users: Vec<user::Model>,
+    ) -> AppResult<()> {
+        if users.is_empty() {
+            return Ok(());
+        }
+        if users.iter().any(|user| user.tenant_id != tenant_id) {
+            return Err(AppError::Authorization("批量用户租户不匹配".into()));
+        }
+        user::Entity::insert_many(users.into_iter().map(user::ActiveModel::from))
+            .exec(transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(())
     }
 
     pub async fn find_by_page_filtered_with_data_scope(
