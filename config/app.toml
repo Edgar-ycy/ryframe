@@ -150,6 +150,8 @@ max_idle_poll_interval_ms = 5000
 lease_seconds = 60
 heartbeat_seconds = 15
 lease_recovery_interval_seconds = 15
+# 仅控制 Cron 计划扫描与管理能力；关闭后普通后台任务仍继续消费。
+scheduler_enabled = true
 scheduler_poll_interval_ms = 1000
 scheduler_batch_size = 100
 max_enabled_schedules_per_tenant = 100

@@ -24,7 +24,7 @@ default-features = false
 
 [features]
 default = []
-mysql = ["dep:sqlx-mysql"]
+mysql = ["dep:sqlx-mysql", "sqlx-mysql/rsa"]
 migrate = ["sqlx-core/migrate", "sqlx-mysql?/migrate"]
 runtime-tokio = ["sqlx-core/_rt-tokio"]
 tls-none = []

@@ -29,6 +29,7 @@ impl Model {
     pub const OUTCOME_SKIPPED_MISFIRE: &str = "skipped_misfire";
     pub const OUTCOME_SKIPPED_CONCURRENCY: &str = "skipped_concurrency";
     pub const OUTCOME_TARGET_UNAVAILABLE: &str = "target_unavailable";
+    pub const OUTCOME_INVALID_CONFIGURATION: &str = "invalid_configuration";
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

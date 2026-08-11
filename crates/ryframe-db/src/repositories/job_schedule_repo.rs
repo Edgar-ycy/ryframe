@@ -99,8 +99,11 @@ impl JobScheduleRepository {
         job_schedule::Entity::find()
             .filter(job_schedule::Column::Enabled.eq(true))
             .filter(job_schedule::Column::DelFlag.eq(job_schedule::Model::DEL_FLAG_NORMAL))
-            .filter(job_schedule::Column::NextRunAt.is_not_null())
-            .filter(job_schedule::Column::NextRunAt.lte(now))
+            .filter(
+                Condition::any()
+                    .add(job_schedule::Column::NextRunAt.is_null())
+                    .add(job_schedule::Column::NextRunAt.lte(now)),
+            )
             .order_by_asc(job_schedule::Column::NextRunAt)
             .order_by_asc(job_schedule::Column::Id)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)

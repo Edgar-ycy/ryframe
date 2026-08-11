@@ -11,6 +11,7 @@
 - [稳定发布与回滚指南](release-guide.md)：稳定版同名 annotated tag、精确提交身份校验、纯源码 Release、蓝绿切换和回滚约束。
 - [生产部署基线](production-deployment.md)：镜像、网络、TLS、metrics、API 文档和多实例存储约束。
 - [生产监控与值班手册](operations-runbook.md)：Prometheus 采集、告警、分级响应和故障处置。
+- [定时任务使用与维护](job-scheduling.md)：可视化规则生成、最近执行时间预览、运行开关和后期移除步骤。
 - [容量测试与验收标准](capacity-guide.md)：负载模型、测试场景、SLO 门槛和容量报告证据。
 - [依赖维护与重复版本治理](dependency-maintenance.md)：安全审计、重复版本基线和升级规则。
 - [FILE-A 文件摘要与上传预留单向维护](file-maintenance.md)：SHA-256 回填、旧预留清理与最终迁移前置条件。

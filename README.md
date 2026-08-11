@@ -181,6 +181,7 @@ config/app.prod.toml
 | `APP_JOBS_POLL_INTERVAL_MS` | 空队列轮询的最小等待（`50..=60000`）；领取任务、收到唤醒或手动重试后会重置到该值 | `500` |
 | `APP_JOBS_MAX_IDLE_POLL_INTERVAL_MS` | 连续空闲时按 2 倍退避的上限，必须位于最小等待到 `60000` 毫秒之间 | `5000` |
 | `APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS` | 过期任务和 Outbox 租约恢复的独立周期（`1..=3600`） | `15` |
+| `APP_JOBS_SCHEDULER_ENABLED` | 是否启用 Cron 计划管理和扫描；关闭后普通后台任务仍继续消费 | `true` |
 | `APP_JOBS_SCHEDULER_POLL_INTERVAL_MS` | 到期 Cron 计划的数据库扫描间隔（`250..=60000`） | `1000` |
 | `APP_JOBS_SCHEDULER_BATCH_SIZE` | 单轮最多领取的到期计划数量（`1..=1000`） | `100` |
 | `APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT` | 单租户最多启用的计划数量（`1..=10000`） | `100` |
@@ -198,6 +199,9 @@ config/app.prod.toml
 | `APP_TELEMETRY_SAMPLE_RATIO` | 根 Span 采样率 | `0.1` |
 | `APP_TELEMETRY_EXPORT_TIMEOUT_SECS` | 单次 OTLP 导出最大等待秒数 | `5` |
 | `APP_TELEMETRY_MAX_QUEUE_SIZE` | 批量导出前允许暂存的最大 Span 数 | `2048` |
+
+定时任务的可视化创建、七段 Cron 约束、运行开关和后期删除步骤见
+[定时任务使用与维护](docs/job-scheduling.md)。
 
 生产 Compose 通过 `APP_*_FILE` 读取 Docker secret；文件必须是 UTF-8，末尾的一个换行会被移除。同一配置不能同时设置直接值和 `_FILE`。不要把密钥、数据库密码、对象存储凭据或副本连接 JSON 写入仓库。
 配置在启动时完成合并和严格校验；当前不提供配置密文解密，任何使用旧 `ENC[...]` 格式的值都会被拒绝。配置文件或环境变量变化后必须重启进程才会生效。

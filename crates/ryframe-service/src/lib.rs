@@ -18,15 +18,17 @@ pub use authorization_cache::{
     AuthorizationSnapshot, AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,
     set_authorization_cache_lookup_hook,
 };
+#[allow(deprecated)]
+pub use jobs::spawn_message_retention_scheduler;
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
-    CreateJobSchedule, ExportCleanupJobHandler, ExportJobHandler, JobHandler, JobMetricsObserver,
-    JobQueue, JobRunResult, JobScheduleExecutionListParams, JobScheduleExecutionVo,
-    JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview, JobScheduleService,
-    JobScheduleVo, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler,
-    OutboxRunResult, OutboxWorker, ScheduledJobContext, ScheduledJobTarget,
-    ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
-    UpdateJobSchedule, spawn_message_retention_scheduler,
+    CallbackScheduleMetricsObserver, CreateJobSchedule, ExportCleanupJobHandler, ExportJobHandler,
+    JobHandler, JobMetricsObserver, JobQueue, JobRunResult, JobScheduleExecutionListParams,
+    JobScheduleExecutionVo, JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview,
+    JobScheduleService, JobScheduleVo, JobWorker, MessageDispatchJobHandler,
+    MessageRetentionJobHandler, OutboxRunResult, OutboxWorker, ScheduleMetricsObserver,
+    ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
+    ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 
 use ryframe_kernel::{ActorContext, AppResult};

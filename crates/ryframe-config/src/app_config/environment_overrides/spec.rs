@@ -115,6 +115,7 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS",
         &["jobs", "lease_recovery_interval_seconds"],
     ),
+    EnvOverride::boolean("APP_JOBS_SCHEDULER_ENABLED", &["jobs", "scheduler_enabled"]),
     EnvOverride::integer(
         "APP_JOBS_SCHEDULER_POLL_INTERVAL_MS",
         &["jobs", "scheduler_poll_interval_ms"],

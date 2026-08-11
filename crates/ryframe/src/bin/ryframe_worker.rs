@@ -19,14 +19,14 @@ use ryframe_core::RedisClient;
 use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
 use ryframe_kernel::AppError;
 use ryframe_service::{
-    AuthorizationCache, CallbackJobMetricsObserver, ExportCleanupJobHandler, ExportJobHandler,
-    JobQueue, JobScheduleService, JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler,
-    OutboxWorker, ScheduledJobTargetRegistry,
+    AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{EXPORT_BUCKET, ExportService, MessageService, OperLogService, UserService},
 };
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
 use tokio::sync::watch;
 
+#[path = "../boot/jobs.rs"]
+mod process_jobs;
 #[path = "../boot/logging.rs"]
 mod process_logging;
 #[path = "../boot/readiness.rs"]
@@ -110,37 +110,38 @@ async fn main() -> Result<(), AppError> {
         ExportService::new(database.clone(), user, object_storage, &config.jobs)
             .with_job_queue(queue.clone()),
     );
-    let worker = JobWorker::new(queue.clone(), &config.jobs)?
-        .with_handler(Arc::new(ExportJobHandler::new(export.clone())))?
-        .with_handler(Arc::new(ExportCleanupJobHandler::new(export.clone())))?;
-    let worker = if config.messaging.enabled {
-        worker
-            .with_handler(Arc::new(
-                MessageDispatchJobHandler::new(message.clone(), redis.clone())
-                    .with_redis_wakeup_failure_observer(Arc::new(|| {
-                        ryframe_middleware::metrics::record_redis_degraded(
-                            "message_dispatch_wakeup",
-                        );
-                    })),
-            ))?
-            .with_handler(Arc::new(
-                MessageRetentionJobHandler::new(message).with_deleted_observer(Arc::new(
-                    ryframe_middleware::metrics::record_message_retention_deleted,
-                )),
-            ))?
-    } else {
-        worker
-    };
-    let schedule_targets = ScheduledJobTargetRegistry::built_in(config.messaging.enabled)?;
-    let schedules = Arc::new(JobScheduleService::new(
-        database.clone(),
+    let worker = process_jobs::build_job_worker(
         queue.clone(),
-        schedule_targets,
         &config.jobs,
-    ));
+        process_jobs::JobWorkerDependencies {
+            export: export.clone(),
+            message: message.clone(),
+            redis: redis.clone(),
+            messaging_enabled: config.messaging.enabled,
+        },
+    )?;
+    let schedules = if config.jobs.scheduler_enabled {
+        let schedule_targets = process_jobs::build_schedule_targets(config.messaging.enabled)?;
+        process_jobs::validate_schedule_targets(&worker, &schedule_targets)?;
+        Some(Arc::new(
+            JobScheduleService::new(
+                database.clone(),
+                queue.clone(),
+                schedule_targets,
+                &config.jobs,
+            )
+            .with_metrics_observer(process_jobs::build_schedule_metrics_observer()),
+        ))
+    } else {
+        None
+    };
 
     if run_once {
-        let scheduled = schedules.scan_due_once().await?;
+        let scheduled = if let Some(schedules) = schedules.as_ref() {
+            schedules.scan_due_once().await?
+        } else {
+            0
+        };
         let outbox_worker = OutboxWorker::new(queue, &config.jobs)?
             .with_authorization_cache(authorization_cache.clone())
             .with_audit_service(oper_log.clone());
@@ -171,7 +172,11 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
     let mut worker_tasks = worker.spawn(shutdown_receiver.clone());
-    worker_tasks.push(schedules.spawn(shutdown_receiver.clone()));
+    if let Some(schedules) = schedules {
+        worker_tasks.push(schedules.spawn(shutdown_receiver.clone()));
+    } else {
+        tracing::info!("Cron 调度已关闭，独立 Worker 仅消费普通后台任务");
+    }
     worker_tasks.extend(
         OutboxWorker::new(queue.clone(), &config.jobs)?
             .with_authorization_cache(authorization_cache)
@@ -435,20 +440,13 @@ fn install_database_metrics(database: &DatabaseCluster) {
 
 /// 在 Worker 进程边界将后台任务事件绑定到 Prometheus 指标。
 fn install_job_metrics(queue: &JobQueue) {
-    queue.set_metrics_observer(Arc::new(
-        CallbackJobMetricsObserver::new(
-            Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
-            Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
-            Arc::new(ryframe_middleware::metrics::observe_job_duration),
-            Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
-            Arc::new(ryframe_middleware::metrics::record_job_wakeup),
-            Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
-            Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
-        )
-        .with_schedule_callbacks(
-            Arc::new(ryframe_middleware::metrics::record_job_schedule_scan),
-            Arc::new(ryframe_middleware::metrics::record_job_schedule_trigger),
-            Arc::new(ryframe_middleware::metrics::observe_job_schedule_lag),
-        ),
-    ));
+    queue.set_metrics_observer(Arc::new(CallbackJobMetricsObserver::new(
+        Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
+        Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
+        Arc::new(ryframe_middleware::metrics::observe_job_duration),
+        Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
+        Arc::new(ryframe_middleware::metrics::record_job_wakeup),
+        Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
+        Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
+    )));
 }

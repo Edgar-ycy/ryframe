@@ -230,6 +230,19 @@ impl RoleRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
+    async fn user_role_ids<C>(&self, db: &C, tenant_id: &str, user_id: i64) -> AppResult<Vec<i64>>
+    where
+        C: ConnectionTrait,
+    {
+        user_role::Entity::find()
+            .filter(user_role::Column::UserId.eq(user_id))
+            .filter(user_role::Column::TenantId.eq(tenant_id))
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+            .map(|roles| roles.into_iter().map(|role| role.role_id).collect())
+    }
+
     /// 查询用户拥有的角色列表
     pub async fn find_user_roles(
         &self,
@@ -237,15 +250,7 @@ impl RoleRepository {
         tenant_id: &str,
         user_id: i64,
     ) -> AppResult<Vec<role::Model>> {
-        let role_ids: Vec<i64> = user_role::Entity::find()
-            .filter(user_role::Column::UserId.eq(user_id))
-            .filter(user_role::Column::TenantId.eq(tenant_id))
-            .all(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .into_iter()
-            .map(|ur| ur.role_id)
-            .collect();
+        let role_ids = self.user_role_ids(db, tenant_id, user_id).await?;
 
         if role_ids.is_empty() {
             return Ok(vec![]);
@@ -271,15 +276,7 @@ impl RoleRepository {
     where
         C: ConnectionTrait,
     {
-        let role_ids: Vec<i64> = user_role::Entity::find()
-            .filter(user_role::Column::UserId.eq(user_id))
-            .filter(user_role::Column::TenantId.eq(tenant_id))
-            .all(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .into_iter()
-            .map(|ur| ur.role_id)
-            .collect();
+        let role_ids = self.user_role_ids(db, tenant_id, user_id).await?;
 
         if role_ids.is_empty() {
             return Ok(vec![]);

@@ -9,6 +9,24 @@
       "review_after": "2026-08-23",
       "reason": "SeaORM 2.0.0 records this optional Arrow integration in Cargo.lock, but the feature is not enabled and upstream has not published a stable sea-orm-arrow release.",
       "evidence": "https://docs.rs/crate/sea-orm-arrow/latest"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "pkcs1",
+      "version": "0.8.0-rc.4",
+      "source": "Cargo.lock",
+      "review_after": "2026-08-24",
+      "reason": "SQLx MySQL 的 RSA 认证能力在 TLS 关闭且 MySQL 使用 caching_sha2_password 时需要该上游候选依赖，避免修改本机数据库账号认证方式。",
+      "evidence": "https://crates.io/crates/pkcs1/0.8.0-rc.4"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rsa",
+      "version": "0.10.0-rc.18",
+      "source": "Cargo.lock",
+      "review_after": "2026-08-24",
+      "reason": "SQLx MySQL 的 RSA 认证能力在 TLS 关闭且 MySQL 使用 caching_sha2_password 时需要该上游候选依赖，避免修改本机数据库账号认证方式。",
+      "evidence": "https://crates.io/crates/rsa/0.10.0-rc.18"
     }
   ]
 }

@@ -84,9 +84,26 @@ pub async fn user_tree(
             .find_tree_by_permissions(&current_user, &current_user.permissions)
             .await?
     };
-    Ok(Json(ApiResponse::success(
-        tree.into_iter().map(MenuTreeNode::from).collect(),
-    )))
+    let mut nodes = tree.into_iter().map(MenuTreeNode::from).collect::<Vec<_>>();
+    if !state.config.jobs.scheduler_enabled {
+        let _ = remove_route(&mut nodes, "monitor.schedules");
+    }
+    Ok(Json(ApiResponse::success(nodes)))
+}
+
+fn remove_route(nodes: &mut Vec<MenuTreeNode>, route_key: &str) -> bool {
+    let mut removed = false;
+    nodes.retain_mut(|node| {
+        if node.route_key.as_deref() == Some(route_key) {
+            removed = true;
+            return false;
+        }
+        let child_removed = remove_route(&mut node.children, route_key);
+        let keep = !(child_removed && node.menu_type == "M" && node.children.is_empty());
+        removed |= child_removed || !keep;
+        keep
+    });
+    removed
 }
 
 /// 菜单列表分页查询

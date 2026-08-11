@@ -74,14 +74,7 @@ impl MessageService {
     ) -> AppResult<u64> {
         self.ensure_enabled()?;
         ryframe_core::validate_explicit_tenant(tenant_id)?;
-        let now = self.queue.database_now().await?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let updated = self
-            .repository
-            .acknowledge(&transaction, tenant_id, user_id, message_ids, now)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
-        Ok(updated)
+        self.acknowledge_for(tenant_id, user_id, message_ids).await
     }
 
     /// 返回仍需要向在线连接唤醒的收件人快照。
@@ -149,11 +142,21 @@ impl MessageService {
     pub async fn acknowledge(&self, actor: &ActorContext, message_ids: &[i64]) -> AppResult<u64> {
         self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
+        self.acknowledge_for(tenant_id, actor.user_id, message_ids)
+            .await
+    }
+
+    async fn acknowledge_for(
+        &self,
+        tenant_id: &str,
+        user_id: i64,
+        message_ids: &[i64],
+    ) -> AppResult<u64> {
         let now = self.queue.database_now().await?;
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let updated = self
             .repository
-            .acknowledge(&transaction, tenant_id, actor.user_id, message_ids, now)
+            .acknowledge(&transaction, tenant_id, user_id, message_ids, now)
             .await?;
         crate::commit_current_audit(transaction).await?;
         Ok(updated)

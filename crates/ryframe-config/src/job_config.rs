@@ -58,6 +58,9 @@ pub struct JobConfig {
     /// 租约恢复循环间隔（秒）。未设置时默认使用 `15`。
     #[serde(default = "default_lease_recovery_interval_seconds")]
     pub lease_recovery_interval_seconds: u64,
+    /// 是否启用数据库驱动的 Cron 调度；关闭后普通后台任务仍继续消费。
+    #[serde(default = "default_scheduler_enabled")]
+    pub scheduler_enabled: bool,
     /// 到期计划扫描间隔（毫秒）。
     #[serde(default = "default_scheduler_poll_interval_ms")]
     pub scheduler_poll_interval_ms: u64,
@@ -85,6 +88,7 @@ impl Default for JobConfig {
             health_host: default_health_host(),
             health_port: default_health_port(),
             lease_recovery_interval_seconds: default_lease_recovery_interval_seconds(),
+            scheduler_enabled: default_scheduler_enabled(),
             scheduler_poll_interval_ms: default_scheduler_poll_interval_ms(),
             scheduler_batch_size: default_scheduler_batch_size(),
             max_enabled_schedules_per_tenant: default_max_enabled_schedules_per_tenant(),
@@ -198,6 +202,10 @@ const fn default_health_port() -> u16 {
 
 const fn default_lease_recovery_interval_seconds() -> u64 {
     15
+}
+
+const fn default_scheduler_enabled() -> bool {
+    true
 }
 
 const fn default_scheduler_poll_interval_ms() -> u64 {

@@ -149,18 +149,38 @@ MySQL 始终是后台任务和 Outbox 的唯一可靠事实来源。`ryframe:job
 空闲等待，而是按 `APP_JOBS_LEASE_RECOVERY_INTERVAL_SECONDS` 独立运行；调整任一 `APP_JOBS_*`
 值后必须同时重启 API 与 Worker。
 
+### 定时调度
+
 Cron 调度同样只以 MySQL 为可靠事实来源。`jobs.mode=embedded` 时由 API 扫描，
 `jobs.mode=external` 时只由 `ryframe-worker` 扫描，`disabled` 不扫描；`ryframe-worker`
-仅接受 `jobs.mode=external`，包括 `--once`。`ryframe-worker --once` 会先扫描一批到期计划，
+仅接受 `jobs.mode=external`，包括 `--once`。`APP_JOBS_SCHEDULER_ENABLED=false` 只关闭计划管理、
+路由、菜单与扫描，不停止普通后台任务、Outbox、重试或死信处理。修改该开关后必须同时重启 API
+和 Worker。关闭期间已经入队的计划任务会继续完成；重新启用后按每条计划的 `skip` 或
+`fire_once` 策略处理错过的执行，不会逐条补跑全部历史。
+
+`ryframe-worker --once` 在调度启用时会先扫描一批到期计划，
 再执行单次 Outbox 和任务消费。扫描间隔、批量大小和单租户启用上限
 分别由 `APP_JOBS_SCHEDULER_POLL_INTERVAL_MS`、`APP_JOBS_SCHEDULER_BATCH_SIZE` 和
 `APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT` 控制。多实例通过 `FOR UPDATE SKIP LOCKED` 与
 `schedule_id + fire_key` 唯一键去重，禁止把 Redis 唤醒是否成功当作计划是否触发的判断依据。
 
 计划时间统一以 UTC 保存，Cron 使用“秒 分 时 日 月 周 年”七段格式，秒字段只允许 `0`，
-年字段只允许 `*`，时区必须是 IANA 名称。排障时结合
+年字段只允许 `*`，时区必须是 IANA 名称。日期字段与星期字段不能同时受限，其中一项必须为
+`*`。管理端优先使用可视化规则生成器并核对服务端返回的未来五次时间；高级表达式也必须先通过
+预览。夏令时开始时不存在的本地时间会跳过，夏令时结束时重复的本地时间可能对应两个不同 UTC
+时刻，应在计划时区、本地时区和 UTC 三列中逐项确认。排障时结合
 `job_schedule_scan_total{result}`、`job_schedule_trigger_total{outcome}` 与
 `job_schedule_lag_seconds`；这些指标不允许增加租户、计划、任务、表达式或错误文本标签。
+
+数据库中被手工破坏的 Cron、时区、目标或租户范围、错过策略、并发策略或最大运行时长会写入
+`invalid_configuration` 执行历史，随后自动禁用并清空下次执行时间。数据库连接或入队等瞬时
+错误不会禁用计划，应先排查基础设施并等待下一轮扫描重试。
+
+如需在后续版本完整移除 Cron，先设置 `APP_JOBS_SCHEDULER_ENABLED=false`，同时重启 API 和
+Worker，确认定时任务菜单与接口不可用、扫描指标停止增长，并观察至少 24 小时确认普通后台任务
+仍正常。随后可删除调度服务、目标注册表、调度 API、前端页面、可视化生成器、调度配置、指标、
+告警和旧每日调度兼容模块。数据库历史默认保留；确需删除时只能新增前向迁移，不能修改旧迁移。
+`JobQueue`、`JobWorker`、Outbox、导出、消息、租约、重试和死信必须保留。
 
 排障时结合 `job_claim_attempts_total{queue,result}`、
 `job_wakeup_total{queue,transport,result}`、`job_wakeup_listener_up{queue}`、

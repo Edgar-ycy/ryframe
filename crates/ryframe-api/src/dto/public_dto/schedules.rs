@@ -121,6 +121,7 @@ impl From<ServiceOccurrence> for JobScheduleOccurrence {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct JobSchedulePreview {
+    pub calculated_at: DateTime<Utc>,
     pub timezone: String,
     pub occurrences: Vec<JobScheduleOccurrence>,
 }
@@ -128,6 +129,7 @@ pub struct JobSchedulePreview {
 impl From<ServicePreview> for JobSchedulePreview {
     fn from(value: ServicePreview) -> Self {
         Self {
+            calculated_at: value.calculated_at,
             timezone: value.timezone,
             occurrences: value
                 .occurrences

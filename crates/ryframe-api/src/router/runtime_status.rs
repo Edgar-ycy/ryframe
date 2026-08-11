@@ -1,4 +1,5 @@
 use super::*;
+use ryframe_config::JobWorkerMode;
 
 pub(super) async fn probe_runtime_status(
     State(state): State<AppState>,
@@ -78,6 +79,15 @@ pub(super) async fn probe_runtime_status(
         upload_circuit_breaker: RuntimeCircuitBreakerStatus {
             state: format!("{:?}", state.runtime.upload_circuit_breaker.current_state()),
         },
+        jobs: RuntimeJobsStatus {
+            mode: match state.config.jobs.mode {
+                JobWorkerMode::Embedded => "embedded",
+                JobWorkerMode::External => "external",
+                JobWorkerMode::Disabled => "disabled",
+            }
+            .into(),
+            scheduler_enabled: state.config.jobs.scheduler_enabled,
+        },
     })))
 }
 
@@ -87,6 +97,7 @@ pub struct RuntimeStatus {
     redis: RuntimeRedisStatus,
     object_storage: RuntimeStorageStatus,
     upload_circuit_breaker: RuntimeCircuitBreakerStatus,
+    jobs: RuntimeJobsStatus,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -140,4 +151,10 @@ struct RuntimeStorageStatus {
 #[derive(Debug, Serialize, ToSchema)]
 struct RuntimeCircuitBreakerStatus {
     state: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct RuntimeJobsStatus {
+    mode: String,
+    scheduler_enabled: bool,
 }

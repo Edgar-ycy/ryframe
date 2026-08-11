@@ -50,9 +50,7 @@ async fn targets(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<Vec<ScheduleTargetVo>>>> {
-    state
-        .services
-        .job_schedules
+    schedule_service(&state)?
         .targets_for_tenant(&current_user)
         .map_err(ryframe_http::HttpAppError::from)
         .map(|targets| targets.into_iter().map(ScheduleTargetVo::from).collect())
@@ -79,9 +77,7 @@ async fn preview(
     _current_user: RequestPrincipal,
     Json(request): Json<SchedulePreviewRequest>,
 ) -> HttpResult<Json<ApiResponse<JobSchedulePreview>>> {
-    state
-        .services
-        .job_schedules
+    schedule_service(&state)?
         .preview(&request.cron_expression, &request.timezone)
         .await
         .map_err(ryframe_http::HttpAppError::from)
@@ -106,9 +102,7 @@ async fn list(
     current_user: RequestPrincipal,
     Query(query): Query<SchedulePageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<JobScheduleVo>>> {
-    let page = state
-        .services
-        .job_schedules
+    let page = schedule_service(&state)?
         .list(
             &current_user,
             query.into_service_params(&state.config.pagination)?,
@@ -142,9 +136,7 @@ async fn detail(
     current_user: RequestPrincipal,
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<JobScheduleVo>>> {
-    state
-        .services
-        .job_schedules
+    schedule_service(&state)?
         .get(&current_user, parse_schedule_id(&id)?)
         .await
         .map_err(ryframe_http::HttpAppError::from)
@@ -174,9 +166,7 @@ async fn create(
     current_user: RequestPrincipal,
     Json(request): Json<CreateScheduleRequest>,
 ) -> HttpResult<Json<ApiResponse<JobScheduleVo>>> {
-    state
-        .services
-        .job_schedules
+    schedule_service(&state)?
         .create(&current_user, request.into())
         .await
         .map_err(ryframe_http::HttpAppError::from)
@@ -207,9 +197,7 @@ async fn update(
     Path(id): Path<String>,
     Json(request): Json<UpdateScheduleRequest>,
 ) -> HttpResult<Json<ApiResponse<JobScheduleVo>>> {
-    state
-        .services
-        .job_schedules
+    schedule_service(&state)?
         .update(&current_user, parse_schedule_id(&id)?, request.into())
         .await
         .map_err(ryframe_http::HttpAppError::from)
@@ -239,9 +227,7 @@ async fn update_status(
     Path(id): Path<String>,
     Json(request): Json<UpdateScheduleStatusRequest>,
 ) -> HttpResult<Json<ApiResponse<JobScheduleVo>>> {
-    state
-        .services
-        .job_schedules
+    schedule_service(&state)?
         .set_enabled(
             &current_user,
             parse_schedule_id(&id)?,
@@ -282,9 +268,7 @@ async fn run_now(
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| AppError::Validation("缺少有效的 Idempotency-Key 请求头".into()))?;
-    let execution = state
-        .services
-        .job_schedules
+    let execution = schedule_service(&state)?
         .run_now(&current_user, parse_schedule_id(&id)?, key)
         .await?;
     Ok((
@@ -314,9 +298,7 @@ async fn remove(
     Path(id): Path<String>,
     Json(request): Json<ScheduleVersionRequest>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    state
-        .services
-        .job_schedules
+    schedule_service(&state)?
         .remove(&current_user, parse_schedule_id(&id)?, request.version)
         .await?;
     Ok(Json(ApiResponse::success_no_data()))
@@ -342,9 +324,7 @@ async fn executions(
     Path(id): Path<String>,
     Query(query): Query<ScheduleExecutionPageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<JobScheduleExecutionVo>>> {
-    let page = state
-        .services
-        .job_schedules
+    let page = schedule_service(&state)?
         .executions(
             &current_user,
             parse_schedule_id(&id)?,
@@ -369,4 +349,10 @@ fn parse_schedule_id(value: &str) -> HttpResult<i64> {
         .ok()
         .filter(|id| *id > 0)
         .ok_or_else(|| AppError::Validation("定时任务 ID 必须是正整数".into()))?)
+}
+
+fn schedule_service(state: &AppState) -> HttpResult<&ryframe_service::JobScheduleService> {
+    state.services.job_schedules.as_deref().ok_or_else(|| {
+        ryframe_http::HttpAppError::from(AppError::NotFound("定时任务调度未启用".into()))
+    })
 }

@@ -9,7 +9,7 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use ryframe_core::TenantContext;
 use ryframe_http::{ApiResponse, HttpResult};
-use ryframe_kernel::AppError;
+use ryframe_kernel::{AppError, AppResult};
 use ryframe_service::system::{LoginStatus, RecordLoginCommand};
 use validator::Validate;
 
@@ -32,19 +32,16 @@ pub(super) async fn record_login_success(
     ip: &str,
     user_agent: &str,
 ) {
-    if let Err(error) = state
-        .services
-        .login_info
-        .record_login(RecordLoginCommand {
-            tenant_id: tenant_id.into(),
-            user_name: username.into(),
-            ipaddr: ip.into(),
-            browser: ryframe_utils::user_agent::parse_browser(user_agent),
-            os: ryframe_utils::user_agent::parse_os(user_agent),
-            status: LoginStatus::Success,
-            message: None,
-        })
-        .await
+    if let Err(error) = record_login_event(
+        state,
+        tenant_id,
+        username,
+        ip,
+        user_agent,
+        LoginStatus::Success,
+        None,
+    )
+    .await
     {
         tracing::error!(%error, "记录登录成功日志失败");
     }
@@ -58,7 +55,31 @@ pub(super) async fn record_login_failure_log(
     user_agent: &str,
     error: &AppError,
 ) {
-    if let Err(record_error) = state
+    if let Err(record_error) = record_login_event(
+        state,
+        tenant_id,
+        username,
+        ip,
+        user_agent,
+        LoginStatus::Failure,
+        Some(error.to_string()),
+    )
+    .await
+    {
+        tracing::error!(%record_error, "记录登录失败日志失败");
+    }
+}
+
+async fn record_login_event(
+    state: &AppState,
+    tenant_id: &str,
+    username: &str,
+    ip: &str,
+    user_agent: &str,
+    status: LoginStatus,
+    message: Option<String>,
+) -> AppResult<()> {
+    state
         .services
         .login_info
         .record_login(RecordLoginCommand {
@@ -67,13 +88,10 @@ pub(super) async fn record_login_failure_log(
             ipaddr: ip.into(),
             browser: ryframe_utils::user_agent::parse_browser(user_agent),
             os: ryframe_utils::user_agent::parse_os(user_agent),
-            status: LoginStatus::Failure,
-            message: Some(error.to_string()),
+            status,
+            message,
         })
         .await
-    {
-        tracing::error!(%record_error, "记录登录失败日志失败");
-    }
 }
 
 async fn add_online_user(

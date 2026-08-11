@@ -135,6 +135,11 @@ impl JobWorker {
         Ok(self)
     }
 
+    /// 判断当前 Worker 是否已经注册指定任务类型的处理器。
+    pub fn has_handler(&self, job_type: &str) -> bool {
+        self.handlers.contains_key(job_type)
+    }
+
     /// 启动配置数量的并行消费循环，并在收到关闭信号后有序退出。
     pub fn spawn(self, shutdown: watch::Receiver<bool>) -> Vec<JoinHandle<()>> {
         let instance = Uuid::new_v4().simple().to_string();

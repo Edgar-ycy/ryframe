@@ -5,14 +5,16 @@ pub(super) fn monitor_router(
     monitor_state: ryframe_monitor::MonitorState,
 ) -> Router {
     let public = ryframe_monitor::public_monitor_router(monitor_state.clone());
-    let protected = ryframe_monitor::protected_monitor_router(monitor_state)
+    let mut protected = ryframe_monitor::protected_monitor_router(monitor_state)
         .merge(route!(runtime_status).with_state(state.clone()))
-        .merge(job_handler::job_router(state.clone()))
-        .merge(schedule_handler::schedule_router(state.clone()))
-        .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-            oper_log_middleware,
-        ));
+        .merge(job_handler::job_router(state.clone()));
+    if state.config.jobs.scheduler_enabled {
+        protected = protected.merge(schedule_handler::schedule_router(state.clone()));
+    }
+    protected = protected.layer(from_fn_with_state(
+        OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+        oper_log_middleware,
+    ));
 
     public.merge(protect(protected, &state))
 }

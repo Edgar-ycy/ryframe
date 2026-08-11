@@ -144,6 +144,44 @@ groups:
           description: "{{ $labels.type }} has dead-letter jobs on {{ $labels.instance }}."
           runbook: "docs/operations-runbook.md#后台任务"
 
+      - alert: RyFrameJobScheduleScanErrors
+        expr: sum by (instance) (increase(ryframe_job_schedule_scan_total{result="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame 定时调度扫描持续失败"
+          description: "{{ $labels.instance }} 在过去五分钟内持续出现定时调度扫描错误。"
+          runbook: "docs/operations-runbook.md#定时调度"
+
+      # 调度关闭后不会产生扫描序列；十五分钟持续窗口可避免重启切换开关时误报。
+      - alert: RyFrameJobScheduleScanStalled
+        expr: sum by (instance) (increase(ryframe_job_schedule_scan_total{result="success"}[10m])) == 0
+        for: 15m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "RyFrame 定时调度扫描已停滞"
+          description: "{{ $labels.instance }} 的已启用定时调度超过十分钟没有完成成功扫描。"
+          runbook: "docs/operations-runbook.md#定时调度"
+
+      - alert: RyFrameJobScheduleLagHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (instance, le) (rate(ryframe_job_schedule_lag_seconds_bucket[10m]))
+          ) > 30
+        for: 10m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "RyFrame 定时调度延迟 P95 超过 30 秒"
+          description: "{{ $labels.instance }} 的定时计划领取延迟持续偏高。"
+          runbook: "docs/operations-runbook.md#定时调度"
+
       - alert: RyFrameMessageDeliveryFailures
         expr: sum by (instance) (increase(ryframe_message_delivery_total{result=~"slow_consumer|closed"}[5m])) > 5
         for: 5m

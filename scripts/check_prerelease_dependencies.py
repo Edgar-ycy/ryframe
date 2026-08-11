@@ -158,6 +158,14 @@ def deployment_source_findings(source: str, relative: str) -> set[Finding]:
         findings.add(finding)
         structured_versions[finding.version] += 1
 
+    def add_container_reference(reference: str) -> None:
+        if is_unresolved_deployment_reference(reference):
+            add_structured(Finding("container", reference, "unresolved", relative))
+        elif container := split_container_reference(reference):
+            name, version = container
+            if is_prerelease_reference(version):
+                add_structured(Finding("container", name, version, relative))
+
     is_dockerfile = Path(relative).name.lower().startswith("dockerfile")
     variables = deployment_variables(source)
     for line in source.splitlines():
@@ -175,12 +183,7 @@ def deployment_source_findings(source: str, relative: str) -> set[Finding]:
 
         if image:
             image = resolve_deployment_reference(image, variables)
-            if is_unresolved_deployment_reference(image):
-                add_structured(Finding("container", image, "unresolved", relative))
-            elif container := split_container_reference(image):
-                name, version = container
-                if is_prerelease_reference(version):
-                    add_structured(Finding("container", name, version, relative))
+            add_container_reference(image)
 
         action_match = YAML_ACTION.match(line)
         if not action_match:
@@ -190,14 +193,7 @@ def deployment_source_findings(source: str, relative: str) -> set[Finding]:
         )
         if action.startswith("docker://"):
             reference = action.removeprefix("docker://")
-            if is_unresolved_deployment_reference(reference):
-                add_structured(Finding("container", reference, "unresolved", relative))
-                continue
-            container = split_container_reference(reference)
-            if container:
-                name, version = container
-                if is_prerelease_reference(version):
-                    add_structured(Finding("container", name, version, relative))
+            add_container_reference(reference)
             continue
         if is_unresolved_deployment_reference(action):
             add_structured(Finding("tool", action, "unresolved", relative))

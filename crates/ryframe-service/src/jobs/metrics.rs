@@ -22,15 +22,6 @@ pub trait JobMetricsObserver: Send + Sync {
 
     /// 记录无法识别的 Redis 唤醒协议负载。
     fn record_wakeup_protocol_error(&self, result: &'static str);
-
-    /// 记录一次调度扫描结果。
-    fn record_schedule_scan(&self, result: &'static str);
-
-    /// 记录一次计划触发结果。
-    fn record_schedule_trigger(&self, outcome: &'static str);
-
-    /// 记录计划时间到扫描领取时间之间的延迟。
-    fn observe_schedule_lag(&self, lag: StdDuration);
 }
 
 type QueueDepthCallback = dyn Fn(&str, &'static str, u64) + Send + Sync;
@@ -40,9 +31,6 @@ type ClaimAttemptCallback = dyn Fn(&'static str, &'static str) + Send + Sync;
 type WakeupCallback = dyn Fn(&'static str, &'static str, &'static str) + Send + Sync;
 type WakeupListenerCallback = dyn Fn(&'static str, bool) + Send + Sync;
 type WakeupProtocolErrorCallback = dyn Fn(&'static str) + Send + Sync;
-type ScheduleScanCallback = dyn Fn(&'static str) + Send + Sync;
-type ScheduleTriggerCallback = dyn Fn(&'static str) + Send + Sync;
-type ScheduleLagCallback = dyn Fn(StdDuration) + Send + Sync;
 
 /// 使用回调把任务监控事件适配到应用层指标实现。
 #[derive(Clone)]
@@ -54,9 +42,6 @@ pub struct CallbackJobMetricsObserver {
     on_wakeup: Arc<WakeupCallback>,
     on_wakeup_listener_up: Arc<WakeupListenerCallback>,
     on_wakeup_protocol_error: Arc<WakeupProtocolErrorCallback>,
-    on_schedule_scan: Arc<ScheduleScanCallback>,
-    on_schedule_trigger: Arc<ScheduleTriggerCallback>,
-    on_schedule_lag: Arc<ScheduleLagCallback>,
 }
 
 impl CallbackJobMetricsObserver {
@@ -78,23 +63,7 @@ impl CallbackJobMetricsObserver {
             on_wakeup,
             on_wakeup_listener_up,
             on_wakeup_protocol_error,
-            on_schedule_scan: Arc::new(|_| {}),
-            on_schedule_trigger: Arc::new(|_| {}),
-            on_schedule_lag: Arc::new(|_| {}),
         }
-    }
-
-    /// 补充调度扫描、触发和延迟指标回调。
-    pub fn with_schedule_callbacks(
-        mut self,
-        on_schedule_scan: Arc<ScheduleScanCallback>,
-        on_schedule_trigger: Arc<ScheduleTriggerCallback>,
-        on_schedule_lag: Arc<ScheduleLagCallback>,
-    ) -> Self {
-        self.on_schedule_scan = on_schedule_scan;
-        self.on_schedule_trigger = on_schedule_trigger;
-        self.on_schedule_lag = on_schedule_lag;
-        self
     }
 }
 
@@ -125,17 +94,5 @@ impl JobMetricsObserver for CallbackJobMetricsObserver {
 
     fn record_wakeup_protocol_error(&self, result: &'static str) {
         (self.on_wakeup_protocol_error)(result);
-    }
-
-    fn record_schedule_scan(&self, result: &'static str) {
-        (self.on_schedule_scan)(result);
-    }
-
-    fn record_schedule_trigger(&self, outcome: &'static str) {
-        (self.on_schedule_trigger)(outcome);
-    }
-
-    fn observe_schedule_lag(&self, lag: StdDuration) {
-        (self.on_schedule_lag)(lag);
     }
 }

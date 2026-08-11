@@ -11,6 +11,7 @@
 
 pub mod app_state;
 pub mod datasource;
+pub mod jobs;
 pub mod limiter;
 pub mod logging;
 pub mod readiness;

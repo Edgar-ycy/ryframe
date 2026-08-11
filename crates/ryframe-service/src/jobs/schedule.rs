@@ -19,8 +19,8 @@ use sha2::{Digest, Sha256};
 use tokio::{sync::watch, task::JoinHandle, time};
 
 use super::{
-    JobQueue, ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
-    ScheduledJobTargetRegistry, ScheduledJobTargetScope,
+    JobQueue, ScheduleMetricsObserver, ScheduledJobContext, ScheduledJobTarget,
+    ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
 };
 
 const SYSTEM_TENANT_ID: &str = "system";
@@ -131,6 +131,7 @@ pub struct JobScheduleOccurrence {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct JobSchedulePreview {
+    pub calculated_at: DateTime<Utc>,
     pub timezone: String,
     pub occurrences: Vec<JobScheduleOccurrence>,
 }
@@ -142,6 +143,7 @@ pub struct JobScheduleService {
     repository: Arc<JobScheduleRepository>,
     queue: Arc<JobQueue>,
     targets: ScheduledJobTargetRegistry,
+    metrics: Option<Arc<dyn ScheduleMetricsObserver>>,
     poll_interval: StdDuration,
     batch_size: usize,
     max_enabled_per_tenant: usize,
@@ -159,10 +161,17 @@ impl JobScheduleService {
             repository: Arc::new(JobScheduleRepository),
             queue,
             targets,
+            metrics: None,
             poll_interval: StdDuration::from_millis(config.scheduler_poll_interval_ms),
             batch_size: config.scheduler_batch_size,
             max_enabled_per_tenant: config.max_enabled_schedules_per_tenant,
         }
+    }
+
+    /// 绑定 Cron 专用监控观察者，不把调度指标注入通用任务队列。
+    pub fn with_metrics_observer(mut self, observer: Arc<dyn ScheduleMetricsObserver>) -> Self {
+        self.metrics = Some(observer);
+        self
     }
 
     pub fn targets_for_tenant(
@@ -171,6 +180,29 @@ impl JobScheduleService {
     ) -> AppResult<Vec<ScheduledJobTargetDescriptor>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         Ok(self.targets.descriptors_for_tenant(tenant_id))
+    }
+
+    /// 返回启动阶段用于处理器一致性校验的调度目标注册表。
+    pub fn target_registry(&self) -> &ScheduledJobTargetRegistry {
+        &self.targets
+    }
+
+    fn record_scan(&self, result: &'static str) {
+        if let Some(observer) = self.metrics.as_ref() {
+            observer.record_scan(result);
+        }
+    }
+
+    fn record_trigger(&self, outcome: &'static str) {
+        if let Some(observer) = self.metrics.as_ref() {
+            observer.record_trigger(outcome);
+        }
+    }
+
+    fn observe_lag(&self, lag: StdDuration) {
+        if let Some(observer) = self.metrics.as_ref() {
+            observer.observe_lag(lag);
+        }
     }
 
     pub async fn preview(
@@ -189,6 +221,7 @@ impl JobScheduleService {
             })
             .collect();
         Ok(JobSchedulePreview {
+            calculated_at: now,
             timezone: parsed.timezone.name().to_owned(),
             occurrences,
         })
@@ -506,6 +539,7 @@ impl JobScheduleService {
         active.updated_at = Set(now);
         active.update(&transaction).await.map_err(database_error)?;
         transaction.commit().await.map_err(database_error)?;
+        self.record_trigger(job_schedule_execution::Model::OUTCOME_ENQUEUED);
         self.queue.notify_background_jobs().await;
         self.execution_vo(execution).await
     }
@@ -581,16 +615,27 @@ impl JobScheduleService {
                 transaction.commit().await.map_err(database_error)?;
                 break;
             };
-            let enqueued = self
-                .process_due_schedule(&transaction, schedule, now)
-                .await?;
+            let result = match self.validate_persisted_schedule(&schedule, now) {
+                Ok(parsed) => {
+                    self.process_due_schedule(&transaction, schedule, now, parsed)
+                        .await?
+                }
+                Err(detail) => {
+                    quarantine_invalid_schedule(&transaction, schedule, now, &detail).await?;
+                    DueScheduleResult {
+                        enqueued: false,
+                        outcome: job_schedule_execution::Model::OUTCOME_INVALID_CONFIGURATION,
+                    }
+                }
+            };
             transaction.commit().await.map_err(database_error)?;
-            if enqueued {
+            self.record_trigger(result.outcome);
+            if result.enqueued {
                 triggered += 1;
                 self.queue.notify_background_jobs().await;
             }
         }
-        self.queue.record_schedule_scan("success");
+        self.record_scan("success");
         Ok(triggered)
     }
 
@@ -598,7 +643,7 @@ impl JobScheduleService {
         tokio::spawn(async move {
             loop {
                 if let Err(error) = self.scan_due_once().await {
-                    self.queue.record_schedule_scan("error");
+                    self.record_scan("error");
                     tracing::warn!(%error, "调度计划扫描失败，将由后续数据库轮询重试");
                 }
                 tokio::select! {
@@ -618,16 +663,16 @@ impl JobScheduleService {
         transaction: &DatabaseTransaction,
         schedule: job_schedule::Model,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+        parsed: ParsedSchedule,
+    ) -> AppResult<DueScheduleResult> {
         let due = schedule
             .next_run_at
             .ok_or_else(|| AppError::Database("已领取计划缺少 next_run_at".into()))?;
-        self.queue.observe_schedule_lag(
+        self.observe_lag(
             (now - due)
                 .to_std()
                 .unwrap_or_else(|_| StdDuration::from_secs(0)),
         );
-        let parsed = ParsedSchedule::parse(&schedule.cron_expression, &schedule.timezone)?;
         let following = parsed.next_after(due)?;
         let misfired = following <= now;
         let next_run_at = if misfired {
@@ -643,46 +688,47 @@ impl JobScheduleService {
         let fire_key = automatic_fire_key(due);
 
         if misfired && schedule.misfire_policy == job_schedule::Model::MISFIRE_SKIP {
-            insert_execution(
+            self.record_non_enqueued_due_execution(
                 transaction,
-                &schedule,
-                NewExecution {
+                NonEnqueuedDueExecution {
+                    schedule,
                     fire_key: &fire_key,
                     trigger_kind,
                     scheduled_for: due,
+                    next_run_at,
+                    now,
                     outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_MISFIRE,
                     detail: Some("计划停机期间错过多次触发，已按 skip 策略跳过".into()),
-                    created_at: now,
                 },
             )
             .await?;
-            self.queue
-                .record_schedule_trigger(job_schedule_execution::Model::OUTCOME_SKIPPED_MISFIRE);
-            advance_schedule(transaction, schedule, next_run_at, due, now).await?;
-            return Ok(false);
+            return Ok(DueScheduleResult {
+                enqueued: false,
+                outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_MISFIRE,
+            });
         }
 
         let target = match self.resolve_target(&schedule.tenant_id, &schedule.handler_key, false) {
             Ok(target) => target,
             Err(error) => {
-                insert_execution(
+                self.record_non_enqueued_due_execution(
                     transaction,
-                    &schedule,
-                    NewExecution {
+                    NonEnqueuedDueExecution {
+                        schedule,
                         fire_key: &fire_key,
                         trigger_kind,
                         scheduled_for: due,
+                        next_run_at,
+                        now,
                         outcome: job_schedule_execution::Model::OUTCOME_TARGET_UNAVAILABLE,
                         detail: Some(error.to_string()),
-                        created_at: now,
                     },
                 )
                 .await?;
-                self.queue.record_schedule_trigger(
-                    job_schedule_execution::Model::OUTCOME_TARGET_UNAVAILABLE,
-                );
-                advance_schedule(transaction, schedule, next_run_at, due, now).await?;
-                return Ok(false);
+                return Ok(DueScheduleResult {
+                    enqueued: false,
+                    outcome: job_schedule_execution::Model::OUTCOME_TARGET_UNAVAILABLE,
+                });
             }
         };
 
@@ -692,24 +738,24 @@ impl JobScheduleService {
                 .has_active_job(transaction, schedule.id)
                 .await?
         {
-            insert_execution(
+            self.record_non_enqueued_due_execution(
                 transaction,
-                &schedule,
-                NewExecution {
+                NonEnqueuedDueExecution {
+                    schedule,
                     fire_key: &fire_key,
                     trigger_kind,
                     scheduled_for: due,
+                    next_run_at,
+                    now,
                     outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_CONCURRENCY,
                     detail: Some("同一计划已有待执行或运行中的任务".into()),
-                    created_at: now,
                 },
             )
             .await?;
-            self.queue.record_schedule_trigger(
-                job_schedule_execution::Model::OUTCOME_SKIPPED_CONCURRENCY,
-            );
-            advance_schedule(transaction, schedule, next_run_at, due, now).await?;
-            return Ok(false);
+            return Ok(DueScheduleResult {
+                enqueued: false,
+                outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_CONCURRENCY,
+            });
         }
 
         let execution = insert_execution(
@@ -738,10 +784,42 @@ impl JobScheduleService {
             .enqueue_in_transaction(transaction, target.build_job(&context)?)
             .await?;
         attach_background_job(transaction, execution, job.job.id).await?;
-        self.queue
-            .record_schedule_trigger(job_schedule_execution::Model::OUTCOME_ENQUEUED);
         advance_schedule(transaction, schedule, next_run_at, due, now).await?;
-        Ok(true)
+        Ok(DueScheduleResult {
+            enqueued: true,
+            outcome: job_schedule_execution::Model::OUTCOME_ENQUEUED,
+        })
+    }
+
+    async fn record_non_enqueued_due_execution(
+        &self,
+        transaction: &DatabaseTransaction,
+        execution: NonEnqueuedDueExecution<'_>,
+    ) -> AppResult<()> {
+        let NonEnqueuedDueExecution {
+            schedule,
+            fire_key,
+            trigger_kind,
+            scheduled_for,
+            next_run_at,
+            now,
+            outcome,
+            detail,
+        } = execution;
+        insert_execution(
+            transaction,
+            &schedule,
+            NewExecution {
+                fire_key,
+                trigger_kind,
+                scheduled_for,
+                outcome,
+                detail,
+                created_at: now,
+            },
+        )
+        .await?;
+        advance_schedule(transaction, schedule, next_run_at, scheduled_for, now).await
     }
 
     fn validate_command(
@@ -819,6 +897,23 @@ impl JobScheduleService {
         Ok(target)
     }
 
+    fn validate_persisted_schedule(
+        &self,
+        schedule: &job_schedule::Model,
+        now: DateTime<Utc>,
+    ) -> Result<ParsedSchedule, String> {
+        let target = self
+            .targets
+            .get(&schedule.handler_key)
+            .ok_or_else(|| "未知的调度目标".to_owned())?;
+        if target.scope() == ScheduledJobTargetScope::System
+            && schedule.tenant_id != SYSTEM_TENANT_ID
+        {
+            return Err("普通租户不能使用平台维护调度目标".into());
+        }
+        validate_persisted_schedule(schedule, now)
+    }
+
     async fn ensure_enabled_limit<C>(&self, db: &C, tenant_id: &str) -> AppResult<()>
     where
         C: ConnectionTrait,
@@ -854,6 +949,52 @@ impl JobScheduleService {
             .and_then(|id| statuses.get(&id).cloned());
         Ok(execution_into_vo(execution, status))
     }
+}
+
+struct NonEnqueuedDueExecution<'a> {
+    schedule: job_schedule::Model,
+    fire_key: &'a str,
+    trigger_kind: &'a str,
+    scheduled_for: DateTime<Utc>,
+    next_run_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+    outcome: &'static str,
+    detail: Option<String>,
+}
+
+struct DueScheduleResult {
+    enqueued: bool,
+    outcome: &'static str,
+}
+
+fn validate_persisted_schedule(
+    schedule: &job_schedule::Model,
+    now: DateTime<Utc>,
+) -> Result<ParsedSchedule, String> {
+    if schedule.next_run_at.is_none() {
+        return Err("已启用计划缺少 next_run_at".into());
+    }
+    if !matches!(
+        schedule.misfire_policy.as_str(),
+        job_schedule::Model::MISFIRE_SKIP | job_schedule::Model::MISFIRE_FIRE_ONCE
+    ) {
+        return Err("错过执行策略只能是 skip 或 fire_once".into());
+    }
+    if !matches!(
+        schedule.concurrency_policy.as_str(),
+        job_schedule::Model::CONCURRENCY_FORBID | job_schedule::Model::CONCURRENCY_ALLOW
+    ) {
+        return Err("并发策略只能是 forbid 或 allow".into());
+    }
+    if !(1..=86_400).contains(&schedule.max_runtime_seconds) {
+        return Err("最大运行时长必须在 1 到 86400 秒之间".into());
+    }
+    let parsed = ParsedSchedule::parse(&schedule.cron_expression, &schedule.timezone)
+        .map_err(|error| error.message().to_owned())?;
+    parsed
+        .next_after(now)
+        .map_err(|error| error.message().to_owned())?;
+    Ok(parsed)
 }
 
 struct ValidatedScheduleCommand {
@@ -894,6 +1035,11 @@ impl ParsedSchedule {
         let timezone = normalize_required(timezone, MAX_TIMEZONE_BYTES, "时区")?
             .parse::<Tz>()
             .map_err(|_| AppError::Validation("时区必须是有效的 IANA 时区名称".into()))?;
+        if fields[3] != "*" && fields[5] != "*" {
+            return Err(AppError::Validation(
+                "Cron 日期字段和星期字段不能同时受限，其中一项必须为 *".into(),
+            ));
+        }
         let schedule = Schedule::from_str(&expression)
             .map_err(|error| AppError::Validation(format!("Cron 表达式无效: {error}")))?;
         Ok(Self {
@@ -989,6 +1135,42 @@ async fn advance_schedule(
     Ok(())
 }
 
+async fn quarantine_invalid_schedule(
+    transaction: &DatabaseTransaction,
+    schedule: job_schedule::Model,
+    now: DateTime<Utc>,
+    detail: &str,
+) -> AppResult<()> {
+    let scheduled_for = schedule.next_run_at.unwrap_or(now);
+    let fire_key = format!(
+        "invalid:{}:{}",
+        schedule.version,
+        automatic_fire_key(scheduled_for)
+    );
+    insert_execution(
+        transaction,
+        &schedule,
+        NewExecution {
+            fire_key: &fire_key,
+            trigger_kind: job_schedule_execution::Model::TRIGGER_SCHEDULED,
+            scheduled_for,
+            outcome: job_schedule_execution::Model::OUTCOME_INVALID_CONFIGURATION,
+            detail: Some(detail.to_owned()),
+            created_at: now,
+        },
+    )
+    .await?;
+
+    let next_version = schedule.version.saturating_add(1);
+    let mut active: job_schedule::ActiveModel = schedule.into();
+    active.enabled = Set(false);
+    active.next_run_at = Set(None);
+    active.version = Set(next_version);
+    active.updated_at = Set(now);
+    active.update(transaction).await.map_err(database_error)?;
+    Ok(())
+}
+
 async fn lock_tenant(transaction: &DatabaseTransaction, tenant_id: &str) -> AppResult<()> {
     let row = transaction
         .query_one_raw(sea_orm::Statement::from_sql_and_values(
@@ -1064,6 +1246,7 @@ fn normalize_outcome(value: Option<String>) -> AppResult<Option<String>> {
             job_schedule_execution::Model::OUTCOME_SKIPPED_MISFIRE,
             job_schedule_execution::Model::OUTCOME_SKIPPED_CONCURRENCY,
             job_schedule_execution::Model::OUTCOME_TARGET_UNAVAILABLE,
+            job_schedule_execution::Model::OUTCOME_INVALID_CONFIGURATION,
         ],
         "执行结果",
     )

@@ -77,6 +77,15 @@ impl ScheduledJobTargetRegistry {
         self.targets.get(handler_key).cloned()
     }
 
+    /// 返回当前配置下可用调度目标所需的后台任务类型。
+    pub fn available_job_types(&self) -> Vec<&'static str> {
+        self.targets
+            .values()
+            .filter(|target| target.available())
+            .map(|target| target.job_type())
+            .collect()
+    }
+
     pub fn descriptors_for_tenant(&self, tenant_id: &str) -> Vec<ScheduledJobTargetDescriptor> {
         self.targets
             .values()

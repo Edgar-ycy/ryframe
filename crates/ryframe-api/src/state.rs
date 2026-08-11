@@ -38,7 +38,7 @@ pub struct AppServices {
     pub oper_log: Arc<OperLogService>,
     pub audit_outbox: Arc<AuditOutbox>,
     pub job_queue: Arc<JobQueue>,
-    pub job_schedules: Arc<JobScheduleService>,
+    pub job_schedules: Option<Arc<JobScheduleService>>,
     pub login_info: Arc<LoginInfoService>,
     pub generator: Arc<GeneratorService>,
     pub profile: Arc<ProfileService>,

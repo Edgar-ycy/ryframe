@@ -7,7 +7,6 @@ use ryframe_db::DatabaseCluster;
 use ryframe_kernel::AppError;
 use ryframe_service::{
     AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
-    ScheduledJobTargetRegistry,
     system::{
         CaptchaStore, ConfigService, DeptService, DictService, ExportService, FileService,
         GeneratorService, LoginInfoService, MenuService, MessageService, NoticeService,
@@ -76,13 +75,20 @@ pub async fn build_all(
     let oper_log = Arc::new(OperLogService::new(database.clone()));
     let job_queue =
         Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis_client.clone()));
-    let schedule_targets = ScheduledJobTargetRegistry::built_in(config.messaging.enabled)?;
-    let job_schedules = Arc::new(JobScheduleService::new(
-        database.clone(),
-        job_queue.clone(),
-        schedule_targets,
-        &config.jobs,
-    ));
+    let job_schedules = if config.jobs.scheduler_enabled {
+        let schedule_targets = super::jobs::build_schedule_targets(config.messaging.enabled)?;
+        Some(Arc::new(
+            JobScheduleService::new(
+                database.clone(),
+                job_queue.clone(),
+                schedule_targets,
+                &config.jobs,
+            )
+            .with_metrics_observer(super::jobs::build_schedule_metrics_observer()),
+        ))
+    } else {
+        None
+    };
     let audit_outbox = Arc::new(
         AuditOutbox::new(database.clone(), config.jobs.default_max_attempts)
             .with_job_queue(job_queue.clone()),

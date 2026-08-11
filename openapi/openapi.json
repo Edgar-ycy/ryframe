@@ -1752,6 +1752,10 @@
           },
           "data": {
             "properties": {
+              "calculated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
               "occurrences": {
                 "items": {
                   "$ref": "#/components/schemas/JobScheduleOccurrence"
@@ -1763,6 +1767,7 @@
               }
             },
             "required": [
+              "calculated_at",
               "timezone",
               "occurrences"
             ],
@@ -2688,6 +2693,9 @@
               "database": {
                 "$ref": "#/components/schemas/RuntimeDatabaseStatus"
               },
+              "jobs": {
+                "$ref": "#/components/schemas/RuntimeJobsStatus"
+              },
               "object_storage": {
                 "$ref": "#/components/schemas/RuntimeStorageStatus"
               },
@@ -2702,7 +2710,8 @@
               "database",
               "redis",
               "object_storage",
-              "upload_circuit_breaker"
+              "upload_circuit_breaker",
+              "jobs"
             ],
             "type": "object"
           },
@@ -5894,6 +5903,10 @@
       },
       "JobSchedulePreview": {
         "properties": {
+          "calculated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
           "occurrences": {
             "items": {
               "$ref": "#/components/schemas/JobScheduleOccurrence"
@@ -5905,6 +5918,7 @@
           }
         },
         "required": [
+          "calculated_at",
           "timezone",
           "occurrences"
         ],
@@ -8775,6 +8789,21 @@
         ],
         "type": "object"
       },
+      "RuntimeJobsStatus": {
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "scheduler_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "scheduler_enabled"
+        ],
+        "type": "object"
+      },
       "RuntimeRedisStatus": {
         "properties": {
           "configured": {
@@ -8795,6 +8824,9 @@
           "database": {
             "$ref": "#/components/schemas/RuntimeDatabaseStatus"
           },
+          "jobs": {
+            "$ref": "#/components/schemas/RuntimeJobsStatus"
+          },
           "object_storage": {
             "$ref": "#/components/schemas/RuntimeStorageStatus"
           },
@@ -8809,7 +8841,8 @@
           "database",
           "redis",
           "object_storage",
-          "upload_circuit_breaker"
+          "upload_circuit_breaker",
+          "jobs"
         ],
         "type": "object"
       },

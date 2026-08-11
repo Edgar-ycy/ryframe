@@ -13,14 +13,12 @@ use ryframe_db::{
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
-use tokio::{sync::watch, task::JoinHandle, time};
+use tokio::{sync::watch, task::JoinHandle};
 
 use super::{
     metrics::JobMetricsObserver,
     wakeup::{QueueWakeup, WakeupQueue},
 };
-use crate::system::{EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
-
 /// 后台任务分页列表的业务查询参数。
 #[derive(Clone, Debug)]
 pub struct BackgroundJobListParams {
@@ -209,66 +207,6 @@ impl JobQueue {
             .await
     }
 
-    /// 按 UTC 自然日幂等写入一次消息过期清理任务。
-    pub async fn enqueue_message_retention(&self) -> AppResult<EnqueueBackgroundJobResult> {
-        let now = self.database_now().await?;
-        let day = now.format("%F").to_string();
-        let trace_context = crate::trace_context::current_trace_context();
-        let result = self
-            .repository
-            .enqueue(
-                self.database.write(),
-                EnqueueBackgroundJob {
-                    tenant_id: None,
-                    schedule_id: None,
-                    scheduled_for: Some(now),
-                    max_runtime_seconds: None,
-                    job_type: MESSAGE_RETENTION_JOB_TYPE.to_owned(),
-                    payload: serde_json::json!({ "run_date": day }),
-                    priority: -10,
-                    available_at: now,
-                    max_attempts: 20,
-                    dedupe_key: Some(format!("message:retention:{day}")),
-                    traceparent: trace_context.traceparent,
-                    tracestate: trace_context.tracestate,
-                },
-                now,
-            )
-            .await?;
-        self.notify_background_jobs().await;
-        Ok(result)
-    }
-
-    /// 按 UTC 自然日幂等写入一次导出结果清理任务。
-    pub async fn enqueue_export_cleanup(&self) -> AppResult<EnqueueBackgroundJobResult> {
-        let now = self.database_now().await?;
-        let day = now.format("%F").to_string();
-        let trace_context = crate::trace_context::current_trace_context();
-        let result = self
-            .repository
-            .enqueue(
-                self.database.write(),
-                EnqueueBackgroundJob {
-                    tenant_id: None,
-                    schedule_id: None,
-                    scheduled_for: Some(now),
-                    max_runtime_seconds: None,
-                    job_type: EXPORT_CLEANUP_JOB_TYPE.to_owned(),
-                    payload: serde_json::json!({ "run_date": day }),
-                    priority: -10,
-                    available_at: now,
-                    max_attempts: 20,
-                    dedupe_key: Some(format!("export:cleanup:{day}")),
-                    traceparent: trace_context.traceparent,
-                    tracestate: trace_context.tracestate,
-                },
-                now,
-            )
-            .await?;
-        self.notify_background_jobs().await;
-        Ok(result)
-    }
-
     /// 查询当前租户的后台任务；任务类型和状态均为精确匹配。
     pub async fn list_for_tenant(
         &self,
@@ -428,69 +366,6 @@ impl JobQueue {
             observer.record_claim_attempt(queue, result);
         }
     }
-
-    pub(super) fn record_schedule_scan(&self, result: &'static str) {
-        if let Some(observer) = self.metrics_observer() {
-            observer.record_schedule_scan(result);
-        }
-    }
-
-    pub(super) fn record_schedule_trigger(&self, outcome: &'static str) {
-        if let Some(observer) = self.metrics_observer() {
-            observer.record_schedule_trigger(outcome);
-        }
-    }
-
-    pub(super) fn observe_schedule_lag(&self, lag: StdDuration) {
-        if let Some(observer) = self.metrics_observer() {
-            observer.observe_schedule_lag(lag);
-        }
-    }
-}
-
-/// 在启动时及每个 UTC 自然日创建消息保留与导出结果清理任务。
-///
-/// 多个 API 或 Worker 实例可同时运行该调度器；数据库中的幂等键会确保每天只保留一条任务。
-pub fn spawn_message_retention_scheduler(
-    queue: Arc<JobQueue>,
-    messaging_enabled: bool,
-    mut shutdown: watch::Receiver<bool>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            if messaging_enabled && let Err(error) = queue.enqueue_message_retention().await {
-                tracing::warn!(%error, "无法写入每日消息过期清理任务");
-            }
-            if let Err(error) = queue.enqueue_export_cleanup().await {
-                tracing::warn!(%error, "无法写入每日导出结果清理任务");
-            }
-            let now = queue.database_now().await.unwrap_or_else(|error| {
-                tracing::warn!(%error, "无法读取数据库时间，按本机 UTC 时间安排下次消息清理");
-                Utc::now()
-            });
-            let delay = duration_until_next_utc_day(now);
-            tokio::select! {
-                _ = time::sleep(delay) => {}
-                changed = shutdown.changed() => {
-                    if changed.is_err() || *shutdown.borrow() {
-                        break;
-                    }
-                }
-            }
-        }
-    })
-}
-
-fn duration_until_next_utc_day(now: DateTime<Utc>) -> StdDuration {
-    let Some(tomorrow) = now.date_naive().succ_opt() else {
-        return StdDuration::from_secs(24 * 60 * 60);
-    };
-    let Some(next) = tomorrow.and_hms_opt(0, 0, 5) else {
-        return StdDuration::from_secs(24 * 60 * 60);
-    };
-    (next.and_utc() - now)
-        .to_std()
-        .unwrap_or_else(|_| StdDuration::from_secs(60))
 }
 
 fn normalize_job_type_filter(value: Option<String>) -> AppResult<Option<String>> {
