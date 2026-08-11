@@ -612,11 +612,11 @@ VALUES ('system', 'config', 0)"####,
     (2, '普通用户',   'common', 0, '5', '1', 2, '普通用户，拥有基础权限')"####,
     r####"INSERT INTO `sys_user` (`id`, `username`, `password_hash`, `nickname`, `email`, `phone`, `status`, `dept_id`) VALUES
     (1, 'admin',
-        '$argon2id$v=19$m=65536,t=3,p=4$/jPTT9LsEpBD6BFpc2rddg$vogNJpv6lRqvcLOOSeZCOId88Fene5oRnWJwuDz5IUE',
-        '超级管理员', 'admin@ryframe.com', '13800000000', 'must_reset_password', 1),
+        '$argon2id$v=19$m=65536,t=3,p=4$O8qRRhiIVYjCHpUuwGWTSA$OO+ik8t1+N5a4PSipMbB71W/pfc3roAbq6mdIAgV1bA',
+        '超级管理员', 'admin@ryframe.com', '13800000000', '1', 1),
     (2, 'user',
-        '$argon2id$v=19$m=65536,t=3,p=4$/jPTT9LsEpBD6BFpc2rddg$vogNJpv6lRqvcLOOSeZCOId88Fene5oRnWJwuDz5IUE',
-        '普通用户', 'user@ryframe.com', '13800000001', 'must_reset_password', 5)"####,
+        '$argon2id$v=19$m=65536,t=3,p=4$LDHC7/MqBOozq1OQk24lDw$IDFTnrVNEFZgvpDI+9kzNZi3pKWEt8EIPi6qOKtmgrw',
+        '普通用户', 'user@ryframe.com', '13800000001', '1', 5)"####,
     r####"INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`) VALUES
 
     (1, '系统管理', 'system', NULL, 'menu', 'Setting', 1, '1'),

@@ -31,7 +31,8 @@ username = "root"
 password = ""
 max_connections = 10
 min_connections = 1
-tls_mode = "disabled"
+# 默认要求加密连接；远程生产数据库必须进一步使用 verify_identity。
+tls_mode = "required"
 # MySQL TLS CA 证书路径示例：tls_ca = "/run/secrets/mysql-ca.pem"
 # MySQL TLS 客户端证书路径示例：tls_client_cert = "/run/secrets/mysql-client.pem"
 # MySQL TLS 客户端私钥路径示例：tls_client_key = "/run/secrets/mysql-client.key"

@@ -122,6 +122,8 @@ data_source = "ryframe_device"
 
 数据库配置拒绝未知字段，连接 URL 固定按 MySQL 生成。配置只在进程启动时加载，修改文件或环境变量后必须重启；旧配置中的多余字段不会被静默忽略。
 
+MySQL 连接默认使用 `tls_mode = "required"`，保证 `caching_sha2_password` 等认证方式通过加密通道完成，不启用无 TLS 的 RSA 密码回退。远程生产数据库仍必须使用 `verify_identity` 并配置 CA；只有明确使用兼容认证方式且位于受控本机环境时才能显式选择 `disabled`。
+
 主库环境变量保持短名称：
 
 ```text

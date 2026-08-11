@@ -4,8 +4,8 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DbTlsMode {
-    #[default]
     Disabled,
+    #[default]
     Required,
     VerifyCa,
     VerifyIdentity,
@@ -229,7 +229,7 @@ impl Default for DbConnection {
             idle_timeout_secs: 600,
             max_lifetime_secs: 1800,
             connect_timeout_secs: 10,
-            tls_mode: DbTlsMode::Disabled,
+            tls_mode: DbTlsMode::Required,
             tls_ca: None,
             tls_client_cert: None,
             tls_client_key: None,

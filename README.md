@@ -185,7 +185,7 @@ config/app.prod.toml
 | `APP_JOBS_SCHEDULER_POLL_INTERVAL_MS` | 到期 Cron 计划的数据库扫描间隔（`250..=60000`） | `1000` |
 | `APP_JOBS_SCHEDULER_BATCH_SIZE` | 单轮最多领取的到期计划数量（`1..=1000`） | `100` |
 | `APP_JOBS_MAX_ENABLED_SCHEDULES_PER_TENANT` | 单租户最多启用的计划数量（`1..=10000`） | `100` |
-| `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；远程生产数据库使用 `verify_identity` | `disabled` |
+| `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；默认要求加密连接，远程生产数据库使用 `verify_identity` | `required` |
 | `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
 | `APP_API_DOCS_ENABLED` | 是否暴露运行时 Swagger/OpenAPI；生产必须关闭 | `true` |
 | `APP_MONITOR_METRICS_BEARER_TOKEN_FILE` | Prometheus 专用 Bearer Token 文件；生产至少 32 字节 | 空 |
