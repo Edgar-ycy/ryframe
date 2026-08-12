@@ -23,6 +23,7 @@ use super::{
 use crate::{
     dto::{
         auth_dto::{AuthSessionResponse, CsrfResponse, LoginResponse, RevokeOtherSessionsResponse},
+        empty_dto::EmptyRequestDto,
         public_dto::UserInfo,
     },
     state::AppState,
@@ -404,6 +405,7 @@ pub async fn revoke_session(
     path = "/api/v1/auth/sessions/revoke-others",
     tag = "认证",
     params(("X-CSRF-Token" = String, Header, description = "与当前访问会话绑定的 CSRF 挑战令牌")),
+    request_body = EmptyRequestDto,
     responses(
         (status = 200, description = "其他会话已撤销", body = ApiResponse<RevokeOtherSessionsResponse>),
         (status = 400, description = "可治理的会话候选超过单次安全上限"),
@@ -420,6 +422,7 @@ pub async fn revoke_other_sessions(
     Extension(claims): Extension<Claims>,
     headers: HeaderMap,
     jar: CookieJar,
+    Json(_request): Json<EmptyRequestDto>,
 ) -> HttpResult<Json<ApiResponse<RevokeOtherSessionsResponse>>> {
     validate_auth_origin(&state, &headers)?;
     verify_csrf(
