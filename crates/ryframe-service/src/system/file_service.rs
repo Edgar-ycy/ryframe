@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -397,7 +397,7 @@ impl FileService {
         &self,
         tenant_id: &str,
         file_id: i64,
-        expired_before: chrono::DateTime<chrono::Utc>,
+        expired_before: DateTime<Utc>,
     ) -> AppResult<bool> {
         let expected_bucket = IMPORT_BUCKET;
         let transaction = self

@@ -290,7 +290,7 @@ impl ExcelExporter {
         Self::write_headers(worksheet, headers)?;
         Self::auto_width(worksheet, headers.len())?;
         worksheet
-            .set_column_width((headers.len().saturating_sub(1)) as u16, 40.0)
+            .set_column_width(headers.len().saturating_sub(1) as u16, 40.0)
             .map_err(|error| AppError::Internal(format!("设置模板列宽失败: {error}")))?;
         worksheet
             .set_freeze_panes(1, 0)
@@ -336,9 +336,9 @@ impl ExcelExporter {
                 .map_err(|error| AppError::Internal(format!("读取模板工作表失败: {error}")))?
                 .add_data_validation(
                     1,
-                    (headers.len().saturating_sub(1)) as u16,
+                    headers.len().saturating_sub(1) as u16,
                     20_000,
-                    (headers.len().saturating_sub(1)) as u16,
+                    headers.len().saturating_sub(1) as u16,
                     &validation,
                 )
                 .map_err(|error| AppError::Internal(format!("添加模板下拉校验失败: {error}")))?;
