@@ -73,38 +73,6 @@ impl ExportService {
         }
     }
 
-    /// 记录 Worker 执行失败，并与后台任务的重试预算保持一致。
-    pub async fn record_execution_failure(
-        &self,
-        background_job_id: i64,
-        terminal: bool,
-        error_message: &str,
-    ) -> AppResult<()> {
-        let Some(export) = self
-            .exports
-            .find_by_background_job_id(self.db.write(), background_job_id)
-            .await?
-        else {
-            return Ok(());
-        };
-        let now = self
-            .background_jobs
-            .database_utc_now(self.db.write())
-            .await?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        if terminal {
-            self.exports
-                .mark_failed(&transaction, export.id, error_message, now)
-                .await?;
-        } else {
-            self.exports
-                .mark_queued_after_failure(&transaction, export.id, error_message, now)
-                .await?;
-        }
-        crate::commit_current_audit(transaction).await?;
-        Ok(())
-    }
-
     async fn execute_user_export(
         &self,
         export: export_job::Model,

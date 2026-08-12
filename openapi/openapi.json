@@ -3582,9 +3582,6 @@
           },
           "data": {
             "properties": {
-              "background_job_id": {
-                "type": "string"
-              },
               "cancel_requested": {
                 "type": "boolean"
               },
@@ -3622,8 +3619,11 @@
               "report_available": {
                 "type": "boolean"
               },
-              "requester_user_id": {
-                "type": "string"
+              "requester_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "skipped_count": {
                 "format": "int32",
@@ -3657,8 +3657,6 @@
             },
             "required": [
               "id",
-              "requester_user_id",
-              "background_job_id",
               "source_name",
               "duplicate_policy",
               "status",
@@ -9671,9 +9669,6 @@
           "items": {
             "items": {
               "properties": {
-                "background_job_id": {
-                  "type": "string"
-                },
                 "cancel_requested": {
                   "type": "boolean"
                 },
@@ -9711,8 +9706,11 @@
                 "report_available": {
                   "type": "boolean"
                 },
-                "requester_user_id": {
-                  "type": "string"
+                "requester_username": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "skipped_count": {
                   "format": "int32",
@@ -9746,8 +9744,6 @@
               },
               "required": [
                 "id",
-                "requester_user_id",
-                "background_job_id",
                 "source_name",
                 "duplicate_policy",
                 "status",
@@ -11558,9 +11554,6 @@
       },
       "UserImportJobVo": {
         "properties": {
-          "background_job_id": {
-            "type": "string"
-          },
           "cancel_requested": {
             "type": "boolean"
           },
@@ -11598,8 +11591,11 @@
           "report_available": {
             "type": "boolean"
           },
-          "requester_user_id": {
-            "type": "string"
+          "requester_username": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "skipped_count": {
             "format": "int32",
@@ -11633,8 +11629,6 @@
         },
         "required": [
           "id",
-          "requester_user_id",
-          "background_job_id",
           "source_name",
           "duplicate_policy",
           "status",

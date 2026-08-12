@@ -413,7 +413,7 @@ impl UserImportRepository {
 }
 
 fn expired_artifact_predicate() -> &'static str {
-    "file.bucket = 'imports' AND file.del_flag = '0' AND file.upload_status = 'ready' \
+    "file.bucket = 'imports' AND file.del_flag = '0' AND file.upload_status IN ('ready', 'cleanup') \
      AND (EXISTS (SELECT 1 FROM sys_user_import_job expired \
             WHERE expired.tenant_id = file.tenant_id \
               AND expired.status IN ('succeeded', 'partial', 'failed', 'cancelled') \

@@ -1,4 +1,7 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -7,9 +10,9 @@ use ryframe_auth::password;
 use ryframe_config::UserImportConfig;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    CreateUserImportJob, DatabaseCluster, DeptRepository, EnqueueBackgroundJob, TenantRepository,
-    UserImportFilter, UserImportRepository, UserRepository, background_job,
-    entities::{user, user_import_job, user_import_row_result},
+    CreateUserImportJob, DatabaseCluster, DeptRepository, EnqueueBackgroundJob, FileRepository,
+    TenantRepository, UserImportFilter, UserImportRepository, UserRepository, background_job,
+    entities::{dept, user, user_import_job, user_import_row_result},
 };
 use ryframe_excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
@@ -21,7 +24,9 @@ use tokio::sync::Semaphore;
 use uuid::Uuid;
 use validator::Validate;
 
-use super::{DownloadedFile, FileService, IMPORT_BUCKET, UploadCommand, UserService};
+use super::{
+    DownloadedFile, FileService, IMPORT_BUCKET, UploadCommand, UploadResponse, UserService,
+};
 use crate::{JobHandler, JobQueue};
 
 /// 可恢复用户导入的稳定后台任务类型。
@@ -29,9 +34,14 @@ pub const USER_IMPORT_JOB_TYPE: &str = "system.user.import";
 const USER_IMPORT_PERMISSION: &str = "system:user-import:add";
 const USER_IMPORT_MAX_RUNTIME_SECONDS: i32 = 14_400;
 const USER_IMPORT_MAX_ATTEMPTS: i32 = 3;
+const DEPARTMENT_PATH_SEPARATOR: &str = " / ";
+const DEPARTMENT_PATH_MAX_BYTES: usize = 2_048;
+const DEPARTMENT_HIERARCHY_MAX_DEPTH: usize = 128;
+const IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES: i64 = 5;
 
 /// 用户导入模板和 Worker 共同使用的行结构。
 #[derive(Clone, Debug, Deserialize, Serialize, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct UserImportData {
     #[serde(alias = "用户名")]
     #[validate(length(min = 2, max = 64, message = "用户名长度必须为 2-64 个字符"))]
@@ -45,8 +55,8 @@ pub struct UserImportData {
     #[serde(alias = "手机号")]
     #[validate(length(max = 32, message = "手机号最多 32 个字符"))]
     pub phone: Option<String>,
-    #[serde(alias = "部门ID")]
-    pub dept_id: Option<String>,
+    #[serde(alias = "部门完整路径")]
+    pub department_path: Option<String>,
 }
 
 impl UserImportData {
@@ -56,7 +66,7 @@ impl UserImportData {
             ("nickname", "昵称"),
             ("email", "邮箱"),
             ("phone", "手机号"),
-            ("dept_id", "部门ID"),
+            ("department_path", "部门完整路径"),
         ]
     }
 }
@@ -65,9 +75,8 @@ impl UserImportData {
 #[derive(Clone, Debug, Serialize)]
 pub struct UserImportJobVo {
     pub id: String,
-    pub requester_user_id: String,
-    pub background_job_id: String,
     pub source_name: String,
+    pub requester_username: Option<String>,
     pub duplicate_policy: String,
     pub status: String,
     pub total_rows: i32,
@@ -88,9 +97,8 @@ impl From<user_import_job::Model> for UserImportJobVo {
     fn from(job: user_import_job::Model) -> Self {
         Self {
             id: job.id.to_string(),
-            requester_user_id: job.requester_user_id.to_string(),
-            background_job_id: job.background_job_id.to_string(),
             source_name: job.source_name_snapshot,
+            requester_username: None,
             duplicate_policy: job.duplicate_policy,
             status: job.status,
             total_rows: job.total_rows,
@@ -107,6 +115,15 @@ impl From<user_import_job::Model> for UserImportJobVo {
             updated_at: job.updated_at,
         }
     }
+}
+
+fn job_vo_with_requester(
+    job: user_import_job::Model,
+    requester_username: Option<String>,
+) -> UserImportJobVo {
+    let mut view = UserImportJobVo::from(job);
+    view.requester_username = requester_username;
+    view
 }
 
 /// 面向管理端的导入异常行安全视图。
@@ -189,6 +206,52 @@ impl UserImportService {
         }
     }
 
+    /// 上传导入源文件，但把当前 HTTP 请求的最终操作审计留给导入任务创建事务。
+    pub async fn upload_source(
+        &self,
+        actor: &ActorContext,
+        original_name: String,
+        data: Vec<u8>,
+    ) -> AppResult<UploadResponse> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let config = self.upload_config();
+        self.file_service
+            .upload_internal_unbound(
+                tenant_id,
+                &actor.username,
+                UploadCommand {
+                    original_name,
+                    data,
+                    config: &config,
+                    bucket: IMPORT_BUCKET,
+                    compress: false,
+                },
+            )
+            .await
+    }
+
+    /// 按申请人的当前主库授权生成不含内部标识的用户导入模板。
+    pub async fn build_template(&self, actor: &ActorContext) -> AppResult<Vec<u8>> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let authorization = self
+            .user_service
+            .resolve_current_authorization(tenant_id, actor.user_id, USER_IMPORT_PERMISSION)
+            .await?;
+        let directory = self.load_department_directory(tenant_id).await?;
+        let available_paths = directory.available_paths(&authorization.actor)?;
+        tokio::task::spawn_blocking(move || {
+            ExcelExporter::export_template_with_reference(
+                "用户数据",
+                UserImportData::excel_headers(),
+                "可用部门",
+                "部门完整路径",
+                &available_paths,
+            )
+        })
+        .await
+        .map_err(|error| AppError::Internal(format!("用户导入模板生成任务异常结束: {error}")))?
+    }
+
     pub async fn find_by_idempotency(
         &self,
         actor: &ActorContext,
@@ -196,10 +259,24 @@ impl UserImportService {
     ) -> AppResult<Option<UserImportJobVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_sha256("幂等键", idempotency_key_hash)?;
-        UserImportRepository
-            .find_by_idempotency(self.db.write(), tenant_id, idempotency_key_hash)
-            .await
-            .map(|job| job.map(UserImportJobVo::from))
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let existing = UserImportRepository
+            .find_by_idempotency_in_txn(&transaction, tenant_id, idempotency_key_hash)
+            .await?;
+        let Some(existing) = existing else {
+            transaction.rollback().await.map_err(database_error)?;
+            return Ok(None);
+        };
+        let requester_username = UserRepository
+            .find_usernames_by_ids(&transaction, tenant_id, &[existing.requester_user_id])
+            .await?
+            .into_iter()
+            .next()
+            .map(|(_, username)| username);
+        let job = job_vo_with_requester(existing, requester_username);
+        // 幂等重放同样属于成功写请求；短事务绑定审计，避免产生 transaction_unbound 告警。
+        crate::commit_current_audit(transaction).await?;
+        Ok(Some(job))
     }
 
     pub async fn request(
@@ -227,9 +304,16 @@ impl UserImportService {
             .find_by_idempotency_in_txn(&transaction, tenant_id, &command.idempotency_key_hash)
             .await?
         {
-            transaction.rollback().await.map_err(database_error)?;
+            let requester_username = UserRepository
+                .find_usernames_by_ids(&transaction, tenant_id, &[existing.requester_user_id])
+                .await?
+                .into_iter()
+                .next()
+                .map(|(_, username)| username);
+            let job = job_vo_with_requester(existing, requester_username);
+            crate::commit_current_audit(transaction).await?;
             return Ok(RequestUserImportOutcome {
-                job: UserImportJobVo::from(existing),
+                job,
                 inserted: false,
             });
         }
@@ -247,6 +331,37 @@ impl UserImportService {
 
         let import_id = try_next_snowflake_id()?;
         let now = UserImportRepository.database_utc_now(&transaction).await?;
+        let source_file = FileRepository
+            .find_by_id_any_status_for_update(&transaction, tenant_id, command.source_file_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("用户导入源文件不存在或已被回收".into()))?;
+        if source_file.bucket != IMPORT_BUCKET {
+            return Err(AppError::Validation("用户导入源文件存储边界不匹配".into()));
+        }
+        if source_file.file_sha256 != command.source_sha256 {
+            return Err(AppError::Validation("用户导入源文件摘要不匹配".into()));
+        }
+        if source_file.upload_status == ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_CLEANUP
+        {
+            if !FileRepository
+                .restore_import_file_for_reference_in_txn(
+                    &transaction,
+                    tenant_id,
+                    command.source_file_id,
+                    now,
+                )
+                .await?
+            {
+                return Err(AppError::NotFound(
+                    "用户导入源文件已进入最终回收阶段".into(),
+                ));
+            }
+        } else if source_file.upload_status
+            != ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_READY
+            || source_file.del_flag != ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL
+        {
+            return Err(AppError::Validation("用户导入源文件尚未完成上传".into()));
+        }
         let trace_context = crate::trace_context::current_trace_context();
         let queued = self
             .queue
@@ -287,9 +402,55 @@ impl UserImportService {
         crate::commit_current_audit(transaction).await?;
         self.queue.notify_background_jobs().await;
         Ok(RequestUserImportOutcome {
-            job: UserImportJobVo::from(job),
+            job: job_vo_with_requester(job, Some(actor.username.clone())),
             inserted: true,
         })
+    }
+
+    /// 导入任务创建失败后，将本次上传且尚未被任何任务引用的文件纳入延迟回收。
+    pub async fn schedule_unreferenced_source_cleanup(
+        &self,
+        actor: &ActorContext,
+        source_file_id: i64,
+    ) -> AppResult<()> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let result: AppResult<bool> = async {
+            TenantRepository
+                .lock_tenant_in_txn(&transaction, tenant_id)
+                .await?;
+            let now = FileRepository.database_utc_now(&transaction).await?;
+            let Some(file) = FileRepository
+                .find_by_id_any_status_for_update(&transaction, tenant_id, source_file_id)
+                .await?
+            else {
+                return Ok(false);
+            };
+            if file.bucket != IMPORT_BUCKET {
+                return Err(AppError::Validation("只能清理用户导入专用文件".into()));
+            }
+            FileRepository
+                .mark_import_orphan_for_cleanup_in_txn(
+                    &transaction,
+                    tenant_id,
+                    source_file_id,
+                    now,
+                    now + chrono::Duration::minutes(IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES),
+                )
+                .await
+        }
+        .await;
+        match result {
+            // 该事务只负责失败补偿，不能把主请求提前标记为审计成功。
+            Ok(true) => transaction.commit().await.map_err(database_error),
+            Ok(false) => transaction.rollback().await.map_err(database_error),
+            Err(error) => {
+                if let Err(rollback_error) = transaction.rollback().await {
+                    tracing::error!(%rollback_error, "用户导入孤儿文件回收事务回滚失败");
+                }
+                Err(error)
+            }
+        }
     }
 
     pub async fn list(
@@ -309,10 +470,26 @@ impl UserImportService {
                 },
             )
             .await?;
+        let mut requester_ids = page
+            .records
+            .iter()
+            .map(|job| job.requester_user_id)
+            .collect::<Vec<_>>();
+        requester_ids.sort_unstable();
+        requester_ids.dedup();
+        let requester_usernames = UserRepository
+            .find_usernames_by_ids(self.db.write(), tenant_id, &requester_ids)
+            .await?
+            .into_iter()
+            .collect::<HashMap<_, _>>();
         Ok(PageResult::new(
             page.records
                 .into_iter()
-                .map(UserImportJobVo::from)
+                .map(|job| {
+                    let requester_username =
+                        requester_usernames.get(&job.requester_user_id).cloned();
+                    job_vo_with_requester(job, requester_username)
+                })
                 .collect(),
             page.total,
             &params.page,
@@ -321,11 +498,17 @@ impl UserImportService {
 
     pub async fn get(&self, actor: &ActorContext, id: i64) -> AppResult<UserImportJobVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        UserImportRepository
+        let job = UserImportRepository
             .find_by_id_for_tenant(self.db.write(), tenant_id, id)
             .await?
-            .map(UserImportJobVo::from)
-            .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))
+            .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
+        let requester_username = UserRepository
+            .find_usernames_by_ids(self.db.write(), tenant_id, &[job.requester_user_id])
+            .await?
+            .into_iter()
+            .next()
+            .map(|(_, username)| username);
+        Ok(job_vo_with_requester(job, requester_username))
     }
 
     pub async fn rows(
@@ -404,7 +587,7 @@ impl UserImportService {
             .await?
             .ok_or_else(|| AppError::NotFound("后台任务没有关联用户导入记录".into()))?;
         if import.is_terminal() {
-            return self.ensure_error_report(&import).await;
+            return self.ensure_error_report_with_status(&import).await;
         }
 
         import = self.mark_running(import.id).await?;
@@ -422,6 +605,11 @@ impl UserImportService {
             return Ok(());
         }
         let rows = tokio::task::spawn_blocking(move || {
+            ExcelImporter::validate_headers_from_bytes(
+                &source.data,
+                None,
+                UserImportData::excel_headers(),
+            )?;
             ExcelImporter::read_rows_from_bytes::<UserImportData>(&source.data, None)
         })
         .await
@@ -443,7 +631,7 @@ impl UserImportService {
         self.set_total_rows(import.id, rows.len()).await?;
         self.process_rows(import.id, rows).await?;
         let finished = self.finalize_import(import.id).await?;
-        self.ensure_error_report(&finished).await
+        self.ensure_error_report_with_status(&finished).await
     }
 
     async fn process_rows(
@@ -451,6 +639,7 @@ impl UserImportService {
         import_id: i64,
         rows: Vec<ExcelImportRow<UserImportData>>,
     ) -> AppResult<()> {
+        let mut department_directory = None;
         loop {
             let current = user_import_job::Entity::find_by_id(import_id)
                 .one(self.db.write())
@@ -486,21 +675,54 @@ impl UserImportService {
                 }
                 Err(error) => return Err(error),
             };
+            let authorization_epoch = authorization.tenant.authorization_epoch;
+            if department_directory
+                .as_ref()
+                .is_none_or(|(epoch, _)| *epoch != authorization_epoch)
+            {
+                department_directory = Some((
+                    authorization_epoch,
+                    self.load_department_directory(&current.tenant_id).await?,
+                ));
+            }
+            let directory = &department_directory
+                .as_ref()
+                .ok_or_else(|| AppError::Internal("部门路径目录未初始化".into()))?
+                .1;
             let end = offset
                 .saturating_add(self.config.batch_size)
                 .min(rows.len());
             let prepared = self
-                .prepare_batch(&current.tenant_id, &authorization.actor, &rows[offset..end])
+                .prepare_batch(
+                    &authorization.actor,
+                    directory,
+                    &rows[offset..end],
+                    authorization.tenant.authorization_epoch,
+                    authorization.user.authorization_version,
+                )
                 .await?;
-            self.commit_batch(import_id, offset, end, prepared).await?;
+            if self.commit_batch(import_id, offset, end, prepared).await?
+                == CommitBatchOutcome::AuthorizationChanged
+            {
+                department_directory = None;
+            }
         }
+    }
+
+    async fn load_department_directory(&self, tenant_id: &str) -> AppResult<DepartmentDirectory> {
+        let departments = DeptRepository
+            .find_filtered(self.db.write(), tenant_id, None, None)
+            .await?;
+        Ok(DepartmentDirectory::from_departments(departments))
     }
 
     async fn prepare_batch(
         &self,
-        tenant_id: &str,
         actor: &ActorContext,
+        directory: &DepartmentDirectory,
         rows: &[ExcelImportRow<UserImportData>],
+        tenant_authorization_epoch: i32,
+        requester_authorization_version: i32,
     ) -> AppResult<PreparedBatch> {
         let mut issues = Vec::new();
         let mut candidates = Vec::new();
@@ -526,14 +748,14 @@ impl UserImportService {
                 ));
                 continue;
             }
-            let dept_id = match parse_required_department(data.dept_id.as_deref()) {
-                Ok(dept_id) => dept_id,
-                Err(error) => {
+            let department = match directory.resolve(data.department_path.as_deref(), actor) {
+                Ok(department) => department,
+                Err(issue) => {
                     issues.push(RowIssue::failed(
                         row_number,
                         &data.username,
-                        "invalid_department",
-                        &error.to_string(),
+                        issue.code,
+                        &issue.message,
                     ));
                     continue;
                 }
@@ -550,45 +772,11 @@ impl UserImportService {
             candidates.push(ImportCandidate {
                 row_number,
                 data,
-                dept_id,
+                department_id: department.id,
             });
         }
 
-        let mut requested_depts = candidates
-            .iter()
-            .map(|candidate| candidate.dept_id)
-            .collect::<Vec<_>>();
-        requested_depts.sort_unstable();
-        requested_depts.dedup();
-        let existing_depts = DeptRepository
-            .find_filtered_by_ids(self.db.write(), tenant_id, None, None, &requested_depts)
-            .await?
-            .into_iter()
-            .map(|dept| dept.id)
-            .collect::<HashSet<_>>();
-
-        let mut valid = Vec::new();
-        for candidate in candidates {
-            if !existing_depts.contains(&candidate.dept_id) {
-                issues.push(RowIssue::failed(
-                    candidate.row_number,
-                    &candidate.data.username,
-                    "department_not_found",
-                    "部门不存在或不属于当前租户",
-                ));
-            } else if !department_is_visible(actor, candidate.dept_id) {
-                issues.push(RowIssue::failed(
-                    candidate.row_number,
-                    &candidate.data.username,
-                    "department_out_of_scope",
-                    "部门超出申请人的当前数据范围",
-                ));
-            } else {
-                valid.push(candidate);
-            }
-        }
-
-        let prepared = try_join_all(valid.into_iter().map(|candidate| {
+        let prepared = try_join_all(candidates.into_iter().map(|candidate| {
             let permits = self.hash_permits.clone();
             async move {
                 let permit = permits
@@ -613,6 +801,8 @@ impl UserImportService {
         Ok(PreparedBatch {
             users: prepared,
             issues,
+            tenant_authorization_epoch,
+            requester_authorization_version,
         })
     }
 
@@ -622,7 +812,7 @@ impl UserImportService {
         expected_offset: usize,
         next_offset: usize,
         mut prepared: PreparedBatch,
-    ) -> AppResult<()> {
+    ) -> AppResult<CommitBatchOutcome> {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let mut import = UserImportRepository
             .lock_by_id_in_txn(&transaction, import_id)
@@ -637,11 +827,11 @@ impl UserImportService {
                 .save_in_txn(&transaction, import)
                 .await?;
             transaction.commit().await.map_err(database_error)?;
-            return Ok(());
+            return Ok(CommitBatchOutcome::Committed);
         }
         if usize::try_from(import.processed_rows).ok() != Some(expected_offset) {
             transaction.rollback().await.map_err(database_error)?;
-            return Ok(());
+            return Ok(CommitBatchOutcome::Committed);
         }
         let now = UserImportRepository.database_utc_now(&transaction).await?;
         let usernames = prepared
@@ -649,9 +839,23 @@ impl UserImportService {
             .iter()
             .map(|item| item.candidate.data.username.clone())
             .collect::<Vec<_>>();
-        TenantRepository
+        let tenant = TenantRepository
             .lock_tenant_in_txn(&transaction, &import.tenant_id)
             .await?;
+        let requester = UserRepository
+            .find_by_id_for_update(&transaction, &import.tenant_id, import.requester_user_id)
+            .await?;
+        let authorization_changed = tenant.authorization_epoch
+            != prepared.tenant_authorization_epoch
+            || !tenant.is_available(now)
+            || requester.as_ref().is_none_or(|user| {
+                !user.is_enabled()
+                    || user.authorization_version != prepared.requester_authorization_version
+            });
+        if authorization_changed {
+            transaction.rollback().await.map_err(database_error)?;
+            return Ok(CommitBatchOutcome::AuthorizationChanged);
+        }
         let existing = UserRepository
             .find_existing_usernames_in_txn(&transaction, &import.tenant_id, &usernames)
             .await?
@@ -737,7 +941,8 @@ impl UserImportService {
         UserImportRepository
             .save_in_txn(&transaction, import)
             .await?;
-        transaction.commit().await.map_err(database_error)
+        transaction.commit().await.map_err(database_error)?;
+        Ok(CommitBatchOutcome::Committed)
     }
 
     async fn mark_running(&self, import_id: i64) -> AppResult<user_import_job::Model> {
@@ -884,6 +1089,7 @@ impl UserImportService {
         })
         .await
         .map_err(|error| AppError::Internal(format!("用户导入报告生成任务异常结束: {error}")))??;
+        let report_sha256 = hex::encode(Sha256::digest(&bytes));
         let mut config = self.upload_config();
         config.max_file_size = config
             .max_file_size
@@ -894,7 +1100,7 @@ impl UserImportService {
                 &import.tenant_id,
                 "system:user-import",
                 UploadCommand {
-                    original_name: format!("user_import_{}_report.xlsx", import.id),
+                    original_name: "user_import_report.xlsx".to_owned(),
                     data: bytes,
                     config: &config,
                     bucket: IMPORT_BUCKET,
@@ -907,12 +1113,28 @@ impl UserImportService {
             .parse::<i64>()
             .map_err(|_| AppError::Internal("用户导入报告文件标识无效".into()))?;
         let transaction = self.db.write().begin().await.map_err(database_error)?;
+        // 报告文件可能因内容相同而被多个任务复用。与导入创建及历史清理统一使用
+        // tenant -> file -> import 的锁序，并在写引用前重新确认对象仍可用。
+        TenantRepository
+            .lock_tenant_in_txn(&transaction, &import.tenant_id)
+            .await?;
+        let report_file = FileRepository
+            .find_by_id_any_status_for_update(&transaction, &import.tenant_id, file_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("用户导入报告文件已被回收".into()))?;
+        if report_file.bucket != IMPORT_BUCKET
+            || report_file.upload_status
+                != ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_READY
+            || report_file.file_sha256 != report_sha256
+        {
+            return Err(AppError::Conflict("用户导入报告文件状态已变化".into()));
+        }
         let mut current = UserImportRepository
             .lock_by_id_in_txn(&transaction, import.id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
-        if current.error_report_file_id.is_none() {
-            let now = UserImportRepository.database_utc_now(&transaction).await?;
+        let now = UserImportRepository.database_utc_now(&transaction).await?;
+        if current.error_report_file_id.is_none() && current.is_terminal() {
             current.error_report_file_id = Some(file_id);
             current.updated_at = now;
             current.last_error = None;
@@ -921,42 +1143,67 @@ impl UserImportService {
                 .await?;
             transaction.commit().await.map_err(database_error)?;
         } else {
-            transaction.rollback().await.map_err(database_error)?;
+            // 并发执行已经关联报告，或人工重投已使任务离开终态时，本次上传可能成为
+            // 无引用对象。只为确实没有任何引用的文件建立可恢复墓碑。
+            let marked = FileRepository
+                .mark_import_orphan_for_cleanup_in_txn(
+                    &transaction,
+                    &import.tenant_id,
+                    file_id,
+                    now,
+                    now + chrono::Duration::minutes(IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES),
+                )
+                .await?;
+            if marked {
+                transaction.commit().await.map_err(database_error)?;
+            } else {
+                transaction.rollback().await.map_err(database_error)?;
+            }
         }
         Ok(())
     }
 
-    pub async fn record_execution_failure(
+    /// 生成异常报告，并只在明确的报告阶段记录错误，避免把租约或队列错误写入已完成导入。
+    async fn ensure_error_report_with_status(
         &self,
-        background_job_id: i64,
-        terminal: bool,
-        error: &str,
+        import: &user_import_job::Model,
     ) -> AppResult<()> {
-        let Some(import) = UserImportRepository
-            .find_by_background_job(self.db.write(), background_job_id)
+        match self.ensure_error_report(import).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                if let Err(record_error) = self
+                    .record_error_report_failure(import.id, &error.to_string())
+                    .await
+                {
+                    tracing::error!(
+                        import_id = import.id,
+                        %record_error,
+                        "记录用户导入异常报告失败状态时发生错误"
+                    );
+                }
+                Err(error)
+            }
+        }
+    }
+
+    async fn record_error_report_failure(&self, import_id: i64, error: &str) -> AppResult<()> {
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let Some(mut import) = UserImportRepository
+            .lock_by_id_in_txn(&transaction, import_id)
             .await?
         else {
+            transaction.rollback().await.map_err(database_error)?;
             return Ok(());
         };
-        if import.is_terminal() {
+        if import.status != user_import_job::Model::STATUS_PARTIAL {
+            transaction.rollback().await.map_err(database_error)?;
             return Ok(());
         }
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let mut current = UserImportRepository
-            .lock_by_id_in_txn(&transaction, import.id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
         let now = UserImportRepository.database_utc_now(&transaction).await?;
-        current.status = if terminal {
-            user_import_job::Model::STATUS_FAILED.to_owned()
-        } else {
-            user_import_job::Model::STATUS_PENDING.to_owned()
-        };
-        current.last_error = Some(truncate_error(error));
-        current.updated_at = now;
-        current.completed_at = terminal.then_some(now);
+        import.last_error = Some(truncate_error(error));
+        import.updated_at = now;
         UserImportRepository
-            .save_in_txn(&transaction, current)
+            .save_in_txn(&transaction, import)
             .await?;
         transaction.commit().await.map_err(database_error)
     }
@@ -980,32 +1227,190 @@ impl JobHandler for UserImportJobHandler {
     }
 
     async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
-        match self.service.execute_background_job(job.id).await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let terminal = is_terminal_import_error(&error) || job.attempts >= job.max_attempts;
-                if let Err(record_error) = self
-                    .service
-                    .record_execution_failure(job.id, terminal, &error.to_string())
-                    .await
-                {
-                    tracing::error!(%record_error, job_id = job.id, "记录用户导入失败状态时发生错误");
-                }
-                if is_terminal_import_error(&error) {
-                    tracing::warn!(%error, job_id = job.id, "用户导入因不可重试错误终止");
-                    Ok(())
-                } else {
-                    Err(error)
-                }
-            }
-        }
+        self.service.execute_background_job(job.id).await
+    }
+
+    fn should_dead_letter(&self, error: &AppError) -> bool {
+        is_terminal_import_error(error)
     }
 }
 
 struct ImportCandidate {
     row_number: i32,
     data: UserImportData,
-    dept_id: i64,
+    department_id: i64,
+}
+
+struct DepartmentDirectory {
+    by_path: HashMap<String, Vec<DepartmentTarget>>,
+}
+
+#[derive(Clone)]
+struct DepartmentTarget {
+    id: i64,
+    hierarchy_valid: bool,
+    enabled: bool,
+}
+
+#[derive(Clone)]
+struct DepartmentPathState {
+    path: String,
+    hierarchy_valid: bool,
+    enabled: bool,
+}
+
+struct DepartmentIssue {
+    code: &'static str,
+    message: String,
+}
+
+impl DepartmentDirectory {
+    fn from_departments(departments: Vec<dept::Model>) -> Self {
+        let by_id = departments
+            .into_iter()
+            .map(|department| (department.id, department))
+            .collect::<HashMap<_, _>>();
+        let mut cache = HashMap::new();
+        let mut by_path: HashMap<String, Vec<DepartmentTarget>> = HashMap::new();
+
+        for id in by_id.keys().copied() {
+            let mut visiting = HashSet::new();
+            let Ok(state) = resolve_department_path(id, &by_id, &mut cache, &mut visiting, 0)
+            else {
+                continue;
+            };
+            // 与行解析共用同一长度边界，避免模板发放 Worker 必然拒绝的路径。
+            if state.path.len() > DEPARTMENT_PATH_MAX_BYTES {
+                continue;
+            }
+            by_path
+                .entry(state.path)
+                .or_default()
+                .push(DepartmentTarget {
+                    id,
+                    hierarchy_valid: state.hierarchy_valid,
+                    enabled: state.enabled,
+                });
+        }
+
+        Self { by_path }
+    }
+
+    fn resolve(
+        &self,
+        value: Option<&str>,
+        actor: &ActorContext,
+    ) -> Result<DepartmentTarget, DepartmentIssue> {
+        let path = value
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| DepartmentIssue {
+                code: "department_required",
+                message: "部门完整路径不能为空".into(),
+            })?;
+        if path.len() > DEPARTMENT_PATH_MAX_BYTES {
+            return Err(DepartmentIssue {
+                code: "department_path_too_long",
+                message: format!("部门完整路径不能超过 {DEPARTMENT_PATH_MAX_BYTES} 字节"),
+            });
+        }
+        let Some(matches) = self.by_path.get(path) else {
+            return Err(DepartmentIssue {
+                code: "department_not_found",
+                message: "部门完整路径不存在或不属于当前租户".into(),
+            });
+        };
+        if matches.len() != 1 {
+            return Err(DepartmentIssue {
+                code: "department_ambiguous",
+                message: "部门完整路径对应多个部门，请先整理重复的部门层级".into(),
+            });
+        }
+        let department = matches[0].clone();
+        if !department.hierarchy_valid {
+            return Err(DepartmentIssue {
+                code: "department_invalid_hierarchy",
+                message: "部门层级数据无效，请先修复部门树".into(),
+            });
+        }
+        if !department.enabled {
+            return Err(DepartmentIssue {
+                code: "department_disabled",
+                message: "部门或其上级部门已停用".into(),
+            });
+        }
+        if !department_is_visible(actor, department.id) {
+            return Err(DepartmentIssue {
+                code: "department_out_of_scope",
+                message: "部门超出申请人的当前数据范围".into(),
+            });
+        }
+        Ok(department)
+    }
+
+    fn available_paths(&self, actor: &ActorContext) -> AppResult<Vec<String>> {
+        let mut paths = self
+            .by_path
+            .iter()
+            .filter(|(_, matches)| {
+                matches.len() == 1
+                    && matches[0].hierarchy_valid
+                    && matches[0].enabled
+                    && department_is_visible(actor, matches[0].id)
+            })
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        paths.sort_unstable();
+        Ok(paths)
+    }
+}
+
+fn resolve_department_path(
+    id: i64,
+    by_id: &HashMap<i64, dept::Model>,
+    cache: &mut HashMap<i64, Result<DepartmentPathState, ()>>,
+    visiting: &mut HashSet<i64>,
+    depth: usize,
+) -> Result<DepartmentPathState, ()> {
+    if let Some(cached) = cache.get(&id) {
+        return cached.clone();
+    }
+    if depth >= DEPARTMENT_HIERARCHY_MAX_DEPTH || !visiting.insert(id) {
+        return Err(());
+    }
+    let result = (|| {
+        let department = by_id.get(&id).ok_or(())?;
+        let name = department.name.trim();
+        if name.is_empty() {
+            return Err(());
+        }
+        match department.parent_id {
+            None => Ok(DepartmentPathState {
+                path: name.to_owned(),
+                hierarchy_valid: department.ancestors == "0",
+                enabled: department.is_enabled(),
+            }),
+            Some(parent_id) => {
+                let parent = by_id.get(&parent_id).ok_or(())?;
+                let parent_state = resolve_department_path(
+                    parent_id,
+                    by_id,
+                    cache,
+                    visiting,
+                    depth.saturating_add(1),
+                )?;
+                Ok(DepartmentPathState {
+                    path: format!("{}{DEPARTMENT_PATH_SEPARATOR}{name}", parent_state.path),
+                    hierarchy_valid: parent_state.hierarchy_valid
+                        && department.ancestors == format!("{},{}", parent.ancestors, parent.id),
+                    enabled: parent_state.enabled && department.is_enabled(),
+                })
+            }
+        }
+    })();
+    visiting.remove(&id);
+    cache.insert(id, result.clone());
+    result
 }
 
 struct PreparedUser {
@@ -1016,6 +1421,14 @@ struct PreparedUser {
 struct PreparedBatch {
     users: Vec<PreparedUser>,
     issues: Vec<RowIssue>,
+    tenant_authorization_epoch: i32,
+    requester_authorization_version: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommitBatchOutcome {
+    Committed,
+    AuthorizationChanged,
 }
 
 struct RowIssue {
@@ -1122,7 +1535,7 @@ fn build_user_model(
         preferred_locale: None,
         status: user::Model::STATUS_PENDING_ACTIVATION.to_owned(),
         authorization_version: 1,
-        dept_id: Some(prepared.candidate.dept_id),
+        dept_id: Some(prepared.candidate.department_id),
         remark: None,
         login_ip: None,
         login_date: None,
@@ -1141,22 +1554,11 @@ fn normalize_import_data(data: &mut UserImportData) {
         .take()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
-    data.dept_id = data
-        .dept_id
+    data.department_path = data
+        .department_path
         .take()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
-}
-
-fn parse_required_department(value: Option<&str>) -> AppResult<i64> {
-    let value = value.ok_or_else(|| AppError::Validation("部门ID不能为空".into()))?;
-    let id = value
-        .parse::<i64>()
-        .map_err(|_| AppError::Validation("部门ID必须是正整数".into()))?;
-    if id <= 0 {
-        return Err(AppError::Validation("部门ID必须是正整数".into()));
-    }
-    Ok(id)
 }
 
 fn department_is_visible(actor: &ActorContext, dept_id: i64) -> bool {

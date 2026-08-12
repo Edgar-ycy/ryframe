@@ -3,20 +3,34 @@ use ryframe_kernel::AppResult;
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
-    ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, ExprTrait, QueryFilter,
-    QuerySelect, TransactionTrait,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
     sea_query::{Expr, LockType},
 };
 
-use crate::entities::background_job;
+use crate::{
+    entities::{background_job, data_retention_run, export_job, user_import_job},
+    repositories::DataRetentionRepository,
+};
 
 use super::{
-    BackgroundJobRepository, ExpiredLeaseRecovery, JobFailureDisposition, database_error,
-    validate_lease,
+    BackgroundJobRepository, ExpiredLeaseRecovery, FailBackgroundJob, JobFailureDisposition,
+    database_error, validate_lease,
 };
 
 /// 租约到期且尝试次数耗尽时写入的安全诊断原因。
 const EXPIRED_LEASE_DEAD_ERROR: &str = "任务租约已过期，处理结果未知";
+
+const USER_IMPORT_JOB_TYPE: &str = "system.user.import";
+const EXPORT_JOB_TYPE: &str = "system.export.execute";
+const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";
+
+#[derive(Clone, Copy)]
+enum LinkedJobDisposition {
+    Retried,
+    Dead,
+    ManuallyRetried,
+}
 
 impl BackgroundJobRepository {
     /// 回收崩溃 Worker 遗留的过期租约。
@@ -28,49 +42,58 @@ impl BackgroundJobRepository {
         db: &DatabaseConnection,
         now: DateTime<Utc>,
     ) -> AppResult<ExpiredLeaseRecovery> {
-        self.recover_expired_leases_on(db, now).await
-    }
-
-    async fn recover_expired_leases_on<C>(
-        &self,
-        db: &C,
-        now: DateTime<Utc>,
-    ) -> AppResult<ExpiredLeaseRecovery>
-    where
-        C: sea_orm::ConnectionTrait,
-    {
-        let dead = Self::expired_lease_dead_query(now)
-            .exec(db)
-            .await
-            .map_err(database_error)?;
-        let requeued = background_job::Entity::update_many()
-            .col_expr(
-                background_job::Column::Status,
-                Expr::value(background_job::Model::STATUS_PENDING),
-            )
-            .col_expr(
-                background_job::Column::LeaseOwner,
-                Expr::value(Option::<String>::None),
-            )
-            .col_expr(
-                background_job::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
-            )
-            .col_expr(background_job::Column::AvailableAt, Expr::value(now))
-            .col_expr(background_job::Column::UpdatedAt, Expr::value(now))
+        let transaction = db.begin().await.map_err(database_error)?;
+        let expired = background_job::Entity::find()
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
             .filter(background_job::Column::LeaseUntil.lte(now))
-            .filter(
-                Expr::col(background_job::Column::Attempts)
-                    .lt(Expr::col(background_job::Column::MaxAttempts)),
+            .order_by_asc(background_job::Column::LeaseUntil)
+            .order_by_asc(background_job::Column::Id)
+            .lock_with_behavior(
+                LockType::Update,
+                sea_orm::sea_query::LockBehavior::SkipLocked,
             )
-            .exec(db)
+            .limit(500)
+            .all(&transaction)
             .await
             .map_err(database_error)?;
-        Ok(ExpiredLeaseRecovery {
-            requeued: requeued.rows_affected,
-            dead: dead.rows_affected,
-        })
+        let mut recovery = ExpiredLeaseRecovery::default();
+        for job in expired {
+            let dead = job.attempts >= job.max_attempts;
+            Self::sync_linked_job_state(
+                &transaction,
+                &job,
+                if dead {
+                    LinkedJobDisposition::Dead
+                } else {
+                    LinkedJobDisposition::Retried
+                },
+                Some(EXPIRED_LEASE_DEAD_ERROR),
+                now,
+            )
+            .await?;
+
+            let mut active: background_job::ActiveModel = job.into();
+            active.status = Set(if dead {
+                background_job::Model::STATUS_DEAD
+            } else {
+                background_job::Model::STATUS_PENDING
+            }
+            .to_owned());
+            active.available_at = Set(now);
+            active.lease_owner = Set(None);
+            active.lease_until = Set(None);
+            active.last_error = Set(dead.then(|| EXPIRED_LEASE_DEAD_ERROR.to_owned()));
+            active.updated_at = Set(now);
+            active.completed_at = Set(dead.then_some(now));
+            active.update(&transaction).await.map_err(database_error)?;
+            if dead {
+                recovery.dead = recovery.dead.saturating_add(1);
+            } else {
+                recovery.requeued = recovery.requeued.saturating_add(1);
+            }
+        }
+        transaction.commit().await.map_err(database_error)?;
+        Ok(recovery)
     }
 
     /// 将仍由当前 Worker 持有且未过期的租约标记为成功。
@@ -138,12 +161,16 @@ impl BackgroundJobRepository {
     pub async fn fail(
         &self,
         db: &DatabaseConnection,
-        job_id: i64,
-        worker_id: &str,
-        retry_at: DateTime<Utc>,
-        error_message: &str,
-        now: DateTime<Utc>,
+        command: FailBackgroundJob<'_>,
     ) -> AppResult<JobFailureDisposition> {
+        let FailBackgroundJob {
+            job_id,
+            worker_id,
+            retry_at,
+            error_message,
+            force_dead,
+            now,
+        } = command;
         let txn = db.begin().await.map_err(database_error)?;
         let Some(job) = Self::owned_running_query(job_id, worker_id)
             .lock(LockType::Update)
@@ -159,7 +186,19 @@ impl BackgroundJobRepository {
             return Ok(JobFailureDisposition::LeaseLost);
         }
 
-        let dead = job.attempts >= job.max_attempts;
+        let dead = force_dead || job.attempts >= job.max_attempts;
+        Self::sync_linked_job_state(
+            &txn,
+            &job,
+            if dead {
+                LinkedJobDisposition::Dead
+            } else {
+                LinkedJobDisposition::Retried
+            },
+            Some(error_message),
+            now,
+        )
+        .await?;
         let mut active: background_job::ActiveModel = job.into();
         active.status = Set(if dead {
             background_job::Model::STATUS_DEAD
@@ -194,33 +233,38 @@ impl BackgroundJobRepository {
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let result = background_job::Entity::update_many()
-            .col_expr(
-                background_job::Column::Status,
-                Expr::value(background_job::Model::STATUS_DEAD),
-            )
-            .col_expr(
-                background_job::Column::LeaseOwner,
-                Expr::value(Option::<String>::None),
-            )
-            .col_expr(
-                background_job::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
-            )
-            .col_expr(
-                background_job::Column::LastError,
-                Expr::value(Some(truncate_error(error_message))),
-            )
-            .col_expr(background_job::Column::UpdatedAt, Expr::value(now))
-            .col_expr(background_job::Column::CompletedAt, Expr::value(now))
-            .filter(background_job::Column::Id.eq(job_id))
-            .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
-            .filter(background_job::Column::LeaseOwner.eq(worker_id))
-            .filter(background_job::Column::LeaseUntil.gt(now))
-            .exec(db)
+        let transaction = db.begin().await.map_err(database_error)?;
+        let Some(job) = Self::owned_running_query(job_id, worker_id)
+            .lock(LockType::Update)
+            .one(&transaction)
             .await
-            .map_err(database_error)?;
-        Ok(result.rows_affected == 1)
+            .map_err(database_error)?
+        else {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        };
+        if job.lease_until.is_none_or(|lease_until| lease_until <= now) {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        }
+        Self::sync_linked_job_state(
+            &transaction,
+            &job,
+            LinkedJobDisposition::Dead,
+            Some(error_message),
+            now,
+        )
+        .await?;
+        let mut active: background_job::ActiveModel = job.into();
+        active.status = Set(background_job::Model::STATUS_DEAD.to_owned());
+        active.lease_owner = Set(None);
+        active.lease_until = Set(None);
+        active.last_error = Set(Some(truncate_error(error_message)));
+        active.updated_at = Set(now);
+        active.completed_at = Set(Some(now));
+        active.update(&transaction).await.map_err(database_error)?;
+        transaction.commit().await.map_err(database_error)?;
+        Ok(true)
     }
 
     /// 将当前租户的一条死信任务重新置为待执行状态。
@@ -235,11 +279,44 @@ impl BackgroundJobRepository {
         job_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let result = Self::retry_dead_query(tenant_id, include_platform, job_id, now)
-            .exec(db)
+        let transaction = db.begin().await.map_err(database_error)?;
+        let tenant_scope = if include_platform {
+            sea_orm::Condition::any()
+                .add(background_job::Column::TenantId.eq(tenant_id))
+                .add(background_job::Column::TenantId.is_null())
+        } else {
+            sea_orm::Condition::all().add(background_job::Column::TenantId.eq(tenant_id))
+        };
+        let Some(job) = background_job::Entity::find_by_id(job_id)
+            .filter(background_job::Column::Status.eq(background_job::Model::STATUS_DEAD))
+            .filter(tenant_scope)
+            .lock(LockType::Update)
+            .one(&transaction)
             .await
-            .map_err(database_error)?;
-        Ok(result.rows_affected == 1)
+            .map_err(database_error)?
+        else {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        };
+        Self::sync_linked_job_state(
+            &transaction,
+            &job,
+            LinkedJobDisposition::ManuallyRetried,
+            None,
+            now,
+        )
+        .await?;
+        let mut active: background_job::ActiveModel = job.into();
+        active.status = Set(background_job::Model::STATUS_PENDING.to_owned());
+        active.attempts = Set(0);
+        active.available_at = Set(now);
+        active.lease_owner = Set(None);
+        active.lease_until = Set(None);
+        active.updated_at = Set(now);
+        active.completed_at = Set(None);
+        active.update(&transaction).await.map_err(database_error)?;
+        transaction.commit().await.map_err(database_error)?;
+        Ok(true)
     }
 
     fn owned_running_query(
@@ -251,71 +328,238 @@ impl BackgroundJobRepository {
             .filter(background_job::Column::LeaseOwner.eq(worker_id))
     }
 
-    fn retry_dead_query(
-        tenant_id: &str,
-        include_platform: bool,
-        job_id: i64,
+    async fn sync_linked_job_state<C>(
+        db: &C,
+        job: &background_job::Model,
+        disposition: LinkedJobDisposition,
+        error_message: Option<&str>,
         now: DateTime<Utc>,
-    ) -> sea_orm::UpdateMany<background_job::Entity> {
-        let query = background_job::Entity::update_many()
-            .col_expr(
-                background_job::Column::Status,
-                Expr::value(background_job::Model::STATUS_PENDING),
-            )
-            .col_expr(background_job::Column::Attempts, Expr::value(0))
-            .col_expr(background_job::Column::AvailableAt, Expr::value(now))
-            .col_expr(
-                background_job::Column::LeaseOwner,
-                Expr::value(Option::<String>::None),
-            )
-            .col_expr(
-                background_job::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
-            )
-            .col_expr(background_job::Column::UpdatedAt, Expr::value(now))
-            .col_expr(
-                background_job::Column::CompletedAt,
-                Expr::value(Option::<DateTime<Utc>>::None),
-            )
-            .filter(background_job::Column::Id.eq(job_id))
-            .filter(background_job::Column::Status.eq(background_job::Model::STATUS_DEAD));
-        if include_platform {
-            query.filter(
-                sea_orm::Condition::any()
-                    .add(background_job::Column::TenantId.eq(tenant_id))
-                    .add(background_job::Column::TenantId.is_null()),
-            )
-        } else {
-            query.filter(background_job::Column::TenantId.eq(tenant_id))
+    ) -> AppResult<()>
+    where
+        C: ConnectionTrait,
+    {
+        let error = error_message.map(truncate_error);
+        match job.job_type.as_str() {
+            USER_IMPORT_JOB_TYPE => {
+                if matches!(disposition, LinkedJobDisposition::ManuallyRetried) {
+                    let result = user_import_job::Entity::update_many()
+                        .col_expr(
+                            user_import_job::Column::LastError,
+                            Expr::value(Option::<String>::None),
+                        )
+                        .col_expr(user_import_job::Column::UpdatedAt, Expr::value(now))
+                        .filter(user_import_job::Column::BackgroundJobId.eq(job.id))
+                        .filter(user_import_job::Column::Status.is_in([
+                            user_import_job::Model::STATUS_SUCCEEDED,
+                            user_import_job::Model::STATUS_PARTIAL,
+                        ]))
+                        .exec(db)
+                        .await
+                        .map_err(database_error)?;
+                    if result.rows_affected > 0 {
+                        return Ok(());
+                    }
+                }
+                let (status, completed_at, statuses) = match disposition {
+                    LinkedJobDisposition::Retried => (
+                        user_import_job::Model::STATUS_PENDING,
+                        None,
+                        vec![
+                            user_import_job::Model::STATUS_PENDING,
+                            user_import_job::Model::STATUS_RUNNING,
+                        ],
+                    ),
+                    LinkedJobDisposition::Dead => (
+                        user_import_job::Model::STATUS_FAILED,
+                        Some(now),
+                        vec![
+                            user_import_job::Model::STATUS_PENDING,
+                            user_import_job::Model::STATUS_RUNNING,
+                            user_import_job::Model::STATUS_FAILED,
+                        ],
+                    ),
+                    LinkedJobDisposition::ManuallyRetried => (
+                        user_import_job::Model::STATUS_PENDING,
+                        None,
+                        vec![user_import_job::Model::STATUS_FAILED],
+                    ),
+                };
+                let mut update = user_import_job::Entity::update_many()
+                    .col_expr(user_import_job::Column::Status, Expr::value(status))
+                    .col_expr(
+                        user_import_job::Column::CompletedAt,
+                        Expr::value(completed_at),
+                    )
+                    .col_expr(user_import_job::Column::UpdatedAt, Expr::value(now))
+                    .filter(user_import_job::Column::BackgroundJobId.eq(job.id))
+                    .filter(user_import_job::Column::Status.is_in(statuses));
+                if let Some(error) = error {
+                    update = update
+                        .col_expr(user_import_job::Column::LastError, Expr::value(Some(error)));
+                } else if matches!(disposition, LinkedJobDisposition::ManuallyRetried) {
+                    update = update.col_expr(
+                        user_import_job::Column::LastError,
+                        Expr::value(Option::<String>::None),
+                    );
+                }
+                update.exec(db).await.map_err(database_error)?;
+            }
+            EXPORT_JOB_TYPE => {
+                let (status, completed_at, statuses) = match disposition {
+                    LinkedJobDisposition::Retried => (
+                        export_job::Model::STATUS_QUEUED,
+                        None,
+                        vec![
+                            export_job::Model::STATUS_QUEUED,
+                            export_job::Model::STATUS_RUNNING,
+                        ],
+                    ),
+                    LinkedJobDisposition::Dead => (
+                        export_job::Model::STATUS_FAILED,
+                        Some(now),
+                        vec![
+                            export_job::Model::STATUS_QUEUED,
+                            export_job::Model::STATUS_RUNNING,
+                        ],
+                    ),
+                    LinkedJobDisposition::ManuallyRetried => (
+                        export_job::Model::STATUS_QUEUED,
+                        None,
+                        vec![export_job::Model::STATUS_FAILED],
+                    ),
+                };
+                let mut update = export_job::Entity::update_many()
+                    .col_expr(export_job::Column::Status, Expr::value(status))
+                    .col_expr(export_job::Column::CompletedAt, Expr::value(completed_at))
+                    .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
+                    .filter(export_job::Column::BackgroundJobId.eq(job.id))
+                    .filter(export_job::Column::Status.is_in(statuses));
+                if let Some(error) = error {
+                    update =
+                        update.col_expr(export_job::Column::ErrorMessage, Expr::value(Some(error)));
+                } else if matches!(disposition, LinkedJobDisposition::ManuallyRetried) {
+                    update = update.col_expr(
+                        export_job::Column::ErrorMessage,
+                        Expr::value(Option::<String>::None),
+                    );
+                }
+                update.exec(db).await.map_err(database_error)?;
+            }
+            DATA_RETENTION_JOB_TYPE => {
+                Self::ensure_retention_run(db, job, now).await?;
+                let (status, completed_at, statuses) = match disposition {
+                    LinkedJobDisposition::Retried => (
+                        data_retention_run::Model::STATUS_PENDING,
+                        None,
+                        vec![
+                            data_retention_run::Model::STATUS_PENDING,
+                            data_retention_run::Model::STATUS_RUNNING,
+                            data_retention_run::Model::STATUS_FAILED,
+                        ],
+                    ),
+                    LinkedJobDisposition::Dead => (
+                        data_retention_run::Model::STATUS_FAILED,
+                        Some(now),
+                        vec![
+                            data_retention_run::Model::STATUS_PENDING,
+                            data_retention_run::Model::STATUS_RUNNING,
+                        ],
+                    ),
+                    LinkedJobDisposition::ManuallyRetried => (
+                        data_retention_run::Model::STATUS_PENDING,
+                        None,
+                        vec![data_retention_run::Model::STATUS_FAILED],
+                    ),
+                };
+                let mut update = data_retention_run::Entity::update_many()
+                    .col_expr(data_retention_run::Column::Status, Expr::value(status))
+                    .col_expr(
+                        data_retention_run::Column::CompletedAt,
+                        Expr::value(completed_at),
+                    )
+                    .col_expr(data_retention_run::Column::UpdatedAt, Expr::value(now))
+                    .filter(data_retention_run::Column::BackgroundJobId.eq(job.id))
+                    .filter(data_retention_run::Column::Status.is_in(statuses));
+                if let Some(error) = error {
+                    update = update.col_expr(
+                        data_retention_run::Column::ErrorSummary,
+                        Expr::value(Some(error)),
+                    );
+                } else if matches!(disposition, LinkedJobDisposition::ManuallyRetried) {
+                    update = update.col_expr(
+                        data_retention_run::Column::ErrorSummary,
+                        Expr::value(Option::<String>::None),
+                    );
+                }
+                update.exec(db).await.map_err(database_error)?;
+            }
+            _ => {}
         }
+        Ok(())
     }
 
-    fn expired_lease_dead_query(now: DateTime<Utc>) -> sea_orm::UpdateMany<background_job::Entity> {
-        background_job::Entity::update_many()
-            .col_expr(
-                background_job::Column::Status,
-                Expr::value(background_job::Model::STATUS_DEAD),
+    async fn ensure_retention_run<C>(
+        db: &C,
+        job: &background_job::Model,
+        now: DateTime<Utc>,
+    ) -> AppResult<()>
+    where
+        C: ConnectionTrait,
+    {
+        if data_retention_run::Entity::find()
+            .filter(data_retention_run::Column::BackgroundJobId.eq(job.id))
+            .one(db)
+            .await
+            .map_err(database_error)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let trigger_kind = job
+            .payload
+            .get("trigger_kind")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| {
+                matches!(
+                    *value,
+                    data_retention_run::Model::TRIGGER_MANUAL
+                        | data_retention_run::Model::TRIGGER_SCHEDULED
+                )
+            })
+            .unwrap_or(data_retention_run::Model::TRIGGER_SCHEDULED);
+        let requested_by = job
+            .payload
+            .get("requested_by")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| value.parse::<i64>().ok());
+        let run_id = job
+            .payload
+            .get("run_id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(job.id);
+        DataRetentionRepository
+            .insert_run_if_missing(
+                db,
+                data_retention_run::Model {
+                    id: run_id,
+                    background_job_id: job.id,
+                    trigger_kind: trigger_kind.to_owned(),
+                    status: data_retention_run::Model::STATUS_PENDING.to_owned(),
+                    policy_snapshot: serde_json::json!({}),
+                    eligible_counts: serde_json::json!({}),
+                    deleted_counts: serde_json::json!({}),
+                    remaining_counts: serde_json::json!({}),
+                    requested_by,
+                    error_summary: None,
+                    started_at: None,
+                    completed_at: None,
+                    created_at: now,
+                    updated_at: now,
+                },
             )
-            .col_expr(
-                background_job::Column::LeaseOwner,
-                Expr::value(Option::<String>::None),
-            )
-            .col_expr(
-                background_job::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
-            )
-            .col_expr(
-                background_job::Column::LastError,
-                Expr::value(Some(EXPIRED_LEASE_DEAD_ERROR.to_owned())),
-            )
-            .col_expr(background_job::Column::UpdatedAt, Expr::value(now))
-            .col_expr(background_job::Column::CompletedAt, Expr::value(now))
-            .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
-            .filter(background_job::Column::LeaseUntil.lte(now))
-            .filter(
-                Expr::col(background_job::Column::Attempts)
-                    .gte(Expr::col(background_job::Column::MaxAttempts)),
-            )
+            .await?;
+        Ok(())
     }
 }
 

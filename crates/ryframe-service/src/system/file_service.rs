@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use ryframe_db::{DatabaseCluster, ReadConsistency};
-use ryframe_db::{FileRepository, entities::sys_file};
+use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_storage::{ObjectStorage, StorageError};
 use ryframe_utils::file_upload::{
@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 
 mod upload_reservation;
 
-use upload_reservation::{ReservationOutcome, UploadReservationGuard};
+use upload_reservation::{
+    ReservationOutcome, UploadAuditBinding, UploadReservationGuard, storage_error_is_not_found,
+};
 
 /// 文件上传响应
 #[derive(Debug)]
@@ -41,6 +43,12 @@ pub const AVATAR_BUCKET: &str = "avatar";
 
 /// 用户导入源文件与错误报告专用私有 bucket 名称。
 pub const IMPORT_BUCKET: &str = "imports";
+
+/// 内部文件最终清理声明的租约时长；进程退出后由全局清理器接管。
+const INTERNAL_DELETE_CLAIM_SECONDS: i64 = 300;
+
+/// 对象存储暂时不可用时的清理重试间隔。
+const INTERNAL_DELETE_RETRY_SECONDS: i64 = 60;
 
 pub struct UploadCommand<'a> {
     pub original_name: String,
@@ -157,8 +165,13 @@ impl FileService {
         command: UploadCommand<'_>,
     ) -> AppResult<UploadResponse> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.upload_for_tenant(tenant_id, &actor.username, command)
-            .await
+        self.upload_for_tenant(
+            tenant_id,
+            &actor.username,
+            command,
+            UploadAuditBinding::CurrentRequest,
+        )
+        .await
     }
 
     /// 由后台任务上传受控的内部文件，不接受客户端指定租户或 bucket。
@@ -171,7 +184,26 @@ impl FileService {
         if tenant_id.is_empty() || tenant_id.len() > 64 {
             return Err(AppError::Validation("内部文件租户标识无效".into()));
         }
-        self.upload_for_tenant(tenant_id, uploaded_by, command)
+        self.upload_for_tenant(
+            tenant_id,
+            uploaded_by,
+            command,
+            UploadAuditBinding::CurrentRequest,
+        )
+        .await
+    }
+
+    /// 供组合业务上传中间文件，最终操作审计由组合业务的成功事务统一提交。
+    pub(crate) async fn upload_internal_unbound(
+        &self,
+        tenant_id: &str,
+        uploaded_by: &str,
+        command: UploadCommand<'_>,
+    ) -> AppResult<UploadResponse> {
+        if tenant_id.is_empty() || tenant_id.len() > 64 {
+            return Err(AppError::Validation("内部文件租户标识无效".into()));
+        }
+        self.upload_for_tenant(tenant_id, uploaded_by, command, UploadAuditBinding::Unbound)
             .await
     }
 
@@ -180,6 +212,7 @@ impl FileService {
         tenant_id: &str,
         uploaded_by: &str,
         command: UploadCommand<'_>,
+        audit_binding: UploadAuditBinding,
     ) -> AppResult<UploadResponse> {
         let UploadCommand {
             original_name,
@@ -248,7 +281,7 @@ impl FileService {
             }
             ReservationOutcome::InProgress(existing) => {
                 return self
-                    .recover_in_progress_upload(existing, &file_sha256)
+                    .recover_in_progress_upload(existing, &file_sha256, audit_binding)
                     .await;
             }
             ReservationOutcome::Reserved(reservation) => reservation,
@@ -261,7 +294,7 @@ impl FileService {
             return Err(error);
         }
 
-        if let Err(error) = self.finalize_upload(&mut guard).await {
+        if let Err(error) = self.finalize_upload(&mut guard, audit_binding).await {
             guard.compensate().await;
             return Err(error);
         }
@@ -359,50 +392,145 @@ impl FileService {
         })
     }
 
-    /// 删除后台任务管理的内部文件对象及元数据；重复删除保持幂等。
-    pub(crate) async fn delete_internal(
+    /// 删除已经超过保留期的导入文件对象及元数据；重复删除保持幂等。
+    pub(crate) async fn delete_expired_import_artifact(
         &self,
         tenant_id: &str,
         file_id: i64,
-        expected_bucket: &str,
+        expired_before: chrono::DateTime<chrono::Utc>,
     ) -> AppResult<bool> {
-        let Some(file) = FileRepository
-            .find_by_id_any_status(self.db.write(), tenant_id, file_id)
-            .await?
-        else {
-            return Ok(false);
-        };
-        if file.bucket != expected_bucket {
-            return Err(AppError::Authorization("内部文件存储边界不匹配".into()));
-        }
-        self.storage
-            .delete(&file.bucket, &file.storage_path)
-            .await
-            .map_err(map_storage_write_error)?;
+        let expected_bucket = IMPORT_BUCKET;
         let transaction = self
             .db
             .write()
             .begin()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        match FileRepository
-            .delete_in_txn(&transaction, tenant_id, file_id)
-            .await
-        {
-            Ok(()) => transaction
-                .commit()
+        // 用户导入创建同样先锁租户再锁文件。统一锁顺序可保证资格复核与新任务引用
+        // 串行发生，避免初始候选查询后文件被活动任务重新引用。
+        TenantRepository
+            .lock_tenant_in_txn(&transaction, tenant_id)
+            .await?;
+        let Some(file) = FileRepository
+            .find_by_id_any_status_for_update(&transaction, tenant_id, file_id)
+            .await?
+        else {
+            transaction
+                .rollback()
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))?,
-            Err(AppError::NotFound(_)) => {
-                transaction
-                    .rollback()
-                    .await
-                    .map_err(|error| AppError::Database(error.to_string()))?;
-                return Ok(false);
-            }
-            Err(error) => return Err(error),
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Ok(false);
+        };
+        if file.bucket != expected_bucket {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Err(AppError::Authorization("内部文件存储边界不匹配".into()));
         }
-        Ok(true)
+        if file.upload_status != sys_file::Model::UPLOAD_STATUS_READY {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Ok(false);
+        }
+
+        let claimed_at = FileRepository.database_utc_now(&transaction).await?;
+        let claim_until = claimed_at + chrono::Duration::seconds(INTERNAL_DELETE_CLAIM_SECONDS);
+        let claim_token = uuid::Uuid::new_v4().to_string();
+        if !FileRepository
+            .claim_ready_expired_import_artifact_in_txn(
+                &transaction,
+                tenant_id,
+                file_id,
+                &claim_token,
+                expired_before,
+                claim_until,
+            )
+            .await?
+        {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Ok(false);
+        }
+
+        // 先持久化不可恢复的清理声明，再触碰对象存储。提交响应不明时必须从主库验证
+        // 令牌，只有能够证明本实例拥有清理权才允许删除对象。
+        if let Err(commit_error) = transaction.commit().await {
+            let verified = FileRepository
+                .find_by_id_any_status(self.db.write(), tenant_id, file_id)
+                .await;
+            match verified {
+                Ok(Some(current))
+                    if current.bucket == expected_bucket
+                        && current.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP
+                        && current.reservation_token.as_deref() == Some(claim_token.as_str()) => {}
+                Ok(_) => {
+                    return Err(AppError::Database(format!(
+                        "文件清理声明提交结果无法确认: {commit_error}"
+                    )));
+                }
+                Err(verify_error) => {
+                    return Err(AppError::Database(format!(
+                        "文件清理声明提交结果无法确认: {commit_error}; 主库核验失败: {verify_error}"
+                    )));
+                }
+            }
+        }
+
+        let delete_result = self.storage.delete(&file.bucket, &file.storage_path).await;
+        if let Err(error) = delete_result
+            && !storage_error_is_not_found(&error)
+        {
+            let retry_at = FileRepository.database_utc_now(self.db.write()).await?;
+            if let Err(defer_error) = FileRepository
+                .defer_cleanup_claim(
+                    self.db.write(),
+                    tenant_id,
+                    file_id,
+                    &claim_token,
+                    retry_at,
+                    retry_at + chrono::Duration::seconds(INTERNAL_DELETE_RETRY_SECONDS),
+                )
+                .await
+            {
+                // 清理声明本身仍然有效；即使延期失败，全局清理器也会在原租约到期后接管。
+                tracing::error!(
+                    file_id,
+                    %defer_error,
+                    "无法延期内部文件清理声明"
+                );
+            }
+            return Err(map_storage_write_error(error));
+        }
+
+        if FileRepository
+            .complete_cleanup_claim(self.db.write(), tenant_id, file_id, &claim_token)
+            .await?
+        {
+            return Ok(true);
+        }
+
+        // 元数据已被删除，或仍是不可恢复的清理墓碑，都表示业务文件已经完成删除。
+        // 后一种情况由已经接管令牌的实例收尾，不允许将其误判为仍可使用的文件。
+        match FileRepository
+            .find_by_id_any_status(self.db.write(), tenant_id, file_id)
+            .await?
+        {
+            None => Ok(true),
+            Some(current)
+                if current.bucket == expected_bucket
+                    && current.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP =>
+            {
+                Ok(true)
+            }
+            Some(_) => Err(AppError::Conflict(
+                "内部文件清理所有权已发生异常变化".into(),
+            )),
+        }
     }
 
     fn upload_response_for_existing(existing: sys_file::Model) -> UploadResponse {

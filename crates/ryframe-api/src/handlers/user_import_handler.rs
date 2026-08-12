@@ -8,9 +8,7 @@ use ryframe_excel::ExcelImporter;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
-use ryframe_service::system::{
-    IMPORT_BUCKET, RequestUserImportCommand, UploadCommand, UserImportListParams,
-};
+use ryframe_service::system::{RequestUserImportCommand, UserImportData, UserImportListParams};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -97,35 +95,31 @@ async fn create(
             .into());
         }
         let validation_bytes = bytes.clone();
-        tokio::task::spawn_blocking(move || ExcelImporter::validate_xlsx(&validation_bytes))
-            .await
-            .map_err(|error| AppError::Internal(format!("XLSX 内容校验任务异常结束: {error}")))??;
+        tokio::task::spawn_blocking(move || {
+            ExcelImporter::validate_headers_from_bytes(
+                &validation_bytes,
+                None,
+                UserImportData::excel_headers(),
+            )
+        })
+        .await
+        .map_err(|error| AppError::Internal(format!("XLSX 内容校验任务异常结束: {error}")))??;
         source = Some((file_name, bytes));
     }
     let (file_name, bytes) =
         source.ok_or_else(|| AppError::Validation("未找到 file 上传字段".into()))?;
     let source_sha256 = hex::encode(Sha256::digest(&bytes));
-    let upload_config = state.services.user_import.upload_config();
     let uploaded = state
         .services
-        .file
-        .upload_single(
-            &current_user,
-            UploadCommand {
-                original_name: file_name.clone(),
-                data: bytes,
-                config: &upload_config,
-                bucket: IMPORT_BUCKET,
-                compress: false,
-            },
-        )
+        .user_import
+        .upload_source(&current_user, file_name.clone(), bytes)
         .await
         .map_err(ryframe_http::HttpAppError::from)?;
     let source_file_id = uploaded
         .file_id
         .parse::<i64>()
         .map_err(|_| AppError::Internal("用户导入源文件标识无效".into()))?;
-    let outcome = state
+    let outcome = match state
         .services
         .user_import
         .request(
@@ -138,7 +132,37 @@ async fn create(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Err(cleanup_error) = state
+                .services
+                .user_import
+                .schedule_unreferenced_source_cleanup(&current_user, source_file_id)
+                .await
+            {
+                tracing::error!(
+                    file_id = source_file_id,
+                    %cleanup_error,
+                    "用户导入任务创建失败后无法安排孤儿源文件回收"
+                );
+            }
+            return Err(ryframe_http::HttpAppError::from(error));
+        }
+    };
+    if !outcome.inserted
+        && let Err(cleanup_error) = state
+            .services
+            .user_import
+            .schedule_unreferenced_source_cleanup(&current_user, source_file_id)
+            .await
+    {
+        tracing::error!(
+            file_id = source_file_id,
+            %cleanup_error,
+            "用户导入幂等重放后无法安排未引用源文件回收"
+        );
+    }
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(outcome.job.into())),

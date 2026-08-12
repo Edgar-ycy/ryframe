@@ -7,7 +7,7 @@ use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post};
-use ryframe_service::system::{UserExportFilters, UserImportData};
+use ryframe_service::system::UserExportFilters;
 
 use crate::{
     dto::{public_dto::ExportJobVo, user_dto::UserExportRequestDto},
@@ -62,11 +62,14 @@ pub(crate) async fn request_user_export(
 #[utoipa::path(get, path = "/api/v1/system/users/import-template", tag = "用户管理",
     responses((status = 200, description = "下载用户导入模板", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
 pub(crate) async fn download_import_template(
-    State(_state): State<AppState>,
-    _current_user: RequestPrincipal,
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
 ) -> HttpResult<axum::response::Response> {
-    use ryframe_excel::ExcelExporter;
-
-    let bytes = ExcelExporter::export_template("用户数据", UserImportData::excel_headers())?;
-    excel_response(bytes, "user_template.xlsx")
+    let bytes = state
+        .services
+        .user_import
+        .build_template(&current_user)
+        .await
+        .map_err(ryframe_http::HttpAppError::from)?;
+    excel_response(bytes, "user_import_template.xlsx")
 }

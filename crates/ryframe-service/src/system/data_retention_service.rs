@@ -13,10 +13,7 @@ use sea_orm::TransactionTrait;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{
-    JobHandler, JobQueue,
-    system::{FileService, IMPORT_BUCKET},
-};
+use crate::{JobHandler, JobQueue, system::FileService};
 
 pub const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";
 
@@ -291,19 +288,29 @@ impl DataRetentionService {
             .and_then(Value::as_str)
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(ryframe_utils::snowflake::try_next_snowflake_id()?);
-        let mut run = self
-            .repository
+        self.repository
             .insert_run_if_missing(
                 self.db.write(),
                 new_run_model(proposed_id, job.id, trigger_kind, requested_by, now),
             )
             .await?;
-
-        run.status = data_retention_run::Model::STATUS_RUNNING.to_owned();
-        run.started_at.get_or_insert(now);
-        run.completed_at = None;
-        run.error_summary = None;
-        run.updated_at = now;
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let run = self
+            .repository
+            .lock_run_by_background_job_in_txn(&transaction, job.id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("数据保留运行记录不存在".into()))?;
+        // 后台任务可能在业务清理已经提交后丢失租约，并由管理员重新投递。完成态是可靠事实，
+        // 通过行锁原子确认后直接返回，避免再次执行永久删除或重写原完成时间。
+        let Some(mut run) = self
+            .repository
+            .begin_run_in_txn(&transaction, run, now)
+            .await?
+        else {
+            transaction.commit().await.map_err(database_error)?;
+            return Ok(());
+        };
+        transaction.commit().await.map_err(database_error)?;
         let overview = self.overview_at(now);
         run.policy_snapshot = serde_json::to_value(&overview).map_err(json_error)?;
         let cutoffs = self.cutoffs(now);
@@ -385,6 +392,41 @@ impl DataRetentionService {
         Ok(())
     }
 
+    /// 在 Worker 领取后先建立运行记录，使外层超时或租约恢复也能同步公开状态。
+    pub async fn prepare_job(&self, job: &background_job::Model) -> AppResult<()> {
+        let now = self.repository.database_utc_now(self.db.write()).await?;
+        let trigger_kind = job
+            .payload
+            .get("trigger_kind")
+            .and_then(Value::as_str)
+            .filter(|value| {
+                matches!(
+                    *value,
+                    data_retention_run::Model::TRIGGER_MANUAL
+                        | data_retention_run::Model::TRIGGER_SCHEDULED
+                )
+            })
+            .unwrap_or(data_retention_run::Model::TRIGGER_SCHEDULED);
+        let requested_by = job
+            .payload
+            .get("requested_by")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<i64>().ok());
+        let proposed_id = job
+            .payload
+            .get("run_id")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(ryframe_utils::snowflake::try_next_snowflake_id()?);
+        self.repository
+            .insert_run_if_missing(
+                self.db.write(),
+                new_run_model(proposed_id, job.id, trigger_kind, requested_by, now),
+            )
+            .await?;
+        Ok(())
+    }
+
     fn overview_at(&self, calculated_at: DateTime<Utc>) -> DataRetentionOverview {
         let cutoffs = self.cutoffs(calculated_at);
         let mut cutoff_views = cutoff_views(&cutoffs);
@@ -429,7 +471,7 @@ impl DataRetentionService {
                 after_id = Some(artifact.file_id);
                 if self
                     .file_service
-                    .delete_internal(&artifact.tenant_id, artifact.file_id, IMPORT_BUCKET)
+                    .delete_expired_import_artifact(&artifact.tenant_id, artifact.file_id, before)
                     .await?
                 {
                     deleted = deleted.saturating_add(1);
@@ -508,6 +550,7 @@ impl JobHandler for DataRetentionJobHandler {
     }
 
     async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
+        self.service.prepare_job(job).await?;
         self.service.execute_job(job).await
     }
 }

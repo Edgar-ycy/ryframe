@@ -171,10 +171,16 @@ impl JobQueue {
 
     /// 回收崩溃 Worker 遗留的过期任务租约。
     pub async fn recover_expired_leases(&self) -> AppResult<()> {
-        let now = self.database_now().await?;
-        self.repository
-            .recover_expired_leases(self.primary(), now)
-            .await?;
+        loop {
+            let now = self.database_now().await?;
+            let recovered = self
+                .repository
+                .recover_expired_leases(self.primary(), now)
+                .await?;
+            if recovered.requeued.saturating_add(recovered.dead) < 500 {
+                break;
+            }
+        }
         Ok(())
     }
 

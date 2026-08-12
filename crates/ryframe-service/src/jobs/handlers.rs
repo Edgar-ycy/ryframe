@@ -47,29 +47,11 @@ impl JobHandler for ExportJobHandler {
     }
 
     async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
-        match self.service.execute_background_job(job.id).await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let terminal = is_terminal_export_error(&error);
-                if let Err(record_error) = self
-                    .service
-                    .record_execution_failure(
-                        job.id,
-                        terminal || job.attempts >= job.max_attempts,
-                        &error.to_string(),
-                    )
-                    .await
-                {
-                    tracing::error!(%record_error, job_id = job.id, "记录导出任务失败状态时发生错误");
-                }
-                if terminal {
-                    tracing::error!(%error, job_id = job.id, "导出任务因不可重试错误终止");
-                    Ok(())
-                } else {
-                    Err(error)
-                }
-            }
-        }
+        self.service.execute_background_job(job.id).await
+    }
+
+    fn should_dead_letter(&self, error: &AppError) -> bool {
+        is_terminal_export_error(error)
     }
 }
 

@@ -6,9 +6,8 @@ use utoipa::ToSchema;
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UserImportJobVo {
     pub id: String,
-    pub requester_user_id: String,
-    pub background_job_id: String,
     pub source_name: String,
+    pub requester_username: Option<String>,
     pub duplicate_policy: String,
     pub status: String,
     pub total_rows: i32,
@@ -29,9 +28,8 @@ impl From<ServiceJob> for UserImportJobVo {
     fn from(value: ServiceJob) -> Self {
         Self {
             id: value.id,
-            requester_user_id: value.requester_user_id,
-            background_job_id: value.background_job_id,
             source_name: value.source_name,
+            requester_username: value.requester_username,
             duplicate_policy: value.duplicate_policy,
             status: value.status,
             total_rows: value.total_rows,

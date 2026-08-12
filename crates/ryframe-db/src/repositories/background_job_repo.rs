@@ -6,7 +6,8 @@ mod types;
 
 pub use types::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
-    EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExpiredLeaseRecovery, JobFailureDisposition,
+    EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExpiredLeaseRecovery, FailBackgroundJob,
+    JobFailureDisposition,
 };
 
 use chrono::Duration;

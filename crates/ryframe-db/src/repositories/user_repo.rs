@@ -243,6 +243,31 @@ impl UserRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
+    /// 批量读取租户内仍有效用户的账号名称，供历史记录展示申请人而不暴露数据库 ID。
+    pub async fn find_usernames_by_ids<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        user_ids: &[i64],
+    ) -> AppResult<Vec<(i64, String)>>
+    where
+        C: ConnectionTrait,
+    {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        user::Entity::find()
+            .select_only()
+            .columns([user::Column::Id, user::Column::Username])
+            .filter(user::Column::TenantId.eq(tenant_id))
+            .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
+            .filter(user::Column::Id.is_in(user_ids.iter().copied()))
+            .into_tuple::<(i64, String)>()
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     pub async fn insert_many_in_txn(
         &self,
         transaction: &DatabaseTransaction,

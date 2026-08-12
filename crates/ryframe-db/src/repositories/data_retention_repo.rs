@@ -5,7 +5,8 @@ use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, Statement, TransactionTrait, TryGetable, sea_query::Expr,
+    QueryOrder, QuerySelect, Statement, TransactionTrait, TryGetable,
+    sea_query::{Expr, LockType},
 };
 
 use crate::entities::data_retention_run;
@@ -160,6 +161,45 @@ impl DataRetentionRepository {
             .one(db)
             .await
             .map_err(database_error)
+    }
+
+    /// 锁定后台任务对应的运行记录，供执行器以幂等方式确认是否仍需清理。
+    pub async fn lock_run_by_background_job_in_txn(
+        &self,
+        transaction: &sea_orm::DatabaseTransaction,
+        background_job_id: i64,
+    ) -> AppResult<Option<data_retention_run::Model>> {
+        data_retention_run::Entity::find()
+            .filter(data_retention_run::Column::BackgroundJobId.eq(background_job_id))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(database_error)
+    }
+
+    /// 在锁定事务中把可恢复状态切换为运行中；完成态保持不变并返回 `false`。
+    pub async fn begin_run_in_txn(
+        &self,
+        transaction: &sea_orm::DatabaseTransaction,
+        mut model: data_retention_run::Model,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<data_retention_run::Model>> {
+        if matches!(
+            model.status.as_str(),
+            data_retention_run::Model::STATUS_SUCCEEDED | data_retention_run::Model::STATUS_PARTIAL
+        ) {
+            return Ok(None);
+        }
+        model.status = data_retention_run::Model::STATUS_RUNNING.to_owned();
+        model.started_at.get_or_insert(now);
+        model.completed_at = None;
+        model.error_summary = None;
+        model.updated_at = now;
+        let saved = data_retention_run::ActiveModel::from(model)
+            .update(transaction)
+            .await
+            .map_err(database_error)?;
+        Ok(Some(saved))
     }
 
     pub async fn list_runs(

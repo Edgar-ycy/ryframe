@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as St
 use async_trait::async_trait;
 use chrono::Duration;
 use ryframe_config::JobConfig;
-use ryframe_db::{JobFailureDisposition, background_job};
+use ryframe_db::{FailBackgroundJob, JobFailureDisposition, background_job};
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
@@ -26,6 +26,11 @@ pub trait JobHandler: Send + Sync {
 
     /// 执行已领取任务；返回错误将触发退避重试或死信。
     async fn handle(&self, job: &background_job::Model) -> AppResult<()>;
+
+    /// 判断错误是否属于重试无法恢复的业务错误；默认交给现有重试预算处理。
+    fn should_dead_letter(&self, _error: &AppError) -> bool {
+        false
+    }
 }
 
 enum LeaseHeartbeatOutcome<T> {
@@ -362,16 +367,21 @@ impl JobWorker {
                 Err(error) => {
                     let now = self.queue.database_now().await?;
                     let retry_at = now + retry_delay(job.attempts);
+                    let force_dead = handler.should_dead_letter(&error);
+                    let error_message = error.to_string();
                     match self
                         .queue
                         .repository()
                         .fail(
                             self.queue.primary(),
-                            job.id,
-                            worker_id,
-                            retry_at,
-                            &error.to_string(),
-                            now,
+                            FailBackgroundJob {
+                                job_id: job.id,
+                                worker_id,
+                                retry_at,
+                                error_message: &error_message,
+                                force_dead,
+                                now,
+                            },
                         )
                         .await?
                     {
