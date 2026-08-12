@@ -3240,6 +3240,55 @@
         ],
         "type": "object"
       },
+      "ApiResponse_RevokeOtherSessionsResponse": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "description": "批量撤销其他登录设备的结果。",
+            "properties": {
+              "revoked_count": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "revoked_count"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_RoleVo": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -4371,6 +4420,98 @@
         ],
         "type": "object"
       },
+      "ApiResponse_Vec_AuthSessionResponse": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "description": "当前用户可管理的登录设备会话。",
+              "properties": {
+                "browser": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "current": {
+                  "type": "boolean"
+                },
+                "expires_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "ipaddr": {
+                  "type": "string"
+                },
+                "last_access_time": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "login_location": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "login_time": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "os": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sid": {
+                  "description": "稳定会话标识，只用于精确撤销，不是访问令牌或刷新令牌。",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sid",
+                "current",
+                "ipaddr",
+                "login_time",
+                "last_access_time",
+                "expires_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_Vec_DeptTreeNode": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -5435,6 +5576,60 @@
           "plan_hash",
           "target_configuration_version",
           "target_authorization_epoch"
+        ],
+        "type": "object"
+      },
+      "AuthSessionResponse": {
+        "description": "当前用户可管理的登录设备会话。",
+        "properties": {
+          "browser": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "ipaddr": {
+            "type": "string"
+          },
+          "last_access_time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "login_location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "login_time": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sid": {
+            "description": "稳定会话标识，只用于精确撤销，不是访问令牌或刷新令牌。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sid",
+          "current",
+          "ipaddr",
+          "login_time",
+          "last_access_time",
+          "expires_at"
         ],
         "type": "object"
       },
@@ -11194,6 +11389,20 @@
         },
         "type": "object"
       },
+      "RevokeOtherSessionsResponse": {
+        "description": "批量撤销其他登录设备的结果。",
+        "properties": {
+          "revoked_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revoked_count"
+        ],
+        "type": "object"
+      },
       "RoleBriefVo": {
         "description": "用户关联的简要角色信息。",
         "properties": {
@@ -13295,6 +13504,12 @@
           },
           "401": {
             "description": "用户名或密码错误"
+          },
+          "409": {
+            "description": "登录设备数量已达到安全上限"
+          },
+          "503": {
+            "description": "会话元数据或 Redis 服务不可用"
           }
         },
         "tags": [
@@ -13605,6 +13820,145 @@
           }
         ],
         "summary": "刷新令牌",
+        "tags": [
+          "认证"
+        ]
+      }
+    },
+    "/api/v1/auth/sessions": {
+      "get": {
+        "operationId": "get_auth_sessions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_AuthSessionResponse"
+                }
+              }
+            },
+            "description": "当前用户的登录设备"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "503": {
+            "description": "会话服务不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "查询当前用户的登录设备。",
+        "tags": [
+          "认证"
+        ]
+      }
+    },
+    "/api/v1/auth/sessions/revoke-others": {
+      "post": {
+        "operationId": "post_auth_sessions_revoke_others",
+        "parameters": [
+          {
+            "description": "与当前访问会话绑定的 CSRF 挑战令牌",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RevokeOtherSessionsResponse"
+                }
+              }
+            },
+            "description": "其他会话已撤销"
+          },
+          "400": {
+            "description": "可治理的会话候选超过单次安全上限"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "CSRF 挑战令牌无效"
+          },
+          "503": {
+            "description": "会话服务不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "撤销当前用户除本设备之外的全部登录设备。",
+        "tags": [
+          "认证"
+        ]
+      }
+    },
+    "/api/v1/auth/sessions/{sid}": {
+      "delete": {
+        "operationId": "delete_auth_sessions_by_sid",
+        "parameters": [
+          {
+            "description": "稳定的设备会话标识",
+            "in": "path",
+            "name": "sid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "与当前访问会话绑定的 CSRF 挑战令牌",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "会话已撤销"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "CSRF 挑战令牌无效"
+          },
+          "404": {
+            "description": "会话不存在或不属于当前用户"
+          },
+          "503": {
+            "description": "会话服务不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "撤销当前用户的一台登录设备。",
         "tags": [
           "认证"
         ]

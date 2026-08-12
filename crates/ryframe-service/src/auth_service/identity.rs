@@ -54,7 +54,11 @@ impl AuthService {
                 "用户会话已失效，请重新登录".into(),
             ));
         }
-        if !self.refresh_sessions.is_active(session_id).await? {
+        if !self
+            .refresh_sessions
+            .is_active_for_identity(session_id, tenant_id, user_id)
+            .await?
+        {
             return Err(AppError::Authentication(
                 "WebSocket 会话已失效，请重新登录".into(),
             ));

@@ -169,10 +169,14 @@ pub async fn build_all(
             .with_job_queue(job_queue.clone()),
     );
 
+    let refresh_sessions = auth.refresh_sessions();
     let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
-        Arc::new(OnlineUserService::new_redis(redis.clone()))
+        Arc::new(OnlineUserService::new_redis(
+            redis.clone(),
+            refresh_sessions,
+        ))
     } else {
-        Arc::new(OnlineUserService::new_in_memory())
+        Arc::new(OnlineUserService::new_in_memory(refresh_sessions))
     };
     let captcha = if let Some(redis) = redis_client {
         CaptchaStore::new_redis(redis.clone(), 300)

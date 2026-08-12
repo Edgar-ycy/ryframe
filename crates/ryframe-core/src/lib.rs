@@ -23,6 +23,9 @@ pub use multi_tenant::{
     validate_explicit_tenant, validate_tenant_identifier, with_tenant_context,
 };
 pub use redis_client::RedisClient;
-pub use refresh_session::{RefreshFamily, RefreshRotation, RefreshSessionStore};
+pub use refresh_session::{
+    RefreshFamily, RefreshRotation, RefreshSessionIdentity, RefreshSessionRevocation,
+    RefreshSessionStore,
+};
 pub use repository::{PageResult, Repository, ValidatedPageQuery};
 pub use token_blacklist::TokenBlacklist;

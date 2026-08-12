@@ -3,9 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use chrono::Utc;
 use tokio::sync::RwLock;
 
-use super::{
-    OnlineUserVo, UserSession, keyspace::session_key, session_codec::remaining_ttl, session_to_vo,
-};
+use super::{UserSession, keyspace::session_key, session_codec::remaining_ttl};
 
 pub(super) type Sessions = Arc<RwLock<HashMap<String, UserSession>>>;
 
@@ -20,7 +18,7 @@ pub(super) async fn remove(sessions: &Sessions, tenant_id: &str, sid: &str) {
     sessions.write().await.remove(&session_key(tenant_id, sid));
 }
 
-pub(super) async fn list(sessions: &Sessions, tenant_id: &str) -> Vec<OnlineUserVo> {
+pub(super) async fn list(sessions: &Sessions, tenant_id: &str) -> Vec<UserSession> {
     sessions
         .read()
         .await
@@ -28,11 +26,29 @@ pub(super) async fn list(sessions: &Sessions, tenant_id: &str) -> Vec<OnlineUser
         .filter(|session| {
             session.tenant_id == tenant_id && remaining_ttl(session.absolute_exp).is_some()
         })
-        .map(session_to_vo)
+        .cloned()
         .collect()
 }
 
-pub(super) async fn touch(sessions: &Sessions, tenant_id: &str, sid: &str) {
+pub(super) async fn list_for_user(
+    sessions: &Sessions,
+    tenant_id: &str,
+    user_id: i64,
+) -> Vec<UserSession> {
+    sessions
+        .read()
+        .await
+        .values()
+        .filter(|session| {
+            session.tenant_id == tenant_id
+                && session.user_id == user_id
+                && remaining_ttl(session.absolute_exp).is_some()
+        })
+        .cloned()
+        .collect()
+}
+
+pub(super) async fn touch(sessions: &Sessions, tenant_id: &str, sid: &str) -> bool {
     let key = session_key(tenant_id, sid);
     let mut sessions = sessions.write().await;
     let expired = sessions
@@ -40,8 +56,12 @@ pub(super) async fn touch(sessions: &Sessions, tenant_id: &str, sid: &str) {
         .is_some_and(|session| remaining_ttl(session.absolute_exp).is_none());
     if expired {
         sessions.remove(&key);
+        false
     } else if let Some(session) = sessions.get_mut(&key) {
         session.last_access_time = Utc::now();
+        true
+    } else {
+        false
     }
 }
 

@@ -1,6 +1,6 @@
 # 生产监控与值班手册
 
-> 最后核对：2026-08-12
+> 最后核对：2026-08-13
 
 本文档定义 RyFrame 生产环境的最低监控、告警和处置要求。告警规则模板位于
 `deploy/prometheus/ryframe-alerts.yml`。模板中的阈值是初始值，上线后应依据容量测试
@@ -17,6 +17,8 @@
 - `/livez` 可用于进程存活探测；后台任务会检查关键依赖，`/readyz` 只读取内存快照，
   不会在请求路径执行 SQL、Redis 或对象存储网络调用。公网负载均衡器仅需访问
   探针，不应访问 metrics、监控详情接口或 API 文档。
+- 当前只支持 Redis 7 standalone，不支持 Redis Cluster。多 API 实例必须连接同一个
+  `required` Redis；内存会话后端仅保证单进程一致性，不得作为多实例生产降级方案。
 
 Prometheus 推荐使用文件型 secret，避免 Token 出现在命令行和配置仓库：
 
@@ -112,11 +114,43 @@ Prometheus 查询结果和 Alertmanager 测试通知。
 为 required；不得通过切换 optional 来消除告警。恢复后确认 refresh 会话、撤销状态、
 幂等记录和分布式锁仍有效，并执行登录/刷新/登出冒烟。
 
+确认 Redis 拓扑仍为 standalone；不要在事故中把配置临时切向 Cluster 节点或 Cluster 代理。
+会话接口依赖 Redis Lua 原子维护 Refresh Family、租户索引和租户用户索引，Redis 不可用时
+`/api/v1/auth/sessions`、单设备撤销和批量撤销应明确返回 `503`。这时不能宣告撤销完成，也不能
+通过手工删除展示 metadata 代替权威 Family 撤销。
+
 ### Refresh Token 重放
 
 按安全事件处理。保全相关请求 ID、账号、租户、来源 IP 和 user-agent；确认 token family
 已被吊销，必要时吊销该用户全部会话并通知安全负责人。禁止在工单或聊天中复制原始
 Token。排查日志泄漏、代理查询参数、浏览器插件和客户端并发刷新。
+
+### 登录设备与会话撤销
+
+设备列表和撤销使用以下个人接口：
+
+- `GET /api/v1/auth/sessions` 查询当前租户用户的有效设备；只要求 Bearer token。
+- `DELETE /api/v1/auth/sessions/{sid}` 撤销一个设备；要求 Bearer token、challenge Cookie 和
+  `X-CSRF-Token`。撤销当前 `sid` 后认证 Cookie 必须被清除，后续 Bearer 请求应返回 `401`。
+- `POST /api/v1/auth/sessions/revoke-others` 保留当前设备并撤销其他设备；CSRF 要求与单设备
+  撤销相同，响应 `revoked_count` 只统计本次实际撤销数量。
+
+单设备目标不存在、跨租户或属于其他用户时统一返回 `404`；CSRF 失败为 `403`；Redis 或会话
+索引不可用为 `503`。排障时先使用 API 返回的 `request_id` 串联日志，不要记录完整 SID 列表，
+更不得记录 access token、refresh token 或 CSRF challenge。
+
+每个租户用户最多允许 256 个活跃设备会话。达到上限后新登录应返回 `409`，先让用户从仍可用的
+设备撤销旧会话，不能通过增大 Redis 脚本输入或直接编辑索引绕过限制。正常批量撤销最多处理
+256 个候选；若升级遗留、损坏或人工写入的索引超过该边界而返回 `400`，按
+`GET /api/v1/auth/sessions` 的结果逐一调用 `DELETE /api/v1/auth/sessions/{sid}`，每次确认成功后
+再处理下一条。逐一撤销是有审计和身份校验的安全降级路径，直接 `DEL` Refresh Family、租户索引
+或在线用户 metadata 会破坏事实与索引的一致性。
+
+Refresh Family 是唯一事实来源，在线用户 metadata 只保存浏览器、IP 等展示信息。版本升级后
+至少七天内同时读取新租户/用户索引与升级前 metadata，并逐条回查 Family；这覆盖当前最大
+Refresh TTL，保证旧会话可查看和撤销。兼容窗口内不要提前移除旧键、关闭双读或用全量 Redis
+清理作为发布步骤。多实例验收必须分别从两个 API 实例登录、列出并撤销同一用户会话，确认两边
+立即得到一致结果；内存模式只做单进程验收，不能证明生产一致性。
 
 ### 限流拒绝
 

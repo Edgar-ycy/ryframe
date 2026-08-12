@@ -142,6 +142,9 @@ API 不定义 `X-Nonce` / `X-Timestamp` 通用防重放协议，客户端不得�
 | `POST` | `/api/v1/auth/refresh` | 空请求体，通过 refresh Cookie 与 CSRF challenge 轮换会话 |
 | `POST` | `/api/v1/auth/logout` | 通过 Cookie 与 CSRF 撤销整个 refresh family；Bearer 可选 |
 | `GET` | `/api/v1/auth/me` | 获取当前主体 |
+| `GET` | `/api/v1/auth/sessions` | 查询当前租户、当前用户的有效登录设备 |
+| `DELETE` | `/api/v1/auth/sessions/{sid}` | 撤销当前用户的指定设备会话 |
+| `POST` | `/api/v1/auth/sessions/revoke-others` | 撤销当前用户除本设备外的全部设备会话 |
 | `POST` | `/api/v1/auth/password-reset/complete` | 使用一次性 Token 完成密码重置 |
 
 登录前先获取 challenge。响应带有 `Cache-Control: no-store`，JSON 中的 `csrf_token` 只保存在页面内存：
@@ -181,6 +184,37 @@ Cookie: ryframe_refresh_token=<opaque_token>; <csrf_challenge_cookie>
 refresh 成功会原子轮换 Cookie 和 `jti`，稳定设备会话标识为 `sid`。同一枚旧 token 在 5 秒并发窗口内返回 `409` 和 `Retry-After`；窗口外再次使用会被判定为重放，整个 refresh family 被撤销并返回 `401`。Redis 不可用时返回 `503`，服务端不会清除仍可能有效的 Cookie。
 
 access token 只用于业务请求并由页面内存持有。客户端遇到业务 `401` 时最多执行一次 single-flight 刷新并重放原请求；`503` 表示服务暂不可用，不能被当作匿名状态。登出即使 access token 已过期也可撤销 refresh family，重复调用保持成功。
+
+### 登录设备
+
+三个登录设备接口都要求有效的 Bearer access token。`GET /api/v1/auth/sessions` 不要求
+CSRF，只返回当前租户、当前用户且仍由 Refresh Family 判定为有效的设备，并把当前 `sid`
+标记为 `current=true`。响应包含浏览器、操作系统、IP、登录位置、登录时间、最近活动时间和
+绝对过期时间；在线用户 metadata 仅用于展示，缺少 metadata 的 Refresh Family 不会被伪造为
+设备记录。
+
+`DELETE /api/v1/auth/sessions/{sid}` 与
+`POST /api/v1/auth/sessions/revoke-others` 是 Cookie 认证边界内的写操作，除 Bearer token 外还
+必须携带由 `/api/v1/auth/csrf` 签发、并与当前 `sid` 绑定的 challenge Cookie 和
+`X-CSRF-Token`。撤销当前 `sid` 会同时清除本浏览器的认证 Cookie；撤销其他设备不会退出
+当前设备。批量接口始终排除当前 `sid`，响应中的 `revoked_count` 是本次实际从活跃变为撤销的
+会话数量。
+
+会话接口的状态语义如下：
+
+- Bearer token 缺失、无效或对应 Refresh Family 已撤销时返回 `401`。
+- CSRF challenge 缺失、无效或与当前 `sid` 不匹配时返回 `403`。
+- 单设备 `sid` 不存在、已过期、跨租户或属于其他用户时统一返回 `404`；已完成的同身份撤销
+  可以幂等返回成功。
+- Redis 会话或索引不可用、响应损坏时返回 `503`，不得把它解释为设备不存在或撤销成功。
+- 每个租户用户最多保有 256 个活跃设备会话；达到上限后新登录返回 `409`。批量撤销也只接受
+  最多 256 个候选。升级遗留或异常索引超过该边界时，批量接口返回 `400`，客户端或运维人员
+  应根据会话列表逐一调用 `DELETE /api/v1/auth/sessions/{sid}`，不能直接删除 Redis 键。
+
+Refresh Family 是会话是否有效的唯一事实来源。租户索引、租户用户索引和在线用户 metadata
+只负责发现候选与展示；服务端在返回列表或执行撤销前都会重新校验 Family 的租户、用户、撤销
+状态和绝对过期时间。升级兼容期内会同时读取新索引和旧在线用户 metadata，并逐项回查
+Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 
 ### 新密码策略
 

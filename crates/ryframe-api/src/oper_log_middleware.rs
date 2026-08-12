@@ -188,7 +188,9 @@ fn infer_business_info(uri: &str, method: &str) -> (String, String) {
     // 根据 HTTP 方法 + URI 细化业务类型
     let business_type = match method {
         "POST" => {
-            if uri.ends_with("/import") {
+            if uri.ends_with("/sessions/revoke-others") {
+                "FORCE_LOGOUT"
+            } else if uri.ends_with("/import") {
                 "IMPORT"
             } else if uri.contains("upload") {
                 "UPLOAD"
@@ -198,7 +200,9 @@ fn infer_business_info(uri: &str, method: &str) -> (String, String) {
         }
         "PUT" => "UPDATE",
         "DELETE" => {
-            if uri.contains("/clean") {
+            if uri.contains("/auth/sessions/") {
+                "FORCE_LOGOUT"
+            } else if uri.contains("/clean") {
                 "CLEAN"
             } else if uri.contains("/online") {
                 "FORCE_LOGOUT"
@@ -220,6 +224,7 @@ fn resource_to_title(module: &str, resource: &str) -> String {
         ("auth", "logout") => "用户登出".into(),
         ("auth", "captcha") => "验证码".into(),
         ("auth", "profile") => "个人中心".into(),
+        ("auth", "sessions") => "登录设备".into(),
         ("system", "users") => "用户管理".into(),
         ("system", "roles") => "角色管理".into(),
         ("system", "permissions") => "权限管理".into(),

@@ -100,10 +100,9 @@ async fn add_online_user(
     result: &ryframe_service::LoginResult,
     ip: &str,
     user_agent: &str,
-) {
+) -> AppResult<()> {
     use ryframe_service::system::UserSession;
 
-    let user_id: i64 = result.user_info.id.parse().unwrap_or(0);
     let login_location = ryframe_utils::ip::get_ip_location(ip);
     let now = chrono::Utc::now();
 
@@ -113,7 +112,7 @@ async fn add_online_user(
         .add_user(UserSession {
             sid: result.sid.clone(),
             tenant_id: tenant_id.to_owned(),
-            user_id,
+            user_id: result.user_id,
             username: result.user_info.username.clone(),
             dept_name: result.user_info.dept_name.clone(),
             ipaddr: ip.to_string(),
@@ -124,7 +123,7 @@ async fn add_online_user(
             last_access_time: now,
             absolute_exp: result.refresh_expires_at as i64,
         })
-        .await;
+        .await
 }
 
 #[utoipa::path(
@@ -136,7 +135,9 @@ async fn add_online_user(
     responses(
         (status = 200, description = "登录成功", body = ApiResponse<LoginResponse>),
         (status = 400, description = "参数校验失败"),
-        (status = 401, description = "用户名或密码错误")
+        (status = 401, description = "用户名或密码错误"),
+        (status = 409, description = "登录设备数量已达到安全上限"),
+        (status = 503, description = "会话元数据或 Redis 服务不可用")
     )
 )]
 pub async fn login(
@@ -188,10 +189,32 @@ pub async fn login(
                 .await
             {
                 ryframe_middleware::metrics::record_redis_degraded("login_protection");
+                if let Err(revoke_error) = state
+                    .services
+                    .auth
+                    .refresh_sessions()
+                    .revoke_for_user(&tenant_id, result.user_id, &result.sid)
+                    .await
+                {
+                    tracing::error!(%revoke_error, sid = %result.sid, "登录保护状态失败后的会话补偿撤销失败");
+                }
+                return Err(error.into());
+            }
+            if let Err(error) = add_online_user(&state, &tenant_id, &result, &ip, user_agent).await
+            {
+                ryframe_middleware::metrics::record_redis_degraded("login_session_metadata");
+                if let Err(revoke_error) = state
+                    .services
+                    .auth
+                    .refresh_sessions()
+                    .revoke_for_user(&tenant_id, result.user_id, &result.sid)
+                    .await
+                {
+                    tracing::error!(%revoke_error, sid = %result.sid, "登录元数据失败后的会话补偿撤销失败");
+                }
                 return Err(error.into());
             }
             record_login_success(&state, &tenant_id, &req.username, &ip, user_agent).await;
-            add_online_user(&state, &tenant_id, &result, &ip, user_agent).await;
 
             Ok((
                 jar.add(refresh_cookie(

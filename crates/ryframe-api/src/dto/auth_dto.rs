@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use ryframe_service::LoginResult;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -49,6 +50,7 @@ impl From<LoginResult> for LoginResponse {
             access_token,
             refresh_token: _,
             sid: _,
+            user_id: _,
             user_info,
             expires_in,
             refresh_expires_at: _,
@@ -65,4 +67,25 @@ impl From<LoginResult> for LoginResponse {
 pub struct CsrfResponse {
     pub csrf_token: String,
     pub expires_in: usize,
+}
+
+/// 当前用户可管理的登录设备会话。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthSessionResponse {
+    /// 稳定会话标识，只用于精确撤销，不是访问令牌或刷新令牌。
+    pub sid: String,
+    pub current: bool,
+    pub ipaddr: String,
+    pub login_location: Option<String>,
+    pub browser: Option<String>,
+    pub os: Option<String>,
+    pub login_time: DateTime<Utc>,
+    pub last_access_time: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// 批量撤销其他登录设备的结果。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RevokeOtherSessionsResponse {
+    pub revoked_count: u64,
 }

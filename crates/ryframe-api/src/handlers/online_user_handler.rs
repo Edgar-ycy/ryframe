@@ -2,13 +2,15 @@ use crate::dto::public_dto::OnlineUserVo;
 use crate::list_query;
 use crate::state::AppState;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, Query, State},
 };
 use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, route};
+
+use crate::oper_log_middleware::AuditMode;
 
 list_query!(pub OnlineUserQuery, OnlineUserFilterQuery {
     username: String,
@@ -19,7 +21,7 @@ list_query!(pub OnlineUserQuery, OnlineUserFilterQuery {
 pub fn online_user_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list_online_users_page))
-        .merge(route!(force_logout))
+        .merge(route!(force_logout).layer(Extension(AuditMode::Independent)))
         .with_state(state)
 }
 
@@ -93,11 +95,15 @@ pub async fn force_logout(
 
     // 这是尽力而为的二级索引清理。已撤销的令牌族会使该 sid 的所有访问/刷新
     // 令牌均无法使用。
-    state
+    if let Err(error) = state
         .services
         .online_user
         .remove_user(&current_user.tenant_id, &sid)
-        .await;
+        .await
+    {
+        ryframe_middleware::metrics::record_redis_degraded("force_logout_metadata");
+        tracing::warn!(%error, %sid, "强制下线后的展示元数据清理失败");
+    }
 
     Ok(Json(ApiResponse::success_no_data()))
 }

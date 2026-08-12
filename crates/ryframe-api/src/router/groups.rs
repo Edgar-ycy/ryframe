@@ -21,15 +21,14 @@ pub(super) fn monitor_router(
     public.merge(protect(protected, &state))
 }
 
-/// 系统管理路由（认证主体 + 租户限流 + 用户限流 + 在线跟踪 + 操作日志）
+/// 系统管理路由（认证主体 + 租户限流 + 用户限流 + 操作日志）
 ///
 /// .layer() 链的语义：后注册的 layer 包裹先注册的，即后注册的先执行（外层先执行）。
 /// 执行顺序（从外到内）：
 ///   1. auth_middleware（一次注入 RequestPrincipal）
 ///   2. authenticated_tenant_rate_limit（使用已认证租户）
 ///   3. 用户限流中间件（`user_rate_limit_middleware`）
-///   4. 在线用户跟踪（`online_user_tracking`）
-///   5. 操作日志中间件（`oper_log_middleware`）
+///   4. 操作日志中间件（`oper_log_middleware`）
 pub(super) fn system_router(
     state: AppState,
     rate_limit_state: RateLimitState,
@@ -98,11 +97,7 @@ pub(super) fn system_router(
     let router = Router::new()
         .merge(database_idempotent)
         .merge(redis_idempotent)
-        // 从内到外注册：公共系统管理层继续统一提供在线跟踪和限流。
-        .layer(from_fn_with_state(
-            state.services.online_user.clone(),
-            online_user_tracking,
-        ))
+        // 从内到外注册：公共系统管理层继续统一提供用户限流。
         .layer(from_fn_with_state(
             rate_limit_state,
             user_rate_limit_middleware,

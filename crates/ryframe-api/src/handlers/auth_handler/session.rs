@@ -1,13 +1,14 @@
 use std::net::SocketAddr;
 
 use axum::{
-    Json,
-    extract::{ConnectInfo, State},
+    Extension, Json,
+    extract::{ConnectInfo, Path, State},
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::CookieJar;
-use ryframe_auth::RequestPrincipal;
+use ryframe_auth::{RequestPrincipal, jwt::Claims};
+use ryframe_core::RefreshSessionRevocation;
 use ryframe_http::{ApiResponse, HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 
@@ -21,7 +22,7 @@ use super::{
 };
 use crate::{
     dto::{
-        auth_dto::{CsrfResponse, LoginResponse},
+        auth_dto::{AuthSessionResponse, CsrfResponse, LoginResponse, RevokeOtherSessionsResponse},
         public_dto::UserInfo,
     },
     state::AppState,
@@ -131,11 +132,15 @@ pub async fn logout(
             .inspect_err(|_| {
                 ryframe_middleware::metrics::record_redis_degraded("logout_session");
             })?;
-        state
+        if let Err(error) = state
             .services
             .online_user
             .remove_user(&claims.tenant_id, &claims.sid)
-            .await;
+            .await
+        {
+            ryframe_middleware::metrics::record_redis_degraded("logout_session_metadata");
+            tracing::warn!(%error, sid = %claims.sid, "清理退出会话元数据失败");
+        }
     }
     Ok((
         clear_auth_cookies(jar, state.config.environment),
@@ -193,6 +198,14 @@ pub async fn refresh(
         .await
     {
         Ok(result) => {
+            state
+                .services
+                .online_user
+                .touch_user_strict(&result.user_info.tenant_id, &result.sid)
+                .await
+                .inspect_err(|_| {
+                    ryframe_middleware::metrics::record_redis_degraded("refresh_session_metadata");
+                })?;
             record_login_success(
                 &state,
                 &result.user_info.tenant_id,
@@ -266,4 +279,197 @@ pub async fn me(
     let user_info = state.services.auth.get_current_user(&current_user).await?;
 
     Ok(Json(ApiResponse::success(user_info.into())))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/sessions",
+    tag = "认证",
+    responses(
+        (status = 200, description = "当前用户的登录设备", body = ApiResponse<Vec<AuthSessionResponse>>),
+        (status = 401, description = "未认证"),
+        (status = 503, description = "会话服务不可用")
+    ),
+    security(("bearer" = []))
+)]
+/// 查询当前用户的登录设备。
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    Extension(claims): Extension<Claims>,
+) -> HttpResult<Json<ApiResponse<Vec<AuthSessionResponse>>>> {
+    let mut sessions = state
+        .services
+        .online_user
+        .list_user_sessions(&current_user.tenant_id, current_user.user_id)
+        .await?;
+    sessions.sort_by(|left, right| {
+        let left_current = left.sid == claims.sid;
+        let right_current = right.sid == claims.sid;
+        right_current
+            .cmp(&left_current)
+            .then_with(|| right.last_access_time.cmp(&left.last_access_time))
+            .then_with(|| left.sid.cmp(&right.sid))
+    });
+    let sessions = sessions
+        .into_iter()
+        .map(|session| {
+            let expires_at =
+                chrono::DateTime::<chrono::Utc>::from_timestamp(session.absolute_exp, 0)
+                    .ok_or_else(|| {
+                        tracing::error!(sid = %session.sid, "登录设备绝对过期时间超出可表示范围");
+                        AppError::ServiceUnavailable("登录设备数据暂不可用".into())
+                    })?;
+            Ok(AuthSessionResponse {
+                current: session.sid == claims.sid,
+                sid: session.sid,
+                ipaddr: session.ipaddr,
+                login_location: session.login_location,
+                browser: session.browser,
+                os: session.os,
+                login_time: session.login_time,
+                last_access_time: session.last_access_time,
+                expires_at,
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    Ok(Json(ApiResponse::success(sessions)))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/auth/sessions/{sid}",
+    tag = "认证",
+    params(
+        ("sid" = String, Path, description = "稳定的设备会话标识"),
+        ("X-CSRF-Token" = String, Header, description = "与当前访问会话绑定的 CSRF 挑战令牌")
+    ),
+    responses(
+        (status = 200, description = "会话已撤销", body = ryframe_http::ApiEmptyResponse),
+        (status = 401, description = "未认证"),
+        (status = 403, description = "CSRF 挑战令牌无效"),
+        (status = 404, description = "会话不存在或不属于当前用户"),
+        (status = 503, description = "会话服务不可用")
+    ),
+    security(("bearer" = []))
+)]
+/// 撤销当前用户的一台登录设备。
+pub async fn revoke_session(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    Extension(claims): Extension<Claims>,
+    Path(sid): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> HttpResult<Response> {
+    validate_auth_origin(&state, &headers)?;
+    verify_csrf(
+        &jar,
+        &headers,
+        &state.config.auth.jwt_secret,
+        Some(&claims.sid),
+    )?;
+    let result = state
+        .services
+        .auth
+        .refresh_sessions()
+        .revoke_for_user(&current_user.tenant_id, current_user.user_id, &sid)
+        .await
+        .inspect_err(|_| {
+            ryframe_middleware::metrics::record_redis_degraded("profile_session_revoke");
+        })?;
+    if matches!(result, RefreshSessionRevocation::NotFoundOrForeign) {
+        return Err(AppError::NotFound("登录设备不存在".into()).into());
+    }
+    if let Err(error) = state
+        .services
+        .online_user
+        .remove_user(&current_user.tenant_id, &sid)
+        .await
+    {
+        ryframe_middleware::metrics::record_redis_degraded("profile_session_metadata_cleanup");
+        tracing::warn!(%error, %sid, "撤销会话后的展示元数据清理失败");
+    }
+
+    let response = Json(ApiResponse::<()>::success_no_data());
+    if sid == claims.sid {
+        Ok((clear_auth_cookies(jar, state.config.environment), response).into_response())
+    } else {
+        Ok((jar, response).into_response())
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/sessions/revoke-others",
+    tag = "认证",
+    params(("X-CSRF-Token" = String, Header, description = "与当前访问会话绑定的 CSRF 挑战令牌")),
+    responses(
+        (status = 200, description = "其他会话已撤销", body = ApiResponse<RevokeOtherSessionsResponse>),
+        (status = 400, description = "可治理的会话候选超过单次安全上限"),
+        (status = 401, description = "未认证"),
+        (status = 403, description = "CSRF 挑战令牌无效"),
+        (status = 503, description = "会话服务不可用")
+    ),
+    security(("bearer" = []))
+)]
+/// 撤销当前用户除本设备之外的全部登录设备。
+pub async fn revoke_other_sessions(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    Extension(claims): Extension<Claims>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> HttpResult<Json<ApiResponse<RevokeOtherSessionsResponse>>> {
+    validate_auth_origin(&state, &headers)?;
+    verify_csrf(
+        &jar,
+        &headers,
+        &state.config.auth.jwt_secret,
+        Some(&claims.sid),
+    )?;
+    let sessions = state
+        .services
+        .online_user
+        .list_user_sessions(&current_user.tenant_id, current_user.user_id)
+        .await?;
+    let mut candidate_sids = state
+        .services
+        .auth
+        .refresh_sessions()
+        .session_sids_for_user(&current_user.tenant_id, current_user.user_id)
+        .await?;
+    candidate_sids.extend(sessions.into_iter().map(|session| session.sid));
+    candidate_sids.sort_unstable();
+    candidate_sids.dedup();
+    let revoked_count = state
+        .services
+        .auth
+        .refresh_sessions()
+        .revoke_other_sessions_for_user(
+            &current_user.tenant_id,
+            current_user.user_id,
+            &claims.sid,
+            &candidate_sids,
+        )
+        .await
+        .inspect_err(|_| {
+            ryframe_middleware::metrics::record_redis_degraded("profile_session_revoke_others");
+        })?;
+
+    // Refresh Family 已经完成权威批量撤销；展示元数据清理失败不能回滚或掩盖安全结果。
+    for sid in candidate_sids.iter().filter(|sid| *sid != &claims.sid) {
+        if let Err(error) = state
+            .services
+            .online_user
+            .remove_user(&current_user.tenant_id, sid)
+            .await
+        {
+            ryframe_middleware::metrics::record_redis_degraded("profile_session_metadata_cleanup");
+            tracing::warn!(%error, %sid, "批量撤销后的展示元数据清理失败");
+        }
+    }
+    Ok(Json(ApiResponse::success(RevokeOtherSessionsResponse {
+        revoked_count,
+    })))
 }

@@ -19,6 +19,8 @@ pub struct LoginResult {
     pub refresh_token: String,
     /// 令牌唯一标识，用于在线用户管理
     pub sid: String,
+    /// 后端内部使用的精确用户 ID，避免从公开字符串 DTO 反向解析。
+    pub user_id: i64,
     pub user_info: UserInfo,
     pub expires_in: usize,
     pub refresh_expires_at: usize,

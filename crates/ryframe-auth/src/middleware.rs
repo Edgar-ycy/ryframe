@@ -95,9 +95,12 @@ pub async fn auth_middleware(
         .into_response());
     }
 
+    let claims_user_id = claims.sub.parse::<i64>().map_err(|_| {
+        HttpAppError::from(AppError::Authentication("令牌主体无效".into())).into_response()
+    })?;
     if !auth_state
         .refresh_sessions
-        .is_active(&claims.sid)
+        .is_active_for_identity(&claims.sid, &claims.tenant_id, claims_user_id)
         .await
         .map_err(|error| {
             record_backend_failure("access_session");

@@ -20,7 +20,7 @@ use axum::{
     middleware,
     middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Response},
-    routing::{get as get_route, post},
+    routing::{delete as delete_route, get as get_route, post},
 };
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_config::RedisMode;
@@ -85,6 +85,10 @@ where
 {
     router
         .layer(middleware::from_fn(request_locale_middleware))
+        .layer(from_fn_with_state(
+            state.services.online_user.clone(),
+            online_user_tracking,
+        ))
         .layer(from_fn_with_state(
             AuthenticatedTenantRateLimitState {
                 limiter: state.rate_limiter.clone(),
@@ -158,6 +162,7 @@ pub fn auth_router(state: AppState) -> Router {
     // 当前用户信息是只读技术端点，显式跳过通用操作审计。
     let skipped_protected = Router::new()
         .route("/me", get_route(auth_handler::me))
+        .route("/sessions", get_route(auth_handler::list_sessions))
         .layer(from_fn_with_state(
             oper_log_state.clone(),
             oper_log_middleware,
@@ -168,6 +173,14 @@ pub fn auth_router(state: AppState) -> Router {
     // 后注册的 Extension 位于操作审计中间件外层，确保策略在中间件执行前可见。
     let independent_protected = Router::new()
         .route("/ws-ticket", post(auth_handler::websocket_ticket))
+        .route(
+            "/sessions/{sid}",
+            delete_route(auth_handler::revoke_session),
+        )
+        .route(
+            "/sessions/revoke-others",
+            post(auth_handler::revoke_other_sessions),
+        )
         .layer(from_fn_with_state(
             oper_log_state.clone(),
             oper_log_middleware,
