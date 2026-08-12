@@ -4,10 +4,12 @@ use ryframe_core::{
     repository::{PageResult, ValidatedPageQuery},
 };
 use ryframe_db::{DatabaseCluster, ReadConsistency};
-use ryframe_db::{PostFilter, PostRepository, entities::post};
+use ryframe_db::{PostFilter, PostRepository, TenantConfigTransferRepository, entities::post};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
-use sea_orm::TransactionTrait;
+use sea_orm::{
+    ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
+};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -76,15 +78,6 @@ impl PostService {
     ) -> AppResult<PostVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        if self
-            .post_repo
-            .find_by_code(db, tenant_id, code)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Conflict("岗位编码已存在".into()));
-        }
-
         let mut new_post = post::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
@@ -99,9 +92,27 @@ impl PostService {
         };
         new_post.fill_on_insert(&FillContext::new())?;
         let transaction = db.begin().await.map_err(database_error)?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        if post::Entity::find()
+            .filter(post::Column::TenantId.eq(tenant_id))
+            .filter(post::Column::Code.eq(code))
+            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&transaction)
+            .await
+            .map_err(database_error)?
+            .is_some()
+        {
+            return Err(AppError::Conflict("岗位编码已存在".into()));
+        }
         let saved = self
             .post_repo
             .insert_in_transaction(&transaction, tenant_id, new_post)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         Ok(PostVo::from(saved))
@@ -117,21 +128,28 @@ impl PostService {
     ) -> AppResult<PostVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        let mut post = self
-            .post_repo
-            .find_by_id(db, tenant_id, id)
-            .await?
+        let transaction = db.begin().await.map_err(database_error)?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        let mut post = post::Entity::find_by_id(id)
+            .filter(post::Column::TenantId.eq(tenant_id))
+            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&transaction)
+            .await
+            .map_err(database_error)?
             .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
-
         post.name = name.to_string();
         post.sort = sort;
         post.status = status;
         post.fill_on_update(&FillContext::new())?;
-
-        let transaction = db.begin().await.map_err(database_error)?;
         let saved = self
             .post_repo
             .update_in_transaction(&transaction, tenant_id, post)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         Ok(PostVo::from(saved))
@@ -140,13 +158,23 @@ impl PostService {
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        self.post_repo
-            .find_by_id(db, tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
         let transaction = db.begin().await.map_err(database_error)?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        post::Entity::find_by_id(id)
+            .filter(post::Column::TenantId.eq(tenant_id))
+            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&transaction)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
         self.post_repo
             .delete_in_transaction(&transaction, tenant_id, id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await
     }

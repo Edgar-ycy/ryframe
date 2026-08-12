@@ -9,7 +9,10 @@ use sea_orm::{
 };
 
 use crate::{
-    entities::{background_job, data_retention_run, export_job, user_import_job},
+    entities::{
+        background_job, data_retention_run, export_job, tenant_config_bundle,
+        tenant_config_transfer, user_import_job,
+    },
     repositories::DataRetentionRepository,
 };
 
@@ -24,6 +27,32 @@ const EXPIRED_LEASE_DEAD_ERROR: &str = "任务租约已过期，处理结果未�
 const USER_IMPORT_JOB_TYPE: &str = "system.user.import";
 const EXPORT_JOB_TYPE: &str = "system.export.execute";
 const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";
+const TENANT_CONFIG_EXPORT_JOB_TYPE: &str = "system.tenant_config.export";
+const TENANT_CONFIG_PREVIEW_JOB_TYPE: &str = "system.tenant_config.preview";
+const TENANT_CONFIG_APPLY_JOB_TYPE: &str = "system.tenant_config.apply";
+const TENANT_CONFIG_ROLLBACK_JOB_TYPE: &str = "system.tenant_config.rollback";
+const TENANT_CONFIG_EXPORT_SAFE_ERROR: &str = "配置包生成失败，请稍后重试或联系管理员";
+const TENANT_CONFIG_PREVIEW_SAFE_ERROR: &str = "配置预览失败，请稍后重试或联系管理员";
+const TENANT_CONFIG_APPLY_SAFE_ERROR: &str = "配置应用失败，请稍后重试或联系管理员";
+const TENANT_CONFIG_ROLLBACK_SAFE_ERROR: &str = "配置回滚失败，请稍后重试或联系管理员";
+
+fn is_tenant_config_job(job_type: &str) -> bool {
+    matches!(
+        job_type,
+        TENANT_CONFIG_EXPORT_JOB_TYPE
+            | TENANT_CONFIG_PREVIEW_JOB_TYPE
+            | TENANT_CONFIG_APPLY_JOB_TYPE
+            | TENANT_CONFIG_ROLLBACK_JOB_TYPE
+    )
+}
+
+fn linked_resource_id(job: &background_job::Model, key: &str) -> Option<i64> {
+    match job.payload.get(key)? {
+        serde_json::Value::String(value) => value.parse().ok().filter(|id| *id > 0),
+        serde_json::Value::Number(value) => value.as_i64().filter(|id| *id > 0),
+        _ => None,
+    }
+}
 
 #[derive(Clone, Copy)]
 enum LinkedJobDisposition {
@@ -224,6 +253,57 @@ impl BackgroundJobRepository {
         })
     }
 
+    /// 将因短期资源占用而无法执行的任务延后，且不消耗一次业务尝试预算。
+    pub async fn defer_retryable_conflict(
+        &self,
+        db: &DatabaseConnection,
+        job_id: i64,
+        worker_id: &str,
+        available_at: DateTime<Utc>,
+        error_message: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let transaction = db.begin().await.map_err(database_error)?;
+        let Some(job) = Self::owned_running_query(job_id, worker_id)
+            .lock(LockType::Update)
+            .one(&transaction)
+            .await
+            .map_err(database_error)?
+        else {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        };
+        if job.lease_until.is_none_or(|lease_until| lease_until <= now) {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        }
+        let linked_transitioned = Self::sync_linked_job_state(
+            &transaction,
+            &job,
+            LinkedJobDisposition::Retried,
+            Some(error_message),
+            now,
+        )
+        .await?;
+        if is_tenant_config_job(&job.job_type) && !linked_transitioned {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        }
+        let attempts = job.attempts.saturating_sub(1);
+        let mut active: background_job::ActiveModel = job.into();
+        active.status = Set(background_job::Model::STATUS_PENDING.to_owned());
+        active.attempts = Set(attempts);
+        active.available_at = Set(available_at);
+        active.lease_owner = Set(None);
+        active.lease_until = Set(None);
+        active.last_error = Set(Some(truncate_error(error_message)));
+        active.updated_at = Set(now);
+        active.completed_at = Set(None);
+        active.update(&transaction).await.map_err(database_error)?;
+        transaction.commit().await.map_err(database_error)?;
+        Ok(true)
+    }
+
     /// 当重试无法推进时显式将任务标记为死信（例如没有注册对应类型的处理器）。
     pub async fn dead_letter(
         &self,
@@ -277,6 +357,7 @@ impl BackgroundJobRepository {
         tenant_id: &str,
         include_platform: bool,
         job_id: i64,
+        retry_requested_by: i64,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
         let transaction = db.begin().await.map_err(database_error)?;
@@ -298,7 +379,14 @@ impl BackgroundJobRepository {
             rollback_quietly(transaction).await;
             return Ok(false);
         };
-        Self::sync_linked_job_state(
+        if is_tenant_config_job(&job.job_type)
+            && !Self::is_tenant_config_job_owner(&transaction, &job, tenant_id, retry_requested_by)
+                .await?
+        {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        }
+        let linked_transitioned = Self::sync_linked_job_state(
             &transaction,
             &job,
             LinkedJobDisposition::ManuallyRetried,
@@ -306,6 +394,10 @@ impl BackgroundJobRepository {
             now,
         )
         .await?;
+        if is_tenant_config_job(&job.job_type) && !linked_transitioned {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        }
         let mut active: background_job::ActiveModel = job.into();
         active.status = Set(background_job::Model::STATUS_PENDING.to_owned());
         active.attempts = Set(0);
@@ -317,6 +409,62 @@ impl BackgroundJobRepository {
         active.update(&transaction).await.map_err(database_error)?;
         transaction.commit().await.map_err(database_error)?;
         Ok(true)
+    }
+
+    async fn is_tenant_config_job_owner<C>(
+        db: &C,
+        job: &background_job::Model,
+        tenant_id: &str,
+        retry_requested_by: i64,
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
+        if job.tenant_id.as_deref() != Some(tenant_id) {
+            return Ok(false);
+        }
+        match job.job_type.as_str() {
+            TENANT_CONFIG_EXPORT_JOB_TYPE => {
+                let Some(bundle_id) = linked_resource_id(job, "bundle_id") else {
+                    return Ok(false);
+                };
+                tenant_config_bundle::Entity::find_by_id(bundle_id)
+                    .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
+                    .filter(tenant_config_bundle::Column::BackgroundJobId.eq(job.id))
+                    .filter(tenant_config_bundle::Column::CreatedBy.eq(retry_requested_by))
+                    .lock(LockType::Update)
+                    .one(db)
+                    .await
+                    .map(|bundle| bundle.is_some())
+                    .map_err(database_error)
+            }
+            TENANT_CONFIG_PREVIEW_JOB_TYPE
+            | TENANT_CONFIG_APPLY_JOB_TYPE
+            | TENANT_CONFIG_ROLLBACK_JOB_TYPE => {
+                let Some(transfer_id) = linked_resource_id(job, "transfer_id") else {
+                    return Ok(false);
+                };
+                let query = tenant_config_transfer::Entity::find_by_id(transfer_id)
+                    .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id))
+                    .filter(tenant_config_transfer::Column::RequestedBy.eq(retry_requested_by));
+                let query = match job.job_type.as_str() {
+                    TENANT_CONFIG_PREVIEW_JOB_TYPE => query
+                        .filter(tenant_config_transfer::Column::PreviewBackgroundJobId.eq(job.id)),
+                    TENANT_CONFIG_APPLY_JOB_TYPE => query
+                        .filter(tenant_config_transfer::Column::ApplyBackgroundJobId.eq(job.id)),
+                    TENANT_CONFIG_ROLLBACK_JOB_TYPE => query
+                        .filter(tenant_config_transfer::Column::RollbackBackgroundJobId.eq(job.id)),
+                    _ => unreachable!("配置迁移任务类型已经过匹配"),
+                };
+                query
+                    .lock(LockType::Update)
+                    .one(db)
+                    .await
+                    .map(|transfer| transfer.is_some())
+                    .map_err(database_error)
+            }
+            _ => Ok(true),
+        }
     }
 
     fn owned_running_query(
@@ -334,11 +482,12 @@ impl BackgroundJobRepository {
         disposition: LinkedJobDisposition,
         error_message: Option<&str>,
         now: DateTime<Utc>,
-    ) -> AppResult<()>
+    ) -> AppResult<bool>
     where
         C: ConnectionTrait,
     {
         let error = error_message.map(truncate_error);
+        let mut linked_transitioned = true;
         match job.job_type.as_str() {
             USER_IMPORT_JOB_TYPE => {
                 if matches!(disposition, LinkedJobDisposition::ManuallyRetried) {
@@ -357,7 +506,7 @@ impl BackgroundJobRepository {
                         .await
                         .map_err(database_error)?;
                     if result.rows_affected > 0 {
-                        return Ok(());
+                        return Ok(true);
                     }
                 }
                 let (status, completed_at, statuses) = match disposition {
@@ -493,9 +642,202 @@ impl BackgroundJobRepository {
                 }
                 update.exec(db).await.map_err(database_error)?;
             }
+            TENANT_CONFIG_EXPORT_JOB_TYPE => {
+                let (status, statuses) = match disposition {
+                    LinkedJobDisposition::Retried => (
+                        tenant_config_bundle::Model::STATUS_PENDING,
+                        vec![
+                            tenant_config_bundle::Model::STATUS_PENDING,
+                            tenant_config_bundle::Model::STATUS_RUNNING,
+                        ],
+                    ),
+                    LinkedJobDisposition::Dead => (
+                        tenant_config_bundle::Model::STATUS_FAILED,
+                        vec![
+                            tenant_config_bundle::Model::STATUS_PENDING,
+                            tenant_config_bundle::Model::STATUS_RUNNING,
+                            tenant_config_bundle::Model::STATUS_FAILED,
+                        ],
+                    ),
+                    LinkedJobDisposition::ManuallyRetried => (
+                        tenant_config_bundle::Model::STATUS_PENDING,
+                        vec![tenant_config_bundle::Model::STATUS_FAILED],
+                    ),
+                };
+                let mut update = tenant_config_bundle::Entity::update_many()
+                    .col_expr(tenant_config_bundle::Column::Status, Expr::value(status))
+                    .col_expr(tenant_config_bundle::Column::UpdatedAt, Expr::value(now))
+                    .filter(tenant_config_bundle::Column::BackgroundJobId.eq(job.id))
+                    .filter(tenant_config_bundle::Column::Status.is_in(statuses));
+                if error.is_some() {
+                    update = update.col_expr(
+                        tenant_config_bundle::Column::ErrorSummary,
+                        Expr::value(Some(TENANT_CONFIG_EXPORT_SAFE_ERROR.to_owned())),
+                    );
+                } else if matches!(disposition, LinkedJobDisposition::ManuallyRetried) {
+                    update = update.col_expr(
+                        tenant_config_bundle::Column::ErrorSummary,
+                        Expr::value(Option::<String>::None),
+                    );
+                }
+                linked_transitioned = update
+                    .exec(db)
+                    .await
+                    .map(|result| result.rows_affected == 1)
+                    .map_err(database_error)?;
+            }
+            TENANT_CONFIG_PREVIEW_JOB_TYPE => {
+                linked_transitioned = Self::sync_config_transfer_state(
+                    db,
+                    job,
+                    disposition,
+                    error,
+                    now,
+                    ConfigTransferJobKind::Preview,
+                )
+                .await?;
+            }
+            TENANT_CONFIG_APPLY_JOB_TYPE => {
+                linked_transitioned = Self::sync_config_transfer_state(
+                    db,
+                    job,
+                    disposition,
+                    error,
+                    now,
+                    ConfigTransferJobKind::Apply,
+                )
+                .await?;
+            }
+            TENANT_CONFIG_ROLLBACK_JOB_TYPE => {
+                linked_transitioned = Self::sync_config_transfer_state(
+                    db,
+                    job,
+                    disposition,
+                    error,
+                    now,
+                    ConfigTransferJobKind::Rollback,
+                )
+                .await?;
+            }
             _ => {}
         }
-        Ok(())
+        Ok(linked_transitioned)
+    }
+
+    async fn sync_config_transfer_state<C>(
+        db: &C,
+        job: &background_job::Model,
+        disposition: LinkedJobDisposition,
+        error: Option<String>,
+        now: DateTime<Utc>,
+        kind: ConfigTransferJobKind,
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
+        let (status, statuses) = match (kind, disposition) {
+            (ConfigTransferJobKind::Preview, LinkedJobDisposition::Retried) => (
+                tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
+                vec![
+                    tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
+                    tenant_config_transfer::Model::STATUS_PREVIEWING,
+                ],
+            ),
+            (ConfigTransferJobKind::Preview, LinkedJobDisposition::Dead) => (
+                tenant_config_transfer::Model::STATUS_FAILED,
+                vec![
+                    tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
+                    tenant_config_transfer::Model::STATUS_PREVIEWING,
+                    tenant_config_transfer::Model::STATUS_FAILED,
+                ],
+            ),
+            (ConfigTransferJobKind::Preview, LinkedJobDisposition::ManuallyRetried) => (
+                tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
+                vec![tenant_config_transfer::Model::STATUS_FAILED],
+            ),
+            (ConfigTransferJobKind::Apply, LinkedJobDisposition::Retried) => (
+                tenant_config_transfer::Model::STATUS_APPLY_PENDING,
+                vec![
+                    tenant_config_transfer::Model::STATUS_APPLY_PENDING,
+                    tenant_config_transfer::Model::STATUS_APPLYING,
+                ],
+            ),
+            (ConfigTransferJobKind::Apply, LinkedJobDisposition::Dead) => (
+                tenant_config_transfer::Model::STATUS_FAILED,
+                vec![
+                    tenant_config_transfer::Model::STATUS_APPLY_PENDING,
+                    tenant_config_transfer::Model::STATUS_APPLYING,
+                    tenant_config_transfer::Model::STATUS_FAILED,
+                ],
+            ),
+            (ConfigTransferJobKind::Apply, LinkedJobDisposition::ManuallyRetried) => (
+                tenant_config_transfer::Model::STATUS_APPLY_PENDING,
+                vec![tenant_config_transfer::Model::STATUS_FAILED],
+            ),
+            (ConfigTransferJobKind::Rollback, LinkedJobDisposition::Retried) => (
+                tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
+                vec![
+                    tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
+                    tenant_config_transfer::Model::STATUS_ROLLING_BACK,
+                ],
+            ),
+            (ConfigTransferJobKind::Rollback, LinkedJobDisposition::Dead) => (
+                tenant_config_transfer::Model::STATUS_FAILED,
+                vec![
+                    tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
+                    tenant_config_transfer::Model::STATUS_ROLLING_BACK,
+                    tenant_config_transfer::Model::STATUS_FAILED,
+                ],
+            ),
+            (ConfigTransferJobKind::Rollback, LinkedJobDisposition::ManuallyRetried) => (
+                tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
+                vec![tenant_config_transfer::Model::STATUS_FAILED],
+            ),
+        };
+        let Some(transfer_id) = linked_resource_id(job, "transfer_id") else {
+            return Ok(false);
+        };
+        let Some(tenant_id) = job.tenant_id.as_deref() else {
+            return Ok(false);
+        };
+        let mut update = tenant_config_transfer::Entity::update_many()
+            .col_expr(tenant_config_transfer::Column::Status, Expr::value(status))
+            .col_expr(tenant_config_transfer::Column::UpdatedAt, Expr::value(now))
+            .filter(tenant_config_transfer::Column::Id.eq(transfer_id))
+            .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id))
+            .filter(tenant_config_transfer::Column::Status.is_in(statuses));
+        update = match kind {
+            ConfigTransferJobKind::Preview => {
+                update.filter(tenant_config_transfer::Column::PreviewBackgroundJobId.eq(job.id))
+            }
+            ConfigTransferJobKind::Apply => {
+                update.filter(tenant_config_transfer::Column::ApplyBackgroundJobId.eq(job.id))
+            }
+            ConfigTransferJobKind::Rollback => {
+                update.filter(tenant_config_transfer::Column::RollbackBackgroundJobId.eq(job.id))
+            }
+        };
+        if error.is_some() {
+            let safe_error = match kind {
+                ConfigTransferJobKind::Preview => TENANT_CONFIG_PREVIEW_SAFE_ERROR,
+                ConfigTransferJobKind::Apply => TENANT_CONFIG_APPLY_SAFE_ERROR,
+                ConfigTransferJobKind::Rollback => TENANT_CONFIG_ROLLBACK_SAFE_ERROR,
+            };
+            update = update.col_expr(
+                tenant_config_transfer::Column::ErrorSummary,
+                Expr::value(Some(safe_error.to_owned())),
+            );
+        } else if matches!(disposition, LinkedJobDisposition::ManuallyRetried) {
+            update = update.col_expr(
+                tenant_config_transfer::Column::ErrorSummary,
+                Expr::value(Option::<String>::None),
+            );
+        }
+        update
+            .exec(db)
+            .await
+            .map(|result| result.rows_affected == 1)
+            .map_err(database_error)
     }
 
     async fn ensure_retention_run<C>(
@@ -561,6 +903,13 @@ impl BackgroundJobRepository {
             .await?;
         Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+enum ConfigTransferJobKind {
+    Preview,
+    Apply,
+    Rollback,
 }
 
 fn truncate_error(error: &str) -> String {

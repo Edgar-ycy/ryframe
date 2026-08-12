@@ -5,12 +5,15 @@ use ryframe_core::{
 };
 use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_db::{
-    DeptRepository, PermissionRepository, RoleFilter, RoleRepository, TenantRepository,
-    entities::role,
+    PermissionRepository, RoleFilter, RoleRepository, TenantConfigTransferRepository,
+    TenantRepository, entities::role,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
-use sea_orm::{ActiveModelTrait, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    TransactionTrait, sea_query::LockType,
+};
 use serde::Serialize;
 
 use crate::AuthorizationCache;
@@ -82,7 +85,6 @@ pub struct RoleService {
     db: DatabaseCluster,
     role_repo: RoleRepository,
     perm_repo: PermissionRepository,
-    dept_repo: DeptRepository,
     authorization_cache: AuthorizationCache,
 }
 
@@ -92,7 +94,6 @@ impl RoleService {
             db,
             role_repo: RoleRepository,
             perm_repo: PermissionRepository,
-            dept_repo: DeptRepository,
             authorization_cache,
         }
     }
@@ -241,8 +242,8 @@ impl RoleService {
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         // 每次创建、更新或删除角色时，先锁定租户行；随后按 ID 升序获取批量目标锁。
         let operation: AppResult<(u64, i32)> = async {
-            TenantRepository
-                .lock_tenant_in_txn(&transaction, tenant_id)
+            TenantConfigTransferRepository
+                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
                 .await?;
             let mut roles = Vec::with_capacity(ids.len());
             for id in &ids {
@@ -276,6 +277,9 @@ impl RoleService {
             let authorization_epoch = self
                 .authorization_cache
                 .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .await?;
+            TenantConfigTransferRepository
+                .increment_configuration_version_in_txn(&transaction, tenant_id)
                 .await?;
             Ok((affected, authorization_epoch))
         }
@@ -337,15 +341,6 @@ impl RoleService {
     ) -> AppResult<RoleVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        if self
-            .role_repo
-            .find_by_code(db, tenant_id, code)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Conflict("角色编码已存在".into()));
-        }
-
         let data_scope = data_scope.unwrap_or_else(|| "1".to_string());
         Self::validate_data_scope(&data_scope)?;
         let mut new_role = role::Model {
@@ -369,6 +364,21 @@ impl RoleService {
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         let operation: AppResult<(role::Model, i32)> = async {
+            TenantConfigTransferRepository
+                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+                .await?;
+            if role::Entity::find()
+                .filter(role::Column::TenantId.eq(tenant_id))
+                .filter(role::Column::Code.eq(code))
+                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+                .lock(LockType::Update)
+                .one(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?
+                .is_some()
+            {
+                return Err(AppError::Conflict("角色编码已存在".into()));
+            }
             TenantRepository
                 .ensure_role_quota_in_txn(&transaction, tenant_id)
                 .await?;
@@ -379,6 +389,9 @@ impl RoleService {
             let authorization_epoch = self
                 .authorization_cache
                 .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .await?;
+            TenantConfigTransferRepository
+                .increment_configuration_version_in_txn(&transaction, tenant_id)
                 .await?;
             Ok((saved, authorization_epoch))
         }
@@ -423,8 +436,8 @@ impl RoleService {
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         let operation: AppResult<(role::Model, i32)> = async {
-            TenantRepository
-                .lock_tenant_in_txn(&transaction, tenant_id)
+            TenantConfigTransferRepository
+                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
                 .await?;
             let mut role = self
                 .role_repo
@@ -460,6 +473,9 @@ impl RoleService {
                 .authorization_cache
                 .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
                 .await?;
+            TenantConfigTransferRepository
+                .increment_configuration_version_in_txn(&transaction, tenant_id)
+                .await?;
             Ok((saved, authorization_epoch))
         }
         .await;
@@ -493,27 +509,41 @@ impl RoleService {
         mut perm_ids: Vec<i64>,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
         normalize_ids(&mut perm_ids);
-        let permissions = self.perm_repo.find_by_ids(db, tenant_id, &perm_ids).await?;
-        if let Some(perm_id) = first_missing_id(&perm_ids, &permissions, |permission| permission.id)
-        {
-            return Err(AppError::NotFound(format!("权限不存在: {}", perm_id)));
-        }
-        let transaction = db
+        let transaction = self
+            .db
+            .write()
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         self.role_repo
             .find_by_id_for_update(&transaction, tenant_id, role_id)
             .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        let permissions = ryframe_db::entities::permission::Entity::find()
+            .filter(ryframe_db::entities::permission::Column::TenantId.eq(tenant_id))
+            .filter(ryframe_db::entities::permission::Column::Id.is_in(perm_ids.iter().copied()))
+            .order_by_asc(ryframe_db::entities::permission::Column::Id)
+            .lock(LockType::Update)
+            .all(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if let Some(perm_id) = first_missing_id(&perm_ids, &permissions, |permission| permission.id)
+        {
+            return Err(AppError::NotFound(format!("权限不存在: {perm_id}")));
+        }
         self.perm_repo
             .assign_perms(&transaction, tenant_id, role_id, &perm_ids)
             .await?;
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
@@ -555,10 +585,7 @@ impl RoleService {
         dept_ids: Vec<i64>,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
         Self::validate_data_scope(data_scope)?;
-        self.get_role_model(actor, role_id).await?;
-
         let unique_dept_ids = if data_scope == role::Model::DATA_SCOPE_CUSTOM {
             let mut unique_dept_ids = dept_ids;
             unique_dept_ids.sort_unstable();
@@ -566,15 +593,6 @@ impl RoleService {
             if unique_dept_ids.is_empty() {
                 return Err(AppError::Validation(
                     "自定义数据权限至少需要一个部门".into(),
-                ));
-            }
-            let existing_depts = self
-                .dept_repo
-                .find_filtered_by_ids(db, tenant_id, None, None, &unique_dept_ids)
-                .await?;
-            if existing_depts.len() != unique_dept_ids.len() {
-                return Err(AppError::Validation(
-                    "自定义数据权限包含不存在或跨租户的部门".into(),
                 ));
             }
             unique_dept_ids
@@ -585,14 +603,42 @@ impl RoleService {
             Vec::new()
         };
 
-        let transaction = db
+        let transaction = self
+            .db
+            .write()
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         self.role_repo
             .find_by_id_for_update(&transaction, tenant_id, role_id)
             .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+        if data_scope == role::Model::DATA_SCOPE_CUSTOM {
+            let existing_depts = ryframe_db::entities::dept::Entity::find()
+                .filter(ryframe_db::entities::dept::Column::TenantId.eq(tenant_id))
+                .filter(
+                    ryframe_db::entities::dept::Column::DelFlag
+                        .eq(ryframe_db::entities::dept::Model::DEL_FLAG_NORMAL),
+                )
+                .filter(
+                    ryframe_db::entities::dept::Column::Id.is_in(unique_dept_ids.iter().copied()),
+                )
+                .order_by_asc(ryframe_db::entities::dept::Column::Id)
+                .lock(LockType::Update)
+                .all(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            if let Some(dept_id) =
+                first_missing_id(&unique_dept_ids, &existing_depts, |dept| dept.id)
+            {
+                return Err(AppError::Validation(format!(
+                    "自定义数据权限包含不存在或跨租户的部门: {dept_id}"
+                )));
+            }
+        }
         self.role_repo
             .replace_data_scope(
                 &transaction,
@@ -605,6 +651,9 @@ impl RoleService {
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache

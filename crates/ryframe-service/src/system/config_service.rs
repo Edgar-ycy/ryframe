@@ -5,11 +5,11 @@ use ryframe_core::{
 };
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository,
-    entities::config,
+    TenantConfigTransferRepository, entities::config,
 };
 use ryframe_db::{DatabaseCluster, ReadConsistency};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
 use crate::{AuthorizationCache, NamespaceCacheLookup};
@@ -24,6 +24,7 @@ pub struct ConfigVo {
     pub name: String,
     pub key: String,
     pub value: String,
+    pub portable: bool,
     pub remark: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -35,6 +36,7 @@ impl From<config::Model> for ConfigVo {
             name: c.name,
             key: c.key,
             value: c.value,
+            portable: c.portable,
             remark: c.remark,
             created_at: c.created_at,
         }
@@ -227,24 +229,30 @@ impl ConfigService {
         value: &str,
         remark: Option<&str>,
     ) -> AppResult<ConfigVo> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        // 检查 key 是否已存在
-        if self
-            .config_repo
-            .find_by_key(db, tenant_id, key)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Validation(format!("参数键名 '{}' 已存在", key)));
-        }
+        self.create_with_portability(actor, name, key, value, remark, false)
+            .await
+    }
 
+    /// 创建参数配置，并显式控制其是否允许进入租户配置包。
+    pub async fn create_with_portability(
+        &self,
+        actor: &ActorContext,
+        name: &str,
+        key: &str,
+        value: &str,
+        remark: Option<&str>,
+        portable: bool,
+    ) -> AppResult<ConfigVo> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        validate_portable_key(key, portable)?;
+        let db = self.db.write();
         let mut new_config = config::Model {
             id: ryframe_utils::snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             key: key.to_string(),
             value: value.to_string(),
+            portable,
             remark: remark.map(|s| s.to_string()),
             del_flag: config::Model::DEL_FLAG_NORMAL.to_string(),
             created_at: Default::default(),
@@ -256,6 +264,21 @@ impl ConfigService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        if config::Entity::find()
+            .filter(config::Column::TenantId.eq(tenant_id))
+            .filter(config::Column::Key.eq(key))
+            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+            .lock(sea_orm::sea_query::LockType::Update)
+            .one(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .is_some()
+        {
+            return Err(AppError::Validation(format!("参数键名 '{key}' 已存在")));
+        }
         let saved = self
             .config_repo
             .insert_in_transaction(&transaction, tenant_id, new_config)
@@ -268,6 +291,9 @@ impl ConfigService {
                 CONFIG_CACHE_NAMESPACE,
             )
             .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
+            .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
@@ -276,23 +302,35 @@ impl ConfigService {
     }
 
     pub async fn update(&self, actor: &ActorContext, id: i64, value: &str) -> AppResult<ConfigVo> {
+        self.update_with_portability(actor, id, value, None).await
+    }
+
+    /// 更新参数值，并在指定时同步配置包迁移标记。
+    pub async fn update_with_portability(
+        &self,
+        actor: &ActorContext,
+        id: i64,
+        value: &str,
+        portable: Option<bool>,
+    ) -> AppResult<ConfigVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        let cfg = self
-            .config_repo
-            .find_by_id(db, tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
         let transaction = db
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         let mut cfg = self
             .config_repo
-            .find_by_id_for_update(&transaction, tenant_id, cfg.id)
+            .find_by_id_for_update(&transaction, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
+        let portable = portable.unwrap_or(cfg.portable);
+        validate_portable_key(&cfg.key, portable)?;
         cfg.value = value.to_string();
+        cfg.portable = portable;
         cfg.fill_on_update(&FillContext::new())?;
 
         let saved = self
@@ -307,6 +345,9 @@ impl ConfigService {
                 CONFIG_CACHE_NAMESPACE,
             )
             .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
+            .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
@@ -317,17 +358,15 @@ impl ConfigService {
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        let cfg = self
-            .config_repo
-            .find_by_id(db, tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
         let transaction = db
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         self.config_repo
-            .find_by_id_for_update(&transaction, tenant_id, cfg.id)
+            .find_by_id_for_update(&transaction, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
         self.config_repo
@@ -340,6 +379,9 @@ impl ConfigService {
                 tenant_id,
                 CONFIG_CACHE_NAMESPACE,
             )
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
@@ -371,4 +413,14 @@ impl ConfigService {
             .await?;
         Ok(1)
     }
+}
+
+fn validate_portable_key(key: &str, portable: bool) -> AppResult<()> {
+    if !portable {
+        return Ok(());
+    }
+    if super::tenant_config_package::is_sensitive_config_key(key) {
+        return Err(AppError::Validation("敏感参数禁止加入租户配置包".into()));
+    }
+    Ok(())
 }

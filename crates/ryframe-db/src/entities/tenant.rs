@@ -20,6 +20,8 @@ pub struct Model {
     pub session_version: i32,
     /// 租户级授权规则版本，角色权限、菜单权限或部门层级变化时递增。
     pub authorization_epoch: i32,
+    /// 部门、岗位、字典、可迁移参数、权限、菜单或角色关系变化时递增。
+    pub configuration_version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

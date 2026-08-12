@@ -15,6 +15,7 @@ mod rate_limit_config;
 mod redis_config;
 mod runtime_config;
 mod telemetry_config;
+mod tenant_config_transfer_config;
 mod user_import_config;
 
 pub use app_config::AppSettings;
@@ -37,6 +38,7 @@ pub use rate_limit_config::RateLimitConfig;
 pub use redis_config::{RedisConfig, RedisMode};
 pub use runtime_config::{ProxyConfig, UploadLimitsConfig};
 pub use telemetry_config::TelemetryConfig;
+pub use tenant_config_transfer_config::TenantConfigTransferConfig;
 pub use user_import_config::UserImportConfig;
 
 pub use crate::app_config::AppConfig;

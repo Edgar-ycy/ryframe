@@ -4,14 +4,16 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
+use ryframe_auth::RequestPrincipal;
 use ryframe_core::RedisClient;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, DatabaseCluster,
-    EnqueueBackgroundJob, EnqueueBackgroundJobResult, background_job,
+    EnqueueBackgroundJob, EnqueueBackgroundJobResult, background_job, tenant_config_bundle,
+    tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::DatabaseTransaction;
+use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
 use serde::Serialize;
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -54,6 +56,7 @@ pub struct BackgroundJobVo {
 
 impl From<background_job::Model> for BackgroundJobVo {
     fn from(job: background_job::Model) -> Self {
+        let last_error = public_job_error(&job.job_type, job.last_error);
         Self {
             id: job.id.to_string(),
             schedule_id: job.schedule_id.map(|id| id.to_string()),
@@ -68,7 +71,7 @@ impl From<background_job::Model> for BackgroundJobVo {
             lease_owner: job.lease_owner,
             lease_until: job.lease_until,
             dedupe_key: job.dedupe_key,
-            last_error: job.last_error,
+            last_error,
             created_at: job.created_at,
             updated_at: job.updated_at,
             completed_at: job.completed_at,
@@ -276,13 +279,13 @@ impl JobQueue {
     /// 重新投递当前租户的一条死信任务，并返回更新后的安全视图。
     pub async fn retry_dead_for_tenant(
         &self,
-        actor: &ActorContext,
+        principal: &RequestPrincipal,
         job_id: i64,
     ) -> AppResult<BackgroundJobVo> {
         if job_id <= 0 {
             return Err(AppError::Validation("后台任务 ID 必须是正整数".into()));
         }
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let tenant_id = crate::validated_tenant_id(principal)?;
         let include_platform = tenant_id == "system";
         let existing = self
             .repository
@@ -292,11 +295,28 @@ impl JobQueue {
         if existing.status != background_job::Model::STATUS_DEAD {
             return Err(AppError::Conflict("仅允许重新投递死信任务".into()));
         }
+        if let Some(required_permission) = manual_retry_permission(&existing.job_type)
+            && !principal.is_super_admin
+            && !ryframe_auth::rbac::has_permission(&principal.permissions, required_permission)
+        {
+            return Err(AppError::Authorization(format!(
+                "重新投递该业务任务还需要权限：{required_permission}"
+            )));
+        }
+        self.ensure_tenant_config_retry_owner(principal, &existing)
+            .await?;
 
         let now = self.database_now().await?;
         let retried = self
             .repository
-            .retry_dead(self.primary(), tenant_id, include_platform, job_id, now)
+            .retry_dead(
+                self.primary(),
+                tenant_id,
+                include_platform,
+                job_id,
+                principal.user_id,
+                now,
+            )
             .await?;
         if !retried {
             return Err(AppError::Conflict(
@@ -310,6 +330,50 @@ impl JobQueue {
             .await?
             .map(BackgroundJobVo::from)
             .ok_or_else(|| AppError::Internal("后台任务重试后无法读取".into()))
+    }
+
+    async fn ensure_tenant_config_retry_owner(
+        &self,
+        principal: &RequestPrincipal,
+        job: &background_job::Model,
+    ) -> AppResult<()> {
+        let tenant_id = crate::validated_tenant_id(principal)?;
+        if manual_retry_permission(&job.job_type).is_some()
+            && job.tenant_id.as_deref() != Some(tenant_id)
+        {
+            return Err(AppError::NotFound(
+                "后台任务关联的配置资源不存在或不可访问".into(),
+            ));
+        }
+        let owner_id = match job.job_type.as_str() {
+            "system.tenant_config.export" => tenant_config_bundle::Entity::find()
+                .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
+                .filter(tenant_config_bundle::Column::BackgroundJobId.eq(job.id))
+                .one(self.primary())
+                .await
+                .map_err(database_error)?
+                .map(|bundle| bundle.created_by),
+            "system.tenant_config.preview" => {
+                transfer_job_owner(self.primary(), tenant_id, job.id, TransferJobKind::Preview)
+                    .await?
+            }
+            "system.tenant_config.apply" => {
+                transfer_job_owner(self.primary(), tenant_id, job.id, TransferJobKind::Apply)
+                    .await?
+            }
+            "system.tenant_config.rollback" => {
+                transfer_job_owner(self.primary(), tenant_id, job.id, TransferJobKind::Rollback)
+                    .await?
+            }
+            _ => return Ok(()),
+        }
+        .ok_or_else(|| AppError::NotFound("后台任务关联的配置资源不存在".into()))?;
+        if owner_id != principal.user_id {
+            return Err(AppError::Authorization(
+                "仅允许原配置任务申请人重新投递该任务".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn repository(&self) -> &BackgroundJobRepository {
@@ -372,6 +436,63 @@ impl JobQueue {
             observer.record_claim_attempt(queue, result);
         }
     }
+}
+
+fn manual_retry_permission(job_type: &str) -> Option<&'static str> {
+    match job_type {
+        "system.tenant_config.export" => Some("system:config-package:export"),
+        "system.tenant_config.preview" => Some("system:config-transfer:preview"),
+        "system.tenant_config.apply" => Some("system:config-transfer:apply"),
+        "system.tenant_config.rollback" => Some("system:config-transfer:rollback"),
+        _ => None,
+    }
+}
+
+fn public_job_error(job_type: &str, error: Option<String>) -> Option<String> {
+    error.map(|error| match job_type {
+        "system.tenant_config.export" => "配置包生成失败，请稍后重试或联系管理员".to_owned(),
+        "system.tenant_config.preview" => "配置预览失败，请稍后重试或联系管理员".to_owned(),
+        "system.tenant_config.apply" => "配置应用失败，请稍后重试或联系管理员".to_owned(),
+        "system.tenant_config.rollback" => "配置回滚失败，请稍后重试或联系管理员".to_owned(),
+        _ => error,
+    })
+}
+
+#[derive(Clone, Copy)]
+enum TransferJobKind {
+    Preview,
+    Apply,
+    Rollback,
+}
+
+async fn transfer_job_owner(
+    db: &sea_orm::DatabaseConnection,
+    tenant_id: &str,
+    job_id: i64,
+    kind: TransferJobKind,
+) -> AppResult<Option<i64>> {
+    let query = tenant_config_transfer::Entity::find()
+        .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id));
+    let query = match kind {
+        TransferJobKind::Preview => {
+            query.filter(tenant_config_transfer::Column::PreviewBackgroundJobId.eq(job_id))
+        }
+        TransferJobKind::Apply => {
+            query.filter(tenant_config_transfer::Column::ApplyBackgroundJobId.eq(job_id))
+        }
+        TransferJobKind::Rollback => {
+            query.filter(tenant_config_transfer::Column::RollbackBackgroundJobId.eq(job_id))
+        }
+    };
+    query
+        .one(db)
+        .await
+        .map_err(database_error)
+        .map(|transfer| transfer.map(|transfer| transfer.requested_by))
+}
+
+fn database_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Database(error.to_string())
 }
 
 fn normalize_job_type_filter(value: Option<String>) -> AppResult<Option<String>> {

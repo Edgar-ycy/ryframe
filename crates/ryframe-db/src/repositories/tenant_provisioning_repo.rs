@@ -129,6 +129,7 @@ impl TenantProvisioningRepository {
             max_requests_per_min: ActiveValue::Set(command.max_requests_per_minute),
             session_version: ActiveValue::Set(1),
             authorization_epoch: ActiveValue::Set(1),
+            configuration_version: ActiveValue::Set(0),
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(now),
         }
@@ -220,7 +221,9 @@ impl TenantProvisioningRepository {
                 && !source.code.starts_with("monitor:schedule:")
                 && source.code != "monitor:overview:list"
                 && !source.code.starts_with("system:user-import:")
-                && source.code != "system:authorization-diagnostic:list";
+                && source.code != "system:authorization-diagnostic:list"
+                && !source.code.starts_with("system:config-package:")
+                && !source.code.starts_with("system:config-transfer:");
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| permission_ids.get(&parent_id).copied());
@@ -332,6 +335,7 @@ impl TenantProvisioningRepository {
                     name: ActiveValue::Set(source.name),
                     key: ActiveValue::Set(source.key),
                     value: ActiveValue::Set(source.value),
+                    portable: ActiveValue::Set(source.portable),
                     remark: ActiveValue::Set(source.remark),
                     del_flag: ActiveValue::Set(source.del_flag),
                     created_at: ActiveValue::Set(now),

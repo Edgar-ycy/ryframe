@@ -324,6 +324,52 @@ impl FileRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
+    /// 将未被配置包或配置迁移记录引用的私有文件改为延迟清理墓碑。
+    pub async fn mark_unreferenced_config_package_for_cleanup_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+        cleanup_after: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<bool> {
+        sys_file::Entity::update_many()
+            .col_expr(
+                sys_file::Column::UploadStatus,
+                sea_orm::sea_query::Expr::value(sys_file::Model::UPLOAD_STATUS_CLEANUP),
+            )
+            .col_expr(
+                sys_file::Column::ReservationToken,
+                sea_orm::sea_query::Expr::value(Option::<String>::None),
+            )
+            .col_expr(
+                sys_file::Column::ReservationExpiresAt,
+                sea_orm::sea_query::Expr::value(cleanup_after),
+            )
+            .col_expr(
+                sys_file::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .filter(sys_file::Column::Id.eq(id))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
+            .filter(sys_file::Column::Bucket.eq("config-packages"))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_READY))
+            .filter(
+                Condition::all()
+                    .add(sea_orm::sea_query::Expr::cust(
+                        "NOT EXISTS (SELECT 1 FROM sys_tenant_config_bundle bundle WHERE bundle.tenant_id = sys_file.tenant_id AND bundle.file_id = sys_file.id)",
+                    ))
+                    .add(sea_orm::sea_query::Expr::cust(
+                        "NOT EXISTS (SELECT 1 FROM sys_tenant_config_transfer transfer WHERE transfer.tenant_id = sys_file.tenant_id AND transfer.snapshot_file_id = sys_file.id)",
+                    )),
+            )
+            .exec(txn)
+            .await
+            .map(|result| result.rows_affected == 1)
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     /// 在延迟清理到期前恢复即将被新导入任务引用的私有文件。
     pub async fn restore_import_file_for_reference_in_txn(
         &self,
@@ -627,6 +673,38 @@ impl FileRepository {
             )
             .filter(sys_file::Column::ReservationExpiresAt.lte(now))
             .order_by_asc(sys_file::Column::ReservationExpiresAt)
+            .limit(limit)
+            .all(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 查找已完成上传、经过最长任务运行窗口后仍未被配置包或回滚快照引用的内部文件。
+    ///
+    /// 这里只产生候选项；调用方仍须在租户行锁和文件行锁下再次验证引用，才能进入延迟清理。
+    pub async fn find_stale_unreferenced_config_packages(
+        &self,
+        db: &DatabaseConnection,
+        ready_before: chrono::DateTime<chrono::Utc>,
+        limit: u64,
+    ) -> AppResult<Vec<sys_file::Model>> {
+        sys_file::Entity::find()
+            .filter(sys_file::Column::Bucket.eq("config-packages"))
+            .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
+            .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_READY))
+            .filter(sys_file::Column::ReservationToken.is_null())
+            .filter(sys_file::Column::UpdatedAt.lte(ready_before))
+            .filter(
+                Condition::all()
+                    .add(sea_orm::sea_query::Expr::cust(
+                        "NOT EXISTS (SELECT 1 FROM sys_tenant_config_bundle bundle WHERE bundle.tenant_id = sys_file.tenant_id AND bundle.file_id = sys_file.id)",
+                    ))
+                    .add(sea_orm::sea_query::Expr::cust(
+                        "NOT EXISTS (SELECT 1 FROM sys_tenant_config_transfer transfer WHERE transfer.tenant_id = sys_file.tenant_id AND transfer.snapshot_file_id = sys_file.id)",
+                    )),
+            )
+            .order_by_asc(sys_file::Column::UpdatedAt)
+            .order_by_asc(sys_file::Column::Id)
             .limit(limit)
             .all(db)
             .await

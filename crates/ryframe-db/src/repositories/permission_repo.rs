@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,
 };
 
 use crate::entities::{menu, permission, role_permission, user_role};
@@ -188,15 +188,14 @@ impl PermissionRepository {
         Ok(user_ids)
     }
 
-    pub async fn is_referenced(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        perm_id: i64,
-    ) -> AppResult<bool> {
+    pub async fn is_referenced<C>(&self, db: &C, tenant_id: &str, perm_id: i64) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
         let role_reference = role_permission::Entity::find()
             .filter(role_permission::Column::TenantId.eq(tenant_id))
             .filter(role_permission::Column::PermId.eq(perm_id))
+            .lock(LockType::Update)
             .one(db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?
@@ -208,6 +207,7 @@ impl PermissionRepository {
             .filter(menu::Column::TenantId.eq(tenant_id))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .filter(menu::Column::PermId.eq(perm_id))
+            .lock(LockType::Update)
             .one(db)
             .await
             .map(|row| row.is_some())

@@ -21,6 +21,7 @@ pub mod password_reset_request_repo;
 pub mod permission_repo;
 pub mod post_repo;
 pub mod role_repo;
+pub mod tenant_config_transfer_repo;
 pub mod tenant_provisioning_repo;
 pub mod tenant_repo;
 pub mod user_import_repo;
@@ -57,6 +58,7 @@ pub use password_reset_request_repo::PasswordResetRequestRepository;
 pub use permission_repo::PermissionRepository;
 pub use post_repo::{PostFilter, PostRepository};
 pub use role_repo::{RoleFilter, RoleRepository};
+pub use tenant_config_transfer_repo::{TenantConfigTransferRepository, TenantConfigurationFence};
 pub use tenant_provisioning_repo::{ProvisionTenantCommand, TenantProvisioningRepository};
 pub use tenant_repo::TenantRepository;
 pub use user_import_repo::{

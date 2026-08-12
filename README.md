@@ -65,10 +65,10 @@ cargo run
 
 默认账号：
 
-| 账号 | 密码 | 说明 |
-| --- | --- | --- |
+| 账号    | 密码     | 说明       |
+|---------|----------|------------|
 | `admin` | `123456` | 超级管理员 |
-| `user` | `123456` | 普通用户 |
+| `user`  | `123456` | 普通用户   |
 
 ### 前端
 
@@ -201,6 +201,13 @@ config/app.prod.toml
 | `APP_USER_IMPORT_BATCH_SIZE` | 用户导入每批提交行数 | `100` |
 | `APP_USER_IMPORT_MAX_ACTIVE_PER_TENANT` | 单租户同时处于等待或运行状态的导入数 | `1` |
 | `APP_USER_IMPORT_HASH_PARALLELISM` | 单进程 Argon2 哈希并行上限 | `2` |
+| `APP_TENANT_CONFIG_TRANSFER_MAX_PACKAGE_BYTES` | 租户配置包压缩文件上限，且不能超过通用上传上限 | `5242880` |
+| `APP_TENANT_CONFIG_TRANSFER_MAX_UNCOMPRESSED_BYTES` | 配置包解压后的总字节上限 | `20971520` |
+| `APP_TENANT_CONFIG_TRANSFER_MAX_ITEMS` | 单个配置包的资源及关系项目上限 | `10000` |
+| `APP_TENANT_CONFIG_TRANSFER_ARTIFACT_HOURS` | 配置包文件保留小时数 | `168` |
+| `APP_TENANT_CONFIG_TRANSFER_ROLLBACK_HOURS` | 应用前快照和回滚窗口小时数 | `168` |
+| `APP_TENANT_CONFIG_TRANSFER_LEASE_SECONDS` | 应用或回滚独占租约秒数 | `300` |
+| `APP_TENANT_CONFIG_TRANSFER_MAX_RUNTIME_SECONDS` | 配置迁移后台任务最大运行秒数 | `1800` |
 | `APP_DATABASE_TLS_MODE` | MySQL TLS 策略；默认要求加密连接，远程生产数据库使用 `verify_identity` | `required` |
 | `APP_PROXY_TRUSTED_CIDRS` | 可以提供转发头的 Nginx CIDR 数组 | `[]` |
 | `APP_API_DOCS_ENABLED` | 是否暴露运行时 Swagger/OpenAPI；生产必须关闭 | `true` |
@@ -220,6 +227,8 @@ config/app.prod.toml
 [定时任务使用与维护](docs/job-scheduling.md)。
 数据保留的永久删除边界、异步用户导入、权限诊断和租户运维总览见
 [数据生命周期、异步导入与运维诊断](docs/data-lifecycle.md)。
+租户配置包的无 ID 格式、预览、应用、回滚和部署顺序见
+[租户配置包迁移](docs/tenant-config-transfer.md)。
 
 生产 Compose 通过 `APP_*_FILE` 读取 Docker secret；文件必须是 UTF-8，末尾的一个换行会被移除。同一配置不能同时设置直接值和 `_FILE`。不要把密钥、数据库密码、对象存储凭据或副本连接 JSON 写入仓库。
 配置在启动时完成合并和严格校验；当前不提供配置密文解密，任何使用旧 `ENC[...]` 格式的值都会被拒绝。配置文件或环境变量变化后必须重启进程才会生效。
@@ -236,6 +245,7 @@ GitHub 稳定版 Release 只保留平台自动生成的源码 ZIP/TAR，不构�
 - [API 使用指南](docs/api-guide.md)
 - [架构说明](docs/architecture.md)
 - [数据库指南](docs/db-guide.md)
+- [租户配置包迁移](docs/tenant-config-transfer.md)
 - [缓存命名空间一致性协议](docs/cache-namespace.md)
 - [对象存储与 RustFS 指南](docs/storage-guide.md)
 - [前端集成指南](docs/frontend-integration.md)

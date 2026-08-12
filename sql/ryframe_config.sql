@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
     `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
     `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
+    `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
     `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -220,6 +221,7 @@ CREATE TABLE IF NOT EXISTS `sys_config` (
     `name`        VARCHAR(128) NOT NULL                    COMMENT '配置名称',
     `key`         VARCHAR(128) NOT NULL                    COMMENT '配置键',
     `value`       VARCHAR(512) NOT NULL                    COMMENT '配置值',
+    `portable`    TINYINT(1)   NOT NULL DEFAULT 0          COMMENT '是否允许配置包迁移',
     `remark`      VARCHAR(512)          DEFAULT NULL       COMMENT '备注',
     `del_flag`    CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
@@ -414,6 +416,7 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_file_tenant_id` (`tenant_id`, `id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_bucket` (`bucket`),
     KEY `idx_upload_by` (`upload_by`),
@@ -621,6 +624,135 @@ CREATE TABLE IF NOT EXISTS `sys_user_import_row_result` (
                 FOREIGN KEY (`import_job_id`) REFERENCES `sys_user_import_job` (`id`)
                 ON UPDATE CASCADE ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户导入异常行结果';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_config_bundle` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `origin` VARCHAR(16) NOT NULL,
+            `source_tenant_key` VARCHAR(64) NOT NULL,
+            `source_tenant_name_snapshot` VARCHAR(128) NOT NULL,
+            `package_schema_version` VARCHAR(64) NOT NULL,
+            `source_app_version` VARCHAR(32) NOT NULL,
+            `file_id` BIGINT DEFAULT NULL,
+            `sha256` CHAR(64) DEFAULT NULL,
+            `resource_counts` JSON NOT NULL,
+            `item_count` INT NOT NULL DEFAULT 0,
+            `status` VARCHAR(24) NOT NULL DEFAULT 'pending',
+            `background_job_id` BIGINT DEFAULT NULL,
+            `idempotency_key_hash` CHAR(64) DEFAULT NULL,
+            `created_by` BIGINT NOT NULL,
+            `error_summary` TEXT DEFAULT NULL,
+            `expires_at` DATETIME(6) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_tenant_config_bundle_tenant_id` (`tenant_id`, `id`),
+            UNIQUE KEY `uq_tenant_config_bundle_background_job` (`background_job_id`),
+            UNIQUE KEY `uq_tenant_config_bundle_idempotency` (`tenant_id`, `created_by`, `idempotency_key_hash`),
+            KEY `idx_tenant_config_bundle_list` (`tenant_id`, `created_at`, `id`),
+            KEY `idx_tenant_config_bundle_expiry` (`status`, `expires_at`, `id`),
+            KEY `idx_tenant_config_bundle_file` (`tenant_id`, `file_id`),
+            CONSTRAINT `fk_tenant_config_bundle_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_tenant_config_bundle_file`
+                FOREIGN KEY (`tenant_id`, `file_id`)
+                REFERENCES `sys_file` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置包';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_config_transfer` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `bundle_id` BIGINT NOT NULL,
+            `idempotency_key_hash` CHAR(64) NOT NULL,
+            `request_kind` VARCHAR(24) NOT NULL,
+            `request_fingerprint` CHAR(64) NOT NULL,
+            `status` VARCHAR(24) NOT NULL DEFAULT 'preview_ready',
+            `target_configuration_version` BIGINT NOT NULL,
+            `target_authorization_epoch` INT NOT NULL,
+            `plan_hash` CHAR(64) DEFAULT NULL,
+            `preview_calculated_at` DATETIME(6) DEFAULT NULL,
+            `preview_background_job_id` BIGINT DEFAULT NULL,
+            `apply_background_job_id` BIGINT DEFAULT NULL,
+            `rollback_background_job_id` BIGINT DEFAULT NULL,
+            `snapshot_file_id` BIGINT DEFAULT NULL,
+            `applied_configuration_version` BIGINT DEFAULT NULL,
+            `applied_authorization_epoch` INT DEFAULT NULL,
+            `change_counts` JSON NOT NULL,
+            `error_summary` TEXT DEFAULT NULL,
+            `requested_by` BIGINT NOT NULL,
+            `rollback_expires_at` DATETIME(6) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_tenant_config_transfer_tenant_id` (`tenant_id`, `id`),
+            UNIQUE KEY `uq_tenant_config_transfer_idempotency` (`tenant_id`, `requested_by`, `idempotency_key_hash`),
+            UNIQUE KEY `uq_tenant_config_transfer_preview_job` (`preview_background_job_id`),
+            UNIQUE KEY `uq_tenant_config_transfer_apply_job` (`apply_background_job_id`),
+            UNIQUE KEY `uq_tenant_config_transfer_rollback_job` (`rollback_background_job_id`),
+            KEY `idx_tenant_config_transfer_list` (`tenant_id`, `created_at`, `id`),
+            KEY `idx_tenant_config_transfer_status` (`tenant_id`, `status`, `created_at`),
+            KEY `idx_tenant_config_transfer_bundle` (`tenant_id`, `bundle_id`),
+            KEY `idx_tenant_config_transfer_snapshot` (`tenant_id`, `snapshot_file_id`),
+            CONSTRAINT `fk_tenant_config_transfer_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_tenant_config_transfer_bundle`
+                FOREIGN KEY (`tenant_id`, `bundle_id`)
+                REFERENCES `sys_tenant_config_bundle` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_tenant_config_transfer_snapshot`
+                FOREIGN KEY (`tenant_id`, `snapshot_file_id`)
+                REFERENCES `sys_file` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_config_transfer_item` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `transfer_id` BIGINT NOT NULL,
+            `resource_type` VARCHAR(32) NOT NULL,
+            `stable_key` VARCHAR(384) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+            `display_name` VARCHAR(255) NOT NULL,
+            `action` VARCHAR(16) NOT NULL,
+            `outcome` VARCHAR(16) NOT NULL DEFAULT 'pending',
+            `detail_code` VARCHAR(64) DEFAULT NULL,
+            `detail` VARCHAR(500) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_tenant_config_transfer_item` (`transfer_id`, `resource_type`, `stable_key`),
+            KEY `idx_tenant_config_transfer_item_list` (`tenant_id`, `transfer_id`, `id`),
+            KEY `idx_tenant_config_transfer_item_action` (`transfer_id`, `action`, `id`),
+            CONSTRAINT `fk_tenant_config_transfer_item_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_tenant_config_transfer_item_transfer`
+                FOREIGN KEY (`tenant_id`, `transfer_id`)
+                REFERENCES `sys_tenant_config_transfer` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移明细';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_config_lease` (
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `owner_token` VARCHAR(64) NOT NULL,
+            `transfer_id` BIGINT NOT NULL,
+            `operation` VARCHAR(16) NOT NULL,
+            `expires_at` DATETIME(6) NOT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`tenant_id`),
+            KEY `idx_tenant_config_lease_expiry` (`expires_at`, `tenant_id`),
+            KEY `idx_tenant_config_lease_transfer` (`tenant_id`, `transfer_id`),
+            CONSTRAINT `fk_tenant_config_lease_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `fk_tenant_config_lease_transfer`
+                FOREIGN KEY (`tenant_id`, `transfer_id`)
+                REFERENCES `sys_tenant_config_transfer` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移租约';
 
 -- 幂等初始化数据（生产环境用户默认锁定）。
 
@@ -863,11 +995,11 @@ INSERT INTO `sys_post` (`id`, `name`, `code`, `sort`, `status`, `remark`) VALUES
     (3, '项目经理', 'pm',     3, '1', '项目经理'),
     (4, '普通员工', 'user',   4, '1', '普通员工') ON DUPLICATE KEY UPDATE `id` = `id`;
 
-INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `remark`) VALUES
-    (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
-    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-light',  'dark主题theme-dark，light主题theme-light'),
-    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'false',      '是否开启验证码功能（true开启，false关闭）'),
-    (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      '是否开启注册功能（true开启，false关闭）') ON DUPLICATE KEY UPDATE `id` = `id`;
+INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `portable`, `remark`) VALUES
+    (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    1, '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
+    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-light',  1, 'dark主题theme-dark，light主题theme-light'),
+    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'false',      0, '是否开启验证码功能（true开启，false关闭）'),
+    (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      0, '是否开启注册功能（true开启，false关闭）') ON DUPLICATE KEY UPDATE `id` = `id`;
 
 INSERT INTO `sys_dict_type` (`id`, `name`, `code`, `status`, `remark`) VALUES
     (2, '菜单状态',   'sys_show_hide',   '1', '菜单状态列表'),

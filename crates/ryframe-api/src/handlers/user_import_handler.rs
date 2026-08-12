@@ -17,7 +17,7 @@ use crate::{
         public_dto::{UserImportJobVo, UserImportRowVo},
         user_import_dto::{UserImportPageQuery, UserImportRowPageQuery, UserImportUploadForm},
     },
-    handler_utils::excel_response,
+    handler_utils::{excel_response, idempotency_key_hash},
     state::AppState,
 };
 
@@ -45,7 +45,7 @@ async fn create(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<UserImportJobVo>>)> {
-    let idempotency_hash = idempotency_hash(&headers)?;
+    let idempotency_hash = idempotency_key_hash(&headers)?;
     if let Some(existing) = state
         .services
         .user_import
@@ -297,16 +297,6 @@ async fn report(
         .await
         .map_err(ryframe_http::HttpAppError::from)?;
     excel_response(file.data, &file.original_name)
-}
-
-fn idempotency_hash(headers: &HeaderMap) -> HttpResult<String> {
-    let key = headers
-        .get("Idempotency-Key")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && value.len() <= 200)
-        .ok_or_else(|| AppError::Validation("缺少有效的 Idempotency-Key 请求头".into()))?;
-    Ok(hex::encode(Sha256::digest(key.as_bytes())))
 }
 
 fn parse_import_id(value: &str) -> HttpResult<i64> {

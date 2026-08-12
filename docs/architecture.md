@@ -1,6 +1,6 @@
 # RyFrame 后端架构与演进指南
 
-> 最后核对：2026-08-03
+> 最后核对：2026-08-12
 > 适用范围：后端仓库 `ryframe` 与独立前端仓库 `ryframe-vue3`
 
 本文档只描述当前代码事实和已经确认的演进方向。接口细节以运行时 OpenAPI 文档为准，不在 Markdown 中维护第二份完整契约。
@@ -121,6 +121,17 @@ flowchart LR
 - `ryframe-storage` 拥有对象存储端口与具体后端；`ryframe-db` 不生成公开 URL，也不依赖存储实现。
 - Repository 字段不允许从 Service 公开，事务边界由 Service 用例拥有。
 
+租户配置包迁移继续遵守相同分层：API 只适配 multipart、DTO 和响应；Service 负责无数据库 ID 的
+`ryframe.tenant-config/v1` 模型、ZIP 安全解析、稳定业务键计划、快照和事务编排；Repository 负责
+`configuration_version`、租约、配置包/迁移记录和按租户过滤；对象内容只进入私有
+`config-packages` bucket。MySQL 是迁移状态和计划版本的事实来源，Redis 仍只降低后台任务唤醒延迟。
+
+预览是主库强一致只读，不取得写租约，也不修改资源。应用和回滚必须先取得每租户唯一租约，所有
+配置写入统一按“租户行 → 租约行 → 资源/关系行”锁定。最终事务重新核对租约所有权、计划哈希、
+`configuration_version` 与 `authorization_epoch`，避免预览后变化或普通写旧快照覆盖迁移结果。
+应用只创建缺失、更新稳定键相同和跳过相同资源，不删除目标独有资源；应用前快照上传失败不会开启
+写事务，写事务失败整体回滚。回滚默认窗口 168 小时且不允许部分回滚。
+
 ## 3. 已完成的架构收敛
 
 1. 删除重复的用户上下文中间件，认证主体统一为 `RequestPrincipal`。
@@ -191,6 +202,7 @@ flowchart LR
 64. 租户授权规则变化在事务内提升 `authorization_epoch`，提交后先同步 Redis 镜像，再向 `ryframe:authorization:changed` 发布只含租户和纪元的轻量事件。各 API 实例复用消息 WebSocket 向该租户在线连接发送 `authorization_changed` 控制帧；该帧不持久化、不参与消息 ACK。认证中间件同时在受保护响应写入 `X-Authorization-Epoch`，前端只接受单调前进的纪元并合并刷新 `/auth/me`、当前菜单、动态路由和租户查询缓存。实时事件仅加速界面收敛，服务端逐请求主体解析和权限守卫始终是安全边界。
 65. 可配置 Cron 计划、触发历史和计划来源任务都持久化在 MySQL；调度器按数据库时钟使用 `FOR UPDATE SKIP LOCKED` 领取到期计划，并以 `(schedule_id, fire_key)` 作为最终去重边界。后端注册表是唯一目标白名单，管理端不能提交函数、命令、URL 或任意任务载荷。依赖方向固定为“Cron 调度 → 后台任务队列”，`JobQueue`、`JobWorker`、Outbox、租约、重试和死信不得反向依赖计划、表达式、时区、目标注册表或执行历史。旧每日清理入口只存在于可删除的 Cron 兼容模块。`scheduler_enabled` 关闭后不构造调度服务、不注册路由或启动扫描，但普通任务及已入队计划任务仍可继续消费。Redis 和本地通知仅在入队事务提交后降低 Worker 等待延迟，不参与调度正确性。
 66. 数据生命周期由独立 `DataRetentionService` 执行，Cron 和人工入口只负责入队通用后台任务；死信与活动记录不进入自动清理。异步用户导入只在任务载荷中保存导入 ID，源文件、游标、进度和异常行以 MySQL 与私有对象存储为事实来源。登录、请求主体、长时间操作与只读诊断共用授权解析器，避免产生第二套角色、权限和数据范围规则。运维趋势直接从 MySQL 按当前租户聚合，不代理 Prometheus，也不向系统租户暴露其他普通租户数据。
+67. 租户配置包使用无数据库 ID 的稳定资源模型，包内只允许两个受控 JSON 文件；默认边界为 5 MiB 压缩、20 MiB 解压和 10,000 项。`sys_tenant.configuration_version` 与授权纪元共同保护预览计划，`sys_config.portable` 和敏感键规则共同限制参数导出。应用/回滚通过每租户唯一租约串行化普通配置写，应用前快照和上传包进入私有 `config-packages` bucket，artifact 与 rollback 窗口默认均为 168 小时；历史元数据没有臆定的自动删除期限。
 
 ## 4. 后续优先级
 

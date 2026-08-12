@@ -1,6 +1,6 @@
 # 对象存储与 RustFS 指南
 
-> 最后核对：2026-07-23
+> 最后核对：2026-08-12
 
 ## 1. 架构边界
 
@@ -17,7 +17,10 @@
 
 支持 `local`、`rustfs`、`minio` 和 `s3` 四个配置后端。RustFS、MinIO 和 S3 共用经过测试的 S3 兼容适配器；`rustfs` 作为独立枚举值进入配置、日志、运行时监控和 CI，不再靠通用 `s3` 名称隐式表达。
 
-应用启动时确保 `uploads` 和 `avatar` 两个私有 bucket 存在。端点不可达、凭据错误、bucket 检查失败，或发现匿名 `Principal`、`NotPrincipal` 等公开 bucket policy，都会阻止服务启动，不允许静默退回本地目录。
+应用启动时确保 `uploads`、`avatar`、`exports`、`imports` 和 `config-packages` 等受控私有
+bucket 存在。`config-packages` 只保存生成或上传的租户配置包及应用前回滚快照，客户端不能指定
+bucket 或对象路径。端点不可达、凭据错误、bucket 检查失败，或发现匿名 `Principal`、
+`NotPrincipal` 等公开 bucket policy，都会阻止服务启动，不允许静默退回本地目录。
 
 ## 2. 本机启动 RustFS
 
@@ -98,7 +101,9 @@ APP_OBJECT_STORAGE_LOCAL_BASE_DIR=/var/lib/ryframe/uploads
 
 ## 4. 运行时检查
 
-受保护接口 `GET /api/v1/monitor/runtime` 返回对象存储后端、端点和动态连接状态。`connected` 会实际检查 `uploads` 与 `avatar`，不是静态配置回显。
+受保护接口 `GET /api/v1/monitor/runtime` 返回对象存储后端、端点和动态连接状态。`connected`
+会实际检查 API 所需业务 bucket，包括私有 `config-packages`，不是静态配置回显；独立 Worker
+启动也会确保自己处理的配置包 bucket 可用。
 
 文件链路通过以下接口进入同一个 `FileService`：
 
@@ -125,6 +130,23 @@ cleanup grace 至少为 5 分钟，并且不小于存储实现声明的“取消
 头像上传完成后，`sys_user.avatar_file_id` 会保存稳定的 `sys_file` 关联；历史仅保存 URL 的头像保留空关联，下一次更新后才进入可计数回收链路。替换头像时，旧文件只有在没有任何有效用户引用时才会变为 5 分钟的 `cleanup` 墓碑。宽限期内的并发去重复用会恢复该文件，因此不会因并发头像更新误删对象。
 
 普通文件上限为 10 MiB，头像上限为 5 MiB，上传超时为 120 秒。Nginx、Axum 请求体、multipart 和业务校验使用同一配置，固定长度或 chunked 超限都返回 `413`。
+
+### 配置包和回滚快照
+
+租户配置包固定使用 `*.ryframe-config.zip`，默认压缩包上限 5 MiB、解压后上限 20 MiB、最多
+10,000 项。上传入口先在服务端验证 ZIP 根目录只能有 `manifest.json` 和 `resources.json`，拒绝
+额外/重复文件、目录、符号链接、绝对或穿越路径、加密和不支持的压缩算法，并对压缩比、实际解压
+字节、JSON 深度与 SHA-256 设置独立边界。通过 ZIP 校验不代表内容可信，后续预览和应用仍需根据
+目标主库重新校验稳定业务键、目录与引用。
+
+配置包和快照只通过 `FileService` 以稳定文件 ID 访问，并再次校验租户和
+`config-packages` bucket；不得向前端返回对象 key 或允许下载接口接收任意路径。组合业务使用未绑定
+上传后，只有配置包或迁移事务成功提交才形成正式引用；事务失败时将无引用对象标记为延迟清理，
+清理器会在租户锁下复核 `sys_tenant_config_bundle.file_id` 和
+`sys_tenant_config_transfer.snapshot_file_id`，然后协调对象与 `sys_file` 元数据。
+
+配置包对象默认保留 168 小时；应用前快照受默认 168 小时回滚窗口保护。窗口结束只表示对象可以按
+安全清理流程回收，不代表配置包或迁移历史元数据自动删除；当前没有为这些历史元数据配置硬删除期。
 
 ## 5. 构建与静态门禁
 

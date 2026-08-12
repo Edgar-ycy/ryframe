@@ -119,6 +119,7 @@ async fn main() -> Result<(), AppError> {
                     message: services.message.clone(),
                     data_retention: services.data_retention.clone(),
                     user_import: services.user_import.clone(),
+                    tenant_config_transfer: services.tenant_config_transfer.clone(),
                     redis: redis.client.clone(),
                     messaging_enabled: config.messaging.enabled,
                 },

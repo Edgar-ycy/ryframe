@@ -62,7 +62,8 @@ use utoipa::OpenApi;
         (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
         (name = "个人中心", description = "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。"),
         (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重和熔断保护。"),
-        (name = "租户管理", description = "系统租户管理租户生命周期、配额和管理员初始化。")
+        (name = "租户管理", description = "系统租户管理租户生命周期、配额和管理员初始化。"),
+        (name = "租户配置迁移", description = "导出、上传、预览、应用和回滚不含数据库 ID 与敏感凭据的租户配置包。")
     ),
     paths(
         crate::router::api_version,
@@ -234,6 +235,19 @@ use utoipa::OpenApi;
         crate::handlers::tenant_handler::create,
         crate::handlers::tenant_handler::update,
         crate::handlers::tenant_handler::update_status,
+        // 租户配置包迁移
+        crate::handlers::tenant_config_handler::request_package_export,
+        crate::handlers::tenant_config_handler::list_packages,
+        crate::handlers::tenant_config_handler::get_package,
+        crate::handlers::tenant_config_handler::download_package,
+        crate::handlers::tenant_config_handler::upload_transfer,
+        crate::handlers::tenant_config_handler::create_transfer_from_package,
+        crate::handlers::tenant_config_handler::list_transfers,
+        crate::handlers::tenant_config_handler::get_transfer,
+        crate::handlers::tenant_config_handler::list_transfer_items,
+        crate::handlers::tenant_config_handler::request_preview,
+        crate::handlers::tenant_config_handler::request_apply,
+        crate::handlers::tenant_config_handler::request_rollback,
     ),
     components(schemas(
         // 认证 DTO
@@ -381,6 +395,14 @@ use utoipa::OpenApi;
         crate::dto::tenant_dto::UpdateTenantDto,
         crate::dto::tenant_dto::UpdateTenantStatusDto,
         crate::dto::public_dto::TenantVo,
+        crate::dto::tenant_config_dto::TenantConfigPageQuery,
+        crate::dto::tenant_config_dto::TenantConfigPackageUploadForm,
+        crate::dto::tenant_config_dto::CreateTenantConfigTransferDto,
+        crate::dto::tenant_config_dto::ApplyTenantConfigTransferDto,
+        crate::dto::public_dto::TenantConfigBundleSummaryVo,
+        crate::dto::public_dto::TenantConfigBundleVo,
+        crate::dto::public_dto::TenantConfigTransferVo,
+        crate::dto::public_dto::TenantConfigTransferItemVo,
         crate::dto::public_dto::UploadResponse,
         crate::router::ApiVersionInfo,
         crate::router::ApiVersionEndpoints,
@@ -411,7 +433,7 @@ pub fn render_openapi_json(
 /// Bearer Token 安全方案
 struct ApiDocModifier;
 
-const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
+pub const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("home", "C"),
     ("system", "M"),
     ("monitor", "M"),
@@ -423,6 +445,7 @@ const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("system.post", "C"),
     ("system.dict", "C"),
     ("system.config", "C"),
+    ("system.config-transfer", "C"),
     ("system.notice", "C"),
     ("system.perm", "C"),
     ("system.authorization-diagnostics", "C"),

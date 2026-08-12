@@ -5,10 +5,10 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
 };
 use ryframe_db::{DatabaseCluster, ReadConsistency};
-use ryframe_db::{PermissionRepository, entities::permission};
+use ryframe_db::{PermissionRepository, TenantConfigTransferRepository, entities::permission};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
-use sea_orm::TransactionTrait;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 
 use crate::AuthorizationCache;
 
@@ -104,19 +104,11 @@ impl PermissionService {
     ) -> AppResult<PermissionVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        if self
-            .perm_repo
-            .find_by_code(db, tenant_id, &command.code)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Conflict("权限码已存在".into()));
-        }
         let mut model = permission::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             name: command.name,
-            code: command.code,
+            code: command.code.clone(),
             parent_id: command.parent_id,
             perm_type: command.perm_type.as_str().to_owned(),
             icon: command.icon,
@@ -130,6 +122,29 @@ impl PermissionService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        if permission::Entity::find()
+            .filter(permission::Column::TenantId.eq(tenant_id))
+            .filter(permission::Column::Code.eq(&command.code))
+            .lock(sea_orm::sea_query::LockType::Update)
+            .one(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .is_some()
+        {
+            return Err(AppError::Conflict("权限码已存在".into()));
+        }
+        if let Some(parent_id) = command.parent_id {
+            permission::Entity::find_by_id(parent_id)
+                .filter(permission::Column::TenantId.eq(tenant_id))
+                .lock(sea_orm::sea_query::LockType::Update)
+                .one(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?
+                .ok_or_else(|| AppError::Validation("父权限不存在".into()))?;
+        }
         let saved = self
             .perm_repo
             .insert_in_transaction(&transaction, tenant_id, model)
@@ -137,6 +152,9 @@ impl PermissionService {
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
@@ -152,29 +170,49 @@ impl PermissionService {
     ) -> AppResult<PermissionVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        let existing = self
-            .perm_repo
-            .find_by_id(db, tenant_id, command.id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
-        if existing.code != command.code
-            && self
-                .perm_repo
-                .find_by_code(db, tenant_id, &command.code)
-                .await?
-                .is_some()
-        {
-            return Err(AppError::Conflict("权限码已存在".into()));
-        }
         let transaction = db
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         let mut model = self
             .perm_repo
             .find_by_id_for_update(&transaction, tenant_id, command.id)
             .await?
             .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
+        if model.code != command.code
+            && permission::Entity::find()
+                .filter(permission::Column::TenantId.eq(tenant_id))
+                .filter(permission::Column::Code.eq(&command.code))
+                .lock(sea_orm::sea_query::LockType::Update)
+                .one(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?
+                .is_some()
+        {
+            return Err(AppError::Conflict("权限码已存在".into()));
+        }
+        if command.parent_id == Some(command.id) {
+            return Err(AppError::Validation("权限不能将自己设为上级".into()));
+        }
+        let mut cursor = command.parent_id;
+        while let Some(parent_id) = cursor {
+            let parent = permission::Entity::find_by_id(parent_id)
+                .filter(permission::Column::TenantId.eq(tenant_id))
+                .lock(sea_orm::sea_query::LockType::Update)
+                .one(&transaction)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?
+                .ok_or_else(|| AppError::Validation("父权限不存在".into()))?;
+            if parent.id == command.id {
+                return Err(AppError::Validation(
+                    "不能将权限移动到自己的后代节点".into(),
+                ));
+            }
+            cursor = parent.parent_id;
+        }
         model.name = command.name;
         model.code = command.code;
         model.parent_id = command.parent_id;
@@ -191,6 +229,9 @@ impl PermissionService {
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
             .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
+            .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
@@ -201,25 +242,35 @@ impl PermissionService {
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        if self.perm_repo.is_referenced(db, tenant_id, id).await? {
-            return Err(AppError::Conflict(
-                "权限仍被角色或菜单引用，不能删除".into(),
-            ));
-        }
         let transaction = db
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         self.perm_repo
             .find_by_id_for_update(&transaction, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
+        if self
+            .perm_repo
+            .is_referenced(&transaction, tenant_id, id)
+            .await?
+        {
+            return Err(AppError::Conflict(
+                "权限仍被角色或菜单引用，不能删除".into(),
+            ));
+        }
         self.perm_repo
             .delete_in_transaction(&transaction, tenant_id, id)
             .await?;
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
@@ -239,42 +290,45 @@ impl PermissionService {
             .iter()
             .map(|code| (*code).to_owned())
             .collect::<BTreeSet<_>>();
-        let existing = self.perm_repo.find_all(db, tenant_id).await?;
-        let existing_codes: HashSet<String> = existing.iter().map(|p| p.code.clone()).collect();
         let scanned_total = scanned.len();
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        let existing = permission::Entity::find()
+            .filter(permission::Column::TenantId.eq(tenant_id))
+            .lock(sea_orm::sea_query::LockType::Update)
+            .all(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let existing_codes: HashSet<String> = existing.iter().map(|p| p.code.clone()).collect();
         let mut missing = Vec::new();
-        let mut models = Vec::new();
-
         for code in scanned {
-            if existing_codes.contains(&code) {
-                continue;
+            if !existing_codes.contains(&code) {
+                missing.push(code);
             }
-            missing.push(code.clone());
-            let name = code.rsplit(':').next().unwrap_or(&code).to_string();
-            let mut model = permission::Model {
-                id: snowflake::try_next_snowflake_id()?,
-                tenant_id: tenant_id.to_owned(),
-                name,
-                code: code.clone(),
-                parent_id: None,
-                perm_type: PermissionType::Api.as_str().to_owned(),
-                icon: None,
-                sort: 0,
-                status: "1".to_string(),
-                created_at: Default::default(),
-                updated_at: Default::default(),
-            };
-            model.fill_on_insert(&FillContext::new())?;
-            models.push(model);
         }
-
-        let created = models.len();
+        let created = missing.len();
         if created > 0 {
-            let transaction = db
-                .begin()
-                .await
-                .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-            for model in models {
+            for code in &missing {
+                let name = code.rsplit(':').next().unwrap_or(code).to_string();
+                let mut model = permission::Model {
+                    id: snowflake::try_next_snowflake_id()?,
+                    tenant_id: tenant_id.to_owned(),
+                    name,
+                    code: code.clone(),
+                    parent_id: None,
+                    perm_type: PermissionType::Api.as_str().to_owned(),
+                    icon: None,
+                    sort: 0,
+                    status: "1".to_string(),
+                    created_at: Default::default(),
+                    updated_at: Default::default(),
+                };
+                model.fill_on_insert(&FillContext::new())?;
                 self.perm_repo
                     .insert_in_transaction(&transaction, tenant_id, model)
                     .await?;
@@ -283,10 +337,18 @@ impl PermissionService {
                 .authorization_cache
                 .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
                 .await?;
+            TenantConfigTransferRepository
+                .increment_configuration_version_in_txn(&transaction, tenant_id)
+                .await?;
             crate::commit_current_audit(transaction).await?;
             self.authorization_cache
                 .sync_tenant_epoch(tenant_id, authorization_epoch)
                 .await?;
+        } else {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
         Ok(PermissionSyncReport {

@@ -186,6 +186,34 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         "APP_USER_IMPORT_HASH_PARALLELISM",
         &["user_import", "hash_parallelism"],
     ),
+    EnvOverride::integer(
+        "APP_TENANT_CONFIG_TRANSFER_MAX_PACKAGE_BYTES",
+        &["tenant_config_transfer", "max_package_bytes"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_CONFIG_TRANSFER_MAX_UNCOMPRESSED_BYTES",
+        &["tenant_config_transfer", "max_uncompressed_bytes"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_CONFIG_TRANSFER_MAX_ITEMS",
+        &["tenant_config_transfer", "max_items"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_CONFIG_TRANSFER_ARTIFACT_HOURS",
+        &["tenant_config_transfer", "artifact_hours"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_CONFIG_TRANSFER_ROLLBACK_HOURS",
+        &["tenant_config_transfer", "rollback_hours"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_CONFIG_TRANSFER_LEASE_SECONDS",
+        &["tenant_config_transfer", "lease_seconds"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_CONFIG_TRANSFER_MAX_RUNTIME_SECONDS",
+        &["tenant_config_transfer", "max_runtime_seconds"],
+    ),
     EnvOverride::boolean("APP_TELEMETRY_ENABLED", &["telemetry", "enabled"]),
     EnvOverride::string("APP_TELEMETRY_ENDPOINT", &["telemetry", "endpoint"]),
     EnvOverride::string("APP_TELEMETRY_SERVICE_NAME", &["telemetry", "service_name"]),

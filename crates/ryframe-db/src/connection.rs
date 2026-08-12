@@ -101,6 +101,10 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_message",
     "sys_message_audience",
     "sys_message_recipient",
+    "sys_tenant_config_bundle",
+    "sys_tenant_config_transfer",
+    "sys_tenant_config_transfer_item",
+    "sys_tenant_config_lease",
 ];
 
 #[derive(Debug, FromQueryResult)]

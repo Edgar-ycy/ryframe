@@ -1,6 +1,6 @@
 # 生产部署基线
 
-> 最后核对：2026-08-05
+> 最后核对：2026-08-12
 
 本文档给出 RyFrame 生产环境的最低安全和可靠性基线。示例配置必须按实际域名、网段、
 证书和容量修改，不能原样作为生产凭据或网络策略。
@@ -128,7 +128,16 @@ Worker 服务上显式配置同一个具名卷或经过验证的共享挂载，�
 - Prometheus 从允许网段携带 Bearer Token 抓取成功；公网或无 Token 请求被拒绝。
 - MySQL/Redis/对象存储 TLS 证书校验成功，数据库迁移和隔离库恢复演练通过。
 - API 与 Worker 使用相同的 `APP_DATA_RETENTION_*` 和 `APP_USER_IMPORT_*`；用户导入私有 bucket 对两类进程都可读写。
+- API 与 Worker 使用相同的 `APP_TENANT_CONFIG_TRANSFER_*`；默认保持 5 MiB 压缩包、20 MiB
+  解压、10,000 项、168 小时 artifact 和 168 小时 rollback 窗口。两类进程都能访问私有
+  `config-packages` bucket，bucket policy 不允许匿名读取或客户端选择对象路径。
 - 先部署迁移，再部署已经注册 `system.user.import` 和数据保留处理器的新 Worker，然后部署 API，最后发布前端；不得先让新 API 向旧 Worker 入队未知任务。
+- 配置迁移同样遵循“数据库迁移 → 已注册 export/preview/apply/rollback 处理器的新 Worker → API
+  → 前端”；上线前生成配置包并完成一次只读预览，不得让新 API 向旧 Worker 入队未知任务。
+- 验证普通配置写在有效迁移租约期间返回 `409`，租约锁顺序为“租户行 → 租约行 → 资源/关系行”；
+  预览后修改目标配置再应用旧计划必须因 `configuration_version` 或授权纪元变化拒绝。
+- 在隔离租户演练应用前快照失败、应用事务回滚与 168 小时窗口内回滚。对象过期不等于配置包或
+  迁移历史元数据过期；当前没有配置这些历史记录的自动硬删除期。
 - 在系统租户执行数据保留预览，逐项核对截止时间和候选数量；确认默认计划只在下一个 `03:30 UTC` 执行，未因升级立即删除历史。
 - 告警规则加载成功，Alertmanager 测试通知到达；备份与证书指标有实际数据。
 - 容量验收通过并保留报告；滚动部署各实例 Snowflake worker ID 唯一。
@@ -137,3 +146,4 @@ Worker 服务上显式配置同一个具名卷或经过验证的共享挂载，�
 [生产监控与值班手册](operations-runbook.md)。
 数据保留、异步导入、权限诊断和租户总览的上线边界见
 [数据生命周期、异步导入与运维诊断](data-lifecycle.md)。
+租户配置迁移的包格式、稳定键和回滚边界见[租户配置包迁移](tenant-config-transfer.md)。

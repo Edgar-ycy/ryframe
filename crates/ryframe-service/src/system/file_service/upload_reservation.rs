@@ -16,6 +16,10 @@ const RESERVATION_TTL_MINUTES: i64 = 5;
 const LEASE_HEARTBEAT_SECONDS: u64 = 30;
 const MIN_CLEANUP_GRACE_SECONDS: i64 = 300;
 const STALE_RESERVATION_BATCH_SIZE: u64 = 32;
+const STALE_CONFIG_PACKAGE_BATCH_SIZE: u64 = 32;
+// 配置允许的后台任务最长运行时间为 24 小时。超过该窗口仍无任何持久化引用的
+// ready 文件才可能是进程取消遗留物，额外一小时用于覆盖任务终态同步和时钟抖动。
+const CONFIG_PACKAGE_ORPHAN_AGE_HOURS: i64 = 25;
 const JANITOR_SUCCESS_INTERVAL_SECONDS: u64 = 60;
 const JANITOR_INITIAL_ERROR_BACKOFF_SECONDS: u64 = 5;
 const JANITOR_MAX_ERROR_BACKOFF_SECONDS: u64 = 300;
@@ -670,10 +674,25 @@ impl FileService {
     /// 常规上传不会在对延迟敏感的路径上执行对象删除。
     pub async fn reconcile_upload_reservations(&self) -> AppResult<u64> {
         let now = FileRepository.database_utc_now(self.db.write()).await?;
+        let stale_config_packages = FileRepository
+            .find_stale_unreferenced_config_packages(
+                self.db.write(),
+                now - chrono::Duration::hours(CONFIG_PACKAGE_ORPHAN_AGE_HOURS),
+                STALE_CONFIG_PACKAGE_BATCH_SIZE,
+            )
+            .await?;
+        let mut processed = 0_u64;
+        for file in stale_config_packages {
+            if self
+                .schedule_unreferenced_config_package_cleanup(&file.tenant_id, file.id)
+                .await?
+            {
+                processed = processed.saturating_add(1);
+            }
+        }
         let reservations = FileRepository
             .find_expired_reservations(self.db.write(), now, STALE_RESERVATION_BATCH_SIZE)
             .await?;
-        let mut processed = 0_u64;
         for reservation in reservations {
             let Some(plan) =
                 plan_expired_reservation(&reservation, now, cleanup_grace(self.storage.as_ref()))

@@ -14,6 +14,7 @@ pub struct Model {
     #[sea_orm(unique)]
     pub key: String,
     pub value: String,
+    pub portable: bool,
     pub remark: Option<String>,
     pub del_flag: String,
     pub created_at: DateTime<Utc>,

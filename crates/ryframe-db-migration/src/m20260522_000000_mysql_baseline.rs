@@ -92,6 +92,7 @@ pub(crate) const BASELINE_STATEMENTS: &[&str] = &[
     `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
     `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
     `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
+    `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
     `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -291,6 +292,7 @@ VALUES ('system', 'config', 0)"####,
     `name`        VARCHAR(128) NOT NULL                    COMMENT '配置名称',
     `key`         VARCHAR(128) NOT NULL                    COMMENT '配置键',
     `value`       VARCHAR(512) NOT NULL                    COMMENT '配置值',
+    `portable`    TINYINT(1)   NOT NULL DEFAULT 0          COMMENT '是否允许配置包迁移',
     `remark`      VARCHAR(512)          DEFAULT NULL       COMMENT '备注',
     `del_flag`    CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
@@ -476,6 +478,7 @@ VALUES ('system', 'config', 0)"####,
     `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_file_tenant_id` (`tenant_id`, `id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_bucket` (`bucket`),
     KEY `idx_upload_by` (`upload_by`),
@@ -832,11 +835,11 @@ VALUES ('system', 'config', 0)"####,
     (2, '技术总监', 'cto',    2, '1', '技术部门负责人'),
     (3, '项目经理', 'pm',     3, '1', '项目经理'),
     (4, '普通员工', 'user',   4, '1', '普通员工')"####,
-    r####"INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `remark`) VALUES
-    (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
-    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-light',  'dark主题theme-dark，light主题theme-light'),
-    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'false',      '是否开启验证码功能（true开启，false关闭）'),
-    (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      '是否开启注册功能（true开启，false关闭）')"####,
+    r####"INSERT INTO `sys_config` (`id`, `name`, `key`, `value`, `portable`, `remark`) VALUES
+    (1, '主框架页-默认皮肤样式', 'sys.index.skinName',     'skin-blue',    1, '蓝色 skin-blue、绿色 skin-green、紫色 skin-purple、红色 skin-red、黄色 skin-yellow'),
+    (3, '主框架页-侧边栏主题',  'sys.index.sideTheme',    'theme-light',  1, 'dark主题theme-dark，light主题theme-light'),
+    (4, '账号自助-验证码开关',  'sys.account.captchaEnabled', 'false',      0, '是否开启验证码功能（true开启，false关闭）'),
+    (5, '账号自助-是否开启注册', 'sys.account.registerUser', 'false',      0, '是否开启注册功能（true开启，false关闭）')"####,
     r####"INSERT INTO `sys_dict_type` (`id`, `name`, `code`, `status`, `remark`) VALUES
     (2, '菜单状态',   'sys_show_hide',   '1', '菜单状态列表'),
     (3, '系统开关',   'sys_normal_disable', '1', '系统正常停用状态'),
@@ -900,6 +903,7 @@ pub(crate) fn ddl_statements() -> impl Iterator<Item = &'static str> {
         .copied()
         .filter(|statement| !is_seed_statement(statement))
         .chain(crate::m20260811_000024_data_lifecycle::lifecycle_table_statements())
+        .chain(crate::m20260812_000025_tenant_config_transfer::tenant_config_table_statements())
 }
 
 pub(crate) fn seed_statements() -> impl Iterator<Item = &'static str> {

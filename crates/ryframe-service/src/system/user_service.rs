@@ -15,6 +15,8 @@ use serde::Serialize;
 
 use crate::{AuthorizationCache, AuthorizationResolver};
 
+pub(crate) use queries::CurrentAuthorization;
+
 pub const USER_STATUS_NORMAL: &str = user::Model::STATUS_NORMAL;
 
 #[derive(Debug, Serialize)]

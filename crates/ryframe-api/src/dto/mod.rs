@@ -22,6 +22,7 @@ pub mod public_dto;
 pub mod retention_dto;
 pub mod role_dto;
 pub mod schedule_dto;
+pub mod tenant_config_dto;
 pub mod tenant_dto;
 mod tenant_validation;
 pub mod user_dto;

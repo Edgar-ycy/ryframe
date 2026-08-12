@@ -37,6 +37,8 @@ pub struct CreateConfigDto {
     pub key: String,
     #[validate(length(min = 1, max = 500, message = "参数键值长度为1-500"))]
     pub value: String,
+    #[serde(default)]
+    pub portable: bool,
     pub remark: Option<String>,
 }
 
@@ -45,4 +47,6 @@ pub struct CreateConfigDto {
 pub struct UpdateConfigDto {
     #[validate(length(min = 1, message = "配置值不能为空"))]
     pub value: String,
+    #[serde(default)]
+    pub portable: Option<bool>,
 }

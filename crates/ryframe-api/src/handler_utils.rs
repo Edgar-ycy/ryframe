@@ -6,6 +6,7 @@ use axum::{
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use ryframe_http::{HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
+use sha2::{Digest, Sha256};
 
 const XLSX_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -41,6 +42,39 @@ pub(crate) fn excel_response(bytes: Vec<u8>, filename: &str) -> HttpResult<Respo
         )
         .body(Body::from(bytes))
         .map_err(|e| HttpAppError::from(AppError::Internal(format!("build response failed: {e}"))))
+}
+
+/// 构建受控内容类型的通用附件响应。
+pub(crate) fn attachment_response(
+    bytes: Vec<u8>,
+    filename: &str,
+    content_type: &str,
+) -> HttpResult<Response> {
+    Response::builder()
+        .status(200)
+        .header("Content-Type", content_type)
+        .header(
+            "Content-Disposition",
+            attachment_content_disposition(filename)?,
+        )
+        .body(Body::from(bytes))
+        .map_err(|error| {
+            HttpAppError::from(AppError::Internal(format!("构建下载响应失败: {error}")))
+        })
+}
+
+/// 读取并散列写请求幂等键；数据库和后台任务只保存摘要。
+pub(crate) fn idempotency_key_hash(headers: &HeaderMap) -> HttpResult<String> {
+    let key = headers
+        .get("Idempotency-Key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+        })
+        .ok_or_else(|| AppError::Validation("缺少有效的 Idempotency-Key 请求头".into()))?;
+    Ok(hex::encode(Sha256::digest(key.as_bytes())))
 }
 
 fn parse_i64(value: &str) -> HttpResult<i64> {

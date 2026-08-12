@@ -16,6 +16,7 @@ pub struct ConfigVo {
     pub name: String,
     pub key: String,
     pub value: String,
+    pub portable: bool,
     pub remark: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -27,6 +28,7 @@ impl From<ServiceConfigVo> for ConfigVo {
             name,
             key,
             value,
+            portable,
             remark,
             created_at,
         } = value;
@@ -35,6 +37,7 @@ impl From<ServiceConfigVo> for ConfigVo {
             name,
             key,
             value,
+            portable,
             remark,
             created_at,
         }

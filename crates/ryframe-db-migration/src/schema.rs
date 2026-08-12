@@ -630,7 +630,8 @@ fn expected_schema() -> Result<ExpectedSchema, DbErr> {
                         index += 1;
                         continue;
                     }
-                    if !next.to_ascii_uppercase().starts_with("ON ") {
+                    let next_upper = next.to_ascii_uppercase();
+                    if !next_upper.starts_with("REFERENCES") && !next_upper.starts_with("ON ") {
                         break;
                     }
                     index += 1;
@@ -973,6 +974,10 @@ fn is_upgrade_table(table: &str) -> bool {
             | "sys_data_retention_run"
             | "sys_user_import_job"
             | "sys_user_import_row_result"
+            | "sys_tenant_config_bundle"
+            | "sys_tenant_config_transfer"
+            | "sys_tenant_config_transfer_item"
+            | "sys_tenant_config_lease"
             | "sys_cache_namespace_version"
             | "sys_outbox_event"
             | "sys_export_job"
@@ -987,7 +992,10 @@ fn is_upgrade_table(table: &str) -> bool {
 fn is_upgrade_column(table: &str, column: &str) -> bool {
     matches!(
         (table, column),
-        ("sys_tenant", "session_version" | "authorization_epoch")
+        (
+            "sys_tenant",
+            "session_version" | "authorization_epoch" | "configuration_version"
+        ) | ("sys_config", "portable")
             | ("sys_user", "authorization_version")
             | ("sys_user", "preferred_locale" | "avatar_file_id")
             | ("sys_role", "is_super")
@@ -1028,7 +1036,7 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
             | ("password_reset_requests", "idx_password_reset_tenant")
             | (
                 "sys_file",
-                "idx_file_reservation_expiry" | "idx_file_sha256"
+                "idx_file_reservation_expiry" | "idx_file_sha256" | "uq_sys_file_tenant_id"
             )
     )
 }

@@ -241,6 +241,9 @@ impl IntoResponse for HttpAppError {
             AppError::Authorization(_) => (StatusCode::FORBIDDEN, None),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, None),
             AppError::Conflict(_) => (StatusCode::CONFLICT, None),
+            AppError::RetryableConflict(_, retry_after) => {
+                (StatusCode::CONFLICT, Some(*retry_after))
+            }
             AppError::PayloadTooLarge(_) => (StatusCode::PAYLOAD_TOO_LARGE, None),
             AppError::RateLimited(_, retry_after) => {
                 (StatusCode::TOO_MANY_REQUESTS, Some(*retry_after))

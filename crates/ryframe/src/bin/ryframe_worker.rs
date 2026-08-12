@@ -21,8 +21,9 @@ use ryframe_kernel::AppError;
 use ryframe_service::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
-        DataRetentionService, EXPORT_BUCKET, ExportService, FileService, IMPORT_BUCKET,
-        MessageService, OperLogService, UserImportService, UserService,
+        CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportService, FileService,
+        IMPORT_BUCKET, MessageService, OperLogService, TenantConfigTransferService,
+        UserImportService, UserService,
     },
 };
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
@@ -120,13 +121,23 @@ async fn main() -> Result<(), AppError> {
         queue.clone(),
         file.clone(),
         config.data_retention.clone(),
+        config.tenant_config_transfer.clone(),
     ));
     let user_import = Arc::new(UserImportService::new(
         database.clone(),
         queue.clone(),
+        user.clone(),
+        file.clone(),
+        config.user_import.clone(),
+    ));
+    let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
+        database.clone(),
+        queue.clone(),
         user,
         file,
-        config.user_import.clone(),
+        authorization_cache.clone(),
+        ryframe_api::tenant_config_target_catalog()?,
+        config.tenant_config_transfer.clone(),
     ));
     let worker = process_jobs::build_job_worker(
         queue.clone(),
@@ -136,6 +147,7 @@ async fn main() -> Result<(), AppError> {
             message: message.clone(),
             data_retention,
             user_import,
+            tenant_config_transfer,
             redis: redis.clone(),
             messaging_enabled: config.messaging.enabled,
         },
@@ -365,7 +377,7 @@ async fn connect_storage_for_worker(
             .map_err(|error| AppError::Config(error.to_string()))?,
         ),
     };
-    for bucket in [EXPORT_BUCKET, IMPORT_BUCKET] {
+    for bucket in [EXPORT_BUCKET, IMPORT_BUCKET, CONFIG_PACKAGE_BUCKET] {
         storage.ensure_bucket(bucket).await.map_err(|error| {
             AppError::ServiceUnavailable(format!("Worker 对象存储不可用: {error}"))
         })?;

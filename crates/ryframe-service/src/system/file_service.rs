@@ -44,6 +44,9 @@ pub const AVATAR_BUCKET: &str = "avatar";
 /// 用户导入源文件与错误报告专用私有 bucket 名称。
 pub const IMPORT_BUCKET: &str = "imports";
 
+/// 租户配置包和回滚快照专用私有 bucket 名称。
+pub const CONFIG_PACKAGE_BUCKET: &str = "config-packages";
+
 /// 内部文件最终清理声明的租约时长；进程退出后由全局清理器接管。
 const INTERNAL_DELETE_CLAIM_SECONDS: i64 = 300;
 
@@ -143,7 +146,12 @@ impl FileService {
 
     /// 校验是否可使用已配置的凭据连接存储后端。
     pub async fn check_storage(&self) -> AppResult<()> {
-        for bucket in [UPLOAD_BUCKET, AVATAR_BUCKET, IMPORT_BUCKET] {
+        for bucket in [
+            UPLOAD_BUCKET,
+            AVATAR_BUCKET,
+            IMPORT_BUCKET,
+            CONFIG_PACKAGE_BUCKET,
+        ] {
             self.storage
                 .readiness_check(bucket)
                 .await
@@ -207,6 +215,34 @@ impl FileService {
             .await
     }
 
+    /// 上传由服务端生成或已经完成格式校验的配置包，不接受客户端 bucket。
+    pub async fn upload_config_package_unbound(
+        &self,
+        tenant_id: &str,
+        uploaded_by: &str,
+        original_name: String,
+        data: Vec<u8>,
+        max_file_size: u64,
+    ) -> AppResult<UploadResponse> {
+        let config = UploadConfig {
+            allowed_extensions: vec!["zip".to_owned()],
+            max_file_size,
+            ..Default::default()
+        };
+        self.upload_internal_unbound(
+            tenant_id,
+            uploaded_by,
+            UploadCommand {
+                original_name,
+                data,
+                config: &config,
+                bucket: CONFIG_PACKAGE_BUCKET,
+                compress: false,
+            },
+        )
+        .await
+    }
+
     async fn upload_for_tenant(
         &self,
         tenant_id: &str,
@@ -239,13 +275,6 @@ impl FileService {
             content_type,
             file_sha256,
         } = prepare_upload_data(original_name, data, compress).await?;
-
-        if let Some(existing) = FileRepository
-            .find_by_sha256(self.db.write(), tenant_id, bucket, &file_sha256)
-            .await?
-        {
-            return Ok(Self::upload_response_for_existing(existing));
-        }
 
         let storage_name = generate_storage_filename(&final_name);
         let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
@@ -362,6 +391,16 @@ impl FileService {
         expected_bucket: &str,
     ) -> AppResult<DownloadedFile> {
         self.download_by_id_for_tenant(tenant_id, file_id, expected_bucket)
+            .await
+    }
+
+    /// 供配置迁移服务按稳定文件 ID 读取私有配置包或回滚快照。
+    pub async fn download_config_package_internal(
+        &self,
+        tenant_id: &str,
+        file_id: i64,
+    ) -> AppResult<DownloadedFile> {
+        self.download_internal(tenant_id, file_id, CONFIG_PACKAGE_BUCKET)
             .await
     }
 
@@ -531,6 +570,73 @@ impl FileService {
                 "内部文件清理所有权已发生异常变化".into(),
             )),
         }
+    }
+
+    /// 将尚未被业务记录引用的配置包文件纳入可恢复的延迟清理。
+    ///
+    /// 调用方必须已经确认配置包、迁移和快照均未引用该文件；本方法会在租户锁下
+    /// 再次锁定文件并仅允许受控 bucket，避免把客户端上传文件误作内部文件回收。
+    pub async fn schedule_unreferenced_config_package_cleanup(
+        &self,
+        tenant_id: &str,
+        file_id: i64,
+    ) -> AppResult<bool> {
+        const ORPHAN_GRACE_MINUTES: i64 = 15;
+        let transaction = self
+            .db
+            .write()
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        TenantRepository
+            .lock_tenant_in_txn(&transaction, tenant_id)
+            .await?;
+        let Some(file) = FileRepository
+            .find_by_id_any_status_for_update(&transaction, tenant_id, file_id)
+            .await?
+        else {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Ok(false);
+        };
+        if file.bucket != CONFIG_PACKAGE_BUCKET {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Err(AppError::Authorization("内部文件存储边界不匹配".into()));
+        }
+        if file.upload_status != sys_file::Model::UPLOAD_STATUS_READY {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Ok(false);
+        }
+        let now = FileRepository.database_utc_now(&transaction).await?;
+        let marked = FileRepository
+            .mark_unreferenced_config_package_for_cleanup_in_txn(
+                &transaction,
+                tenant_id,
+                file_id,
+                now,
+                now + chrono::Duration::minutes(ORPHAN_GRACE_MINUTES),
+            )
+            .await?;
+        if marked {
+            transaction
+                .commit()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+        } else {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+        }
+        Ok(marked)
     }
 
     fn upload_response_for_existing(existing: sys_file::Model) -> UploadResponse {

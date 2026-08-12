@@ -12,7 +12,8 @@ use ryframe_service::{
         DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
         MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
         OverviewService, PermissionService, PostService, ProfileService, RoleService,
-        TenantService, UserImportService, UserService, WebSocketTicketService,
+        TenantConfigTransferService, TenantService, UserImportService, UserService,
+        WebSocketTicketService,
     },
 };
 use ryframe_storage::ObjectStorage;
@@ -83,6 +84,7 @@ pub async fn build_all(
         job_queue.clone(),
         file.clone(),
         config.data_retention.clone(),
+        config.tenant_config_transfer.clone(),
     ));
     let user_import = Arc::new(UserImportService::new(
         database.clone(),
@@ -90,6 +92,15 @@ pub async fn build_all(
         user.clone(),
         file.clone(),
         config.user_import.clone(),
+    ));
+    let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
+        database.clone(),
+        job_queue.clone(),
+        user.clone(),
+        file.clone(),
+        authorization_cache.clone(),
+        ryframe_api::tenant_config_target_catalog()?,
+        config.tenant_config_transfer.clone(),
     ));
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
         database.clone(),
@@ -149,7 +160,10 @@ pub async fn build_all(
         project_root,
     ));
 
-    let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
+    let profile = Arc::new(ProfileService::new(
+        database.clone(),
+        authorization_cache.clone(),
+    ));
     let export = Arc::new(
         ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
             .with_job_queue(job_queue.clone()),
@@ -189,6 +203,7 @@ pub async fn build_all(
         job_schedules,
         data_retention,
         user_import,
+        tenant_config_transfer,
         authorization_diagnostic,
         overview,
         login_info,

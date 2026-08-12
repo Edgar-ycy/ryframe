@@ -9,7 +9,9 @@ use ryframe_service::{
     ScheduledJobTargetRegistry,
     system::{
         DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
-        UserImportJobHandler, UserImportService,
+        TenantConfigApplyJobHandler, TenantConfigExportJobHandler, TenantConfigPreviewJobHandler,
+        TenantConfigRollbackJobHandler, TenantConfigTransferService, UserImportJobHandler,
+        UserImportService,
     },
 };
 
@@ -19,6 +21,7 @@ pub struct JobWorkerDependencies {
     pub message: Arc<MessageService>,
     pub data_retention: Arc<DataRetentionService>,
     pub user_import: Arc<UserImportService>,
+    pub tenant_config_transfer: Arc<TenantConfigTransferService>,
     pub redis: Option<RedisClient>,
     pub messaging_enabled: bool,
 }
@@ -37,6 +40,18 @@ pub fn build_job_worker(
         )))?
         .with_handler(Arc::new(UserImportJobHandler::new(
             dependencies.user_import,
+        )))?
+        .with_handler(Arc::new(TenantConfigExportJobHandler::new(
+            dependencies.tenant_config_transfer.clone(),
+        )))?
+        .with_handler(Arc::new(TenantConfigPreviewJobHandler::new(
+            dependencies.tenant_config_transfer.clone(),
+        )))?
+        .with_handler(Arc::new(TenantConfigApplyJobHandler::new(
+            dependencies.tenant_config_transfer.clone(),
+        )))?
+        .with_handler(Arc::new(TenantConfigRollbackJobHandler::new(
+            dependencies.tenant_config_transfer,
         )))?;
     if !dependencies.messaging_enabled {
         return Ok(worker);

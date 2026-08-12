@@ -11,7 +11,8 @@ use ryframe_config::UserImportConfig;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
     CreateUserImportJob, DatabaseCluster, DeptRepository, EnqueueBackgroundJob, FileRepository,
-    TenantRepository, UserImportFilter, UserImportRepository, UserRepository, background_job,
+    TenantConfigTransferRepository, TenantRepository, UserImportFilter, UserImportRepository,
+    UserRepository, background_job,
     entities::{dept, user, user_import_job, user_import_row_result},
 };
 use ryframe_excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
@@ -814,6 +815,14 @@ impl UserImportService {
         mut prepared: PreparedBatch,
     ) -> AppResult<CommitBatchOutcome> {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let import_snapshot = user_import_job::Entity::find_by_id(import_id)
+            .one(self.db.write())
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, &import_snapshot.tenant_id, None)
+            .await?;
         let mut import = UserImportRepository
             .lock_by_id_in_txn(&transaction, import_id)
             .await?

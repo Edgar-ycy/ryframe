@@ -21,6 +21,7 @@ pub mod profile_handler;
 pub mod retention_handler;
 pub mod role_handler;
 pub mod schedule_handler;
+pub mod tenant_config_handler;
 pub mod tenant_handler;
 pub mod user_handler;
 pub mod user_import_handler;

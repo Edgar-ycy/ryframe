@@ -4,10 +4,10 @@ use ryframe_core::{
     repository::{PageResult, ValidatedPageQuery},
 };
 use ryframe_db::{DatabaseCluster, ReadConsistency};
-use ryframe_db::{MenuFilter, MenuRepository, PermissionRepository, entities::menu};
+use ryframe_db::{MenuFilter, MenuRepository, TenantConfigTransferRepository, entities::menu};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
-use sea_orm::TransactionTrait;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 
 use crate::AuthorizationCache;
 
@@ -15,6 +15,7 @@ mod model;
 mod validation;
 
 pub use model::{CreateMenuCommand, MenuTreeNode, MenuType, MenuVo, UpdateMenuCommand};
+use validation::MenuBinding;
 
 #[derive(Debug)]
 pub struct MenuListParams {
@@ -29,7 +30,6 @@ const MENU_TREE_CACHE_NAMESPACE: &str = "menu-tree";
 pub struct MenuService {
     db: DatabaseCluster,
     menu_repo: MenuRepository,
-    perm_repo: PermissionRepository,
     authorization_cache: AuthorizationCache,
 }
 
@@ -38,7 +38,6 @@ impl MenuService {
         Self {
             db,
             menu_repo: MenuRepository,
-            perm_repo: PermissionRepository,
             authorization_cache,
         }
     }
@@ -104,15 +103,6 @@ impl MenuService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
         let route_key = normalize_route_key(command.route_key);
-        self.validate_binding(
-            tenant_id,
-            None,
-            command.parent_id,
-            command.menu_type,
-            command.perm_id,
-            route_key.as_deref(),
-        )
-        .await?;
         let mut new_menu = menu::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
@@ -120,7 +110,7 @@ impl MenuService {
             parent_id: command.parent_id,
             menu_type: command.menu_type.as_str().to_owned(),
             perm_id: command.perm_id,
-            route_key,
+            route_key: route_key.clone(),
             icon: command.icon,
             sort: command.sort,
             visible: command.visible,
@@ -136,6 +126,21 @@ impl MenuService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        self.validate_binding(
+            &transaction,
+            tenant_id,
+            MenuBinding {
+                current_id: None,
+                parent_id: command.parent_id,
+                menu_type: command.menu_type,
+                perm_id: command.perm_id,
+                route_key: route_key.as_deref(),
+            },
+        )
+        .await?;
         let saved = self
             .menu_repo
             .insert_in_transaction(&transaction, tenant_id, new_menu)
@@ -143,6 +148,9 @@ impl MenuService {
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
@@ -158,23 +166,31 @@ impl MenuService {
     ) -> AppResult<MenuVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
+        let route_key = normalize_route_key(command.route_key);
+        let transaction = db
+            .begin()
+            .await
+            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         let mut menu = self
             .menu_repo
-            .find_by_id(db, tenant_id, command.id)
+            .find_by_id_for_update(&transaction, tenant_id, command.id)
             .await?
             .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
-        let route_key = normalize_route_key(command.route_key);
-
         self.validate_binding(
+            &transaction,
             tenant_id,
-            Some(command.id),
-            command.parent_id,
-            command.menu_type,
-            command.perm_id,
-            route_key.as_deref(),
+            MenuBinding {
+                current_id: Some(command.id),
+                parent_id: command.parent_id,
+                menu_type: command.menu_type,
+                perm_id: command.perm_id,
+                route_key: route_key.as_deref(),
+            },
         )
         .await?;
-
         menu.name = command.name;
         menu.parent_id = command.parent_id;
         menu.menu_type = command.menu_type.as_str().to_owned();
@@ -185,15 +201,6 @@ impl MenuService {
         menu.visible = command.visible;
         menu.status = command.status;
         menu.fill_on_update(&FillContext::new())?;
-
-        let transaction = db
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        self.menu_repo
-            .find_by_id_for_update(&transaction, tenant_id, command.id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
         let saved = self
             .menu_repo
             .update_in_transaction(&transaction, tenant_id, menu)
@@ -201,6 +208,9 @@ impl MenuService {
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache
@@ -212,29 +222,38 @@ impl MenuService {
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
-        self.menu_repo
-            .find_by_id(db, tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
-
-        if self.menu_repo.has_children(db, tenant_id, id).await? {
-            return Err(AppError::Validation("存在子菜单，无法删除".into()));
-        }
-
         let transaction = db
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
         self.menu_repo
             .find_by_id_for_update(&transaction, tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
+        if menu::Entity::find()
+            .filter(menu::Column::TenantId.eq(tenant_id))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::ParentId.eq(id))
+            .lock(sea_orm::sea_query::LockType::Update)
+            .one(&transaction)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .is_some()
+        {
+            return Err(AppError::Validation("存在子菜单，无法删除".into()));
+        }
         self.menu_repo
             .delete_in_transaction(&transaction, tenant_id, id)
             .await?;
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .await?;
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&transaction, tenant_id)
             .await?;
         crate::commit_current_audit(transaction).await?;
         self.authorization_cache

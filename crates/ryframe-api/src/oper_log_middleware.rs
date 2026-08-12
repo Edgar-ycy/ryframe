@@ -227,6 +227,7 @@ fn resource_to_title(module: &str, resource: &str) -> String {
         ("system", "depts") => "部门管理".into(),
         ("system", "posts") => "岗位管理".into(),
         ("system", "configs") => "参数配置".into(),
+        ("system", "config-packages" | "config-transfers") => "配置迁移".into(),
         ("system", "dict") => "字典管理".into(),
         ("system", "notices") => "通知公告".into(),
         ("system", "operlogs") => "操作日志".into(),

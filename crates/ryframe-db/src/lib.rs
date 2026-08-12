@@ -19,8 +19,9 @@ pub use entities::{
     background_job, cache_namespace_version, config, data_retention_run, dept, dict_data,
     dict_type, export_job, job_schedule, job_schedule_execution, login_info, menu, message,
     message_audience, message_recipient, notice, oper_log, outbox_event, password_reset_request,
-    permission, post, role, role_dept, role_permission, sys_file, tenant, user, user_import_job,
-    user_import_row_result, user_role,
+    permission, post, role, role_dept, role_permission, sys_file, tenant, tenant_config_bundle,
+    tenant_config_lease, tenant_config_transfer, tenant_config_transfer_item, user,
+    user_import_job, user_import_row_result, user_role,
 };
 pub use repositories::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
@@ -37,6 +38,7 @@ pub use repositories::{
     ProvisionTenantCommand, PublishMessageCommand, PublishedMessage, RecipientMessage,
     RecipientMessagePage, RecordOutboxEvent, RetentionCleanupResult, RetentionCutoff,
     RetentionResource, RoleFilter, RoleRepository, ScheduleOverviewStats,
-    TenantProvisioningRepository, TenantRepository, UserFilter, UserImportArtifact,
-    UserImportFilter, UserImportRepository, UserRepository, validate_cache_namespace,
+    TenantConfigTransferRepository, TenantConfigurationFence, TenantProvisioningRepository,
+    TenantRepository, UserFilter, UserImportArtifact, UserImportFilter, UserImportRepository,
+    UserRepository, validate_cache_namespace,
 };

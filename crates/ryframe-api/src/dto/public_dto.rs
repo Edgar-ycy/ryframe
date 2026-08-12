@@ -9,6 +9,7 @@ mod organization;
 mod overview;
 mod retention;
 mod schedules;
+mod tenant_config;
 mod user_import;
 
 pub use audit::{LoginInfoVo, OnlineUserVo, OperLogVo};
@@ -43,5 +44,9 @@ pub use retention::{
 pub use schedules::{
     JobScheduleExecutionVo, JobScheduleOccurrence, JobSchedulePreview, JobScheduleVo,
     ScheduleTargetVo,
+};
+pub use tenant_config::{
+    TenantConfigBundleSummaryVo, TenantConfigBundleVo, TenantConfigTransferItemVo,
+    TenantConfigTransferVo,
 };
 pub use user_import::{UserImportJobVo, UserImportRowVo};

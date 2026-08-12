@@ -89,12 +89,13 @@ async fn create(
     state
         .services
         .config
-        .create(
+        .create_with_portability(
             &current_user,
             &dto.name,
             &dto.key,
             &dto.value,
             dto.remark.as_deref(),
+            dto.portable,
         )
         .await
         .map_err(ryframe_http::HttpAppError::from)
@@ -117,7 +118,7 @@ async fn update(
     state
         .services
         .config
-        .update(&current_user, id, &dto.value)
+        .update_with_portability(&current_user, id, &dto.value, dto.portable)
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))

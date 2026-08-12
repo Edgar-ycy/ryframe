@@ -196,6 +196,7 @@ impl DataRetentionRepository {
         model.error_summary = None;
         model.updated_at = now;
         let saved = data_retention_run::ActiveModel::from(model)
+            .reset_all()
             .update(transaction)
             .await
             .map_err(database_error)?;

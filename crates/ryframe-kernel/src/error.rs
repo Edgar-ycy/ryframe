@@ -57,6 +57,8 @@ pub enum AppError {
     Authorization(String),
     NotFound(String),
     Conflict(String),
+    /// 资源当前被短期占用；调用方可在指定秒数后安全重试。
+    RetryableConflict(String, u64),
     PayloadTooLarge(String),
     RateLimited(String, u64),
     Database(String),
@@ -73,6 +75,7 @@ impl fmt::Display for AppError {
             Self::Authorization(_) => "权限不足",
             Self::NotFound(_) => "资源不存在",
             Self::Conflict(_) => "数据冲突",
+            Self::RetryableConflict(_, _) => "资源暂时被占用",
             Self::PayloadTooLarge(_) => "请求体过大",
             Self::RateLimited(_, _) => "请求过于频繁",
             Self::Database(_) => "数据库错误",
@@ -95,6 +98,7 @@ impl AppError {
             Self::Authorization(_) => ErrorCode::Authorization,
             Self::NotFound(_) => ErrorCode::NotFound,
             Self::Conflict(_) => ErrorCode::Conflict,
+            Self::RetryableConflict(_, _) => ErrorCode::Conflict,
             Self::PayloadTooLarge(_) => ErrorCode::PayloadTooLarge,
             Self::RateLimited(_, _) => ErrorCode::RateLimited,
             Self::Database(_) => ErrorCode::Database,
@@ -112,6 +116,7 @@ impl AppError {
             | Self::Authorization(message)
             | Self::NotFound(message)
             | Self::Conflict(message)
+            | Self::RetryableConflict(message, _)
             | Self::PayloadTooLarge(message)
             | Self::Database(message)
             | Self::Config(message)
@@ -121,10 +126,11 @@ impl AppError {
         }
     }
 
-    /// 返回限流错误的重试等待秒数，其他错误返回 `None`。
+    /// 返回限流或短期资源占用错误的建议重试等待秒数，其他错误返回 `None`。
     pub const fn retry_after_secs(&self) -> Option<u64> {
         match self {
-            Self::RateLimited(_, retry_after_secs) => Some(*retry_after_secs),
+            Self::RateLimited(_, retry_after_secs)
+            | Self::RetryableConflict(_, retry_after_secs) => Some(*retry_after_secs),
             _ => None,
         }
     }

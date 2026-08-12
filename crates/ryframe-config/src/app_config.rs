@@ -4,7 +4,7 @@ use crate::{
     ApiDocsConfig, AuthConfig, CorsConfig, DataRetentionConfig, DatabaseConfig, Environment,
     GeneratorConfig, JobConfig, LoggerConfig, MessagingConfig, MonitorConfig, ObjectStorageConfig,
     PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig, TelemetryConfig,
-    UploadLimitsConfig, UserImportConfig,
+    TenantConfigTransferConfig, UploadLimitsConfig, UserImportConfig,
 };
 
 mod defaults;
@@ -65,6 +65,8 @@ pub struct AppConfig {
     pub data_retention: DataRetentionConfig,
     #[serde(default)]
     pub user_import: UserImportConfig,
+    #[serde(default)]
+    pub tenant_config_transfer: TenantConfigTransferConfig,
     #[serde(default)]
     pub telemetry: TelemetryConfig,
     #[serde(default)]

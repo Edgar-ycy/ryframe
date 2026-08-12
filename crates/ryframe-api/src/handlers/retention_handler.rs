@@ -5,9 +5,7 @@ use axum::{
 };
 use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
-use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
-use sha2::{Digest, Sha256};
 
 use crate::{
     dto::{
@@ -15,6 +13,7 @@ use crate::{
         public_dto::{DataRetentionOverview, DataRetentionPreview, DataRetentionRunVo},
         retention_dto::RetentionRunPageQuery,
     },
+    handler_utils::idempotency_key_hash,
     state::AppState,
 };
 
@@ -82,13 +81,7 @@ async fn run(
     headers: HeaderMap,
     Json(_request): Json<EmptyRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<DataRetentionRunVo>>)> {
-    let key = headers
-        .get("Idempotency-Key")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && value.len() <= 200)
-        .ok_or_else(|| AppError::Validation("缺少有效的 Idempotency-Key 请求头".into()))?;
-    let hash = hex::encode(Sha256::digest(key.as_bytes()));
+    let hash = idempotency_key_hash(&headers)?;
     let run = state
         .services
         .data_retention

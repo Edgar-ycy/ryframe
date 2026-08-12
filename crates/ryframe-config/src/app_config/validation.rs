@@ -121,6 +121,9 @@ impl AppConfig {
         self.user_import
             .validate(self.upload.file_max_bytes)
             .map_err(AppError::Config)?;
+        self.tenant_config_transfer
+            .validate(self.upload.file_max_bytes)
+            .map_err(AppError::Config)?;
         self.telemetry.validate().map_err(AppError::Config)?;
         self.messaging.validate().map_err(AppError::Config)?;
         let access_ttl =

@@ -15,6 +15,8 @@ mod option;
 pub mod permission_service;
 pub mod post_service;
 pub mod role_service;
+pub mod tenant_config_package;
+pub mod tenant_config_transfer_service;
 pub mod tenant_service;
 pub mod user_import_service;
 pub mod user_service;
@@ -62,6 +64,22 @@ pub use permission_service::{
 };
 pub use post_service::{PostListParams, PostService, PostVo};
 pub use role_service::{RoleListParams, RoleService, RoleVo};
+pub use tenant_config_package::{
+    GeneratedTenantConfigPackage, ParsedTenantConfigPackage, PortableConfig, PortableDepartment,
+    PortableDictData, PortableDictType, PortableMenu, PortablePermission, PortablePost,
+    PortableRole, TenantConfigCatalogSummary, TenantConfigPackageLimits,
+    TenantConfigPackageManifest, TenantConfigPackageResources, TenantConfigResourceCounts,
+    build_tenant_config_package, parse_tenant_config_package,
+};
+pub use tenant_config_transfer_service::{
+    ApplyTenantConfigTransferCommand, RequestTenantConfigBundleOutcome,
+    RequestTenantConfigTransferOutcome, TENANT_CONFIG_APPLY_JOB_TYPE,
+    TENANT_CONFIG_EXPORT_JOB_TYPE, TENANT_CONFIG_PREVIEW_JOB_TYPE, TENANT_CONFIG_ROLLBACK_JOB_TYPE,
+    TenantConfigApplyJobHandler, TenantConfigBundleSummaryVo, TenantConfigBundleVo,
+    TenantConfigExportJobHandler, TenantConfigPreviewJobHandler, TenantConfigRollbackJobHandler,
+    TenantConfigTargetCatalog, TenantConfigTransferItemVo, TenantConfigTransferService,
+    TenantConfigTransferVo,
+};
 pub use tenant_service::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
 pub use user_import_service::{
     RequestUserImportCommand, RequestUserImportOutcome, USER_IMPORT_JOB_TYPE, UserImportData,
@@ -79,8 +97,8 @@ pub mod profile_service;
 pub use profile_service::ProfileService;
 pub mod file_service;
 pub use file_service::{
-    AVATAR_BUCKET, DownloadedFile, FileService, IMPORT_BUCKET, UPLOAD_BUCKET, UploadCommand,
-    UploadResponse,
+    AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, DownloadedFile, FileService, IMPORT_BUCKET,
+    UPLOAD_BUCKET, UploadCommand, UploadResponse,
 };
 pub mod online_user_service;
 pub mod overview_service;

@@ -188,6 +188,16 @@ batch_size = 100
 max_active_per_tenant = 1
 hash_parallelism = 2
 
+[tenant_config_transfer]
+# 配置包上传、解压、项目数、保留窗口、租约及后台任务运行上限。
+max_package_bytes = 5242880
+max_uncompressed_bytes = 20971520
+max_items = 10000
+artifact_hours = 168
+rollback_hours = 168
+lease_seconds = 300
+max_runtime_seconds = 1800
+
 [object_storage]
 # 存储后端: local（本地）| rustfs（RustFS）| minio（MinIO）| s3（兼容 S3）
 backend = "local"

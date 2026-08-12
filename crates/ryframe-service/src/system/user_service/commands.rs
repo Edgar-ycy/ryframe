@@ -1,6 +1,6 @@
 use ryframe_auth::password;
 use ryframe_core::auto_fill::{AutoFill, FillContext};
-use ryframe_db::{TenantRepository, entities::user};
+use ryframe_db::{TenantConfigTransferRepository, TenantRepository, entities::user};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{ActiveModelTrait, DatabaseTransaction, TransactionTrait};
@@ -66,6 +66,12 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        // 部门和角色在配置回滚期间必须保持存在；栅栏后重新校验，避免使用事务前快照。
+        self.validate_assignments_in_txn(&transaction, actor, dept_id, Some(&role_ids))
+            .await?;
         TenantRepository
             .ensure_user_quota_in_txn(&transaction, tenant_id)
             .await?;
@@ -103,6 +109,11 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            .await?;
+        self.validate_assignments_in_txn(&transaction, actor, dept_id, None)
+            .await?;
         let mut user = self
             .lock_manageable_user_in_txn(actor, &transaction, id)
             .await?;

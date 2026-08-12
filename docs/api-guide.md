@@ -1,6 +1,6 @@
 # RyFrame API 使用指南
 
-> 最后核对：2026-07-23
+> 最后核对：2026-08-12
 > API 版本：`v1`
 
 本文档说明稳定约定和常见流程。所有路径、请求字段和响应 Schema 的唯一事实来源是 OpenAPI；运行时文档与仓库中的 `openapi/openapi.json` 必须精确一致：
@@ -241,6 +241,8 @@ access token 只用于业务请求并由页面内存持有。客户端遇到业�
 | `/api/v1/system/users` | 用户 | `/options`、`PUT /{id}/roles`、`PUT /{id}/status`、`/batch/{ids}`、导入模板、导出和重置请求 |
 | `/api/v1/system/user-imports` | 异步用户导入 | 幂等创建、列表、详情、取消、异常行和错误报告 |
 | `/api/v1/system/authorization-diagnostics` | 权限诊断 | `GET /users/{id}` 从主库重算用户最终授权 |
+| `/api/v1/system/config-packages` | 租户配置包 | 幂等生成、列表、详情和下载 |
+| `/api/v1/system/config-transfers` | 租户配置迁移 | 上传、从已有包创建、预览、应用、回滚和明细 |
 | `/api/v1/system/roles` | 角色 | `/options`、`GET/PUT /{id}/permissions`、`PUT /{id}/data-scope` |
 | `/api/v1/system/perms` | 权限 | `/tree`、`/sync` |
 | `/api/v1/system/menus` | 菜单 | `/tree`、`/current` |
@@ -300,6 +302,47 @@ POST /api/v1/system/user-imports
 权限诊断使用 `GET /api/v1/system/authorization-diagnostics/users/{id}`，只读展示调用者当前数据范围内用户的角色、权限来源、菜单、最终数据范围和版本同步状态。Redis 不可用时主库诊断仍可返回，不提供提权、修改纪元或清缓存入口。
 
 运维总览使用 `GET /api/v1/monitor/overview` 和 `GET /api/v1/monitor/overview/trends?range=6h|24h|7d`。趋势严格按当前租户聚合；系统租户只额外包含无租户的平台后台任务，不会统计其他普通租户。详细运行边界见[数据生命周期、异步导入与运维诊断](data-lifecycle.md)。
+
+### 租户配置包迁移
+
+配置包接口：
+
+```text
+POST /api/v1/system/config-packages
+GET  /api/v1/system/config-packages
+GET  /api/v1/system/config-packages/{id}
+GET  /api/v1/system/config-packages/{id}/download
+```
+
+迁移接口：
+
+```text
+POST /api/v1/system/config-transfers/upload
+POST /api/v1/system/config-transfers/from-package
+GET  /api/v1/system/config-transfers
+GET  /api/v1/system/config-transfers/{id}
+GET  /api/v1/system/config-transfers/{id}/items
+POST /api/v1/system/config-transfers/{id}/preview
+POST /api/v1/system/config-transfers/{id}/apply
+POST /api/v1/system/config-transfers/{id}/rollback
+```
+
+生成、上传、从已有包创建、预览、应用和回滚都是显式操作；所有 `POST` 必须携带
+`Idempotency-Key`，首次接受返回 `202`。上传使用 `multipart/form-data`，只允许一个名为
+`file` 的 `*.ryframe-config.zip` 文件。默认压缩包上限为 5 MiB、解压后上限为 20 MiB、
+最多 10,000 项。服务端只接受 ZIP 根目录下的 `manifest.json` 和 `resources.json`，并对路径、
+文件数、压缩比、JSON 深度、SHA-256、稳定业务键及目标端引用执行校验。
+
+预览不会修改目标配置，而是返回基于目标主库 `configuration_version`、
+`authorization_epoch` 和当前资源生成的计划；项目分类为 `create`、`update`、`unchanged`、
+`conflict` 和 `blocked`。应用请求必须回传预览的 `plan_hash`、目标配置版本和目标授权纪元；
+任一值过期返回 `409`，客户端必须重新预览。应用前自动生成目标快照；应用后默认有 168 小时
+回滚窗口。回滚仍会复核版本、快照、后续人工修改和新增引用，不提供部分回滚。
+
+配置包不接受或返回数据库 ID 作为资源稳定键，也不包含用户、密码、Secret、Token、文件、日志、
+任务或应用配置。部门使用完整名称路径，岗位、权限和角色使用代码，目录与页面使用
+`route_key`，参数只有 `portable=true` 且不命中敏感键规则时才进入配置包。完整规则见
+[租户配置包迁移](tenant-config-transfer.md)。
 
 ### 角色分配
 

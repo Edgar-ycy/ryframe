@@ -1,6 +1,6 @@
 # 数据库开发指南
 
-> 最后核对：2026-08-06
+> 最后核对：2026-08-12
 
 ## 1. 技术和边界
 
@@ -199,11 +199,11 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 | `sys_menu` | 前端菜单树和稳定 `route_key` |
 | `sys_dept` | 部门树 |
 | `sys_post` | 岗位 |
-| `sys_config` | 系统参数 |
+| `sys_config` | 系统参数；`portable` 明确标记是否允许进入租户配置包 |
 | `sys_cache_namespace_version` | 租户业务缓存命名空间的数据库权威单调版本 |
 | `sys_dict_type`、`sys_dict_data` | 字典类型和数据 |
 | `sys_notice` | 通知公告 |
-| `sys_tenant` | 租户状态、配额与 `authorization_epoch` 授权规则版本 |
+| `sys_tenant` | 租户状态、配额、`authorization_epoch` 授权规则版本与 `configuration_version` 配置版本 |
 | `sys_file` | 上传文件元数据 |
 | `sys_background_job` | 持久化后台任务、租约、重试、死信和计划来源 |
 | `sys_outbox_event` | 事务性 Outbox 投递状态 |
@@ -211,6 +211,10 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 | `sys_data_retention_run` | 数据保留策略快照、删除计数和运行结果 |
 | `sys_user_import_job` | 异步用户导入进度、游标、文件引用和终态 |
 | `sys_user_import_row_result` | 用户导入跳过与失败行；成功行只累计计数 |
+| `sys_tenant_config_bundle` | 生成或上传的配置包元数据、私有文件引用、摘要、状态与过期时间 |
+| `sys_tenant_config_transfer` | 目标租户预览、应用、回滚状态、计划哈希、版本栅栏与快照引用 |
+| `sys_tenant_config_transfer_item` | 按稳定业务键记录的预览项目、动作、结果和安全说明 |
+| `sys_tenant_config_lease` | 每租户唯一的配置应用/回滚租约 |
 | `password_reset_requests` | 一次性密码重置请求 |
 
 ### 关联与日志表
@@ -339,6 +343,33 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
 - 多角色范围取可见数据并集；任一角色拥有全部数据范围时不附加行级限制。
 
 跨租户平台用例必须使用专用方法并校验系统超级管理员，不能通过省略租户参数绕过隔离。参见 [架构指南](architecture.md)。
+
+### 租户配置版本与迁移租约
+
+部门、岗位、字典、可迁移参数、权限、菜单、角色及其关系发生创建、更新、启停、软删除或关系变化时，
+必须在同一事务递增 `sys_tenant.configuration_version`。涉及授权的变化还必须递增
+`authorization_epoch`；二者分别解决“预览后配置已改变”和“授权结果已改变”，不能互相替代。
+`sys_config.portable` 默认 `false`，只有显式标记且不命中敏感键规则的参数才能导出；不得把密码、
+Secret、Token、Credential 或 Private Key 类键值写入配置包。
+
+所有配置写事务统一遵循以下锁顺序：
+
+```text
+sys_tenant 行
+  → sys_tenant_config_lease 行
+  → 父资源或目标资源行
+  → 关系行
+```
+
+普通写入在锁定租户行后检查有效租约，发现其他所有者的 `apply` 或 `rollback` 租约返回 `409`。
+应用或回滚使用自己的 `owner_token`，在最终事务内重新核对租约所有权、到期时间、
+`configuration_version`、`authorization_epoch` 和计划哈希，再按稳定业务键顺序锁定并写入资源。
+禁止先在事务外读取旧 Model，再在取得租户栅栏后直接覆盖；更新、删除、父级校验、引用检查和部门
+`ancestors` 计算都必须在取得栅栏后基于重新锁定的当前记录完成。
+
+配置包和迁移记录只保存文件 ID 与 SHA-256，不保存对象内容或对象路径。应用前快照上传失败时不进入
+写事务；应用事务失败时全部回滚。配置包对象和回滚快照默认分别受 168 小时 artifact/rollback
+窗口保护；当前没有配置包或迁移历史元数据的自动硬删除期限，不得把文件过期误写成元数据删除策略。
 
 ## 9. 迁移与重置
 

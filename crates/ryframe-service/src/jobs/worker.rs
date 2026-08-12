@@ -366,9 +366,41 @@ impl JobWorker {
                 }
                 Err(error) => {
                     let now = self.queue.database_now().await?;
+                    if let AppError::RetryableConflict(message, retry_after_seconds) = &error {
+                        let retry_after_seconds = (*retry_after_seconds).clamp(1, 86_400);
+                        let available_at = now
+                            + Duration::seconds(
+                                i64::try_from(retry_after_seconds).unwrap_or(86_400),
+                            );
+                        let deferred = self
+                            .queue
+                            .repository()
+                            .defer_retryable_conflict(
+                                self.queue.primary(),
+                                job.id,
+                                worker_id,
+                                available_at,
+                                message,
+                                now,
+                            )
+                            .await?;
+                        return Ok(if deferred {
+                            tracing::debug!(
+                                job_id = job.id,
+                                job_type = %job.job_type,
+                                worker_id,
+                                retry_at = %available_at,
+                                "后台任务因资源暂时被占用而延期，未消耗尝试预算"
+                            );
+                            JobRunResult::Retried
+                        } else {
+                            JobRunResult::LeaseLost
+                        });
+                    }
                     let retry_at = now + retry_delay(job.attempts);
                     let force_dead = handler.should_dead_letter(&error);
                     let error_message = error.to_string();
+                    let log_error = job_log_error(&job.job_type, &error);
                     match self
                         .queue
                         .repository()
@@ -393,7 +425,7 @@ impl JobWorker {
                                 attempts = job.attempts,
                                 max_attempts = job.max_attempts,
                                 retry_at = %available_at,
-                                error = %error,
+                                error = %log_error,
                                 "后台任务执行失败，已安排重试"
                             );
                             Ok(JobRunResult::Retried)
@@ -405,7 +437,7 @@ impl JobWorker {
                                 worker_id,
                                 attempts = job.attempts,
                                 max_attempts = job.max_attempts,
-                                error = %error,
+                                error = %log_error,
                                 "后台任务重试耗尽，已进入死信状态"
                             );
                             Ok(JobRunResult::Dead)
@@ -552,6 +584,22 @@ fn job_run_result_label(result: &AppResult<JobRunResult>) -> &'static str {
 /// 将未注册任务归并到固定标签，避免异常数据扩大 Prometheus 标签基数。
 fn bounded_job_type_label(registered: bool, job_type: &str) -> &str {
     if registered { job_type } else { "unregistered" }
+}
+
+/// 配置迁移任务可能处理上传包、数据库和对象路径，日志只记录稳定错误类别，
+/// 避免把底层错误详情或配置内容写入普通 Worker 日志。
+fn job_log_error(job_type: &str, error: &AppError) -> String {
+    if matches!(
+        job_type,
+        "system.tenant_config.export"
+            | "system.tenant_config.preview"
+            | "system.tenant_config.apply"
+            | "system.tenant_config.rollback"
+    ) {
+        format!("配置迁移任务失败（错误类别：{}）", error.error_code())
+    } else {
+        error.to_string()
+    }
 }
 
 /// 生成指数退避等待时间，最高五分钟。
