@@ -29,6 +29,17 @@ pub struct RateLimitDecision {
     pub retry_after_secs: u64,
 }
 
+/// 固定窗口限流器的只读快照。
+///
+/// 快照不会创建桶或递增计数，仅用于展示当前窗口；`remaining_secs = 0` 表示当前没有活跃窗口。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RateLimitSnapshot {
+    pub key: String,
+    pub current: u64,
+    pub limit: u32,
+    pub remaining_secs: u64,
+}
+
 #[derive(Clone)]
 pub struct RateLimiter {
     mode: RateLimiterMode,
@@ -147,6 +158,71 @@ impl RateLimiter {
             .is_ok_and(|decision| decision.allowed)
     }
 
+    /// 批量读取固定窗口状态，不改变任何限流计数。
+    ///
+    /// Redis 模式使用一个 Lua 调用读取全部计数和 TTL；内存模式直接读取已有桶。
+    pub async fn snapshot_many(
+        &self,
+        keys: &[String],
+        limit: u32,
+    ) -> Result<Vec<RateLimitSnapshot>, String> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        match &self.mode {
+            RateLimiterMode::Redis { client, .. } => {
+                let redis_keys = keys
+                    .iter()
+                    .map(|key| format!("{RATE_LIMIT_KEY_PREFIX}{key}"))
+                    .collect::<Vec<_>>();
+                let script = r#"
+                    local result = {}
+                    for index, key in ipairs(KEYS) do
+                        local count = redis.call('GET', key)
+                        local ttl = redis.call('TTL', key)
+                        result[(index - 1) * 2 + 1] = tonumber(count) or 0
+                        result[(index - 1) * 2 + 2] = ttl > 0 and ttl or 0
+                    end
+                    return result
+                "#;
+                let values = client
+                    .eval_script(script, &redis_keys, &[] as &[&str])
+                    .await
+                    .map_err(|error| format!("Redis rate-limit snapshot failed: {error}"))?;
+                parse_redis_snapshots(keys, limit, values)
+            }
+            RateLimiterMode::InMemory { inner } => {
+                let now = Instant::now();
+                Ok(keys
+                    .iter()
+                    .map(|key| {
+                        let (current, remaining_secs) = inner
+                            .buckets
+                            .get(key)
+                            .filter(|bucket| bucket.reset_at > now)
+                            .map(|bucket| {
+                                (
+                                    u64::from(bucket.count),
+                                    bucket
+                                        .reset_at
+                                        .saturating_duration_since(now)
+                                        .as_secs()
+                                        .max(1),
+                                )
+                            })
+                            .unwrap_or((0, 0));
+                        RateLimitSnapshot {
+                            key: key.clone(),
+                            current,
+                            limit,
+                            remaining_secs,
+                        }
+                    })
+                    .collect())
+            }
+        }
+    }
+
     pub fn spawn_gc(self: &Arc<Self>) {
         if let RateLimiterMode::InMemory { inner } = &self.mode {
             let inner = inner.clone();
@@ -182,6 +258,10 @@ impl RateLimiter {
         format!("tenant_user:{tenant_id}:{user_id}")
     }
 
+    pub fn tenant_key(tenant_id: &str) -> String {
+        format!("tenant:{tenant_id}")
+    }
+
     pub fn api_key(path: &str) -> String {
         format!("api:{path}")
     }
@@ -193,6 +273,42 @@ impl RateLimiter {
     pub fn user_api_key(user_id: &str, path: &str) -> String {
         format!("user_api:{user_id}:{path}")
     }
+}
+
+fn parse_redis_snapshots(
+    keys: &[String],
+    limit: u32,
+    value: redis::Value,
+) -> Result<Vec<RateLimitSnapshot>, String> {
+    let redis::Value::Array(values) = value else {
+        return Err("unexpected Redis rate-limit snapshot result".into());
+    };
+    if values.len() != keys.len().saturating_mul(2) {
+        return Err("Redis rate-limit snapshot returned an invalid item count".into());
+    }
+    keys.iter()
+        .enumerate()
+        .map(|(index, key)| {
+            let current = redis_nonnegative_integer(&values[index * 2])?;
+            let remaining_secs = redis_nonnegative_integer(&values[index * 2 + 1])?;
+            Ok(RateLimitSnapshot {
+                key: key.clone(),
+                current,
+                limit,
+                remaining_secs,
+            })
+        })
+        .collect()
+}
+
+fn redis_nonnegative_integer(value: &redis::Value) -> Result<u64, String> {
+    let redis::Value::Int(value) = value else {
+        return Err(format!(
+            "unexpected Redis rate-limit snapshot item: {value:?}"
+        ));
+    };
+    u64::try_from(*value)
+        .map_err(|_| "Redis rate-limit snapshot returned a negative value".to_owned())
 }
 
 #[derive(Clone)]

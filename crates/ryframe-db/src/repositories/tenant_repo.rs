@@ -35,7 +35,7 @@ impl TenantRepository {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let limit = u64::try_from(tenant.max_users).unwrap_or_default();
-        if count >= limit {
+        if limit > 0 && count >= limit {
             return Err(AppError::Validation("已达到租户最大用户数".into()));
         }
         Ok(())
@@ -58,7 +58,7 @@ impl TenantRepository {
         let incoming =
             u64::try_from(incoming).map_err(|_| AppError::Validation("导入批次过大".into()))?;
         let limit = u64::try_from(tenant.max_users).unwrap_or_default();
-        if count.saturating_add(incoming) > limit {
+        if limit > 0 && count.saturating_add(incoming) > limit {
             return Err(AppError::Validation("批量导入将超过租户最大用户数".into()));
         }
         Ok(())
@@ -128,7 +128,7 @@ impl TenantRepository {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let limit = u64::try_from(tenant.max_roles).unwrap_or_default();
-        if count >= limit {
+        if limit > 0 && count >= limit {
             return Err(AppError::Validation("已达到租户最大角色数".into()));
         }
         Ok(())
@@ -150,7 +150,8 @@ impl TenantRepository {
             .count(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        if user_count > u64::try_from(max_users).unwrap_or_default() {
+        let user_limit = u64::try_from(max_users).unwrap_or_default();
+        if user_limit > 0 && user_count > user_limit {
             return Err(AppError::Validation(format!(
                 "用户额度不能低于当前用户数 {user_count}"
             )));
@@ -162,7 +163,8 @@ impl TenantRepository {
             .count(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        if role_count > u64::try_from(max_roles).unwrap_or_default() {
+        let role_limit = u64::try_from(max_roles).unwrap_or_default();
+        if role_limit > 0 && role_count > role_limit {
             return Err(AppError::Validation(format!(
                 "角色额度不能低于当前角色数 {role_count}"
             )));
@@ -171,17 +173,24 @@ impl TenantRepository {
         let storage_bytes = sys_file::Entity::find()
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .all(txn)
+            .select_only()
+            .column_as(
+                Expr::cust(
+                    "CAST(COALESCE(SUM(CASE WHEN `file_size` > 0 THEN `file_size` ELSE 0 END), 0) AS SIGNED)",
+                ),
+                "storage_bytes",
+            )
+            .into_tuple::<Option<i64>>()
+            .one(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?
-            .into_iter()
-            .fold(0_u64, |used, file| {
-                used.saturating_add(u64::try_from(file.file_size).unwrap_or_default())
-            });
+            .flatten()
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or_default();
         let storage_limit_bytes = u64::try_from(max_storage_mb)
             .unwrap_or_default()
             .saturating_mul(1024 * 1024);
-        if storage_bytes > storage_limit_bytes {
+        if storage_limit_bytes > 0 && storage_bytes > storage_limit_bytes {
             return Err(AppError::Validation(format!(
                 "存储额度不能低于当前已用字节数 {storage_bytes}"
             )));
@@ -204,17 +213,24 @@ impl TenantRepository {
         let used = sys_file::Entity::find()
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
-            .all(txn)
+            .select_only()
+            .column_as(
+                Expr::cust(
+                    "CAST(COALESCE(SUM(CASE WHEN `file_size` > 0 THEN `file_size` ELSE 0 END), 0) AS SIGNED)",
+                ),
+                "storage_bytes",
+            )
+            .into_tuple::<Option<i64>>()
+            .one(txn)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?
-            .into_iter()
-            .fold(0_u64, |used, file| {
-                used.saturating_add(u64::try_from(file.file_size).unwrap_or_default())
-            });
+            .flatten()
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or_default();
         let limit = u64::try_from(tenant.max_storage_mb)
             .unwrap_or_default()
             .saturating_mul(1024 * 1024);
-        if used.saturating_add(incoming_bytes) > limit {
+        if limit > 0 && used.saturating_add(incoming_bytes) > limit {
             return Err(AppError::Validation("已达到租户最大存储容量".into()));
         }
         Ok(())

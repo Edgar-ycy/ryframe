@@ -1,6 +1,6 @@
 # 数据库开发指南
 
-> 最后核对：2026-08-12
+> 最后核对：2026-08-13
 
 ## 1. 技术和边界
 
@@ -342,7 +342,43 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
 - 用户、部门、公告和日志查询还会叠加角色数据范围。
 - 多角色范围取可见数据并集；任一角色拥有全部数据范围时不附加行级限制。
 
-跨租户平台用例必须使用专用方法并校验系统超级管理员，不能通过省略租户参数绕过隔离。参见 [架构指南](architecture.md)。
+跨租户平台用例必须使用专用方法并校验系统租户，不能通过省略租户参数绕过隔离。租户创建、修改和
+启停等写用例继续要求系统超级管理员；只读分页、详情和用量查询再分别校验 `tenant:list` 与
+`tenant:usage:list`。参见 [架构指南](architecture.md)。
+
+### 租户容量聚合
+
+平台租户容量分页、详情和用量查询都选择主库 `Strong` 读取，不能使用副本，也不能通过扫描对象
+存储推算文件占用。统计口径必须与实际配额检查一致：
+
+- 用户：`sys_user.del_flag = '0'`，包含正常、待激活、必须改密等仍占席位的状态。
+- 角色：`sys_role.del_flag = '0'`。
+- 存储：`sys_file.del_flag = '0'`，按数据库中的非负 `file_size` 求和。
+- 后台任务：分别汇总 `pending`、`running`、`dead`。
+- 计划：只统计未软删除且已启用的 `sys_job_schedule`。
+- 用户导入：只统计 `pending`、`running`。
+
+分页先在 `sys_tenant` 上确定当前页，再把该页全部租户 ID 交给一条条件聚合查询；用户、角色、文件、
+后台任务、计划和导入均按这组 ID 批量汇总，查询次数不得随页内租户数增长。容量状态筛选本身也在
+数据库中按三类资源聚合结果完成，不能先取无界租户列表再在内存中筛选。请求限流窗口来自 Redis
+只读快照，不参与主库整体容量状态，也不能把读取快照实现成会增加计数的限流请求。
+
+租户资源配额为 `0` 时统一表示无限制。非零配额的状态按整数交叉相乘比较 80%、90%、100% 边界，
+避免浮点误差；整体状态取用户、角色、存储三项中最严重的一项，三项全部无限制时为 `unlimited`。
+Redis 当前窗口不可用时只返回 `unknown`，不得回滚或隐藏已经成功读取的主库统计。
+
+租户容量治理迁移安装以下四个聚合索引：
+
+```text
+sys_user         idx_user_tenant_del              (tenant_id, del_flag)
+sys_role         idx_role_tenant_del              (tenant_id, del_flag, id)
+sys_file         idx_file_tenant_del_size         (tenant_id, del_flag, file_size)
+sys_job_schedule idx_schedule_tenant_del_enabled  (tenant_id, enabled, del_flag)
+```
+
+上线前应使用预计租户数、用户数、角色数和文件数的代表性数据执行 `EXPLAIN ANALYZE`，保存容量筛选、
+当前页条件聚合和单租户用量查询的执行计划，确认命中上述索引且没有逐租户子查询。索引只服务查询，
+不会改变配额、软删除或文件生命周期语义。
 
 ### 租户配置版本与迁移租约
 

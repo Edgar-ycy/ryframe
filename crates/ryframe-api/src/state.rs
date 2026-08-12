@@ -13,8 +13,8 @@ use ryframe_service::{
         DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
         MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
         OverviewService, PermissionService, PostService, ProfileService, RoleService,
-        TenantConfigTransferService, TenantService, UserImportService, UserService,
-        WebSocketTicketService,
+        TenantConfigTransferService, TenantService, TenantUsageService, UserImportService,
+        UserService, WebSocketTicketService,
     },
 };
 use ryframe_utils::ip::TrustedProxySet;
@@ -27,6 +27,7 @@ pub struct AppServices {
     pub user: Arc<UserService>,
     pub role: Arc<RoleService>,
     pub tenant: Arc<TenantService>,
+    pub tenant_usage: Arc<TenantUsageService>,
     pub permission: Arc<PermissionService>,
     pub menu: Arc<MenuService>,
     pub dept: Arc<DeptService>,

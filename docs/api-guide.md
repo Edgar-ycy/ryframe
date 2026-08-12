@@ -1,6 +1,6 @@
 # RyFrame API 使用指南
 
-> 最后核对：2026-08-12
+> 最后核对：2026-08-13
 > API 版本：`v1`
 
 本文档说明稳定约定和常见流程。所有路径、请求字段和响应 Schema 的唯一事实来源是 OpenAPI；运行时文档与仓库中的 `openapi/openapi.json` 必须精确一致：
@@ -289,7 +289,7 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 | `/api/v1/system/operlogs` | 操作日志 | `/exports` |
 | `/api/v1/system/loginlogs` | 登录日志 | `/exports` |
 | `/api/v1/system/online` | 在线用户 | `DELETE /{sid}`；`sid` 精确表示一个设备会话 |
-| `/api/v1/platform/tenants` | 租户 | `PUT /{tenant_id}/status` |
+| `/api/v1/platform/tenants` | 租户 | 兼容列表、`/page`、`GET /{tenant_id}`、`/{tenant_id}/usage`、`PUT /{tenant_id}/status` |
 | `/api/v1/auth/profile` | 个人中心 | `/password`、`/avatar` |
 | `/api/v1/tools/gen` | 代码生成 | `/tables`、`/preview`、`/generate`、`/download` |
 | `/api/v1/common/upload` | 文件上传 | `/image`、`/avatar` |
@@ -336,6 +336,38 @@ POST /api/v1/system/user-imports
 权限诊断使用 `GET /api/v1/system/authorization-diagnostics/users/{id}`，只读展示调用者当前数据范围内用户的角色、权限来源、菜单、最终数据范围和版本同步状态。Redis 不可用时主库诊断仍可返回，不提供提权、修改纪元或清缓存入口。
 
 运维总览使用 `GET /api/v1/monitor/overview` 和 `GET /api/v1/monitor/overview/trends?range=6h|24h|7d`。趋势严格按当前租户聚合；系统租户只额外包含无租户的平台后台任务，不会统计其他普通租户。详细运行边界见[数据生命周期、异步导入与运维诊断](data-lifecycle.md)。
+
+### 平台租户容量与配额
+
+平台租户接口只允许 `system` 租户访问。原有 `GET /api/v1/platform/tenants` 继续返回兼容的基础列表，
+不增加用量字段；新接口为：
+
+```text
+GET /api/v1/platform/tenants/page
+GET /api/v1/platform/tenants/{tenant_id}
+GET /api/v1/platform/tenants/{tenant_id}/usage
+```
+
+分页接口要求 `tenant:list`，默认每页 20 条，最大 100 条，支持按租户标识、租户名称、启停状态、
+到期状态和容量状态筛选。启停状态为 `enabled`、`disabled`；到期状态为 `active`、`expiring`、
+`expired`、`never`；容量状态为 `normal`、`warning`、`critical`、`exceeded`、`unlimited`、
+`unknown`。只有同时具有 `tenant:usage:list` 的调用者才会在分页和详情响应中得到
+`capacity_status` 与 `usage`；缺少该权限时二者为 `null`，并且不能使用容量状态筛选。独立用量接口
+固定要求 `tenant:usage:list`。两个权限都只属于系统租户，迁移不会自动把用量权限授予任何普通角色；
+系统租户管理员可按职责显式授权平台管理角色，普通租户访问上述接口返回 `403`。
+
+用户、角色和存储用量均从主库强一致读取。用户统计所有未软删除、仍占用席位的用户，角色统计所有
+未软删除角色，存储按未软删除文件记录的 `file_size` 汇总，不扫描对象存储目录。三类资源的配额值
+为 `0` 时表示无限制，不表示禁止创建或上传。单项与整体状态按实际使用率计算：低于 80% 为
+`normal`，80% 至不足 90% 为 `warning`，90% 至不足 100% 为 `critical`，达到或超过 100% 为
+`exceeded`；三项全部无限制时整体为 `unlimited`。整体容量状态只由这三类主库资源决定，不受 Redis
+请求窗口影响。
+
+`usage.request_window` 只表示当前一分钟限流窗口，包含当前计数、上限和剩余秒数，不是历史请求量。
+租户请求上限为 `0` 或全局租户限流关闭时，该项为 `unlimited`；Redis 读取失败时，该项单独变为
+`unknown`，用户、角色、存储和辅助汇总仍正常返回。辅助汇总只提供 Pending、Running、Dead 后台
+任务数、启用计划数、活动用户导入数以及 Cron 开关，不返回任务载荷、用户明细或错误全文。接口不
+自动轮询，管理端只应在页面进入、筛选、翻页、打开详情或手动刷新时读取。
 
 ### 租户配置包迁移
 

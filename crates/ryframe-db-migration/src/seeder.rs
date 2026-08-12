@@ -21,6 +21,7 @@ where
     crate::m20260809_000022_job_schedules::seed_schedule_management(db).await?;
     crate::m20260811_000024_data_lifecycle::seed_lifecycle_management(db).await?;
     crate::m20260812_000025_tenant_config_transfer::seed_tenant_config_management(db).await?;
+    crate::m20260813_000026_tenant_usage_governance::seed_tenant_usage_governance(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }
@@ -32,9 +33,13 @@ pub fn mysql_snapshot_sql() -> String {
          -- 仅供审阅：部署和重置工具不得执行此文件。\n\
          -- 重新生成命令：cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
     );
-    for statement in ddl_statements()
-        .map(crate::m20260806_000021_message_recipient_soft_delete::current_snapshot_statement)
-    {
+    for statement in ddl_statements() {
+        let statement =
+            crate::m20260806_000021_message_recipient_soft_delete::current_snapshot_statement(
+                statement,
+            );
+        let statement =
+            crate::m20260813_000026_tenant_usage_governance::current_snapshot_statement(statement);
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }

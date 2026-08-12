@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
     KEY `idx_tenant_id` (`tenant_id`),
+    KEY `idx_user_tenant_del` (`tenant_id`, `del_flag`),
     KEY `idx_dept_id` (`dept_id`),
     KEY `idx_user_avatar_file` (`avatar_file_id`),
     CONSTRAINT `fk_sys_user_tenant`
@@ -136,6 +137,7 @@ CREATE TABLE IF NOT EXISTS `sys_role` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
     KEY `idx_tenant_id` (`tenant_id`),
+    KEY `idx_role_tenant_del` (`tenant_id`, `del_flag`, `id`),
     CONSTRAINT `fk_sys_role_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -418,6 +420,7 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_sys_file_tenant_id` (`tenant_id`, `id`),
     KEY `idx_tenant_id` (`tenant_id`),
+    KEY `idx_file_tenant_del_size` (`tenant_id`, `del_flag`, `file_size`),
     KEY `idx_bucket` (`bucket`),
     KEY `idx_upload_by` (`upload_by`),
     KEY `idx_del_flag` (`del_flag`),
@@ -479,7 +482,8 @@ CREATE TABLE IF NOT EXISTS `sys_job_schedule` (
     `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_job_schedule_scan` (`enabled`, `del_flag`, `next_run_at`, `id`),
-    KEY `idx_job_schedule_tenant` (`tenant_id`, `del_flag`, `created_at`)
+    KEY `idx_job_schedule_tenant` (`tenant_id`, `del_flag`, `created_at`),
+    KEY `idx_schedule_tenant_del_enabled` (`tenant_id`, `enabled`, `del_flag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务调度计划';
 
 CREATE TABLE IF NOT EXISTS `sys_job_schedule_execution` (

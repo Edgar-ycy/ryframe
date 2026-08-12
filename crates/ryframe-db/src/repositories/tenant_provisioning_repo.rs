@@ -106,6 +106,7 @@ impl TenantProvisioningRepository {
         let system_permissions = permission::Entity::find()
             .filter(permission::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(permission::Column::Code.ne("*:*:*"))
+            // 租户管理和容量用量均是 system 租户的平台能力，不能复制给普通租户。
             .filter(permission::Column::Code.not_like("tenant:%"))
             // 平台权限只能保留在 system 租户，绝不能随租户模板授予新租户管理员。
             .filter(permission::Column::Code.not_like(format!("{PLATFORM_PERMISSION_PREFIX}%")))

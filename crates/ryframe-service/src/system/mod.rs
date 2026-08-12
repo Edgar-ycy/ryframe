@@ -18,6 +18,7 @@ pub mod role_service;
 pub mod tenant_config_package;
 pub mod tenant_config_transfer_service;
 pub mod tenant_service;
+pub mod tenant_usage_service;
 pub mod user_import_service;
 pub mod user_service;
 pub mod websocket_ticket_service;
@@ -81,6 +82,10 @@ pub use tenant_config_transfer_service::{
     TenantConfigTransferVo,
 };
 pub use tenant_service::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
+pub use tenant_usage_service::{
+    QuotaUsage, RequestWindowUsage, TenantAuxiliaryUsage, TenantCapacityVo, TenantUsagePageParams,
+    TenantUsageService, TenantUsageVo,
+};
 pub use user_import_service::{
     RequestUserImportCommand, RequestUserImportOutcome, USER_IMPORT_JOB_TYPE, UserImportData,
     UserImportJobHandler, UserImportJobVo, UserImportListParams, UserImportRowVo,

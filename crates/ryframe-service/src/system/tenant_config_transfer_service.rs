@@ -3021,7 +3021,7 @@ async fn ensure_role_quota_for_plan_in_txn(
         .await
         .map_err(database_error)?;
     let limit = u64::try_from(tenant.max_roles).unwrap_or_default();
-    if active_count.saturating_add(create_count) > limit {
+    if limit > 0 && active_count.saturating_add(create_count) > limit {
         return Err(AppError::Validation(format!(
             "配置应用将使租户角色数超过上限（当前 {active_count}，新增 {create_count}，上限 {limit}）"
         )));
@@ -4499,11 +4499,12 @@ fn action_menu_key(parent_key: &str, permission_code: &str) -> String {
 }
 
 fn is_platform_only_permission(code: &str) -> bool {
-    code.starts_with("platform:")
-        || code == "tenant:*"
-        || code.starts_with("tenant:")
-        || code == "monitor:retention:*"
-        || code.starts_with("monitor:retention:")
+    let normalized = code.to_ascii_lowercase();
+    normalized.starts_with("platform:")
+        || normalized == "tenant:*"
+        || normalized.starts_with("tenant:")
+        || normalized == "monitor:retention:*"
+        || normalized.starts_with("monitor:retention:")
 }
 
 fn permission_contains_wildcard(code: &str) -> bool {

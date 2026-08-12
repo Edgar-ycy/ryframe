@@ -21,6 +21,9 @@ pub use model::{
 };
 pub use tree::build_perm_tree;
 
+const SYSTEM_TENANT_ID: &str = "system";
+const TENANT_PERMISSION_PREFIX: &str = "tenant:";
+
 pub struct PermissionService {
     db: DatabaseCluster,
     perm_repo: PermissionRepository,
@@ -103,6 +106,7 @@ impl PermissionService {
         command: CreatePermissionCommand,
     ) -> AppResult<PermissionVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
+        ensure_tenant_permission_code_boundary(tenant_id, &command.code)?;
         let db = self.db.write();
         let mut model = permission::Model {
             id: snowflake::try_next_snowflake_id()?,
@@ -169,6 +173,7 @@ impl PermissionService {
         command: UpdatePermissionCommand,
     ) -> AppResult<PermissionVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
+        ensure_tenant_permission_code_boundary(tenant_id, &command.code)?;
         let db = self.db.write();
         let transaction = db
             .begin()
@@ -289,6 +294,10 @@ impl PermissionService {
         let scanned = route_permission_codes
             .iter()
             .map(|code| (*code).to_owned())
+            // 编译期目录包含平台租户接口；普通租户同步时必须安全忽略，不能复制或因其存在而失败。
+            .filter(|code| {
+                tenant_id == SYSTEM_TENANT_ID || !is_tenant_permission_code(code.as_str())
+            })
             .collect::<BTreeSet<_>>();
         let scanned_total = scanned.len();
         let transaction = db
@@ -358,4 +367,18 @@ impl PermissionService {
             missing,
         })
     }
+}
+
+fn ensure_tenant_permission_code_boundary(tenant_id: &str, code: &str) -> AppResult<()> {
+    if tenant_id != SYSTEM_TENANT_ID && is_tenant_permission_code(code) {
+        return Err(AppError::Authorization(
+            "租户管理权限仅允许系统租户维护".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_tenant_permission_code(code: &str) -> bool {
+    code.get(..TENANT_PERMISSION_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(TENANT_PERMISSION_PREFIX))
 }

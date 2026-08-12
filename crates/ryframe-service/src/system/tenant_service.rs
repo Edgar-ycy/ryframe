@@ -258,12 +258,12 @@ fn validate_tenant_limits(
     max_storage_mb: i64,
     max_requests_per_min: i32,
 ) -> AppResult<()> {
-    if max_users < MIN_TENANT_USERS {
+    if max_users != 0 && max_users < MIN_TENANT_USERS {
         return Err(AppError::Validation(format!(
             "用户额度不能低于 {MIN_TENANT_USERS}"
         )));
     }
-    if max_roles < MIN_TENANT_ROLES {
+    if max_roles != 0 && max_roles < MIN_TENANT_ROLES {
         return Err(AppError::Validation(format!(
             "角色额度不能低于 {MIN_TENANT_ROLES}"
         )));

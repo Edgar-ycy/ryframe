@@ -24,6 +24,7 @@ pub mod role_repo;
 pub mod tenant_config_transfer_repo;
 pub mod tenant_provisioning_repo;
 pub mod tenant_repo;
+pub mod tenant_usage_repo;
 pub mod user_import_repo;
 pub mod user_repo;
 
@@ -61,6 +62,7 @@ pub use role_repo::{RoleFilter, RoleRepository};
 pub use tenant_config_transfer_repo::{TenantConfigTransferRepository, TenantConfigurationFence};
 pub use tenant_provisioning_repo::{ProvisionTenantCommand, TenantProvisioningRepository};
 pub use tenant_repo::TenantRepository;
+pub use tenant_usage_repo::{TenantUsageAggregate, TenantUsagePageFilter, TenantUsageRepository};
 pub use user_import_repo::{
     CreateUserImportJob, UserImportArtifact, UserImportFilter, UserImportRepository,
 };

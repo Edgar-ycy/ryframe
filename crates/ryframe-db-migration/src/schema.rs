@@ -732,6 +732,37 @@ fn add_post_baseline_indexes(schema: &mut ExpectedSchema) {
             },
         );
     }
+
+    for (table, name, columns) in [
+        (
+            "sys_user",
+            "idx_user_tenant_del",
+            vec!["tenant_id", "del_flag"],
+        ),
+        (
+            "sys_role",
+            "idx_role_tenant_del",
+            vec!["tenant_id", "del_flag", "id"],
+        ),
+        (
+            "sys_file",
+            "idx_file_tenant_del_size",
+            vec!["tenant_id", "del_flag", "file_size"],
+        ),
+        (
+            "sys_job_schedule",
+            "idx_schedule_tenant_del_enabled",
+            vec!["tenant_id", "enabled", "del_flag"],
+        ),
+    ] {
+        schema.indexes.insert(
+            (table.into(), name.into()),
+            ExpectedIndex {
+                unique: false,
+                columns: columns.into_iter().map(str::to_owned).collect(),
+            },
+        );
+    }
 }
 
 /// 补充必须在基线表创建完成后才能添加的跨表约束。
@@ -1038,6 +1069,10 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
                 "sys_file",
                 "idx_file_reservation_expiry" | "idx_file_sha256" | "uq_sys_file_tenant_id"
             )
+            | ("sys_user", "idx_user_tenant_del")
+            | ("sys_role", "idx_role_tenant_del")
+            | ("sys_file", "idx_file_tenant_del_size")
+            | ("sys_job_schedule", "idx_schedule_tenant_del_enabled")
     )
 }
 

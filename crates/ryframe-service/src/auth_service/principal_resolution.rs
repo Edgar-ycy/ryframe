@@ -108,7 +108,9 @@ fn build_authorization_snapshot(
             roles,
             role_ids,
             permissions: authorization.permission_codes,
-            tenant_request_limit_per_minute: identity.tenant.max_requests_per_min.max(1) as u32,
+            // 租户写服务禁止负数；若历史数据损坏为负数，则按最严格的单次额度降级，不能意外放开限流。
+            tenant_request_limit_per_minute: u32::try_from(identity.tenant.max_requests_per_min)
+                .unwrap_or(1),
         },
     }
 }

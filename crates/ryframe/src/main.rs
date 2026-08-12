@@ -65,10 +65,16 @@ async fn main() -> Result<(), AppError> {
     let config_arc = Arc::new(config.clone());
     let redis = boot::redis::init(&config.redis, config.environment).await?;
     let object_storage = boot::storage::init(&config).await?;
-    let services =
-        boot::services::build_all(&database, &config, &redis.client, object_storage).await?;
-    install_job_metrics(&services.job_queue);
     let limit = boot::limiter::init(&config, &redis.client)?;
+    let services = boot::services::build_all(
+        &database,
+        &config,
+        &redis.client,
+        object_storage,
+        limit.limiter.clone(),
+    )
+    .await?;
+    install_job_metrics(&services.job_queue);
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let (server_info, mut server_info_sampler) =

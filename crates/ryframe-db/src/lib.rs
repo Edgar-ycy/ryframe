@@ -39,6 +39,7 @@ pub use repositories::{
     RecipientMessagePage, RecordOutboxEvent, RetentionCleanupResult, RetentionCutoff,
     RetentionResource, RoleFilter, RoleRepository, ScheduleOverviewStats,
     TenantConfigTransferRepository, TenantConfigurationFence, TenantProvisioningRepository,
-    TenantRepository, UserFilter, UserImportArtifact, UserImportFilter, UserImportRepository,
-    UserRepository, validate_cache_namespace,
+    TenantRepository, TenantUsageAggregate, TenantUsagePageFilter, TenantUsageRepository,
+    UserFilter, UserImportArtifact, UserImportFilter, UserImportRepository, UserRepository,
+    validate_cache_namespace,
 };

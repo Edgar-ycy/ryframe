@@ -57,8 +57,11 @@ async fn authenticated_tenant_rate_limit(
         .ok_or_else(|| {
             HttpAppError::from(AppError::Authentication("未认证，请先登录".into())).into_response()
         })?;
-    let key = format!("tenant:{}", principal.tenant_id);
-    let limit = principal.tenant_request_limit_per_minute.max(1);
+    if principal.tenant_request_limit_per_minute == 0 {
+        return Ok(next.run(request).await);
+    }
+    let key = ryframe_middleware::RateLimiter::tenant_key(&principal.tenant_id);
+    let limit = principal.tenant_request_limit_per_minute;
 
     match state.limiter.acquire(&key, 60, limit).await {
         Ok(decision) if decision.allowed => Ok(next.run(request).await),

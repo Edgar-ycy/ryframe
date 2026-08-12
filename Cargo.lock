@@ -3468,6 +3468,7 @@ dependencies = [
  "ryframe-excel",
  "ryframe-generator",
  "ryframe-kernel",
+ "ryframe-middleware",
  "ryframe-storage",
  "ryframe-utils",
  "sea-orm",

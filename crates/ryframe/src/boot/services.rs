@@ -5,6 +5,7 @@ use ryframe_config::{AppConfig, RedisMode};
 use ryframe_core::RedisClient;
 use ryframe_db::DatabaseCluster;
 use ryframe_kernel::AppError;
+use ryframe_middleware::RateLimiter;
 use ryframe_service::{
     AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
     system::{
@@ -12,8 +13,8 @@ use ryframe_service::{
         DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
         MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
         OverviewService, PermissionService, PostService, ProfileService, RoleService,
-        TenantConfigTransferService, TenantService, UserImportService, UserService,
-        WebSocketTicketService,
+        TenantConfigTransferService, TenantService, TenantUsageService, UserImportService,
+        UserService, WebSocketTicketService,
     },
 };
 use ryframe_storage::ObjectStorage;
@@ -26,6 +27,7 @@ pub async fn build_all(
     config: &AppConfig,
     redis_client: &Option<RedisClient>,
     object_storage: Arc<dyn ObjectStorage>,
+    rate_limiter: Arc<RateLimiter>,
 ) -> Result<AppServices, AppError> {
     let authorization_cache = AuthorizationCache::new(
         redis_client.clone(),
@@ -46,6 +48,12 @@ pub async fn build_all(
     let tenant = Arc::new(TenantService::new(
         database.clone(),
         authorization_cache.clone(),
+    ));
+    let tenant_usage = Arc::new(TenantUsageService::new(
+        database.clone(),
+        rate_limiter,
+        config.rate_limit.enabled,
+        config.jobs.scheduler_enabled,
     ));
     let permission = Arc::new(PermissionService::new(
         database.clone(),
@@ -191,6 +199,7 @@ pub async fn build_all(
         user,
         role,
         tenant,
+        tenant_usage,
         permission,
         menu,
         dept,

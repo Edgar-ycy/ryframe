@@ -10,6 +10,7 @@ mod overview;
 mod retention;
 mod schedules;
 mod tenant_config;
+mod tenant_usage;
 mod user_import;
 
 pub use audit::{LoginInfoVo, OnlineUserVo, OperLogVo};
@@ -48,5 +49,9 @@ pub use schedules::{
 pub use tenant_config::{
     TenantConfigBundleSummaryVo, TenantConfigBundleVo, TenantConfigTransferItemVo,
     TenantConfigTransferVo,
+};
+pub use tenant_usage::{
+    TenantAuxiliaryUsageVo, TenantCapacityVo, TenantQuotaUsageVo, TenantRequestWindowUsageVo,
+    TenantUsageVo,
 };
 pub use user_import::{UserImportJobVo, UserImportRowVo};

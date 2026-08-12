@@ -546,6 +546,39 @@
         ],
         "type": "object"
       },
+      "ApiPageResponse_TenantCapacityVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_TenantCapacityVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiPageResponse_TenantConfigBundleVo": {
         "description": "统一分页 API 响应结构。",
         "properties": {
@@ -3578,6 +3611,117 @@
         ],
         "type": "object"
       },
+      "ApiResponse_TenantCapacityVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "description": "平台租户分页与详情响应。",
+            "properties": {
+              "capacity_status": {
+                "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "domain": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "expiration_status": {
+                "type": "string"
+              },
+              "expire_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "max_requests_per_min": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "max_roles": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "max_storage_mb": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "max_users": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "description": "对外统一使用 `enabled` 或 `disabled`。",
+                "type": "string"
+              },
+              "tenant_id": {
+                "type": "string"
+              },
+              "usage": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TenantUsageVo",
+                    "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "tenant_id",
+              "name",
+              "status",
+              "max_users",
+              "max_roles",
+              "max_storage_mb",
+              "max_requests_per_min",
+              "expiration_status"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_TenantConfigBundleVo": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -3793,6 +3937,78 @@
               "change_counts",
               "created_at",
               "updated_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_TenantUsageVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "description": "租户容量与当前窗口用量。",
+            "properties": {
+              "auxiliary": {
+                "$ref": "#/components/schemas/TenantAuxiliaryUsageVo"
+              },
+              "calculated_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "request_window": {
+                "$ref": "#/components/schemas/TenantRequestWindowUsageVo"
+              },
+              "roles": {
+                "$ref": "#/components/schemas/TenantQuotaUsageVo"
+              },
+              "storage": {
+                "$ref": "#/components/schemas/TenantQuotaUsageVo"
+              },
+              "tenant_id": {
+                "type": "string"
+              },
+              "users": {
+                "$ref": "#/components/schemas/TenantQuotaUsageVo"
+              }
+            },
+            "required": [
+              "tenant_id",
+              "calculated_at",
+              "users",
+              "roles",
+              "storage",
+              "request_window",
+              "auxiliary"
             ],
             "type": "object"
           },
@@ -10264,6 +10480,124 @@
         ],
         "type": "object"
       },
+      "PageData_TenantCapacityVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "description": "平台租户分页与详情响应。",
+              "properties": {
+                "capacity_status": {
+                  "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "domain": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "expiration_status": {
+                  "type": "string"
+                },
+                "expire_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "max_requests_per_min": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "max_roles": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "max_storage_mb": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "max_users": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "description": "对外统一使用 `enabled` 或 `disabled`。",
+                  "type": "string"
+                },
+                "tenant_id": {
+                  "type": "string"
+                },
+                "usage": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TenantUsageVo",
+                      "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "tenant_id",
+                "name",
+                "status",
+                "max_users",
+                "max_roles",
+                "max_storage_mb",
+                "max_requests_per_min",
+                "expiration_status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
       "PageData_TenantConfigBundleVo": {
         "description": "分页接口的业务数据。",
         "properties": {
@@ -11918,6 +12252,208 @@
         ],
         "type": "object"
       },
+      "TenantAuxiliaryUsageVo": {
+        "description": "租户后台运行状态汇总。",
+        "properties": {
+          "active_user_imports": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cron_enabled": {
+            "type": "boolean"
+          },
+          "dead_jobs": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "enabled_schedules": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending_jobs": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "running_jobs": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending_jobs",
+          "running_jobs",
+          "dead_jobs",
+          "enabled_schedules",
+          "active_user_imports",
+          "cron_enabled"
+        ],
+        "type": "object"
+      },
+      "TenantCapacityPageQuery": {
+        "additionalProperties": false,
+        "description": "平台租户容量分页查询参数。",
+        "properties": {
+          "capacity_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TenantCapacityStatusFilter",
+                "description": "按容量状态筛选；调用者还必须具有 `tenant:usage:list` 权限。"
+              }
+            ]
+          },
+          "expiration_status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TenantExpirationStatusFilter",
+                "description": "按到期状态筛选。"
+              }
+            ]
+          },
+          "name": {
+            "description": "按租户名称模糊搜索。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page": {
+            "description": "页码，从 1 开始；省略时为 1。",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "description": "每页记录数，省略时为 20，最大为 100。",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TenantStatusFilter",
+                "description": "按租户启停状态筛选。"
+              }
+            ]
+          },
+          "tenant_id": {
+            "description": "按租户标识模糊搜索。",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "TenantCapacityStatusFilter": {
+        "description": "租户容量状态筛选。",
+        "enum": [
+          "normal",
+          "warning",
+          "critical",
+          "exceeded",
+          "unlimited",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "TenantCapacityVo": {
+        "description": "平台租户分页与详情响应。",
+        "properties": {
+          "capacity_status": {
+            "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expiration_status": {
+            "type": "string"
+          },
+          "expire_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_requests_per_min": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "max_roles": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "max_storage_mb": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_users": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "description": "对外统一使用 `enabled` 或 `disabled`。",
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "usage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TenantUsageVo",
+                "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tenant_id",
+          "name",
+          "status",
+          "max_users",
+          "max_roles",
+          "max_storage_mb",
+          "max_requests_per_min",
+          "expiration_status"
+        ],
+        "type": "object"
+      },
       "TenantConfigBundleSummaryVo": {
         "description": "配置迁移中关联配置包的安全摘要，不包含数据库内部标识。",
         "properties": {
@@ -12232,6 +12768,144 @@
           "change_counts",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "TenantExpirationStatusFilter": {
+        "description": "租户到期状态筛选。",
+        "enum": [
+          "active",
+          "expiring",
+          "expired",
+          "never"
+        ],
+        "type": "string"
+      },
+      "TenantQuotaUsageVo": {
+        "description": "单项租户配额用量。",
+        "properties": {
+          "limit": {
+            "description": "`None` 表示该资源不受配额限制。",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "percentage_basis_points": {
+            "description": "使用率基点，10000 表示 100%；无限制时为 `None`。",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "used": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "status"
+        ],
+        "type": "object"
+      },
+      "TenantRequestWindowUsageVo": {
+        "description": "租户当前请求限流窗口用量。",
+        "properties": {
+          "current": {
+            "description": "Redis 不可用时为 `None`。",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "`None` 表示租户请求限流未启用。",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "percentage_basis_points": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "remaining_secs": {
+            "description": "Redis 不可用时为 `None`。",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "TenantStatusFilter": {
+        "description": "租户启停状态筛选。",
+        "enum": [
+          "enabled",
+          "disabled"
+        ],
+        "type": "string"
+      },
+      "TenantUsageVo": {
+        "description": "租户容量与当前窗口用量。",
+        "properties": {
+          "auxiliary": {
+            "$ref": "#/components/schemas/TenantAuxiliaryUsageVo"
+          },
+          "calculated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "request_window": {
+            "$ref": "#/components/schemas/TenantRequestWindowUsageVo"
+          },
+          "roles": {
+            "$ref": "#/components/schemas/TenantQuotaUsageVo"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/TenantQuotaUsageVo"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "users": {
+            "$ref": "#/components/schemas/TenantQuotaUsageVo"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "calculated_at",
+          "users",
+          "roles",
+          "storage",
+          "request_window",
+          "auxiliary"
         ],
         "type": "object"
       },
@@ -15404,7 +16078,157 @@
         ]
       }
     },
+    "/api/v1/platform/tenants/page": {
+      "get": {
+        "operationId": "get_platform_tenants_page",
+        "parameters": [
+          {
+            "description": "页码，从 1 开始；省略时为 1。",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "每页记录数，省略时为 20，最大为 100。",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "按租户标识模糊搜索。",
+            "in": "query",
+            "name": "tenant_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "按租户名称模糊搜索。",
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "按租户启停状态筛选。",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TenantStatusFilter"
+            }
+          },
+          {
+            "description": "按到期状态筛选。",
+            "in": "query",
+            "name": "expiration_status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TenantExpirationStatusFilter"
+            }
+          },
+          {
+            "description": "按容量状态筛选；调用者还必须具有 `tenant:usage:list` 权限。",
+            "in": "query",
+            "name": "capacity_status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TenantCapacityStatusFilter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_TenantCapacityVo"
+                }
+              }
+            },
+            "description": "平台租户分页列表"
+          },
+          "400": {
+            "description": "分页或筛选参数无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "不是系统租户、缺少租户列表权限，或没有容量筛选权限"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户管理"
+        ]
+      }
+    },
     "/api/v1/platform/tenants/{tenant_id}": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id",
+        "parameters": [
+          {
+            "description": "租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantCapacityVo"
+                }
+              }
+            },
+            "description": "平台租户详情"
+          },
+          "400": {
+            "description": "租户标识无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "不是系统租户或缺少租户列表权限"
+          },
+          "404": {
+            "description": "租户不存在"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户管理"
+        ]
+      },
       "put": {
         "operationId": "put_platform_tenants_by_tenant_id",
         "parameters": [
@@ -15482,6 +16306,54 @@
               }
             },
             "description": "租户状态更新成功"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户管理"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/usage": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id_usage",
+        "parameters": [
+          {
+            "description": "租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantUsageVo"
+                }
+              }
+            },
+            "description": "租户容量与当前请求窗口用量"
+          },
+          "400": {
+            "description": "租户标识无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "不是系统租户或缺少租户用量查看权限"
+          },
+          "404": {
+            "description": "租户不存在"
           }
         },
         "security": [
@@ -20695,6 +21567,7 @@
       "tenant:edit",
       "tenant:list",
       "tenant:status",
+      "tenant:usage:list",
       "tools:gen:add",
       "tools:gen:list"
     ],

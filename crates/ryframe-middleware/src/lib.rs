@@ -18,8 +18,8 @@ pub use client_ip::trusted_client_ip_middleware;
 pub use cors::cors_layer;
 pub use idempotency::{IdempotencyState, idempotency_middleware};
 pub use rate_limit::{
-    RateLimitState, RateLimiter, api_rate_limit_middleware, rate_limit_middleware,
-    user_rate_limit_middleware,
+    RateLimitSnapshot, RateLimitState, RateLimiter, api_rate_limit_middleware,
+    rate_limit_middleware, user_rate_limit_middleware,
 };
 pub use request_id::request_id_middleware;
 pub use request_log::{request_log_layer, request_log_layer_with_masking};

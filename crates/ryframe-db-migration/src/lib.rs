@@ -35,6 +35,7 @@ mod m20260809_000022_job_schedules;
 mod m20260811_000023_default_password_hashes;
 mod m20260811_000024_data_lifecycle;
 mod m20260812_000025_tenant_config_transfer;
+mod m20260813_000026_tenant_usage_governance;
 mod schema;
 mod seeder;
 
@@ -88,6 +89,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260811_000023_default_password_hashes::Migration),
             Box::new(m20260811_000024_data_lifecycle::Migration),
             Box::new(m20260812_000025_tenant_config_transfer::Migration),
+            Box::new(m20260813_000026_tenant_usage_governance::Migration),
         ]
     }
 }
