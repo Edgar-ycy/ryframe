@@ -8,3 +8,9 @@ linter: qodana-rust
 # 使用入门检查配置，后续可按项目基线逐步收紧。
 profile:
   name: qodana.starter
+
+exclude:
+  # Cargo 支持通过“依赖名/Feature 名”转发 Feature，此处仅屏蔽 Qodana 对该清单的误报。
+  - name: TomlUnresolvedReference
+    paths:
+      - crates/ryframe/Cargo.toml
