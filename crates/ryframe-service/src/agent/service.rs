@@ -31,10 +31,10 @@ use super::{
     scope::{
         SubjectScope, departments_scope, resolve_account_scope, resolve_user_scope, users_scope,
     },
-    secret::{
-        IP_DIGEST_DOMAIN, ParsedApiKey, ParsedDelegation, USER_AGENT_DIGEST_DOMAIN,
-        invalid_credential, keyed_hash, parse_authorization, parse_delegation,
-    },
+};
+use crate::service_identity_secret::{
+    IP_DIGEST_DOMAIN, ParsedApiKey, ParsedDelegation, USER_AGENT_DIGEST_DOMAIN, invalid_credential,
+    keyed_hash, parse_authorization, parse_delegation,
 };
 
 const ACCESS_MODE_UNKNOWN: &str = "unknown";

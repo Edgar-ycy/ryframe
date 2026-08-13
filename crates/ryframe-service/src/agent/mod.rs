@@ -1,7 +1,6 @@
 mod limiter;
 mod registry;
 mod scope;
-mod secret;
 mod service;
 mod types;
 

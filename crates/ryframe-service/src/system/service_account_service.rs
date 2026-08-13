@@ -3,10 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Duration, Utc};
-use hmac::{Hmac, KeyInit, Mac};
-use rand::RngExt as _;
 use ryframe_config::{PepperKeyring, ServiceAccountsConfig};
 use ryframe_core::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_db::{
@@ -28,13 +25,11 @@ use sea_orm::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::AuthorizationCache;
+use crate::{
+    AuthorizationCache,
+    service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
+};
 
-type HmacSha256 = Hmac<Sha256>;
-
-const DELEGATION_TOKEN_PREFIX: &str = "rfd_";
-const CREDENTIAL_MAC_DOMAIN: &[u8] = b"ryframe/service-credential/v1\0";
-const DELEGATION_MAC_DOMAIN: &[u8] = b"ryframe/service-delegation/v1\0";
 const IDEMPOTENCY_DOMAIN: &[u8] = b"ryframe/idempotency-key/v1\0";
 const FINGERPRINT_DOMAIN: &[u8] = b"ryframe/request-fingerprint/v1\0";
 
@@ -606,16 +601,14 @@ impl ServiceAccountService {
                 "每个服务账号最多只能有两把有效 API Key".into(),
             ));
         }
-        let key_id = random_token(18);
-        let secret = random_token(32);
-        let presented_secret = format!("rfk_{key_id}.{secret}");
+        let issued = IssuedApiKey::issue();
         let (pepper_version, pepper) = self.keyring.active();
-        let secret_mac = keyed_hash(pepper, CREDENTIAL_MAC_DOMAIN, presented_secret.as_bytes())?;
+        let secret_mac = issued.mac(pepper)?;
         let model = service_credential::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
             account_id,
-            key_id,
+            key_id: issued.key_id().to_owned(),
             secret_mac,
             pepper_version,
             label,
@@ -643,7 +636,7 @@ impl ServiceAccountService {
             .await;
         Ok(CreatedCredentialVo {
             credential: saved.into(),
-            secret: Some(presented_secret),
+            secret: Some(issued.into_presented()),
         })
     }
 
@@ -844,9 +837,9 @@ impl ServiceAccountService {
                 self.config.max_delegation_days
             )));
         }
-        let token = format!("{DELEGATION_TOKEN_PREFIX}{}", random_token(32));
+        let issued = IssuedDelegationToken::issue();
         let (pepper_version, pepper) = self.keyring.active();
-        let token_mac = keyed_hash(pepper, DELEGATION_MAC_DOMAIN, token.as_bytes())?;
+        let token_mac = issued.mac(pepper)?;
         let model = service_delegation::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
@@ -888,7 +881,7 @@ impl ServiceAccountService {
             .await;
         Ok(CreatedDelegationVo {
             delegation: vo,
-            token: Some(token),
+            token: Some(issued.into_presented()),
         })
     }
 
@@ -1533,14 +1526,6 @@ fn unkeyed_hash(domain: &[u8], value: &[u8]) -> Vec<u8> {
     digest.finalize().to_vec()
 }
 
-fn keyed_hash(key: &[u8], domain: &[u8], value: &[u8]) -> AppResult<Vec<u8>> {
-    let mut mac =
-        HmacSha256::new_from_slice(key).map_err(|_| AppError::Config("Pepper 长度无效".into()))?;
-    mac.update(domain);
-    mac.update(value);
-    Ok(mac.finalize().into_bytes().to_vec())
-}
-
 fn ensure_same_fingerprint(existing: &[u8], requested: &[u8]) -> AppResult<()> {
     if existing == requested {
         Ok(())
@@ -1549,12 +1534,6 @@ fn ensure_same_fingerprint(existing: &[u8], requested: &[u8]) -> AppResult<()> {
             "相同 Idempotency-Key 已用于不同请求".into(),
         ))
     }
-}
-
-fn random_token(bytes: usize) -> String {
-    let mut value = vec![0_u8; bytes];
-    rand::rng().fill(&mut value[..]);
-    URL_SAFE_NO_PAD.encode(value)
 }
 
 async fn database_now<C>(db: &C) -> AppResult<DateTime<Utc>>

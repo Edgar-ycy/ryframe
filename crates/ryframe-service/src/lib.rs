@@ -4,6 +4,7 @@ mod auth_service;
 mod authorization_cache;
 mod authorization_resolver;
 pub mod jobs;
+mod service_identity_secret;
 pub mod system;
 mod trace_context;
 
