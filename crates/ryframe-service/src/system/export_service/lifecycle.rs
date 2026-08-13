@@ -128,9 +128,9 @@ impl ExportService {
     pub async fn unread_notification_count(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let exports = self
+        let recent_exports = self
             .exports
-            .list_unread_notifications(&db, tenant_id, actor.user_id)
+            .list_for_requester(&db, tenant_id, actor.user_id, 100)
             .await?;
         let authorization = self
             .users
@@ -143,14 +143,18 @@ impl ExportService {
                 "导出申请人的账号或租户已不可用".into(),
             ));
         }
-        Ok(exports
+        Ok(recent_exports
             .iter()
             .filter(|export| {
-                authorization.actor.is_super_admin
-                    || ryframe_auth::rbac::has_permission(
-                        &authorization.permission_codes,
-                        &export.permission_code,
-                    )
+                matches!(
+                    export.status.as_str(),
+                    export_job::Model::STATUS_SUCCEEDED | export_job::Model::STATUS_FAILED
+                ) && export.notification_read_at.is_none()
+                    && (authorization.actor.is_super_admin
+                        || ryframe_auth::rbac::has_permission(
+                            &authorization.permission_codes,
+                            &export.permission_code,
+                        ))
             })
             .count() as u64)
     }

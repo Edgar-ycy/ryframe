@@ -120,29 +120,6 @@ impl ExportJobRepository {
             .map_err(database_error)
     }
 
-    /// 读取申请人尚未查看的成功或失败通知，供服务层按当前权限过滤。
-    pub async fn list_unread_notifications(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        requester_id: i64,
-    ) -> AppResult<Vec<export_job::Model>> {
-        export_job::Entity::find()
-            .filter(export_job::Column::TenantId.eq(tenant_id))
-            .filter(export_job::Column::RequesterId.eq(requester_id))
-            .filter(export_job::Column::NotificationReadAt.is_null())
-            .filter(export_job::Column::Status.is_in([
-                export_job::Model::STATUS_SUCCEEDED,
-                export_job::Model::STATUS_FAILED,
-            ]))
-            .order_by_desc(export_job::Column::CompletedAt)
-            .order_by_desc(export_job::Column::Id)
-            .limit(100)
-            .all(db)
-            .await
-            .map_err(database_error)
-    }
-
     /// 将申请人已经实际看到的成功或失败通知幂等标记为已查看。
     pub async fn mark_notifications_read<C>(
         &self,
