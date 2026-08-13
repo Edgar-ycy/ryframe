@@ -5,7 +5,7 @@ use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
 use serde_json::Value;
@@ -78,6 +78,7 @@ impl ExportJobRepository {
             created_at: Set(now),
             updated_at: Set(now),
             completed_at: Set(None),
+            notification_read_at: Set(None),
         }
         .insert(transaction)
         .await
@@ -116,6 +117,52 @@ impl ExportJobRepository {
             .limit(limit.clamp(1, 100))
             .all(db)
             .await
+            .map_err(database_error)
+    }
+
+    /// 统计申请人尚未查看的成功或失败通知。
+    pub async fn count_unread_notifications(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        requester_id: i64,
+    ) -> AppResult<u64> {
+        export_job::Entity::find()
+            .filter(export_job::Column::TenantId.eq(tenant_id))
+            .filter(export_job::Column::RequesterId.eq(requester_id))
+            .filter(export_job::Column::NotificationReadAt.is_null())
+            .filter(export_job::Column::Status.is_in([
+                export_job::Model::STATUS_SUCCEEDED,
+                export_job::Model::STATUS_FAILED,
+            ]))
+            .count(db)
+            .await
+            .map_err(database_error)
+    }
+
+    /// 将申请人当前所有成功或失败通知幂等标记为已查看。
+    pub async fn mark_notifications_read<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        requester_id: i64,
+        now: DateTime<Utc>,
+    ) -> AppResult<u64>
+    where
+        C: ConnectionTrait,
+    {
+        export_job::Entity::update_many()
+            .col_expr(export_job::Column::NotificationReadAt, Expr::value(now))
+            .filter(export_job::Column::TenantId.eq(tenant_id))
+            .filter(export_job::Column::RequesterId.eq(requester_id))
+            .filter(export_job::Column::NotificationReadAt.is_null())
+            .filter(export_job::Column::Status.is_in([
+                export_job::Model::STATUS_SUCCEEDED,
+                export_job::Model::STATUS_FAILED,
+            ]))
+            .exec(db)
+            .await
+            .map(|result| result.rows_affected)
             .map_err(database_error)
     }
 

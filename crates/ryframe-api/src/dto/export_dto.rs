@@ -14,3 +14,8 @@ pub struct ExportRequestDto(pub serde_json::Value);
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CancelExportJobDto {}
+
+/// 确认当前用户全部导出完成或失败通知的显式命令体。
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MarkExportNotificationsReadDto {}

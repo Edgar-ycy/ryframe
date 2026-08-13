@@ -50,11 +50,13 @@ const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_export_job` (
     `created_at` DATETIME NOT NULL,
     `updated_at` DATETIME NOT NULL,
     `completed_at` DATETIME DEFAULT NULL,
+    `notification_read_at` DATETIME DEFAULT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_export_job_background` (`background_job_id`),
     KEY `idx_export_job_requester` (`tenant_id`, `requester_id`, `created_at`),
     KEY `idx_export_job_expiry` (`status`, `expires_at`),
-    KEY `idx_export_job_history` (`status`, `completed_at`, `id`)
+    KEY `idx_export_job_history` (`status`, `completed_at`, `id`),
+    KEY `idx_export_job_notification` (`tenant_id`, `requester_id`, `notification_read_at`, `status`, `completed_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1071,6 +1073,7 @@ fn is_upgrade_column(table: &str, column: &str) -> bool {
                 "tenant_id"
             )
             | ("sys_oper_log", "event_id" | "request_id")
+            | ("sys_export_job", "notification_read_at")
     )
 }
 
@@ -1090,7 +1093,10 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
                 "sys_job_schedule_execution",
                 "idx_job_schedule_execution_retention" | "idx_job_schedule_execution_trend"
             )
-            | ("sys_export_job", "idx_export_job_history")
+            | (
+                "sys_export_job",
+                "idx_export_job_history" | "idx_export_job_notification"
+            )
             | ("sys_oper_log", "idx_oper_log_tenant_time_status")
             | ("sys_login_info", "idx_login_info_tenant_time_status")
             | ("sys_login_info" | "sys_oper_log", "idx_tenant_id")

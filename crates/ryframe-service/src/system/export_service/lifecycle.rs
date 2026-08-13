@@ -124,6 +124,27 @@ impl ExportService {
         Ok(result)
     }
 
+    /// 统计当前申请人尚未查看的导出完成或失败通知。
+    pub async fn unread_notification_count(&self, actor: &ActorContext) -> AppResult<u64> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
+        self.exports
+            .count_unread_notifications(&db, tenant_id, actor.user_id)
+            .await
+    }
+
+    /// 幂等确认当前申请人的全部导出完成或失败通知。
+    pub async fn mark_notifications_read(&self, actor: &ActorContext) -> AppResult<u64> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let now = self
+            .background_jobs
+            .database_utc_now(self.db.write())
+            .await?;
+        self.exports
+            .mark_notifications_read(self.db.write(), tenant_id, actor.user_id, now)
+            .await
+    }
+
     /// 取消申请人自己的尚未完成导出任务。
     pub async fn cancel_for_requester(
         &self,

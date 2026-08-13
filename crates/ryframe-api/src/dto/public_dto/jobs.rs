@@ -119,6 +119,7 @@ pub struct ExportJobVo {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub notification_read_at: Option<DateTime<Utc>>,
 }
 
 impl From<ServiceExportJobVo> for ExportJobVo {
@@ -135,6 +136,7 @@ impl From<ServiceExportJobVo> for ExportJobVo {
             created_at,
             updated_at,
             completed_at,
+            notification_read_at,
         } = value;
         Self {
             id,
@@ -148,6 +150,7 @@ impl From<ServiceExportJobVo> for ExportJobVo {
             created_at,
             updated_at,
             completed_at,
+            notification_read_at,
         }
     }
 }

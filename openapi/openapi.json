@@ -2729,6 +2729,13 @@
               "id": {
                 "type": "string"
               },
+              "notification_read_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "resource": {
                 "type": "string"
               },
@@ -5766,6 +5773,13 @@
                 },
                 "id": {
                   "type": "string"
+                },
+                "notification_read_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "resource": {
                   "type": "string"
@@ -8843,6 +8857,13 @@
           "id": {
             "type": "string"
           },
+          "notification_read_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "resource": {
             "type": "string"
           },
@@ -9337,6 +9358,11 @@
           "expires_in",
           "user_info"
         ],
+        "type": "object"
+      },
+      "MarkExportNotificationsReadDto": {
+        "additionalProperties": false,
+        "description": "确认当前用户全部导出完成或失败通知的显式命令体。",
         "type": "object"
       },
       "MenuTreeNode": {
@@ -17289,6 +17315,68 @@
           }
         ],
         "summary": "查询当前用户可以访问的最近导出任务。",
+        "tags": [
+          "导出任务"
+        ]
+      }
+    },
+    "/api/v1/common/jobs/notifications/read": {
+      "post": {
+        "operationId": "post_common_jobs_notifications_read",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkExportNotificationsReadDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_u64"
+                }
+              }
+            },
+            "description": "已查看的导出通知数量"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "将当前用户全部导出完成或失败通知标记为已查看。",
+        "tags": [
+          "导出任务"
+        ]
+      }
+    },
+    "/api/v1/common/jobs/notifications/unread-count": {
+      "get": {
+        "operationId": "get_common_jobs_notifications_unread_count",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_u64"
+                }
+              }
+            },
+            "description": "未读导出通知数量"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "查询当前用户尚未查看的导出完成或失败通知数量。",
         "tags": [
           "导出任务"
         ]

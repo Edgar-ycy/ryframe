@@ -26,6 +26,7 @@ pub struct Model {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub notification_read_at: Option<DateTime<Utc>>,
 }
 
 impl Model {

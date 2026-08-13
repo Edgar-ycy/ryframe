@@ -10,7 +10,10 @@ use ryframe_macro::{get, post, route};
 use ryframe_service::system::RequestExportCommand;
 
 use crate::{
-    dto::{export_dto::CancelExportJobDto, public_dto::ExportJobVo},
+    dto::{
+        export_dto::{CancelExportJobDto, MarkExportNotificationsReadDto},
+        public_dto::ExportJobVo,
+    },
     handler_utils::excel_response,
     state::AppState,
 };
@@ -19,10 +22,52 @@ use crate::{
 pub fn export_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
+        .merge(route!(unread_notification_count))
+        .merge(route!(mark_notifications_read))
         .merge(route!(detail))
         .merge(route!(cancel))
         .merge(route!(download))
         .with_state(state)
+}
+
+/// 查询当前用户尚未查看的导出完成或失败通知数量。
+#[get("/notifications/unread-count")]
+#[utoipa::path(get, path = "/api/v1/common/jobs/notifications/unread-count", tag = "导出任务",
+    responses((status = 200, description = "未读导出通知数量", body = ApiResponse<u64>)),
+    security(("bearer" = [])))]
+async fn unread_notification_count(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+) -> HttpResult<Json<ApiResponse<u64>>> {
+    state
+        .services
+        .export
+        .unread_notification_count(&current_user)
+        .await
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(ApiResponse::success)
+        .map(Json)
+}
+
+/// 将当前用户全部导出完成或失败通知标记为已查看。
+#[post("/notifications/read")]
+#[utoipa::path(post, path = "/api/v1/common/jobs/notifications/read", tag = "导出任务",
+    request_body = MarkExportNotificationsReadDto,
+    responses((status = 200, description = "已查看的导出通知数量", body = ApiResponse<u64>)),
+    security(("bearer" = [])))]
+async fn mark_notifications_read(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    Json(_request): Json<MarkExportNotificationsReadDto>,
+) -> HttpResult<Json<ApiResponse<u64>>> {
+    state
+        .services
+        .export
+        .mark_notifications_read(&current_user)
+        .await
+        .map_err(ryframe_http::HttpAppError::from)
+        .map(ApiResponse::success)
+        .map(Json)
 }
 
 /// 查询当前用户可以访问的最近导出任务。

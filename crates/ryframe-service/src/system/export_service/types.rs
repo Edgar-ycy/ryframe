@@ -34,6 +34,7 @@ pub struct ExportJobVo {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub notification_read_at: Option<DateTime<Utc>>,
 }
 
 /// 已完成导出对应的受控文件定位信息。
@@ -57,6 +58,7 @@ impl From<export_job::Model> for ExportJobVo {
             created_at: job.created_at,
             updated_at: job.updated_at,
             completed_at: job.completed_at,
+            notification_read_at: job.notification_read_at,
         }
     }
 }

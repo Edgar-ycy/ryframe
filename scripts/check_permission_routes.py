@@ -38,6 +38,8 @@ AUTHENTICATED_ONLY_ROUTES = {
     # 导出任务仅允许创建者操作自身任务，服务层会复核租户、申请人和资源权限，
     # 因此不要求额外的管理端 RBAC 权限码。
     ("export_handler.rs", "/"),
+    ("export_handler.rs", "/notifications/unread-count"),
+    ("export_handler.rs", "/notifications/read"),
     ("export_handler.rs", "/{id}"),
     ("export_handler.rs", "/{id}/cancel"),
     ("export_handler.rs", "/{id}/download"),

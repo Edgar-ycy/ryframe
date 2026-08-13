@@ -206,6 +206,8 @@ use utoipa::OpenApi;
         crate::handlers::schedule_handler::remove,
         crate::handlers::schedule_handler::executions,
         crate::handlers::export_handler::list,
+        crate::handlers::export_handler::unread_notification_count,
+        crate::handlers::export_handler::mark_notifications_read,
         crate::handlers::export_handler::detail,
         crate::handlers::export_handler::cancel,
         crate::handlers::export_handler::download,

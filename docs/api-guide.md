@@ -299,6 +299,7 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 | `/api/v1/tools/gen` | 代码生成 | `/tables`、`/preview`、`/generate`、`/download` |
 | `/api/v1/common/upload` | 文件上传 | `/image`、`/avatar` |
 | `/api/v1/common/file` | 文件 | `/download` |
+| `/api/v1/common/jobs` | 我的导出任务 | 最近任务、未读完成提醒、取消和下载 |
 | `/api/v1/monitor` | 监控 | `/overview`、`/overview/trends`、`/retention`、`/jobs`、`/schedules`、`/metrics`、`/server`、`/cache`、`/db-pool`、`/runtime`；探针位于根路径 `/livez`、`/readyz` |
 
 公告创建、更新和响应只使用 `content_markdown`，不接受旧 `content` 字段。Markdown 原文按 UTF-8 字节校验，允许 1–60,000 字节；限制由 OpenAPI 的 `x-ryframe-notice-policy` 发布，前端不得复制常量。
@@ -309,6 +310,12 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 `POST /api/v1/system/messages/delete` 提交 1–100 个字符串 ID 删除自己的收件箱记录；重复
 删除幂等，跨租户、跨用户和不存在的 ID 不会影响其他数据。公告和通知正文均为 Markdown
 原文，客户端必须禁用原始 HTML 并在渲染前净化输出。
+
+异步导出创建成功只表示任务已进入队列，不表示文件已经生成。任务进入 `succeeded` 或 `failed`
+后会产生当前申请人的持久未读提醒；客户端通过
+`GET /api/v1/common/jobs/notifications/unread-count` 展示“我的导出任务”徽标，用户打开任务中心后
+调用 `POST /api/v1/common/jobs/notifications/read` 幂等确认全部完成提醒。已读状态保存在服务端，
+不会因刷新页面、重新登录或切换浏览器标签页而恢复为未读；取消任务不产生完成提醒。
 
 ### 当前用户菜单
 

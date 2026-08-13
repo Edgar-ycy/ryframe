@@ -1,0 +1,61 @@
+use sea_orm::DatabaseBackend;
+use sea_orm_migration::prelude::*;
+
+const TABLE: &str = "sys_export_job";
+const READ_AT_COLUMN: &str = "notification_read_at";
+const NOTIFICATION_INDEX: &str = "idx_export_job_notification";
+
+/// 为导出完成提醒补充持久未读状态与定向查询索引。
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        if manager.get_database_backend() != DatabaseBackend::MySql {
+            return Err(DbErr::Custom(
+                "export job notifications require MySQL 8.0+".into(),
+            ));
+        }
+        if !manager.has_table(TABLE).await? {
+            return Err(DbErr::Custom("missing sys_export_job table".into()));
+        }
+        if !manager.has_column(TABLE, READ_AT_COLUMN).await? {
+            manager
+                .alter_table(
+                    Table::alter()
+                        .table(Alias::new(TABLE))
+                        .add_column(
+                            ColumnDef::new(Alias::new(READ_AT_COLUMN))
+                                .date_time()
+                                .null(),
+                        )
+                        .to_owned(),
+                )
+                .await?;
+        }
+        if !manager.has_index(TABLE, NOTIFICATION_INDEX).await? {
+            manager
+                .create_index(
+                    Index::create()
+                        .name(NOTIFICATION_INDEX)
+                        .table(Alias::new(TABLE))
+                        .col(Alias::new("tenant_id"))
+                        .col(Alias::new("requester_id"))
+                        .col(Alias::new(READ_AT_COLUMN))
+                        .col(Alias::new("status"))
+                        .col(Alias::new("completed_at"))
+                        .col(Alias::new("id"))
+                        .to_owned(),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        Err(DbErr::Custom(
+            "export job notification migration is forward-only".into(),
+        ))
+    }
+}
