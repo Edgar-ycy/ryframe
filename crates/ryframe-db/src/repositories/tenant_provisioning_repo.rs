@@ -225,6 +225,10 @@ impl TenantProvisioningRepository {
                 && source.code != "system:authorization-diagnostic:list"
                 && !source.code.starts_with("system:config-package:")
                 && !source.code.starts_with("system:config-transfer:");
+            let auto_assign = auto_assign
+                && !source.code.starts_with("system:service-account:")
+                && !source.code.starts_with("system:service-delegation:")
+                && !source.code.starts_with("system:service-access-audit:");
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| permission_ids.get(&parent_id).copied());

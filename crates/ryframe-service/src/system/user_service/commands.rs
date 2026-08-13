@@ -156,6 +156,9 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantRepository
+            .lock_tenant_in_txn(&transaction, tenant_id)
+            .await?;
         self.lock_manageable_user_in_txn(actor, &transaction, id)
             .await?;
         self.user_repo
@@ -188,6 +191,9 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantRepository
+            .lock_tenant_in_txn(&transaction, tenant_id)
+            .await?;
         // 始终按升序获取用户锁，避免重叠的批量操作因以不同顺序提供相同 ID 而死锁。
         for id in &ids {
             self.lock_manageable_user_in_txn(actor, &transaction, *id)
@@ -221,6 +227,9 @@ impl UserService {
             .begin()
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        TenantRepository
+            .lock_tenant_in_txn(&transaction, tenant_id)
+            .await?;
         self.lock_manageable_user_in_txn(actor, &transaction, id)
             .await?;
         let versions = self

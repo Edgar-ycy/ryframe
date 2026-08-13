@@ -15,6 +15,7 @@ mod option;
 pub mod permission_service;
 pub mod post_service;
 pub mod role_service;
+pub mod service_account_service;
 pub mod tenant_config_package;
 pub mod tenant_config_transfer_service;
 pub mod tenant_service;
@@ -65,6 +66,12 @@ pub use permission_service::{
 };
 pub use post_service::{PostListParams, PostService, PostVo};
 pub use role_service::{RoleListParams, RoleService, RoleVo};
+pub use service_account_service::{
+    CreateCredentialCommand, CreateDelegationCommand, CreateServiceAccountCommand,
+    CreatedCredentialVo, CreatedDelegationVo, ServiceAccessAuditVo, ServiceAccountDetailVo,
+    ServiceAccountService, ServiceAccountVo, ServiceCapabilityDescriptor, ServiceCredentialVo,
+    ServiceDelegationTargetVo, ServiceDelegationVo, UpdateServiceAccountCommand,
+};
 pub use tenant_config_package::{
     GeneratedTenantConfigPackage, ParsedTenantConfigPackage, PortableConfig, PortableDepartment,
     PortableDictData, PortableDictType, PortableMenu, PortablePermission, PortablePost,

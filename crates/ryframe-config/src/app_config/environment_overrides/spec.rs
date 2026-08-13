@@ -173,6 +173,58 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
         &["data_retention", "retention_run_days"],
     ),
     EnvOverride::integer(
+        "APP_DATA_RETENTION_SERVICE_ACCESS_AUDIT_DAYS",
+        &["data_retention", "service_access_audit_days"],
+    ),
+    EnvOverride::boolean(
+        "APP_SERVICE_ACCOUNTS_ENABLED",
+        &["service_accounts", "enabled"],
+    ),
+    EnvOverride::string(
+        "APP_SERVICE_ACCOUNTS_PEPPER_KEYRING_FILE",
+        &["service_accounts", "pepper_keyring_file"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_ACTIVE_PEPPER_VERSION",
+        &["service_accounts", "active_pepper_version"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_MAX_ACTIVE_CREDENTIALS",
+        &["service_accounts", "max_active_credentials"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_MAX_CREDENTIAL_DAYS",
+        &["service_accounts", "max_credential_days"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_DEFAULT_DELEGATION_HOURS",
+        &["service_accounts", "default_delegation_hours"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_MAX_DELEGATION_DAYS",
+        &["service_accounts", "max_delegation_days"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_DEFAULT_REQUESTS_PER_MINUTE",
+        &["service_accounts", "default_requests_per_minute"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_MAX_CONCURRENT_QUERIES",
+        &["service_accounts", "max_concurrent_queries"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_QUERY_TIMEOUT_MS",
+        &["service_accounts", "query_timeout_ms"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_MAX_PAGE_SIZE",
+        &["service_accounts", "max_page_size"],
+    ),
+    EnvOverride::integer(
+        "APP_SERVICE_ACCOUNTS_MAX_RESPONSE_BYTES",
+        &["service_accounts", "max_response_bytes"],
+    ),
+    EnvOverride::integer(
         "APP_USER_IMPORT_MAX_FILE_BYTES",
         &["user_import", "max_file_bytes"],
     ),

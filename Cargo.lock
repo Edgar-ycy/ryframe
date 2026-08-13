@@ -3271,6 +3271,7 @@ dependencies = [
 name = "ryframe-config"
 version = "0.9.0"
 dependencies = [
+ "base64 0.23.1",
  "percent-encoding",
  "ryframe-kernel",
  "ryframe-utils",
@@ -3459,7 +3460,9 @@ dependencies = [
  "cron",
  "futures-util",
  "hex",
+ "hmac",
  "opentelemetry",
+ "rand 0.10.1",
  "redis",
  "ryframe-auth",
  "ryframe-config",

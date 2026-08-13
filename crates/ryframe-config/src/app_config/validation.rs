@@ -124,6 +124,7 @@ impl AppConfig {
         self.tenant_config_transfer
             .validate(self.upload.file_max_bytes)
             .map_err(AppError::Config)?;
+        self.service_accounts.validate().map_err(AppError::Config)?;
         self.telemetry.validate().map_err(AppError::Config)?;
         self.messaging.validate().map_err(AppError::Config)?;
         let access_ttl =
@@ -160,6 +161,20 @@ impl AppConfig {
             return Err(AppError::Config(
                 "production requires redis.mode = \"required\"".into(),
             ));
+        }
+        if self.environment.is_production() && self.service_accounts.enabled {
+            if !self
+                .redis
+                .as_ref()
+                .is_some_and(|redis| redis.mode == RedisMode::Required)
+            {
+                return Err(AppError::Config(
+                    "生产环境启用 service_accounts 时要求 redis.mode = \"required\"".into(),
+                ));
+            }
+            self.service_accounts
+                .load_pepper_keyring(jwt_secret)
+                .map_err(AppError::Config)?;
         }
         if let Some(redis) = &self.redis {
             validate_redis_tls(redis, self.environment.is_production())?;

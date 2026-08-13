@@ -289,6 +289,11 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 | `/api/v1/system/operlogs` | 操作日志 | `/exports` |
 | `/api/v1/system/loginlogs` | 登录日志 | `/exports` |
 | `/api/v1/system/online` | 在线用户 | `DELETE /{sid}`；`sid` 精确表示一个设备会话 |
+| `/api/v1/system/service-accounts` | 服务账号 | 账号 CRUD、角色整体替换、API Key 列表/创建/撤销 |
+| `/api/v1/system/service-delegations` | 服务委托管理 | 当前租户委托分页和管理员撤销 |
+| `/api/v1/system/service-access-audits` | 服务访问审计 | Agent 成功、拒绝和错误记录分页 |
+| `/api/v1/profile/service-delegations` | 个人服务委托 | 本人委托、可委托能力、创建和撤销 |
+| `/api/v1/agent/v1` | Agent API | 固定能力发现、用户/部门/岗位目录和字典只读查询 |
 | `/api/v1/platform/tenants` | 租户 | 兼容列表、`/page`、`GET /{tenant_id}`、`/{tenant_id}/usage`、`PUT /{tenant_id}/status` |
 | `/api/v1/auth/profile` | 个人中心 | `/password`、`/avatar` |
 | `/api/v1/tools/gen` | 代码生成 | `/tables`、`/preview`、`/generate`、`/download` |
@@ -368,6 +373,82 @@ GET /api/v1/platform/tenants/{tenant_id}/usage
 `unknown`，用户、角色、存储和辅助汇总仍正常返回。辅助汇总只提供 Pending、Running、Dead 后台
 任务数、启用计划数、活动用户导入数以及 Cron 开关，不返回任务载荷、用户明细或错误全文。接口不
 自动轮询，管理端只应在页面进入、筛选、翻页、打开详情或手动刷新时读取。
+
+### 服务账号、个人委托和 Agent API
+
+服务账号是租户内独立于普通用户登录的机器主体，只能调用编译期固定的 Agent 只读能力。管理接口
+继续使用普通 Bearer 会话，并按以下权限分离查看、编辑、角色授权、Key 轮换、Key 撤销、委托管理
+和访问审计；迁移只安装权限与 `system.service-accounts` 菜单，不自动授予普通角色。
+
+```text
+GET    /api/v1/system/service-accounts
+POST   /api/v1/system/service-accounts
+GET    /api/v1/system/service-accounts/{id}
+PUT    /api/v1/system/service-accounts/{id}
+PUT    /api/v1/system/service-accounts/{id}/status
+DELETE /api/v1/system/service-accounts/{id}
+GET    /api/v1/system/service-accounts/{id}/roles
+PUT    /api/v1/system/service-accounts/{id}/roles
+GET    /api/v1/system/service-accounts/{id}/credentials
+POST   /api/v1/system/service-accounts/{id}/credentials
+DELETE /api/v1/system/service-accounts/{id}/credentials/{credential_id}
+GET    /api/v1/system/service-delegations
+DELETE /api/v1/system/service-delegations/{id}
+GET    /api/v1/system/service-access-audits
+```
+
+创建 API Key 必须携带 16–128 个可见 ASCII 字符组成的 `Idempotency-Key`。完整 Key 形如
+`rfk_<key_id>.<secret>`，只在首次成功响应的 `secret` 字段显示；响应带 `Cache-Control: no-store`
+和 `Pragma: no-cache`。同一主体以相同幂等键和相同请求重试只返回同一凭据元数据，`secret` 为
+`null`；相同幂等键绑定不同请求时返回 `409`。列表只返回 Key ID、标签、状态、到期和撤销等元数据，
+数据库也不保存明文 Secret。默认每个账号最多同时保有两把有效 Key，每把有效期不超过 90 天，
+便于先创建新 Key、切换调用方，再撤销旧 Key。
+
+个人委托允许已登录用户把自己和指定服务账号共同拥有的固定能力显式授予该账号：
+
+```text
+GET    /api/v1/profile/service-delegations
+GET    /api/v1/profile/service-delegations/capabilities
+POST   /api/v1/profile/service-delegations
+DELETE /api/v1/profile/service-delegations/{id}
+```
+
+创建委托同样要求 `Idempotency-Key`。委托令牌形如 `rfd_<secret>`，只在首次成功响应的 `token`
+字段显示，幂等重放时为 `null`，并使用相同的禁止缓存响应头。未指定到期时间时默认 24 小时，最大
+不超过 30 天。用户只能撤销本人委托；具备管理权限的管理员可从租户委托列表撤销。能力候选来自
+服务端固定注册表，并且必须同时存在于当前用户和服务账号的有效权限中，客户端不能提交任意路径、
+operationId 或权限码来扩展能力。
+
+Agent 请求不使用普通 JWT。直接调用只携带 API Key；代表用户调用还必须携带委托令牌：
+
+```text
+Authorization: RyFrameApiKey rfk_<key_id>.<secret>
+X-RyFrame-Delegation: rfd_<secret>     # 仅委托模式
+```
+
+当前注册的只读入口只有：
+
+```text
+GET /api/v1/agent/v1/capabilities
+GET /api/v1/agent/v1/directory/users?page=1&page_size=20
+GET /api/v1/agent/v1/directory/departments?page=1&page_size=20
+GET /api/v1/agent/v1/directory/posts?page=1&page_size=20
+GET /api/v1/agent/v1/reference/dictionaries/{type_code}?page=1&page_size=20
+```
+
+`capabilities` 只返回调用方在当前时刻真正可用的注册能力，本身不授予数据权限。直接模式按服务账号
+的角色权限与数据范围执行；委托模式还要求服务账号权限、被代表用户权限和委托能力白名单三者同时
+允许，用户与服务账号的数据范围取交集。用户和部门目录按该交集做行级过滤；岗位和字典只有双方
+数据范围均为“全部”时才返回记录。分页默认 20，部署可把最大页大小设为不超过 100；不接受未注册
+过滤或排序参数。所有 Agent 响应在数据库计算出的权限事实下执行，并受固定查询超时和最大响应字节
+限制。
+
+Agent 的成功、拒绝、未知路径和运行错误都进入服务访问审计。成功查询与对应审计在同一个主库事务
+提交后才返回结果；失败审计无法写入时返回 `503`，不会把未审计请求伪装成成功。审计保存 request ID、
+operationId、能力、访问模式、结果、原因、状态码、行数、响应字节与授权版本，不保存 API Key、
+委托令牌、响应正文、原始 IP 或原始 user-agent。`401` 不区分 Key、Secret 或委托令牌的具体错误；
+`403` 表示固定能力或双主体交集不允许；`413` 表示最终响应超过上限；`429` 携带 `Retry-After`；
+Redis、数据库、审计或查询时限不可用时返回 `503`。
 
 ### 租户配置包迁移
 

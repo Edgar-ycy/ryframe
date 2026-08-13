@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS `sys_dept` (
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_dept_tenant_id` (`tenant_id`, `id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_parent_id` (`parent_id`),
     CONSTRAINT `fk_sys_dept_tenant`
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
     `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_user_tenant_id` (`tenant_id`, `id`),
     UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_user_tenant_del` (`tenant_id`, `del_flag`),
@@ -135,6 +137,7 @@ CREATE TABLE IF NOT EXISTS `sys_role` (
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_role_tenant_id` (`tenant_id`, `id`),
     UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_role_tenant_del` (`tenant_id`, `del_flag`, `id`),
@@ -757,6 +760,189 @@ CREATE TABLE IF NOT EXISTS `sys_tenant_config_lease` (
                 REFERENCES `sys_tenant_config_transfer` (`tenant_id`, `id`)
                 ON UPDATE CASCADE ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移租约';
+
+CREATE TABLE IF NOT EXISTS `sys_service_account` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `code` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+            `name` VARCHAR(128) NOT NULL,
+            `description` VARCHAR(500) DEFAULT NULL,
+            `dept_id` BIGINT DEFAULT NULL,
+            `status` CHAR(1) NOT NULL DEFAULT '1',
+            `authorization_version` INT NOT NULL DEFAULT 1,
+            `max_requests_per_minute` INT NOT NULL DEFAULT 60,
+            `created_by` BIGINT NOT NULL,
+            `del_flag` CHAR(1) NOT NULL DEFAULT '0',
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_service_account_tenant_id` (`tenant_id`, `id`),
+            UNIQUE KEY `uq_service_account_code` (`tenant_id`, `code`),
+            KEY `idx_service_account_list` (`tenant_id`, `del_flag`, `created_at`, `id`),
+            KEY `idx_service_account_dept` (`tenant_id`, `dept_id`),
+            KEY `fk_service_account_creator` (`tenant_id`, `created_by`),
+            CONSTRAINT `fk_service_account_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_service_account_dept`
+                FOREIGN KEY (`tenant_id`, `dept_id`) REFERENCES `sys_dept` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_service_account_creator`
+                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `ck_service_account_status` CHECK (`status` IN ('0', '1')),
+            CONSTRAINT `ck_service_account_del_flag` CHECK (`del_flag` IN ('0', '2')),
+            CONSTRAINT `ck_service_account_rate` CHECK (`max_requests_per_minute` > 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号';
+
+CREATE TABLE IF NOT EXISTS `sys_service_account_role` (
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `account_id` BIGINT NOT NULL,
+            `role_id` BIGINT NOT NULL,
+            PRIMARY KEY (`tenant_id`, `account_id`, `role_id`),
+            KEY `idx_service_account_role_role` (`tenant_id`, `role_id`, `account_id`),
+            CONSTRAINT `fk_service_account_role_account`
+                FOREIGN KEY (`tenant_id`, `account_id`)
+                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `fk_service_account_role_role`
+                FOREIGN KEY (`tenant_id`, `role_id`) REFERENCES `sys_role` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号角色关系';
+
+CREATE TABLE IF NOT EXISTS `sys_service_credential` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `account_id` BIGINT NOT NULL,
+            `key_id` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `secret_mac` BINARY(32) NOT NULL,
+            `pepper_version` INT NOT NULL,
+            `label` VARCHAR(128) NOT NULL,
+            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+            `expires_at` DATETIME(6) NOT NULL,
+            `last_used_at` DATETIME(6) DEFAULT NULL,
+            `created_by` BIGINT NOT NULL,
+            `revoked_at` DATETIME(6) DEFAULT NULL,
+            `revoked_by` BIGINT DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            `idempotency_key_hash` BINARY(32) NOT NULL,
+            `request_fingerprint` BINARY(32) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_service_credential_key_id` (`key_id`),
+            UNIQUE KEY `uq_service_credential_idempotency` (`tenant_id`, `account_id`, `idempotency_key_hash`),
+            KEY `idx_service_credential_active` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
+            KEY `idx_service_credential_expiry` (`status`, `expires_at`, `id`),
+            KEY `fk_service_credential_creator` (`tenant_id`, `created_by`),
+            KEY `fk_service_credential_revoker` (`tenant_id`, `revoked_by`),
+            CONSTRAINT `fk_service_credential_account`
+                FOREIGN KEY (`tenant_id`, `account_id`)
+                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `fk_service_credential_creator`
+                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_service_credential_revoker`
+                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `ck_service_credential_status` CHECK (`status` IN ('active', 'revoked'))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号 API Key 凭据';
+
+CREATE TABLE IF NOT EXISTS `sys_service_delegation` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `account_id` BIGINT NOT NULL,
+            `user_id` BIGINT NOT NULL,
+            `token_mac` BINARY(32) NOT NULL,
+            `pepper_version` INT NOT NULL,
+            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+            `version` INT NOT NULL DEFAULT 1,
+            `not_before` DATETIME(6) NOT NULL,
+            `expires_at` DATETIME(6) NOT NULL,
+            `reason` VARCHAR(500) NOT NULL,
+            `created_by_user_id` BIGINT NOT NULL,
+            `revoked_at` DATETIME(6) DEFAULT NULL,
+            `revoked_by` BIGINT DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            `idempotency_key_hash` BINARY(32) NOT NULL,
+            `request_fingerprint` BINARY(32) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_service_delegation_tenant_id` (`tenant_id`, `id`),
+            UNIQUE KEY `uq_service_delegation_token_mac` (`token_mac`),
+            UNIQUE KEY `uq_service_delegation_idempotency` (`tenant_id`, `user_id`, `idempotency_key_hash`),
+            KEY `idx_service_delegation_account` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
+            KEY `idx_service_delegation_user` (`tenant_id`, `user_id`, `status`, `expires_at`, `id`),
+            KEY `idx_service_delegation_expiry` (`status`, `expires_at`, `id`),
+            KEY `fk_service_delegation_creator` (`tenant_id`, `created_by_user_id`),
+            KEY `fk_service_delegation_revoker` (`tenant_id`, `revoked_by`),
+            CONSTRAINT `fk_service_delegation_account`
+                FOREIGN KEY (`tenant_id`, `account_id`)
+                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `fk_service_delegation_user`
+                FOREIGN KEY (`tenant_id`, `user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_service_delegation_creator`
+                FOREIGN KEY (`tenant_id`, `created_by_user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `fk_service_delegation_revoker`
+                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `ck_service_delegation_status` CHECK (`status` IN ('active', 'revoked')),
+            CONSTRAINT `ck_service_delegation_window` CHECK (`not_before` < `expires_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户显式查询委托';
+
+CREATE TABLE IF NOT EXISTS `sys_service_delegation_capability` (
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `delegation_id` BIGINT NOT NULL,
+            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            PRIMARY KEY (`tenant_id`, `delegation_id`, `capability_key`),
+            KEY `idx_service_delegation_capability` (`tenant_id`, `capability_key`, `delegation_id`),
+            CONSTRAINT `fk_service_delegation_capability_delegation`
+                FOREIGN KEY (`tenant_id`, `delegation_id`)
+                REFERENCES `sys_service_delegation` (`tenant_id`, `id`)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='委托查询能力白名单';
+
+CREATE TABLE IF NOT EXISTS `sys_service_access_audit` (
+            `id` BIGINT NOT NULL,
+            `request_id` CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `tenant_id` VARCHAR(64) DEFAULT NULL,
+            `account_id` BIGINT DEFAULT NULL,
+            `credential_id` BIGINT DEFAULT NULL,
+            `delegation_id` BIGINT DEFAULT NULL,
+            `represented_user_id` BIGINT DEFAULT NULL,
+            `operation_id` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `required_permission` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `access_mode` VARCHAR(16) NOT NULL,
+            `result` VARCHAR(16) NOT NULL,
+            `reason_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `http_status` INT NOT NULL,
+            `request_ip_digest` BINARY(32) DEFAULT NULL,
+            `user_agent_digest` BINARY(32) DEFAULT NULL,
+            `row_count` INT DEFAULT NULL,
+            `response_bytes` BIGINT DEFAULT NULL,
+            `tenant_epoch` INT DEFAULT NULL,
+            `account_authorization_version` INT DEFAULT NULL,
+            `user_authorization_version` INT DEFAULT NULL,
+            `delegation_version` INT DEFAULT NULL,
+            `started_at` DATETIME(6) NOT NULL,
+            `completed_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_service_access_audit_request` (`request_id`),
+            KEY `idx_service_access_audit_retention` (`completed_at`, `id`),
+            KEY `idx_service_access_audit_tenant` (`tenant_id`, `completed_at`, `id`),
+            KEY `idx_service_access_audit_account` (`tenant_id`, `account_id`, `completed_at`, `id`),
+            KEY `idx_service_access_audit_user` (`tenant_id`, `represented_user_id`, `completed_at`, `id`),
+            CONSTRAINT `ck_service_access_audit_mode` CHECK (`access_mode` IN ('direct', 'delegated', 'unknown')),
+            CONSTRAINT `ck_service_access_audit_result` CHECK (`result` IN ('success', 'denied', 'error')),
+            CONSTRAINT `ck_service_access_audit_counts` CHECK (
+                (`row_count` IS NULL OR `row_count` >= 0)
+                AND (`response_bytes` IS NULL OR `response_bytes` >= 0)
+            )
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Agent API 访问审计';
 
 -- 幂等初始化数据（生产环境用户默认锁定）。
 

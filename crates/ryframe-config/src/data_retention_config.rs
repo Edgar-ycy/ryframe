@@ -26,6 +26,8 @@ pub struct DataRetentionConfig {
     pub user_import_artifact_hours: u32,
     #[serde(default = "default_retention_run_days")]
     pub retention_run_days: u32,
+    #[serde(default = "default_service_access_audit_days")]
+    pub service_access_audit_days: u32,
 }
 
 impl Default for DataRetentionConfig {
@@ -42,6 +44,7 @@ impl Default for DataRetentionConfig {
             user_import_history_days: default_user_import_history_days(),
             user_import_artifact_hours: default_user_import_artifact_hours(),
             retention_run_days: default_retention_run_days(),
+            service_access_audit_days: default_service_access_audit_days(),
         }
     }
 }
@@ -71,6 +74,7 @@ impl DataRetentionConfig {
             ("operation_log_days", self.operation_log_days),
             ("login_log_days", self.login_log_days),
             ("user_import_history_days", self.user_import_history_days),
+            ("service_access_audit_days", self.service_access_audit_days),
         ] {
             if !(1..=3_650).contains(&days) {
                 return Err(format!("data_retention.{name} 必须在 1 到 3650 天之间"));
@@ -120,4 +124,7 @@ const fn default_user_import_artifact_hours() -> u32 {
 }
 const fn default_retention_run_days() -> u32 {
     730
+}
+const fn default_service_access_audit_days() -> u32 {
+    180
 }

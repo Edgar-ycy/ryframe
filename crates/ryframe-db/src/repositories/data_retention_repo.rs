@@ -21,11 +21,12 @@ pub enum RetentionResource {
     OperationLogs,
     LoginLogs,
     UserImports,
+    ServiceAccessAudits,
     RetentionRuns,
 }
 
 impl RetentionResource {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::BackgroundJobs,
         Self::OutboxEvents,
         Self::ScheduleExecutions,
@@ -33,6 +34,7 @@ impl RetentionResource {
         Self::OperationLogs,
         Self::LoginLogs,
         Self::UserImports,
+        Self::ServiceAccessAudits,
         Self::RetentionRuns,
     ];
 
@@ -45,6 +47,7 @@ impl RetentionResource {
             Self::OperationLogs => "operation_logs",
             Self::LoginLogs => "login_logs",
             Self::UserImports => "user_imports",
+            Self::ServiceAccessAudits => "service_access_audits",
             Self::RetentionRuns => "retention_runs",
         }
     }
@@ -58,6 +61,7 @@ impl RetentionResource {
             Self::OperationLogs => "sys_oper_log",
             Self::LoginLogs => "sys_login_info",
             Self::UserImports => "sys_user_import_job",
+            Self::ServiceAccessAudits => "sys_service_access_audit",
             Self::RetentionRuns => "sys_data_retention_run",
         }
     }
@@ -77,6 +81,7 @@ impl RetentionResource {
             Self::UserImports => {
                 "status IN ('succeeded', 'partial', 'failed', 'cancelled') AND completed_at < ?"
             }
+            Self::ServiceAccessAudits => "completed_at < ?",
             Self::RetentionRuns => {
                 "status IN ('succeeded', 'partial', 'failed') AND completed_at < ?"
             }

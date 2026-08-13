@@ -215,6 +215,10 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 | `sys_tenant_config_transfer` | 目标租户预览、应用、回滚状态、计划哈希、版本栅栏与快照引用 |
 | `sys_tenant_config_transfer_item` | 按稳定业务键记录的预览项目、动作、结果和安全说明 |
 | `sys_tenant_config_lease` | 每租户唯一的配置应用/回滚租约 |
+| `sys_service_account` | 租户服务账号、部门归属、状态、授权版本和请求上限 |
+| `sys_service_credential` | 服务账号 API Key 元数据、Secret MAC、Pepper 版本、到期/撤销和幂等指纹 |
+| `sys_service_delegation` | 用户对服务账号的显式限时委托、Token MAC、版本、到期/撤销和幂等指纹 |
+| `sys_service_access_audit` | Agent 成功、拒绝与错误访问的不可变安全审计 |
 | `password_reset_requests` | 一次性密码重置请求 |
 
 ### 关联与日志表
@@ -224,12 +228,26 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 | `sys_user_role` | 用户与角色 |
 | `sys_role_permission` | 角色与权限 |
 | `sys_role_dept` | 角色自定义部门范围 |
+| `sys_service_account_role` | 服务账号与普通角色的租户内授权关系 |
+| `sys_service_delegation_capability` | 委托允许调用的编译期 Agent 能力白名单 |
 | `sys_oper_log` | 操作日志 |
 | `sys_login_info` | 登录日志 |
 
 关联表对真实父记录建立外键并按业务需要级联删除。软删除实体间的关系由 Service 校验，避免数据库级联绕过审计和业务规则。
 
 数据保留、异步导入和租户趋势使用专门的复合索引。清理查询以终态时间和稳定 ID 分批，趋势查询以 `tenant_id + 时间 + 状态/结果` 聚合；新增或调整索引前必须在代表性数据上保存 `EXPLAIN` 证据。导入历史到期时，`sys_user_import_row_result` 通过外键级联删除；导入文件对象和 `sys_file` 元数据由 FileService 安全删除，不得用裸 SQL 绕过对象清理。
+
+服务账号迁移一次性安装上述六张表，并为 `sys_dept`、`sys_user`、`sys_role` 补齐租户复合身份
+约束，使所有关系外键同时绑定 `tenant_id` 和父记录 ID。`sys_service_account.code`、Key ID、委托
+Token MAC、幂等哈希和审计 request ID 具有相应唯一约束；凭据和委托分别按账号/用户维护幂等唯一
+键。迁移的 `down` 明确拒绝删除这些前向安全数据，生产回退不能通过自动降级表结构完成。
+
+数据库只保存完整 API Key 和委托令牌的 HMAC-SHA-256、对应 `pepper_version`，不保存或可逆加密
+明文。`idempotency_key_hash` 只用于定位重试，`request_fingerprint` 用于拒绝相同幂等键对应不同
+请求；幂等重放只能返回已有元数据，无法重新取回一次性 Secret/Token。`sys_service_access_audit`
+不对账号、凭据、委托和用户建立会因业务删除而丢失历史的级联外键；关联标识可以为空，以记录身份
+解析前的拒绝、未注册 Agent 路径和基础设施错误。它只保存 IP、user-agent 的带 Pepper 摘要，不
+保存原值、凭据、令牌或查询响应正文。
 
 ## 5. Entity 约定
 
@@ -341,6 +359,19 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
 - 后台任务必须从任务载荷或受信配置获得显式租户，并将其传入 Service/Repository；不需要伪造 HTTP task-local。
 - 用户、部门、公告和日志查询还会叠加角色数据范围。
 - 多角色范围取可见数据并集；任一角色拥有全部数据范围时不附加行级限制。
+
+Agent 访问在租户内有两种主体模型。直接模式只计算服务账号所绑定普通角色的权限并集与数据范围；
+委托模式分别计算服务账号角色并集、用户角色并集，再对能力权限与行级范围取交集。服务账号不能
+绑定超级角色，委托能力只能来自编译期注册表且必须为双方当前共同权限。用户/部门查询把交集直接
+下推为租户过滤后的 `All`、部门集合、用户本人或部门加本人条件；岗位/字典目前要求两个主体都拥有
+全部数据范围。禁止先读取无界全租户行再在内存中过滤。
+
+服务账号相关写入统一先对 `sys_tenant` 取得更新锁，再按稳定顺序锁定服务账号、凭据或委托、用户
+及关系行。账号状态/角色、API Key 创建/撤销、委托创建/撤销都在同一事务提升服务账号
+`authorization_version` 和租户 `authorization_epoch`；委托还提升被代表用户的授权版本。Agent
+查询按“租户共享锁 → 服务账号共享锁 → 凭据共享锁 → 可选委托及能力共享锁 → 授权快照 → 只读
+查询 → 成功审计”执行，只有事务提交后才能返回成功。失败审计使用独立事务；审计写入失败时请求
+必须失败，不能返回未经持久化审计的成功结果。
 
 跨租户平台用例必须使用专用方法并校验系统租户，不能通过省略租户参数绕过隔离。租户创建、修改和
 启停等写用例继续要求系统超级管理员；只读分页、详情和用量查询再分别校验 `tenant:list` 与

@@ -9,6 +9,7 @@ mod organization;
 mod overview;
 mod retention;
 mod schedules;
+mod service_account;
 mod tenant_config;
 mod tenant_usage;
 mod user_import;
@@ -45,6 +46,11 @@ pub use retention::{
 pub use schedules::{
     JobScheduleExecutionVo, JobScheduleOccurrence, JobSchedulePreview, JobScheduleVo,
     ScheduleTargetVo,
+};
+pub use service_account::{
+    CreatedServiceCredentialVo, CreatedServiceDelegationVo, ServiceAccessAuditVo,
+    ServiceAccountDetailVo, ServiceAccountVo, ServiceCapabilityVo, ServiceCredentialVo,
+    ServiceDelegationVo,
 };
 pub use tenant_config::{
     TenantConfigBundleSummaryVo, TenantConfigBundleVo, TenantConfigTransferItemVo,

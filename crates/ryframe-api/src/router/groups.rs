@@ -44,11 +44,28 @@ pub(super) fn system_router(
         .nest(
             "/config-transfers",
             tenant_config_handler::config_transfer_router(state.clone()),
-        )
-        .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-            oper_log_middleware,
-        ));
+        );
+    let database_idempotent = if state.services.service_accounts.is_some() {
+        database_idempotent
+            .nest(
+                "/service-accounts",
+                service_account_handler::service_account_router(state.clone()),
+            )
+            .nest(
+                "/service-delegations",
+                service_account_handler::service_delegation_router(state.clone()),
+            )
+            .nest(
+                "/service-access-audits",
+                service_account_handler::service_access_audit_router(state.clone()),
+            )
+    } else {
+        database_idempotent
+    }
+    .layer(from_fn_with_state(
+        OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+        oper_log_middleware,
+    ));
 
     let redis_idempotent = Router::new()
         .nest(

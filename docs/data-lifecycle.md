@@ -1,6 +1,6 @@
 # 数据生命周期、异步导入与运维诊断
 
-> 最后核对：2026-08-12
+> 最后核对：2026-08-13
 
 本文说明数据保留、异步用户导入、权限生效诊断和租户运维总览的运行边界。接口字段、状态枚举和权限码仍以 `openapi/openapi.json` 为唯一契约来源。
 
@@ -22,6 +22,7 @@
 | 用户导入源文件和错误报告 | 168 小时 | 导入已进入终态 |
 | 租户配置包对象 | 168 小时 | artifact 窗口结束且不再被活动操作保护 |
 | 配置应用前快照 | 168 小时 | 回滚窗口结束且不再被活动回滚保护 |
+| 服务访问审计 | 180 天 | 按 `completed_at` 超过截止时间 |
 | 数据保留运行记录 | 730 天 | 超过截止时间 |
 
 `pending`、`running`、`dead` 后台任务和未成功发布的 Outbox 不会被自动删除；死信固定永久保留。所有截止时间都使用 MySQL 当前 UTC 时间计算，不以 API 或 Worker 主机时钟为准。
@@ -46,6 +47,7 @@ operation_log_days = 180
 login_log_days = 180
 user_import_history_days = 180
 user_import_artifact_hours = 168
+service_access_audit_days = 180
 retention_run_days = 730
 ```
 
@@ -141,6 +143,8 @@ GET /api/v1/monitor/overview/trends?range=6h|24h|7d
 8. 验证对象存储故障时导入创建返回 `503`，不会回退到未受控临时文件。
 9. 验证 Worker 中断、取消和重试后导入从已提交游标继续。
 10. 观察后台任务、对象存储和数据库增长，按容量报告调整保留期和导入并发。
+11. 启用服务账号时，先验证 Agent 成功、拒绝和错误审计都可持久化，并核对
+    `APP_DATA_RETENTION_SERVICE_ACCESS_AUDIT_DAYS=180` 满足合规与容量要求。
 
 ## 6. 租户配置包与迁移对象生命周期
 
@@ -158,3 +162,31 @@ GET /api/v1/monitor/overview/trends?range=6h|24h|7d
 `configuration_version` 和 `authorization_epoch`；目标变化后旧预览失效。应用与回滚在独占租约下
 执行，普通配置写会返回 `409`。应用成功后配置包仍按 artifact 窗口管理，快照按 rollback 窗口管理；
 回滚完成也不能绕过引用复核立即裸删对象。
+
+## 7. 服务账号凭据、委托和访问审计生命周期
+
+API Key 与个人委托令牌都是一次性展示的安全材料。首次创建成功响应带禁止缓存头；数据库只保存
+用途域分离的 MAC、Pepper 版本、状态、到期时间、撤销信息、幂等键哈希和请求指纹。相同
+`Idempotency-Key` 与相同请求只能重放元数据，Secret/Token 字段为 `null`；因此客户端必须在首次
+响应时进入受控密钥存储，响应丢失后只能撤销并重新创建，不能从数据库、审计、备份或接口恢复明文。
+
+凭据默认最多每账号同时两把有效 Key，每把最长 90 天。推荐在旧 Key 有效时创建第二把、切换调用方、
+通过访问审计确认新 Key 生效，再撤销旧 Key。委托未指定到期时默认 24 小时，最长 30 天；用户本人或
+有权管理员可以提前撤销。到期和撤销立即使 Agent 校验失败，但当前不会自动硬删除 Key、委托或能力
+白名单历史，不能把“不可使用”误解为“记录已删除”。服务账号软删除也不会授权继续使用已有 Key。
+
+Pepper Keyring 是凭据可验证性的外部生命周期事实。轮换时先加入新版本并设为活动版本，所有 API
+实例使用相同版本集合；旧版本必须保留到所有引用它的有效 Key 与委托都到期或撤销。提前删除旧
+Pepper 会让相关凭据不可验证，且无法从数据库重建。Keyring 不属于数据保留任务，必须由部署平台的
+Secret 管理、备份和恢复策略独立保护，并严格与 JWT Secret 分离。
+
+`sys_service_access_audit` 记录 Agent 的成功、拒绝、未注册路径和运行错误。它可以在身份解析前只
+保存 request ID、操作和摘要等最小字段，不保存 API Key、委托令牌、查询正文、原始 IP 或原始
+user-agent。成功查询与审计在同一个主库事务提交；失败审计另行持久化，审计不可用时请求
+fail-closed。默认按 MySQL UTC `completed_at` 保留 180 天，由现有
+`system.data_retention.cleanup` 资源批次永久硬删除，没有新增 Worker 或专用清理器。
+
+缩短 `service_access_audit_days` 会永久提前删除安全证据。变更前必须完成合规确认、容量评估和保留
+预览，并同时更新 API 与 Worker 的 `APP_DATA_RETENTION_SERVICE_ACCESS_AUDIT_DAYS` 后重启；达到单次
+资源上限时运行会标记 `partial` 并在后续继续。调查、诉讼保全或安全事件期间，应在执行清理前由
+部署方采取受控保全措施，不能通过手工改时间、裸 SQL 删除或绕开数据保留任务“整理”审计。

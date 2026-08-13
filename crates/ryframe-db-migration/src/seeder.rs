@@ -22,6 +22,7 @@ where
     crate::m20260811_000024_data_lifecycle::seed_lifecycle_management(db).await?;
     crate::m20260812_000025_tenant_config_transfer::seed_tenant_config_management(db).await?;
     crate::m20260813_000026_tenant_usage_governance::seed_tenant_usage_governance(db).await?;
+    crate::m20260813_000027_service_accounts::seed_service_account_management(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }
@@ -40,6 +41,12 @@ pub fn mysql_snapshot_sql() -> String {
             );
         let statement =
             crate::m20260813_000026_tenant_usage_governance::current_snapshot_statement(statement);
+        let statement =
+            crate::m20260813_000027_service_accounts::current_snapshot_statement(&statement);
+        snapshot.push_str(statement.trim());
+        snapshot.push_str(";\n\n");
+    }
+    for statement in crate::m20260813_000027_service_accounts::service_account_table_statements() {
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }

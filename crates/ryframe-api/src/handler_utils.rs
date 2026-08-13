@@ -65,7 +65,14 @@ pub(crate) fn attachment_response(
 
 /// 读取并散列写请求幂等键；数据库和后台任务只保存摘要。
 pub(crate) fn idempotency_key_hash(headers: &HeaderMap) -> HttpResult<String> {
-    let key = headers
+    Ok(hex::encode(Sha256::digest(
+        idempotency_key_value(headers)?.as_bytes(),
+    )))
+}
+
+/// 读取数据库幂等服务需要自行散列的原始幂等键；调用方不得记录该值。
+pub(crate) fn idempotency_key_value(headers: &HeaderMap) -> HttpResult<String> {
+    Ok(headers
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
         .filter(|value| {
@@ -73,8 +80,8 @@ pub(crate) fn idempotency_key_hash(headers: &HeaderMap) -> HttpResult<String> {
                 && value.len() <= 128
                 && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
         })
-        .ok_or_else(|| AppError::Validation("缺少有效的 Idempotency-Key 请求头".into()))?;
-    Ok(hex::encode(Sha256::digest(key.as_bytes())))
+        .ok_or_else(|| AppError::Validation("缺少有效的 Idempotency-Key 请求头".into()))
+        .map(str::to_owned)?)
 }
 
 fn parse_i64(value: &str) -> HttpResult<i64> {

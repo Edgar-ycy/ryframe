@@ -16,6 +16,13 @@ use crate::request_id::RequestId;
 /// 统一 JSON 响应在中间件中允许缓冲的最大字节数。
 const API_JSON_RESPONSE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
+/// 标记已经在业务事务内完成最终编码与大小校验的 API 响应。
+///
+/// Agent 查询需要让审计中的响应字节数与实际发送的未压缩 JSON 完全一致，因此统一响应层只补语言头，
+/// 不得再次解析或序列化这类成功响应。错误响应仍走标准安全信封。
+#[derive(Clone, Copy, Debug)]
+pub struct PrebuiltApiEnvelope;
+
 /// 统一所有 `/api` 路径的响应信封，并把请求 ID 同步到响应头和响应体。
 ///
 /// 业务处理器只负责构造业务数据；该中间件在压缩前处理响应，避免响应头与
@@ -53,6 +60,12 @@ pub async fn api_response_envelope_middleware(
         .and_then(Locale::parse)
         .unwrap_or(requested_locale);
     ensure_locale_headers(response.headers_mut(), locale);
+
+    if response.status().is_success()
+        && response.extensions().get::<PrebuiltApiEnvelope>().is_some()
+    {
+        return response;
+    }
 
     normalize_response(
         response,

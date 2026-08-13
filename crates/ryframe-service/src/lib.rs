@@ -1,3 +1,4 @@
+pub mod agent;
 mod audit;
 mod auth_service;
 mod authorization_cache;

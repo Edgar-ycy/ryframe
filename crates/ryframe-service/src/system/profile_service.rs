@@ -3,7 +3,7 @@ use ryframe_core::{
     Repository,
     auto_fill::{AutoFill, FillContext},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{DatabaseCluster, ReadConsistency, TenantRepository};
 use ryframe_db::{
     DeptRepository, FileRepository, PermissionRepository, RoleRepository, UserRepository,
     entities::{sys_file, user},
@@ -164,6 +164,9 @@ impl ProfileService {
             .begin()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
+        TenantRepository
+            .lock_tenant_in_txn(&transaction, tenant_id)
+            .await?;
         let mut user = self
             .user_repo
             .find_by_id_for_update(&transaction, tenant_id, actor.user_id)

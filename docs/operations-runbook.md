@@ -158,6 +158,48 @@ Refresh TTL，保证旧会话可查看和撤销。兼容窗口内不要提前移
 问题要求指数退避并遵守 `Retry-After`。只有证明正常峰值确实超过基线且下游有余量后，
 才能调整限流参数。
 
+### 服务账号、Agent 凭据和访问审计
+
+Agent 调用异常先按 request ID 查询 `GET /api/v1/system/service-access-audits`，核对
+`operation_id`、`capability_key`、`access_mode`、`result`、`reason_code`、HTTP 状态、行数、响应
+字节和完成时间；该接口需要 `system:service-access-audit:list`。审计不包含 API Key、委托令牌、
+响应正文、原始 IP 或原始 user-agent，禁止为排障把这些敏感值补写到操作日志、工单或聊天记录。
+原始凭据一旦泄露只能撤销并轮换，不能从数据库、审计或幂等响应恢复。
+
+常见处置顺序如下：
+
+1. `401 invalid_credential`：确认请求使用精确的
+   `Authorization: RyFrameApiKey rfk_<key_id>.<secret>`，委托模式另有
+   `X-RyFrame-Delegation: rfd_<secret>`；再检查账号、Key、委托、用户状态与数据库 UTC 到期时间。
+   响应故意不说明 Key ID、Secret、Pepper 或委托哪一项失败，不能通过扩大日志泄露判定细节。
+2. `403`：从服务账号详情核对角色，使用个人委托能力接口重新计算双方共同能力，并检查委托白名单。
+   用户/部门查询还受双方数据范围交集约束；岗位/字典要求双方范围都是全部。不要临时授予超级角色、
+   手改关系表或绕过数据范围验证问题。
+3. `429`：保留 `Retry-After`，区分预认证 IP、租户、账号、凭据、被代表用户、账号+能力和账号并发
+   七个维度。先排查重试风暴、重复并发与调用方是否复用已撤销 Key，再依据容量证据调整
+   `APP_SERVICE_ACCOUNTS_DEFAULT_REQUESTS_PER_MINUTE`、账号请求上限或并发上限；不得直接删除 Redis
+   键来解除生产告警。
+4. `413`：缩小页大小或响应范围，不能提高到超过 1 MiB 的硬上限。`503 timeout` 先检查慢 SQL、锁
+   等待和主库连接，再评估 100–30000 ms 范围内的查询时限。依赖或审计不可用产生的 `503` 必须先
+   修复 MySQL/Redis，不得切换副本或关闭审计放行。
+5. 未注册 Agent 路径返回审计后的 `404`。持续出现时检查调用方版本、OpenAPI 的
+   `x-ryframe-agent-capabilities` 和反向代理改写；Agent 不支持客户端自定义 operation、过滤或排序。
+
+Key 轮换采用“双 Key”窗口：携带新的 `Idempotency-Key` 创建第二把 Key，立即安全保存首次响应中的
+完整 Key，切换调用方并验证审计后撤销旧 Key。默认每账号最多两把有效 Key且每把最长 90 天；幂等
+重放只返回元数据，`secret=null`。如果首次响应丢失，不得继续重放期待取回 Secret，应撤销该凭据后
+重新创建。委托 Token 同样只显示一次；默认 24 小时、最长 30 天，撤销后不可恢复。
+
+Pepper 轮换必须先把新版本加入外部 Keyring，保留仍被有效 Key/委托引用的旧版本，把
+`APP_SERVICE_ACCOUNTS_ACTIVE_PEPPER_VERSION` 指向新版本，再滚动重启 API。确认新建凭据已使用新
+版本、旧凭据仍可按预期校验后，等待旧凭据与委托全部到期或撤销，才能从 Keyring 移除旧 Pepper。
+Keyring 解析、权限、活动版本或挂载故障会阻止服务启动；不得回退复用 JWT Secret、把 Pepper 写入
+TOML/环境变量/日志，或在滚动期间让实例使用不相容的版本集合。
+
+服务访问审计默认保留 180 天并由既有数据保留任务清理，没有新增 Worker。出现增长异常时先按
+成功、拒绝、未知路径和依赖错误拆分调用量，再检查预认证攻击和客户端重试。只能通过数据保留预览
+与受控任务清理到期行；不得手工删除当前保留窗口中的审计，也不得把降低保留期作为限流替代方案。
+
 ### 数据库副本与读回退
 
 先核对 `ryframe_db_node_up` 的副本名称、数据库连接日志和复制延迟，再从应用网络执行

@@ -1,3 +1,4 @@
+pub mod agent_dto;
 pub mod auth_dto;
 pub mod config_dto;
 pub mod dept_dto;
@@ -22,6 +23,7 @@ pub mod public_dto;
 pub mod retention_dto;
 pub mod role_dto;
 pub mod schedule_dto;
+pub mod service_account_dto;
 pub mod tenant_config_dto;
 pub mod tenant_dto;
 mod tenant_validation;

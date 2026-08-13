@@ -19,6 +19,193 @@
         ],
         "type": "object"
       },
+      "AgentCapabilityResponse": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "method",
+          "path"
+        ],
+        "type": "object"
+      },
+      "AgentDepartmentResponse": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
+      "AgentDictionaryItemResponse": {
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "sort": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value",
+          "sort"
+        ],
+        "type": "object"
+      },
+      "AgentDictionaryResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentDictionaryItemResponse"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type_code",
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "AgentPageQuery": {
+        "additionalProperties": false,
+        "description": "Agent 只读列表的固定分页参数；未知过滤条件由服务层审计后拒绝。",
+        "properties": {
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AgentPostResponse": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
+      "AgentUserResponse": {
+        "properties": {
+          "dept_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "nickname",
+          "status"
+        ],
+        "type": "object"
+      },
       "ApiEmptyResponse": {
         "description": "不携带业务数据的统一响应。\n\n保持独立类型可让 OpenAPI 正确生成空数据响应的 Schema，避免把 Rust 的\n单元类型错误地暴露成不存在的组件引用。",
         "properties": {
@@ -47,6 +234,105 @@
         "required": [
           "code",
           "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiPageResponse_AgentDepartmentResponse": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_AgentDepartmentResponse"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiPageResponse_AgentPostResponse": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_AgentPostResponse"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiPageResponse_AgentUserResponse": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_AgentUserResponse"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
           "request_id"
         ],
         "type": "object"
@@ -513,6 +799,105 @@
         ],
         "type": "object"
       },
+      "ApiPageResponse_ServiceAccessAuditVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_ServiceAccessAuditVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiPageResponse_ServiceAccountVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_ServiceAccountVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiPageResponse_ServiceDelegationVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_ServiceDelegationVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiPageResponse_TableInfo": {
         "description": "统一分页 API 响应结构。",
         "properties": {
@@ -773,6 +1158,89 @@
           "code",
           "message",
           "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_AgentDictionaryResponse": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentDictionaryItemResponse"
+                },
+                "type": "array"
+              },
+              "max_page_size": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "page": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "page_size": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total_pages": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type_code": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type_code",
+              "items",
+              "page",
+              "page_size",
+              "total",
+              "total_pages",
+              "max_page_size"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
           "request_id"
         ],
         "type": "object"
@@ -1511,6 +1979,112 @@
               "value",
               "portable",
               "created_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_CreatedServiceCredentialVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "credential": {
+                "$ref": "#/components/schemas/ServiceCredentialVo"
+              },
+              "secret": {
+                "description": "仅首次成功时返回完整 API Key；幂等重放为 `null`。",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "credential"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_CreatedServiceDelegationVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "delegation": {
+                "$ref": "#/components/schemas/ServiceDelegationVo"
+              },
+              "token": {
+                "description": "仅首次成功时返回委托令牌；幂等重放为 `null`。",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "delegation"
             ],
             "type": "object"
           },
@@ -3573,6 +4147,149 @@
         ],
         "type": "object"
       },
+      "ApiResponse_ServiceAccountDetailVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "account": {
+                "$ref": "#/components/schemas/ServiceAccountVo"
+              },
+              "role_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "account",
+              "role_ids"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_ServiceAccountVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "authorization_version": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "code": {
+                "type": "string"
+              },
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "dept_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "max_requests_per_minute": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "code",
+              "name",
+              "status",
+              "authorization_version",
+              "max_requests_per_minute",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_String": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -4636,6 +5353,63 @@
         ],
         "type": "object"
       },
+      "ApiResponse_Vec_AgentCapabilityResponse": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "method": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "method",
+                "path"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_Vec_AuthSessionResponse": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -5333,6 +6107,258 @@
                 "scope",
                 "job_type",
                 "available"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_Vec_ServiceCredentialVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "properties": {
+                "account_id": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "expires_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "key_id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "last_used_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "revoked_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "account_id",
+                "key_id",
+                "label",
+                "status",
+                "expires_at",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_Vec_ServiceDelegationTargetResponse": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "properties": {
+                "account_code": {
+                  "type": "string"
+                },
+                "account_id": {
+                  "type": "string"
+                },
+                "account_name": {
+                  "type": "string"
+                },
+                "capabilities": {
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceCapabilityVo"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "account_id",
+                "account_code",
+                "account_name",
+                "capabilities"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_Vec_ServiceDelegationVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "properties": {
+                "account_id": {
+                  "type": "string"
+                },
+                "capability_keys": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "expires_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "not_before": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "revoked_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                },
+                "user_id": {
+                  "type": "string"
+                },
+                "version": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "account_id",
+                "user_id",
+                "status",
+                "version",
+                "not_before",
+                "expires_at",
+                "reason",
+                "capability_keys",
+                "created_at"
               ],
               "type": "object"
             },
@@ -7052,6 +8078,91 @@
         ],
         "type": "object"
       },
+      "CreateServiceAccountDto": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^[a-z0-9_-]{1,64}$",
+            "type": "string"
+          },
+          "dept_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_requests_per_minute": {
+            "format": "int32",
+            "maximum": 10000,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "type": "object"
+      },
+      "CreateServiceCredentialDto": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "CreateServiceDelegationDto": {
+        "additionalProperties": false,
+        "properties": {
+          "capability_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "service_account_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_account_id",
+          "capability_keys",
+          "reason"
+        ],
+        "type": "object"
+      },
       "CreateTenantConfigTransferDto": {
         "additionalProperties": false,
         "description": "从当前租户已有配置包创建一次迁移。",
@@ -7175,6 +8286,42 @@
         ],
         "type": "object"
       },
+      "CreatedServiceCredentialVo": {
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/ServiceCredentialVo"
+          },
+          "secret": {
+            "description": "仅首次成功时返回完整 API Key；幂等重放为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "type": "object"
+      },
+      "CreatedServiceDelegationVo": {
+        "properties": {
+          "delegation": {
+            "$ref": "#/components/schemas/ServiceDelegationVo"
+          },
+          "token": {
+            "description": "仅首次成功时返回委托令牌；幂等重放为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "delegation"
+        ],
+        "type": "object"
+      },
       "CsrfResponse": {
         "properties": {
           "csrf_token": {
@@ -7281,6 +8428,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "service_access_audit_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "tenant_config_artifact_hours": {
             "format": "int32",
             "minimum": 0,
@@ -7315,6 +8467,7 @@
           "user_import_artifact_hours",
           "tenant_config_artifact_hours",
           "tenant_config_rollback_hours",
+          "service_access_audit_days",
           "retention_run_days",
           "dead_background_jobs_permanent",
           "dead_outbox_events_permanent"
@@ -9016,6 +10169,209 @@
         },
         "type": "object"
       },
+      "PageData_AgentDepartmentResponse": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "parent_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_AgentPostResponse": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "code",
+                "name",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_AgentUserResponse": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "dept_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "nickname": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "username",
+                "nickname",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
       "PageData_BackgroundJobVo": {
         "description": "分页接口的业务数据。",
         "properties": {
@@ -10413,6 +11769,374 @@
         ],
         "type": "object"
       },
+      "PageData_ServiceAccessAuditVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "access_mode": {
+                  "type": "string"
+                },
+                "account_authorization_version": {
+                  "format": "int32",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "account_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "capability_key": {
+                  "type": "string"
+                },
+                "completed_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "credential_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delegation_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "delegation_version": {
+                  "format": "int32",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "http_status": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "operation_id": {
+                  "type": "string"
+                },
+                "reason_code": {
+                  "type": "string"
+                },
+                "represented_user_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "required_permission": {
+                  "type": "string"
+                },
+                "response_bytes": {
+                  "format": "int64",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "result": {
+                  "type": "string"
+                },
+                "row_count": {
+                  "format": "int32",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "started_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "tenant_epoch": {
+                  "format": "int32",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "tenant_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "user_authorization_version": {
+                  "format": "int32",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "request_id",
+                "operation_id",
+                "capability_key",
+                "required_permission",
+                "access_mode",
+                "result",
+                "reason_code",
+                "http_status",
+                "started_at",
+                "completed_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_ServiceAccountVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "authorization_version": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "dept_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "max_requests_per_minute": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "code",
+                "name",
+                "status",
+                "authorization_version",
+                "max_requests_per_minute",
+                "created_at",
+                "updated_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_ServiceDelegationVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "account_id": {
+                  "type": "string"
+                },
+                "capability_keys": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "expires_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "not_before": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "revoked_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "type": "string"
+                },
+                "user_id": {
+                  "type": "string"
+                },
+                "version": {
+                  "format": "int32",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "account_id",
+                "user_id",
+                "status",
+                "version",
+                "not_before",
+                "expires_at",
+                "reason",
+                "capability_keys",
+                "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
       "PageData_TableInfo": {
         "description": "分页接口的业务数据。",
         "properties": {
@@ -11688,6 +13412,21 @@
         },
         "type": "object"
       },
+      "ReplaceServiceAccountRolesDto": {
+        "additionalProperties": false,
+        "properties": {
+          "role_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "role_ids"
+        ],
+        "type": "object"
+      },
       "ReplaceUserRolesDto": {
         "additionalProperties": false,
         "properties": {
@@ -12225,6 +13964,396 @@
           "pid",
           "uptime"
         ],
+        "type": "object"
+      },
+      "ServiceAccessAuditVo": {
+        "properties": {
+          "access_mode": {
+            "type": "string"
+          },
+          "account_authorization_version": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "account_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capability_key": {
+            "type": "string"
+          },
+          "completed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "credential_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delegation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delegation_version": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "http_status": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "represented_user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "required_permission": {
+            "type": "string"
+          },
+          "response_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "result": {
+            "type": "string"
+          },
+          "row_count": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "tenant_epoch": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_authorization_version": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "request_id",
+          "operation_id",
+          "capability_key",
+          "required_permission",
+          "access_mode",
+          "result",
+          "reason_code",
+          "http_status",
+          "started_at",
+          "completed_at"
+        ],
+        "type": "object"
+      },
+      "ServiceAccountDetailVo": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/ServiceAccountVo"
+          },
+          "role_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "account",
+          "role_ids"
+        ],
+        "type": "object"
+      },
+      "ServiceAccountStatusDto": {
+        "enum": [
+          "enabled",
+          "disabled"
+        ],
+        "type": "string"
+      },
+      "ServiceAccountVo": {
+        "properties": {
+          "authorization_version": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "dept_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "max_requests_per_minute": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "status",
+          "authorization_version",
+          "max_requests_per_minute",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ServiceCapabilityVo": {
+        "properties": {
+          "delegated": {
+            "type": "boolean"
+          },
+          "direct": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "permission": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "permission",
+          "direct",
+          "delegated"
+        ],
+        "type": "object"
+      },
+      "ServiceCredentialVo": {
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "key_id",
+          "label",
+          "status",
+          "expires_at",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ServiceDelegationTargetResponse": {
+        "properties": {
+          "account_code": {
+            "type": "string"
+          },
+          "account_id": {
+            "type": "string"
+          },
+          "account_name": {
+            "type": "string"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceCapabilityVo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "account_id",
+          "account_code",
+          "account_name",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "ServiceDelegationVo": {
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "capability_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "not_before": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "account_id",
+          "user_id",
+          "status",
+          "version",
+          "not_before",
+          "expires_at",
+          "reason",
+          "capability_keys",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ServiceResourcePageQuery": {
+        "additionalProperties": false,
+        "description": "服务账号、委托与访问审计共用的分页参数。",
+        "properties": {
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "TableInfo": {
@@ -13326,6 +15455,49 @@
         ],
         "type": "object"
       },
+      "UpdateServiceAccountDto": {
+        "additionalProperties": false,
+        "properties": {
+          "dept_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "max_requests_per_minute": {
+            "format": "int32",
+            "maximum": 10000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "max_requests_per_minute"
+        ],
+        "type": "object"
+      },
+      "UpdateServiceAccountStatusDto": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ServiceAccountStatusDto"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "UpdateTenantDto": {
         "additionalProperties": false,
         "properties": {
@@ -13961,9 +16133,21 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "delegationToken": {
+        "description": "可选的本人限时委托令牌，格式：`rfd_<256-bit-secret>`。",
+        "in": "header",
+        "name": "X-RyFrame-Delegation",
+        "type": "apiKey"
+      },
       "refreshCookie": {
         "in": "cookie",
         "name": "ryframe_refresh_token",
+        "type": "apiKey"
+      },
+      "ryframeApiKey": {
+        "description": "格式：`RyFrameApiKey rfk_<key_id>.<256-bit-secret>`；仅用于 `/api/v1/agent/v1/**`。",
+        "in": "header",
+        "name": "Authorization",
         "type": "apiKey"
       }
     }
@@ -13982,6 +16166,344 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/agent/v1/capabilities": {
+      "get": {
+        "operationId": "get_agent_v1_capabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_AgentCapabilityResponse"
+                }
+              }
+            },
+            "description": "当前身份真正可用的编译期能力"
+          },
+          "400": {
+            "description": "请求参数无效"
+          },
+          "401": {
+            "description": "Agent 凭据无效"
+          },
+          "403": {
+            "description": "能力不可用"
+          },
+          "413": {
+            "description": "响应超过固定上限"
+          },
+          "429": {
+            "description": "请求频率或并发超过上限"
+          },
+          "503": {
+            "description": "授权、限流、数据库或审计服务不可用"
+          }
+        },
+        "security": [
+          {
+            "ryframeApiKey": []
+          },
+          {
+            "delegationToken": [],
+            "ryframeApiKey": []
+          }
+        ],
+        "tags": [
+          "Agent API"
+        ]
+      }
+    },
+    "/api/v1/agent/v1/directory/departments": {
+      "get": {
+        "operationId": "get_agent_v1_directory_departments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_AgentDepartmentResponse"
+                }
+              }
+            },
+            "description": "双主体数据范围交集内的部门"
+          },
+          "400": {
+            "description": "分页或过滤参数无效"
+          },
+          "401": {
+            "description": "Agent 凭据无效"
+          },
+          "403": {
+            "description": "权限交集不足"
+          },
+          "413": {
+            "description": "响应超过固定上限"
+          },
+          "429": {
+            "description": "请求频率或并发超过上限"
+          },
+          "503": {
+            "description": "授权、限流、数据库或审计服务不可用"
+          }
+        },
+        "security": [
+          {
+            "ryframeApiKey": []
+          },
+          {
+            "delegationToken": [],
+            "ryframeApiKey": []
+          }
+        ],
+        "tags": [
+          "Agent API"
+        ]
+      }
+    },
+    "/api/v1/agent/v1/directory/posts": {
+      "get": {
+        "operationId": "get_agent_v1_directory_posts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_AgentPostResponse"
+                }
+              }
+            },
+            "description": "双方数据范围均为全部时可见的岗位"
+          },
+          "400": {
+            "description": "分页或过滤参数无效"
+          },
+          "401": {
+            "description": "Agent 凭据无效"
+          },
+          "403": {
+            "description": "权限交集不足"
+          },
+          "413": {
+            "description": "响应超过固定上限"
+          },
+          "429": {
+            "description": "请求频率或并发超过上限"
+          },
+          "503": {
+            "description": "授权、限流、数据库或审计服务不可用"
+          }
+        },
+        "security": [
+          {
+            "ryframeApiKey": []
+          },
+          {
+            "delegationToken": [],
+            "ryframeApiKey": []
+          }
+        ],
+        "tags": [
+          "Agent API"
+        ]
+      }
+    },
+    "/api/v1/agent/v1/directory/users": {
+      "get": {
+        "operationId": "get_agent_v1_directory_users",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_AgentUserResponse"
+                }
+              }
+            },
+            "description": "双主体数据范围交集内的用户"
+          },
+          "400": {
+            "description": "分页或过滤参数无效"
+          },
+          "401": {
+            "description": "Agent 凭据无效"
+          },
+          "403": {
+            "description": "权限交集不足"
+          },
+          "413": {
+            "description": "响应超过固定上限"
+          },
+          "429": {
+            "description": "请求频率或并发超过上限"
+          },
+          "503": {
+            "description": "授权、限流、数据库或审计服务不可用"
+          }
+        },
+        "security": [
+          {
+            "ryframeApiKey": []
+          },
+          {
+            "delegationToken": [],
+            "ryframeApiKey": []
+          }
+        ],
+        "tags": [
+          "Agent API"
+        ]
+      }
+    },
+    "/api/v1/agent/v1/reference/dictionaries/{type_code}": {
+      "get": {
+        "operationId": "get_agent_v1_reference_dictionaries_by_type_code",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "type_code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AgentDictionaryResponse"
+                }
+              }
+            },
+            "description": "双方数据范围均为全部时可见的启用字典"
+          },
+          "400": {
+            "description": "字典类型或分页参数无效"
+          },
+          "401": {
+            "description": "Agent 凭据无效"
+          },
+          "403": {
+            "description": "权限交集不足"
+          },
+          "404": {
+            "description": "字典类型不存在"
+          },
+          "413": {
+            "description": "响应超过固定上限"
+          },
+          "429": {
+            "description": "请求频率或并发超过上限"
+          },
+          "503": {
+            "description": "授权、限流、数据库或审计服务不可用"
+          }
+        },
+        "security": [
+          {
+            "ryframeApiKey": []
+          },
+          {
+            "delegationToken": [],
+            "ryframeApiKey": []
+          }
+        ],
+        "tags": [
+          "Agent API"
+        ]
+      }
+    },
     "/api/v1/auth/captcha/config": {
       "get": {
         "description": "GET /api/v1/auth/captcha/config（公开接口，无需认证）\n返回 sys.account.captchaEnabled 配置值。",
@@ -16363,6 +18885,182 @@
         ],
         "tags": [
           "租户管理"
+        ]
+      }
+    },
+    "/api/v1/profile/service-delegations": {
+      "get": {
+        "operationId": "get_profile_service_delegations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_ServiceDelegationVo"
+                }
+              }
+            },
+            "description": "当前用户本人创建的委托"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "个人服务委托"
+        ]
+      },
+      "post": {
+        "operationId": "post_profile_service_delegations",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServiceDelegationDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CreatedServiceDelegationVo"
+                }
+              }
+            },
+            "description": "委托已创建；令牌只显示一次"
+          },
+          "400": {
+            "description": "参数、能力或幂等键无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "能力不是双方共同拥有或账号不可委托"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "409": {
+            "description": "幂等键冲突"
+          },
+          "503": {
+            "description": "服务账号功能、Pepper 或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "个人服务委托"
+        ]
+      }
+    },
+    "/api/v1/profile/service-delegations/capabilities": {
+      "get": {
+        "operationId": "get_profile_service_delegations_capabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_ServiceDelegationTargetResponse"
+                }
+              }
+            },
+            "description": "当前用户与服务账号共同可委托的编译期能力"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "个人服务委托"
+        ]
+      }
+    },
+    "/api/v1/profile/service-delegations/{id}": {
+      "delete": {
+        "operationId": "delete_profile_service_delegations_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "本人委托已撤销"
+          },
+          "400": {
+            "description": "委托 ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "只能撤销本人委托"
+          },
+          "404": {
+            "description": "委托不存在"
+          },
+          "409": {
+            "description": "委托已撤销"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "个人服务委托"
         ]
       }
     },
@@ -20182,6 +22880,788 @@
         ]
       }
     },
+    "/api/v1/system/service-access-audits": {
+      "get": {
+        "operationId": "get_system_service_access_audits",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_ServiceAccessAuditVo"
+                }
+              }
+            },
+            "description": "Agent 访问审计列表"
+          },
+          "400": {
+            "description": "分页参数无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务访问审计权限"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务访问审计"
+        ]
+      }
+    },
+    "/api/v1/system/service-accounts": {
+      "get": {
+        "operationId": "get_system_service_accounts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_ServiceAccountVo"
+                }
+              }
+            },
+            "description": "服务账号分页列表"
+          },
+          "400": {
+            "description": "分页参数无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号查看权限"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      },
+      "post": {
+        "operationId": "post_system_service_accounts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServiceAccountDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ServiceAccountVo"
+                }
+              }
+            },
+            "description": "服务账号已创建"
+          },
+          "400": {
+            "description": "请求参数无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号创建权限"
+          },
+          "409": {
+            "description": "账号代码冲突"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      }
+    },
+    "/api/v1/system/service-accounts/{id}": {
+      "delete": {
+        "operationId": "delete_system_service_accounts_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "服务账号已删除"
+          },
+          "400": {
+            "description": "账号 ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号删除权限"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      },
+      "get": {
+        "operationId": "get_system_service_accounts_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ServiceAccountDetailVo"
+                }
+              }
+            },
+            "description": "服务账号详情"
+          },
+          "400": {
+            "description": "账号 ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号查看权限"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      },
+      "put": {
+        "operationId": "put_system_service_accounts_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateServiceAccountDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ServiceAccountVo"
+                }
+              }
+            },
+            "description": "服务账号已更新"
+          },
+          "400": {
+            "description": "请求参数无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号编辑权限"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      }
+    },
+    "/api/v1/system/service-accounts/{id}/credentials": {
+      "get": {
+        "operationId": "get_system_service_accounts_by_id_credentials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_ServiceCredentialVo"
+                }
+              }
+            },
+            "description": "API Key 元数据列表"
+          },
+          "400": {
+            "description": "账号 ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号查看权限"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      },
+      "post": {
+        "operationId": "post_system_service_accounts_by_id_credentials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateServiceCredentialDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_CreatedServiceCredentialVo"
+                }
+              }
+            },
+            "description": "API Key 已创建；Secret 只显示一次"
+          },
+          "400": {
+            "description": "请求参数或幂等键无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有 API Key 轮换权限"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "409": {
+            "description": "有效 Key 已达上限或幂等冲突"
+          },
+          "503": {
+            "description": "服务账号功能、Pepper 或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      }
+    },
+    "/api/v1/system/service-accounts/{id}/credentials/{credential_id}": {
+      "delete": {
+        "operationId": "delete_system_service_accounts_by_id_credentials_by_credential_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "API Key 已撤销"
+          },
+          "400": {
+            "description": "ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有 API Key 撤销权限"
+          },
+          "404": {
+            "description": "服务账号或 API Key 不存在"
+          },
+          "409": {
+            "description": "API Key 已撤销"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      }
+    },
+    "/api/v1/system/service-accounts/{id}/roles": {
+      "get": {
+        "operationId": "get_system_service_accounts_by_id_roles",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_Vec_String"
+                }
+              }
+            },
+            "description": "服务账号角色 ID"
+          },
+          "400": {
+            "description": "账号 ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号角色权限"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      },
+      "put": {
+        "operationId": "put_system_service_accounts_by_id_roles",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceServiceAccountRolesDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "服务账号角色已替换"
+          },
+          "400": {
+            "description": "账号或角色 ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号角色权限，或选择了超级角色"
+          },
+          "404": {
+            "description": "服务账号或角色不存在"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      }
+    },
+    "/api/v1/system/service-accounts/{id}/status": {
+      "put": {
+        "operationId": "put_system_service_accounts_by_id_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateServiceAccountStatusDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "服务账号状态已更新"
+          },
+          "400": {
+            "description": "请求参数无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有服务账号编辑权限"
+          },
+          "404": {
+            "description": "服务账号不存在"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务账号"
+        ]
+      }
+    },
+    "/api/v1/system/service-delegations": {
+      "get": {
+        "operationId": "get_system_service_delegations",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_ServiceDelegationVo"
+                }
+              }
+            },
+            "description": "当前租户委托列表"
+          },
+          "400": {
+            "description": "分页参数无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有委托查看权限"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务委托"
+        ]
+      }
+    },
+    "/api/v1/system/service-delegations/{id}": {
+      "delete": {
+        "operationId": "delete_system_service_delegations_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "委托已撤销"
+          },
+          "400": {
+            "description": "委托 ID 无效"
+          },
+          "401": {
+            "description": "未认证"
+          },
+          "403": {
+            "description": "没有委托撤销权限"
+          },
+          "404": {
+            "description": "委托不存在"
+          },
+          "409": {
+            "description": "委托已撤销"
+          },
+          "503": {
+            "description": "服务账号功能未启用或数据库不可用"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "服务委托"
+        ]
+      }
+    },
     "/api/v1/system/user-imports": {
       "get": {
         "operationId": "get_system_user_imports",
@@ -21347,8 +24827,83 @@
     {
       "description": "导出、上传、预览、应用和回滚不含数据库 ID 与敏感凭据的租户配置包。",
       "name": "租户配置迁移"
+    },
+    {
+      "description": "管理不可登录的服务账号、角色范围和一次性 API Key。",
+      "name": "服务账号"
+    },
+    {
+      "description": "当前用户本人创建的限时双主体查询委托，以及管理员只读治理入口。",
+      "name": "服务委托"
+    },
+    {
+      "description": "查询 Agent API 的最小化访问审计，不包含请求或响应正文。",
+      "name": "服务访问审计"
+    },
+    {
+      "description": "当前用户本人查看、创建和撤销限时服务委托。",
+      "name": "个人服务委托"
+    },
+    {
+      "description": "仅接受 RyFrameApiKey 的编译期白名单只读接口，不接受普通 Bearer。",
+      "name": "Agent API"
     }
   ],
+  "x-ryframe-agent-capabilities": {
+    "capabilities": [
+      {
+        "capability_key": "capabilities.list",
+        "cost": 1,
+        "delegated": true,
+        "direct": true,
+        "method": "GET",
+        "operation_id": "get_agent_v1_capabilities",
+        "path": "/api/v1/agent/v1/capabilities",
+        "required_permission": ""
+      },
+      {
+        "capability_key": "directory.users.list",
+        "cost": 1,
+        "delegated": true,
+        "direct": true,
+        "method": "GET",
+        "operation_id": "get_agent_v1_directory_users",
+        "path": "/api/v1/agent/v1/directory/users",
+        "required_permission": "system:user:list"
+      },
+      {
+        "capability_key": "directory.departments.list",
+        "cost": 1,
+        "delegated": true,
+        "direct": true,
+        "method": "GET",
+        "operation_id": "get_agent_v1_directory_departments",
+        "path": "/api/v1/agent/v1/directory/departments",
+        "required_permission": "system:dept:list"
+      },
+      {
+        "capability_key": "directory.posts.list",
+        "cost": 1,
+        "delegated": true,
+        "direct": true,
+        "method": "GET",
+        "operation_id": "get_agent_v1_directory_posts",
+        "path": "/api/v1/agent/v1/directory/posts",
+        "required_permission": "system:post:list"
+      },
+      {
+        "capability_key": "reference.dictionaries.read",
+        "cost": 1,
+        "delegated": true,
+        "direct": true,
+        "method": "GET",
+        "operation_id": "get_agent_v1_reference_dictionaries_by_type_code",
+        "path": "/api/v1/agent/v1/reference/dictionaries/{type_code}",
+        "required_permission": "system:dict:list"
+      }
+    ],
+    "version": 1
+  },
   "x-ryframe-api-prefix": {
     "value": "/api/v1",
     "version": 1
@@ -21402,6 +24957,10 @@
       {
         "menu_type": "C",
         "route_key": "system.config-transfer"
+      },
+      {
+        "menu_type": "C",
+        "route_key": "system.service-accounts"
       },
       {
         "menu_type": "C",
@@ -21555,6 +25114,16 @@
       "system:role:export",
       "system:role:list",
       "system:role:remove",
+      "system:service-access-audit:list",
+      "system:service-account:add",
+      "system:service-account:edit",
+      "system:service-account:key-revoke",
+      "system:service-account:key-rotate",
+      "system:service-account:list",
+      "system:service-account:remove",
+      "system:service-account:role",
+      "system:service-delegation:list",
+      "system:service-delegation:revoke",
       "system:user-import:add",
       "system:user-import:cancel",
       "system:user-import:list",

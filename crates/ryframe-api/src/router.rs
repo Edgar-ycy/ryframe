@@ -6,7 +6,8 @@ use crate::{
         config_handler, dept_handler, dict_handler, export_handler, generator_handler, job_handler,
         login_log_handler, menu_handler, message_handler, notice_handler, online_user_handler,
         oper_log_handler, overview_handler, permission_handler, post_handler, profile_handler,
-        retention_handler, role_handler, schedule_handler, tenant_config_handler, user_handler,
+        retention_handler, role_handler, schedule_handler, service_account_handler,
+        service_delegation_profile_handler, tenant_config_handler, user_handler,
         user_import_handler,
     },
     oper_log_middleware::{AuditMode, OperLogMiddlewareState, oper_log_middleware},
@@ -298,6 +299,17 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         // API 版本信息端点
         .route("/version", get_route(api_version));
 
+    if state.services.service_accounts.is_some() {
+        let profile_delegations = protect(
+            service_delegation_profile_handler::service_delegation_profile_router(state.clone())
+                .layer(from_fn_with_state(
+                    OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+                    oper_log_middleware,
+                )),
+            &state,
+        );
+        router = router.nest("/profile/service-delegations", profile_delegations);
+    }
     if state.config.api_docs.enabled {
         router = router.route(
             "/api-docs/openapi.json",

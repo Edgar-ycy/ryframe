@@ -543,7 +543,10 @@ where
 
 fn expected_schema() -> Result<ExpectedSchema, DbErr> {
     let mut schema = ExpectedSchema::default();
-    for statement in ddl_statements().chain([OUTBOX_EVENT_DDL, EXPORT_JOB_DDL]) {
+    for statement in ddl_statements()
+        .chain([OUTBOX_EVENT_DDL, EXPORT_JOB_DDL])
+        .chain(crate::m20260813_000027_service_accounts::service_account_table_statements())
+    {
         let table = extract_table_name(statement).ok_or_else(|| {
             DbErr::Custom("canonical baseline contains an invalid CREATE TABLE statement".into())
         })?;
@@ -733,32 +736,54 @@ fn add_post_baseline_indexes(schema: &mut ExpectedSchema) {
         );
     }
 
-    for (table, name, columns) in [
+    for (table, name, unique, columns) in [
+        (
+            "sys_dept",
+            "uq_sys_dept_tenant_id",
+            true,
+            vec!["tenant_id", "id"],
+        ),
+        (
+            "sys_user",
+            "uq_sys_user_tenant_id",
+            true,
+            vec!["tenant_id", "id"],
+        ),
+        (
+            "sys_role",
+            "uq_sys_role_tenant_id",
+            true,
+            vec!["tenant_id", "id"],
+        ),
         (
             "sys_user",
             "idx_user_tenant_del",
+            false,
             vec!["tenant_id", "del_flag"],
         ),
         (
             "sys_role",
             "idx_role_tenant_del",
+            false,
             vec!["tenant_id", "del_flag", "id"],
         ),
         (
             "sys_file",
             "idx_file_tenant_del_size",
+            false,
             vec!["tenant_id", "del_flag", "file_size"],
         ),
         (
             "sys_job_schedule",
             "idx_schedule_tenant_del_enabled",
+            false,
             vec!["tenant_id", "enabled", "del_flag"],
         ),
     ] {
         schema.indexes.insert(
             (table.into(), name.into()),
             ExpectedIndex {
-                unique: false,
+                unique,
                 columns: columns.into_iter().map(str::to_owned).collect(),
             },
         );
@@ -1009,6 +1034,12 @@ fn is_upgrade_table(table: &str) -> bool {
             | "sys_tenant_config_transfer"
             | "sys_tenant_config_transfer_item"
             | "sys_tenant_config_lease"
+            | "sys_service_account"
+            | "sys_service_account_role"
+            | "sys_service_credential"
+            | "sys_service_delegation"
+            | "sys_service_delegation_capability"
+            | "sys_service_access_audit"
             | "sys_cache_namespace_version"
             | "sys_outbox_event"
             | "sys_export_job"
@@ -1073,6 +1104,9 @@ fn is_upgrade_index(table: &str, name: &str) -> bool {
             | ("sys_role", "idx_role_tenant_del")
             | ("sys_file", "idx_file_tenant_del_size")
             | ("sys_job_schedule", "idx_schedule_tenant_del_enabled")
+            | ("sys_dept", "uq_sys_dept_tenant_id")
+            | ("sys_user", "uq_sys_user_tenant_id")
+            | ("sys_role", "uq_sys_role_tenant_id")
     )
 }
 

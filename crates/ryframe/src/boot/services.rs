@@ -8,13 +8,14 @@ use ryframe_kernel::AppError;
 use ryframe_middleware::RateLimiter;
 use ryframe_service::{
     AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
+    agent::{AgentService, service_capability_descriptors},
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
         DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
         MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
         OverviewService, PermissionService, PostService, ProfileService, RoleService,
-        TenantConfigTransferService, TenantService, TenantUsageService, UserImportService,
-        UserService, WebSocketTicketService,
+        ServiceAccountService, TenantConfigTransferService, TenantService, TenantUsageService,
+        UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_storage::ObjectStorage;
@@ -55,6 +56,34 @@ pub async fn build_all(
         config.rate_limit.enabled,
         config.jobs.scheduler_enabled,
     ));
+    let (service_accounts, agent) = if config.service_accounts.enabled {
+        let redis = redis_client.clone().ok_or_else(|| {
+            AppError::Config("启用服务账号后必须配置 Redis，以保证 Agent 多实例限流一致".into())
+        })?;
+        let keyring = Arc::new(
+            config
+                .service_accounts
+                .load_pepper_keyring(&config.auth.jwt_secret)
+                .map_err(AppError::Config)?,
+        );
+        let descriptors = service_capability_descriptors();
+        let management = Arc::new(ServiceAccountService::new(
+            database.clone(),
+            config.service_accounts.clone(),
+            keyring.clone(),
+            descriptors,
+            authorization_cache.clone(),
+        )?);
+        let agent = Arc::new(AgentService::new(
+            database.clone(),
+            redis,
+            keyring,
+            config.service_accounts.clone(),
+        )?);
+        (Some(management), Some(agent))
+    } else {
+        (None, None)
+    };
     let permission = Arc::new(PermissionService::new(
         database.clone(),
         authorization_cache.clone(),
@@ -200,6 +229,8 @@ pub async fn build_all(
         role,
         tenant,
         tenant_usage,
+        service_accounts,
+        agent,
         permission,
         menu,
         dept,

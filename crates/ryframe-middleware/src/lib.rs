@@ -23,7 +23,7 @@ pub use rate_limit::{
 };
 pub use request_id::request_id_middleware;
 pub use request_log::{request_log_layer, request_log_layer_with_masking};
-pub use response_envelope::api_response_envelope_middleware;
+pub use response_envelope::{PrebuiltApiEnvelope, api_response_envelope_middleware};
 pub use security_headers::{SecurityHeadersConfig, security_headers_middleware};
 pub use timeout::timeout_middleware;
 use tower_http::compression::CompressionLayer;

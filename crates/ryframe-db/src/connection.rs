@@ -105,6 +105,12 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_tenant_config_transfer",
     "sys_tenant_config_transfer_item",
     "sys_tenant_config_lease",
+    "sys_service_account",
+    "sys_service_account_role",
+    "sys_service_credential",
+    "sys_service_delegation",
+    "sys_service_delegation_capability",
+    "sys_service_access_audit",
 ];
 
 #[derive(Debug, FromQueryResult)]

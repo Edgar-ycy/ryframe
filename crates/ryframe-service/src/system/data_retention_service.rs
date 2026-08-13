@@ -52,6 +52,7 @@ pub struct DataRetentionPolicy {
     pub tenant_config_artifact_hours: u32,
     pub tenant_config_rollback_hours: u32,
     pub retention_run_days: u32,
+    pub service_access_audit_days: u32,
     pub dead_background_jobs_permanent: bool,
     pub dead_outbox_events_permanent: bool,
 }
@@ -75,6 +76,7 @@ impl DataRetentionPolicy {
             tenant_config_artifact_hours: tenant_config.artifact_hours,
             tenant_config_rollback_hours: tenant_config.rollback_hours,
             retention_run_days: config.retention_run_days,
+            service_access_audit_days: config.service_access_audit_days,
             dead_background_jobs_permanent: true,
             dead_outbox_events_permanent: true,
         }
@@ -830,6 +832,11 @@ impl DataRetentionService {
                 RetentionResource::UserImports,
                 now,
                 self.config.user_import_history_days,
+            ),
+            cutoff(
+                RetentionResource::ServiceAccessAudits,
+                now,
+                self.config.service_access_audit_days,
             ),
             cutoff(
                 RetentionResource::RetentionRuns,

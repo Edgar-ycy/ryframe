@@ -2,7 +2,8 @@ use ryframe_core::Repository;
 use ryframe_db::TenantConfigTransferRepository;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::{
-    ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
+    ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    sea_query::LockType,
 };
 
 use super::UserService;
@@ -120,6 +121,7 @@ impl UserService {
                         .eq(ryframe_db::entities::role::Model::DEL_FLAG_NORMAL),
                 )
                 .filter(ryframe_db::entities::role::Column::Id.is_in(role_ids.iter().copied()))
+                .order_by_asc(ryframe_db::entities::role::Column::Id)
                 .lock(LockType::Update)
                 .all(transaction)
                 .await

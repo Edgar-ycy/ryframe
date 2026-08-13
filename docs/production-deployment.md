@@ -1,6 +1,6 @@
 # 生产部署基线
 
-> 最后核对：2026-08-12
+> 最后核对：2026-08-13
 
 本文档给出 RyFrame 生产环境的最低安全和可靠性基线。示例配置必须按实际域名、网段、
 证书和容量修改，不能原样作为生产凭据或网络策略。
@@ -58,6 +58,28 @@ Compose 默认使用只读根文件系统、删除全部 Linux capability、启�
 或 `full`；`summary` 与 `full` 会在启动时输出安全警告。无论模式如何，日志和 OpenTelemetry
 均不得记录绑定参数、密码、令牌或连接串；OpenTelemetry 数据库 span 不记录原始 SQL。
 
+生产 Compose 默认启用服务账号，并把 `APP_SERVICE_ACCOUNTS_PEPPER_KEYRING_FILE` 固定指向只读
+Docker secret `/run/secrets/service-account-peppers.json`。部署平台必须通过
+`RYFRAME_SERVICE_ACCOUNT_PEPPER_KEYRING_FILE` 提供外部文件，不能把内容写入镜像、仓库、应用 TOML
+或环境变量。Keyring 使用严格 JSON 或 TOML，根字段只有 `peppers`，每项只有正整数 `version` 与
+规范 Base64 `key_base64`；解码后至少 32 字节，最多同时保留 8 个版本，活动版本必须存在且任一
+Pepper 都不能等于 JWT Secret。文件必须是非空普通文件而非符号链接，最大 64 KiB；Unix 上不能向
+组或其他用户开放写权限。示意内容只能用新生成的随机值：
+
+```json
+{
+  "peppers": [
+    { "version": 1, "key_base64": "<至少 32 随机字节的规范 Base64>" }
+  ]
+}
+```
+
+启用时 API 必须能读取并校验 Keyring，而且 Redis 必须配置；生产还强制
+`redis.mode="required"`。任一 Keyring 格式、权限、活动版本或 Redis 条件不满足都会阻止启动，
+不得回退为空 Pepper、内存限流或 JWT Secret。迁移进程和 Worker 复用 Compose 公共 secret 与环境
+基线，但第五阶段不新增 Agent Worker、队列或端口；Agent 固定查询仅由 API 的
+`/api/v1/agent/v1/**` 处理。
+
 ## 2. 网络与入口
 
 - 仅 Nginx/负载均衡器暴露 443；应用 8080、MySQL、Redis 和对象存储 API 只在受控
@@ -68,6 +90,9 @@ Compose 默认使用只读根文件系统、删除全部 Linux capability、启�
 - 使用 `deploy/nginx/ryframe.conf` 时，将 metrics 的示例私网 CIDR 替换为精确的
   Prometheus/VPN 地址。安全组也应执行同样限制，不能只依赖 Nginx。
 - Nginx 必须覆盖客户端提供的转发头；`APP_PROXY_TRUSTED_CIDRS` 仅包含真实代理地址。
+- `/api/v1/agent/v1/**` 是机器凭据入口，只允许必要调用方网络访问。Nginx 不得记录完整
+  `Authorization` 或 `X-RyFrame-Delegation`，也不得把这些请求头回显到错误页或上游调试日志；
+  请求仍必须经过可信代理 IP 解析，以保证预认证防刷、七维限流和访问审计使用真实来源边界。
 - `/api/v1/ws` 必须使用 WebSocket 专用反向代理：转发 `Upgrade`，关闭缓冲，并将读取超时设为高于心跳间隔。一次性 ticket 位于查询参数，Nginx、负载均衡器和 CDN 均不得记录完整请求 URI 或 ticket；模板已对该路径关闭访问日志。
 - 生产启用消息中心时必须保持 `APP_REDIS_MODE=required`。默认容量为票据 60 秒、消息保留 90 天、每租户用户单实例 5 条连接、每连接 256 条有界出站队列和单消息最多 100000 名收件人；共享补拉调度器每 15 秒扫描一次、启动抖动最多 5 秒、每个租户用户每批最多 100 条，查询一次后向该身份的全部连接扇出。调整 `APP_MESSAGING_*` 前必须完成连接、内存、数据库写放大和大受众发布压测。
 - `APP_API_DOCS_ENABLED=false`，并在 Nginx 阻断 Swagger/OpenAPI；`APP_MONITOR_METRICS_BEARER_TOKEN_FILE`
@@ -121,6 +146,12 @@ Worker 服务上显式配置同一个具名卷或经过验证的共享挂载，�
 ## 5. 最低上线检查
 
 - 配置校验通过，密钥均由 secret 管理注入，日志中无敏感值。
+- 服务账号启用时，Pepper Keyring 是只读普通文件、活动版本存在、与 JWT Secret 不同，并在全部 API
+  实例保持相同版本集合；Redis 为 required 且所有 API 实例连接同一 standalone。
+- 用首次创建响应完成 API Key 与个人委托一次性 Secret/Token 验证；随后幂等重放字段为 `null`、
+  响应禁止缓存，日志与追踪中没有完整凭据。直接和委托模式的能力、权限及数据范围交集符合预期。
+- 验证 Agent 的成功、`401/403/404/413/429/503` 都产生相应访问审计；阻断审计写入或 Redis 后请求
+  fail-closed，授权撤销后下一请求立即拒绝。确认默认 180 天访问审计保留策略与容量预算已获批准。
 - API 与 Worker 默认向 stdout 输出 JSON 日志，平台采集、轮转、保留和容量告警均已生效。
 - `/livez=200`、`/readyz=200`，公网 Swagger/OpenAPI 为 `404`。
 - 登录后可建立 `/api/v1/ws` 并收到 `101 Switching Protocols`；抽查 Nginx、负载均衡器和 CDN 日志，确认其中不包含 `ticket=`。

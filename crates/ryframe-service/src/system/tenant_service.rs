@@ -231,6 +231,9 @@ impl TenantService {
             .await
             .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
         self.tenant_repo
+            .lock_tenant_in_txn(&transaction, tenant_id)
+            .await?;
+        self.tenant_repo
             .update_status(&transaction, tenant_id, &status)
             .await?;
         let authorization_epoch = self

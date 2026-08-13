@@ -64,6 +64,11 @@ use utoipa::OpenApi;
         (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重和熔断保护。"),
         (name = "租户管理", description = "系统租户管理租户生命周期、配额和管理员初始化。"),
         (name = "租户配置迁移", description = "导出、上传、预览、应用和回滚不含数据库 ID 与敏感凭据的租户配置包。")
+        ,(name = "服务账号", description = "管理不可登录的服务账号、角色范围和一次性 API Key。")
+        ,(name = "服务委托", description = "当前用户本人创建的限时双主体查询委托，以及管理员只读治理入口。")
+        ,(name = "服务访问审计", description = "查询 Agent API 的最小化访问审计，不包含请求或响应正文。")
+        ,(name = "个人服务委托", description = "当前用户本人查看、创建和撤销限时服务委托。")
+        ,(name = "Agent API", description = "仅接受 RyFrameApiKey 的编译期白名单只读接口，不接受普通 Bearer。")
     ),
     paths(
         crate::router::api_version,
@@ -254,6 +259,31 @@ use utoipa::OpenApi;
         crate::handlers::tenant_config_handler::request_preview,
         crate::handlers::tenant_config_handler::request_apply,
         crate::handlers::tenant_config_handler::request_rollback,
+        // 服务账号与个人委托
+        crate::handlers::service_account_handler::list_accounts,
+        crate::handlers::service_account_handler::create_account,
+        crate::handlers::service_account_handler::account_detail,
+        crate::handlers::service_account_handler::update_account,
+        crate::handlers::service_account_handler::update_account_status,
+        crate::handlers::service_account_handler::remove_account,
+        crate::handlers::service_account_handler::account_roles,
+        crate::handlers::service_account_handler::replace_account_roles,
+        crate::handlers::service_account_handler::list_credentials,
+        crate::handlers::service_account_handler::create_credential,
+        crate::handlers::service_account_handler::revoke_credential,
+        crate::handlers::service_account_handler::list_delegations,
+        crate::handlers::service_account_handler::revoke_delegation,
+        crate::handlers::service_account_handler::list_access_audits,
+        crate::handlers::service_delegation_profile_handler::list_my_delegations,
+        crate::handlers::service_delegation_profile_handler::delegation_capabilities,
+        crate::handlers::service_delegation_profile_handler::create_my_delegation,
+        crate::handlers::service_delegation_profile_handler::revoke_my_delegation,
+        // 独立 Agent API
+        crate::handlers::agent_handler::capabilities,
+        crate::handlers::agent_handler::users,
+        crate::handlers::agent_handler::departments,
+        crate::handlers::agent_handler::posts,
+        crate::handlers::agent_handler::dictionary,
     ),
     components(schemas(
         // 认证 DTO
@@ -420,6 +450,30 @@ use utoipa::OpenApi;
         crate::dto::public_dto::TenantConfigBundleVo,
         crate::dto::public_dto::TenantConfigTransferVo,
         crate::dto::public_dto::TenantConfigTransferItemVo,
+        crate::dto::service_account_dto::ServiceResourcePageQuery,
+        crate::dto::service_account_dto::CreateServiceAccountDto,
+        crate::dto::service_account_dto::UpdateServiceAccountDto,
+        crate::dto::service_account_dto::ServiceAccountStatusDto,
+        crate::dto::service_account_dto::UpdateServiceAccountStatusDto,
+        crate::dto::service_account_dto::ReplaceServiceAccountRolesDto,
+        crate::dto::service_account_dto::CreateServiceCredentialDto,
+        crate::dto::service_account_dto::CreateServiceDelegationDto,
+        crate::dto::public_dto::ServiceCapabilityVo,
+        crate::dto::public_dto::ServiceAccountVo,
+        crate::dto::public_dto::ServiceAccountDetailVo,
+        crate::dto::public_dto::ServiceCredentialVo,
+        crate::dto::public_dto::CreatedServiceCredentialVo,
+        crate::dto::public_dto::ServiceDelegationVo,
+        crate::dto::public_dto::CreatedServiceDelegationVo,
+        crate::dto::public_dto::ServiceAccessAuditVo,
+        crate::handlers::service_delegation_profile_handler::ServiceDelegationTargetResponse,
+        crate::dto::agent_dto::AgentPageQuery,
+        crate::dto::agent_dto::AgentCapabilityResponse,
+        crate::dto::agent_dto::AgentUserResponse,
+        crate::dto::agent_dto::AgentDepartmentResponse,
+        crate::dto::agent_dto::AgentPostResponse,
+        crate::dto::agent_dto::AgentDictionaryResponse,
+        crate::dto::agent_dto::AgentDictionaryItemResponse,
         crate::dto::public_dto::UploadResponse,
         crate::router::ApiVersionInfo,
         crate::router::ApiVersionEndpoints,
@@ -463,6 +517,7 @@ pub const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("system.dict", "C"),
     ("system.config", "C"),
     ("system.config-transfer", "C"),
+    ("system.service-accounts", "C"),
     ("system.notice", "C"),
     ("system.perm", "C"),
     ("system.authorization-diagnostics", "C"),
@@ -532,6 +587,26 @@ fn permission_catalog_contract() -> serde_json::Value {
     })
 }
 
+fn agent_capability_contract() -> serde_json::Value {
+    let capabilities = ryframe_service::agent::AgentCapability::ALL
+        .into_iter()
+        .map(|capability| {
+            let descriptor = capability.descriptor();
+            serde_json::json!({
+                "capability_key": descriptor.key,
+                "operation_id": descriptor.operation_id,
+                "method": descriptor.method,
+                "path": descriptor.path,
+                "required_permission": descriptor.required_permission,
+                "direct": descriptor.direct,
+                "delegated": descriptor.delegated,
+                "cost": descriptor.cost,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "version": 1, "capabilities": capabilities })
+}
+
 impl utoipa::Modify for ApiDocModifier {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -548,6 +623,28 @@ impl utoipa::Modify for ApiDocModifier {
                 utoipa::openapi::security::SecurityScheme::ApiKey(
                     utoipa::openapi::security::ApiKey::Cookie(
                         utoipa::openapi::security::ApiKeyValue::new("ryframe_refresh_token"),
+                    ),
+                ),
+            );
+            components.add_security_scheme(
+                "ryframeApiKey",
+                utoipa::openapi::security::SecurityScheme::ApiKey(
+                    utoipa::openapi::security::ApiKey::Header(
+                        utoipa::openapi::security::ApiKeyValue::with_description(
+                            "Authorization",
+                            "格式：`RyFrameApiKey rfk_<key_id>.<256-bit-secret>`；仅用于 `/api/v1/agent/v1/**`。",
+                        ),
+                    ),
+                ),
+            );
+            components.add_security_scheme(
+                "delegationToken",
+                utoipa::openapi::security::SecurityScheme::ApiKey(
+                    utoipa::openapi::security::ApiKey::Header(
+                        utoipa::openapi::security::ApiKeyValue::with_description(
+                            "X-RyFrame-Delegation",
+                            "可选的本人限时委托令牌，格式：`rfd_<256-bit-secret>`。",
+                        ),
                     ),
                 ),
             );
@@ -572,6 +669,10 @@ impl utoipa::Modify for ApiDocModifier {
         openapi.extensions.get_or_insert_default().insert(
             "x-ryframe-permission-catalog".into(),
             permission_catalog_contract(),
+        );
+        openapi.extensions.get_or_insert_default().insert(
+            "x-ryframe-agent-capabilities".into(),
+            agent_capability_contract(),
         );
 
         for (path, item) in &mut openapi.paths.paths {

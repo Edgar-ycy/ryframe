@@ -329,7 +329,7 @@ pub async fn rate_limit_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Result<Response, Response> {
-    if !state.config.enabled {
+    if !state.config.enabled || is_agent_api_path(request.uri().path()) {
         return Ok(next.run(request).await);
     }
 
@@ -363,7 +363,10 @@ pub async fn user_rate_limit_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Result<Response, Response> {
-    if !state.config.enabled || !state.config.enable_user_rate_limit {
+    if !state.config.enabled
+        || !state.config.enable_user_rate_limit
+        || is_agent_api_path(request.uri().path())
+    {
         return Ok(next.run(request).await);
     }
 
@@ -395,7 +398,10 @@ pub async fn api_rate_limit_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> Result<Response, Response> {
-    if !state.config.enabled || state.config.api_limits.is_empty() {
+    if !state.config.enabled
+        || state.config.api_limits.is_empty()
+        || is_agent_api_path(request.uri().path())
+    {
         return Ok(next.run(request).await);
     }
 
@@ -466,6 +472,11 @@ pub async fn api_rate_limit_middleware(
         )),
         Err(error) => Err(rate_limit_unavailable(error)),
     }
+}
+
+/// Agent API 使用能够覆盖身份、能力及并发维度的专用原子限流器；通用限流不得提前返回未审计的 429。
+fn is_agent_api_path(path: &str) -> bool {
+    path == "/api/v1/agent/v1" || path.starts_with("/api/v1/agent/v1/")
 }
 
 fn rate_limited_response(scope: &str, message: &str, retry_after_secs: u64) -> Response {

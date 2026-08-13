@@ -26,6 +26,7 @@ pub fn build_app(
     } else {
         SecurityHeadersConfig::default()
     };
+    let agent_security_headers = security_headers.clone();
 
     let business = ryframe_api::VersionedRouter::new()
         .with_v1(ryframe_api::api_router(
@@ -58,17 +59,43 @@ pub fn build_app(
     let probes = Router::new()
         .route("/livez", get(ryframe_api::livez))
         .route("/readyz", get(ryframe_api::readyz))
-        .with_state(state);
+        .with_state(state.clone());
 
-    let app = Router::new()
+    let regular = Router::new()
         .merge(business)
         .merge(probes)
         .layer(ryframe_middleware::cors_layer(cors_config)?)
         .layer(from_fn_with_state(
-            response_localizer,
+            response_localizer.clone(),
             ryframe_middleware::api_response_envelope_middleware,
         ))
-        .layer(ryframe_middleware::compression_layer())
+        .layer(ryframe_middleware::compression_layer());
+
+    // Agent API 不经过会在业务审计前短路的通用请求体、超时、限流或 CORS 层。
+    // 其固定 GET 路由在服务内执行配置限定的总预算、专用原子限流和 fail-closed 审计；
+    // OPTIONS 与未知方法也会进入 Agent fallback 并留下最小审计。
+    let agent = if state.services.agent.is_some() {
+        Router::new()
+            .nest(
+                "/api/v1/agent/v1",
+                ryframe_api::handlers::agent_handler::agent_router(state.clone()),
+            )
+            .layer(from_fn_with_state(
+                agent_security_headers,
+                ryframe_middleware::security_headers_middleware,
+            ))
+            .layer(from_fn(request_locale_middleware))
+            .layer(from_fn_with_state(
+                response_localizer,
+                ryframe_middleware::api_response_envelope_middleware,
+            ))
+    } else {
+        Router::new()
+    };
+
+    let app = Router::new()
+        .merge(regular)
+        .merge(agent)
         .layer(ryframe_middleware::request_log_layer_with_masking())
         .layer(from_fn_with_state(
             trusted_proxies,

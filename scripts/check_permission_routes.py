@@ -21,6 +21,9 @@ NON_RBAC_FILES = {
     "captcha_handler.rs",
     "common_handler.rs",
     "profile_handler.rs",
+    # 个人服务委托只允许当前 JWT 主体管理本人委托；Agent 路由使用独立 API Key 授权与审计链。
+    "service_delegation_profile_handler.rs",
+    "agent_handler.rs",
 }
 
 AUTHENTICATED_ONLY_ROUTES = {

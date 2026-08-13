@@ -8,13 +8,14 @@ use ryframe_middleware::RateLimiter;
 use ryframe_monitor::MonitorState;
 use ryframe_service::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
+    agent::AgentService,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
         DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
         MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
         OverviewService, PermissionService, PostService, ProfileService, RoleService,
-        TenantConfigTransferService, TenantService, TenantUsageService, UserImportService,
-        UserService, WebSocketTicketService,
+        ServiceAccountService, TenantConfigTransferService, TenantService, TenantUsageService,
+        UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_utils::ip::TrustedProxySet;
@@ -28,6 +29,8 @@ pub struct AppServices {
     pub role: Arc<RoleService>,
     pub tenant: Arc<TenantService>,
     pub tenant_usage: Arc<TenantUsageService>,
+    pub service_accounts: Option<Arc<ServiceAccountService>>,
+    pub agent: Option<Arc<AgentService>>,
     pub permission: Arc<PermissionService>,
     pub menu: Arc<MenuService>,
     pub dept: Arc<DeptService>,
