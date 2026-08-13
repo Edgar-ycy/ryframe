@@ -314,7 +314,8 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 异步导出创建成功只表示任务已进入队列，不表示文件已经生成。任务进入 `succeeded` 或 `failed`
 后会产生当前申请人的持久未读提醒；客户端通过
 `GET /api/v1/common/jobs/notifications/unread-count` 展示“我的导出任务”徽标，用户打开任务中心后
-调用 `POST /api/v1/common/jobs/notifications/read` 幂等确认全部完成提醒。已读状态保存在服务端，
+调用 `POST /api/v1/common/jobs/notifications/read` 提交本次实际看到的 1–100 个任务字符串 ID，幂等
+确认对应提醒。已读状态保存在服务端，
 不会因刷新页面、重新登录或切换浏览器标签页而恢复为未读；取消任务不产生完成提醒。
 
 ### 当前用户菜单

@@ -140,12 +140,13 @@ impl ExportJobRepository {
             .map_err(database_error)
     }
 
-    /// 将申请人当前所有成功或失败通知幂等标记为已查看。
+    /// 将申请人已经实际看到的成功或失败通知幂等标记为已查看。
     pub async fn mark_notifications_read<C>(
         &self,
         db: &C,
         tenant_id: &str,
         requester_id: i64,
+        ids: &[i64],
         now: DateTime<Utc>,
     ) -> AppResult<u64>
     where
@@ -155,6 +156,7 @@ impl ExportJobRepository {
             .col_expr(export_job::Column::NotificationReadAt, Expr::value(now))
             .filter(export_job::Column::TenantId.eq(tenant_id))
             .filter(export_job::Column::RequesterId.eq(requester_id))
+            .filter(export_job::Column::Id.is_in(ids.iter().copied()))
             .filter(export_job::Column::NotificationReadAt.is_null())
             .filter(export_job::Column::Status.is_in([
                 export_job::Model::STATUS_SUCCEEDED,

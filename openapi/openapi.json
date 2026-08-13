@@ -9362,7 +9362,20 @@
       },
       "MarkExportNotificationsReadDto": {
         "additionalProperties": false,
-        "description": "确认当前用户全部导出完成或失败通知的显式命令体。",
+        "description": "确认当前用户已经实际看到的导出完成或失败通知。",
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
         "type": "object"
       },
       "MenuTreeNode": {
@@ -17350,7 +17363,7 @@
             "bearer": []
           }
         ],
-        "summary": "将当前用户全部导出完成或失败通知标记为已查看。",
+        "summary": "将当前用户已经实际看到的导出完成或失败通知标记为已查看。",
         "tags": [
           "导出任务"
         ]

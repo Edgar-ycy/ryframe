@@ -133,15 +133,24 @@ impl ExportService {
             .await
     }
 
-    /// 幂等确认当前申请人的全部导出完成或失败通知。
-    pub async fn mark_notifications_read(&self, actor: &ActorContext) -> AppResult<u64> {
+    /// 幂等确认当前申请人已经实际看到的导出完成或失败通知。
+    pub async fn mark_notifications_read(
+        &self,
+        actor: &ActorContext,
+        ids: &[i64],
+    ) -> AppResult<u64> {
+        if ids.is_empty() || ids.len() > 100 || ids.iter().any(|id| *id <= 0) {
+            return Err(AppError::Validation(
+                "导出通知 ID 数量必须介于 1 和 100 之间且均为正整数".into(),
+            ));
+        }
         let tenant_id = crate::validated_tenant_id(actor)?;
         let now = self
             .background_jobs
             .database_utc_now(self.db.write())
             .await?;
         self.exports
-            .mark_notifications_read(self.db.write(), tenant_id, actor.user_id, now)
+            .mark_notifications_read(self.db.write(), tenant_id, actor.user_id, ids, now)
             .await
     }
 

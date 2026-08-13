@@ -49,7 +49,7 @@ async fn unread_notification_count(
         .map(Json)
 }
 
-/// 将当前用户全部导出完成或失败通知标记为已查看。
+/// 将当前用户已经实际看到的导出完成或失败通知标记为已查看。
 #[post("/notifications/read")]
 #[utoipa::path(post, path = "/api/v1/common/jobs/notifications/read", tag = "导出任务",
     request_body = MarkExportNotificationsReadDto,
@@ -58,12 +58,22 @@ async fn unread_notification_count(
 async fn mark_notifications_read(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Json(_request): Json<MarkExportNotificationsReadDto>,
+    Json(request): Json<MarkExportNotificationsReadDto>,
 ) -> HttpResult<Json<ApiResponse<u64>>> {
+    if request.ids.is_empty() || request.ids.len() > 100 {
+        return Err(AppError::Validation("导出通知 ID 数量必须介于 1 和 100 之间".into()).into());
+    }
+    let mut ids = request
+        .ids
+        .iter()
+        .map(|id| parse_export_id(id))
+        .collect::<HttpResult<Vec<_>>>()?;
+    ids.sort_unstable();
+    ids.dedup();
     state
         .services
         .export
-        .mark_notifications_read(&current_user)
+        .mark_notifications_read(&current_user, &ids)
         .await
         .map_err(ryframe_http::HttpAppError::from)
         .map(ApiResponse::success)
