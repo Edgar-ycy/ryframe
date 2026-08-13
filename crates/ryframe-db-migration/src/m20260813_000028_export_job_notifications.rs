@@ -33,6 +33,13 @@ impl MigrationTrait for Migration {
                         .to_owned(),
                 )
                 .await?;
+            // 升级前已经进入终态的历史任务默认视为已查看，避免部署后突然产生大量旧提醒。
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "UPDATE `sys_export_job` SET `notification_read_at` = COALESCE(`completed_at`, `updated_at`) WHERE `status` IN ('succeeded', 'failed') AND `notification_read_at` IS NULL",
+                )
+                .await?;
         }
         if !manager.has_index(TABLE, NOTIFICATION_INDEX).await? {
             manager
