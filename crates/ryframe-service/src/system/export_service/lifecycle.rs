@@ -128,9 +128,31 @@ impl ExportService {
     pub async fn unread_notification_count(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.select_read(ReadConsistency::Strong).connection;
-        self.exports
-            .count_unread_notifications(&db, tenant_id, actor.user_id)
-            .await
+        let exports = self
+            .exports
+            .list_unread_notifications(&db, tenant_id, actor.user_id)
+            .await?;
+        let authorization = self
+            .users
+            .calculate_current_authorization(tenant_id, actor.user_id)
+            .await?;
+        if !authorization.tenant.is_available(chrono::Utc::now())
+            || !authorization.user.is_enabled()
+        {
+            return Err(AppError::Authorization(
+                "导出申请人的账号或租户已不可用".into(),
+            ));
+        }
+        Ok(exports
+            .iter()
+            .filter(|export| {
+                authorization.actor.is_super_admin
+                    || ryframe_auth::rbac::has_permission(
+                        &authorization.permission_codes,
+                        &export.permission_code,
+                    )
+            })
+            .count() as u64)
     }
 
     /// 幂等确认当前申请人已经实际看到的导出完成或失败通知。

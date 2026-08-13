@@ -5,7 +5,7 @@ use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
 use serde_json::Value;
@@ -120,13 +120,13 @@ impl ExportJobRepository {
             .map_err(database_error)
     }
 
-    /// 统计申请人尚未查看的成功或失败通知。
-    pub async fn count_unread_notifications(
+    /// 读取申请人尚未查看的成功或失败通知，供服务层按当前权限过滤。
+    pub async fn list_unread_notifications(
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
         requester_id: i64,
-    ) -> AppResult<u64> {
+    ) -> AppResult<Vec<export_job::Model>> {
         export_job::Entity::find()
             .filter(export_job::Column::TenantId.eq(tenant_id))
             .filter(export_job::Column::RequesterId.eq(requester_id))
@@ -135,7 +135,10 @@ impl ExportJobRepository {
                 export_job::Model::STATUS_SUCCEEDED,
                 export_job::Model::STATUS_FAILED,
             ]))
-            .count(db)
+            .order_by_desc(export_job::Column::CompletedAt)
+            .order_by_desc(export_job::Column::Id)
+            .limit(100)
+            .all(db)
             .await
             .map_err(database_error)
     }
