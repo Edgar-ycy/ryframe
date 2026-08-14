@@ -1,6 +1,5 @@
 debug
 target
-/ryframe-vue3/
 /.codex/
 .pnpm-store/
 uploads/
@@ -12,7 +11,6 @@ __pycache__/
 **/mutants.out*/
 .idea/
 .claude
-AGENTS.md
 # Code coverage profiler data (large files)
 *.profraw
 example
