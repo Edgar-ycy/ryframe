@@ -339,10 +339,22 @@ state
 
 ## 6. CI 与本地质量检查
 
+### 6.1 源码规模与模块职责
+
+后端 CI 会扫描 `crates/ryframe-service/src` 与 `crates/ryframe-core/src` 的手写 Rust 业务源码，单文件不得超过
+1000 行。生成文件、Schema、迁移文件和快照不在该扫描范围内。前端独立 CI 会约束 Composable（含
+`src/app/**/use*.ts`）不超过 500 行，Vue SFC 与 SCSS 单文件不超过 700 行；生成 OpenAPI 与 i18n Catalog
+同样豁免。
+
+Facade 只协调公开接口、生命周期和事务边界；事务协调器必须让锁序、提交点和失败补偿在线性流程中可读；
+纯领域模块不应反向依赖 HTTP、数据库连接或页面状态。规模门禁不使用无理由的永久白名单。确有临时例外时，
+必须在本节记录文件路径、职责原因和复审日期，并在复审日期前拆分或移除该例外。
+
 托管后端 CI 在 Linux 上执行以下核心门禁：
 
 ```bash
 python scripts/check_prerelease_dependencies.py
+python scripts/check_source_size.py
 python scripts/check_permission_routes.py
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --lib --bins -- -D warnings

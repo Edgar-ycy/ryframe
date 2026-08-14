@@ -64,6 +64,9 @@ jobs:
       - name: Reject unreviewed prerelease dependencies
         run: python scripts/check_prerelease_dependencies.py
 
+      - name: Enforce handwritten source size limits
+        run: python scripts/check_source_size.py
+
       - name: Check permission bindings
         run: python scripts/check_permission_routes.py
 
