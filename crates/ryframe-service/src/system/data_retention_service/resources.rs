@@ -1,0 +1,53 @@
+use super::*;
+
+impl DataRetentionService {
+    pub(super) fn cutoffs(&self, now: DateTime<Utc>) -> Vec<RetentionCutoff> {
+        vec![
+            cutoff(
+                RetentionResource::BackgroundJobs,
+                now,
+                self.config.background_job_succeeded_days,
+            ),
+            cutoff(
+                RetentionResource::OutboxEvents,
+                now,
+                self.config.outbox_published_days,
+            ),
+            cutoff(
+                RetentionResource::ScheduleExecutions,
+                now,
+                self.config.schedule_execution_days,
+            ),
+            cutoff(
+                RetentionResource::ExportJobs,
+                now,
+                self.config.export_job_history_days,
+            ),
+            cutoff(
+                RetentionResource::OperationLogs,
+                now,
+                self.config.operation_log_days,
+            ),
+            cutoff(
+                RetentionResource::LoginLogs,
+                now,
+                self.config.login_log_days,
+            ),
+            cutoff(
+                RetentionResource::UserImports,
+                now,
+                self.config.user_import_history_days,
+            ),
+            cutoff(
+                RetentionResource::ServiceAccessAudits,
+                now,
+                self.config.service_access_audit_days,
+            ),
+            cutoff(
+                RetentionResource::RetentionRuns,
+                now,
+                self.config.retention_run_days,
+            ),
+        ]
+    }
+}
