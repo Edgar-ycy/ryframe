@@ -11,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
+use redis::AsyncCommands;
 use ryframe_core::RedisClient;
 use ryframe_utils::ip::{ClientIp, TrustedProxySet};
 
@@ -99,31 +100,31 @@ impl RateLimiter {
         match &self.mode {
             RateLimiterMode::Redis { client, .. } => {
                 let redis_key = format!("{RATE_LIMIT_KEY_PREFIX}{key}");
-                let script = r#"
-                    local count = redis.call('INCR', KEYS[1])
-                    if count == 1 then
-                        redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
-                    end
-                    if count <= tonumber(ARGV[2]) then
-                        return 1
-                    end
-                    return 0
-                "#;
-                let window_arg = window_secs.to_string();
-                let limit_arg = limit.to_string();
+                let watched = [redis_key.clone()];
                 match client
-                    .eval_script(
-                        script,
-                        &[redis_key.as_str()],
-                        &[window_arg.as_str(), limit_arg.as_str()],
-                    )
+                    .transaction(&watched, move |mut connection, mut transaction| {
+                        let redis_key = redis_key.clone();
+                        async move {
+                            let current: Option<u64> = connection.get(&redis_key).await?;
+                            let ttl: i64 = connection.ttl(&redis_key).await?;
+                            let count = current.unwrap_or(0).saturating_add(1);
+                            transaction.incr(&redis_key, 1_u8).ignore();
+                            if current.is_none() || ttl < 0 {
+                                transaction
+                                    .expire(&redis_key, redis_ttl_secs(window_secs))
+                                    .ignore();
+                            }
+                            let committed: Option<()> =
+                                transaction.query_async(&mut connection).await?;
+                            Ok(committed.map(|()| count <= u64::from(limit)))
+                        }
+                    })
                     .await
                 {
-                    Ok(redis::Value::Int(value)) => Ok(RateLimitDecision {
-                        allowed: value == 1,
+                    Ok(allowed) => Ok(RateLimitDecision {
+                        allowed,
                         retry_after_secs: window_secs,
                     }),
-                    Ok(value) => Err(format!("unexpected Redis rate-limit result: {value:?}")),
                     Err(error) => Err(format!("Redis rate-limit operation failed: {error}")),
                 }
             }
@@ -160,7 +161,7 @@ impl RateLimiter {
 
     /// 批量读取固定窗口状态，不改变任何限流计数。
     ///
-    /// Redis 模式使用一个 Lua 调用读取全部计数和 TTL；内存模式直接读取已有桶。
+    /// Redis 模式使用单次原子管道读取全部计数和 TTL；内存模式直接读取已有桶。
     pub async fn snapshot_many(
         &self,
         keys: &[String],
@@ -175,18 +176,17 @@ impl RateLimiter {
                     .iter()
                     .map(|key| format!("{RATE_LIMIT_KEY_PREFIX}{key}"))
                     .collect::<Vec<_>>();
-                let script = r#"
-                    local result = {}
-                    for index, key in ipairs(KEYS) do
-                        local count = redis.call('GET', key)
-                        local ttl = redis.call('TTL', key)
-                        result[(index - 1) * 2 + 1] = tonumber(count) or 0
-                        result[(index - 1) * 2 + 2] = ttl > 0 and ttl or 0
-                    end
-                    return result
-                "#;
+                let watched = redis_keys.clone();
                 let values = client
-                    .eval_script(script, &redis_keys, &[] as &[&str])
+                    .transaction(&watched, move |mut connection, mut transaction| {
+                        let redis_keys = redis_keys.clone();
+                        async move {
+                            for redis_key in &redis_keys {
+                                transaction.get(redis_key).ttl(redis_key);
+                            }
+                            transaction.query_async(&mut connection).await
+                        }
+                    })
                     .await
                     .map_err(|error| format!("Redis rate-limit snapshot failed: {error}"))?;
                 parse_redis_snapshots(keys, limit, values)
@@ -278,11 +278,8 @@ impl RateLimiter {
 fn parse_redis_snapshots(
     keys: &[String],
     limit: u32,
-    value: redis::Value,
+    values: Vec<redis::Value>,
 ) -> Result<Vec<RateLimitSnapshot>, String> {
-    let redis::Value::Array(values) = value else {
-        return Err("unexpected Redis rate-limit snapshot result".into());
-    };
     if values.len() != keys.len().saturating_mul(2) {
         return Err("Redis rate-limit snapshot returned an invalid item count".into());
     }
@@ -309,6 +306,10 @@ fn redis_nonnegative_integer(value: &redis::Value) -> Result<u64, String> {
     };
     u64::try_from(*value)
         .map_err(|_| "Redis rate-limit snapshot returned a negative value".to_owned())
+}
+
+fn redis_ttl_secs(ttl_secs: u64) -> i64 {
+    ttl_secs.min(i64::MAX as u64) as i64
 }
 
 #[derive(Clone)]

@@ -115,7 +115,7 @@ Prometheus 查询结果和 Alertmanager 测试通知。
 幂等记录和分布式锁仍有效，并执行登录/刷新/登出冒烟。
 
 确认 Redis 拓扑仍为 standalone；不要在事故中把配置临时切向 Cluster 节点或 Cluster 代理。
-会话接口依赖 Redis Lua 原子维护 Refresh Family、租户索引和租户用户索引，Redis 不可用时
+会话接口依赖 Redis 乐观事务原子维护 Refresh Family、租户索引和租户用户索引，Redis 不可用时
 `/api/v1/auth/sessions`、单设备撤销和批量撤销应明确返回 `503`。这时不能宣告撤销完成，也不能
 通过手工删除展示 metadata 代替权威 Family 撤销。
 
@@ -327,7 +327,7 @@ ID；发现 Excel 行、密码、用户资料或对象存储地址进入日志�
 `idx_schedule_tenant_del_enabled`。同一页的 SQL 次数应保持有界，不随租户数线性增加；发现逐租户
 计数时按 N+1 回归处理，不能用缩小默认页大小掩盖问题。
 
-请求卡片只代表当前一分钟限流窗口。其 `status=unknown` 时检查 Redis 连通性、ACL/TLS、Lua 与键
+请求卡片只代表当前一分钟限流窗口。其 `status=unknown` 时检查 Redis 连通性、ACL/TLS、事务执行与键
 过期时间；用户、角色、存储和辅助汇总仍正常即属于预期局部降级，不应把整页判定为失败。不要根据
 当前窗口推导历史请求量，也不要通过手工写 Redis 计数修正页面。页面与客户端不得后台持续轮询。
 Prometheus 指标只能使用固定低基数标签，禁止加入租户 ID、租户名称或用量状态对应的资源标识。

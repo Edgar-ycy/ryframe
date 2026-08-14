@@ -1,71 +1,10 @@
+use redis::AsyncCommands;
 use ryframe_core::RedisClient;
 use ryframe_kernel::{AppError, AppResult};
 use sha2::{Digest, Sha256};
 
 const WINDOW_SECS: u64 = 60;
 const KEY_PREFIX: &str = "ryframe:v0.9:agent-limit:";
-
-const ACQUIRE_SCRIPT: &str = r#"
-local dimension_count = tonumber(ARGV[1])
-local window_secs = tonumber(ARGV[2])
-local retry_after = 1
-for index = 1, dimension_count do
-    local limit = tonumber(ARGV[2 + (index - 1) * 2 + 1])
-    local cost = tonumber(ARGV[2 + (index - 1) * 2 + 2])
-    local current = tonumber(redis.call('GET', KEYS[index])) or 0
-    if current + cost > limit then
-        local ttl = redis.call('TTL', KEYS[index])
-        if ttl > retry_after then retry_after = ttl end
-        return {0, index, retry_after}
-    end
-end
-local concurrency_key = KEYS[dimension_count + 1]
-local tail = 2 + dimension_count * 2
-local concurrency_limit = tonumber(ARGV[tail + 1])
-local owner = ARGV[tail + 2]
-local concurrency_ttl_ms = tonumber(ARGV[tail + 3])
-local redis_time = redis.call('TIME')
-local now_ms = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
-redis.call('ZREMRANGEBYSCORE', concurrency_key, '-inf', now_ms)
-if redis.call('ZCARD', concurrency_key) >= concurrency_limit then
-    local oldest = redis.call('ZRANGE', concurrency_key, 0, 0, 'WITHSCORES')
-    local retry = 1
-    if oldest[2] then retry = math.max(1, math.ceil((tonumber(oldest[2]) - now_ms) / 1000)) end
-    return {0, dimension_count + 1, retry}
-end
-for index = 1, dimension_count do
-    local cost = tonumber(ARGV[2 + (index - 1) * 2 + 2])
-    local count = redis.call('INCRBY', KEYS[index], cost)
-    if count == cost or redis.call('TTL', KEYS[index]) < 0 then
-        redis.call('EXPIRE', KEYS[index], window_secs)
-    end
-end
-redis.call('ZADD', concurrency_key, now_ms + concurrency_ttl_ms, owner)
-local existing_ttl = redis.call('PTTL', concurrency_key)
-if existing_ttl < concurrency_ttl_ms then
-    redis.call('PEXPIRE', concurrency_key, concurrency_ttl_ms)
-end
-return {1, 0, 0}
-"#;
-
-const RELEASE_SCRIPT: &str = r#"
-if redis.call('ZSCORE', KEYS[1], ARGV[1]) then
-    return redis.call('ZREM', KEYS[1], ARGV[1])
-end
-return 0
-"#;
-
-const PRE_AUTH_SCRIPT: &str = r#"
-local count = redis.call('INCR', KEYS[1])
-if count == 1 or redis.call('TTL', KEYS[1]) < 0 then
-    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
-end
-if count <= tonumber(ARGV[2]) then
-    return {1, 0}
-end
-local ttl = redis.call('TTL', KEYS[1])
-return {0, math.max(1, ttl)}
-"#;
 
 #[derive(Clone)]
 pub(super) struct AgentLimiter {
@@ -102,35 +41,48 @@ impl AgentLimiter {
     /// 在读取公开 Key ID 前先执行独立的 IP 防刷；正式身份验证后仍会原子执行完整七维决策。
     pub async fn guard_pre_auth_ip(&self, ip: &str, limit: u32) -> AppResult<()> {
         let key = digest_key("pre-auth-ip", ip);
-        let value = self
+        let watched = [key.clone()];
+        let code: i64 = self
             .redis
-            .eval_script(
-                PRE_AUTH_SCRIPT,
-                &[key],
-                &[WINDOW_SECS.to_string(), limit.max(1).to_string()],
-            )
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let key = key.clone();
+                async move {
+                    let current: Option<u64> = connection.get(&key).await?;
+                    let ttl: i64 = connection.ttl(&key).await?;
+                    let next = current.unwrap_or(0).saturating_add(1);
+                    transaction.incr(&key, 1_u8).ignore();
+                    if current.is_none() || ttl < 0 {
+                        transaction
+                            .expire(&key, redis_ttl_secs(WINDOW_SECS))
+                            .ignore();
+                    }
+                    let retry_after = if ttl > 0 { ttl as u64 } else { WINDOW_SECS };
+                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                    let allowed = next <= u64::from(limit.max(1));
+                    Ok(committed.map(|()| {
+                        if allowed {
+                            1
+                        } else {
+                            -(retry_after as i64).max(1)
+                        }
+                    }))
+                }
+            })
             .await
             .map_err(|_| AppError::ServiceUnavailable("Agent 限流服务暂不可用".into()))?;
-        let values: Vec<i64> = redis::from_redis_value(value)
-            .map_err(|_| AppError::ServiceUnavailable("Agent 限流服务返回无效结果".into()))?;
-        if values.len() != 2 {
-            return Err(AppError::ServiceUnavailable(
-                "Agent 限流服务返回无效结果".into(),
-            ));
-        }
-        if values[0] == 1 {
+        if code == 1 {
             Ok(())
         } else {
             Err(AppError::RateLimited(
                 "Agent 请求过于频繁".into(),
-                u64::try_from(values[1]).unwrap_or(1).max(1),
+                code.unsigned_abs().max(1),
             ))
         }
     }
 
     pub async fn acquire(&self, input: AgentLimitInput<'_>) -> AppResult<AgentConcurrencyLease> {
         let mut dimensions = Vec::<(String, u32, u32)>::new();
-        // 预认证 IP 桶已经承担独立 IP 维度；完整决策仍在同一 Lua 中读取该桶，避免重复计数。
+        // 预认证 IP 桶已经承担独立 IP 维度；完整决策仍会读取该桶，避免重复计数。
         dimensions.push((digest_key("pre-auth-ip", input.ip), input.default_limit, 0));
         if let Ok(limit) = u32::try_from(input.tenant_limit)
             && limit > 0
@@ -172,30 +124,100 @@ impl AgentLimiter {
             .map(|(key, _, _)| key.clone())
             .collect::<Vec<_>>();
         keys.push(concurrency_key.clone());
-        let mut args = vec![dimensions.len().to_string(), WINDOW_SECS.to_string()];
-        for (_, limit, cost) in &dimensions {
-            args.push(limit.to_string());
-            args.push(cost.to_string());
-        }
-        args.push(input.concurrency_limit.max(1).to_string());
-        args.push(input.owner.to_owned());
-        args.push(input.concurrency_ttl_ms.max(1_000).to_string());
-        let value = self
+        let watched = keys.clone();
+        let owner = input.owner.to_owned();
+        let concurrency_limit = input.concurrency_limit.max(1);
+        let concurrency_ttl_ms = input.concurrency_ttl_ms.max(1_000);
+        let transaction_concurrency_key = concurrency_key.clone();
+        let code: i64 = self
             .redis
-            .eval_script(ACQUIRE_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let dimensions = dimensions.clone();
+                let concurrency_key = transaction_concurrency_key.clone();
+                let owner = owner.clone();
+                async move {
+                    let mut retry_after = 1_u64;
+                    for (key, limit, cost) in &dimensions {
+                        let current: Option<u64> = connection.get(key).await?;
+                        let ttl: i64 = connection.ttl(key).await?;
+                        if current.unwrap_or(0).saturating_add(u64::from(*cost)) > u64::from(*limit)
+                        {
+                            retry_after = retry_after.max(u64::try_from(ttl).unwrap_or(1));
+                            return Ok(Some(-(retry_after as i64).max(1)));
+                        }
+                    }
+                    let (seconds, microseconds): (i64, i64) =
+                        redis::cmd("TIME").query_async(&mut connection).await?;
+                    let now_ms = seconds
+                        .saturating_mul(1_000)
+                        .saturating_add(microseconds.saturating_div(1_000));
+                    let active_count: usize = redis::cmd("ZCOUNT")
+                        .arg(&concurrency_key)
+                        .arg(format!("({now_ms}"))
+                        .arg("+inf")
+                        .query_async(&mut connection)
+                        .await?;
+                    if active_count >= concurrency_limit as usize {
+                        let oldest: Vec<(String, f64)> = redis::cmd("ZRANGEBYSCORE")
+                            .arg(&concurrency_key)
+                            .arg(format!("({now_ms}"))
+                            .arg("+inf")
+                            .arg("WITHSCORES")
+                            .arg("LIMIT")
+                            .arg(0)
+                            .arg(1)
+                            .query_async(&mut connection)
+                            .await?;
+                        let retry_after = oldest
+                            .first()
+                            .map(|(_, expires_at)| {
+                                (((*expires_at as i64).saturating_sub(now_ms) + 999) / 1_000).max(1)
+                                    as u64
+                            })
+                            .unwrap_or(1);
+                        return Ok(Some(-(retry_after as i64).max(1)));
+                    }
+                    for (key, _, cost) in &dimensions {
+                        if *cost == 0 {
+                            continue;
+                        }
+                        let current: Option<u64> = connection.get(key).await?;
+                        let ttl: i64 = connection.ttl(key).await?;
+                        transaction.incr(key, *cost).ignore();
+                        if current.is_none() || ttl < 0 {
+                            transaction
+                                .expire(key, redis_ttl_secs(WINDOW_SECS))
+                                .ignore();
+                        }
+                    }
+                    transaction
+                        .cmd("ZREMRANGEBYSCORE")
+                        .arg(&concurrency_key)
+                        .arg("-inf")
+                        .arg(now_ms)
+                        .ignore()
+                        .zadd(
+                            &concurrency_key,
+                            owner,
+                            now_ms.saturating_add(concurrency_ttl_ms as i64),
+                        )
+                        .ignore();
+                    let existing_ttl: i64 = connection.pttl(&concurrency_key).await?;
+                    if existing_ttl < concurrency_ttl_ms as i64 {
+                        transaction
+                            .pexpire(&concurrency_key, redis_ttl_ms(concurrency_ttl_ms))
+                            .ignore();
+                    }
+                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                    Ok(committed.map(|()| 1_i64))
+                }
+            })
             .await
             .map_err(|_| AppError::ServiceUnavailable("Agent 限流服务暂不可用".into()))?;
-        let values: Vec<i64> = redis::from_redis_value(value)
-            .map_err(|_| AppError::ServiceUnavailable("Agent 限流服务返回无效结果".into()))?;
-        if values.len() != 3 {
-            return Err(AppError::ServiceUnavailable(
-                "Agent 限流服务返回无效结果".into(),
-            ));
-        }
-        if values[0] != 1 {
+        if code != 1 {
             return Err(AppError::RateLimited(
                 "Agent 请求过于频繁".into(),
-                u64::try_from(values[2]).unwrap_or(1).max(1),
+                code.unsigned_abs().max(1),
             ));
         }
         Ok(AgentConcurrencyLease {
@@ -208,13 +230,9 @@ impl AgentLimiter {
 
 impl AgentConcurrencyLease {
     pub async fn release(self) {
-        if self
-            .limiter
-            .redis
-            .eval_script_i64(RELEASE_SCRIPT, &[self.key], &[self.owner])
-            .await
-            .is_err()
-        {
+        let mut connection = self.limiter.redis.conn().clone();
+        let result: redis::RedisResult<usize> = connection.zrem(&self.key, &self.owner).await;
+        if result.is_err() {
             tracing::warn!("Agent 并发租约释放失败，将由 TTL 自动回收");
         }
     }
@@ -226,4 +244,12 @@ fn digest_key(dimension: &str, value: &str) -> String {
     digest.update([0]);
     digest.update(value.as_bytes());
     format!("{KEY_PREFIX}{dimension}:{}", hex::encode(digest.finalize()))
+}
+
+fn redis_ttl_secs(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+fn redis_ttl_ms(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
 }

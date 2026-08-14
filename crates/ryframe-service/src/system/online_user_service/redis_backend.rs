@@ -1,4 +1,5 @@
 use chrono::Utc;
+use redis::AsyncCommands;
 use ryframe_core::RedisClient;
 use ryframe_kernel::{AppError, AppResult};
 
@@ -10,63 +11,20 @@ use super::{
 
 const MGET_BATCH_SIZE: usize = 256;
 
-const READ_INDEX_SCRIPT: &str = r#"
-local result = redis.call('SMEMBERS', KEYS[1])
-table.sort(result)
-return result
-"#;
-
-const ADD_SCRIPT: &str = r#"
-redis.call('SETEX', KEYS[1], tonumber(ARGV[2]), ARGV[1])
-redis.call('SADD', KEYS[2], ARGV[3])
-redis.call('SADD', KEYS[3], ARGV[3])
-local tenant_ttl = redis.call('TTL', KEYS[2])
-local user_ttl = redis.call('TTL', KEYS[3])
-if tenant_ttl == -1 or tenant_ttl < tonumber(ARGV[2]) then
-  redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))
-end
-if user_ttl == -1 or user_ttl < tonumber(ARGV[2]) then
-  redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))
-end
-return 1
-"#;
-
-const REMOVE_SCRIPT: &str = r#"
-redis.call('DEL', KEYS[1])
-redis.call('SREM', KEYS[2], ARGV[1])
-if ARGV[2] == '1' then
-  redis.call('SREM', KEYS[3], ARGV[1])
-  if redis.call('SCARD', KEYS[3]) == 0 then redis.call('DEL', KEYS[3]) end
-end
-if redis.call('SCARD', KEYS[2]) == 0 then redis.call('DEL', KEYS[2]) end
-return 1
-"#;
-
-const TOUCH_IF_UNCHANGED_SCRIPT: &str = r#"
-local current = redis.call('GET', KEYS[1])
-if current == false or current ~= ARGV[1] then return 0 end
-local ttl = tonumber(ARGV[3])
-if ttl == nil or ttl <= 0 then
-  redis.call('DEL', KEYS[1])
-  redis.call('SREM', KEYS[2], ARGV[4])
-  redis.call('SREM', KEYS[3], ARGV[4])
-  return 2
-end
-redis.call('SETEX', KEYS[1], ttl, ARGV[2])
-redis.call('SADD', KEYS[2], ARGV[4])
-redis.call('SADD', KEYS[3], ARGV[4])
-local tenant_ttl = redis.call('TTL', KEYS[2])
-local user_ttl = redis.call('TTL', KEYS[3])
-if tenant_ttl == -1 or tenant_ttl < ttl then redis.call('EXPIRE', KEYS[2], ttl) end
-if user_ttl == -1 or user_ttl < ttl then redis.call('EXPIRE', KEYS[3], ttl) end
-return 1
-"#;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TouchCasOutcome {
     Skipped,
     Updated,
     Deleted,
+}
+
+struct SessionIndexMembership<'a> {
+    metadata_key: &'a str,
+    tenant_key: &'a str,
+    user_key: &'a str,
+    sid: &'a str,
+    json: &'a str,
+    ttl_secs: u64,
 }
 
 fn unavailable(operation: &str, error: redis::RedisError) -> AppError {
@@ -95,19 +53,47 @@ async fn apply_touch_if_unchanged(
     let metadata_key = session_key(&session.tenant_id, &session.sid);
     let tenant_key = tenant_index_key(&session.tenant_id);
     let user_key = tenant_user_index_key(&session.tenant_id, session.user_id);
-    let (new_json, ttl) = replacement
-        .map(|(json, ttl)| (json, ttl.to_string()))
-        .unwrap_or(("", "0".to_string()));
+    let watched = [metadata_key.clone(), tenant_key.clone(), user_key.clone()];
+    let expected_json = expected_json.to_owned();
+    let replacement = replacement.map(|(json, ttl)| (json.to_owned(), ttl));
+    let sid = session.sid.clone();
     let code = client
-        .eval_script_i64(
-            TOUCH_IF_UNCHANGED_SCRIPT,
-            &[
-                metadata_key.as_str(),
-                tenant_key.as_str(),
-                user_key.as_str(),
-            ],
-            &[expected_json, new_json, ttl.as_str(), session.sid.as_str()],
-        )
+        .transaction(&watched, move |mut connection, mut transaction| {
+            let metadata_key = metadata_key.clone();
+            let tenant_key = tenant_key.clone();
+            let user_key = user_key.clone();
+            let expected_json = expected_json.clone();
+            let replacement = replacement.clone();
+            let sid = sid.clone();
+            async move {
+                let current: Option<String> = connection.get(&metadata_key).await?;
+                if current.as_deref() != Some(expected_json.as_str()) {
+                    return Ok(Some(0_i64));
+                }
+                let Some((new_json, ttl)) = replacement else {
+                    transaction
+                        .del(&metadata_key)
+                        .ignore()
+                        .srem(&tenant_key, &sid)
+                        .ignore()
+                        .srem(&user_key, &sid)
+                        .ignore();
+                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                    return Ok(committed.map(|()| 2_i64));
+                };
+                let membership = SessionIndexMembership {
+                    metadata_key: &metadata_key,
+                    tenant_key: &tenant_key,
+                    user_key: &user_key,
+                    sid: &sid,
+                    json: &new_json,
+                    ttl_secs: ttl,
+                };
+                queue_index_membership(&mut connection, &mut transaction, &membership).await?;
+                let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                Ok(committed.map(|()| 1_i64))
+            }
+        })
         .await
         .map_err(|error| unavailable("touch", error))?;
     parse_touch_cas_outcome(code)
@@ -121,17 +107,28 @@ pub(super) async fn add(client: &RedisClient, session: &UserSession, ttl: u64) -
         tracing::error!(%error, "序列化在线用户失败");
         AppError::Internal("无法序列化登录设备元数据".into())
     })?;
-    let ttl = ttl.to_string();
-    client
-        .eval_script_i64(
-            ADD_SCRIPT,
-            &[
-                metadata_key.as_str(),
-                tenant_key.as_str(),
-                user_key.as_str(),
-            ],
-            &[json.as_str(), ttl.as_str(), session.sid.as_str()],
-        )
+    let watched = [metadata_key.clone(), tenant_key.clone(), user_key.clone()];
+    let sid = session.sid.clone();
+    let _: () = client
+        .transaction(&watched, move |mut connection, mut transaction| {
+            let metadata_key = metadata_key.clone();
+            let tenant_key = tenant_key.clone();
+            let user_key = user_key.clone();
+            let json = json.clone();
+            let sid = sid.clone();
+            async move {
+                let membership = SessionIndexMembership {
+                    metadata_key: &metadata_key,
+                    tenant_key: &tenant_key,
+                    user_key: &user_key,
+                    sid: &sid,
+                    json: &json,
+                    ttl_secs: ttl,
+                };
+                queue_index_membership(&mut connection, &mut transaction, &membership).await?;
+                transaction.query_async(&mut connection).await
+            }
+        })
         .await
         .map_err(|error| unavailable("add", error))?;
     Ok(())
@@ -140,7 +137,7 @@ pub(super) async fn add(client: &RedisClient, session: &UserSession, ttl: u64) -
 pub(super) async fn remove(client: &RedisClient, tenant_id: &str, sid: &str) -> AppResult<()> {
     let metadata_key = session_key(tenant_id, sid);
     let tenant_key = tenant_index_key(tenant_id);
-    // 在 Rust 中解析 Snowflake ID，避免 Lua cjson 以双精度数处理时丢失精度。
+    // 在 Rust 中解析 Snowflake ID，避免经浮点转换时丢失精度。
     let metadata = client
         .get(&metadata_key)
         .await
@@ -157,19 +154,62 @@ pub(super) async fn remove(client: &RedisClient, tenant_id: &str, sid: &str) -> 
     let user_key = user_id
         .map(|user_id| tenant_user_index_key(tenant_id, user_id))
         .unwrap_or_else(|| tenant_key.clone());
+    let watched = [metadata_key.clone(), tenant_key.clone(), user_key.clone()];
+    let sid = sid.to_owned();
     client
-        .eval_script_i64(
-            REMOVE_SCRIPT,
-            &[
-                metadata_key.as_str(),
-                tenant_key.as_str(),
-                user_key.as_str(),
-            ],
-            &[sid, if user_id.is_some() { "1" } else { "0" }],
-        )
+        .transaction(&watched, move |mut connection, mut transaction| {
+            let metadata_key = metadata_key.clone();
+            let tenant_key = tenant_key.clone();
+            let user_key = user_key.clone();
+            let sid = sid.clone();
+            async move {
+                transaction
+                    .del(&metadata_key)
+                    .ignore()
+                    .srem(&tenant_key, &sid)
+                    .ignore();
+                if user_id.is_some() {
+                    transaction.srem(&user_key, &sid).ignore();
+                }
+                let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                Ok(committed)
+            }
+        })
         .await
         .map_err(|error| unavailable("remove", error))?;
     Ok(())
+}
+
+async fn queue_index_membership(
+    connection: &mut redis::aio::MultiplexedConnection,
+    transaction: &mut redis::Pipeline,
+    membership: &SessionIndexMembership<'_>,
+) -> Result<(), redis::RedisError> {
+    transaction
+        .set_ex(
+            membership.metadata_key,
+            membership.json,
+            membership.ttl_secs,
+        )
+        .ignore()
+        .sadd(membership.tenant_key, membership.sid)
+        .ignore()
+        .sadd(membership.user_key, membership.sid)
+        .ignore();
+    let ttl_secs = redis_ttl_secs(membership.ttl_secs);
+    let tenant_ttl: i64 = connection.ttl(membership.tenant_key).await?;
+    let user_ttl: i64 = connection.ttl(membership.user_key).await?;
+    if tenant_ttl == -1 || tenant_ttl < ttl_secs {
+        transaction.expire(membership.tenant_key, ttl_secs).ignore();
+    }
+    if user_ttl == -1 || user_ttl < ttl_secs {
+        transaction.expire(membership.user_key, ttl_secs).ignore();
+    }
+    Ok(())
+}
+
+fn redis_ttl_secs(ttl_secs: u64) -> i64 {
+    ttl_secs.min(i64::MAX as u64) as i64
 }
 
 async fn load_keys(
@@ -194,18 +234,15 @@ pub(super) async fn list(client: &RedisClient, tenant_id: &str) -> AppResult<Vec
         .scan_keys(tenant_pattern(tenant_id))
         .await
         .map_err(|error| unavailable("legacy_list", error))?;
-    let indexed_sids = client
-        .eval_script_optional_strings(
-            READ_INDEX_SCRIPT,
-            &[tenant_index_key(tenant_id).as_str()],
-            &[] as &[&str],
-        )
+    let indexed_sids: Vec<String> = client
+        .conn()
+        .clone()
+        .smembers(tenant_index_key(tenant_id))
         .await
         .map_err(|error| unavailable("tenant_index", error))?;
     keys.extend(
         indexed_sids
             .into_iter()
-            .flatten()
             .map(|sid| session_key(tenant_id, &sid)),
     );
     keys.sort_unstable();
@@ -223,18 +260,15 @@ pub(super) async fn list_for_user(
         .scan_keys(tenant_pattern(tenant_id))
         .await
         .map_err(|error| unavailable("legacy_user_list", error))?;
-    let indexed_sids = client
-        .eval_script_optional_strings(
-            READ_INDEX_SCRIPT,
-            &[tenant_user_index_key(tenant_id, user_id).as_str()],
-            &[] as &[&str],
-        )
+    let indexed_sids: Vec<String> = client
+        .conn()
+        .clone()
+        .smembers(tenant_user_index_key(tenant_id, user_id))
         .await
         .map_err(|error| unavailable("user_index", error))?;
     keys.extend(
         indexed_sids
             .into_iter()
-            .flatten()
             .map(|sid| session_key(tenant_id, &sid)),
     );
     keys.sort_unstable();

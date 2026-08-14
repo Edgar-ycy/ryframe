@@ -158,7 +158,7 @@
 - 公开 API 前缀统一由 `ryframe-http::API_PREFIX` 与 `api_path` 生成；OpenAPI 通过 `x-ryframe-api-prefix` 向前端发布同一前缀，部署环境只配置 API origin，不再维护版本路径。
 - API 层拥有全部公开响应 DTO 并对 Service 模型执行穷尽所有权转换；Service、Generator 和 Utils 的运行依赖图已移除 Utoipa。文件 Service 只返回存储身份，私有下载 URL 仅在 API DTO 边界构造。
 - Cargo feature 最小与最大组合统一登记在 `config/feature-matrix.json`；CI 复用 Cargo 元数据执行轻量完整性守卫，完整组合编译只通过本地 `cargo xtask feature-matrix` 显式运行。
-- 配置缓存改用数据库持久化的租户命名空间 `BIGINT` 权威版本；配置写入、版本递增与 Outbox 同事务提交，Redis 使用同槽固定 version/values 键和不经过 Lua 浮点数的精确十进制版本比较。
+- 配置缓存改用数据库持久化的租户命名空间 `BIGINT` 权威版本；配置写入、版本递增与 Outbox 同事务提交，Redis 使用同槽固定 version/values 键和不经过浮点数的精确十进制版本比较。
 - 文件上传运行时只使用 SHA-256 与 `upload_status` 状态机；旧 MD5 校验和 `del_flag = '3'` 清理被隔离到一次性维护二进制，最终单向迁移在前置数据未收敛时闭锁失败，并在成功后删除旧列与索引。
 - 所有受审计的业务写命令统一在同一 MySQL 事务内提交业务变更、授权版本和 `audit.operation` Outbox；失败审计使用独立短事务且不会覆盖原业务错误，Service 层架构守卫禁止裸提交回流。
 - Outbox 与后台任务补齐去重、租约心跳、崩溃恢复、指数退避、dead 状态和人工重试；导出任务使用稳定主键游标、创建者权限与数据范围复核、确定性对象标识以及 24 小时到期清理。
@@ -192,7 +192,7 @@
 
 - 新增显式绑定已部署 RC 的定时公网观察与自动 stable 晋级工作流，持续校验 HTTPS 首页、前后端构建 SHA、`/livez`、`/readyz`、`/api/v1/version`、定时心跳和 48 小时 Deployment 证据。
 - 新增 `/livez` 与 `/readyz`，分别提供纯进程存活检查和 MySQL、required Redis、必要对象存储就绪检查。
-- 新增 `GET /api/v1/auth/csrf`、HttpOnly refresh Cookie、稳定 `sid`、Redis refresh family、Lua 原子轮换、5 秒并发宽限与重放撤销。
+- 新增 `GET /api/v1/auth/csrf`、HttpOnly refresh Cookie、稳定 `sid`、Redis refresh family、乐观事务原子轮换、5 秒并发宽限与重放撤销。
 - 新增 MySQL 8.4、Redis 7 和 RustFS 的 Docker Compose 测试栈，以及空库基线、旧结构升级、重复迁移、种子幂等和部分结构拒绝测试。
 - 新增可信代理 CIDR、作用域幂等、依赖降级与拒绝指标、上传统一限制和 stable 联合发布门禁。
 

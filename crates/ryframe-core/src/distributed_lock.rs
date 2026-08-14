@@ -32,6 +32,7 @@ use std::{
 };
 
 use dashmap::{DashMap, mapref::entry::Entry};
+use redis::{AsyncCommands, SetExpiry, SetOptions};
 use ryframe_kernel::{AppError, AppResult};
 
 use crate::redis_client::RedisClient;
@@ -193,32 +194,24 @@ impl DistributedLock for RedisDistributedLock {
         let ttl_secs = ttl.as_secs().max(1);
         let redis_key = format!("{LOCK_KEY_PREFIX}{key}");
 
-        // 使用 SET NX 原子获取锁
-        let script = redis::Script::new(
-            r"
-            if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
-                return 1
-            else
-                return 0
-            end
-        ",
-        );
-
         let mut conn = self.client.conn().clone();
-        let result: i32 = script
-            .key(&redis_key)
-            .arg(&holder_id)
-            .arg(ttl_secs)
-            .invoke_async(&mut conn)
+        let acquired: Option<String> = conn
+            .set_options(
+                &redis_key,
+                &holder_id,
+                SetOptions::default()
+                    .conditional_set(redis::ExistenceCheck::NX)
+                    .with_expiration(SetExpiry::EX(ttl_secs)),
+            )
             .await
             .map_err(|e| AppError::ServiceUnavailable(format!("Redis SET NX 失败: {}", e)))?;
 
-        if result == 1 {
+        if acquired.is_some() {
             let key_owned = redis_key;
             let holder_clone = holder_id.clone();
             let client = self.client.clone();
 
-            // 使用 Lua 脚本释放锁（仅当持有者匹配时才释放）
+            // 使用乐观事务释放锁，仅在持有者仍匹配时删除。
             let release_fn: Box<dyn Fn() -> AppResult<()> + Send + Sync> = Box::new(move || {
                 let client = client.clone();
                 let key = key_owned.clone();
@@ -227,20 +220,21 @@ impl DistributedLock for RedisDistributedLock {
                 // `Drop` 中无法 `await`。应在当前运行时调度比较并删除操作，且不能阻塞 Tokio 工作线程。
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(async move {
-                        let release_script = redis::Script::new(
-                            r"
-                            if redis.call('GET', KEYS[1]) == ARGV[1] then
-                                return redis.call('DEL', KEYS[1])
-                            else
-                                return 0
-                            end
-                        ",
-                        );
-                        let mut conn = client.conn().clone();
-                        match release_script
-                            .key(key.as_str())
-                            .arg(&holder)
-                            .invoke_async::<i32>(&mut conn)
+                        let release_key = key.clone();
+                        let release_holder = holder.clone();
+                        let watched_key = release_key.clone();
+                        match client
+                            .transaction(&[watched_key.as_str()], move |mut conn, mut pipe| {
+                                let key = release_key.clone();
+                                let holder = release_holder.clone();
+                                async move {
+                                    let current: Option<String> = conn.get(&key).await?;
+                                    if current.as_deref() != Some(holder.as_str()) {
+                                        return Ok(Some(0_i32));
+                                    }
+                                    pipe.del(&key).query_async(&mut conn).await
+                                }
+                            })
                             .await
                         {
                             Ok(1) => tracing::debug!("分布式锁已释放 [key={}]", key),
@@ -248,7 +242,7 @@ impl DistributedLock for RedisDistributedLock {
                                 tracing::debug!("分布式锁已过期或被其他实例持有 [key={}]", key)
                             }
                             Err(e) => {
-                                tracing::warn!("分布式锁释放脚本执行失败 [key={}]: {}", key, e)
+                                tracing::warn!("分布式锁释放事务执行失败 [key={}]: {}", key, e)
                             }
                             _ => {}
                         }

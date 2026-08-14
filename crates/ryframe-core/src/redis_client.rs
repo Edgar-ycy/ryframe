@@ -6,16 +6,14 @@
 use std::{future::Future, time::Duration};
 
 use redis::{
-    AsyncCommands,
-    aio::{ConnectionManager, ConnectionManagerConfig},
+    AsyncCommands, FromRedisValue, Pipeline, ToRedisArgs,
+    aio::{ConnectionManager, ConnectionManagerConfig, MultiplexedConnection},
 };
 use ryframe_config::RedisConfig;
 use tracing::Instrument;
 
 const SCAN_BATCH_SIZE: usize = 256;
-const GET_AND_DEL_SCRIPT: &str = "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value";
-
-/// Redis 客户端 span 使用的固定操作集合，禁止将键、参数或脚本内容作为属性。
+/// Redis 客户端 span 使用的固定操作集合，禁止将键和参数内容作为属性。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RedisOperation {
     Connect,
@@ -39,7 +37,7 @@ enum RedisOperation {
     Expire,
     Incr,
     Decr,
-    Eval,
+    Transaction,
 }
 
 impl RedisOperation {
@@ -66,7 +64,7 @@ impl RedisOperation {
             Self::Expire => "EXPIRE",
             Self::Incr => "INCR",
             Self::Decr => "DECR",
-            Self::Eval => "EVAL",
+            Self::Transaction => "TRANSACTION",
         }
     }
 }
@@ -104,25 +102,6 @@ fn prepare_mget_command<K: AsRef<str>>(keys: &[K]) -> redis::Cmd {
     command
 }
 
-fn prepare_script_invocation<'script, K, V>(
-    script: &'script redis::Script,
-    keys: &[K],
-    args: &[V],
-) -> redis::ScriptInvocation<'script>
-where
-    K: AsRef<str>,
-    V: AsRef<str>,
-{
-    let mut invocation = script.prepare_invoke();
-    for key in keys {
-        invocation.key(key.as_ref());
-    }
-    for arg in args {
-        invocation.arg(arg.as_ref());
-    }
-    invocation
-}
-
 /// Redis 客户端封装
 ///
 /// 内部使用 `ConnectionManager`，自动处理重连和连接池管理。
@@ -130,6 +109,7 @@ where
 pub struct RedisClient {
     client: redis::Client,
     conn: ConnectionManager,
+    timeout: Duration,
 }
 
 impl RedisClient {
@@ -165,12 +145,51 @@ impl RedisClient {
         .await?;
 
         tracing::info!("Redis 连接成功: {}:{}", config.host, config.port);
-        Ok(Self { client, conn })
+        Ok(Self {
+            client,
+            conn,
+            timeout: Duration::from_secs(config.timeout_secs.max(1)),
+        })
     }
 
     /// 获取底层连接管理器（用于高级操作）
     pub fn conn(&self) -> &ConnectionManager {
         &self.conn
+    }
+
+    /// 建立本次操作独占的多路复用连接。
+    ///
+    /// 需要 `WATCH/MULTI/EXEC` 的调用必须使用独占连接，避免多个乐观事务在共享连接上交错。
+    async fn dedicated_connection(&self) -> Result<MultiplexedConnection, redis::RedisError> {
+        tokio::time::timeout(self.timeout, self.client.get_multiplexed_async_connection())
+            .await
+            .map_err(|_| redis_timeout_error("Redis 独占连接超时"))?
+    }
+
+    /// 在独占连接上执行 Redis 乐观事务，检测到并发修改时自动重试。
+    ///
+    /// 闭包可能执行多次，闭包内只能进行可重复的 Redis 读取并构造事务命令，不能产生外部副作用。
+    pub async fn transaction<K, T, F, Fut>(
+        &self,
+        keys: &[K],
+        operation: F,
+    ) -> Result<T, redis::RedisError>
+    where
+        K: ToRedisArgs,
+        T: FromRedisValue,
+        F: FnMut(MultiplexedConnection, Pipeline) -> Fut,
+        Fut: Future<Output = Result<Option<T>, redis::RedisError>>,
+    {
+        let connection = self.dedicated_connection().await?;
+        trace_redis_operation(RedisOperation::Transaction, async {
+            tokio::time::timeout(
+                self.timeout,
+                redis::aio::transaction_async(connection, keys, operation),
+            )
+            .await
+            .map_err(|_| redis_timeout_error("Redis 事务超时"))?
+        })
+        .await
     }
 
     /// 建立一个专用的 Pub/Sub 订阅连接并订阅指定频道。
@@ -278,14 +297,12 @@ impl RedisClient {
         key: K,
     ) -> Result<Option<String>, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::GetAndDel, async {
-            redis::cmd("EVAL")
-                .arg(GET_AND_DEL_SCRIPT)
-                .arg(1)
+        trace_redis_operation(
+            RedisOperation::GetAndDel,
+            redis::cmd("GETDEL")
                 .arg(key.as_ref())
-                .query_async(&mut conn)
-                .await
-        })
+                .query_async(&mut conn),
+        )
         .await
     }
 
@@ -446,67 +463,10 @@ impl RedisClient {
         let mut conn = self.conn.clone();
         trace_redis_operation(RedisOperation::Decr, conn.decr(key.as_ref(), 1)).await
     }
+}
 
-    /// 执行 Lua 脚本（用于滑动窗口限流等原子操作）。
-    ///
-    /// # 参数
-    /// - `script`: Lua 脚本内容
-    /// - `keys`: KEYS 数组
-    /// - `args`: ARGV 数组
-    ///
-    /// # 返回值
-    /// 脚本返回值（通常为整数或字符串）
-    pub async fn eval_script<S: AsRef<str>, K: AsRef<str>, V: AsRef<str>>(
-        &self,
-        script: S,
-        keys: &[K],
-        args: &[V],
-    ) -> Result<redis::Value, redis::RedisError> {
-        let mut conn = self.conn.clone();
-        let lua = redis::Script::new(script.as_ref());
-        trace_redis_operation(
-            RedisOperation::Eval,
-            prepare_script_invocation(&lua, keys, args).invoke_async(&mut conn),
-        )
-        .await
-    }
-
-    /// 执行返回整数状态码的 Lua 脚本。
-    pub async fn eval_script_i64<S: AsRef<str>, K: AsRef<str>, V: AsRef<str>>(
-        &self,
-        script: S,
-        keys: &[K],
-        args: &[V],
-    ) -> Result<i64, redis::RedisError> {
-        let value = self.eval_script(script, keys, args).await?;
-        redis::from_redis_value(value).map_err(|error| {
-            redis::RedisError::from((
-                redis::ErrorKind::Parse,
-                "unable to parse Redis script response",
-                error.to_string(),
-            ))
-        })
-    }
-
-    /// 执行返回可空字符串数组的 Lua 脚本。
-    ///
-    /// 该返回类型用于一次原子读取多个相互关联的缓存值；Lua 返回的 `false`
-    /// 会被转换为 `None`，避免调用方依赖 Redis 协议值的内部表示。
-    pub async fn eval_script_optional_strings<S: AsRef<str>, K: AsRef<str>, V: AsRef<str>>(
-        &self,
-        script: S,
-        keys: &[K],
-        args: &[V],
-    ) -> Result<Vec<Option<String>>, redis::RedisError> {
-        let value = self.eval_script(script, keys, args).await?;
-        redis::from_redis_value(value).map_err(|error| {
-            redis::RedisError::from((
-                redis::ErrorKind::Parse,
-                "unable to parse Redis script response",
-                error.to_string(),
-            ))
-        })
-    }
+fn redis_timeout_error(message: &'static str) -> redis::RedisError {
+    redis::RedisError::from(std::io::Error::new(std::io::ErrorKind::TimedOut, message))
 }
 
 async fn build_client(config: &RedisConfig) -> Result<redis::Client, redis::RedisError> {

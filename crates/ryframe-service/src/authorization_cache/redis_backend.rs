@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use redis::AsyncCommands;
 use ryframe_core::RedisClient;
 
 use super::keyspace::{
@@ -6,134 +7,6 @@ use super::keyspace::{
     tenant_value_hash_key, user_version_key,
 };
 use super::*;
-
-const READ_SNAPSHOT_SCRIPT: &str = r#"
-local tenant_epoch = redis.call('GET', KEYS[1])
-local user_version = redis.call('GET', KEYS[2])
-if not tenant_epoch or not user_version then
-  return {tenant_epoch or false, user_version or false, false}
-end
-local snapshot = redis.call('HGET', KEYS[3], tenant_epoch .. ':' .. user_version)
-return {tenant_epoch, user_version, snapshot or false}
-"#;
-
-const WRITE_SNAPSHOT_SCRIPT: &str = r#"
-local tenant_epoch = redis.call('GET', KEYS[1])
-local user_version = redis.call('GET', KEYS[2])
-local expected_epoch = tonumber(ARGV[1])
-local expected_version = tonumber(ARGV[2])
-if tenant_epoch and tonumber(tenant_epoch) > expected_epoch then
-  return 0
-end
-if user_version and tonumber(user_version) > expected_version then
-  return 0
-end
-redis.call('SET', KEYS[1], ARGV[1])
-redis.call('SET', KEYS[2], ARGV[2])
-redis.call('DEL', KEYS[3])
-redis.call('HSET', KEYS[3], ARGV[1] .. ':' .. ARGV[2], ARGV[4])
-redis.call('EXPIRE', KEYS[3], ARGV[3])
-return 1
-"#;
-
-const UPDATE_MIRROR_SCRIPT: &str = r#"
-local current = redis.call('GET', KEYS[1])
-local incoming = tonumber(ARGV[1])
-if current and tonumber(current) > incoming then
-  return tonumber(current)
-end
-redis.call('SET', KEYS[1], ARGV[1])
-return incoming
-"#;
-
-const READ_TENANT_VALUE_SCRIPT: &str = r#"
-local tenant_epoch = redis.call('GET', KEYS[1])
-if not tenant_epoch then
-  return {false, false}
-end
-local value = redis.call('HGET', KEYS[2], tenant_epoch)
-return {tenant_epoch, value or false}
-"#;
-
-const WRITE_TENANT_VALUE_SCRIPT: &str = r#"
-local tenant_epoch = redis.call('GET', KEYS[1])
-if not tenant_epoch or tenant_epoch ~= ARGV[1] then
-  return 0
-end
-redis.call('DEL', KEYS[2])
-redis.call('HSET', KEYS[2], ARGV[1], ARGV[3])
-redis.call('EXPIRE', KEYS[2], ARGV[2])
-return 1
-"#;
-
-const READ_NAMESPACE_VALUE_SCRIPT: &str = r#"
-local namespace_version = redis.call('GET', KEYS[1])
-if not namespace_version then
-  return {false, false}
-end
-local value = redis.call('HGET', KEYS[2], ARGV[1])
-return {namespace_version, value or false}
-"#;
-
-const WRITE_NAMESPACE_VALUE_SCRIPT: &str = r#"
-local namespace_version = redis.call('GET', KEYS[1])
-if not namespace_version or namespace_version ~= ARGV[1] then
-  return 0
-end
-redis.call('HSET', KEYS[2], ARGV[2], ARGV[4])
-redis.call('EXPIRE', KEYS[2], ARGV[3])
-return 1
-"#;
-
-const ADVANCE_NAMESPACE_VERSION_SCRIPT: &str = r#"
-local function is_canonical_decimal(value)
-  if not value or value == '' then
-    return false
-  end
-  if value == '0' then
-    return true
-  end
-  if string.sub(value, 1, 1) == '0' then
-    return false
-  end
-  return string.find(value, '[^0-9]') == nil
-end
-
-local function compare_decimal(left, right)
-  if string.len(left) < string.len(right) then
-    return -1
-  end
-  if string.len(left) > string.len(right) then
-    return 1
-  end
-  if left < right then
-    return -1
-  end
-  if left > right then
-    return 1
-  end
-  return 0
-end
-
-local incoming = ARGV[1]
-if not is_canonical_decimal(incoming) then
-  return redis.error_reply('namespace version must be a canonical decimal string')
-end
-
-local current = redis.call('GET', KEYS[1])
-if current then
-  if not is_canonical_decimal(current) then
-    return redis.error_reply('stored namespace version is not a canonical decimal string')
-  end
-  if compare_decimal(incoming, current) <= 0 then
-    return 0
-  end
-end
-
-redis.call('SET', KEYS[1], incoming)
-redis.call('DEL', KEYS[2])
-return 1
-"#;
 
 pub(super) struct RedisAuthorizationCacheBackend {
     pub(super) redis: RedisClient,
@@ -146,24 +19,38 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         tenant_id: &str,
         user_id: i64,
     ) -> Result<AuthorizationCacheLookup, String> {
-        // 三个键共享同一租户 hash tag，Redis Cluster 可把整段脚本固定路由到一个槽。
-        let keys = [
-            tenant_epoch_key(tenant_id),
-            user_version_key(tenant_id, user_id),
-            snapshot_hash_key(tenant_id, user_id),
-        ];
-        let args: [String; 0] = [];
-        let values = self
+        let tenant_key = tenant_epoch_key(tenant_id);
+        let user_key = user_version_key(tenant_id, user_id);
+        let snapshot_key = snapshot_hash_key(tenant_id, user_id);
+        let watched = [tenant_key.clone(), user_key.clone(), snapshot_key.clone()];
+        let values: (Option<String>, Option<String>, Option<String>) = self
             .redis
-            .eval_script_optional_strings(READ_SNAPSHOT_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let tenant_key = tenant_key.clone();
+                let user_key = user_key.clone();
+                let snapshot_key = snapshot_key.clone();
+                async move {
+                    let tenant_epoch: Option<String> = connection.get(&tenant_key).await?;
+                    let user_version: Option<String> = connection.get(&user_key).await?;
+                    let field = match (&tenant_epoch, &user_version) {
+                        (Some(tenant_epoch), Some(user_version)) => {
+                            format!("{tenant_epoch}:{user_version}")
+                        }
+                        _ => "__ryframe_missing_snapshot__".to_owned(),
+                    };
+                    transaction
+                        .get(&tenant_key)
+                        .get(&user_key)
+                        .hget(&snapshot_key, field);
+                    transaction.query_async(&mut connection).await
+                }
+            })
             .await
             .map_err(|error| error.to_string())?;
-        if values.len() != 3 {
-            return Err(format!("授权快照脚本返回了 {} 项，预期 3 项", values.len()));
-        }
-        let tenant_authorization_epoch = parse_optional_version(values[0].as_deref())?;
-        let user_authorization_version = parse_optional_version(values[1].as_deref())?;
-        let snapshot = values[2]
+        let tenant_authorization_epoch = parse_optional_version(values.0.as_deref())?;
+        let user_authorization_version = parse_optional_version(values.1.as_deref())?;
+        let snapshot = values
+            .2
             .as_deref()
             .map(serde_json::from_str::<AuthorizationSnapshot>)
             .transpose()
@@ -185,22 +72,52 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let tenant_id = &snapshot.principal.actor.tenant_id;
         let user_id = snapshot.principal.actor.user_id;
         let versions = snapshot.versions;
-        let keys = [
-            tenant_epoch_key(tenant_id),
-            user_version_key(tenant_id, user_id),
-            snapshot_hash_key(tenant_id, user_id),
-        ];
+        let tenant_key = tenant_epoch_key(tenant_id);
+        let user_key = user_version_key(tenant_id, user_id);
+        let snapshot_key = snapshot_hash_key(tenant_id, user_id);
+        let watched = [tenant_key.clone(), user_key.clone(), snapshot_key.clone()];
         let payload = serde_json::to_string(snapshot).map_err(|error| error.to_string())?;
-        let args = [
-            versions.tenant_authorization_epoch.to_string(),
-            versions.user_authorization_version.to_string(),
-            AUTHORIZATION_SNAPSHOT_TTL_SECS.to_string(),
-            payload,
-        ];
+        let tenant_epoch = versions.tenant_authorization_epoch.to_string();
+        let user_version = versions.user_authorization_version.to_string();
+        let ttl_secs = AUTHORIZATION_SNAPSHOT_TTL_SECS;
         self.redis
-            .eval_script_i64(WRITE_SNAPSHOT_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let tenant_key = tenant_key.clone();
+                let user_key = user_key.clone();
+                let snapshot_key = snapshot_key.clone();
+                let payload = payload.clone();
+                let tenant_epoch = tenant_epoch.clone();
+                let user_version = user_version.clone();
+                async move {
+                    let current_tenant: Option<String> = connection.get(&tenant_key).await?;
+                    let current_user: Option<String> = connection.get(&user_key).await?;
+                    if version_is_newer(current_tenant.as_deref(), &tenant_epoch)
+                        .map_err(redis_cache_value_error)?
+                        || version_is_newer(current_user.as_deref(), &user_version)
+                            .map_err(redis_cache_value_error)?
+                    {
+                        return Ok(Some(false));
+                    }
+                    transaction
+                        .set(&tenant_key, &tenant_epoch)
+                        .ignore()
+                        .set(&user_key, &user_version)
+                        .ignore()
+                        .del(&snapshot_key)
+                        .ignore()
+                        .hset(
+                            &snapshot_key,
+                            format!("{tenant_epoch}:{user_version}"),
+                            payload,
+                        )
+                        .ignore()
+                        .expire(&snapshot_key, redis_ttl_secs(ttl_secs))
+                        .ignore();
+                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                    Ok(committed.map(|()| true))
+                }
+            })
             .await
-            .map(|stored| stored == 1)
             .map_err(|error| error.to_string())
     }
 
@@ -236,25 +153,31 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         tenant_id: &str,
         namespace: &str,
     ) -> Result<Option<TenantCacheLookup>, String> {
-        let keys = [
-            tenant_epoch_key(tenant_id),
-            tenant_value_hash_key(tenant_id, namespace),
-        ];
-        let args: [String; 0] = [];
-        let values = self
+        let tenant_key = tenant_epoch_key(tenant_id);
+        let value_key = tenant_value_hash_key(tenant_id, namespace);
+        let watched = [tenant_key.clone(), value_key.clone()];
+        let values: (Option<String>, Option<String>) = self
             .redis
-            .eval_script_optional_strings(READ_TENANT_VALUE_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let tenant_key = tenant_key.clone();
+                let value_key = value_key.clone();
+                async move {
+                    let tenant_epoch: Option<String> = connection.get(&tenant_key).await?;
+                    let field = tenant_epoch
+                        .as_deref()
+                        .unwrap_or("__ryframe_missing_tenant_epoch__");
+                    transaction.get(&tenant_key).hget(&value_key, field);
+                    transaction.query_async(&mut connection).await
+                }
+            })
             .await
             .map_err(|error| error.to_string())?;
-        if values.len() != 2 {
-            return Err(format!("租户缓存脚本返回了 {} 项，预期 2 项", values.len()));
-        }
-        let Some(tenant_authorization_epoch) = parse_optional_version(values[0].as_deref())? else {
+        let Some(tenant_authorization_epoch) = parse_optional_version(values.0.as_deref())? else {
             return Ok(None);
         };
         Ok(Some(TenantCacheLookup {
             tenant_authorization_epoch,
-            value: values[1].clone(),
+            value: values.1,
         }))
     }
 
@@ -266,19 +189,34 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         value: &str,
         ttl_secs: u64,
     ) -> Result<bool, String> {
-        let keys = [
-            tenant_epoch_key(tenant_id),
-            tenant_value_hash_key(tenant_id, namespace),
-        ];
-        let args = [
-            authorization_epoch.to_string(),
-            ttl_secs.to_string(),
-            value.to_owned(),
-        ];
+        let tenant_key = tenant_epoch_key(tenant_id);
+        let value_key = tenant_value_hash_key(tenant_id, namespace);
+        let watched = [tenant_key.clone(), value_key.clone()];
+        let epoch = authorization_epoch.to_string();
+        let value = value.to_owned();
         self.redis
-            .eval_script_i64(WRITE_TENANT_VALUE_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let tenant_key = tenant_key.clone();
+                let value_key = value_key.clone();
+                let epoch = epoch.clone();
+                let value = value.clone();
+                async move {
+                    let current: Option<String> = connection.get(&tenant_key).await?;
+                    if current.as_deref() != Some(epoch.as_str()) {
+                        return Ok(Some(false));
+                    }
+                    transaction
+                        .del(&value_key)
+                        .ignore()
+                        .hset(&value_key, &epoch, value)
+                        .ignore()
+                        .expire(&value_key, redis_ttl_secs(ttl_secs))
+                        .ignore();
+                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                    Ok(committed.map(|()| true))
+                }
+            })
             .await
-            .map(|stored| stored == 1)
             .map_err(|error| error.to_string())
     }
 
@@ -288,15 +226,33 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         namespace: &str,
         namespace_version: i64,
     ) -> Result<(), String> {
-        let keys = [
-            namespace_version_key(tenant_id, namespace),
-            namespace_values_hash_key(tenant_id, namespace),
-        ];
-        let args = [namespace_version.to_string()];
+        let version_key = namespace_version_key(tenant_id, namespace);
+        let values_key = namespace_values_hash_key(tenant_id, namespace);
+        let watched = [version_key.clone(), values_key.clone()];
+        let incoming = namespace_version.to_string();
+        validate_canonical_decimal(&incoming)?;
         self.redis
-            .eval_script_i64(ADVANCE_NAMESPACE_VERSION_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let version_key = version_key.clone();
+                let values_key = values_key.clone();
+                let incoming = incoming.clone();
+                async move {
+                    let current: Option<String> = connection.get(&version_key).await?;
+                    if let Some(current) = current.as_deref() {
+                        validate_canonical_decimal(current).map_err(redis_cache_value_error)?;
+                        if compare_decimal(&incoming, current).is_le() {
+                            return Ok(Some(()));
+                        }
+                    }
+                    transaction
+                        .set(&version_key, incoming)
+                        .ignore()
+                        .del(&values_key)
+                        .ignore();
+                    transaction.query_async(&mut connection).await
+                }
+            })
             .await
-            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
@@ -306,34 +262,33 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         namespace: &str,
         item: &str,
     ) -> Result<Option<NamespaceCacheLookup>, String> {
-        let keys = [
-            namespace_version_key(tenant_id, namespace),
-            namespace_values_hash_key(tenant_id, namespace),
-        ];
-        let args = [item.to_owned()];
-        let values = self
+        let version_key = namespace_version_key(tenant_id, namespace);
+        let values_key = namespace_values_hash_key(tenant_id, namespace);
+        let watched = [version_key.clone(), values_key.clone()];
+        let item = item.to_owned();
+        let values: (Option<String>, Option<String>) = self
             .redis
-            .eval_script_optional_strings(READ_NAMESPACE_VALUE_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let version_key = version_key.clone();
+                let values_key = values_key.clone();
+                let item = item.clone();
+                async move {
+                    transaction.get(&version_key).hget(&values_key, item);
+                    transaction.query_async(&mut connection).await
+                }
+            })
             .await
             .map_err(|error| error.to_string())?;
-        if values.len() != 2 {
-            return Err(format!(
-                "租户缓存命名空间脚本返回了 {} 项，预期 2 项",
-                values.len()
-            ));
-        }
-        let Some(raw_version) = values[0].as_deref() else {
+        let Some(raw_version) = values.0.as_deref() else {
             return Ok(None);
         };
+        validate_canonical_decimal(raw_version)?;
         let namespace_version = raw_version
             .parse::<i64>()
             .map_err(|error| format!("租户缓存命名空间版本无效: {error}"))?;
-        if namespace_version < 0 || raw_version != namespace_version.to_string() {
-            return Err("租户缓存命名空间版本不是规范十进制字符串".into());
-        }
         Ok(Some(NamespaceCacheLookup {
             namespace_version,
-            value: values[1].clone(),
+            value: values.1,
         }))
     }
 
@@ -346,32 +301,91 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         value: &str,
         ttl_secs: u64,
     ) -> Result<bool, String> {
-        let keys = [
-            namespace_version_key(tenant_id, namespace),
-            namespace_values_hash_key(tenant_id, namespace),
-        ];
-        let args = [
-            namespace_version.to_string(),
-            item.to_owned(),
-            ttl_secs.to_string(),
-            value.to_owned(),
-        ];
+        let version_key = namespace_version_key(tenant_id, namespace);
+        let values_key = namespace_values_hash_key(tenant_id, namespace);
+        let watched = [version_key.clone(), values_key.clone()];
+        let expected_version = namespace_version.to_string();
+        let item = item.to_owned();
+        let value = value.to_owned();
         self.redis
-            .eval_script_i64(WRITE_NAMESPACE_VALUE_SCRIPT, &keys, &args)
+            .transaction(&watched, move |mut connection, mut transaction| {
+                let version_key = version_key.clone();
+                let values_key = values_key.clone();
+                let expected_version = expected_version.clone();
+                let item = item.clone();
+                let value = value.clone();
+                async move {
+                    let current: Option<String> = connection.get(&version_key).await?;
+                    if current.as_deref() != Some(expected_version.as_str()) {
+                        return Ok(Some(false));
+                    }
+                    transaction
+                        .hset(&values_key, item, value)
+                        .ignore()
+                        .expire(&values_key, redis_ttl_secs(ttl_secs))
+                        .ignore();
+                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                    Ok(committed.map(|()| true))
+                }
+            })
             .await
-            .map(|stored| stored == 1)
             .map_err(|error| error.to_string())
     }
 }
 
 async fn update_mirror(redis: &RedisClient, key: String, version: i64) -> Result<(), String> {
-    let keys = [key];
-    let args = [version.to_string()];
+    let watched = [key.clone()];
+    let incoming = version.to_string();
     redis
-        .eval_script_i64(UPDATE_MIRROR_SCRIPT, &keys, &args)
+        .transaction(&watched, move |mut connection, mut transaction| {
+            let key = key.clone();
+            let incoming = incoming.clone();
+            async move {
+                let current: Option<String> = connection.get(&key).await?;
+                if version_is_newer(current.as_deref(), &incoming)
+                    .map_err(redis_cache_value_error)?
+                {
+                    return Ok(Some(()));
+                }
+                transaction.set(&key, incoming).ignore();
+                transaction.query_async(&mut connection).await
+            }
+        })
         .await
-        .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+fn version_is_newer(current: Option<&str>, incoming: &str) -> Result<bool, String> {
+    current
+        .map(|current| {
+            let current = current
+                .parse::<i64>()
+                .map_err(|error| format!("授权版本不是有效整数: {error}"))?;
+            let incoming = incoming
+                .parse::<i64>()
+                .map_err(|error| format!("授权版本不是有效整数: {error}"))?;
+            Ok(current > incoming)
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(false))
+}
+
+fn validate_canonical_decimal(value: &str) -> Result<(), String> {
+    let canonical = value == "0"
+        || (!value.is_empty()
+            && !value.starts_with('0')
+            && value.bytes().all(|byte| byte.is_ascii_digit()));
+    if canonical {
+        Ok(())
+    } else {
+        Err("租户缓存命名空间版本不是规范十进制字符串".into())
+    }
+}
+
+fn compare_decimal(left: &str, right: &str) -> std::cmp::Ordering {
+    left.len()
+        .cmp(&right.len())
+        .then_with(|| left.as_bytes().cmp(right.as_bytes()))
 }
 
 fn parse_optional_version(value: Option<&str>) -> Result<Option<i32>, String> {
@@ -382,4 +396,17 @@ fn parse_optional_version(value: Option<&str>) -> Result<Option<i32>, String> {
                 .map_err(|error| format!("授权版本不是有效整数: {error}"))
         })
         .transpose()
+}
+
+fn redis_ttl_secs(ttl_secs: u64) -> i64 {
+    ttl_secs.min(i64::MAX as u64) as i64
+}
+
+fn redis_cache_value_error(message: String) -> redis::RedisError {
+    (
+        redis::ErrorKind::UnexpectedReturnType,
+        "授权缓存 Redis 值无效",
+        message,
+    )
+        .into()
 }

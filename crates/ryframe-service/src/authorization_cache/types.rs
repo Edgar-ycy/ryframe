@@ -17,7 +17,7 @@ pub struct AuthorizationSnapshot {
     pub principal: RequestPrincipal,
 }
 
-/// 一次 Lua 原子读取的结果。
+/// 一次 Redis 乐观事务读取的结果。
 #[derive(Clone, Debug)]
 pub struct AuthorizationCacheLookup {
     pub tenant_authorization_epoch: Option<i32>,

@@ -79,7 +79,7 @@ span，任何模式都不记录绑定参数值；数据库日志继承 HTTP、�
 
 具体数据库、Redis 和对象存储实现只能在组合根选择。Handler 或 Service 不得读取环境变量并自行创建基础设施连接。
 
-当前 Redis 运行边界是 Redis 7 standalone。Refresh Family、租户索引和租户用户索引的 Lua
+当前 Redis 运行边界是 Redis 7 standalone。Refresh Family、租户索引和租户用户索引的乐观事务
 协议依赖单个 standalone 实例提供原子执行；当前客户端和键布局不支持 Redis Cluster，生产配置
 不得指向 Cluster 节点或把 Cluster 代理当作 standalone 使用。多 API 实例必须连接同一个
 `required` Redis，才能获得跨实例一致的刷新、重放检测和会话撤销；内存后端只保证单进程内
@@ -113,7 +113,7 @@ Refresh Family 是设备会话是否有效的唯一可靠事实来源。每个 F
 仅凭未过期 JWT 继续访问。
 
 Redis 模式为 Family 维护租户索引和租户用户索引。注册、轮换、重放撤销、单设备撤销与批量
-撤销使用 Lua 维护 Family 和索引；索引 TTL 延伸至成员中的最晚绝对过期时间，但索引从不授予
+撤销使用 Redis 乐观事务维护 Family 和索引；索引 TTL 延伸至成员中的最晚绝对过期时间，但索引从不授予
 会话有效性。读取时仍逐个回查 Family，并清理已撤销、已过期或身份不匹配的陈旧成员。同一租户
 用户最多注册 256 个活跃 Family；`revoke-others` 在 Redis 中以单次有界脚本撤销最多 256 个
 候选，展示 metadata 的后续清理是可重试的辅助操作，不改变已经提交的权威撤销结果。
@@ -198,7 +198,7 @@ SQL、过滤器、排序、operationId 或权限码形成新业务逻辑。
 凭据或委托变化，以及参与委托的用户授权变化，都在租户写栅栏内提升对应授权版本和租户授权纪元，
 防止旧快照继续授予访问。
 
-Agent 限流依赖 Redis 7 standalone 的原子 Lua。预认证 IP 桶在查询公开 Key ID 前先防刷，解析身份后
+Agent 限流依赖 Redis 7 standalone 的原子乐观事务。预认证 IP 桶在查询公开 Key ID 前先防刷，解析身份后
 同一原子决策覆盖 IP、租户、服务账号、凭据、可选被代表用户、服务账号+能力成本及账号并发租约七个
 维度；并发租约由 request ID 所有，正常完成时释放，异常由 TTL 回收。Redis 故障、协议异常或多实例
 无法共享同一 required Redis 时不允许降级放行。Pepper Keyring 只保存于进程内存，凭据与委托表只
@@ -241,9 +241,9 @@ Agent 限流依赖 Redis 7 standalone 的原子 Lua。预认证 IP 桶在查询�
 33. `ryframe-auth` 通过 `PrincipalResolver` 委托 `AuthService` 解析租户、用户、角色、权限和数据范围；`ryframe-monitor` 通过 `DatabaseMonitor` 使用 `ryframe-db` 的 SeaORM 适配器。两个横切 crate 已移除 `ryframe-db`、SeaORM 和裸数据库连接依赖，边界由 crate 依赖声明、模块可见性与编译检查共同维护。
 34. `AuthService` 已拆为会话签发、身份与授权装载、主体解析和暴力破解防护模块；登录、刷新、当前用户和请求主体共享身份/授权规则。请求授权每次从 MySQL 解析，不使用 Redis 权限缓存，避免缓存删除失败形成旧权限窗口。
 35. 路由权限目录由 `ryframe-api/build.rs` 在编译期使用 `syn` 解析并嵌入二进制，覆盖 API 与监控路由；权限 Service 只同步显式传入的目录，不再依赖源码路径或部署环境中的 Rust 文件。
-36. Redis 模式匹配统一使用游标 `SCAN` 和批量删除，不暴露阻塞式 `KEYS`；一次性数据通过 Lua 原子取删，缓存写失败必须记录上下文。
+36. Redis 模式匹配统一使用游标 `SCAN` 和批量删除，不暴露阻塞式 `KEYS`；一次性数据通过原生命令原子取删，缓存写失败必须记录上下文。
 37. 菜单按模型与层级校验拆分并使用 `MenuType` 强类型，`route_key` 规范化后再校验和持久化；部门按 command/query/model 拆分，部门引用关系由 Repository 查询。
-38. 参数配置缓存采用数据库权威的租户命名空间单调版本：业务写、`BIGINT` 递增和 Outbox 同事务提交；Redis 使用同一 tenant hash slot 下固定 version key 与 values Hash，Lua 以规范十进制字符串精确比较，只有新版本才清 Hash。热命中零 SQL，未命中固定从主库读取，Redis 丢失时从数据库恢复权威版本。完整协议见 [缓存命名空间一致性协议](cache-namespace.md)。
+38. 参数配置缓存采用数据库权威的租户命名空间单调版本：业务写、`BIGINT` 递增和 Outbox 同事务提交；Redis 使用同一 tenant hash slot 下固定 version key 与 values Hash，乐观事务以规范十进制字符串精确比较，只有新版本才清 Hash。热命中零 SQL，未命中固定从主库读取，Redis 丢失时从数据库恢复权威版本。完整协议见 [缓存命名空间一致性协议](cache-namespace.md)。
 39. OpenAPI 可由 `export_openapi` 确定性导出到 `openapi/openapi.json`；开发者在本地更新快照，托管 CI 复用编译缓存重新导出并做精确差异比较。联合发布门禁比对前后端检入快照的版本和 SHA-256，不上传独立契约产物。
 40. 稳定响应模型和 multipart 表单已进入组件 schema，JSON 中的 Snowflake ID 统一为字符串；前端同步快照并通过 `openapi-typescript` 生成只读类型，API 模块不再复制 DTO 字段。
 41. 列表查询宏生成分页 `ListQuery` 与纯筛选 `FilterQuery`；角色和用户选择器统一使用 `OptionQuery(q?, limit?)`，执行租户与数据范围内的稳定前缀查询，并以 `has_more` 表示是否存在更多候选项。
@@ -254,7 +254,7 @@ Agent 限流依赖 Redis 7 standalone 的原子 Lua。预认证 IP 桶在查询�
 46. MySQL 8.4、Redis 7 与固定版本 RustFS 的真实拓扑、迁移和 API 冒烟验证保留为本地或受控验收环境流程；托管后端 CI 不启动依赖容器，也不重复运行 Rust 测试。
 47. 隔离数据库、副本轮询、主库写入、命名数据源、迁移、代码生成器、Redis 与 RustFS 链路由本地完整验收覆盖；日常 push CI 只执行静态质量门禁和依赖安全审计。
 48. 配置收敛为静态启动配置，环境名统一为 `dev/test/prod`；生产配置文件禁止保存敏感值，secret 仅允许由 `APP_*` 环境变量或外部 secret manager 注入，缺失配置、旧 `ENC[...]` 格式和未知字段都会拒绝启动。
-49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过 Lua CAS 轮换和检测重放。
+49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过乐观事务 CAS 轮换和检测重放。
 50. 根路径 `/livez` 只检查进程；API 与独立 Worker 都由后台任务按固定周期探测依赖，`/readyz` 只读取有时效上限的内存快照，过期时按未就绪处理，请求路径不执行网络 I/O。API 快照覆盖 MySQL、required Redis 和必要对象存储；Worker 快照只要求 MySQL 与 required Redis，对象存储标记为不要求。探针绕过租户、认证、幂等和业务限流。
 51. 幂等只应用于认证后的 system/platform 写请求；存储键仅隔离租户、用户和原始 `Idempotency-Key`，完整指纹绑定方法、真实规范化路径、排序后的查询参数和 body SHA-256。同主体同键同指纹才允许回放，任一请求语义不同均返回 `409`；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
 52. 稳定发布只接受位于 `main` 的 `vMAJOR.MINOR.PATCH` annotated tag，前后端必须同标签同版本，且 annotation 与各自 CHANGELOG 完整版本章节一致；发布前再次锁定两仓 tag object ID 与完整 commit SHA。后端是唯一联合发布主控：它校验前端仓库和精确 commit、两份 OpenAPI 的 SHA-256，以及两仓精确提交均已有成功的 push CI，然后生成合并发布说明。稳定版 Release 不构建容器、不上传自定义附件，只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照；交付身份直接来自 annotated tag object 及其解引用出的精确提交，两仓均禁止 Nightly 和其他预发布工作流。
