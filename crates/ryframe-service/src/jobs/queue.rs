@@ -9,8 +9,8 @@ use ryframe_core::RedisClient;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, DatabaseCluster,
-    EnqueueBackgroundJob, EnqueueBackgroundJobResult, background_job, tenant_config_bundle,
-    tenant_config_transfer,
+    EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExecutionTenantScope, background_job,
+    tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
@@ -146,13 +146,17 @@ impl JobQueue {
     }
 
     /// 汇报所有已注册任务类型的低基数队列指标。
-    pub async fn report_metrics_for_types(&self, job_types: &[String]) -> AppResult<()> {
+    pub async fn report_metrics_for_types(
+        &self,
+        job_types: &[String],
+        tenant_scope: &ExecutionTenantScope,
+    ) -> AppResult<()> {
         let Some(observer) = self.metrics_observer() else {
             return Ok(());
         };
         for stats in self
             .repository
-            .stats_for_types(self.primary(), job_types)
+            .stats_for_types(self.primary(), job_types, tenant_scope)
             .await?
         {
             observer.set_queue_depth(&stats.job_type, "pending", stats.pending);
@@ -173,12 +177,15 @@ impl JobQueue {
     }
 
     /// 回收崩溃 Worker 遗留的过期任务租约。
-    pub async fn recover_expired_leases(&self) -> AppResult<()> {
+    pub async fn recover_expired_leases(
+        &self,
+        tenant_scope: &ExecutionTenantScope,
+    ) -> AppResult<()> {
         loop {
             let now = self.database_now().await?;
             let recovered = self
                 .repository
-                .recover_expired_leases(self.primary(), now)
+                .recover_expired_leases(self.primary(), now, tenant_scope)
                 .await?;
             if recovered.requeued.saturating_add(recovered.dead) < 500 {
                 break;

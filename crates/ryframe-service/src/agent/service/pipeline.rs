@@ -71,6 +71,18 @@ impl AgentService {
                 return Err(error);
             }
         };
+        if !self.multi_tenancy.allows_tenant(&hint.credential.tenant_id) {
+            let error = invalid_credential();
+            self.audit_failure_bounded(
+                request,
+                Some(&hint),
+                RESULT_DENIED,
+                "invalid_credential",
+                401,
+            )
+            .await?;
+            return Err(error);
+        }
         let (tenant_limit, account_limit) =
             match before_deadline(deadline, self.limit_hints(&hint)).await {
                 Ok(limits) => limits,

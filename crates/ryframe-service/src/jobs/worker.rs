@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as St
 use async_trait::async_trait;
 use chrono::Duration;
 use ryframe_config::JobConfig;
-use ryframe_db::{FailBackgroundJob, JobFailureDisposition, background_job};
+use ryframe_db::{ExecutionTenantScope, FailBackgroundJob, JobFailureDisposition, background_job};
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
@@ -96,6 +96,7 @@ pub enum JobRunResult {
 #[derive(Clone)]
 pub struct JobWorker {
     queue: Arc<JobQueue>,
+    execution_tenant_scope: ExecutionTenantScope,
     handlers: Arc<BTreeMap<String, Arc<dyn JobHandler>>>,
     worker_prefix: String,
     lease_duration: Duration,
@@ -108,7 +109,11 @@ pub struct JobWorker {
 
 impl JobWorker {
     /// 根据运行配置创建 Worker。处理器需要通过 `with_handler` 显式注册。
-    pub fn new(queue: Arc<JobQueue>, config: &JobConfig) -> AppResult<Self> {
+    pub fn new(
+        queue: Arc<JobQueue>,
+        config: &JobConfig,
+        execution_tenant_scope: ExecutionTenantScope,
+    ) -> AppResult<Self> {
         let lease_seconds = i64::try_from(config.lease_seconds)
             .map_err(|_| AppError::Config("jobs.lease_seconds 超出支持范围".into()))?;
         let worker_prefix = config
@@ -117,6 +122,7 @@ impl JobWorker {
             .unwrap_or_else(|| "ryframe-worker".into());
         Ok(Self {
             queue,
+            execution_tenant_scope,
             handlers: Arc::new(BTreeMap::new()),
             worker_prefix,
             lease_duration: Duration::seconds(lease_seconds),
@@ -165,12 +171,16 @@ impl JobWorker {
 
         if self.queue.has_metrics_observer() && !self.handlers.is_empty() {
             let queue = self.queue.clone();
+            let execution_tenant_scope = self.execution_tenant_scope.clone();
             let job_types = self.handlers.keys().cloned().collect::<Vec<_>>();
             let mut receiver = shutdown.clone();
             tasks.push(tokio::spawn(async move {
                 let mut collection_degraded = false;
                 loop {
-                    match queue.report_metrics_for_types(&job_types).await {
+                    match queue
+                        .report_metrics_for_types(&job_types, &execution_tenant_scope)
+                        .await
+                    {
                         Ok(()) if collection_degraded => {
                             tracing::info!("后台任务队列指标采集已恢复");
                             collection_degraded = false;
@@ -216,7 +226,13 @@ impl JobWorker {
         let claimed = match self
             .queue
             .repository()
-            .claim_next(self.queue.primary(), worker_id, self.lease_duration, now)
+            .claim_next(
+                self.queue.primary(),
+                worker_id,
+                self.lease_duration,
+                now,
+                &self.execution_tenant_scope,
+            )
             .await
         {
             Ok(claimed) => claimed,
@@ -543,7 +559,11 @@ impl JobWorker {
             if *shutdown.borrow() {
                 break;
             }
-            match self.queue.recover_expired_leases().await {
+            match self
+                .queue
+                .recover_expired_leases(&self.execution_tenant_scope)
+                .await
+            {
                 Ok(()) if recovery_degraded => {
                     tracing::info!("后台任务过期租约回收已恢复");
                     recovery_degraded = false;

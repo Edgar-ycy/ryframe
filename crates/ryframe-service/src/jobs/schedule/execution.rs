@@ -12,7 +12,11 @@ impl JobScheduleService {
                 .await
                 .map_err(database_error)?;
             let now = self.repository_clock(&transaction).await?;
-            let Some(schedule) = self.repository.lock_next_due(&transaction, now).await? else {
+            let Some(schedule) = self
+                .repository
+                .lock_next_due(&transaction, now, &self.execution_tenant_scope)
+                .await?
+            else {
                 transaction.commit().await.map_err(database_error)?;
                 break;
             };

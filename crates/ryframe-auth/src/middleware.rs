@@ -79,6 +79,17 @@ pub async fn auth_middleware(
         .into_response());
     }
 
+    if !auth_state
+        .config
+        .multi_tenancy
+        .allows_tenant(&claims.tenant_id)
+    {
+        return Err(HttpAppError::from(AppError::Authentication(
+            "令牌租户不适用于当前运行模式，请重新登录".into(),
+        ))
+        .into_response());
+    }
+
     // 令牌黑名单检查（支持 JWT 主动撤销）
     if auth_state
         .blacklist

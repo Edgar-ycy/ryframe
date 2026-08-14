@@ -6,7 +6,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ryframe_auth::rbac;
-use ryframe_config::{PepperKeyring, ServiceAccountsConfig};
+use ryframe_config::{MultiTenancyConfig, PepperKeyring, ServiceAccountsConfig};
 use ryframe_core::RedisClient;
 use ryframe_db::{
     AgentQueryRepository, AgentRowScope, DataRetentionRepository, DatabaseCluster,
@@ -45,6 +45,7 @@ const RESULT_ERROR: &str = service_access_audit::Model::RESULT_ERROR;
 pub struct AgentService {
     db: DatabaseCluster,
     config: ServiceAccountsConfig,
+    multi_tenancy: MultiTenancyConfig,
     keyring: Arc<PepperKeyring>,
     limiter: AgentLimiter,
 }
@@ -85,6 +86,7 @@ impl AgentService {
         redis: RedisClient,
         keyring: Arc<PepperKeyring>,
         config: ServiceAccountsConfig,
+        multi_tenancy: MultiTenancyConfig,
     ) -> AppResult<Self> {
         config.validate().map_err(AppError::Config)?;
         if !config.enabled {
@@ -93,6 +95,7 @@ impl AgentService {
         Ok(Self {
             db,
             config,
+            multi_tenancy,
             keyring,
             limiter: AgentLimiter::new(redis),
         })

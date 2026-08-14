@@ -38,6 +38,11 @@ pub async fn upgrade(
             return Err(error.into());
         }
     };
+    if !state.config.multi_tenancy.allows_tenant(&ticket.tenant_id) {
+        return Err(
+            AppError::Authentication("WebSocket 票据租户不适用于当前运行模式".into()).into(),
+        );
+    }
     state
         .services
         .auth

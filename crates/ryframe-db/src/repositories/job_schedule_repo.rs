@@ -7,7 +7,10 @@ use sea_orm::{
     sea_query::{LikeExpr, LockBehavior, LockType},
 };
 
-use crate::entities::{background_job, job_schedule, job_schedule_execution};
+use crate::{
+    ExecutionTenantScope,
+    entities::{background_job, job_schedule, job_schedule_execution},
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct JobScheduleFilter<'a> {
@@ -95,8 +98,9 @@ impl JobScheduleRepository {
         &self,
         transaction: &DatabaseTransaction,
         now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<Option<job_schedule::Model>> {
-        job_schedule::Entity::find()
+        let mut query = job_schedule::Entity::find()
             .filter(job_schedule::Column::Enabled.eq(true))
             .filter(job_schedule::Column::DelFlag.eq(job_schedule::Model::DEL_FLAG_NORMAL))
             .filter(
@@ -105,7 +109,11 @@ impl JobScheduleRepository {
                     .add(job_schedule::Column::NextRunAt.lte(now)),
             )
             .order_by_asc(job_schedule::Column::NextRunAt)
-            .order_by_asc(job_schedule::Column::Id)
+            .order_by_asc(job_schedule::Column::Id);
+        if let Some(condition) = tenant_scope.condition(job_schedule::Column::TenantId) {
+            query = query.filter(condition);
+        }
+        query
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(transaction)
             .await

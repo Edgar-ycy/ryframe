@@ -25,10 +25,26 @@ pub async fn complete_password_reset(
         .request_id
         .parse::<i64>()
         .map_err(|_| AppError::Validation("无效的重置请求ID".into()))?;
+    let tenant_id = match state.config.multi_tenancy.fixed_tenant_id() {
+        Some(fixed_tenant_id) => match req.tenant_id.as_deref() {
+            None => fixed_tenant_id,
+            Some(requested_tenant_id) if requested_tenant_id == fixed_tenant_id => fixed_tenant_id,
+            Some(_) => {
+                return Err(AppError::Validation(format!(
+                    "单租户模式只允许使用 {fixed_tenant_id} 租户"
+                ))
+                .into());
+            }
+        },
+        None => req
+            .tenant_id
+            .as_deref()
+            .ok_or_else(|| AppError::Validation("缺少租户信息".into()))?,
+    };
     state
         .services
         .user
-        .complete_password_reset_request(&req.tenant_id, request_id, &req.token, &req.new_password)
+        .complete_password_reset_request(tenant_id, request_id, &req.token, &req.new_password)
         .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }

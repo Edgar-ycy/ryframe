@@ -158,7 +158,7 @@ pub async fn get_captcha_config_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> HttpResult<Json<ApiResponse<CaptchaConfigResponse>>> {
-    let tenant_id = tenant_id_from_headers(&headers)?;
+    let tenant_id = tenant_id_from_headers(&headers, &state.config.multi_tenancy)?;
     let enabled = state
         .services
         .config

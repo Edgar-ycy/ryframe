@@ -107,6 +107,9 @@ async fn publish(
         .tenant_id
         .as_deref()
         .unwrap_or(current_user.tenant_id.as_str());
+    if !state.config.multi_tenancy.allows_tenant(target_tenant_id) {
+        return Err(AppError::Authorization("单租户模式不允许向其他租户发布消息".into()).into());
+    }
     ensure_cross_tenant_publish_authority(&current_user, target_tenant_id)?;
     let audiences = dto
         .audiences

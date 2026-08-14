@@ -184,11 +184,17 @@ pub(super) async fn verify_captcha_if_enabled(
 }
 
 pub(super) fn tenant_id(
+    state: &AppState,
     tenant_context: Option<axum::Extension<TenantContext>>,
     headers: &HeaderMap,
 ) -> HttpResult<String> {
+    if state.config.multi_tenancy.fixed_tenant_id().is_some() {
+        return crate::handler_utils::tenant_id_from_headers(headers, &state.config.multi_tenancy);
+    }
     tenant_context
         .map(|axum::Extension(context)| context.tenant_id)
         .map(Ok)
-        .unwrap_or_else(|| crate::handler_utils::tenant_id_from_headers(headers))
+        .unwrap_or_else(|| {
+            crate::handler_utils::tenant_id_from_headers(headers, &state.config.multi_tenancy)
+        })
 }

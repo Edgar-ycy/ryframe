@@ -160,7 +160,7 @@ pub async fn login(
 
     let ip = extract_ip(&state, &headers, addr);
     let user_agent = extract_user_agent(&headers);
-    let tenant_id = tenant_id(tenant_context, &headers)?;
+    let tenant_id = tenant_id(&state, tenant_context, &headers)?;
 
     if let Some(response) = enforce_login_rate_limit(&state, &tenant_id, &req.username, &ip).await?
     {

@@ -86,6 +86,17 @@ async fn main() -> Result<(), AppError> {
     ryframe_db_migration::verify_current_schema(database.write())
         .await
         .map_err(|error| AppError::Internal(format!("数据库结构指纹校验失败: {error}")))?;
+    if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
+        ryframe_db::TenantRepository
+            .ensure_available(database.write(), tenant_id)
+            .await
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "单租户模式要求内置 {tenant_id} 租户存在且可用: {error}"
+                ))
+            })?;
+        tracing::info!(tenant_id, "Worker 已启用单租户模式");
+    }
 
     let redis = connect_redis_for_worker(&config).await?;
     let authorization_cache = AuthorizationCache::new(
@@ -139,9 +150,11 @@ async fn main() -> Result<(), AppError> {
         ryframe_api::tenant_config_target_catalog()?,
         config.tenant_config_transfer.clone(),
     ));
+    let execution_tenant_scope = process_jobs::execution_tenant_scope(&config.multi_tenancy);
     let worker = process_jobs::build_job_worker(
         queue.clone(),
         &config.jobs,
+        execution_tenant_scope.clone(),
         process_jobs::JobWorkerDependencies {
             export: export.clone(),
             message: message.clone(),
@@ -159,6 +172,7 @@ async fn main() -> Result<(), AppError> {
             JobScheduleService::new(
                 database.clone(),
                 queue.clone(),
+                execution_tenant_scope.clone(),
                 schedule_targets,
                 &config.jobs,
             )
@@ -174,7 +188,7 @@ async fn main() -> Result<(), AppError> {
         } else {
             0
         };
-        let outbox_worker = OutboxWorker::new(queue, &config.jobs)?
+        let outbox_worker = OutboxWorker::new(queue, &config.jobs, execution_tenant_scope.clone())?
             .with_authorization_cache(authorization_cache.clone())
             .with_audit_service(oper_log.clone());
         let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
@@ -210,7 +224,7 @@ async fn main() -> Result<(), AppError> {
         tracing::info!("Cron 调度已关闭，独立 Worker 仅消费普通后台任务");
     }
     worker_tasks.extend(
-        OutboxWorker::new(queue.clone(), &config.jobs)?
+        OutboxWorker::new(queue.clone(), &config.jobs, execution_tenant_scope)?
             .with_authorization_cache(authorization_cache)
             .with_audit_service(oper_log)
             .spawn(shutdown_receiver),

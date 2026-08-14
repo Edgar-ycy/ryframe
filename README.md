@@ -169,6 +169,7 @@ config/app.prod.toml
 | `APP_ENV` | 运行环境：`dev`、`prod` | `dev` |
 | `SNOWFLAKE_WORKER_ID` | Snowflake 节点 ID（`0..=1023`）；生产环境必填，且每个同时运行的实例必须唯一 | 开发环境默认 `1` |
 | `APP_CONFIG_DIR` | 配置目录 | `config` |
+| `APP_MULTI_TENANCY_ENABLED` | 多租户总开关；关闭后强制使用内置 `system` 租户，底层 `tenant_id` 隔离仍保留 | `true` |
 | `APP_DATABASE_REPLICAS_FILE` | 命名只读副本 JSON 数组文件 | `[]` |
 | `APP_DATABASE_SOURCES_FILE` | 命名业务数据源 JSON 数组文件 | 按环境配置 |
 | `APP_DATABASE_SQL_LOG_LEVEL` | SQL 日志模式：`off`、`slow`、`summary`、`full`；生产常态必须为 `off` | 开发 `slow`，生产 `off` |
@@ -222,6 +223,16 @@ config/app.prod.toml
 | `APP_TELEMETRY_SAMPLE_RATIO` | 根 Span 采样率 | `0.1` |
 | `APP_TELEMETRY_EXPORT_TIMEOUT_SECS` | 单次 OTLP 导出最大等待秒数 | `5` |
 | `APP_TELEMETRY_MAX_QUEUE_SIZE` | 批量导出前允许暂存的最大 Span 数 | `2048` |
+
+单租户部署可在 `[multi_tenancy]` 下设置 `enabled = false`，或设置
+`APP_MULTI_TENANCY_ENABLED=false`。关闭后所有业务身份和数据访问都固定使用内置 `system`
+租户；数据库仍保留 `tenant_id` 字段、显式租户传递和 Repository 隔离条件，并且不支持配置
+其他固定租户。该切换本身不会迁移、合并或删除已有租户数据；平台级数据保留任务仍按现有
+策略运行，原有非 `system` 租户数据在单租户模式下不会进入业务视图。
+
+多租户模式只在进程启动时读取。切换前应备份并确认目标数据已位于 `system` 租户，所有 API
+和 Worker 实例必须使用相同配置并同时重启；重新启用后，原有非 `system` 租户数据仍按既有
+隔离规则保留。
 
 定时任务的可视化创建、七段 Cron 约束、运行开关和后期删除步骤见
 [定时任务使用与维护](docs/job-scheduling.md)。

@@ -79,6 +79,7 @@ pub async fn build_all(
             redis,
             keyring,
             config.service_accounts.clone(),
+            config.multi_tenancy.clone(),
         )?);
         (Some(management), Some(agent))
     } else {
@@ -156,6 +157,7 @@ pub async fn build_all(
             JobScheduleService::new(
                 database.clone(),
                 job_queue.clone(),
+                super::jobs::execution_tenant_scope(&config.multi_tenancy),
                 schedule_targets,
                 &config.jobs,
             )

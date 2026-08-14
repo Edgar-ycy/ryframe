@@ -180,6 +180,12 @@ pub async fn refresh(
             return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
         }
     };
+    if !state.config.multi_tenancy.allows_tenant(&claims.tenant_id) {
+        let error = HttpAppError::from(AppError::Authentication(
+            "刷新会话租户不适用于当前运行模式，请重新登录".into(),
+        ));
+        return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
+    }
     let rotation_attempt_id = verify_csrf(
         &jar,
         &headers,

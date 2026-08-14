@@ -6,8 +6,8 @@ use cron::Schedule;
 use ryframe_config::JobConfig;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    DatabaseCluster, JobScheduleExecutionFilter, JobScheduleFilter, JobScheduleRepository,
-    job_schedule, job_schedule_execution,
+    DatabaseCluster, ExecutionTenantScope, JobScheduleExecutionFilter, JobScheduleFilter,
+    JobScheduleRepository, job_schedule, job_schedule_execution,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -142,6 +142,7 @@ pub struct JobScheduleService {
     database: DatabaseCluster,
     repository: Arc<JobScheduleRepository>,
     queue: Arc<JobQueue>,
+    execution_tenant_scope: ExecutionTenantScope,
     targets: ScheduledJobTargetRegistry,
     metrics: Option<Arc<dyn ScheduleMetricsObserver>>,
     poll_interval: StdDuration,

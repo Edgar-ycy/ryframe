@@ -3,6 +3,7 @@ pub mod connection;
 pub mod data_scope;
 pub mod database_monitor;
 pub mod entities;
+mod execution_tenant_scope;
 pub mod pagination;
 pub mod repositories;
 pub mod sql_logger;
@@ -11,6 +12,7 @@ pub use cluster::{
     DatabaseReadSelectionReason, ReadConsistency, SelectedDatabase,
 };
 pub use database_monitor::SeaOrmDatabaseMonitor;
+pub use execution_tenant_scope::ExecutionTenantScope;
 pub use sql_logger::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 pub mod transaction;
 

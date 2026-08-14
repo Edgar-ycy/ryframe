@@ -10,7 +10,7 @@ use sea_orm::{
 };
 use serde_json::Value;
 
-use crate::entities::outbox_event;
+use crate::{ExecutionTenantScope, entities::outbox_event};
 
 const EXPIRED_LEASE_DEAD_ERROR: &str = "Outbox 事件租约已过期，投递结果未知";
 
@@ -119,10 +119,11 @@ impl OutboxEventRepository {
         worker_id: &str,
         lease_duration: Duration,
         now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<Option<outbox_event::Model>> {
         validate_lease(worker_id, lease_duration)?;
         let transaction = db.begin().await.map_err(database_error)?;
-        let Some(event) = Self::claimable_query(now)
+        let Some(event) = Self::claimable_query(now, tenant_scope)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(&transaction)
             .await
@@ -230,8 +231,11 @@ impl OutboxEventRepository {
         })
     }
 
-    fn claimable_query(now: DateTime<Utc>) -> sea_orm::Select<outbox_event::Entity> {
-        outbox_event::Entity::find()
+    fn claimable_query(
+        now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
+    ) -> sea_orm::Select<outbox_event::Entity> {
+        let mut query = outbox_event::Entity::find()
             .filter(outbox_event::Column::Status.eq(outbox_event::Model::STATUS_PENDING))
             .filter(outbox_event::Column::AvailableAt.lte(now))
             .filter(
@@ -239,7 +243,11 @@ impl OutboxEventRepository {
                     .lt(Expr::col(outbox_event::Column::MaxAttempts)),
             )
             .order_by_asc(outbox_event::Column::AvailableAt)
-            .order_by_asc(outbox_event::Column::Id)
+            .order_by_asc(outbox_event::Column::Id);
+        if let Some(condition) = tenant_scope.condition(outbox_event::Column::TenantId) {
+            query = query.filter(condition);
+        }
+        query
     }
 
     fn owned_running_query(
@@ -276,15 +284,21 @@ impl OutboxEventRepository {
         &self,
         db: &DatabaseConnection,
         now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<()> {
-        self.recover_expired_leases_on(db, now).await
+        self.recover_expired_leases_on(db, now, tenant_scope).await
     }
 
-    async fn recover_expired_leases_on<C>(&self, db: &C, now: DateTime<Utc>) -> AppResult<()>
+    async fn recover_expired_leases_on<C>(
+        &self,
+        db: &C,
+        now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
+    ) -> AppResult<()>
     where
         C: ConnectionTrait,
     {
-        outbox_event::Entity::update_many()
+        let mut exhausted = outbox_event::Entity::update_many()
             .col_expr(
                 outbox_event::Column::Status,
                 Expr::value(outbox_event::Model::STATUS_DEAD),
@@ -307,11 +321,12 @@ impl OutboxEventRepository {
             .filter(
                 Expr::col(outbox_event::Column::Attempts)
                     .gte(Expr::col(outbox_event::Column::MaxAttempts)),
-            )
-            .exec(db)
-            .await
-            .map_err(database_error)?;
-        outbox_event::Entity::update_many()
+            );
+        if let Some(condition) = tenant_scope.condition(outbox_event::Column::TenantId) {
+            exhausted = exhausted.filter(condition);
+        }
+        exhausted.exec(db).await.map_err(database_error)?;
+        let mut retryable = outbox_event::Entity::update_many()
             .col_expr(
                 outbox_event::Column::Status,
                 Expr::value(outbox_event::Model::STATUS_PENDING),
@@ -331,10 +346,11 @@ impl OutboxEventRepository {
             .filter(
                 Expr::col(outbox_event::Column::Attempts)
                     .lt(Expr::col(outbox_event::Column::MaxAttempts)),
-            )
-            .exec(db)
-            .await
-            .map_err(database_error)?;
+            );
+        if let Some(condition) = tenant_scope.condition(outbox_event::Column::TenantId) {
+            retryable = retryable.filter(condition);
+        }
+        retryable.exec(db).await.map_err(database_error)?;
         Ok(())
     }
 }

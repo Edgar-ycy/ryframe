@@ -20,7 +20,24 @@ pub(crate) fn attachment_content_disposition(filename: &str) -> HttpResult<Heade
     })
 }
 
-pub(crate) fn tenant_id_from_headers(headers: &HeaderMap) -> HttpResult<String> {
+pub(crate) fn tenant_id_from_headers(
+    headers: &HeaderMap,
+    config: &ryframe_config::MultiTenancyConfig,
+) -> HttpResult<String> {
+    if let Some(tenant_id) = config.fixed_tenant_id() {
+        if let Some(requested) = headers.get("X-Tenant-Id") {
+            let requested = requested
+                .to_str()
+                .map(str::trim)
+                .map_err(|_| AppError::Validation("租户请求头不是有效文本".into()))?;
+            if requested != tenant_id {
+                return Err(
+                    AppError::Validation(format!("单租户模式只允许使用 {tenant_id} 租户")).into(),
+                );
+            }
+        }
+        return Ok(tenant_id.to_owned());
+    }
     let tenant_id = headers
         .get("X-Tenant-Id")
         .and_then(|value| value.to_str().ok())

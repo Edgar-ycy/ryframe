@@ -9,6 +9,7 @@ use sea_orm::{
 };
 
 use crate::{
+    ExecutionTenantScope,
     entities::{
         background_job, data_retention_run, export_job, tenant_config_bundle,
         tenant_config_transfer, user_import_job,
@@ -78,13 +79,18 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<ExpiredLeaseRecovery> {
         let transaction = db.begin().await.map_err(database_error)?;
-        let expired = background_job::Entity::find()
+        let mut query = background_job::Entity::find()
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
             .filter(background_job::Column::LeaseUntil.lte(now))
             .order_by_asc(background_job::Column::LeaseUntil)
-            .order_by_asc(background_job::Column::Id)
+            .order_by_asc(background_job::Column::Id);
+        if let Some(condition) = tenant_scope.condition(background_job::Column::TenantId) {
+            query = query.filter(condition);
+        }
+        let expired = query
             .lock_with_behavior(
                 LockType::Update,
                 sea_orm::sea_query::LockBehavior::SkipLocked,

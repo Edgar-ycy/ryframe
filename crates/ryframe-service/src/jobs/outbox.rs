@@ -3,7 +3,8 @@ use std::{sync::Arc, time::Duration as StdDuration};
 use chrono::{DateTime, Duration, Utc};
 use ryframe_config::JobConfig;
 use ryframe_db::{
-    EnqueueBackgroundJob, OutboxEventRepository, OutboxFailureDisposition, outbox_event,
+    EnqueueBackgroundJob, ExecutionTenantScope, OutboxEventRepository, OutboxFailureDisposition,
+    outbox_event,
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
@@ -38,6 +39,7 @@ pub enum OutboxRunResult {
 pub struct OutboxWorker {
     queue: Arc<JobQueue>,
     repository: Arc<OutboxEventRepository>,
+    execution_tenant_scope: ExecutionTenantScope,
     worker_prefix: String,
     lease_duration: Duration,
     poll_interval: StdDuration,
@@ -50,12 +52,17 @@ pub struct OutboxWorker {
 
 impl OutboxWorker {
     /// 根据后台任务配置构建 Outbox Worker，复用相同的租约、轮询与并发策略。
-    pub fn new(queue: Arc<JobQueue>, config: &JobConfig) -> AppResult<Self> {
+    pub fn new(
+        queue: Arc<JobQueue>,
+        config: &JobConfig,
+        execution_tenant_scope: ExecutionTenantScope,
+    ) -> AppResult<Self> {
         let lease_seconds = i64::try_from(config.lease_seconds)
             .map_err(|_| AppError::Config("jobs.lease_seconds 超出支持范围".into()))?;
         Ok(Self {
             queue,
             repository: Arc::new(OutboxEventRepository),
+            execution_tenant_scope,
             worker_prefix: config
                 .worker_id
                 .clone()
@@ -116,7 +123,13 @@ impl OutboxWorker {
         };
         let event = match self
             .repository
-            .claim_next(self.queue.primary(), worker_id, self.lease_duration, now)
+            .claim_next(
+                self.queue.primary(),
+                worker_id,
+                self.lease_duration,
+                now,
+                &self.execution_tenant_scope,
+            )
             .await
         {
             Ok(Some(event)) => {
@@ -499,7 +512,7 @@ impl OutboxWorker {
                     .database_utc_now(self.queue.primary())
                     .await?;
                 self.repository
-                    .recover_expired_leases(self.queue.primary(), now)
+                    .recover_expired_leases(self.queue.primary(), now, &self.execution_tenant_scope)
                     .await
             }
             .await;

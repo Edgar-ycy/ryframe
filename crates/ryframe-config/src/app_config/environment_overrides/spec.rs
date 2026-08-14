@@ -76,6 +76,7 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_APP_NAME", &["app", "name"]),
     EnvOverride::string("APP_APP_HOST", &["app", "host"]),
     EnvOverride::integer("APP_APP_PORT", &["app", "port"]),
+    EnvOverride::boolean("APP_MULTI_TENANCY_ENABLED", &["multi_tenancy", "enabled"]),
     EnvOverride::boolean("APP_API_DOCS_ENABLED", &["api_docs", "enabled"]),
     EnvOverride::secret(
         "APP_MONITOR_METRICS_BEARER_TOKEN",

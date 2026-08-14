@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use ryframe_config::JobConfig;
+use ryframe_config::{JobConfig, MultiTenancyConfig};
 use ryframe_core::RedisClient;
+use ryframe_db::ExecutionTenantScope;
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_service::{
     CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
@@ -30,9 +31,10 @@ pub struct JobWorkerDependencies {
 pub fn build_job_worker(
     queue: Arc<JobQueue>,
     config: &JobConfig,
+    execution_tenant_scope: ExecutionTenantScope,
     dependencies: JobWorkerDependencies,
 ) -> AppResult<JobWorker> {
-    let worker = JobWorker::new(queue, config)?
+    let worker = JobWorker::new(queue, config, execution_tenant_scope)?
         .with_handler(Arc::new(ExportJobHandler::new(dependencies.export.clone())))?
         .with_handler(Arc::new(ExportCleanupJobHandler::new(dependencies.export)))?
         .with_handler(Arc::new(DataRetentionJobHandler::new(
@@ -68,6 +70,14 @@ pub fn build_job_worker(
                 ryframe_middleware::metrics::record_message_retention_deleted,
             )),
         ))
+}
+
+/// 将应用的多租户开关转换为后台执行器使用的数据库范围。
+pub fn execution_tenant_scope(config: &MultiTenancyConfig) -> ExecutionTenantScope {
+    config.fixed_tenant_id().map_or_else(
+        ExecutionTenantScope::all,
+        ExecutionTenantScope::tenant_and_platform,
+    )
 }
 
 /// 统一构造 API 与 Worker 使用的内置调度目标目录。

@@ -8,7 +8,7 @@ use sea_orm::{
     sea_query::{LockBehavior, LockType},
 };
 
-use crate::entities::background_job;
+use crate::{ExecutionTenantScope, entities::background_job};
 
 use super::{BackgroundJobRepository, database_error, validate_lease};
 
@@ -23,11 +23,12 @@ impl BackgroundJobRepository {
         worker_id: &str,
         lease_duration: Duration,
         now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<Option<background_job::Model>> {
         validate_lease(worker_id, lease_duration)?;
         let txn = db.begin().await.map_err(database_error)?;
 
-        let Some(job) = Self::claimable_query(now)
+        let Some(job) = Self::claimable_query(now, tenant_scope)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(&txn)
             .await
@@ -54,8 +55,11 @@ impl BackgroundJobRepository {
         Ok(Some(claimed))
     }
 
-    fn claimable_query(now: DateTime<Utc>) -> sea_orm::Select<background_job::Entity> {
-        background_job::Entity::find()
+    fn claimable_query(
+        now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
+    ) -> sea_orm::Select<background_job::Entity> {
+        let mut query = background_job::Entity::find()
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_PENDING))
             .filter(background_job::Column::AvailableAt.lte(now))
             .filter(
@@ -65,6 +69,10 @@ impl BackgroundJobRepository {
             )
             .order_by_desc(background_job::Column::Priority)
             .order_by_asc(background_job::Column::AvailableAt)
-            .order_by_asc(background_job::Column::Id)
+            .order_by_asc(background_job::Column::Id);
+        if let Some(condition) = tenant_scope.condition(background_job::Column::TenantId) {
+            query = query.filter(condition);
+        }
+        query
     }
 }

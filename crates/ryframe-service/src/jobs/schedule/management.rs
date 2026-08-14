@@ -4,6 +4,7 @@ impl JobScheduleService {
     pub fn new(
         database: DatabaseCluster,
         queue: Arc<JobQueue>,
+        execution_tenant_scope: ExecutionTenantScope,
         targets: ScheduledJobTargetRegistry,
         config: &JobConfig,
     ) -> Self {
@@ -11,6 +12,7 @@ impl JobScheduleService {
             database,
             repository: Arc::new(JobScheduleRepository),
             queue,
+            execution_tenant_scope,
             targets,
             metrics: None,
             poll_interval: StdDuration::from_millis(config.scheduler_poll_interval_ms),

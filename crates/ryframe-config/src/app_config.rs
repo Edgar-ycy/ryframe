@@ -2,9 +2,10 @@ use serde::Deserialize;
 
 use crate::{
     ApiDocsConfig, AuthConfig, CorsConfig, DataRetentionConfig, DatabaseConfig, Environment,
-    GeneratorConfig, JobConfig, LoggerConfig, MessagingConfig, MonitorConfig, ObjectStorageConfig,
-    PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig, ServiceAccountsConfig,
-    TelemetryConfig, TenantConfigTransferConfig, UploadLimitsConfig, UserImportConfig,
+    GeneratorConfig, JobConfig, LoggerConfig, MessagingConfig, MonitorConfig, MultiTenancyConfig,
+    ObjectStorageConfig, PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig,
+    ServiceAccountsConfig, TelemetryConfig, TenantConfigTransferConfig, UploadLimitsConfig,
+    UserImportConfig,
 };
 
 mod defaults;
@@ -40,6 +41,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub generator: GeneratorConfig,
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub multi_tenancy: MultiTenancyConfig,
     #[serde(default)]
     pub redis: Option<RedisConfig>,
     pub logger: LoggerConfig,

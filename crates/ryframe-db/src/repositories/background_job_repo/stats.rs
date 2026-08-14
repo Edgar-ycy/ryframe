@@ -7,7 +7,7 @@ use sea_orm::{
     QueryFilter, QueryOrder, QueryResult, Statement, Value, sea_query::Expr,
 };
 
-use crate::entities::background_job;
+use crate::{ExecutionTenantScope, entities::background_job};
 
 use super::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
@@ -158,6 +158,7 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         job_types: &[String],
+        tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<Vec<BackgroundJobTypeStats>> {
         let job_types = unique_job_types(job_types);
         if job_types.is_empty() {
@@ -168,7 +169,11 @@ impl BackgroundJobRepository {
         let mut sql = String::with_capacity(TYPE_STATS_SQL_PREFIX.len() + placeholders.len() + 32);
         sql.push_str(TYPE_STATS_SQL_PREFIX);
         sql.push_str(&placeholders);
-        sql.push_str(") GROUP BY `job_type`");
+        sql.push(')');
+        if tenant_scope.tenant_id().is_some() {
+            sql.push_str(" AND (`tenant_id` = ? OR `tenant_id` IS NULL)");
+        }
+        sql.push_str(" GROUP BY `job_type`");
         let mut values = vec![
             Value::from(background_job::Model::STATUS_PENDING.to_owned()),
             Value::from(background_job::Model::STATUS_RUNNING.to_owned()),
@@ -177,6 +182,9 @@ impl BackgroundJobRepository {
             Value::from(background_job::Model::STATUS_PENDING.to_owned()),
         ];
         values.extend(job_types.iter().cloned().map(Value::from));
+        if let Some(tenant_id) = tenant_scope.tenant_id() {
+            values.push(Value::from(tenant_id.to_owned()));
+        }
 
         let rows = db
             .query_all_raw(Statement::from_sql_and_values(

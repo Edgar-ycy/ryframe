@@ -55,6 +55,17 @@ async fn main() -> Result<(), AppError> {
         }
     }
     boot::datasource::verify_schema(&database).await?;
+    if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
+        ryframe_db::TenantRepository
+            .ensure_available(database.write(), tenant_id)
+            .await
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "单租户模式要求内置 {tenant_id} 租户存在且可用: {error}"
+                ))
+            })?;
+        tracing::info!(tenant_id, "已启用单租户模式");
+    }
     let replica_health_monitor = boot::datasource::spawn_replica_health_monitor(
         database.clone(),
         config.database.replicas.clone(),
@@ -117,9 +128,11 @@ async fn main() -> Result<(), AppError> {
     );
     let mut worker_tasks = match config.jobs.mode {
         JobWorkerMode::Embedded => {
+            let execution_tenant_scope = boot::jobs::execution_tenant_scope(&config.multi_tenancy);
             let worker = boot::jobs::build_job_worker(
                 services.job_queue.clone(),
                 &config.jobs,
+                execution_tenant_scope.clone(),
                 boot::jobs::JobWorkerDependencies {
                     export: services.export.clone(),
                     message: services.message.clone(),
@@ -152,10 +165,14 @@ async fn main() -> Result<(), AppError> {
                     .unwrap_or(RedisMode::Disabled),
             );
             tasks.extend(
-                OutboxWorker::new(services.job_queue.clone(), &config.jobs)?
-                    .with_authorization_cache(authorization_cache)
-                    .with_audit_service(services.oper_log.clone())
-                    .spawn(shutdown_receiver),
+                OutboxWorker::new(
+                    services.job_queue.clone(),
+                    &config.jobs,
+                    execution_tenant_scope,
+                )?
+                .with_authorization_cache(authorization_cache)
+                .with_audit_service(services.oper_log.clone())
+                .spawn(shutdown_receiver),
             );
             tasks
         }

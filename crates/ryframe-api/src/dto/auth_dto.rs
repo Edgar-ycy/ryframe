@@ -24,7 +24,7 @@ pub struct LoginRequest {
 pub struct CompletePasswordResetRequest {
     #[validate(custom(function = "validate_tenant_identifier"))]
     #[schema(pattern = r"^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,62}[A-Za-z0-9])$")]
-    pub tenant_id: String,
+    pub tenant_id: Option<String>,
     pub request_id: String,
     #[validate(length(min = 1, message = "重置令牌不能为空"))]
     pub token: String,

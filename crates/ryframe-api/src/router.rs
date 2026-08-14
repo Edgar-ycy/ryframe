@@ -231,6 +231,8 @@ pub struct ApiVersionInfo {
     pub version: String,
     pub source_commit: String,
     pub api_prefix: String,
+    /// 是否允许客户端选择和管理多个租户。
+    pub multi_tenancy_enabled: bool,
     pub endpoints: ApiVersionEndpoints,
 }
 
@@ -241,12 +243,13 @@ pub struct ApiVersionInfo {
     tag = "通用",
     responses((status = 200, description = "API 版本与构建信息", body = ApiResponse<ApiVersionInfo>))
 )]
-pub async fn api_version() -> Json<ApiResponse<ApiVersionInfo>> {
-    Json(ApiResponse::success(ApiVersionInfo {
+pub async fn api_version(State(state): State<AppState>) -> Response {
+    let mut response = Json(ApiResponse::success(ApiVersionInfo {
         name: env!("CARGO_PKG_NAME").to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         source_commit: env!("RYFRAME_BUILD_COMMIT").to_owned(),
         api_prefix: API_PREFIX.to_owned(),
+        multi_tenancy_enabled: state.config.multi_tenancy.enabled,
         endpoints: ApiVersionEndpoints {
             auth: api_path("auth"),
             system: api_path("system"),
@@ -257,6 +260,11 @@ pub async fn api_version() -> Json<ApiResponse<ApiVersionInfo>> {
             swagger: api_path("swagger-ui"),
         },
     }))
+    .into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 /// API 总路由
@@ -265,27 +273,20 @@ pub async fn api_version() -> Json<ApiResponse<ApiVersionInfo>> {
 pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     let idempotency_state = IdempotencyState::new(state.redis.clone(), 300);
     idempotency_state.spawn_gc();
-    let platform = protect(
-        crate::handlers::tenant_handler::tenant_router(state.clone())
-            .layer(from_fn_with_state(
-                OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-                oper_log_middleware,
-            ))
-            .layer(from_fn_with_state(
-                idempotency_state.clone(),
-                idempotency_middleware,
-            )),
-        &state,
-    );
-
-    let mut router = Router::new()
+    let public_runtime = Router::new()
         .route("/ws", get_route(crate::message_socket::upgrade))
-        .with_state(state.clone())
+        .route("/version", get_route(api_version))
+        .with_state(state.clone());
+    let mut router = Router::new()
+        .merge(public_runtime)
         .nest("/auth", auth_router(state.clone()))
-        .nest("/platform/tenants", platform)
         .nest(
             "/system",
-            system_router(state.clone(), rate_limit_state.clone(), idempotency_state),
+            system_router(
+                state.clone(),
+                rate_limit_state.clone(),
+                idempotency_state.clone(),
+            ),
         )
         .nest(
             "/monitor",
@@ -295,9 +296,23 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
             "/tools",
             tools_router(state.clone(), rate_limit_state.clone()),
         )
-        .nest("/common", common_router(state.clone()))
-        // API 版本信息端点
-        .route("/version", get_route(api_version));
+        .nest("/common", common_router(state.clone()));
+
+    if state.config.multi_tenancy.enabled {
+        let platform = protect(
+            crate::handlers::tenant_handler::tenant_router(state.clone())
+                .layer(from_fn_with_state(
+                    OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+                    oper_log_middleware,
+                ))
+                .layer(from_fn_with_state(
+                    idempotency_state.clone(),
+                    idempotency_middleware,
+                )),
+            &state,
+        );
+        router = router.nest("/platform/tenants", platform);
+    }
 
     if state.services.service_accounts.is_some() {
         let profile_delegations = protect(
