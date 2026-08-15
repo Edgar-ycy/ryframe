@@ -286,8 +286,8 @@ fn parse_redis_snapshots(
     keys.iter()
         .enumerate()
         .map(|(index, key)| {
-            let current = redis_nonnegative_integer(&values[index * 2])?;
-            let remaining_secs = redis_nonnegative_integer(&values[index * 2 + 1])?;
+            let current = redis_snapshot_integer(&values[index * 2])?;
+            let remaining_secs = redis_snapshot_integer(&values[index * 2 + 1])?;
             Ok(RateLimitSnapshot {
                 key: key.clone(),
                 current,
@@ -298,8 +298,11 @@ fn parse_redis_snapshots(
         .collect()
 }
 
-fn redis_nonnegative_integer(value: &redis::Value) -> Result<u64, String> {
+fn redis_snapshot_integer(value: &redis::Value) -> Result<u64, String> {
     match value {
+        // 不存在的窗口：`GET` 返回 nil、`TTL` 返回负整数，统一按“无活跃窗口”读取。
+        redis::Value::Nil => Ok(0),
+        redis::Value::Int(value) if *value < 0 => Ok(0),
         // `INCR` 写出的整数在部分驱动路径下以整数回复返回，`GET` 路径则
         // 以 bulk string 返回；两种类型都应解析，避免读取方与写入方协议不一致。
         redis::Value::Int(value) => u64::try_from(*value)

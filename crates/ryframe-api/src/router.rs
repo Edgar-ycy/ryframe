@@ -369,7 +369,12 @@ pub(super) async fn feature_disabled(State(_state): State<AppState>) -> Response
 }
 
 pub(super) fn feature_disabled_router(state: AppState) -> Router {
-    Router::new().fallback(feature_disabled).with_state(state)
+    // 使用显式通配路由而不是 fallback：嵌套路由的 fallback 在部分合并/挂载
+    // 路径下会被丢弃，通配路由保证功能关闭时任何子路径都返回 501。
+    Router::new()
+        .route("/", axum::routing::any(feature_disabled))
+        .route("/{*rest}", axum::routing::any(feature_disabled))
+        .with_state(state)
 }
 
 #[get("/runtime")]
