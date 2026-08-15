@@ -233,6 +233,8 @@ pub struct ApiVersionInfo {
     pub api_prefix: String,
     /// 是否允许客户端选择和管理多个租户。
     pub multi_tenancy_enabled: bool,
+    /// 服务账号与个人服务委托功能是否启用。
+    pub service_accounts_enabled: bool,
     pub endpoints: ApiVersionEndpoints,
 }
 
@@ -250,6 +252,7 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
         source_commit: env!("RYFRAME_BUILD_COMMIT").to_owned(),
         api_prefix: API_PREFIX.to_owned(),
         multi_tenancy_enabled: state.config.multi_tenancy.enabled,
+        service_accounts_enabled: state.services.service_accounts.is_some(),
         endpoints: ApiVersionEndpoints {
             auth: api_path("auth"),
             system: api_path("system"),
@@ -324,6 +327,11 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
             &state,
         );
         router = router.nest("/profile/service-delegations", profile_delegations);
+    } else {
+        router = router.nest(
+            "/profile/service-delegations",
+            feature_disabled_router(state.clone()),
+        );
     }
     if state.config.api_docs.enabled {
         router = router.route(
@@ -348,6 +356,21 @@ use groups::{common_router, monitor_router, system_router, tools_router};
 use runtime_probe::RuntimeStatus;
 #[cfg(feature = "runtime-swagger-ui")]
 use swagger::swagger_ui_router;
+
+/// 功能开关关闭时挂载的统一降级路由：返回 501 与稳定的 `feature_disabled` 错误键。
+///
+/// 前端通过 `/api/v1/version` 的能力字段提前隐藏入口，这里作为纵深防御，
+/// 避免功能关闭时把请求落入通用的 404 而无法区分“资源不存在”与“功能未启用”。
+pub(super) async fn feature_disabled(State(_state): State<AppState>) -> Response {
+    let mut response =
+        HttpAppError::from(AppError::FeatureDisabled("服务账号功能未启用".into())).into_response();
+    ryframe_http::mark_expected_feature_disabled(&mut response);
+    response
+}
+
+pub(super) fn feature_disabled_router(state: AppState) -> Router {
+    Router::new().fallback(feature_disabled).with_state(state)
+}
 
 #[get("/runtime")]
 #[perm("monitor:runtime:list")]

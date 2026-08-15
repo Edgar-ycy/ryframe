@@ -16,6 +16,7 @@ pub(super) fn classify_error(error: &AppError) -> (i32, &'static str, &'static s
             (503, "query_timeout", RESULT_ERROR)
         }
         AppError::ServiceUnavailable(_) => (503, "service_unavailable", RESULT_ERROR),
+        AppError::FeatureDisabled(_) => (501, "feature_disabled", RESULT_ERROR),
         AppError::Config(_) | AppError::Internal(_) => (500, "internal", RESULT_ERROR),
     }
 }

@@ -20,6 +20,7 @@ pub enum ErrorCode {
     Config,
     Internal,
     ServiceUnavailable,
+    FeatureDisabled,
 }
 
 impl ErrorCode {
@@ -37,6 +38,7 @@ impl ErrorCode {
             Self::Config => "config",
             Self::Internal => "internal",
             Self::ServiceUnavailable => "service_unavailable",
+            Self::FeatureDisabled => "feature_disabled",
         }
     }
 }
@@ -65,6 +67,7 @@ pub enum AppError {
     Config(String),
     Internal(String),
     ServiceUnavailable(String),
+    FeatureDisabled(String),
 }
 
 impl fmt::Display for AppError {
@@ -82,6 +85,7 @@ impl fmt::Display for AppError {
             Self::Config(_) => "配置错误",
             Self::Internal(_) => "内部错误",
             Self::ServiceUnavailable(_) => "服务暂不可用",
+            Self::FeatureDisabled(_) => "功能未启用",
         };
         write!(formatter, "{category}: {}", self.message())
     }
@@ -105,6 +109,7 @@ impl AppError {
             Self::Config(_) => ErrorCode::Config,
             Self::Internal(_) => ErrorCode::Internal,
             Self::ServiceUnavailable(_) => ErrorCode::ServiceUnavailable,
+            Self::FeatureDisabled(_) => ErrorCode::FeatureDisabled,
         }
     }
 
@@ -121,7 +126,8 @@ impl AppError {
             | Self::Database(message)
             | Self::Config(message)
             | Self::Internal(message)
-            | Self::ServiceUnavailable(message) => message,
+            | Self::ServiceUnavailable(message)
+            | Self::FeatureDisabled(message) => message,
             Self::RateLimited(message, _) => message,
         }
     }

@@ -23,6 +23,7 @@ rate_limited = "Too many requests"
 config = "Internal server error"
 service_unavailable = "Service temporarily unavailable"
 database = "Database error"
+feature_disabled = "Feature is not enabled"
 
 [auth]
 login_success = "Login successful"

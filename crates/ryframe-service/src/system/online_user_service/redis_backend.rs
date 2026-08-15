@@ -305,9 +305,8 @@ pub(super) async fn touch(client: &RedisClient, tenant_id: &str, sid: &str) -> A
         .as_ref()
         .map(|(new_json, ttl)| (new_json.as_str(), *ttl));
     match apply_touch_if_unchanged(client, &session, &json, replacement_ref).await? {
-        TouchCasOutcome::Updated => Ok(()),
-        TouchCasOutcome::Skipped | TouchCasOutcome::Deleted => Err(AppError::ServiceUnavailable(
-            "登录设备元数据暂不可用".into(),
-        )),
+        // 尽力而为的 touch 遵循最后写入者胜出：并发请求已经更新时跳过即可，
+        // 元数据被并发撤销时同样不算服务故障。
+        TouchCasOutcome::Updated | TouchCasOutcome::Skipped | TouchCasOutcome::Deleted => Ok(()),
     }
 }

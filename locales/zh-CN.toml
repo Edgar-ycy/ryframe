@@ -23,6 +23,7 @@ rate_limited = "请求过于频繁"
 config = "服务器内部错误"
 service_unavailable = "服务暂不可用"
 database = "数据库错误"
+feature_disabled = "功能未启用"
 
 [auth]
 login_success = "登录成功"

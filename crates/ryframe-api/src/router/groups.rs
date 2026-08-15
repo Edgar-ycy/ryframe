@@ -45,8 +45,10 @@ pub(super) fn system_router(
             "/config-transfers",
             tenant_config_handler::config_transfer_router(state.clone()),
         );
-    let database_idempotent = if state.services.service_accounts.is_some() {
-        database_idempotent
+    // 服务账号功能关闭时仍挂载统一降级路由，返回 501 + `feature_disabled`，
+    // 避免前端在配置回退或菜单残留时把请求落入通用 404。
+    let service_account_routes = if state.services.service_accounts.is_some() {
+        Router::new()
             .nest(
                 "/service-accounts",
                 service_account_handler::service_account_router(state.clone()),
@@ -60,12 +62,24 @@ pub(super) fn system_router(
                 service_account_handler::service_access_audit_router(state.clone()),
             )
     } else {
+        Router::new()
+            .nest("/service-accounts", feature_disabled_router(state.clone()))
+            .nest(
+                "/service-delegations",
+                feature_disabled_router(state.clone()),
+            )
+            .nest(
+                "/service-access-audits",
+                feature_disabled_router(state.clone()),
+            )
+    };
+    let database_idempotent =
         database_idempotent
-    }
-    .layer(from_fn_with_state(
-        OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-        oper_log_middleware,
-    ));
+            .merge(service_account_routes)
+            .layer(from_fn_with_state(
+                OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+                oper_log_middleware,
+            ));
 
     let redis_idempotent = Router::new()
         .nest(

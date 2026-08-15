@@ -299,13 +299,19 @@ fn parse_redis_snapshots(
 }
 
 fn redis_nonnegative_integer(value: &redis::Value) -> Result<u64, String> {
-    let redis::Value::Int(value) = value else {
-        return Err(format!(
+    match value {
+        // `INCR` 写出的整数在部分驱动路径下以整数回复返回，`GET` 路径则
+        // 以 bulk string 返回；两种类型都应解析，避免读取方与写入方协议不一致。
+        redis::Value::Int(value) => u64::try_from(*value)
+            .map_err(|_| "Redis rate-limit snapshot returned a negative value".to_owned()),
+        redis::Value::BulkString(bytes) => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .ok_or_else(|| format!("unexpected Redis rate-limit snapshot item: {value:?}")),
+        _ => Err(format!(
             "unexpected Redis rate-limit snapshot item: {value:?}"
-        ));
-    };
-    u64::try_from(*value)
-        .map_err(|_| "Redis rate-limit snapshot returned a negative value".to_owned())
+        )),
+    }
 }
 
 fn redis_ttl_secs(ttl_secs: u64) -> i64 {

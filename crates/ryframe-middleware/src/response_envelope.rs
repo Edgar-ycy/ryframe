@@ -287,6 +287,7 @@ fn localized_error_message_key(error_key: Option<&str>) -> &'static str {
         Some("database") => "error.database",
         Some("config") => "error.config",
         Some("service_unavailable") => "error.service_unavailable",
+        Some("feature_disabled") => "error.feature_disabled",
         Some("internal") | None | Some(_) => "error.internal",
     }
 }
@@ -361,6 +362,7 @@ fn error_key_for_status(status: StatusCode) -> &'static str {
         StatusCode::PAYLOAD_TOO_LARGE => "payload_too_large",
         StatusCode::TOO_MANY_REQUESTS => "rate_limited",
         StatusCode::SERVICE_UNAVAILABLE => "service_unavailable",
+        StatusCode::NOT_IMPLEMENTED => "feature_disabled",
         _ => "internal",
     }
 }

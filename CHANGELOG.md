@@ -25,6 +25,9 @@
 
 - 使用前向数据迁移修复全新数据库中与文档默认密码不匹配的系统管理员和普通用户哈希及登录状态；只更新仍保留旧无效哈希的记录，不覆盖已经修改过的密码。
 - 前端刷新会话无论成功或失败都会作废本次 CSRF 挑战，避免后端清理认证 Cookie 后，登录流程继续复用失配的内存挑战令牌。
+- 服务账号功能关闭时，`/system/service-accounts*`、`/system/service-delegations*`、`/system/service-access-audits*` 与 `/profile/service-delegations*` 改为返回 501 与稳定 `feature_disabled` 错误键，不再落入 404；`/api/v1/version` 新增 `service_accounts_enabled` 能力字段供前端隐藏入口。
+- 在线用户最近活动时间更新遇到并发 CAS 竞争（`Skipped`）或会话已被并发撤销（`Deleted`）时视为成功，不再输出“登录设备元数据暂不可用”WARN，也不再计入 Redis 降级监控。
+- 租户请求限流窗口快照同时兼容 Redis 整数与 bulk string 两种回复形式，容量接口不再因序列化类型不匹配而局部降级。
 
 ### Security
 

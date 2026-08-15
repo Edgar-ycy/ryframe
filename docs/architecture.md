@@ -167,11 +167,12 @@ Redis 模式为 Family 维护租户索引和租户用户索引。注册、轮换
 租户持有的 `tenant:usage:list`，普通租户不能借菜单、角色或同名自定义权限读取跨租户汇总。
 Prometheus 不承载逐租户容量明细，任何容量指标都不得使用租户 ID 或名称作为标签。
 
-服务账号与 Agent 查询在组合根中作为一组可选能力装配。`service_accounts.enabled=false` 时管理端、
-个人委托与 `/api/v1/agent/v1/**` 路由都不挂载；启用时必须同时获得主库、Redis、授权缓存和外部
-Pepper Keyring。它不创建新的 Worker、队列或动态代码执行器，固定查询由 API 进程内的
-`AgentService` 编排现有 Repository 完成。服务账号不是 `RequestPrincipal`，API Key 也不能进入
-普通 Bearer/JWT 会话链路。
+服务账号与 Agent 查询在组合根中作为一组可选能力装配。`service_accounts.enabled=false` 时
+`/api/v1/agent/v1/**` 路由不挂载，管理端、个人委托接口挂载统一降级路由并返回
+`501` + `feature_disabled`，`/api/v1/version` 的 `service_accounts_enabled=false` 供前端隐藏
+菜单与个人中心委托卡片；启用时必须同时获得主库、Redis、授权缓存和外部 Pepper Keyring。
+它不创建新的 Worker、队列或动态代码执行器，固定查询由 API 进程内的 `AgentService` 编排现有
+Repository 完成。服务账号不是 `RequestPrincipal`，API Key 也不能进入普通 Bearer/JWT 会话链路。
 
 ```mermaid
 flowchart LR

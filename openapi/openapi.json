@@ -1270,6 +1270,10 @@
               "name": {
                 "type": "string"
               },
+              "service_accounts_enabled": {
+                "description": "服务账号与个人服务委托功能是否启用。",
+                "type": "boolean"
+              },
               "source_commit": {
                 "type": "string"
               },
@@ -1283,6 +1287,7 @@
               "source_commit",
               "api_prefix",
               "multi_tenancy_enabled",
+              "service_accounts_enabled",
               "endpoints"
             ],
             "type": "object"
@@ -6805,6 +6810,10 @@
           "name": {
             "type": "string"
           },
+          "service_accounts_enabled": {
+            "description": "服务账号与个人服务委托功能是否启用。",
+            "type": "boolean"
+          },
           "source_commit": {
             "type": "string"
           },
@@ -6818,6 +6827,7 @@
           "source_commit",
           "api_prefix",
           "multi_tenancy_enabled",
+          "service_accounts_enabled",
           "endpoints"
         ],
         "type": "object"
