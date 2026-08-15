@@ -137,7 +137,7 @@ impl AgentService {
         .await;
         // 释放只用于提前回收并发槽位；请求主预算不能被 Redis 客户端超时配置延长。
         // 独立短任务失败时由租约 TTL 安全回收，且绝不覆盖已经确定的业务结果。
-        std::mem::drop(tokio::spawn(async move {
+        drop(tokio::spawn(async move {
             if tokio::time::timeout(Duration::from_millis(250), lease.release())
                 .await
                 .is_err()

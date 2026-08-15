@@ -89,17 +89,11 @@ impl ServiceAccountService {
         let enabled_role_ids = if role_ids.is_empty() {
             Vec::new()
         } else {
-            ryframe_db::entities::role::Entity::find()
-                .filter(ryframe_db::entities::role::Column::TenantId.eq(tenant_id))
-                .filter(ryframe_db::entities::role::Column::Id.is_in(role_ids))
-                .filter(
-                    ryframe_db::entities::role::Column::Status
-                        .eq(ryframe_db::entities::role::Model::STATUS_NORMAL),
-                )
-                .filter(
-                    ryframe_db::entities::role::Column::DelFlag
-                        .eq(ryframe_db::entities::role::Model::DEL_FLAG_NORMAL),
-                )
+            role::Entity::find()
+                .filter(role::Column::TenantId.eq(tenant_id))
+                .filter(role::Column::Id.is_in(role_ids))
+                .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
+                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
                 .all(db)
                 .await
                 .map_err(database_error)?
@@ -138,19 +132,11 @@ impl ServiceAccountService {
         let account_roles = if account_role_ids.is_empty() {
             Vec::new()
         } else {
-            ryframe_db::entities::role::Entity::find()
-                .filter(ryframe_db::entities::role::Column::TenantId.eq(tenant_id))
-                .filter(
-                    ryframe_db::entities::role::Column::Id.is_in(account_role_ids.iter().copied()),
-                )
-                .filter(
-                    ryframe_db::entities::role::Column::Status
-                        .eq(ryframe_db::entities::role::Model::STATUS_NORMAL),
-                )
-                .filter(
-                    ryframe_db::entities::role::Column::DelFlag
-                        .eq(ryframe_db::entities::role::Model::DEL_FLAG_NORMAL),
-                )
+            role::Entity::find()
+                .filter(role::Column::TenantId.eq(tenant_id))
+                .filter(role::Column::Id.is_in(account_role_ids.iter().copied()))
+                .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
+                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
                 .all(txn)
                 .await
                 .map_err(database_error)?

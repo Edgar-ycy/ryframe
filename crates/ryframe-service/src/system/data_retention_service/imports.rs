@@ -8,7 +8,7 @@ impl DataRetentionService {
     pub(super) async fn cleanup_import_artifacts(
         &self,
         now: DateTime<Utc>,
-    ) -> AppResult<ryframe_db::RetentionCleanupResult> {
+    ) -> AppResult<RetentionCleanupResult> {
         let before = self.import_artifact_cutoff(now);
         let maximum = self.config.max_rows_per_resource_per_run;
         let mut deleted = 0_u64;
@@ -44,6 +44,6 @@ impl DataRetentionService {
         let remaining = UserImportRepository
             .count_expired_artifacts(self.db.write(), before)
             .await?;
-        Ok(ryframe_db::RetentionCleanupResult { deleted, remaining })
+        Ok(RetentionCleanupResult { deleted, remaining })
     }
 }

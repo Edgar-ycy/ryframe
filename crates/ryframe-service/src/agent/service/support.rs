@@ -49,7 +49,7 @@ pub(super) fn database_error(error: sea_orm::DbErr) -> AppError {
 
 pub(super) async fn before_deadline<T>(
     deadline: tokio::time::Instant,
-    future: impl std::future::Future<Output = AppResult<T>>,
+    future: impl Future<Output = AppResult<T>>,
 ) -> AppResult<T> {
     match tokio::time::timeout_at(deadline, future).await {
         Ok(result) => result,
