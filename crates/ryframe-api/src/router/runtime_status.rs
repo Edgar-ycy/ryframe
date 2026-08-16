@@ -1,5 +1,5 @@
 use super::*;
-use ryframe_config::JobWorkerMode;
+use ryframe_config::{JobWorkerMode, StorageBackend};
 
 pub(super) async fn probe_runtime_status(
     State(state): State<AppState>,
@@ -73,8 +73,9 @@ pub(super) async fn probe_runtime_status(
         object_storage: RuntimeStorageStatus {
             backend: storage_config.backend.as_str().into(),
             connected: storage_connected,
-            endpoint: (!storage_config.endpoint.trim().is_empty())
-                .then(|| storage_config.endpoint.clone()),
+            endpoint: (storage_config.backend != StorageBackend::Local
+                && !storage_config.endpoint.trim().is_empty())
+            .then(|| storage_config.endpoint.clone()),
         },
         upload_circuit_breaker: RuntimeCircuitBreakerStatus {
             state: format!("{:?}", state.runtime.upload_circuit_breaker.current_state()),

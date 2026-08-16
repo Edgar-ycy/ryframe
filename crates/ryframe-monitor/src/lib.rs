@@ -2,7 +2,7 @@ mod cache_monitor;
 mod readiness;
 pub mod server_info;
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     Json,
@@ -17,7 +17,10 @@ use serde::Serialize;
 pub use server_info::{ServerInfo, ServerInfoSampler};
 use utoipa::ToSchema;
 
-pub use cache_monitor::{CacheInfo, CacheKeysInfo, RedisMemoryInfo, RedisServerInfo};
+pub use cache_monitor::{
+    CacheCommandStats, CacheCommandStatsStatus, CacheInfo, CacheKeysInfo, RedisMemoryInfo,
+    RedisServerInfo,
+};
 pub use readiness::{DependencyHealthCache, DependencyHealthSnapshot, DependencyStatus};
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -32,6 +35,8 @@ pub struct DbPoolInfo {
 pub struct MonitorState {
     pub database: Arc<dyn DatabaseMonitor>,
     pub redis: Option<RedisClient>,
+    /// Redis 是否已在配置中启用。客户端缺失时，用于区分显式未配置和运行时故障。
+    pub redis_configured: bool,
     pub readiness: DependencyHealthCache,
     pub metrics_bearer_token: Arc<str>,
     pub server_info: ServerInfoSampler,
@@ -83,16 +88,15 @@ pub async fn cache_info_handler(
 #[get("/cache/commands")]
 #[perm("monitor:cache:list")]
 #[utoipa::path(get, path = "/api/v1/monitor/cache/commands", tag = "服务器监控",
-    responses((status = 200, description = "Redis 命令统计", body = ApiResponse<BTreeMap<String, String>>)),
+    responses((status = 200, description = "Redis 命令统计", body = ApiResponse<CacheCommandStats>)),
     security(("bearer" = [])))]
 pub async fn cache_commands_handler(
     State(state): State<MonitorState>,
-) -> HttpResult<Json<ApiResponse<BTreeMap<String, String>>>> {
+) -> HttpResult<Json<ApiResponse<CacheCommandStats>>> {
     let stats = match state.redis.as_ref() {
-        Some(redis) => cache_monitor::get_cache_command_stats(redis)
-            .await
-            .unwrap_or_else(|| error_stat("failed to fetch command stats")),
-        None => error_stat("Redis not configured"),
+        Some(redis) => cache_monitor::get_cache_command_stats(redis).await,
+        None if state.redis_configured => CacheCommandStats::unavailable(),
+        None => CacheCommandStats::not_configured(),
     };
     Ok(Json(ApiResponse::success(stats)))
 }
@@ -152,10 +156,6 @@ pub async fn db_pool_handler(
         active_connections,
         timestamp: current_timestamp(),
     })))
-}
-
-fn error_stat(message: &str) -> BTreeMap<String, String> {
-    BTreeMap::from([("error".into(), message.into())])
 }
 
 fn current_timestamp() -> String {

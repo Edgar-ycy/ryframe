@@ -312,6 +312,12 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 删除幂等，跨租户、跨用户和不存在的 ID 不会影响其他数据。公告和通知正文均为 Markdown
 原文，客户端必须禁用原始 HTML 并在渲染前净化输出。
 
+实时连接先通过 `POST /api/v1/auth/ws-ticket` 申请一次性票据。Redis optional 模式已降级、Redis
+暂时不可用或消息中心关闭时，该接口固定返回 `503`、`error_key=service_unavailable`、
+`Retry-After: 60` 和 `X-RyFrame-Realtime: unavailable`；后者已由 CORS 暴露。客户端收到该组合
+应停止短周期 WebSocket 重连并继续收件箱补拉，按 `Retry-After` 进行低频健康复试，不能把它当作
+认证失效或重复写入操作日志。
+
 异步导出创建成功只表示任务已进入队列，不表示文件已经生成。任务进入 `succeeded` 或 `failed`
 后会产生当前申请人的持久未读提醒；客户端通过
 `GET /api/v1/common/jobs/notifications/unread-count` 展示“我的导出任务”徽标，用户打开任务中心后

@@ -481,6 +481,8 @@ use utoipa::OpenApi;
         crate::router::ApiVersionEndpoints,
         ryframe_monitor::ServerInfo,
         ryframe_monitor::CacheInfo,
+        ryframe_monitor::CacheCommandStats,
+        ryframe_monitor::CacheCommandStatsStatus,
         ryframe_monitor::CacheKeysInfo,
         ryframe_monitor::RedisServerInfo,
         ryframe_monitor::RedisMemoryInfo,

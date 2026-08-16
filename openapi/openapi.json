@@ -1459,50 +1459,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_BTreeMap_String_String": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "propertyNames": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_BackgroundJobQueueStats": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -1690,6 +1646,63 @@
               "max_attempts",
               "created_at",
               "updated_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_CacheCommandStats": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "description": "Redis 命令统计响应。",
+            "properties": {
+              "commands": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "status": {
+                "$ref": "#/components/schemas/CacheCommandStatsStatus"
+              }
+            },
+            "required": [
+              "status",
+              "commands"
             ],
             "type": "object"
           },
@@ -7484,6 +7497,37 @@
           "updated_at"
         ],
         "type": "object"
+      },
+      "CacheCommandStats": {
+        "description": "Redis 命令统计响应。",
+        "properties": {
+          "commands": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CacheCommandStatsStatus"
+          }
+        },
+        "required": [
+          "status",
+          "commands"
+        ],
+        "type": "object"
+      },
+      "CacheCommandStatsStatus": {
+        "description": "Redis 命令统计查询状态。\n\n`not_configured` 表示当前实例没有启用 Redis；`unavailable` 表示 Redis\n已配置但连接或查询失败。两种情况下均返回空的 `commands`，避免让调用方\n将错误文本误当作命令名称渲染。",
+        "enum": [
+          "available",
+          "not_configured",
+          "unavailable"
+        ],
+        "type": "string"
       },
       "CacheInfo": {
         "description": "缓存信息响应",
@@ -17250,10 +17294,16 @@
             "description": "未认证"
           },
           "503": {
-            "description": "Redis 不可用；显式禁用时返回 Retry-After: 60",
+            "description": "实时消息通道不可用；客户端应回退到收件箱轮询",
             "headers": {
               "Retry-After": {
-                "description": "仅 Redis 显式禁用时为 60 秒",
+                "description": "再次申请票据前至少等待 60 秒",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-RyFrame-Realtime": {
+                "description": "固定值 unavailable，标识受控的实时通道降级",
                 "schema": {
                   "type": "string"
                 }
@@ -17702,7 +17752,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_BTreeMap_String_String"
+                  "$ref": "#/components/schemas/ApiResponse_CacheCommandStats"
                 }
               }
             },

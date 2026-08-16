@@ -173,10 +173,20 @@ pub fn auth_router(state: AppState) -> Router {
         ))
         .layer(Extension(AuditMode::Skip));
 
-    // WebSocket ticket 只写入 Redis，显式允许审计事件使用独立 Outbox 事务。
+    // WebSocket ticket 是浏览器实时连接的技术协商，不代表用户业务操作。Redis
+    // optional 降级期间浏览器会按 Retry-After 重试，必须跳过通用操作审计，避免
+    // 把受控的实时通道不可用写成海量失败操作日志。
     // 后注册的 Extension 位于操作审计中间件外层，确保策略在中间件执行前可见。
-    let independent_protected = Router::new()
+    let websocket_ticket = Router::new()
         .route("/ws-ticket", post(auth_handler::websocket_ticket))
+        .layer(from_fn_with_state(
+            oper_log_state.clone(),
+            oper_log_middleware,
+        ))
+        .layer(Extension(AuditMode::Skip));
+
+    // 会话撤销会改变安全状态，仍使用独立 Outbox 事务保留操作审计。
+    let independent_protected = Router::new()
         .route(
             "/sessions/{sid}",
             delete_route(auth_handler::revoke_session),
@@ -192,7 +202,12 @@ pub fn auth_router(state: AppState) -> Router {
         .layer(Extension(AuditMode::Independent));
 
     // protect() 位于最外层，执行顺序为 auth → 审计策略 → oper_log → handler。
-    let protected = protect(skipped_protected.merge(independent_protected), &state);
+    let protected = protect(
+        skipped_protected
+            .merge(websocket_ticket)
+            .merge(independent_protected),
+        &state,
+    );
 
     // 个人资料路由（认证 + 操作日志，中间件在此统一注册）
     // profile_router 不再内嵌 .with_state()

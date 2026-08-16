@@ -47,6 +47,10 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
     let monitor = ryframe_monitor::MonitorState {
         database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
         redis: redis_client.clone(),
+        redis_configured: config
+            .redis
+            .as_ref()
+            .is_some_and(|redis| redis.mode != RedisMode::Disabled),
         readiness: ryframe_monitor::DependencyHealthCache::new(
             config
                 .redis

@@ -87,6 +87,49 @@ pub struct RedisMemoryInfo {
     pub used_memory: u64,
 }
 
+/// Redis 命令统计查询状态。
+///
+/// `not_configured` 表示当前实例没有启用 Redis；`unavailable` 表示 Redis
+/// 已配置但连接或查询失败。两种情况下均返回空的 `commands`，避免让调用方
+/// 将错误文本误当作命令名称渲染。
+#[derive(Debug, Clone, Copy, Serialize, ToSchema, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheCommandStatsStatus {
+    Available,
+    NotConfigured,
+    Unavailable,
+}
+
+/// Redis 命令统计响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CacheCommandStats {
+    pub status: CacheCommandStatsStatus,
+    pub commands: BTreeMap<String, String>,
+}
+
+impl CacheCommandStats {
+    pub fn available(commands: BTreeMap<String, String>) -> Self {
+        Self {
+            status: CacheCommandStatsStatus::Available,
+            commands,
+        }
+    }
+
+    pub fn not_configured() -> Self {
+        Self {
+            status: CacheCommandStatsStatus::NotConfigured,
+            commands: BTreeMap::new(),
+        }
+    }
+
+    pub fn unavailable() -> Self {
+        Self {
+            status: CacheCommandStatsStatus::Unavailable,
+            commands: BTreeMap::new(),
+        }
+    }
+}
+
 /// 解析 Redis INFO 输出为 HashMap
 fn parse_info_map(info: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
@@ -219,23 +262,31 @@ async fn count_keys(client: &RedisClient, pattern: &str) -> u64 {
     }
 }
 
-/// 获取 Redis 命令统计信息
-pub async fn get_cache_command_stats(client: &RedisClient) -> Option<BTreeMap<String, String>> {
+/// 获取 Redis 命令统计信息。
+///
+/// 命令统计仅在 Redis 可用时返回。Redis 已配置但不可访问时保留该状态，供
+/// 监控界面与调用方准确展示降级原因。
+pub async fn get_cache_command_stats(client: &RedisClient) -> CacheCommandStats {
     let info_result = redis_info(client, Some("commandstats")).await;
 
     match info_result {
-        Ok(info) => {
-            let mut stats = BTreeMap::new();
-            for line in info.lines() {
-                if line.starts_with("cmdstat_")
-                    && let Some((cmd, data)) = line.split_once(':')
-                {
-                    let cmd_name = cmd.strip_prefix("cmdstat_").unwrap_or(cmd);
-                    stats.insert(cmd_name.to_string(), data.to_string());
-                }
-            }
-            Some(stats)
+        Ok(info) => CacheCommandStats::available(parse_command_stats(&info)),
+        Err(error) => {
+            tracing::warn!(%error, "Redis command stats query failed");
+            CacheCommandStats::unavailable()
         }
-        Err(_) => None,
     }
+}
+
+fn parse_command_stats(info: &str) -> BTreeMap<String, String> {
+    let mut stats = BTreeMap::new();
+    for line in info.lines() {
+        if line.starts_with("cmdstat_")
+            && let Some((cmd, data)) = line.split_once(':')
+        {
+            let cmd_name = cmd.strip_prefix("cmdstat_").unwrap_or(cmd);
+            stats.insert(cmd_name.to_string(), data.to_string());
+        }
+    }
+    stats
 }

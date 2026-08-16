@@ -306,6 +306,12 @@ DELETE /system/roles/batch/1,2
 `POST /system/messages/delete`，请求体为 `{"ids":["消息 ID"]}`，一次 1–100 个字符串 ID；成功后
 移除对应缓存并同步未读数。删除不影响其他收件人，也不能让已删除记录重新被补拉或重放。
 
+申请 `POST /auth/ws-ticket` 时，如果实时通道因 Redis optional 降级、Redis 暂时不可用或消息中心
+关闭而不可用，服务端固定返回 `503`、`error_key: "service_unavailable"`、`Retry-After: 60` 和
+`X-RyFrame-Realtime: unavailable`。该响应头已加入 CORS 暴露列表。客户端应将其视为受控降级：停止
+短周期 WebSocket 重连，保留收件箱轮询和 HTTP 授权纪元回退；后续按 `Retry-After` 进行低频健康
+复试，成功后再恢复实时连接。
+
 同一条 WebSocket 连接还承载 `authorization_changed` 控制帧。该帧不是收件箱消息，不写入消息表、不参与 ACK、未读数或消息补拉；客户端只使用其中的授权纪元触发上述动态授权刷新。
 
 ## 上传、下载与导出
