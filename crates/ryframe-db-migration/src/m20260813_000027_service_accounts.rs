@@ -15,6 +15,8 @@ const SERVICE_ACCOUNT_PERMISSIONS: &[(&str, &str, i32)] = &[
     ("system:service-access-audit:list", "服务访问审计查询", 69),
 ];
 
+const SYSTEM_TENANT_ID: &str = "system";
+
 /// 安装服务账号、API Key、用户委托和访问审计的持久化底座。
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -359,12 +361,18 @@ where
     let icon = Option::<String>::try_get_by_index(&row, 3)?;
     let sort = i32::try_get_by_index(&row, 4)?;
     let status = String::try_get_by_index(&row, 5)?;
+    // 产品能力会将非系统租户的服务账号资源置为休眠，结构校验必须接受该受控状态。
+    let status_is_valid = if tenant_id == SYSTEM_TENANT_ID {
+        status == "1"
+    } else {
+        matches!(status.as_str(), "0" | "1")
+    };
     if name != expected_name
         || parent_id != Some(expected_parent_id)
         || permission_type != "api"
         || icon.is_some()
         || sort != expected_sort
-        || status != "1"
+        || !status_is_valid
     {
         return Err(DbErr::Custom(format!(
             "租户 {tenant_id} 的保留权限 {code} 已存在，但定义与服务账号管理契约不一致"
@@ -402,14 +410,16 @@ where
     let visible = i64::try_get_by_index(&row, 6)?;
     let status = String::try_get_by_index(&row, 7)?;
     let del_flag = String::try_get_by_index(&row, 8)?;
+    // 非系统租户的 Capability 休眠状态必须同时隐藏并停用菜单，不能把它误判为定义冲突。
+    let resource_state_is_valid = (visible == 1 && status == "1")
+        || (tenant_id != SYSTEM_TENANT_ID && visible == 0 && status == "0");
     if name != "服务账号"
         || parent_id != Some(expected_parent_id)
         || menu_type != "C"
         || permission_id != Some(expected_permission_id)
         || icon.as_deref() != Some("Key")
         || sort != 14
-        || visible != 1
-        || status != "1"
+        || !resource_state_is_valid
         || del_flag != "0"
     {
         return Err(DbErr::Custom(format!(
