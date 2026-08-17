@@ -9,7 +9,9 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         if manager.get_database_backend() != DatabaseBackend::MySql {
-            return Err(DbErr::Custom("outbox events require MySQL 8.0+".into()));
+            return Err(DbErr::Custom(
+                "outbox events require MySQL 8.0.16 or newer".into(),
+            ));
         }
         if manager.has_table("sys_outbox_event").await? {
             return Ok(());

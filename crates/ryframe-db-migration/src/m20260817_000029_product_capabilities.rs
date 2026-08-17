@@ -31,7 +31,9 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         if manager.get_database_backend() != DbBackend::MySql {
-            return Err(DbErr::Custom("产品能力迁移要求 MySQL 8.4".into()));
+            return Err(DbErr::Custom(
+                "产品能力迁移要求 MySQL 8.0.16 或更高版本".into(),
+            ));
         }
         if !manager.has_table("sys_tenant").await? {
             return Err(DbErr::Custom(

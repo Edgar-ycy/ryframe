@@ -12,7 +12,9 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         if manager.get_database_backend() != DbBackend::MySql {
-            return Err(DbErr::Custom("租户配置迁移要求 MySQL 8.0+".into()));
+            return Err(DbErr::Custom(
+                "租户配置迁移要求 MySQL 8.0.16 或更高版本".into(),
+            ));
         }
         add_configuration_columns(manager).await?;
         ensure_tenant_scoped_file_key(manager.get_connection()).await?;

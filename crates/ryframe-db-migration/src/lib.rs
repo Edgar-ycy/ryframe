@@ -107,7 +107,7 @@ impl MigratorTrait for Migrator {
 /// 这是唯一允许执行 DDL 的操作，供独立部署任务使用，而非生产 API 启动过程。
 pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
-    verify_mysql_84(db).await?;
+    verify_mysql_80(db).await?;
     let transaction = db.begin().await?;
     if let Err(error) = acquire_migration_lock(&transaction).await {
         let _ = transaction.rollback().await;
@@ -128,7 +128,7 @@ pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// 指纹相匹配。
 pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
-    verify_mysql_84(db).await?;
+    verify_mysql_80(db).await?;
     let status = status(db).await?;
     if !status.is_up_to_date() {
         return Err(DbErr::Custom(format!(
@@ -144,7 +144,7 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// 在不改变数据库状态的情况下读取迁移账本状态。
 pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
-    verify_mysql_84(db).await?;
+    verify_mysql_80(db).await?;
     let expected = Migrator::migrations().len();
     let ledger_exists = scalar_i64(
         db,
@@ -167,7 +167,8 @@ struct ServerIdentityRow {
     version_comment: String,
 }
 
-async fn verify_mysql_84(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// 仅接受支持受约束 CHECK 的 MySQL 8.0.16 或更高版本。
+async fn verify_mysql_80(db: &DatabaseConnection) -> Result<(), DbErr> {
     let identity = ServerIdentityRow::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT VERSION() AS version, @@version_comment AS version_comment",
@@ -175,26 +176,35 @@ async fn verify_mysql_84(db: &DatabaseConnection) -> Result<(), DbErr> {
     .one(db)
     .await?
     .ok_or_else(|| DbErr::Custom("cannot verify MySQL server identity".into()))?;
-    let version_core = identity
-        .version
-        .split(['-', '+'])
-        .next()
-        .unwrap_or_default();
-    let mut parts = version_core.split('.');
-    let supported = parts.next() == Some("8")
-        && parts.next() == Some("4")
-        && parts
-            .next()
-            .is_some_and(|patch| !patch.is_empty() && patch.bytes().all(|b| b.is_ascii_digit()))
-        && !identity.version.to_ascii_lowercase().contains("mariadb")
-        && !identity
-            .version_comment
-            .to_ascii_lowercase()
-            .contains("mariadb");
+    let supported = supports_mysql_80_or_newer(&identity.version, &identity.version_comment);
     if !supported {
-        return Err(DbErr::Custom("RyFrame requires Oracle MySQL 8.4.x".into()));
+        return Err(DbErr::Custom(
+            "RyFrame requires MySQL 8.0.16 or newer".into(),
+        ));
     }
     Ok(())
+}
+
+fn supports_mysql_80_or_newer(version: &str, version_comment: &str) -> bool {
+    if version.to_ascii_lowercase().contains("mariadb")
+        || version_comment.to_ascii_lowercase().contains("mariadb")
+    {
+        return false;
+    }
+
+    let version_core = version.split(['-', '+']).next().unwrap_or_default();
+    let mut parts = version_core.split('.');
+    let Some(major) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(minor) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(patch) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+
+    (major, minor, patch) >= (8, 0, 16)
 }
 
 fn ensure_mysql(db: &DatabaseConnection) -> Result<(), DbErr> {

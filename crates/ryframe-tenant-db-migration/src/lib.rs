@@ -134,7 +134,7 @@ impl MigratorTrait for Migrator {
 /// 升级一个明确选择的租户数据目标。不会创建任何控制面 `sys_*` 表。
 pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
-    verify_mysql_84(db).await?;
+    verify_mysql_80(db).await?;
     TENANT_DATA_CATALOG
         .validate()
         .map_err(|error| DbErr::Custom(format!("tenant-data catalog is invalid: {error}")))?;
@@ -173,7 +173,7 @@ pub async fn verify_for_catalog(
     catalog: &TenantDataCatalog,
 ) -> Result<(), DbErr> {
     ensure_mysql(db)?;
-    verify_mysql_84(db).await?;
+    verify_mysql_80(db).await?;
     catalog
         .validate_structure()
         .map_err(|error| DbErr::Custom(format!("tenant-data catalog is invalid: {error}")))?;
@@ -191,7 +191,7 @@ pub async fn verify_for_catalog(
 /// 读取独立迁移账本，不执行 DDL。
 pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
-    verify_mysql_84(db).await?;
+    verify_mysql_80(db).await?;
     let expected = Migrator::migrations().len();
     let ledger_exists = scalar_i64(
         db,
@@ -216,8 +216,8 @@ pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     })
 }
 
-/// 统一数据面只接受 Oracle MySQL 8.4.x；错误契约不回显服务器原始身份。
-pub async fn verify_mysql_84(db: &DatabaseConnection) -> Result<(), DbErr> {
+/// 统一数据面只接受 MySQL 8.0.16 或更高版本；错误契约不回显服务器原始身份。
+pub async fn verify_mysql_80(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
     let identity = ServerIdentityRow::find_by_statement(Statement::from_string(
         DbBackend::MySql,
@@ -226,28 +226,35 @@ pub async fn verify_mysql_84(db: &DatabaseConnection) -> Result<(), DbErr> {
     .one(db)
     .await?
     .ok_or_else(|| DbErr::Custom("cannot verify MySQL server identity".into()))?;
-    let version_core = identity
-        .version
-        .split(['-', '+'])
-        .next()
-        .unwrap_or_default();
-    let mut parts = version_core.split('.');
-    let supported = parts.next() == Some("8")
-        && parts.next() == Some("4")
-        && parts
-            .next()
-            .is_some_and(|patch| !patch.is_empty() && patch.bytes().all(|b| b.is_ascii_digit()))
-        && !identity.version.to_ascii_lowercase().contains("mariadb")
-        && !identity
-            .version_comment
-            .to_ascii_lowercase()
-            .contains("mariadb");
+    let supported = supports_mysql_80_or_newer(&identity.version, &identity.version_comment);
     if !supported {
         return Err(DbErr::Custom(
-            "tenant-data target requires Oracle MySQL 8.4.x".into(),
+            "tenant-data target requires MySQL 8.0.16 or newer".into(),
         ));
     }
     Ok(())
+}
+
+fn supports_mysql_80_or_newer(version: &str, version_comment: &str) -> bool {
+    if version.to_ascii_lowercase().contains("mariadb")
+        || version_comment.to_ascii_lowercase().contains("mariadb")
+    {
+        return false;
+    }
+
+    let version_core = version.split(['-', '+']).next().unwrap_or_default();
+    let mut parts = version_core.split('.');
+    let Some(major) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(minor) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(patch) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
+        return false;
+    };
+
+    (major, minor, patch) >= (8, 0, 16)
 }
 
 /// dedicated/mysql 目标不得混入控制面对象；shared-control 使用 `verify`。
@@ -274,7 +281,7 @@ pub async fn verify_mysql_target_for_catalog(
 }
 
 pub async fn ensure_mysql_target_boundary(db: &DatabaseConnection) -> Result<(), DbErr> {
-    verify_mysql_84(db).await?;
+    verify_mysql_80(db).await?;
     let expected = expected_mysql_target_table_names(&TENANT_DATA_CATALOG);
     let actual = mysql_target_table_names(db).await?;
     if actual.iter().any(|table| !expected.contains(table)) {
@@ -962,7 +969,7 @@ async fn verify_migration_versions(db: &DatabaseConnection) -> Result<(), DbErr>
 }
 
 fn normalize_check_clause(value: &str) -> String {
-    // MySQL 8.4 information_schema may render literal delimiters as
+    // MySQL information_schema may render literal delimiters as
     // `_utf8mb4\'value\'`. Only normalize syntax outside literals. Literal
     // bytes (including case, whitespace, backticks and charset-like text) are
     // semantic and must survive the exact comparison unchanged.
@@ -1037,7 +1044,7 @@ fn normalize_quoted_literal(
                     return index + 1;
                 }
                 if slash_count >= 3 && slash_count % 2 == 1 {
-                    // MySQL 8.4 renders an apostrophe inside an escaped-delimiter
+                    // MySQL may render an apostrophe inside an escaped-delimiter
                     // literal as three slashes plus the quote. Canonicalize it to
                     // SQL's doubled-quote representation while preserving any
                     // additional literal backslashes.
@@ -1217,7 +1224,7 @@ mod tests {
     use super::{ForeignKeySchemaRow, ensure_local_foreign_key_schemas, normalize_check_clause};
 
     #[test]
-    fn normalizes_mysql_84_escaped_check_literal_quotes() {
+    fn normalizes_mysql_escaped_check_literal_quotes() {
         assert_eq!(
             normalize_check_clause(r#"(`state` IN (_utf8mb4\'active\', _utf8mb4\'frozen\'))"#),
             "statein('active','frozen')",

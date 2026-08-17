@@ -263,7 +263,7 @@ Agent 限流依赖 Redis 7 standalone 的原子乐观事务。预认证 IP 桶�
 43. OpenAPI 通过 `x-ryframe-menu-routes` 导出默认菜单的稳定 `route_key` 与 `M/C` 类型；后端 CI 校验权限绑定并重新生成 OpenAPI/MySQL 快照做精确比对，前端 CI 校验页面注册表的精确集合与组件类型。
 44. 新密码规则集中在 `ryframe-auth::password`，个人修改、重置完成和租户管理员创建共用同一校验；OpenAPI 通过 `x-ryframe-password-policy` 发布规则，前端生成运行时验证配置而不再复制正则。
 45. 个人修改密码与密码重置都会原子递增 `authorization_version`，旧 access/refresh token 随即失效；弱密码校验发生在写事务前，不会消耗重置请求或创建半成品租户。
-46. MySQL 8.4、Redis 7 与固定版本 RustFS 的真实拓扑、迁移和 API 冒烟验证保留为本地或受控验收环境流程；托管后端 CI 不启动依赖容器，也不重复运行 Rust 测试。
+46. MySQL 8.0.16+、Redis 7 与固定版本 RustFS 的真实拓扑、迁移和 API 冒烟验证保留为本地或受控验收环境流程；托管后端 CI 不启动依赖容器，也不重复运行 Rust 测试。
 47. 隔离数据库、副本轮询、主库写入、命名数据源、迁移、代码生成器、Redis 与 RustFS 链路由本地完整验收覆盖；日常 push CI 只执行静态质量门禁和依赖安全审计。
 48. 配置收敛为静态启动配置，环境名统一为 `dev/test/prod`；生产配置文件禁止保存敏感值，secret 仅允许由 `APP_*` 环境变量或外部 secret manager 注入，缺失配置、旧 `ENC[...]` 格式和未知字段都会拒绝启动。
 49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过乐观事务 CAS 轮换和检测重放。

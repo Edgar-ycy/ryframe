@@ -7,7 +7,7 @@ RyFrame 是一个基于 Rust 2024 的后台管理系统框架，采用 Cargo Wor
 - 认证授权：内存 access token、HttpOnly refresh Cookie、CSRF 防护、会话轮换、RBAC 权限和数据权限。
 - 系统管理：用户、角色、权限、菜单、部门、岗位、参数、字典、通知、日志。
 - 安全中间件：限流、请求日志、CORS、超时、请求体限制、安全响应头、幂等与重放防护。
-- 数据与缓存：MySQL 8.4、SeaORM 主库/多只读副本、命名业务数据源、Rust Migrator、Redis 分布式状态。
+- 数据与缓存：MySQL 8.0.16+、SeaORM 主库/多只读副本、命名业务数据源、Rust Migrator、Redis 分布式状态。
 - 监控运维：存活探针、后台依赖探测与缓存式就绪快照、服务状态、缓存统计、数据库连接池、Prometheus 指标。
 - 扩展能力：代码生成、RustFS/MinIO/S3 对象存储、文件上传下载、Excel 导入导出、国际化和 WebSocket。
 - 前端管理端：独立仓库 [ryframe-vue3](https://github.com/Edgar-ycy/ryframe-vue3) 提供 Vue 3 + TypeScript + Element Plus 后台界面。
@@ -18,7 +18,7 @@ RyFrame 是一个基于 Rust 2024 的后台管理系统框架，采用 Cargo Wor
 
 - Rust 1.97.1（仓库通过 `rust-toolchain.toml` 固定）
 - Python 3.11+（用于后端质量门禁与发布校验脚本）
-- MySQL 8.4
+- MySQL 8.0.16+
 - Redis 7+；生产环境强制使用并要求持久化与 `noeviction`，开发环境才允许显式的内存降级
 - RustFS；开发配置默认连接本机 `9000` 端口，也可显式切换为本地存储
 
@@ -41,7 +41,12 @@ docker run -d --name ryframe-rustfs -p 9000:9000 -p 9001:9001 -e RUSTFS_ACCESS_K
 # 按本地环境修改数据库、Redis、对象存储等配置
 # config/app.dev.toml
 
-cargo run
+# 控制库与租户数据面使用独立迁移账本；首次启动和升级均先显式完成两类迁移
+cargo run -p ryframe --bin ryframe-migrate -- control up
+cargo run -p ryframe --bin ryframe-migrate -- tenant-data up --all
+
+# 启动 API
+cargo run -p ryframe --bin ryframe
 ```
 
 首次启动前可运行 `cargo xtask doctor` 检查 Rust、Node、pnpm、前后端仓库和配置。联合生产检查使用 `cargo xtask check`，可附加 `--scope backend` 或 `--scope frontend` 缩小范围。Cargo feature 必须在 `config/feature-matrix.json` 登记最小与最大组合，并在本地或发布验收环境运行 `cargo xtask feature-matrix`；日常 CI 不重复编译特性矩阵。稳定发布前使用 `cargo xtask release-verify` 校验双仓库版本、提交和发布元数据。`file-maintenance` 只用于一次性历史文件校验，常规 API 和 Worker 不会启用它。

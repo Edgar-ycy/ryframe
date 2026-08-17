@@ -82,7 +82,7 @@ impl TenantRepository {
 
     /// 在创建 Saga 首事务内查询并锁定可能存在的租户。
     ///
-    /// MySQL 8.4/InnoDB 在默认 REPEATABLE READ 下会对未命中的唯一索引范围持有间隙锁，
+    /// MySQL/InnoDB 在默认 REPEATABLE READ 下会对未命中的唯一索引范围持有间隙锁，
     /// 使“检查不存在→创建”不会在事务外留下竞态窗口。
     pub async fn lock_optional_tenant_in_txn(
         &self,

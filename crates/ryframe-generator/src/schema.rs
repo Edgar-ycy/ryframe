@@ -80,9 +80,9 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
         col_infos.push(col_info);
     }
 
-    ryframe_tenant_db_migration::verify_mysql_84(db)
+    ryframe_tenant_db_migration::verify_mysql_80(db)
         .await
-        .map_err(|_| AppError::Validation("代码生成要求 Oracle MySQL 8.4.x".into()))?;
+        .map_err(|_| AppError::Validation("代码生成要求 MySQL 8.0.16 或更高版本".into()))?;
     let table_comment = query_table_comment(db, table_name).await?;
     let indexes = query_indexes(db, table_name).await?;
     let foreign_keys = query_foreign_keys(db, table_name).await?;

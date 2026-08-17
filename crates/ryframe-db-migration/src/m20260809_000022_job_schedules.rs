@@ -9,7 +9,9 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         if manager.get_database_backend() != DbBackend::MySql {
-            return Err(DbErr::Custom("job schedules require MySQL 8.0+".into()));
+            return Err(DbErr::Custom(
+                "job schedules require MySQL 8.0.16 or newer".into(),
+            ));
         }
 
         add_background_job_columns(manager).await?;

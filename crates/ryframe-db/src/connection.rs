@@ -7,7 +7,7 @@ use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Sta
 
 /// 根据数据库配置创建连接池
 ///
-/// RyFrame v0.5 起仅支持 MySQL 8.4。
+/// RyFrame v0.5 起仅支持 MySQL 8.0.16 或更高版本。
 pub async fn connect(config: &DbConnection) -> AppResult<DatabaseConnection> {
     connect_with_sql_logging(config, SqlLogLevel::Off, 200).await
 }

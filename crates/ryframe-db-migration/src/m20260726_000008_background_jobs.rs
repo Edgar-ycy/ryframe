@@ -14,7 +14,7 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         if manager.get_database_backend() != DatabaseBackend::MySql {
             return Err(DbErr::Custom(
-                "background jobs require MySQL 8.0+ with SKIP LOCKED support".into(),
+                "background jobs require MySQL 8.0.16 or newer with SKIP LOCKED support".into(),
             ));
         }
 

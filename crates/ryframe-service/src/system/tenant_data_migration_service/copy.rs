@@ -145,7 +145,7 @@ impl TenantDataMigrationService {
                 .await?;
         }
         // 摘要与 FK 校验可能持续较久；进入不可取消边界前再做双目标实时
-        // ping、MySQL 8.4、ledger、完整 schema 与 mode/slot/fence 不变量复核。
+        // ping、MySQL 8.0.16+、ledger、完整 schema 与 mode/slot/fence 不变量复核。
         self.router
             .verify_target_now_for_catalog(&migration.source_target_key, &self.catalog)
             .await

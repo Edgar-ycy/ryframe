@@ -8,7 +8,7 @@
 
 - **Rust**：由 `rust-toolchain.toml` 固定的 1.97.1（[rustup](https://rustup.rs/) 会自动选择）
 - **Python**：3.11+（用于质量门禁和发布校验脚本）
-- **数据库**：MySQL 8.4；本地开发和部署演练可使用 Docker
+- **数据库**：MySQL 8.0.16+；本地开发和部署演练可使用 Docker
 - **Redis**：生产会话、撤销、幂等和分布式锁的强制依赖
 
 ### 快速开始
@@ -22,10 +22,14 @@ rustup component add clippy rustfmt
 cargo install cargo-audit
 
 
-# 3. 编辑 config/app.dev.toml；应用启动时由 Rust Migrator 初始化空库
+# 3. 编辑 config/app.dev.toml
 
-# 4. 启动开发服务器
-cargo run
+# 4. 初始化或升级控制库与租户数据面（两者使用独立迁移账本）
+cargo run -p ryframe --bin ryframe-migrate -- control up
+cargo run -p ryframe --bin ryframe-migrate -- tenant-data up --all
+
+# 5. 启动开发服务器
+cargo run -p ryframe --bin ryframe
 ```
 
 服务默认监听 `http://localhost:8080`，默认账号：`admin` / `123456`。

@@ -16,6 +16,7 @@
 
 ### Changed
 
+- 数据库运行时和租户数据目标的版本门槛统一为 MySQL 8.0.16+；继续拒绝 MariaDB，并保留受约束 CHECK、`SKIP LOCKED` 和完整 schema 校验所需的最低能力。
 - 登录、刷新和 `GET /auth/context` 统一返回原子 `session_context`；菜单按 Capability 后 RBAC 过滤，受保护响应返回授权、运行时、数据 generation 和状态四个快照头。
 - 登录、请求主体、长时间用户操作和权限诊断共用授权解析器，统一启用角色、超级角色、权限并集和数据范围语义。
 - API、Embedded Worker、External Worker 与 `ryframe-worker --once` 共用后台任务处理器装配，避免导入或维护任务在不同运行模式下缺少处理器。

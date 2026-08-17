@@ -10,7 +10,7 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         if manager.get_database_backend() != DbBackend::MySql {
             return Err(DbErr::Custom(
-                "tenant-data control migration requires MySQL 8.4".into(),
+                "tenant-data control migration requires MySQL 8.0.16 or newer".into(),
             ));
         }
         if !manager.has_table("sys_tenant").await? {

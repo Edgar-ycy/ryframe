@@ -5,7 +5,7 @@
 ## 1. 技术和边界
 
 - ORM：SeaORM 2.0 稳定版。
-- 驱动：MySQL 8.4。
+- 驱动：MySQL 8.0.16+。
 - 连接池：SeaORM/SQLx 异步连接池。
 - 应用模型：每个进程建立一个主库连接池、零到多个命名只读副本连接池，以及零到多个显式命名业务数据源连接池。
 - 租户模型：共享表通过 `tenant_id` 隔离。
@@ -76,7 +76,8 @@ SQL 日志统一走应用的 text/JSON writer、文件滚动和非阻塞写入�
 上下文；OpenTelemetry 数据库 span 不包含原始 SQL 或绑定参数。
 
 消息收件箱的索引必须先由慢 SQL 日志收集候选语句，再在脱敏后的代表性数据上执行
-`EXPLAIN ANALYZE`。候选索引为 `(tenant_id, user_id, deleted_at, message_id DESC)`、
+`EXPLAIN ANALYZE`（MySQL 8.0.18+）。若使用 8.0.16–8.0.17，则使用
+`EXPLAIN FORMAT=TREE` 并采集等价的预热后计时结果。候选索引为 `(tenant_id, user_id, deleted_at, message_id DESC)`、
 `(tenant_id, user_id, deleted_at, read_at, message_id DESC)` 和
 `(tenant_id, user_id, deleted_at, acked_at, message_id DESC)`；只有执行耗时或扫描行数至少
 改善 30% 时，才允许把对应索引加入迁移。没有这份执行计划证据时不得仅凭代码中的过滤条件
@@ -407,7 +408,8 @@ sys_file         idx_file_tenant_del_size         (tenant_id, del_flag, file_siz
 sys_job_schedule idx_schedule_tenant_del_enabled  (tenant_id, enabled, del_flag)
 ```
 
-上线前应使用预计租户数、用户数、角色数和文件数的代表性数据执行 `EXPLAIN ANALYZE`，保存容量筛选、
+上线前应使用预计租户数、用户数、角色数和文件数的代表性数据执行 `EXPLAIN ANALYZE`
+（MySQL 8.0.18+）；8.0.16–8.0.17 使用 `EXPLAIN FORMAT=TREE` 和预热后计时。保存容量筛选、
 当前页条件聚合和单租户用量查询的执行计划，确认命中上述索引且没有逐租户子查询。索引只服务查询，
 不会改变配额、软删除或文件生命周期语义。
 
