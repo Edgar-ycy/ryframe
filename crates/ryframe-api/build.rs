@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use syn::{Attribute, Item, LitStr, Token, punctuated::Punctuated};
+use syn::{Attribute, Expr, ExprLit, Item, Lit, LitStr, Meta, Token, punctuated::Punctuated};
 
 type RouteCapabilityBinding = (String, String, String, String, String, Option<String>);
 
@@ -109,31 +109,38 @@ fn collect_permission_codes(
                 let (permission, capability) =
                     collect_permission_attributes(&function.attrs, codes)?;
                 if let Some(capability) = capability {
+                    let documented_path = documented_api_path(&function.attrs, function)?;
                     let handler = if module_path.is_empty() {
                         function.sig.ident.to_string()
                     } else {
                         format!("{module_path}::{}", function.sig.ident)
                     };
-                    let mut route_found = false;
+                    let mut route_count = 0;
                     for attribute in &function.attrs {
                         let Some(method) = route_method(attribute) else {
                             continue;
                         };
-                        route_found = true;
                         let paths = attribute
                             .parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)?;
-                        for path in paths {
+                        for _ in paths {
+                            route_count += 1;
+                            if route_count > 1 {
+                                return Err(syn::Error::new_spanned(
+                                    function,
+                                    "capability route handlers may declare exactly one HTTP path",
+                                ));
+                            }
                             capability_bindings.insert((
                                 source.to_owned(),
                                 handler.clone(),
                                 method.to_owned(),
-                                path.value(),
+                                documented_path.clone(),
                                 capability.clone(),
                                 permission.clone(),
                             ));
                         }
                     }
-                    if !route_found {
+                    if route_count == 0 {
                         return Err(syn::Error::new_spanned(
                             function,
                             "#[capability] is only valid on an HTTP route handler",
@@ -162,6 +169,71 @@ fn collect_permission_codes(
         }
     }
     Ok(())
+}
+
+/// Extract the published, fully-qualified path for a capability-protected route.
+///
+/// Axum route attributes intentionally contain paths relative to their router group.  The route
+/// contract is consumed outside Rust, so it must instead expose the canonical OpenAPI path (for
+/// example `/api/v1/system/service-accounts`), not the group-local `"/"` or `"/{id}"` path.
+fn documented_api_path(attributes: &[Attribute], function: &syn::ItemFn) -> syn::Result<String> {
+    let mut documented_path = None;
+
+    for attribute in attributes {
+        let segments = &attribute.path().segments;
+        if segments.len() != 2
+            || segments
+                .first()
+                .is_none_or(|segment| segment.ident != "utoipa")
+            || segments
+                .last()
+                .is_none_or(|segment| segment.ident != "path")
+        {
+            continue;
+        }
+
+        let entries = attribute.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+        for entry in entries {
+            let Meta::NameValue(entry) = entry else {
+                continue;
+            };
+            if !entry.path.is_ident("path") {
+                continue;
+            }
+            let Expr::Lit(ExprLit {
+                lit: Lit::Str(path),
+                ..
+            }) = &entry.value
+            else {
+                return Err(syn::Error::new_spanned(
+                    &entry.value,
+                    "utoipa route path must be a string literal",
+                ));
+            };
+            let value = path.value();
+            if documented_path.replace(value).is_some() {
+                return Err(syn::Error::new_spanned(
+                    path,
+                    "capability route must declare exactly one utoipa path",
+                ));
+            }
+        }
+    }
+
+    let Some(documented_path) = documented_path else {
+        return Err(syn::Error::new_spanned(
+            function,
+            "capability route must declare an explicit utoipa path",
+        ));
+    };
+    if documented_path == "/api/v1" || documented_path.starts_with("/api/v1/") {
+        Ok(documented_path)
+    } else {
+        Err(syn::Error::new_spanned(
+            function,
+            "capability route utoipa path must start with /api/v1",
+        ))
+    }
 }
 
 fn collect_permission_attributes(

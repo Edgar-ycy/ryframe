@@ -726,6 +726,7 @@ fn permission_catalog_contract() -> serde_json::Value {
 
 fn route_contract() -> serde_json::Value {
     let bindings = crate::permission_catalog::route_capability_bindings();
+    let mut endpoint_keys = std::collections::BTreeSet::new();
     for descriptor in ryframe_service::system::CAPABILITY_CATALOG {
         for permission in descriptor.permission_codes {
             assert!(
@@ -742,6 +743,15 @@ fn route_contract() -> serde_json::Value {
         .iter()
         .map(
             |(source, handler, method, path, capability_code, permission_code)| {
+                assert!(
+                    *path == ryframe_http::API_PREFIX
+                        || path.starts_with(&format!("{}/", ryframe_http::API_PREFIX)),
+                    "route contract path must include the public API prefix: {path}"
+                );
+                assert!(
+                    endpoint_keys.insert((*method, *path)),
+                    "route contract has duplicate method/path binding: {method} {path}"
+                );
                 let descriptor = ryframe_service::system::CAPABILITY_CATALOG
                     .iter()
                     .find(|descriptor| descriptor.code == *capability_code)

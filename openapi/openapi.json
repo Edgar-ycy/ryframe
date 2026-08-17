@@ -41356,7 +41356,7 @@
         "capability_code": "system.service_accounts",
         "handler": "capabilities",
         "method": "GET",
-        "path": "/capabilities",
+        "path": "/api/v1/agent/v1/capabilities",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/agent_handler.rs"
       },
@@ -41364,7 +41364,7 @@
         "capability_code": "system.service_accounts",
         "handler": "departments",
         "method": "GET",
-        "path": "/directory/departments",
+        "path": "/api/v1/agent/v1/directory/departments",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/agent_handler.rs"
       },
@@ -41372,7 +41372,7 @@
         "capability_code": "system.service_accounts",
         "handler": "dictionary",
         "method": "GET",
-        "path": "/reference/dictionaries/{type_code}",
+        "path": "/api/v1/agent/v1/reference/dictionaries/{type_code}",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/agent_handler.rs"
       },
@@ -41380,7 +41380,7 @@
         "capability_code": "system.service_accounts",
         "handler": "posts",
         "method": "GET",
-        "path": "/directory/posts",
+        "path": "/api/v1/agent/v1/directory/posts",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/agent_handler.rs"
       },
@@ -41388,7 +41388,7 @@
         "capability_code": "system.service_accounts",
         "handler": "users",
         "method": "GET",
-        "path": "/directory/users",
+        "path": "/api/v1/agent/v1/directory/users",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/agent_handler.rs"
       },
@@ -41396,7 +41396,7 @@
         "capability_code": "system.service_accounts",
         "handler": "account_detail",
         "method": "GET",
-        "path": "/{id}",
+        "path": "/api/v1/system/service-accounts/{id}",
         "permission_code": "system:service-account:list",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41404,7 +41404,7 @@
         "capability_code": "system.service_accounts",
         "handler": "account_roles",
         "method": "GET",
-        "path": "/{id}/roles",
+        "path": "/api/v1/system/service-accounts/{id}/roles",
         "permission_code": "system:service-account:role",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41412,7 +41412,7 @@
         "capability_code": "system.service_accounts",
         "handler": "create_account",
         "method": "POST",
-        "path": "/",
+        "path": "/api/v1/system/service-accounts",
         "permission_code": "system:service-account:add",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41420,7 +41420,7 @@
         "capability_code": "system.service_accounts",
         "handler": "create_credential",
         "method": "POST",
-        "path": "/{id}/credentials",
+        "path": "/api/v1/system/service-accounts/{id}/credentials",
         "permission_code": "system:service-account:key-rotate",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41428,7 +41428,7 @@
         "capability_code": "system.service_accounts",
         "handler": "list_access_audits",
         "method": "GET",
-        "path": "/",
+        "path": "/api/v1/system/service-access-audits",
         "permission_code": "system:service-access-audit:list",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41436,7 +41436,7 @@
         "capability_code": "system.service_accounts",
         "handler": "list_accounts",
         "method": "GET",
-        "path": "/",
+        "path": "/api/v1/system/service-accounts",
         "permission_code": "system:service-account:list",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41444,7 +41444,7 @@
         "capability_code": "system.service_accounts",
         "handler": "list_credentials",
         "method": "GET",
-        "path": "/{id}/credentials",
+        "path": "/api/v1/system/service-accounts/{id}/credentials",
         "permission_code": "system:service-account:list",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41452,7 +41452,7 @@
         "capability_code": "system.service_accounts",
         "handler": "list_delegations",
         "method": "GET",
-        "path": "/",
+        "path": "/api/v1/system/service-delegations",
         "permission_code": "system:service-delegation:list",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41460,7 +41460,7 @@
         "capability_code": "system.service_accounts",
         "handler": "remove_account",
         "method": "DELETE",
-        "path": "/{id}",
+        "path": "/api/v1/system/service-accounts/{id}",
         "permission_code": "system:service-account:remove",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41468,7 +41468,7 @@
         "capability_code": "system.service_accounts",
         "handler": "replace_account_roles",
         "method": "PUT",
-        "path": "/{id}/roles",
+        "path": "/api/v1/system/service-accounts/{id}/roles",
         "permission_code": "system:service-account:role",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41476,7 +41476,7 @@
         "capability_code": "system.service_accounts",
         "handler": "revoke_credential",
         "method": "DELETE",
-        "path": "/{id}/credentials/{credential_id}",
+        "path": "/api/v1/system/service-accounts/{id}/credentials/{credential_id}",
         "permission_code": "system:service-account:key-revoke",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41484,7 +41484,7 @@
         "capability_code": "system.service_accounts",
         "handler": "revoke_delegation",
         "method": "DELETE",
-        "path": "/{id}",
+        "path": "/api/v1/system/service-delegations/{id}",
         "permission_code": "system:service-delegation:revoke",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41492,7 +41492,7 @@
         "capability_code": "system.service_accounts",
         "handler": "update_account",
         "method": "PUT",
-        "path": "/{id}",
+        "path": "/api/v1/system/service-accounts/{id}",
         "permission_code": "system:service-account:edit",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41500,7 +41500,7 @@
         "capability_code": "system.service_accounts",
         "handler": "update_account_status",
         "method": "PUT",
-        "path": "/{id}/status",
+        "path": "/api/v1/system/service-accounts/{id}/status",
         "permission_code": "system:service-account:edit",
         "source": "crates/ryframe-api/src/handlers/service_account_handler.rs"
       },
@@ -41508,7 +41508,7 @@
         "capability_code": "system.service_accounts",
         "handler": "create_my_delegation",
         "method": "POST",
-        "path": "/",
+        "path": "/api/v1/profile/service-delegations",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/service_delegation_profile_handler.rs"
       },
@@ -41516,7 +41516,7 @@
         "capability_code": "system.service_accounts",
         "handler": "delegation_capabilities",
         "method": "GET",
-        "path": "/capabilities",
+        "path": "/api/v1/profile/service-delegations/capabilities",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/service_delegation_profile_handler.rs"
       },
@@ -41524,7 +41524,7 @@
         "capability_code": "system.service_accounts",
         "handler": "list_my_delegations",
         "method": "GET",
-        "path": "/",
+        "path": "/api/v1/profile/service-delegations",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/service_delegation_profile_handler.rs"
       },
@@ -41532,7 +41532,7 @@
         "capability_code": "system.service_accounts",
         "handler": "revoke_my_delegation",
         "method": "DELETE",
-        "path": "/{id}",
+        "path": "/api/v1/profile/service-delegations/{id}",
         "permission_code": null,
         "source": "crates/ryframe-api/src/handlers/service_delegation_profile_handler.rs"
       }
