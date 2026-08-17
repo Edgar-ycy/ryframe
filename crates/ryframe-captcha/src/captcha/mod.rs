@@ -11,8 +11,8 @@ use crate::AppResult;
 use challenge::generate_challenge;
 use render::create_captcha_image;
 
-const CAPTCHA_WIDTH: u32 = 120;
-const CAPTCHA_HEIGHT: u32 = 40;
+const CAPTCHA_WIDTH: u32 = 160;
+const CAPTCHA_HEIGHT: u32 = 56;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptchaType {

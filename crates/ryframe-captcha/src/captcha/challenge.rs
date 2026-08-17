@@ -2,7 +2,8 @@ use rand::{Rng, RngExt};
 
 use super::CaptchaType;
 
-pub(super) const ALPHANUMERIC_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+// 移除在低分辨率字形下容易混淆的 B/8、S/5、G/6、Z/2 等字符。
+pub(super) const ALPHANUMERIC_ALPHABET: &[u8] = b"ACDEFHJKLMNPQRTUVWXY3479";
 const ALPHANUMERIC_LENGTH: usize = 4;
 
 pub(super) struct Challenge {

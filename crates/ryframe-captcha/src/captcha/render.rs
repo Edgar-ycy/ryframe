@@ -5,9 +5,9 @@ use crate::{AppError, AppResult};
 
 use super::glyph::{self, GLYPH_HEIGHT, GLYPH_WIDTH};
 
-const GLYPH_SCALE: u32 = 4;
-const INTERFERENCE_LINES: usize = 5;
-const INTERFERENCE_POINTS: usize = 50;
+const GLYPH_SCALE: u32 = 5;
+const INTERFERENCE_LINES: usize = 2;
+const INTERFERENCE_POINTS: usize = 16;
 const MAX_TEXT_CHARACTERS: usize = 12;
 const MAX_IMAGE_DIMENSION: u32 = 1024;
 
@@ -45,9 +45,9 @@ pub(super) fn create_captcha_image(text: &str, width: u32, height: u32) -> AppRe
 
     let mut rng = rand::rng();
     let background = Rgb([
-        rng.random_range(220..255),
-        rng.random_range(220..255),
-        rng.random_range(220..255),
+        rng.random_range(235..255),
+        rng.random_range(235..255),
+        rng.random_range(235..255),
     ]);
     let mut image = ImageBuffer::from_pixel(width, height, background);
 
@@ -74,9 +74,9 @@ pub(super) fn create_captcha_image(text: &str, width: u32, height: u32) -> AppRe
     let y_offset = (height - glyph_height) / 2;
     for (index, character) in text.chars().enumerate() {
         let color = Rgb([
-            rng.random_range(0..100),
-            rng.random_range(0..100),
-            rng.random_range(0..100),
+            rng.random_range(0..70),
+            rng.random_range(0..70),
+            rng.random_range(0..70),
         ]);
         draw_glyph(
             &mut image,
@@ -96,9 +96,9 @@ pub(super) fn create_captcha_image(text: &str, width: u32, height: u32) -> AppRe
 
 fn interference_color(rng: &mut impl Rng) -> Rgb<u8> {
     Rgb([
-        rng.random_range(100..200),
-        rng.random_range(100..200),
-        rng.random_range(100..200),
+        rng.random_range(170..215),
+        rng.random_range(170..215),
+        rng.random_range(170..215),
     ])
 }
 

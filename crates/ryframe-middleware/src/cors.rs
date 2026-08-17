@@ -61,6 +61,7 @@ pub fn cors_layer(config: &CorsConfig) -> AppResult<CorsLayer> {
             http::HeaderName::from_static("x-tenant-data-generation"),
             http::HeaderName::from_static("x-tenant-data-state"),
             http::HeaderName::from_static("x-ryframe-realtime"),
+            http::HeaderName::from_static("x-captcha-id"),
         ])
         .allow_credentials(true)
         .max_age(std::time::Duration::from_secs(3600));
