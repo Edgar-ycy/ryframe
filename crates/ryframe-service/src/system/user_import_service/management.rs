@@ -1,6 +1,6 @@
 impl UserImportService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         queue: Arc<JobQueue>,
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,

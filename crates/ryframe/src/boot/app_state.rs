@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ryframe_api::{AppServices, runtime::RuntimeComponents};
 use ryframe_config::{AppConfig, RedisMode};
 use ryframe_core::{RedisClient, TokenBlacklist};
-use ryframe_db::DatabaseCluster;
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_i18n::Localizer;
 use ryframe_middleware::RateLimiter;
 use ryframe_utils::ip::TrustedProxySet;
@@ -12,7 +12,7 @@ use ryframe_utils::ip::TrustedProxySet;
 ///
 /// 使用单个输入结构保持组合根的依赖关系显式，避免随着基础设施增加让函数参数失控。
 pub struct AppStateAssembly {
-    pub database: DatabaseCluster,
+    pub database: ControlDatabaseCluster,
     pub config: Arc<AppConfig>,
     pub localizer: Arc<Localizer>,
     pub redis_client: Option<RedisClient>,

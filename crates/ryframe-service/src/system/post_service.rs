@@ -3,7 +3,7 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{PostFilter, PostRepository, TenantConfigTransferRepository, entities::post};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -47,12 +47,12 @@ pub struct PostListParams {
 }
 
 pub struct PostService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     post_repo: PostRepository,
 }
 
 impl PostService {
-    pub fn new(db: DatabaseCluster) -> Self {
+    pub fn new(db: ControlDatabaseCluster) -> Self {
         Self {
             db,
             post_repo: PostRepository,

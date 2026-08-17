@@ -18,9 +18,7 @@ pub use distributed_lock::{
     DistributedLock, LocalDistributedLock, LockGuard, RedisDistributedLock, create_distributed_lock,
 };
 pub use multi_tenant::{
-    ExtractionMethod, IsolationStrategy, QuotaCheck, TenantConfig, TenantContext, TenantFilter,
-    TenantIsolation, TenantQuota, TenantRateLimitCache, tenant_middleware,
-    validate_explicit_tenant, validate_tenant_identifier, with_tenant_context,
+    TenantContext, validate_explicit_tenant, validate_tenant_identifier, with_tenant_context,
 };
 pub use redis_client::RedisClient;
 pub use refresh_session::{

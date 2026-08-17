@@ -13,6 +13,33 @@ port = 8080
 # 数据库 tenant_id 隔离列、唯一键和缓存命名空间仍然保留。
 enabled = true
 
+[tenant_data]
+# 新租户默认 placement；已有租户始终以控制库权威 placement 为准，缺失时拒绝路由。
+default_target = "shared-control"
+max_open_targets = 32
+max_total_connections = 200
+idle_pool_secs = 600
+# shared-control 可省略并由规范化阶段注入；显式形式如下：
+# [[tenant_data.targets]]
+# key = "shared-control"
+# mode = "shared"
+# kind = "control"
+# 独立 MySQL 目标只保存密码环境变量名，不允许配置明文密码或 DSN。
+# [[tenant_data.targets]]
+# key = "tenant-a-db"
+# display_name = "租户 A 独立库"
+# region = "cn-east-1"
+# mode = "dedicated"
+# kind = "mysql"
+# max_connections = 8
+# host = "mysql-tenant-a.internal"
+# port = 3306
+# database = "ryframe_tenant_a"
+# username = "ryframe_tenant_a"
+# password_env = "RYFRAME_TENANT_A_DB_PASSWORD"
+# tls_mode = "verify_identity"
+# tls_ca = "/run/secrets/mysql-ca.pem"
+
 [api_docs]
 enabled = true
 
@@ -26,7 +53,8 @@ sql_log_level = "off"
 # 慢 SQL 判定阈值（毫秒）。
 sql_slow_threshold_ms = 200
 # 未设置时，开发/测试环境的 migration_mode 默认为 auto，生产环境默认为 verify。
-# 生产 DDL 应由独立的 `ryframe-migrate up` 部署任务执行。
+# 生产控制面 DDL 应由独立的 `ryframe-migrate control up` 部署任务执行；
+# 租户数据面另执行 `ryframe-migrate tenant-data up --all`。
 
 [database.primary]
 host = "localhost"

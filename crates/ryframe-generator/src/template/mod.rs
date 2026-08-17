@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod dto;
 pub mod entity;
 pub mod handler;
@@ -6,12 +7,24 @@ pub mod service;
 
 use crate::schema::{ColumnInfo, TableInfo};
 
-pub(crate) fn primary_key(table: &TableInfo) -> &ColumnInfo {
-    table
+pub(crate) fn business_primary_keys(table: &TableInfo) -> Vec<&ColumnInfo> {
+    let primary = table
+        .indexes
+        .iter()
+        .find(|index| index.name == "PRIMARY")
+        .expect("table schema is validated before rendering");
+    primary
         .columns
         .iter()
-        .find(|column| column.is_primary_key)
-        .expect("table schema is validated before rendering")
+        .filter(|name| name.as_str() != "tenant_id")
+        .map(|name| {
+            table
+                .columns
+                .iter()
+                .find(|column| column.name == *name)
+                .expect("PRIMARY column exists in table metadata")
+        })
+        .collect()
 }
 
 pub(crate) fn is_managed_column(column: &ColumnInfo) -> bool {

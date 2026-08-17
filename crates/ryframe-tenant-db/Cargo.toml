@@ -1,0 +1,22 @@
+[package]
+name = "ryframe-tenant-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+ryframe-config = { path = "../ryframe-config" }
+ryframe-core = { path = "../ryframe-core" }
+ryframe-db = { path = "../ryframe-db" }
+ryframe-tenant-db-migration = { path = "../ryframe-tenant-db-migration" }
+sea-orm = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

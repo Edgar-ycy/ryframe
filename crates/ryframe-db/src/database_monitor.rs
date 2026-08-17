@@ -10,11 +10,11 @@ struct ActiveConnectionRow {
 }
 
 pub struct SeaOrmDatabaseMonitor {
-    database: crate::DatabaseCluster,
+    database: crate::ControlDatabaseCluster,
 }
 
 impl SeaOrmDatabaseMonitor {
-    pub fn new(database: crate::DatabaseCluster) -> Self {
+    pub fn new(database: crate::ControlDatabaseCluster) -> Self {
         Self { database }
     }
 }

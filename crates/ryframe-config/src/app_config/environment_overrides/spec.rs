@@ -77,6 +77,23 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_APP_HOST", &["app", "host"]),
     EnvOverride::integer("APP_APP_PORT", &["app", "port"]),
     EnvOverride::boolean("APP_MULTI_TENANCY_ENABLED", &["multi_tenancy", "enabled"]),
+    EnvOverride::string(
+        "APP_TENANT_DATA_DEFAULT_TARGET",
+        &["tenant_data", "default_target"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_DATA_MAX_OPEN_TARGETS",
+        &["tenant_data", "max_open_targets"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_DATA_MAX_TOTAL_CONNECTIONS",
+        &["tenant_data", "max_total_connections"],
+    ),
+    EnvOverride::integer(
+        "APP_TENANT_DATA_IDLE_POOL_SECS",
+        &["tenant_data", "idle_pool_secs"],
+    ),
+    EnvOverride::json_file("APP_TENANT_DATA_TARGETS", &["tenant_data", "targets"]),
     EnvOverride::boolean("APP_API_DOCS_ENABLED", &["api_docs", "enabled"]),
     EnvOverride::secret(
         "APP_MONITOR_METRICS_BEARER_TOKEN",

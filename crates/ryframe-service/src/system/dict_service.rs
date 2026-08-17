@@ -2,7 +2,7 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
     DictDataRepository, DictTypeFilter, DictTypeRepository, TenantConfigTransferRepository,
     entities::{dict_data, dict_type},
@@ -82,14 +82,14 @@ impl From<dict_data::Model> for DictDataVo {
 }
 
 pub struct DictService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     dict_type_repo: DictTypeRepository,
     dict_data_repo: DictDataRepository,
     redis: Option<ryframe_core::RedisClient>,
 }
 
 impl DictService {
-    pub fn new(db: DatabaseCluster, redis: Option<ryframe_core::RedisClient>) -> Self {
+    pub fn new(db: ControlDatabaseCluster, redis: Option<ryframe_core::RedisClient>) -> Self {
         Self {
             db,
             dict_type_repo: DictTypeRepository,

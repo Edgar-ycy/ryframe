@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_config::MessagingConfig;
-use ryframe_db::{DatabaseCluster, MessageRepository, OutboxEventRepository};
+use ryframe_db::{ControlDatabaseCluster, MessageRepository, OutboxEventRepository};
 use ryframe_kernel::{AppError, AppResult};
 
 use crate::JobQueue;
@@ -22,7 +22,7 @@ pub const MESSAGE_RETENTION_JOB_TYPE: &str = "system.message.retention";
 
 /// MySQL 持久化消息中心服务。
 pub struct MessageService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     repository: MessageRepository,
     outbox: OutboxEventRepository,
     queue: Arc<JobQueue>,
@@ -31,7 +31,7 @@ pub struct MessageService {
 
 impl MessageService {
     /// 使用主库和持久化任务队列构造服务。
-    pub fn new(db: DatabaseCluster, queue: Arc<JobQueue>, config: MessagingConfig) -> Self {
+    pub fn new(db: ControlDatabaseCluster, queue: Arc<JobQueue>, config: MessagingConfig) -> Self {
         Self {
             db,
             repository: MessageRepository,

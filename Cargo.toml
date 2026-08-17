@@ -3,7 +3,7 @@ default-members = ["crates/ryframe"]
 
 members = [
     "crates/ryframe",
-    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-http", "crates/ryframe-i18n", "crates/ryframe-kernel", "crates/ryframe-middleware", "crates/ryframe-service",
+    "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-config", "crates/ryframe-core", "crates/ryframe-db", "crates/ryframe-db-migration", "crates/ryframe-tenant-db", "crates/ryframe-tenant-db-migration", "crates/ryframe-http", "crates/ryframe-i18n", "crates/ryframe-kernel", "crates/ryframe-middleware", "crates/ryframe-service",
     "crates/ryframe-generator", "crates/ryframe-monitor", "crates/ryframe-macro", "crates/ryframe-storage",
     "crates/ryframe-utils", "crates/ryframe-captcha", "crates/ryframe-excel",
     "xtask",

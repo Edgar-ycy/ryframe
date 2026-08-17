@@ -4,8 +4,8 @@
 //! 不完整初始化的 schema 会被拒绝，而不会被静默修复。
 
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, Statement, TransactionTrait,
-    TryGetable,
+    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, FromQueryResult, Statement,
+    TransactionTrait, TryGetable,
 };
 use sea_orm_migration::prelude::*;
 
@@ -103,6 +103,7 @@ impl MigratorTrait for Migrator {
 /// 这是唯一允许执行 DDL 的操作，供独立部署任务使用，而非生产 API 启动过程。
 pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
+    verify_mysql_84(db).await?;
     let transaction = db.begin().await?;
     if let Err(error) = acquire_migration_lock(&transaction).await {
         let _ = transaction.rollback().await;
@@ -123,10 +124,11 @@ pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// 指纹相匹配。
 pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
+    verify_mysql_84(db).await?;
     let status = status(db).await?;
     if !status.is_up_to_date() {
         return Err(DbErr::Custom(format!(
-            "migration ledger is not current: applied {}, expected {}; run `ryframe-migrate up` before starting the API",
+            "control migration ledger is not current: applied {}, expected {}; run `ryframe-migrate control up` before starting the API",
             status.applied, status.expected
         )));
     }
@@ -138,6 +140,7 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// 在不改变数据库状态的情况下读取迁移账本状态。
 pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
+    verify_mysql_84(db).await?;
     let expected = Migrator::migrations().len();
     let ledger_exists = scalar_i64(
         db,
@@ -152,6 +155,42 @@ pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
         0
     };
     Ok(MigrationStatus { applied, expected })
+}
+
+#[derive(Debug, FromQueryResult)]
+struct ServerIdentityRow {
+    version: String,
+    version_comment: String,
+}
+
+async fn verify_mysql_84(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let identity = ServerIdentityRow::find_by_statement(Statement::from_string(
+        DbBackend::MySql,
+        "SELECT VERSION() AS version, @@version_comment AS version_comment",
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(|| DbErr::Custom("cannot verify MySQL server identity".into()))?;
+    let version_core = identity
+        .version
+        .split(['-', '+'])
+        .next()
+        .unwrap_or_default();
+    let mut parts = version_core.split('.');
+    let supported = parts.next() == Some("8")
+        && parts.next() == Some("4")
+        && parts
+            .next()
+            .is_some_and(|patch| !patch.is_empty() && patch.bytes().all(|b| b.is_ascii_digit()))
+        && !identity.version.to_ascii_lowercase().contains("mariadb")
+        && !identity
+            .version_comment
+            .to_ascii_lowercase()
+            .contains("mariadb");
+    if !supported {
+        return Err(DbErr::Custom("RyFrame requires Oracle MySQL 8.4.x".into()));
+    }
+    Ok(())
 }
 
 fn ensure_mysql(db: &DatabaseConnection) -> Result<(), DbErr> {

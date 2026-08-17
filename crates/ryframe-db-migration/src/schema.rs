@@ -142,7 +142,7 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT TABLE_NAME FROM information_schema.TABLES \
+            "SELECT TABLE_NAME AS `table_name` FROM information_schema.TABLES \
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' \
              AND TABLE_NAME <> 'seaql_migrations' ORDER BY TABLE_NAME"
                 .to_owned(),
@@ -150,7 +150,10 @@ where
         .await?;
     let mut tables = Vec::with_capacity(rows.len());
     for row in rows {
-        tables.push(String::try_get_by_index(&row, 0)?);
+        let table = String::try_get_by_index(&row, 0)?;
+        if !is_tenant_data_object(&table) {
+            tables.push(table);
+        }
     }
     Ok(tables)
 }
@@ -395,7 +398,9 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT t.TABLE_NAME, t.ENGINE, c.CHARACTER_SET_NAME, t.TABLE_COLLATION \
+            "SELECT t.TABLE_NAME AS `table_name`, t.ENGINE AS `engine`, \
+                    c.CHARACTER_SET_NAME AS `character_set_name`, \
+                    t.TABLE_COLLATION AS `table_collation` \
              FROM information_schema.TABLES t \
              JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY c \
                ON c.COLLATION_NAME = t.TABLE_COLLATION \
@@ -406,6 +411,9 @@ where
     let mut tables = BTreeMap::new();
     for row in rows {
         let table = String::try_get_by_index(&row, 0)?;
+        if is_tenant_data_object(&table) {
+            continue;
+        }
         let engine = normalize_identifier(&String::try_get_by_index(&row, 1)?);
         let character_set = normalize_identifier(&String::try_get_by_index(&row, 2)?);
         let collation = normalize_identifier(&String::try_get_by_index(&row, 3)?);
@@ -421,6 +429,10 @@ where
     Ok(tables)
 }
 
+fn is_tenant_data_object(table: &str) -> bool {
+    table == "seaql_tenant_data_migrations" || table.starts_with("biz_")
+}
+
 async fn actual_columns<C>(db: &C) -> Result<BTreeMap<(String, String), ActualColumn>, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -428,8 +440,12 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA, \
-                    CHARACTER_SET_NAME, COLLATION_NAME, GENERATION_EXPRESSION \
+            "SELECT TABLE_NAME AS `table_name`, COLUMN_NAME AS `column_name`, \
+                    COLUMN_TYPE AS `column_type`, IS_NULLABLE AS `is_nullable`, \
+                    COLUMN_DEFAULT AS `column_default`, EXTRA AS `extra`, \
+                    CHARACTER_SET_NAME AS `character_set_name`, \
+                    COLLATION_NAME AS `collation_name`, \
+                    GENERATION_EXPRESSION AS `generation_expression` \
              FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
                 .to_owned(),
         ))
@@ -472,9 +488,12 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT TABLE_NAME, INDEX_NAME, CAST(NON_UNIQUE AS SIGNED), \
-                    CAST(SEQ_IN_INDEX AS SIGNED), COALESCE(COLUMN_NAME, EXPRESSION), \
-                    CAST(SUB_PART AS SIGNED), INDEX_TYPE, IS_VISIBLE \
+            "SELECT TABLE_NAME AS `table_name`, INDEX_NAME AS `index_name`, \
+                    CAST(NON_UNIQUE AS SIGNED) AS `non_unique`, \
+                    CAST(SEQ_IN_INDEX AS SIGNED) AS `seq_in_index`, \
+                    COALESCE(COLUMN_NAME, EXPRESSION) AS `column_expression`, \
+                    CAST(SUB_PART AS SIGNED) AS `sub_part`, INDEX_TYPE AS `index_type`, \
+                    IS_VISIBLE AS `is_visible` \
              FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() \
              ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
                 .to_owned(),
@@ -508,10 +527,12 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, \
-                    CAST(k.ORDINAL_POSITION AS SIGNED), k.COLUMN_NAME, \
-                    k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME, \
-                    r.UPDATE_RULE, r.DELETE_RULE \
+            "SELECT k.TABLE_NAME AS `table_name`, k.CONSTRAINT_NAME AS `constraint_name`, \
+                    CAST(k.ORDINAL_POSITION AS SIGNED) AS `ordinal_position`, \
+                    k.COLUMN_NAME AS `column_name`, \
+                    k.REFERENCED_TABLE_NAME AS `referenced_table_name`, \
+                    k.REFERENCED_COLUMN_NAME AS `referenced_column_name`, \
+                    r.UPDATE_RULE AS `update_rule`, r.DELETE_RULE AS `delete_rule` \
              FROM information_schema.KEY_COLUMN_USAGE k \
              JOIN information_schema.REFERENTIAL_CONSTRAINTS r \
                ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA \

@@ -9,7 +9,7 @@ use ryframe_auth::rbac;
 use ryframe_config::{MultiTenancyConfig, PepperKeyring, ServiceAccountsConfig};
 use ryframe_core::RedisClient;
 use ryframe_db::{
-    AgentQueryRepository, AgentRowScope, DataRetentionRepository, DatabaseCluster,
+    AgentQueryRepository, AgentRowScope, ControlDatabaseCluster, DataRetentionRepository,
     ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
     ServiceAuthorizationRepository, ServiceAuthorizationSnapshot, ServiceCredentialRepository,
     ServiceDelegationRepository,
@@ -43,7 +43,7 @@ const RESULT_ERROR: &str = service_access_audit::Model::RESULT_ERROR;
 
 #[derive(Clone)]
 pub struct AgentService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     config: ServiceAccountsConfig,
     multi_tenancy: MultiTenancyConfig,
     keyring: Arc<PepperKeyring>,
@@ -82,7 +82,7 @@ use support::*;
 
 impl AgentService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         redis: RedisClient,
         keyring: Arc<PepperKeyring>,
         config: ServiceAccountsConfig,

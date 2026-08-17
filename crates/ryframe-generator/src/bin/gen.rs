@@ -22,28 +22,28 @@ use sea_orm::Database;
 const DB_URL: &str = "mysql://root:123456@localhost:3306/ryframe_device";
 
 /// 工作区根目录（代码输出的基准路径）
-const WORKSPACE_ROOT: &str = "./example";
+const WORKSPACE_ROOT: &str = ".";
 
 /// 要生成代码的表名列表
-const TABLES: &[&str] = &["t_gongxv", "t_xiangmu"];
+const TABLES: &[&str] = &["biz_work_order", "biz_device"];
 
 /// 表名前缀过滤列表，如 ["t_"] 会将 "t_gongxv" 剥离为 "gongxv" 来命名
-const TABLE_PREFIXES: &[&str] = &["t_"];
+const TABLE_PREFIXES: &[&str] = &["biz_"];
 
 /// 实体输出目录（相对于 `WORKSPACE_ROOT`）
-const ENTITY_DIR: &str = "src/entities";
+const ENTITY_DIR: &str = "crates/ryframe-db/src/entities";
 
 /// 仓储输出目录
-const REPOSITORY_DIR: &str = "src/repositories";
+const REPOSITORY_DIR: &str = "crates/ryframe-service/src/business";
 
 /// 服务输出目录
-const SERVICE_DIR: &str = "src/service";
+const SERVICE_DIR: &str = "crates/ryframe-service/src/business";
 
 /// 处理器输出目录
-const HANDLER_DIR: &str = "src/handlers";
+const HANDLER_DIR: &str = "crates/ryframe-api/src/handlers/business";
 
 /// 数据传输对象输出目录
-const DTO_DIR: &str = "src/dto";
+const DTO_DIR: &str = "crates/ryframe-api/src/dto/business";
 
 /// 是否覆盖已存在的文件
 const OVERWRITE: bool = true;
@@ -57,7 +57,7 @@ const GENERATE_COMMENTS: bool = true;
 async fn main() {
     if TABLES.is_empty() {
         eprintln!("未配置要生成的表名。请在源代码的 TABLES 常量中添加表名。");
-        eprintln!("例如: const TABLES: &[&str] = &[\"sys_user\", \"sys_role\"];");
+        eprintln!("例如: const TABLES: &[&str] = &[\"biz_device\", \"biz_work_order\"];");
         process::exit(1);
     }
 

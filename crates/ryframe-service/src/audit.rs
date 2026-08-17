@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-use ryframe_db::{DatabaseCluster, OutboxEventRepository, RecordOutboxEvent};
+use ryframe_db::{ControlDatabaseCluster, OutboxEventRepository, RecordOutboxEvent};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -174,13 +174,13 @@ pub async fn commit_current_audit(transaction: DatabaseTransaction) -> AppResult
 /// 由 HTTP 边界使用的独立短事务 Outbox 写入器。
 #[derive(Clone)]
 pub struct AuditOutbox {
-    database: DatabaseCluster,
+    database: ControlDatabaseCluster,
     max_attempts: i32,
     job_queue: Option<Arc<JobQueue>>,
 }
 
 impl AuditOutbox {
-    pub fn new(database: DatabaseCluster, default_max_attempts: i32) -> Self {
+    pub fn new(database: ControlDatabaseCluster, default_max_attempts: i32) -> Self {
         Self {
             database,
             max_attempts: default_max_attempts.clamp(1, OUTBOX_MAX_ATTEMPTS),

@@ -18,6 +18,7 @@ mod runtime_config;
 mod service_accounts_config;
 mod telemetry_config;
 mod tenant_config_transfer_config;
+mod tenant_data_config;
 mod user_import_config;
 
 pub use app_config::AppSettings;
@@ -43,6 +44,10 @@ pub use runtime_config::{ProxyConfig, UploadLimitsConfig};
 pub use service_accounts_config::{PepperKeyring, ServiceAccountsConfig};
 pub use telemetry_config::TelemetryConfig;
 pub use tenant_config_transfer_config::TenantConfigTransferConfig;
+pub use tenant_data_config::{
+    SHARED_CONTROL_TARGET_KEY, TenantDataConfig, TenantDatabaseTargetConfig,
+    TenantDatabaseTargetKind, TenantDatabaseTargetMode, is_valid_target_key,
+};
 pub use user_import_config::UserImportConfig;
 
 pub use crate::app_config::AppConfig;

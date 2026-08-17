@@ -4,8 +4,10 @@ use std::{
 };
 
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
-use ryframe_db::DatabaseCluster;
-pub use ryframe_generator::{ColumnInfo, GenerateOptions, GeneratedFile, TableInfo, WriteReport};
+use ryframe_db::ControlDatabaseCluster;
+pub use ryframe_generator::{
+    ColumnInfo, ForeignKeyInfo, GenerateOptions, GeneratedFile, IndexInfo, TableInfo, WriteReport,
+};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::DatabaseConnection;
 
@@ -17,13 +19,13 @@ pub struct TableListParams {
 }
 
 pub struct GeneratorService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     data_source: String,
     project_root: PathBuf,
 }
 
 impl GeneratorService {
-    pub fn new(db: DatabaseCluster, data_source: String, project_root: PathBuf) -> Self {
+    pub fn new(db: ControlDatabaseCluster, data_source: String, project_root: PathBuf) -> Self {
         Self {
             db,
             data_source,

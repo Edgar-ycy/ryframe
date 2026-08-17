@@ -8,7 +8,7 @@ use ryframe_auth::RequestPrincipal;
 use ryframe_core::RedisClient;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, DatabaseCluster,
+    BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ControlDatabaseCluster,
     EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExecutionTenantScope, background_job,
     tenant_config_bundle, tenant_config_transfer,
 };
@@ -106,7 +106,7 @@ impl From<BackgroundJobStats> for BackgroundJobQueueStats {
 /// 持久化任务的业务层入口。
 #[derive(Clone)]
 pub struct JobQueue {
-    database: DatabaseCluster,
+    database: ControlDatabaseCluster,
     repository: Arc<BackgroundJobRepository>,
     metrics_observer: Arc<RwLock<Option<Arc<dyn JobMetricsObserver>>>>,
     wakeup: Arc<QueueWakeup>,
@@ -114,7 +114,7 @@ pub struct JobQueue {
 
 impl JobQueue {
     /// 使用主库构造任务队列。所有领取、状态迁移和入队都必须走主库。
-    pub fn new(database: DatabaseCluster) -> Self {
+    pub fn new(database: ControlDatabaseCluster) -> Self {
         let metrics_observer = Arc::new(RwLock::new(None));
         Self {
             database,

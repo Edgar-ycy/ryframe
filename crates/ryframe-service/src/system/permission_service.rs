@@ -4,7 +4,7 @@ use ryframe_core::{
     Repository,
     auto_fill::{AutoFill, FillContext},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{PermissionRepository, TenantConfigTransferRepository, entities::permission};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -25,13 +25,13 @@ const SYSTEM_TENANT_ID: &str = "system";
 const TENANT_PERMISSION_PREFIX: &str = "tenant:";
 
 pub struct PermissionService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     perm_repo: PermissionRepository,
     authorization_cache: AuthorizationCache,
 }
 
 impl PermissionService {
-    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             perm_repo: PermissionRepository,

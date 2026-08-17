@@ -10,9 +10,9 @@ use ryframe_auth::password;
 use ryframe_config::UserImportConfig;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    CreateUserImportJob, DatabaseCluster, DeptRepository, EnqueueBackgroundJob, FileRepository,
-    TenantConfigTransferRepository, TenantRepository, UserImportFilter, UserImportRepository,
-    UserRepository, background_job,
+    ControlDatabaseCluster, CreateUserImportJob, DeptRepository, EnqueueBackgroundJob,
+    FileRepository, TenantConfigTransferRepository, TenantRepository, UserImportFilter,
+    UserImportRepository, UserRepository, background_job,
     entities::{dept, user, user_import_job, user_import_row_result},
 };
 use ryframe_excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
@@ -42,7 +42,7 @@ const IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES: i64 = 5;
 
 #[derive(Clone)]
 pub struct UserImportService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     queue: Arc<JobQueue>,
     user_service: Arc<UserService>,
     file_service: Arc<FileService>,

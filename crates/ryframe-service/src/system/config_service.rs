@@ -7,7 +7,7 @@ use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository,
     TenantConfigTransferRepository, entities::config,
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -51,14 +51,14 @@ pub struct ConfigListParams {
 }
 
 pub struct ConfigService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     config_repo: ConfigRepository,
     cache_namespace_repo: CacheNamespaceVersionRepository,
     authorization_cache: AuthorizationCache,
 }
 
 impl ConfigService {
-    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             config_repo: ConfigRepository,

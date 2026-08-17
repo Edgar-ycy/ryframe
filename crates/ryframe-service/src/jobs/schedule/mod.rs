@@ -6,7 +6,7 @@ use cron::Schedule;
 use ryframe_config::JobConfig;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    DatabaseCluster, ExecutionTenantScope, JobScheduleExecutionFilter, JobScheduleFilter,
+    ControlDatabaseCluster, ExecutionTenantScope, JobScheduleExecutionFilter, JobScheduleFilter,
     JobScheduleRepository, job_schedule, job_schedule_execution,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -139,7 +139,7 @@ pub struct JobSchedulePreview {
 /// 数据库驱动的租户调度服务。
 #[derive(Clone)]
 pub struct JobScheduleService {
-    database: DatabaseCluster,
+    database: ControlDatabaseCluster,
     repository: Arc<JobScheduleRepository>,
     queue: Arc<JobQueue>,
     execution_tenant_scope: ExecutionTenantScope,

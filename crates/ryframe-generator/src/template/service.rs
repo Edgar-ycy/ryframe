@@ -4,8 +4,23 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
     let struct_name = naming::to_pascal_case(base_name);
     let snake = naming::to_snake_case(base_name);
     let repository_field = format!("{}_repo", snake);
-    let primary_key = template::primary_key(table);
-    let primary_key_type = primary_key.rust_type.as_str();
+    let business_primary_keys = template::business_primary_keys(table);
+    let key_fields = business_primary_keys
+        .iter()
+        .map(|column| {
+            format!(
+                "    pub {}: {},",
+                naming::safe_field_name(&column.name),
+                column.rust_type
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let key_call_arguments = business_primary_keys
+        .iter()
+        .map(|column| format!("key.{}", naming::safe_field_name(&column.name)))
+        .collect::<Vec<_>>()
+        .join(", ");
     let public_columns = template::public_columns(table).collect::<Vec<_>>();
     let command_columns = template::command_columns(table).collect::<Vec<_>>();
 
@@ -50,7 +65,9 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
         .iter()
         .map(|column| {
             let field_name = naming::safe_field_name(&column.name);
-            let value = if column.is_primary_key {
+            let value = if column.name == "tenant_id" {
+                "tenant_id.to_owned()".into()
+            } else if column.is_primary_key {
                 if column.is_auto_increment {
                     "Default::default()".into()
                 } else if column.rust_type == "i64" {
@@ -60,7 +77,6 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
                 }
             } else {
                 match column.name.as_str() {
-                    "tenant_id" => "tenant_id.to_owned()".into(),
                     "del_flag" => template::normal_value(column),
                     "created_at" | "updated_at" | "create_time" | "update_time" => {
                         "Default::default()".into()
@@ -80,7 +96,10 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let common_import = if !primary_key.is_auto_increment && primary_key.rust_type == "i64" {
+    let common_import = if business_primary_keys
+        .iter()
+        .any(|column| !column.is_auto_increment && column.rust_type == "i64")
+    {
         "use ryframe_kernel::{ActorContext, AppError, AppResult};\nuse ryframe_utils::snowflake;"
     } else {
         "use ryframe_kernel::{ActorContext, AppError, AppResult};"
@@ -89,15 +108,23 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
 
     format!(
         r#"// 此文件由 ryframe-generator v{generator_version} 自动生成。
+// tenant-data-boundary: business
 {chrono_import}{common_import}
+use std::sync::Arc;
+
 use ryframe_core::{{
-    Repository,
     auto_fill::{{AutoFill, FillContext}},
     repository::{{ValidatedPageQuery, PageResult}},
 }};
-use ryframe_db::{{{struct_name}Repository, entities::{snake}}};
-use sea_orm::DatabaseConnection;
-use serde::Serialize;
+use crate::business::{struct_name}Repository;
+use ryframe_db::entities::{snake};
+use ryframe_tenant_db::TenantDatabaseRouter;
+use serde::{{Deserialize, Serialize}};
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct {struct_name}Key {{
+{key_fields}
+}}
 
 #[derive(Debug, Serialize)]
 pub struct {struct_name}Vo {{
@@ -113,14 +140,14 @@ pub struct Update{struct_name}Command {{
 }}
 
 pub struct {struct_name}Service {{
-    db: DatabaseConnection,
+    tenant_data: Arc<TenantDatabaseRouter>,
     {repository_field}: {struct_name}Repository,
 }}
 
 impl {struct_name}Service {{
-    pub fn new(db: DatabaseConnection) -> Self {{
+    pub fn new(tenant_data: Arc<TenantDatabaseRouter>) -> Self {{
         Self {{
-            db,
+            tenant_data,
             {repository_field}: {struct_name}Repository,
         }}
     }}
@@ -131,10 +158,14 @@ impl {struct_name}Service {{
         query: ValidatedPageQuery,
     ) -> AppResult<PageResult<{struct_name}Vo>> {{
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = &self.db;
+        let session = self
+            .tenant_data
+            .resolve(tenant_id)
+            .await
+            .map_err(crate::map_tenant_data_error)?;
         let page = self
             .{repository_field}
-            .find_by_page(db, tenant_id, query.clone())
+            .find_by_page(&session, query.clone())
             .await?;
         let records = page.records.into_iter().map({struct_name}Vo::from).collect();
         Ok(PageResult::new(records, page.total, &query))
@@ -143,13 +174,17 @@ impl {struct_name}Service {{
     pub async fn find_by_id(
         &self,
         actor: &ActorContext,
-        id: {primary_key_type},
+        key: {struct_name}Key,
     ) -> AppResult<Option<{struct_name}Vo>> {{
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = &self.db;
+        let session = self
+            .tenant_data
+            .resolve(tenant_id)
+            .await
+            .map_err(crate::map_tenant_data_error)?;
         Ok(self
             .{repository_field}
-            .find_by_id(db, tenant_id, id)
+            .find_by_id(&session, {key_call_arguments})
             .await?
             .map({struct_name}Vo::from))
     }}
@@ -160,42 +195,62 @@ impl {struct_name}Service {{
         command: Create{struct_name}Command,
     ) -> AppResult<{struct_name}Vo> {{
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = &self.db;
+        let session = self
+            .tenant_data
+            .resolve(tenant_id)
+            .await
+            .map_err(crate::map_tenant_data_error)?;
         let mut model = {snake}::Model {{
 {create_model_fields}
         }};
         model.fill_on_insert(&FillContext::new())?;
-        let saved = self.{repository_field}.insert(db, tenant_id, model).await?;
+        let saved = self
+            .{repository_field}
+            .insert(&session, model)
+            .await?;
         Ok({struct_name}Vo::from(saved))
     }}
 
     pub async fn update(
         &self,
         actor: &ActorContext,
-        id: {primary_key_type},
+        key: {struct_name}Key,
         command: Update{struct_name}Command,
     ) -> AppResult<{struct_name}Vo> {{
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = &self.db;
+        let session = self
+            .tenant_data
+            .resolve(tenant_id)
+            .await
+            .map_err(crate::map_tenant_data_error)?;
         let mut model = self
             .{repository_field}
-            .find_by_id(db, tenant_id, id)
+            .find_by_id(&session, {key_call_arguments})
             .await?
             .ok_or_else(|| AppError::NotFound("记录不存在".into()))?;
 {update_fields}
         model.fill_on_update(&FillContext::new())?;
-        let saved = self.{repository_field}.update(db, tenant_id, model).await?;
+        let saved = self
+            .{repository_field}
+            .update(&session, model)
+            .await?;
         Ok({struct_name}Vo::from(saved))
     }}
 
     pub async fn delete(
         &self,
         actor: &ActorContext,
-        id: {primary_key_type},
+        key: {struct_name}Key,
     ) -> AppResult<()> {{
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = &self.db;
-        self.{repository_field}.delete(db, tenant_id, id).await
+        let session = self
+            .tenant_data
+            .resolve(tenant_id)
+            .await
+            .map_err(crate::map_tenant_data_error)?;
+        self.{repository_field}
+            .delete(&session, {key_call_arguments})
+            .await
     }}
 }}
 

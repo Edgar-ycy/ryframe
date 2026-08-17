@@ -3,7 +3,7 @@ use ryframe_core::{
     Repository,
     auto_fill::{AutoFill, FillContext},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency, TenantRepository};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency, TenantRepository};
 use ryframe_db::{
     DeptRepository, FileRepository, PermissionRepository, RoleRepository, UserRepository,
     entities::{sys_file, user},
@@ -40,7 +40,7 @@ pub struct UserProfileResponse {
 
 /// 个人中心服务
 pub struct ProfileService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     user_repo: UserRepository,
     role_repo: RoleRepository,
     perm_repo: PermissionRepository,
@@ -49,7 +49,7 @@ pub struct ProfileService {
 }
 
 impl ProfileService {
-    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             user_repo: UserRepository,

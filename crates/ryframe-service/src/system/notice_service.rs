@@ -3,7 +3,7 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{NoticeFilter, NoticeRepository, entities::notice};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -45,12 +45,12 @@ pub struct NoticeListParams {
 }
 
 pub struct NoticeService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     notice_repo: NoticeRepository,
 }
 
 impl NoticeService {
-    pub fn new(db: DatabaseCluster) -> Self {
+    pub fn new(db: ControlDatabaseCluster) -> Self {
         Self {
             db,
             notice_repo: NoticeRepository,

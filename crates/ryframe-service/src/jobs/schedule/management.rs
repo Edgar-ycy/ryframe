@@ -2,7 +2,7 @@ use super::*;
 
 impl JobScheduleService {
     pub fn new(
-        database: DatabaseCluster,
+        database: ControlDatabaseCluster,
         queue: Arc<JobQueue>,
         execution_tenant_scope: ExecutionTenantScope,
         targets: ScheduledJobTargetRegistry,

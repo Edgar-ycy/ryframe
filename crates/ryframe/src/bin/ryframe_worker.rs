@@ -16,7 +16,7 @@ use ryframe_config::{
     AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode, StorageBackend,
 };
 use ryframe_core::RedisClient;
-use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
+use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
 use ryframe_service::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
@@ -69,7 +69,7 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
     ryframe_db::connection::ping(&primary).await?;
-    let database = DatabaseCluster::single(primary);
+    let database = ControlDatabaseCluster::single(primary);
     install_database_metrics(&database);
 
     match config.database.migration_mode {
@@ -267,7 +267,7 @@ struct WorkerHealthState {
 
 /// 启动独立 Worker 的存活、就绪和 Prometheus 指标端点。
 async fn start_health_server(
-    database: DatabaseCluster,
+    database: ControlDatabaseCluster,
     redis: Option<RedisClient>,
     redis_required: bool,
     metrics_bearer_token: Arc<str>,
@@ -464,7 +464,7 @@ async fn shutdown_signal(shutdown_sender: watch::Sender<bool>) {
 }
 
 /// 在 Worker 进程边界将底层数据库事件绑定到 Prometheus 指标。
-fn install_database_metrics(database: &DatabaseCluster) {
+fn install_database_metrics(database: &ControlDatabaseCluster) {
     database.set_metrics_observer(Arc::new(CallbackDatabaseMetricsObserver::new(
         Arc::new(|kind, name, healthy| {
             ryframe_middleware::metrics::set_database_node_health(

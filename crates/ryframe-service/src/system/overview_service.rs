@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_config::{JobConfig, JobWorkerMode};
-use ryframe_db::{DataRetentionRepository, DatabaseCluster, OverviewRepository};
+use ryframe_db::{ControlDatabaseCluster, DataRetentionRepository, OverviewRepository};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
 
@@ -83,7 +83,7 @@ pub struct OverviewTrends {
 }
 
 pub struct OverviewService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     repository: OverviewRepository,
     clock_repository: DataRetentionRepository,
     job_queue: Arc<JobQueue>,
@@ -92,7 +92,7 @@ pub struct OverviewService {
 }
 
 impl OverviewService {
-    pub fn new(db: DatabaseCluster, job_queue: Arc<JobQueue>, config: &JobConfig) -> Self {
+    pub fn new(db: ControlDatabaseCluster, job_queue: Arc<JobQueue>, config: &JobConfig) -> Self {
         let jobs_mode = match config.mode {
             JobWorkerMode::Embedded => "embedded",
             JobWorkerMode::External => "external",

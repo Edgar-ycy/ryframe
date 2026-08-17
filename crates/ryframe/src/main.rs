@@ -4,7 +4,7 @@ mod boot;
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
 use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode};
-use ryframe_db::{CallbackDatabaseMetricsObserver, DatabaseCluster};
+use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_i18n::Localizer;
 use ryframe_kernel::AppError;
 use ryframe_service::{AuthorizationCache, CallbackJobMetricsObserver, JobQueue, OutboxWorker};
@@ -308,7 +308,7 @@ async fn shutdown_signal(
 }
 
 /// 在应用边界将底层数据库事件绑定到 Prometheus 指标。
-fn install_database_metrics(database: &DatabaseCluster) {
+fn install_database_metrics(database: &ControlDatabaseCluster) {
     database.set_metrics_observer(Arc::new(CallbackDatabaseMetricsObserver::new(
         Arc::new(|kind, name, healthy| {
             ryframe_middleware::metrics::set_database_node_health(

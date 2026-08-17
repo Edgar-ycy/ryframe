@@ -20,8 +20,6 @@ redis = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "fs"] }
 tracing = { workspace = true }
 dashmap = { workspace = true }
-axum = { workspace = true }
-http = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
 

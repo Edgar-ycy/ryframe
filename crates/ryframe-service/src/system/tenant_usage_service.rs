@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::{DateTime, Utc};
 use ryframe_core::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    DatabaseCluster, ReadConsistency, TenantRepository, TenantUsageAggregate,
+    ControlDatabaseCluster, ReadConsistency, TenantRepository, TenantUsageAggregate,
     TenantUsagePageFilter, TenantUsageRepository, entities::tenant,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -76,7 +76,7 @@ pub struct TenantCapacityVo {
 }
 
 pub struct TenantUsageService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     tenant_repo: TenantRepository,
     usage_repo: TenantUsageRepository,
     rate_limiter: Arc<RateLimiter>,
@@ -86,7 +86,7 @@ pub struct TenantUsageService {
 
 impl TenantUsageService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         rate_limiter: Arc<RateLimiter>,
         rate_limit_enabled: bool,
         scheduler_enabled: bool,

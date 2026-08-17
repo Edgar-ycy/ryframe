@@ -8,8 +8,8 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_config::TenantConfigTransferConfig;
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, DatabaseCluster, EnqueueBackgroundJob,
-    FileRepository, TenantConfigTransferRepository,
+    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ControlDatabaseCluster,
+    EnqueueBackgroundJob, FileRepository, TenantConfigTransferRepository,
     entities::{
         background_job, config, dept, dict_data, dict_type, menu, permission, post, role,
         role_dept, role_permission, tenant, tenant_config_bundle, tenant_config_lease,
@@ -79,7 +79,7 @@ const REQUEST_KIND_FROM_PACKAGE: &str = "from_package";
 
 #[derive(Clone)]
 pub struct TenantConfigTransferService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     repository: Arc<TenantConfigTransferRepository>,
     queue: Arc<JobQueue>,
     user_service: Arc<UserService>,
@@ -91,7 +91,7 @@ pub struct TenantConfigTransferService {
 
 impl TenantConfigTransferService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         queue: Arc<JobQueue>,
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,

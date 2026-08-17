@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use ryframe_db::{
-    DataRetentionRepository, DatabaseCluster, DeptRepository, MenuRepository, PermissionRepository,
-    RoleRepository, UserRepository,
+    ControlDatabaseCluster, DataRetentionRepository, DeptRepository, MenuRepository,
+    PermissionRepository, RoleRepository, UserRepository,
     entities::{menu, permission, role},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
@@ -127,7 +127,7 @@ struct PermissionSource {
 }
 
 pub struct AuthorizationDiagnosticService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     user_service: Arc<UserService>,
     user_repo: UserRepository,
     role_repo: RoleRepository,
@@ -141,7 +141,7 @@ pub struct AuthorizationDiagnosticService {
 
 impl AuthorizationDiagnosticService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         user_service: Arc<UserService>,
         authorization_cache: AuthorizationCache,
         websocket_notification_available: bool,

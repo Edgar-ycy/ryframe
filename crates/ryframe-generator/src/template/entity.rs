@@ -44,6 +44,7 @@ pub fn render_entity(table: &TableInfo, _base_name: &str, generate_comments: boo
 
     format!(
         r#"// 此文件由 ryframe-generator v{generator_version} 自动生成。
+// tenant-data-boundary: business entity
 {chrono_import}use ryframe_macro::AutoFill;
 use sea_orm::entity::prelude::*;
 use serde::{{Deserialize, Serialize}};

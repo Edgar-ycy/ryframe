@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_config::{DataRetentionConfig, TenantConfigTransferConfig};
 use ryframe_core::repository::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
-    DataRetentionRepository, DatabaseCluster, EnqueueBackgroundJob, FileRepository,
+    ControlDatabaseCluster, DataRetentionRepository, EnqueueBackgroundJob, FileRepository,
     RetentionCleanupResult, RetentionCutoff, RetentionResource, TenantRepository,
     UserImportRepository, background_job, data_retention_run, tenant_config_bundle,
     tenant_config_transfer,
@@ -144,7 +144,7 @@ impl From<data_retention_run::Model> for DataRetentionRunVo {
 
 #[derive(Clone)]
 pub struct DataRetentionService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     repository: Arc<DataRetentionRepository>,
     queue: Arc<JobQueue>,
     file_service: Arc<FileService>,
@@ -154,7 +154,7 @@ pub struct DataRetentionService {
 
 impl DataRetentionService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         queue: Arc<JobQueue>,
         file_service: Arc<FileService>,
         config: DataRetentionConfig,

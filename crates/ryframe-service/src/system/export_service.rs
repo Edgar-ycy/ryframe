@@ -3,7 +3,9 @@ use std::sync::Arc;
 use chrono::Duration;
 use ryframe_config::JobConfig;
 use ryframe_core::repository::Repository;
-use ryframe_db::{BackgroundJobRepository, DatabaseCluster, ExportJobRepository, FileRepository};
+use ryframe_db::{
+    BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
+};
 use ryframe_kernel::AppError;
 
 use crate::JobQueue;
@@ -40,7 +42,7 @@ const EXPORT_CLEANUP_BATCH_SIZE: u64 = 100;
 
 /// 异步导出任务服务。
 pub struct ExportService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     background_jobs: BackgroundJobRepository,
     exports: ExportJobRepository,
     files: FileRepository,
@@ -60,7 +62,7 @@ pub struct ExportService {
 
 impl ExportService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         users: Arc<UserService>,
         storage: Arc<dyn ryframe_storage::ObjectStorage>,
         jobs: &JobConfig,

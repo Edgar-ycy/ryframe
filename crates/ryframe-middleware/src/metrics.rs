@@ -181,6 +181,42 @@ lazy_static! {
         "Eventual-consistency reads routed to primary because no healthy replica was available",
     )
     .expect("create db_read_fallback_total");
+    static ref TENANT_DATA_TARGETS: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "tenant_data_targets",
+            "Tenant-data target count by bounded mode and cached health",
+        ),
+        &["mode", "health"],
+    )
+    .expect("create tenant_data_targets");
+    static ref TENANT_DATA_PLACEMENTS: IntGaugeVec = IntGaugeVec::new(
+        Opts::new(
+            "tenant_data_placements",
+            "Tenant-data placement count by bounded state and target mode",
+        ),
+        &["mode", "state"],
+    )
+    .expect("create tenant_data_placements");
+    static ref TENANT_DATA_POOL_OPEN: IntGauge = IntGauge::new(
+        "tenant_data_pool_open",
+        "Open tenant-data MySQL pools in this process",
+    )
+    .expect("create tenant_data_pool_open");
+    static ref TENANT_DATA_POOL_OPENING: IntGauge = IntGauge::new(
+        "tenant_data_pool_opening",
+        "Tenant-data MySQL pools currently opening in this process",
+    )
+    .expect("create tenant_data_pool_opening");
+    static ref TENANT_DATA_POOL_RESERVED_CONNECTIONS: IntGauge = IntGauge::new(
+        "tenant_data_pool_reserved_connections",
+        "Connections atomically reserved across tenant-data pools",
+    )
+    .expect("create tenant_data_pool_reserved_connections");
+    static ref TENANT_DATA_POOL_ACTIVE_LEASES: IntGauge = IntGauge::new(
+        "tenant_data_pool_active_leases",
+        "Active tenant-data pool leases in this process",
+    )
+    .expect("create tenant_data_pool_active_leases");
     static ref JOB_QUEUE_DEPTH: IntGaugeVec = IntGaugeVec::new(
         Opts::new(
             "job_queue_depth",
@@ -331,6 +367,12 @@ fn ensure_registered() {
             Box::new(DB_NODE_UP.clone()),
             Box::new(DB_READ_SELECTION_TOTAL.clone()),
             Box::new(DB_READ_FALLBACK_TOTAL.clone()),
+            Box::new(TENANT_DATA_TARGETS.clone()),
+            Box::new(TENANT_DATA_PLACEMENTS.clone()),
+            Box::new(TENANT_DATA_POOL_OPEN.clone()),
+            Box::new(TENANT_DATA_POOL_OPENING.clone()),
+            Box::new(TENANT_DATA_POOL_RESERVED_CONNECTIONS.clone()),
+            Box::new(TENANT_DATA_POOL_ACTIVE_LEASES.clone()),
             Box::new(JOB_QUEUE_DEPTH.clone()),
             Box::new(JOB_OLDEST_READY_AGE_SECONDS.clone()),
             Box::new(JOB_DURATION_SECONDS.clone()),
@@ -529,6 +571,40 @@ pub fn database_read_selection_totals() -> Vec<(&'static str, &'static str, u64)
         (target, reason, count)
     })
     .collect()
+}
+
+/// 重置租户数据低基数聚合，调用方随后写入本次完整快照。
+pub fn reset_tenant_data_aggregates() {
+    ensure_registered();
+    TENANT_DATA_TARGETS.reset();
+    TENANT_DATA_PLACEMENTS.reset();
+}
+
+pub fn set_tenant_data_target_count(mode: &'static str, health: &'static str, count: usize) {
+    ensure_registered();
+    TENANT_DATA_TARGETS
+        .with_label_values(&[mode, health])
+        .set(count as i64);
+}
+
+pub fn set_tenant_data_placement_count(mode: &'static str, state: &'static str, count: u64) {
+    ensure_registered();
+    TENANT_DATA_PLACEMENTS
+        .with_label_values(&[mode, state])
+        .set(count as i64);
+}
+
+pub fn set_tenant_data_pool_stats(
+    open: usize,
+    opening: usize,
+    reserved_connections: u32,
+    active_leases: usize,
+) {
+    ensure_registered();
+    TENANT_DATA_POOL_OPEN.set(open as i64);
+    TENANT_DATA_POOL_OPENING.set(opening as i64);
+    TENANT_DATA_POOL_RESERVED_CONNECTIONS.set(reserved_connections as i64);
+    TENANT_DATA_POOL_ACTIVE_LEASES.set(active_leases as i64);
 }
 
 /// 设置已注册任务类型在指定状态下的队列深度。

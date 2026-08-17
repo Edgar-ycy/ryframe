@@ -1,5 +1,5 @@
 use ryframe_config::{AppConfig, DatabaseReplicaConfig, SqlLogLevel};
-use ryframe_db::DatabaseCluster;
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 use sea_orm::DatabaseConnection;
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ const REPLICA_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(60);
 /// 连接主数据库、可选副本和具名数据源。
 /// 主库和具名数据源连接失败仍会导致启动失败；副本以降级状态启动，避免短暂的副本
 /// 故障阻止 API 提供由主库支撑的服务。
-pub async fn connect(config: &AppConfig) -> Result<DatabaseCluster, AppError> {
+pub async fn connect(config: &AppConfig) -> Result<ControlDatabaseCluster, AppError> {
     let primary_config = &config.database.primary;
     let primary = ryframe_db::connection::connect_with_sql_logging(
         primary_config,
@@ -69,13 +69,13 @@ pub async fn connect(config: &AppConfig) -> Result<DatabaseCluster, AppError> {
         sources.push((source_config.name.clone(), source));
     }
 
-    Ok(DatabaseCluster::with_sources_and_replica_slots(
+    Ok(ControlDatabaseCluster::with_sources_and_replica_slots(
         primary, replicas, sources,
     ))
 }
 
 /// 校验主库迁移账本与结构。滚动迁移期间副本可能滞后，健康检查通过前不得参与路由。
-pub async fn verify_schema(cluster: &DatabaseCluster) -> Result<(), AppError> {
+pub async fn verify_schema(cluster: &ControlDatabaseCluster) -> Result<(), AppError> {
     verify_database_node("primary", cluster.write()).await?;
     tracing::info!(
         node = "primary",
@@ -87,7 +87,7 @@ pub async fn verify_schema(cluster: &DatabaseCluster) -> Result<(), AppError> {
 /// 持续探测副本，但不将其纳入就绪判定。返回的句柄由应用进程持有，并在优雅退出时
 /// 随 Tokio 运行时一同释放。
 pub fn spawn_replica_health_monitor(
-    database: DatabaseCluster,
+    database: ControlDatabaseCluster,
     replicas: Vec<DatabaseReplicaConfig>,
     sql_log_level: SqlLogLevel,
     sql_slow_threshold_ms: u64,
@@ -167,7 +167,7 @@ enum ReplicaProbeFailure {
 }
 
 async fn probe_replica(
-    database: &DatabaseCluster,
+    database: &ControlDatabaseCluster,
     replica: &DatabaseReplicaConfig,
     sql_log_level: SqlLogLevel,
     sql_slow_threshold_ms: u64,

@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
     ProvisionTenantCommand, TenantProvisioningRepository, TenantRepository, entities::tenant,
 };
@@ -68,14 +68,14 @@ pub struct UpdateTenantParams {
 }
 
 pub struct TenantService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     tenant_repo: TenantRepository,
     provisioning_repo: TenantProvisioningRepository,
     authorization_cache: AuthorizationCache,
 }
 
 impl TenantService {
-    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             tenant_repo: TenantRepository,

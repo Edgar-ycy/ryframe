@@ -5,6 +5,7 @@ use ryframe_kernel::{AppError, AppResult};
 use super::security::MIN_PRODUCTION_JWT_SECRET_BYTES;
 use crate::{
     AppConfig, DbConnection, DbTlsMode, MigrationMode, RedisConfig, RedisMode, StorageBackend,
+    TenantDatabaseTargetKind,
 };
 
 impl AppConfig {
@@ -22,6 +23,7 @@ impl AppConfig {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
         self.database.validate().map_err(AppError::Config)?;
+        self.tenant_data.validate().map_err(AppError::Config)?;
         validate_database_connection(
             "database.primary",
             &self.database.primary,
@@ -30,6 +32,13 @@ impl AppConfig {
         if !self.environment.is_test() && self.database.migration_mode == MigrationMode::Off {
             return Err(AppError::Config(
                 "database.migration_mode = \"off\" is allowed only when APP_ENV=test".into(),
+            ));
+        }
+        if self.environment.is_production() && self.database.migration_mode != MigrationMode::Verify
+        {
+            return Err(AppError::Config(
+                "production requires database.migration_mode = \"verify\"; schema changes must be applied by ryframe-migrate"
+                    .into(),
             ));
         }
 
@@ -80,6 +89,54 @@ impl AppConfig {
                 &source.connection,
                 self.environment.is_production(),
             )?;
+        }
+        let mut tenant_databases = HashSet::with_capacity(
+            self.tenant_data.targets.len()
+                + self.database.replicas.len()
+                + self.database.sources.len()
+                + 1,
+        );
+        tenant_databases.insert((
+            self.database.primary.host.trim(),
+            self.database.primary.port,
+            self.database.primary.database.trim(),
+        ));
+        for replica in &self.database.replicas {
+            tenant_databases.insert((
+                replica.connection.host.trim(),
+                replica.connection.port,
+                replica.connection.database.trim(),
+            ));
+        }
+        for source in &self.database.sources {
+            tenant_databases.insert((
+                source.connection.host.trim(),
+                source.connection.port,
+                source.connection.database.trim(),
+            ));
+        }
+        for (index, target) in self.tenant_data.targets.iter().enumerate() {
+            if target.kind != TenantDatabaseTargetKind::Mysql {
+                continue;
+            }
+            let host = target.host.as_deref().unwrap_or_default().trim();
+            // 与实际连接构建保持同一规范身份；省略 MySQL 端口等价于显式 3306。
+            let port = target.port.unwrap_or(3306);
+            let database = target.database.as_deref().unwrap_or_default().trim();
+            let identity = (host, port, database);
+            if !tenant_databases.insert(identity) {
+                return Err(AppError::Config(format!(
+                    "tenant_data.targets[{index}] 与控制库拓扑、命名数据源或其他租户目标指向同一个 MySQL schema"
+                )));
+            }
+            if self.environment.is_production()
+                && !is_loopback_host(host)
+                && target.tls_mode.unwrap_or_default() != DbTlsMode::VerifyIdentity
+            {
+                return Err(AppError::Config(format!(
+                    "remote production tenant_data.targets[{index}] requires tls_mode = \"verify_identity\""
+                )));
+            }
         }
         let generator_source = self.generator.data_source.trim();
         if generator_source.is_empty() {

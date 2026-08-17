@@ -1,6 +1,6 @@
 use chrono::Utc;
 use ryframe_core::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{OperLogFilter, OperLogRepository, entities::oper_log};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -94,12 +94,12 @@ pub struct RecordOperLogCommand {
 }
 
 pub struct OperLogService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     oper_log_repo: OperLogRepository,
 }
 
 impl OperLogService {
-    pub fn new(db: DatabaseCluster) -> Self {
+    pub fn new(db: ControlDatabaseCluster) -> Self {
         Self {
             db,
             oper_log_repo: OperLogRepository,

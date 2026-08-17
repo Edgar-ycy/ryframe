@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_config::{PepperKeyring, ServiceAccountsConfig};
 use ryframe_core::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_db::{
-    DataRetentionRepository, DatabaseCluster, PermissionRepository, ReadConsistency,
+    ControlDatabaseCluster, DataRetentionRepository, PermissionRepository, ReadConsistency,
     RoleRepository, ServiceAccountLock, ServiceAccountRepository, ServiceCredentialRepository,
     ServiceDelegationRepository, UserRepository,
     entities::{
@@ -47,7 +47,7 @@ use capabilities::*;
 pub use model::*;
 use validation::*;
 pub struct ServiceAccountService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     config: ServiceAccountsConfig,
     keyring: Arc<PepperKeyring>,
     capabilities: Vec<ServiceCapabilityDescriptor>,
@@ -62,7 +62,7 @@ pub struct ServiceAccountService {
 
 impl ServiceAccountService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         config: ServiceAccountsConfig,
         keyring: Arc<PepperKeyring>,
         capabilities: Vec<ServiceCapabilityDescriptor>,

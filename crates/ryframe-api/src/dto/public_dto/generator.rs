@@ -2,7 +2,8 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use ryframe_service::system::generator_service::{
-    ColumnInfo as ServiceColumnInfo, GeneratedFile as ServiceGeneratedFile,
+    ColumnInfo as ServiceColumnInfo, ForeignKeyInfo as ServiceForeignKeyInfo,
+    GeneratedFile as ServiceGeneratedFile, IndexInfo as ServiceIndexInfo,
     TableInfo as ServiceTableInfo, WriteReport as ServiceWriteReport,
 };
 
@@ -12,6 +13,10 @@ pub struct TableInfo {
     pub table_name: String,
     pub comment: Option<String>,
     pub columns: Vec<ColumnInfo>,
+    pub indexes: Vec<IndexInfo>,
+    pub foreign_keys: Vec<ForeignKeyInfo>,
+    pub foreign_key_dependencies: Vec<String>,
+    pub schema_canonical: String,
 }
 
 impl From<ServiceTableInfo> for TableInfo {
@@ -20,11 +25,57 @@ impl From<ServiceTableInfo> for TableInfo {
             table_name,
             comment,
             columns,
+            indexes,
+            foreign_keys,
+            foreign_key_dependencies,
+            schema_canonical,
         } = value;
         Self {
             table_name,
             comment,
             columns: columns.into_iter().map(ColumnInfo::from).collect(),
+            indexes: indexes.into_iter().map(IndexInfo::from).collect(),
+            foreign_keys: foreign_keys.into_iter().map(ForeignKeyInfo::from).collect(),
+            foreign_key_dependencies,
+            schema_canonical,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IndexInfo {
+    pub name: String,
+    pub unique: bool,
+    pub index_type: String,
+    pub columns: Vec<String>,
+}
+
+impl From<ServiceIndexInfo> for IndexInfo {
+    fn from(value: ServiceIndexInfo) -> Self {
+        Self {
+            name: value.name,
+            unique: value.unique,
+            index_type: value.index_type,
+            columns: value.columns,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ForeignKeyInfo {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub referenced_table: String,
+    pub referenced_columns: Vec<String>,
+}
+
+impl From<ServiceForeignKeyInfo> for ForeignKeyInfo {
+    fn from(value: ServiceForeignKeyInfo) -> Self {
+        Self {
+            name: value.name,
+            columns: value.columns,
+            referenced_table: value.referenced_table,
+            referenced_columns: value.referenced_columns,
         }
     }
 }

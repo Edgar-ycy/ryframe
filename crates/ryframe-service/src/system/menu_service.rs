@@ -3,7 +3,7 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{MenuFilter, MenuRepository, TenantConfigTransferRepository, entities::menu};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -28,13 +28,13 @@ const CACHE_TTL_SECS: u64 = 3600;
 const MENU_TREE_CACHE_NAMESPACE: &str = "menu-tree";
 
 pub struct MenuService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     menu_repo: MenuRepository,
     authorization_cache: AuthorizationCache,
 }
 
 impl MenuService {
-    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             menu_repo: MenuRepository,

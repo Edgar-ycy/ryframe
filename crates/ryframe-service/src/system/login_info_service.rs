@@ -1,6 +1,6 @@
 use chrono::Utc;
 use ryframe_core::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{LoginInfoFilter, LoginInfoRepository, entities::login_info};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -76,12 +76,12 @@ pub struct LoginInfoQuery {
 }
 
 pub struct LoginInfoService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     login_info_repo: LoginInfoRepository,
 }
 
 impl LoginInfoService {
-    pub fn new(db: DatabaseCluster) -> Self {
+    pub fn new(db: ControlDatabaseCluster) -> Self {
         Self {
             db,
             login_info_repo: LoginInfoRepository,

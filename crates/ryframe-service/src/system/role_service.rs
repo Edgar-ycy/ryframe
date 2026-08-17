@@ -3,7 +3,7 @@ use ryframe_core::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageResult, ValidatedPageQuery},
 };
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
     PermissionRepository, RoleFilter, RoleRepository, TenantConfigTransferRepository,
     TenantRepository, entities::role,
@@ -82,14 +82,14 @@ pub struct RoleListParams {
 }
 
 pub struct RoleService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     role_repo: RoleRepository,
     perm_repo: PermissionRepository,
     authorization_cache: AuthorizationCache,
 }
 
 impl RoleService {
-    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             role_repo: RoleRepository,

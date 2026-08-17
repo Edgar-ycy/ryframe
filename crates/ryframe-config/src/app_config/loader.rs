@@ -49,7 +49,7 @@ impl AppConfig {
             && config.database.migration_mode != MigrationMode::Verify
         {
             return Err(AppError::Config(
-                "production requires database.migration_mode = \"verify\"; run ryframe-migrate up before starting the API".into(),
+                "production requires database.migration_mode = \"verify\"; run `ryframe-migrate control up` and `ryframe-migrate tenant-data up --all` before starting the API".into(),
             ));
         }
         if environment.is_production()

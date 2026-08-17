@@ -4,7 +4,7 @@ mod queries;
 mod roles;
 
 use ryframe_core::repository::ValidatedPageQuery;
-use ryframe_db::DatabaseCluster;
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{
     DeptRepository, RoleRepository, UserRepository,
     entities::{password_reset_request, role, user},
@@ -85,7 +85,7 @@ impl From<role::Model> for RoleBriefVo {
 }
 
 pub struct UserService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     user_repo: UserRepository,
     role_repo: RoleRepository,
     dept_repo: DeptRepository,
@@ -132,7 +132,7 @@ impl UserListParams {
 }
 
 impl UserService {
-    pub fn new(db: DatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
         Self {
             db,
             user_repo: UserRepository,

@@ -18,6 +18,7 @@ pub fn render_dto(table: &TableInfo, base_name: &str) -> String {
 
     format!(
         r#"// 此文件由 ryframe-generator v{generator_version} 自动生成。
+// tenant-data-boundary: business
 {chrono_import}use serde::Deserialize;
 use utoipa::ToSchema;
 

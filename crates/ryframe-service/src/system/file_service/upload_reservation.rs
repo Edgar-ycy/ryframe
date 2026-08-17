@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use ryframe_core::repository::Repository;
-use ryframe_db::{DatabaseCluster, FileRepository, entities::sys_file};
+use ryframe_db::{ControlDatabaseCluster, FileRepository, entities::sys_file};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_storage::{ObjectStorage, StorageError};
 use sea_orm::TransactionTrait;
@@ -108,14 +108,14 @@ enum ReservationTransactionOutcome {
 /// `pending`/`cleanup` 记录及其 TTL；即使本进程从未运行 `Drop`，全局清理器
 /// 也会协调处理这些记录。
 pub(super) struct UploadReservationGuard {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     storage: Arc<dyn ObjectStorage>,
     reservation: Option<sys_file::Model>,
 }
 
 impl UploadReservationGuard {
     pub(super) fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         storage: Arc<dyn ObjectStorage>,
         reservation: sys_file::Model,
     ) -> Self {
@@ -785,7 +785,7 @@ async fn commit_upload_state(
 }
 
 async fn compensate_upload_reservation(
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     storage: Arc<dyn ObjectStorage>,
     reservation: sys_file::Model,
 ) {

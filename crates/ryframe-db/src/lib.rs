@@ -8,8 +8,8 @@ pub mod pagination;
 pub mod repositories;
 pub mod sql_logger;
 pub use cluster::{
-    CallbackDatabaseMetricsObserver, DatabaseCluster, DatabaseMetricsObserver, DatabaseNodeKind,
-    DatabaseReadSelectionReason, ReadConsistency, SelectedDatabase,
+    CallbackDatabaseMetricsObserver, ControlDatabaseCluster, DatabaseMetricsObserver,
+    DatabaseNodeKind, DatabaseReadSelectionReason, ReadConsistency, SelectedDatabase,
 };
 pub use database_monitor::SeaOrmDatabaseMonitor;
 pub use execution_tenant_scope::ExecutionTenantScope;

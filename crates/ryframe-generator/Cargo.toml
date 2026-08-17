@@ -10,6 +10,7 @@ description.workspace = true
 
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
+ryframe-tenant-db-migration = { path = "../ryframe-tenant-db-migration" }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }

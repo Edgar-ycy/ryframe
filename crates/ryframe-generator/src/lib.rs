@@ -10,7 +10,7 @@ pub mod type_mapping;
 /// - 仓储 trait：ryframe_core::repository::Repository
 /// - 自动填充 trait：ryframe_core::auto_fill::AutoFill
 /// - HTTP 响应类型：ryframe_http::ApiResponse / ApiPageResponse
-pub const GENERATOR_VERSION: &str = "0.7.0";
+pub const GENERATOR_VERSION: &str = "0.8.0";
 
 pub use engine::{GenerateOptions, GeneratedFile, WriteReport, generate, write_to_disk};
-pub use schema::{ColumnInfo, TableInfo, fetch_table, list_tables};
+pub use schema::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, fetch_table, list_tables};

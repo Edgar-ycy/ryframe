@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ryframe_api::AppServices;
 use ryframe_config::{AppConfig, RedisMode};
 use ryframe_core::RedisClient;
-use ryframe_db::DatabaseCluster;
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 use ryframe_middleware::RateLimiter;
 use ryframe_service::{
@@ -24,7 +24,7 @@ use ryframe_storage::ObjectStorage;
 ///
 /// 依赖注入顺序：Repository → Redis → Service。
 pub async fn build_all(
-    database: &DatabaseCluster,
+    database: &ControlDatabaseCluster,
     config: &AppConfig,
     redis_client: &Option<RedisClient>,
     object_storage: Arc<dyn ObjectStorage>,

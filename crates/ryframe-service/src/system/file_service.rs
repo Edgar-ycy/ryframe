@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use ryframe_db::{DatabaseCluster, ReadConsistency};
+use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_storage::{ObjectStorage, StorageError};
@@ -135,12 +135,12 @@ where
 }
 
 pub struct FileService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     storage: Arc<dyn ObjectStorage>,
 }
 
 impl FileService {
-    pub fn new(db: DatabaseCluster, storage: Arc<dyn ObjectStorage>) -> Self {
+    pub fn new(db: ControlDatabaseCluster, storage: Arc<dyn ObjectStorage>) -> Self {
         Self { db, storage }
     }
 

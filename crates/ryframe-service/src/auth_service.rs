@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_config::AppConfig;
 use ryframe_core::{RedisClient, RefreshSessionStore};
-use ryframe_db::DatabaseCluster;
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{DeptRepository, UserRepository, entities::user};
 use serde::Serialize;
 
@@ -65,7 +65,7 @@ impl From<&user::Model> for UserInfo {
 
 /// 认证服务
 pub struct AuthService {
-    db: DatabaseCluster,
+    db: ControlDatabaseCluster,
     user_repo: UserRepository,
     dept_repo: DeptRepository,
     authorization_resolver: AuthorizationResolver,
@@ -78,7 +78,7 @@ pub struct AuthService {
 
 impl AuthService {
     pub fn new(
-        db: DatabaseCluster,
+        db: ControlDatabaseCluster,
         config: Arc<AppConfig>,
         redis: Option<RedisClient>,
         authorization_cache: AuthorizationCache,

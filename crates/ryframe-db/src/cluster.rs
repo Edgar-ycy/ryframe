@@ -236,7 +236,7 @@ impl DatabaseNode {
 }
 
 #[derive(Debug)]
-struct DatabaseClusterInner {
+struct ControlDatabaseClusterInner {
     primary: DatabaseConnection,
     replicas: Box<[ReplicaNode]>,
     sources: Box<[DatabaseNode]>,
@@ -246,16 +246,16 @@ struct DatabaseClusterInner {
 
 /// 共享的主库、副本及具名业务数据源连接池。
 ///
-/// 命令始终使用 [`DatabaseCluster::write`]。查询只能通过
-/// [`DatabaseCluster::select_read`] 显式声明需要强一致性还是最终一致性；最终一致性读取
+/// 命令始终使用 [`ControlDatabaseCluster::write`]。查询只能通过
+/// [`ControlDatabaseCluster::select_read`] 显式声明需要强一致性还是最终一致性；最终一致性读取
 /// 会按轮询顺序选择健康副本，并在没有可用副本时回退到主库。
-/// 异构业务数据源只能通过 [`DatabaseCluster::source`] 获取，绝不参与自动路由。
+/// 异构业务数据源只能通过 [`ControlDatabaseCluster::source`] 获取，绝不参与自动路由。
 #[derive(Clone, Debug)]
-pub struct DatabaseCluster {
-    inner: Arc<DatabaseClusterInner>,
+pub struct ControlDatabaseCluster {
+    inner: Arc<ControlDatabaseClusterInner>,
 }
 
-impl DatabaseCluster {
+impl ControlDatabaseCluster {
     /// 使用可替换副本连接槽位构建集群。
     ///
     /// `None` 表示该副本已经配置但当前无可用连接；它会保留在拓扑和指标中，等待
@@ -273,7 +273,7 @@ impl DatabaseCluster {
         let sources = collect_nodes(sources);
 
         Self {
-            inner: Arc::new(DatabaseClusterInner {
+            inner: Arc::new(ControlDatabaseClusterInner {
                 primary,
                 replicas,
                 sources,
@@ -570,7 +570,7 @@ async fn node_health<'a>(
     .await
 }
 
-impl From<DatabaseConnection> for DatabaseCluster {
+impl From<DatabaseConnection> for ControlDatabaseCluster {
     fn from(connection: DatabaseConnection) -> Self {
         Self::single(connection)
     }
