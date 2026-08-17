@@ -1,6 +1,6 @@
 use super::frame::{
-    QueueTextResult, queue_text, serialize_authorization_changed_frame, serialize_hello_frame,
-    serialize_message_frame,
+    QueueTextResult, queue_text, serialize_hello_frame, serialize_message_frame,
+    serialize_tenant_context_changed_frame,
 };
 use super::*;
 
@@ -258,12 +258,16 @@ impl MessageHub {
         delivered
     }
 
-    /// 向本实例中同一租户的全部在线连接广播授权纪元变化。
-    pub fn send_authorization_changed(&self, tenant_id: &str, authorization_epoch: i32) -> usize {
-        let payload = match serialize_authorization_changed_frame(authorization_epoch) {
+    /// 向本实例中同一租户的全部在线连接广播强一致上下文快照。
+    pub fn send_tenant_context_changed(
+        &self,
+        snapshot: &ryframe_tenant_db::TenantRuntimeSnapshot,
+    ) -> usize {
+        let tenant_id = snapshot.tenant_id();
+        let payload = match serialize_tenant_context_changed_frame(snapshot) {
             Ok(payload) => payload,
             Err(error) => {
-                tracing::error!(tenant_id, authorization_epoch, %error, "授权变化 WebSocket 帧序列化失败");
+                tracing::error!(tenant_id, %error, "租户上下文变化 WebSocket 帧序列化失败");
                 return 0;
             }
         };
@@ -289,7 +293,7 @@ impl MessageHub {
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     let _ = shutdown.send(true);
                     disconnected.push(connection_id.clone());
-                    tracing::warn!(connection_id, "授权变化通知遇到慢消费者，已关闭连接");
+                    tracing::warn!(connection_id, "租户上下文变化通知遇到慢消费者，已关闭连接");
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     disconnected.push(connection_id);
@@ -327,6 +331,7 @@ impl MessageHub {
         &self,
         redis: Option<RedisClient>,
         service: Arc<MessageService>,
+        tenant_data: Arc<ryframe_tenant_db::TenantDatabaseRouter>,
     ) -> Option<JoinHandle<()>> {
         ryframe_middleware::metrics::set_message_redis_listener_connected(false);
         if !self.config.enabled {
@@ -373,10 +378,16 @@ impl MessageHub {
                                         if !event.tenant_id.trim().is_empty()
                                             && event.authorization_epoch > 0 =>
                                     {
-                                        hub.send_authorization_changed(
-                                            &event.tenant_id,
-                                            event.authorization_epoch,
-                                        );
+                                        match tenant_data.runtime_snapshot(&event.tenant_id).await {
+                                            Ok(snapshot) => {
+                                                hub.send_tenant_context_changed(&snapshot);
+                                            }
+                                            Err(error) => tracing::warn!(
+                                                tenant_id = %event.tenant_id,
+                                                %error,
+                                                "授权变化后读取租户强一致上下文失败"
+                                            ),
+                                        }
                                     }
                                     _ => tracing::warn!("收到无效的授权变化实时通知"),
                                 }

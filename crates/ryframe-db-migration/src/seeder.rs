@@ -23,6 +23,8 @@ where
     crate::m20260812_000025_tenant_config_transfer::seed_tenant_config_management(db).await?;
     crate::m20260813_000026_tenant_usage_governance::seed_tenant_usage_governance(db).await?;
     crate::m20260813_000027_service_accounts::seed_service_account_management(db).await?;
+    crate::m20260817_000029_product_capabilities::seed_product_capabilities(db).await?;
+    crate::m20260817_000030_tenant_data_control::seed_tenant_data_placements(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }

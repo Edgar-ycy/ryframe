@@ -1,6 +1,6 @@
 use ryframe_core::{PageResult, ValidatedPageQuery};
 use ryframe_kernel::AppResult;
-use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, Select};
+use sea_orm::{ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait, Select};
 /// 使用方式：
 /// ```text
 /// use ryframe_config::PaginationConfig;
@@ -22,14 +22,15 @@ use sea_orm::{DatabaseConnection, EntityTrait, FromQueryResult, PaginatorTrait, 
 /// ```text
 /// let result = paginate(db, select, &query).await?;
 /// ```
-pub async fn paginate<E>(
-    db: &DatabaseConnection,
+pub async fn paginate<E, C>(
+    db: &C,
     select: Select<E>,
     query: &ValidatedPageQuery,
 ) -> AppResult<PageResult<E::Model>>
 where
     E: EntityTrait,
     E::Model: FromQueryResult + Send + Sync,
+    C: ConnectionTrait,
 {
     let paginator = select.paginate(db, query.page_size());
     let total = paginator

@@ -20,7 +20,14 @@ pub enum ErrorCode {
     Config,
     Internal,
     ServiceUnavailable,
-    FeatureDisabled,
+    CapabilityUnavailable,
+    TenantCapabilityDenied,
+    PermissionDenied,
+    StaleRuntimeEpoch,
+    StalePlacementGeneration,
+    TenantOperationConflict,
+    TenantDataMaintenance,
+    TenantDataTargetUnavailable,
 }
 
 impl ErrorCode {
@@ -38,7 +45,14 @@ impl ErrorCode {
             Self::Config => "config",
             Self::Internal => "internal",
             Self::ServiceUnavailable => "service_unavailable",
-            Self::FeatureDisabled => "feature_disabled",
+            Self::CapabilityUnavailable => "capability_unavailable",
+            Self::TenantCapabilityDenied => "tenant_capability_denied",
+            Self::PermissionDenied => "permission_denied",
+            Self::StaleRuntimeEpoch => "stale_runtime_epoch",
+            Self::StalePlacementGeneration => "stale_placement_generation",
+            Self::TenantOperationConflict => "tenant_operation_conflict",
+            Self::TenantDataMaintenance => "tenant_data_maintenance",
+            Self::TenantDataTargetUnavailable => "tenant_data_target_unavailable",
         }
     }
 }
@@ -67,7 +81,22 @@ pub enum AppError {
     Config(String),
     Internal(String),
     ServiceUnavailable(String),
-    FeatureDisabled(String),
+    /// 当前部署缺少 Capability 声明的基础设施依赖。
+    CapabilityUnavailable(String),
+    /// 当前租户未被套餐或覆盖授予所请求的 Capability。
+    TenantCapabilityDenied(String),
+    /// 当前主体缺少 RBAC 权限。
+    PermissionDenied(String),
+    /// 产品上下文写入基于过期的租户运行纪元。
+    StaleRuntimeEpoch(String),
+    /// 数据放置或迁移写入基于过期的放置代次。
+    StalePlacementGeneration(String),
+    /// 同一租户已有互斥的控制面操作。
+    TenantOperationConflict(String),
+    /// 租户业务数据正在维护窗口内停写。
+    TenantDataMaintenance(String, u64),
+    /// 租户绑定的数据目标当前不可用。
+    TenantDataTargetUnavailable(String, u64),
 }
 
 impl fmt::Display for AppError {
@@ -85,7 +114,14 @@ impl fmt::Display for AppError {
             Self::Config(_) => "配置错误",
             Self::Internal(_) => "内部错误",
             Self::ServiceUnavailable(_) => "服务暂不可用",
-            Self::FeatureDisabled(_) => "功能未启用",
+            Self::CapabilityUnavailable(_) => "部署能力不可用",
+            Self::TenantCapabilityDenied(_) => "租户未开通能力",
+            Self::PermissionDenied(_) => "权限不足",
+            Self::StaleRuntimeEpoch(_) => "租户运行版本已变化",
+            Self::StalePlacementGeneration(_) => "租户数据放置已变化",
+            Self::TenantOperationConflict(_) => "租户操作冲突",
+            Self::TenantDataMaintenance(_, _) => "租户业务数据维护中",
+            Self::TenantDataTargetUnavailable(_, _) => "租户业务数据库不可用",
         };
         write!(formatter, "{category}: {}", self.message())
     }
@@ -109,7 +145,14 @@ impl AppError {
             Self::Config(_) => ErrorCode::Config,
             Self::Internal(_) => ErrorCode::Internal,
             Self::ServiceUnavailable(_) => ErrorCode::ServiceUnavailable,
-            Self::FeatureDisabled(_) => ErrorCode::FeatureDisabled,
+            Self::CapabilityUnavailable(_) => ErrorCode::CapabilityUnavailable,
+            Self::TenantCapabilityDenied(_) => ErrorCode::TenantCapabilityDenied,
+            Self::PermissionDenied(_) => ErrorCode::PermissionDenied,
+            Self::StaleRuntimeEpoch(_) => ErrorCode::StaleRuntimeEpoch,
+            Self::StalePlacementGeneration(_) => ErrorCode::StalePlacementGeneration,
+            Self::TenantOperationConflict(_) => ErrorCode::TenantOperationConflict,
+            Self::TenantDataMaintenance(_, _) => ErrorCode::TenantDataMaintenance,
+            Self::TenantDataTargetUnavailable(_, _) => ErrorCode::TenantDataTargetUnavailable,
         }
     }
 
@@ -126,8 +169,15 @@ impl AppError {
             | Self::Database(message)
             | Self::Config(message)
             | Self::Internal(message)
-            | Self::ServiceUnavailable(message)
-            | Self::FeatureDisabled(message) => message,
+            | Self::ServiceUnavailable(message) => message,
+            Self::CapabilityUnavailable(message)
+            | Self::TenantCapabilityDenied(message)
+            | Self::PermissionDenied(message)
+            | Self::StaleRuntimeEpoch(message)
+            | Self::StalePlacementGeneration(message)
+            | Self::TenantOperationConflict(message)
+            | Self::TenantDataMaintenance(message, _)
+            | Self::TenantDataTargetUnavailable(message, _) => message,
             Self::RateLimited(message, _) => message,
         }
     }
@@ -136,7 +186,9 @@ impl AppError {
     pub const fn retry_after_secs(&self) -> Option<u64> {
         match self {
             Self::RateLimited(_, retry_after_secs)
-            | Self::RetryableConflict(_, retry_after_secs) => Some(*retry_after_secs),
+            | Self::RetryableConflict(_, retry_after_secs)
+            | Self::TenantDataMaintenance(_, retry_after_secs)
+            | Self::TenantDataTargetUnavailable(_, retry_after_secs) => Some(*retry_after_secs),
             _ => None,
         }
     }

@@ -157,11 +157,12 @@ impl TenantConfigTransferService {
         self.repository
             .acquire_lease_in_txn(
                 &transaction,
-                tenant_config_lease::Model {
+                tenant_operation_lease::Model {
                     tenant_id: tenant_id.to_owned(),
                     owner_token: owner_token.to_owned(),
-                    transfer_id,
                     operation: operation.to_owned(),
+                    resource_type: "tenant_config_transfer".to_owned(),
+                    resource_id: transfer_id.to_string(),
                     expires_at: now
                         + Duration::seconds(
                             i64::try_from(self.config.lease_seconds).unwrap_or(300),

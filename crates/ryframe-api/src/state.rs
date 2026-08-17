@@ -13,11 +13,13 @@ use ryframe_service::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
         DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
         MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
-        OverviewService, PermissionService, PostService, ProfileService, RoleService,
-        ServiceAccountService, TenantConfigTransferService, TenantService, TenantUsageService,
-        UserImportService, UserService, WebSocketTicketService,
+        OverviewService, PermissionService, PostService, ProductService, ProfileService,
+        RoleService, ServiceAccountService, TenantConfigTransferService,
+        TenantDataMigrationService, TenantService, TenantUsageService, UserImportService,
+        UserService, WebSocketTicketService,
     },
 };
+use ryframe_tenant_db::TenantDatabaseRouter;
 use ryframe_utils::ip::TrustedProxySet;
 
 use crate::runtime::RuntimeComponents;
@@ -28,6 +30,8 @@ pub struct AppServices {
     pub user: Arc<UserService>,
     pub role: Arc<RoleService>,
     pub tenant: Arc<TenantService>,
+    pub product: Arc<ProductService>,
+    pub tenant_data: Arc<TenantDatabaseRouter>,
     pub tenant_usage: Arc<TenantUsageService>,
     pub service_accounts: Option<Arc<ServiceAccountService>>,
     pub agent: Option<Arc<AgentService>>,
@@ -48,6 +52,7 @@ pub struct AppServices {
     pub data_retention: Arc<DataRetentionService>,
     pub user_import: Arc<UserImportService>,
     pub tenant_config_transfer: Arc<TenantConfigTransferService>,
+    pub tenant_data_migration: Arc<TenantDataMigrationService>,
     pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,
     pub overview: Arc<OverviewService>,
     pub login_info: Arc<LoginInfoService>,

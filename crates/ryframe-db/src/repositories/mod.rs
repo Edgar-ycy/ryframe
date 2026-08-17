@@ -21,6 +21,7 @@ pub mod overview_repo;
 pub mod password_reset_request_repo;
 pub mod permission_repo;
 pub mod post_repo;
+pub mod product_repo;
 pub mod role_repo;
 pub mod service_access_audit_repo;
 pub mod service_account_repo;
@@ -28,6 +29,8 @@ pub mod service_authorization_repo;
 pub mod service_credential_repo;
 pub mod service_delegation_repo;
 pub mod tenant_config_transfer_repo;
+pub mod tenant_data_repo;
+pub mod tenant_operation_lease_repo;
 pub mod tenant_provisioning_repo;
 pub mod tenant_repo;
 pub mod tenant_usage_repo;
@@ -67,6 +70,7 @@ pub use overview_repo::{OverviewRepository, OverviewTrendCount, ScheduleOverview
 pub use password_reset_request_repo::PasswordResetRequestRepository;
 pub use permission_repo::PermissionRepository;
 pub use post_repo::{PostFilter, PostRepository};
+pub use product_repo::{ProductPlanVersionBundle, ProductRepository, TenantProductBundle};
 pub use role_repo::{RoleFilter, RoleRepository};
 pub use service_access_audit_repo::ServiceAccessAuditRepository;
 pub use service_account_repo::{ServiceAccountLock, ServiceAccountRepository};
@@ -76,6 +80,10 @@ pub use service_authorization_repo::{
 pub use service_credential_repo::ServiceCredentialRepository;
 pub use service_delegation_repo::ServiceDelegationRepository;
 pub use tenant_config_transfer_repo::{TenantConfigTransferRepository, TenantConfigurationFence};
+pub use tenant_data_repo::{
+    CreateTenantDataMigration, RegisterTenantDataBackupPoint, TenantDataRepository,
+};
+pub use tenant_operation_lease_repo::TenantOperationLeaseRepository;
 pub use tenant_provisioning_repo::{ProvisionTenantCommand, TenantProvisioningRepository};
 pub use tenant_repo::TenantRepository;
 pub use tenant_usage_repo::{TenantUsageAggregate, TenantUsagePageFilter, TenantUsageRepository};

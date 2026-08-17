@@ -33,7 +33,6 @@ impl MenuFilterQuery {
 pub fn menu_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(tree))
-        .merge(route!(user_tree))
         .merge(route!(list_page))
         .merge(route!(create))
         .merge(route!(detail))
@@ -51,59 +50,12 @@ async fn tree(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
-    state
-        .services
-        .menu
-        .find_tree(&current_user)
-        .await
-        .map_err(ryframe_http::HttpAppError::from)
-        .map(|nodes| {
-            Json(ApiResponse::success(
-                nodes.into_iter().map(MenuTreeNode::from).collect(),
-            ))
-        })
-}
-
-/// 当前用户可见的菜单树（按角色过滤，前端用）
-#[get("/current")]
-#[utoipa::path(get, path = "/api/v1/system/menus/current", tag = "菜单管理",
-    responses((status = 200, description = "用户菜单树", body = ApiResponse<Vec<MenuTreeNode>>)), security(("bearer" = [])))]
-pub async fn user_tree(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-) -> HttpResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
-    let tree = if current_user.is_super_admin {
-        // 超级管理员看全部菜单树
-        state.services.menu.find_tree(&current_user).await?
-    } else if current_user.role_ids.is_empty() {
-        vec![]
-    } else {
-        state
-            .services
-            .menu
-            .find_tree_by_permissions(&current_user, &current_user.permissions)
-            .await?
-    };
-    let mut nodes = tree.into_iter().map(MenuTreeNode::from).collect::<Vec<_>>();
-    if !state.config.jobs.scheduler_enabled {
-        let _ = remove_route(&mut nodes, "monitor.schedules");
-    }
+    let nodes = state.services.menu.find_tree(&current_user).await?;
+    let nodes = nodes
+        .into_iter()
+        .map(MenuTreeNode::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(ApiResponse::success(nodes)))
-}
-
-fn remove_route(nodes: &mut Vec<MenuTreeNode>, route_key: &str) -> bool {
-    let mut removed = false;
-    nodes.retain_mut(|node| {
-        if node.route_key.as_deref() == Some(route_key) {
-            removed = true;
-            return false;
-        }
-        let child_removed = remove_route(&mut node.children, route_key);
-        let keep = !(child_removed && node.menu_type == "M" && node.children.is_empty());
-        removed |= child_removed || !keep;
-        keep
-    });
-    removed
 }
 
 /// 菜单列表分页查询
@@ -119,21 +71,23 @@ async fn list_page(
     Query(query): Query<MenuListQuery>,
 ) -> HttpResult<Json<ApiPageResponse<MenuVo>>> {
     let (page, filter) = query.into_parts(&state.config.pagination)?;
-    state
+    let page = state
         .services
         .menu
         .find_by_page(&current_user, filter.into_service_params(page))
-        .await
-        .map_err(ryframe_http::HttpAppError::from)
-        .map(|page| {
-            Json(ApiPageResponse::page(
-                page.records.into_iter().map(MenuVo::from).collect(),
-                page.total,
-                page.page,
-                page.page_size,
-                state.config.pagination.max_page_size,
-            ))
-        })
+        .await?;
+    let records = page
+        .records
+        .into_iter()
+        .map(MenuVo::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(ApiPageResponse::page(
+        records,
+        page.total,
+        page.page,
+        page.page_size,
+        state.config.pagination.max_page_size,
+    )))
 }
 
 /// 创建菜单
@@ -149,7 +103,7 @@ async fn create(
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let perm_id = parse_optional_i64_str(dto.perm_id.as_deref())?;
-    state
+    let value = state
         .services
         .menu
         .create(
@@ -165,9 +119,8 @@ async fn create(
                 visible: dto.visible.unwrap_or(true),
             },
         )
-        .await
-        .map_err(ryframe_http::HttpAppError::from)
-        .map(|value| Json(ApiResponse::success(value.into())))
+        .await?;
+    Ok(Json(ApiResponse::success(MenuVo::try_from(value)?)))
 }
 
 /// 更新菜单
@@ -185,7 +138,7 @@ async fn update(
     dto.validate()?;
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let perm_id = parse_optional_i64_str(dto.perm_id.as_deref())?;
-    state
+    let value = state
         .services
         .menu
         .update(
@@ -203,9 +156,8 @@ async fn update(
                 status: dto.status,
             },
         )
-        .await
-        .map_err(ryframe_http::HttpAppError::from)
-        .map(|value| Json(ApiResponse::success(value.into())))
+        .await?;
+    Ok(Json(ApiResponse::success(MenuVo::try_from(value)?)))
 }
 
 /// 菜单详情
@@ -226,7 +178,7 @@ async fn detail(
         .find_by_id(&current_user, id)
         .await?
         .ok_or_else(|| ryframe_kernel::AppError::NotFound("菜单不存在".into()))?;
-    Ok(Json(ApiResponse::success(menu.into())))
+    Ok(Json(ApiResponse::success(MenuVo::try_from(menu)?)))
 }
 
 /// 删除菜单

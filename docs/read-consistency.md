@@ -1,6 +1,6 @@
 # 数据库读一致性分类
 
-本文定义 `DatabaseCluster` 的读取边界。业务查询必须显式调用
+本文定义 `ControlDatabaseCluster` 的控制面读取边界。系统查询必须显式调用
 `select_read(ReadConsistency)`；命令、事务、锁和 CAS 继续使用 `write()`。
 
 ## 选择规则
@@ -42,7 +42,7 @@
 | API 与独立 Worker `readyz` | 只读后台探测生成的内存快照，请求路径不执行 SQL、Redis 或对象存储网络调用 |
 
 API Handler 不直接持有数据库连接，只调用 Service。独立 Worker 当前只构建主库
-`DatabaseCluster`，因此 Worker 内部的 `Eventual` 业务导出查询也会选择主库；若以后让
+`ControlDatabaseCluster`，因此 Worker 内部的 `Eventual` 控制面导出查询也会选择主库；若以后让
 Worker 使用副本，必须同时接入副本结构校验、健康监督和关闭流程，不能只复制连接配置。
 
 ## 评审要求

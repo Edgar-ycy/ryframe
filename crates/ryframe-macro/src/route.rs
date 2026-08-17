@@ -23,8 +23,8 @@ pub fn expand_route(method: HttpMethod, args: TokenStream, input: TokenStream) -
         Err(error) => return error.to_compile_error().into(),
     };
     let mut function = parse_macro_input!(input as ItemFn);
-    let permission = match take_permission_attribute(&mut function.attrs) {
-        Ok(permission) => permission,
+    let (permission, _capability) = match take_route_contract_attributes(&mut function.attrs) {
+        Ok(contract) => contract,
         Err(error) => return error.to_compile_error().into(),
     };
     let state_type = infer_state_type(&function).unwrap_or_else(|| syn::parse_quote!(()));
@@ -60,31 +60,51 @@ pub fn expand_route(method: HttpMethod, args: TokenStream, input: TokenStream) -
     .into()
 }
 
-fn take_permission_attribute(attributes: &mut Vec<Attribute>) -> syn::Result<Option<LitStr>> {
+fn take_route_contract_attributes(
+    attributes: &mut Vec<Attribute>,
+) -> syn::Result<(Option<LitStr>, Option<LitStr>)> {
     let mut permission = None;
+    let mut capability = None;
     let mut retained = Vec::with_capacity(attributes.len());
 
     for attribute in attributes.drain(..) {
-        let is_permission = attribute
+        let marker = attribute
             .path()
             .segments
             .last()
-            .is_some_and(|segment| segment.ident == "perm");
-        if !is_permission {
+            .map(|segment| segment.ident.to_string());
+        if marker.as_deref() != Some("perm") && marker.as_deref() != Some("capability") {
             retained.push(attribute);
             continue;
         }
-        if permission.is_some() {
+        let value = attribute.parse_args::<LitStr>()?;
+        if value.value().trim() != value.value() || value.value().is_empty() {
             return Err(syn::Error::new_spanned(
                 attribute,
-                "only one #[perm] attribute is allowed per route handler",
+                "route marker must be non-empty and trimmed",
             ));
         }
-        permission = Some(attribute.parse_args::<LitStr>()?);
+        if marker.as_deref() == Some("perm") {
+            if permission.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "only one #[perm] attribute is allowed per route handler",
+                ));
+            }
+            permission = Some(value);
+        } else {
+            if capability.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "only one #[capability] attribute is allowed per route handler",
+                ));
+            }
+            capability = Some(value);
+        }
     }
 
     *attributes = retained;
-    Ok(permission)
+    Ok((permission, capability))
 }
 
 fn infer_state_type(function: &ItemFn) -> Option<Type> {

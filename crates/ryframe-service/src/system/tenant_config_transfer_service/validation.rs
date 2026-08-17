@@ -12,7 +12,7 @@ pub(super) fn ensure_preview_identity(
         return Err(AppError::Conflict("目标配置已经变化，请重新预览".into()));
     }
     let expected = sha256_json(&PlanHashInput {
-        resources_sha256: &source.manifest.resources_sha256,
+        source_package_sha256: &source.package_sha256,
         target_resources_sha256: sha256_hex(&canonical_resources(target)?),
         target_configuration_version: fence.configuration_version,
         target_authorization_epoch: fence.authorization_epoch,

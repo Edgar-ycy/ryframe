@@ -71,6 +71,53 @@ use config_transfer::*;
 use support::*;
 
 impl BackgroundJobRepository {
+    /// 在业务 control 事务内复活一条已关联的权威任务。
+    ///
+    /// 正在持有有效租约的 Worker 仍是唯一执行者，本方法不会抢占；其他状态
+    /// 原地恢复为 pending 并重置尝试预算，不创建第二条可并发执行的任务。
+    pub async fn reactivate_linked_in_txn<C>(
+        &self,
+        db: &C,
+        job_id: i64,
+        expected_job_type: &str,
+        payload_key: &str,
+        expected_resource_id: i64,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
+        let Some(job) = background_job::Entity::find_by_id(job_id)
+            .lock(LockType::Update)
+            .one(db)
+            .await
+            .map_err(database_error)?
+        else {
+            return Ok(false);
+        };
+        if job.job_type != expected_job_type
+            || linked_resource_id(&job, payload_key) != Some(expected_resource_id)
+        {
+            return Ok(false);
+        }
+        if job.status == background_job::Model::STATUS_PENDING
+            || (job.status == background_job::Model::STATUS_RUNNING
+                && job.lease_until.is_some_and(|lease_until| lease_until > now))
+        {
+            return Ok(true);
+        }
+        let mut active: background_job::ActiveModel = job.into();
+        active.status = Set(background_job::Model::STATUS_PENDING.to_owned());
+        active.attempts = Set(0);
+        active.available_at = Set(now);
+        active.lease_owner = Set(None);
+        active.lease_until = Set(None);
+        active.updated_at = Set(now);
+        active.completed_at = Set(None);
+        active.update(db).await.map_err(database_error)?;
+        Ok(true)
+    }
+
     /// 回收崩溃 Worker 遗留的过期租约。
     ///
     /// 任务被领取时即消耗一次尝试；最后一次已过期的租约直接进入 `dead`，其余任务

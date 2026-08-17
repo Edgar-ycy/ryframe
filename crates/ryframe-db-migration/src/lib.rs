@@ -38,6 +38,8 @@ mod m20260812_000025_tenant_config_transfer;
 mod m20260813_000026_tenant_usage_governance;
 mod m20260813_000027_service_accounts;
 mod m20260813_000028_export_job_notifications;
+mod m20260817_000029_product_capabilities;
+mod m20260817_000030_tenant_data_control;
 mod schema;
 mod seeder;
 
@@ -94,6 +96,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260813_000026_tenant_usage_governance::Migration),
             Box::new(m20260813_000027_service_accounts::Migration),
             Box::new(m20260813_000028_export_job_notifications::Migration),
+            Box::new(m20260817_000029_product_capabilities::Migration),
+            Box::new(m20260817_000030_tenant_data_control::Migration),
         ]
     }
 }

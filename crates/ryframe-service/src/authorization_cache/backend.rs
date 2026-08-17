@@ -158,7 +158,7 @@ impl AuthorizationCache {
         let mirror_updated = mirror_result.is_ok();
         self.handle_mirror_result(mirror_result, tenant_id, None)?;
         if mirror_updated {
-            self.publish_authorization_changed(tenant_id, authorization_epoch)
+            self.publish_tenant_context_changed(tenant_id, authorization_epoch)
                 .await;
         }
         Ok(())
@@ -225,7 +225,7 @@ impl AuthorizationCache {
             .map_err(|error| {
                 AppError::ServiceUnavailable(format!("修复租户授权版本失败: {error}"))
             })?;
-        self.publish_authorization_changed(tenant_id, authorization_epoch)
+        self.publish_tenant_context_changed(tenant_id, authorization_epoch)
             .await;
         Ok(())
     }
@@ -424,7 +424,9 @@ impl AuthorizationCache {
         }
     }
 
-    async fn publish_authorization_changed(&self, tenant_id: &str, authorization_epoch: i32) {
+    /// 发布租户上下文已变化的跨实例加速信号。事件不携带权威快照，
+    /// API 订阅者必须回控制库强一致读取四值后再通知浏览器。
+    pub async fn publish_tenant_context_changed(&self, tenant_id: &str, authorization_epoch: i32) {
         let Some(redis) = &self.redis else {
             return;
         };

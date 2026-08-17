@@ -232,10 +232,26 @@ impl MenuRepository {
         tenant_id: &str,
         permission_codes: &[String],
     ) -> AppResult<Vec<menu::Model>> {
+        self.find_by_permission_codes_excluding_routes(db, tenant_id, permission_codes, &[])
+            .await
+    }
+
+    /// 先移除未开通 capability 的路由，再执行 RBAC 页面筛选和祖先目录回填。
+    pub async fn find_by_permission_codes_excluding_routes(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        permission_codes: &[String],
+        excluded_route_keys: &[String],
+    ) -> AppResult<Vec<menu::Model>> {
         if permission_codes.is_empty() {
             return Ok(vec![]);
         }
 
+        let excluded_route_keys = excluded_route_keys
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
         let all = menu::Entity::find()
             .filter(menu::Column::TenantId.eq(tenant_id))
             .filter(menu::Column::Status.eq(menu::Model::STATUS_NORMAL))
@@ -243,17 +259,34 @@ impl MenuRepository {
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .into_iter()
+            .filter(|item| {
+                item.route_key
+                    .as_deref()
+                    .is_none_or(|route_key| !excluded_route_keys.contains(route_key))
+            })
+            .collect::<Vec<_>>();
 
         let permission_set: HashSet<&str> = permission_codes.iter().map(String::as_str).collect();
+        let by_id: HashMap<i64, &menu::Model> = all.iter().map(|menu| (menu.id, menu)).collect();
         if permission_set.contains("*:*:*") {
+            let mut visible_ids = HashSet::new();
+            for item in all
+                .iter()
+                .filter(|item| item.menu_type == menu::Model::MENU_TYPE_MENU)
+            {
+                include_menu_with_complete_ancestors(item.id, &by_id, &mut visible_ids);
+            }
             return Ok(all
                 .into_iter()
-                .filter(|item| item.menu_type != menu::Model::MENU_TYPE_BUTTON)
+                .filter(|item| {
+                    item.menu_type != menu::Model::MENU_TYPE_BUTTON
+                        && visible_ids.contains(&item.id)
+                })
                 .collect());
         }
 
-        let by_id: HashMap<i64, &menu::Model> = all.iter().map(|menu| (menu.id, menu)).collect();
         let menu_permission_codes = self.permission_code_map(db, tenant_id, &all).await?;
         let mut visible_ids = HashSet::new();
 
@@ -273,13 +306,7 @@ impl MenuRepository {
                 continue;
             }
 
-            let mut current_id = Some(item.id);
-            while let Some(id) = current_id {
-                if !visible_ids.insert(id) {
-                    break;
-                }
-                current_id = by_id.get(&id).and_then(|item| item.parent_id);
-            }
+            include_menu_with_complete_ancestors(item.id, &by_id, &mut visible_ids);
         }
 
         Ok(all
@@ -298,6 +325,25 @@ impl MenuRepository {
     ) -> AppResult<Vec<MenuTreeNode>> {
         let menus = self
             .find_by_permission_codes(db, tenant_id, permission_codes)
+            .await?;
+        let menu_permission_codes = self.permission_code_map(db, tenant_id, &menus).await?;
+        Ok(build_menu_tree(&menus, None, &menu_permission_codes))
+    }
+
+    pub async fn find_tree_by_permission_codes_excluding_routes(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        permission_codes: &[String],
+        excluded_route_keys: &[String],
+    ) -> AppResult<Vec<MenuTreeNode>> {
+        let menus = self
+            .find_by_permission_codes_excluding_routes(
+                db,
+                tenant_id,
+                permission_codes,
+                excluded_route_keys,
+            )
             .await?;
         let menu_permission_codes = self.permission_code_map(db, tenant_id, &menus).await?;
         Ok(build_menu_tree(&menus, None, &menu_permission_codes))
@@ -344,6 +390,23 @@ impl MenuRepository {
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(rows.into_iter().map(|row| (row.id, row.code)).collect())
     }
+}
+
+fn include_menu_with_complete_ancestors(
+    menu_id: i64,
+    by_id: &HashMap<i64, &menu::Model>,
+    visible_ids: &mut HashSet<i64>,
+) {
+    let mut chain = Vec::new();
+    let mut current_id = Some(menu_id);
+    while let Some(id) = current_id {
+        let Some(item) = by_id.get(&id) else {
+            return;
+        };
+        chain.push(id);
+        current_id = item.parent_id;
+    }
+    visible_ids.extend(chain);
 }
 
 fn build_menu_tree(

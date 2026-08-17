@@ -5,6 +5,7 @@ use chrono::Duration;
 use ryframe_config::JobConfig;
 use ryframe_db::{ExecutionTenantScope, FailBackgroundJob, JobFailureDisposition, background_job};
 use ryframe_kernel::{AppError, AppResult};
+use ryframe_tenant_db::TenantDatabaseRouter;
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -30,6 +31,16 @@ pub trait JobHandler: Send + Sync {
     /// 判断错误是否属于重试无法恢复的业务错误；默认交给现有重试预算处理。
     fn should_dead_letter(&self, _error: &AppError) -> bool {
         false
+    }
+
+    /// 是否提供业务权威状态的丢失任务对账。
+    fn has_authoritative_reconciler(&self) -> bool {
+        false
+    }
+
+    /// 从业务 MySQL 权威表恢复 dead/missing 后台任务；必须多实例幂等。
+    async fn reconcile_authoritative_jobs(&self) -> AppResult<()> {
+        Ok(())
     }
 }
 
@@ -98,6 +109,7 @@ pub struct JobWorker {
     queue: Arc<JobQueue>,
     execution_tenant_scope: ExecutionTenantScope,
     handlers: Arc<BTreeMap<String, Arc<dyn JobHandler>>>,
+    tenant_data: Option<Arc<TenantDatabaseRouter>>,
     worker_prefix: String,
     lease_duration: Duration,
     heartbeat_interval: StdDuration,
@@ -124,6 +136,7 @@ impl JobWorker {
             queue,
             execution_tenant_scope,
             handlers: Arc::new(BTreeMap::new()),
+            tenant_data: None,
             worker_prefix,
             lease_duration: Duration::seconds(lease_seconds),
             heartbeat_interval: StdDuration::from_secs(config.heartbeat_seconds),
@@ -132,6 +145,12 @@ impl JobWorker {
             lease_recovery_interval: StdDuration::from_secs(config.lease_recovery_interval_seconds),
             concurrency: config.concurrency,
         })
+    }
+
+    /// 保持 Worker 与组合根使用同一个路由实例，供租户数据任务处理器共享。
+    pub fn with_tenant_data(mut self, tenant_data: Arc<TenantDatabaseRouter>) -> Self {
+        self.tenant_data = Some(tenant_data);
+        self
     }
 
     /// 注册处理器；重复类型属于启动配置错误。
@@ -207,9 +226,46 @@ impl JobWorker {
         }
 
         let worker = self.clone();
+        let lease_recovery_shutdown = shutdown.clone();
         tasks.push(tokio::spawn(async move {
-            worker.recover_expired_leases_until_shutdown(shutdown).await;
+            worker
+                .recover_expired_leases_until_shutdown(lease_recovery_shutdown)
+                .await;
         }));
+
+        let reconcilers = self
+            .handlers
+            .values()
+            .filter(|handler| handler.has_authoritative_reconciler())
+            .cloned()
+            .collect::<Vec<_>>();
+        if !reconcilers.is_empty() {
+            let mut receiver = shutdown.clone();
+            tasks.push(tokio::spawn(async move {
+                loop {
+                    if *receiver.borrow() {
+                        break;
+                    }
+                    for reconciler in &reconcilers {
+                        if let Err(error) = reconciler.reconcile_authoritative_jobs().await {
+                            tracing::warn!(
+                                job_type = reconciler.job_type(),
+                                error_code = %error.error_code(),
+                                "权威业务任务 watchdog 对账失败"
+                            );
+                        }
+                    }
+                    tokio::select! {
+                        _ = time::sleep(StdDuration::from_secs(30)) => {}
+                        changed = receiver.changed() => {
+                            if changed.is_err() || *receiver.borrow() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }));
+        }
 
         tasks
     }

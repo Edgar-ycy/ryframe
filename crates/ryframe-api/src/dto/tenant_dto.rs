@@ -161,6 +161,13 @@ pub struct CreateTenantDto {
         pattern = r"^(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])(?=.*[^A-Za-z0-9])[!-~]{8,72}$"
     )]
     pub admin_password: String,
+    /// 已发布产品套餐版本 ID；为避免 JavaScript 精度损失使用十进制字符串。
+    #[validate(length(min = 1, max = 20))]
+    #[schema(value_type = String, pattern = r"^[1-9][0-9]{0,18}$")]
+    pub plan_version_id: String,
+    /// 初始租户数据目标稳定键。
+    #[validate(length(min = 1, max = 64))]
+    pub data_target_key: String,
 }
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]

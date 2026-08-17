@@ -37,6 +37,13 @@ impl TenantConfigTransferService {
                 .repository
                 .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
                 .await?;
+            self.product_service
+                .ensure_capability_requirements_in_txn(
+                    &transaction,
+                    tenant_id,
+                    &parsed.manifest.required_capabilities,
+                )
+                .await?;
             let mut current = self
                 .repository
                 .lock_transfer_in_txn(&transaction, tenant_id, transfer_id)

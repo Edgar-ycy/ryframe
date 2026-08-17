@@ -102,20 +102,26 @@ X-Tenant-Id: <tenant_id>
 | ---: | --- |
 | `400` | JSON、查询参数或业务校验失败 |
 | `401` | Token 缺失、失效、被撤销或会话版本过期 |
-| `403` | CSRF 校验失败、权限不足、租户不可用或数据范围不允许 |
+| `403` | CSRF 校验失败、租户 Capability 未开通、RBAC 权限不足或数据范围不允许 |
 | `404` | 资源不存在 |
-| `409` | 幂等冲突、refresh 并发冲突或资源状态冲突 |
+| `409` | 幂等、refresh 并发、旧 runtime epoch、旧 placement generation 或租户互斥操作冲突 |
 | `413` | 上传或请求体超过服务端限制 |
 | `429` | 限流；响应携带 `Retry-After` |
-| `501` | 功能开关未启用（`error_key=feature_disabled`），例如服务账号相关管理接口 |
-| `503` | Redis、数据库或必要对象存储暂不可用 |
+| `423` | 租户业务数据处于停写维护窗口；响应携带 `Retry-After` |
+| `501` | 部署环境缺少 Capability 依赖（`error_key=capability_unavailable`） |
+| `503` | Redis、控制库、租户业务数据目标或必要对象存储暂不可用；可重试响应携带 `Retry-After` |
 | `500` | 未预期的服务端错误 |
 
 客户端应优先按稳定的 `error_key` 映射本地化文案，未命中时回退到服务端 `message`，同时保留 HTTP 状态和 `request_id` 用于排障。`details` 仅包含可安全公开的结构化参数。
 
 ### 重试、幂等和代理边界
 
-认证后的 `/system`、`/platform` 写请求可以携带 `Idempotency-Key`。存储键只隔离租户、用户和客户端提供的原始键；请求指纹完整绑定 HTTP 方法、真实规范化路径、排序后的查询参数以及 body SHA-256。同一主体复用同一个键且指纹一致时，处理中请求返回 `409` 与 `Retry-After`，完成结果保留 300 秒并可回放；方法、路径、查询值或正文任一不同都会返回 `409`，仅查询参数顺序不同仍视为同一请求。超过 1 MiB 的成功响应不会被缓存，后续重复请求返回不可回放冲突，但首次成功响应保持不变。认证、上传下载、生成器、监控和流式响应不参与幂等缓存。
+幂等是端点契约，不是 `/system` 或 `/platform` 的隐式全局行为。客户端只对 OpenAPI 明确声明
+`Idempotency-Key` 的接口发送该头。通用短期重放缓存完整绑定租户、用户、方法、规范化路径、排序后
+查询参数和 body SHA-256，但 Redis 只用于加速，不能成为持久业务 Saga 的事实来源。租户创建、配置
+迁移、服务账号密钥以及租户数据迁移使用各自的 MySQL 唯一键、请求摘要和状态机保证持久幂等；
+Redis 故障不能阻止这些控制面操作进入其数据库事务。产品套餐 CRUD 和产品变更通过唯一键、不可变
+版本、预览哈希、运行时纪元与统一租约控制并发，不声明 `Idempotency-Key`。
 
 API 不定义 `X-Nonce` / `X-Timestamp` 通用防重放协议，客户端不得依赖或发送这两个头。未签名且由客户端自行生成的 nonce 与时间戳不能证明请求来源，也没有绑定主体、方法、目标路径和 body；把它们当作安全校验会产生错误的保护预期。当前浏览器边界由 HTTPS、Bearer 身份与授权、签名 CSRF challenge、refresh family 原子轮换以及上述幂等绑定共同承担。未来若为外部机器客户端增加应用层持有者证明，必须设计独立的密钥注册与轮换流程，并采用 [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421) 一类可验证签名，明确覆盖方法、目标 URI、内容摘要、创建时间与 nonce；不得恢复裸双头方案。
 
@@ -142,7 +148,7 @@ API 不定义 `X-Nonce` / `X-Timestamp` 通用防重放协议，客户端不得�
 | `POST` | `/api/v1/auth/login` | 登录；JSON 只返回 access token，refresh token 只写入 Cookie |
 | `POST` | `/api/v1/auth/refresh` | 空请求体，通过 refresh Cookie 与 CSRF challenge 轮换会话 |
 | `POST` | `/api/v1/auth/logout` | 通过 Cookie 与 CSRF 撤销整个 refresh family；Bearer 可选 |
-| `GET` | `/api/v1/auth/me` | 获取当前主体 |
+| `GET` | `/api/v1/auth/context` | 强一致获取用户、授权、Capability、业务数据状态和菜单的原子会话上下文 |
 | `GET` | `/api/v1/auth/sessions` | 查询当前租户、当前用户的有效登录设备 |
 | `DELETE` | `/api/v1/auth/sessions/{sid}` | 撤销当前用户的指定设备会话 |
 | `POST` | `/api/v1/auth/sessions/revoke-others` | 撤销当前用户除本设备外的全部设备会话 |
@@ -172,7 +178,7 @@ Cookie: <csrf_challenge_cookie>
 }
 ```
 
-成功响应的业务数据只有 `access_token`、`expires_in` 和 `user_info`。refresh token 永远不出现在 JSON、日志或 OpenAPI Schema 中，只通过名为 `ryframe_refresh_token` 的 host-only Cookie 下发；Cookie 属性固定为 `HttpOnly`、`SameSite=Lax`、`Path=/api/v1/auth`，生产环境强制 `Secure`。会话从登录起最多存活 7 天，刷新不会延长这个绝对期限。
+成功响应的业务数据只有 `access_token`、`expires_in` 和 `session_context`；刷新返回相同结构。`session_context` 原子包含用户、角色、权限、授权纪元、运行时纪元、有效 Capability、业务数据状态与 generation，以及已经按 Capability 和 RBAC 过滤的菜单树。所有 `i64` ID、epoch 和 generation 均以 JSON 字符串传输。refresh token 永远不出现在 JSON、日志或 OpenAPI Schema 中，只通过名为 `ryframe_refresh_token` 的 host-only Cookie 下发；Cookie 属性固定为 `HttpOnly`、`SameSite=Lax`、`Path=/api/v1/auth`，生产环境强制 `Secure`。会话从登录起最多存活 7 天，刷新不会延长这个绝对期限。
 
 刷新接口没有请求体，也不接收 `X-Tenant-Id`：
 
@@ -280,7 +286,7 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 | `/api/v1/system/config-transfers` | 租户配置迁移 | 上传、从已有包创建、预览、应用、回滚和明细 |
 | `/api/v1/system/roles` | 角色 | `/options`、`GET/PUT /{id}/permissions`、`PUT /{id}/data-scope` |
 | `/api/v1/system/perms` | 权限 | `/tree`、`/sync` |
-| `/api/v1/system/menus` | 菜单 | `/tree`、`/current` |
+| `/api/v1/system/menus` | 菜单 | `/tree`；当前用户菜单由 `/auth/context` 一次返回 |
 | `/api/v1/system/depts` | 部门 | `/tree` |
 | `/api/v1/system/posts` | 岗位 | `/exports` |
 | `/api/v1/system/configs` | 参数配置 | `/key/{key}`、`DELETE /cache`、`/exports` |
@@ -296,6 +302,9 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 | `/api/v1/profile/service-delegations` | 个人服务委托 | 本人委托、可委托能力、创建和撤销 |
 | `/api/v1/agent/v1` | Agent API | 固定能力发现、用户/部门/岗位目录和字典只读查询 |
 | `/api/v1/platform/tenants` | 租户 | 兼容列表、`/page`、`GET /{tenant_id}`、`/{tenant_id}/usage`、`PUT /{tenant_id}/status` |
+| `/api/v1/platform/product-plans` | 产品套餐 | 套餐 CRUD、草稿版本、发布与退役；租户变更经 preview/apply |
+| `/api/v1/platform/data-targets` | 数据目标 | 安全元数据、健康状态与备份恢复点；从不返回连接信息或 Secret 引用 |
+| `/api/v1/platform/tenant-data-migrations` | 租户数据迁移 | 详情、切换前取消和保留期后 finalize |
 | `/api/v1/auth/profile` | 个人中心 | `/password`、`/avatar` |
 | `/api/v1/tools/gen` | 代码生成 | `/tables`、`/preview`、`/generate`、`/download` |
 | `/api/v1/common/upload` | 文件上传 | `/image`、`/avatar` |
@@ -328,15 +337,12 @@ Refresh Family；该双读至少保留一个最大 Refresh TTL，即七天。
 未读统计与任务中心保持同一个“当前租户、当前账号最近 100 条”可见范围，不会为任务中心已经无法
 展示的更早历史记录保留无法清除的徽标。
 
-### 当前用户菜单
+### 会话上下文与当前菜单
 
-登录后使用：
-
-```text
-GET /api/v1/system/menus/current
-```
-
-后端只返回稳定 `route_key`、菜单元数据和权限。前端必须通过本地页面注册表解析 `route_key`，不得执行服务端下发的任意组件路径。
+登录和刷新直接返回 `session_context`，已登录客户端通过
+`GET /api/v1/auth/context` 强一致刷新同一结构。菜单先按租户 Capability、再按 RBAC 过滤，空目录
+自动移除。后端只返回稳定 `route_key`、`capability_code`、菜单元数据和权限；前端必须通过编译期
+功能 manifest 与页面注册表解析，不能执行服务端下发的 Vue 路径或 JavaScript。
 
 ### 异步用户导入
 
@@ -521,7 +527,7 @@ PUT /api/v1/system/roles/{id}/data-scope
 
 调用前先读取当前值，提交完整目标集合，不要只提交增量差异。创建用户时可直接提交 `role_ids`，用户和角色关联在同一数据库事务中创建；后续资料、角色和状态分别通过用户资源、`/{id}/roles` 和 `/{id}/status` 更新。数据范围请求同时提交 `data_scope` 和 `dept_ids`，两者在同一数据库事务中替换。
 
-角色权限、数据范围、菜单和权限目录变更会提升租户授权纪元。角色成员无需重新登录：下一次受保护请求会使旧授权快照失效并从主库重建。在线管理端通过 WebSocket `authorization_changed` 控制帧立即刷新权限、菜单和动态路由；所有受保护响应同时返回 `X-Authorization-Epoch`，作为实时通知断线时的校准兜底。撤销权限后即使旧页面按钮短暂存在，后端也会立即拒绝无权请求。
+角色权限、数据范围、菜单和权限目录变更会提升授权纪元；套餐、Capability 覆盖或业务数据放置变化会提升运行时纪元。在线管理端通过 WebSocket `tenant_context_changed` 控制帧刷新整个会话上下文。所有受保护响应同时返回 `X-Authorization-Epoch`、`X-Tenant-Runtime-Epoch`、`X-Tenant-Data-Generation` 和 `X-Tenant-Data-State`，作为实时通知断线时的校准兜底。撤销权限或 Capability 后即使旧页面按钮短暂存在，后端也会立即拒绝请求。
 
 ### 参数配置
 

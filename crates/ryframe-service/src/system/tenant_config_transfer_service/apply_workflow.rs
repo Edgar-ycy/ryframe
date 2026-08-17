@@ -25,12 +25,7 @@ impl TenantConfigTransferService {
             )
             .await?;
         let mut lease = self
-            .acquire_operation_lease(
-                tenant_id,
-                transfer_id,
-                &owner_token,
-                tenant_config_lease::Model::OPERATION_APPLY,
-            )
+            .acquire_operation_lease(tenant_id, transfer_id, &owner_token, "tenant_config.apply")
             .await?;
         if let Err(error) = self
             .mark_transfer_running(
@@ -72,6 +67,13 @@ impl TenantConfigTransferService {
                     Some(&owner_token),
                 )
                 .await?;
+            self.product_service
+                .ensure_capability_requirements_in_txn(
+                    &snapshot_transaction,
+                    tenant_id,
+                    &parsed.manifest.required_capabilities,
+                )
+                .await?;
             let snapshot_time = self
                 .repository
                 .database_utc_now(&snapshot_transaction)
@@ -92,31 +94,46 @@ impl TenantConfigTransferService {
                 .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
             let target_resources = load_resources_on(&snapshot_transaction, tenant_id).await?;
             ensure_preview_identity(&transfer, &parsed, &target_resources, fence)?;
-            let snapshot_resources =
-                filter_exportable_resources(target_resources, &self.target_catalog)?;
-            Ok::<_, AppError>((snapshot_resources, tenant.name, snapshot_time))
+            let enabled_capabilities = self
+                .product_service
+                .enabled_capability_requirements_in_txn(&snapshot_transaction, tenant_id)
+                .await?;
+            let (snapshot_resources, snapshot_capabilities) = filter_exportable_resources(
+                target_resources,
+                &self.target_catalog,
+                &enabled_capabilities,
+            )?;
+            Ok::<_, AppError>((
+                snapshot_resources,
+                snapshot_capabilities,
+                tenant.name,
+                snapshot_time,
+            ))
         }
         .await;
-        let (snapshot_resources, snapshot_tenant_name, snapshot_time) = match snapshot_result {
-            Ok(value) => {
-                if let Err(error) = snapshot_transaction.commit().await.map_err(database_error) {
+        let (snapshot_resources, snapshot_capabilities, snapshot_tenant_name, snapshot_time) =
+            match snapshot_result {
+                Ok(value) => {
+                    if let Err(error) = snapshot_transaction.commit().await.map_err(database_error)
+                    {
+                        let _ = lease.release().await;
+                        return Err(error);
+                    }
+                    value
+                }
+                Err(error) => {
+                    let rollback_result = snapshot_transaction
+                        .rollback()
+                        .await
+                        .map_err(database_error);
                     let _ = lease.release().await;
+                    rollback_result?;
                     return Err(error);
                 }
-                value
-            }
-            Err(error) => {
-                let rollback_result = snapshot_transaction
-                    .rollback()
-                    .await
-                    .map_err(database_error);
-                let _ = lease.release().await;
-                rollback_result?;
-                return Err(error);
-            }
-        };
+            };
         let snapshot = match crate::system::build_tenant_config_package(
             snapshot_resources,
+            snapshot_capabilities,
             tenant_id.to_owned(),
             snapshot_tenant_name,
             env!("CARGO_PKG_VERSION").to_owned(),
@@ -186,6 +203,13 @@ impl TenantConfigTransferService {
             let fence = self
                 .repository
                 .lock_tenant_configuration_in_txn(&transaction, tenant_id, Some(&owner_token))
+                .await?;
+            self.product_service
+                .ensure_capability_requirements_in_txn(
+                    &transaction,
+                    tenant_id,
+                    &parsed.manifest.required_capabilities,
+                )
                 .await?;
             let mut current = self
                 .repository

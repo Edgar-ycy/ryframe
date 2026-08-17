@@ -95,6 +95,25 @@ impl MenuService {
             .map(|nodes| nodes.into_iter().map(MenuTreeNode::from).collect())
     }
 
+    /// 会话启动使用的强一致导航查询。Capability 路由先被移除，随后才应用 RBAC。
+    pub async fn find_session_tree(
+        &self,
+        actor: &ActorContext,
+        permission_codes: &[String],
+        excluded_capability_routes: &[String],
+    ) -> AppResult<Vec<MenuTreeNode>> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        self.menu_repo
+            .find_tree_by_permission_codes_excluding_routes(
+                self.db.write(),
+                tenant_id,
+                permission_codes,
+                excluded_capability_routes,
+            )
+            .await
+            .map(|nodes| nodes.into_iter().map(MenuTreeNode::from).collect())
+    }
+
     pub async fn create(
         &self,
         actor: &ActorContext,

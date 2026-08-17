@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `tenant_id`              VARCHAR(64)  NOT NULL COMMENT '租户标识',
     `name`                   VARCHAR(128) NOT NULL COMMENT '租户名称',
     `domain`                 VARCHAR(255)          DEFAULT NULL COMMENT '绑定域名',
-    `status`                 CHAR(1)      NOT NULL DEFAULT '1' COMMENT '状态: 0停用 1正常',
+    `status`                 VARCHAR(32)  NOT NULL DEFAULT 'enabled' COMMENT '生命周期状态',
     `expire_at`              DATETIME              DEFAULT NULL COMMENT '到期时间',
     `max_users`              INT          NOT NULL DEFAULT 100 COMMENT '最大用户数',
     `max_roles`              INT          NOT NULL DEFAULT 20 COMMENT '最大角色数',
@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
     `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
     `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
+    `runtime_epoch`          BIGINT       NOT NULL DEFAULT 1 COMMENT '租户运行时产品上下文纪元',
     `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
     `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -741,25 +742,301 @@ CREATE TABLE IF NOT EXISTS `sys_tenant_config_transfer_item` (
                 ON UPDATE CASCADE ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移明细';
 
-CREATE TABLE IF NOT EXISTS `sys_tenant_config_lease` (
+CREATE TABLE IF NOT EXISTS `sys_product_plan` (
+            `id` BIGINT NOT NULL,
+            `plan_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `name` VARCHAR(128) NOT NULL,
+            `description` VARCHAR(500) DEFAULT NULL,
+            `status` CHAR(1) NOT NULL DEFAULT '1',
+            `created_by` BIGINT NOT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_product_plan_key` (`plan_key`),
+            KEY `idx_product_plan_status` (`status`, `plan_key`),
+            CONSTRAINT `ck_product_plan_status` CHECK (`status` IN ('0', '1')),
+            CONSTRAINT `ck_product_plan_key` CHECK (CHAR_LENGTH(`plan_key`) > 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='产品套餐';
+
+CREATE TABLE IF NOT EXISTS `sys_product_plan_version` (
+            `id` BIGINT NOT NULL,
+            `plan_id` BIGINT NOT NULL,
+            `version` INT NOT NULL,
+            `name` VARCHAR(128) NOT NULL,
+            `description` VARCHAR(500) DEFAULT NULL,
+            `status` VARCHAR(16) NOT NULL DEFAULT 'draft',
+            `created_by` BIGINT NOT NULL,
+            `published_by` BIGINT DEFAULT NULL,
+            `published_at` DATETIME(6) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_product_plan_version` (`plan_id`, `version`),
+            KEY `idx_product_plan_version_status` (`plan_id`, `status`, `version`),
+            CONSTRAINT `fk_product_plan_version_plan`
+                FOREIGN KEY (`plan_id`) REFERENCES `sys_product_plan` (`id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT `ck_product_plan_version_status`
+                CHECK (`status` IN ('draft', 'published', 'retired'))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='产品套餐版本';
+
+CREATE TABLE IF NOT EXISTS `sys_product_plan_capability` (
+            `plan_version_id` BIGINT NOT NULL,
+            `capability_code` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `variant_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `schema_version` INT NOT NULL,
+            `config` JSON NOT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`plan_version_id`, `capability_code`),
+            KEY `idx_product_plan_capability_code` (`capability_code`, `plan_version_id`),
+            CONSTRAINT `fk_product_plan_capability_version`
+                FOREIGN KEY (`plan_version_id`) REFERENCES `sys_product_plan_version` (`id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `ck_product_plan_capability_code`
+                CHECK (CHAR_LENGTH(`capability_code`) > 0),
+            CONSTRAINT `ck_product_plan_capability_variant`
+                CHECK (CHAR_LENGTH(`variant_code`) > 0),
+            CONSTRAINT `ck_product_plan_capability_schema`
+                CHECK (`schema_version` > 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='产品套餐版本能力';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_product_plan` (
             `tenant_id` VARCHAR(64) NOT NULL,
-            `owner_token` VARCHAR(64) NOT NULL,
-            `transfer_id` BIGINT NOT NULL,
-            `operation` VARCHAR(16) NOT NULL,
+            `plan_version_id` BIGINT NOT NULL,
+            `changed_by` BIGINT DEFAULT NULL,
+            `change_reason` VARCHAR(500) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`tenant_id`),
+            KEY `idx_tenant_product_plan_version` (`plan_version_id`, `tenant_id`),
+            CONSTRAINT `fk_tenant_product_plan_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `fk_tenant_product_plan_version`
+                FOREIGN KEY (`plan_version_id`) REFERENCES `sys_product_plan_version` (`id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户产品套餐分配';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_capability_override` (
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `capability_code` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `enabled` TINYINT(1) NOT NULL,
+            `variant_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `schema_version` INT NOT NULL,
+            `config` JSON NOT NULL,
+            `reason` VARCHAR(500) DEFAULT NULL,
+            `changed_by` BIGINT DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`tenant_id`, `capability_code`),
+            KEY `idx_tenant_capability_override_code` (`capability_code`, `tenant_id`),
+            CONSTRAINT `fk_tenant_capability_override_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `ck_tenant_capability_override_enabled`
+                CHECK (`enabled` IN (0, 1)),
+            CONSTRAINT `ck_tenant_capability_override_code`
+                CHECK (CHAR_LENGTH(`capability_code`) > 0),
+            CONSTRAINT `ck_tenant_capability_override_variant`
+                CHECK (CHAR_LENGTH(`variant_code`) > 0),
+            CONSTRAINT `ck_tenant_capability_override_schema`
+                CHECK (`schema_version` > 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户能力覆盖';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_provision_request` (
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `request_token` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `admin_password_hash` VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`tenant_id`),
+            CONSTRAINT `fk_tenant_provision_request_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `ck_tenant_provision_request_token`
+                CHECK (CHAR_LENGTH(`request_token`) = 64)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户创建 Saga 权威幂等请求';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_operation_lease` (
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `owner_token` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `operation` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `resource_type` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `resource_id` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
             `expires_at` DATETIME(6) NOT NULL,
             `created_at` DATETIME(6) NOT NULL,
             `updated_at` DATETIME(6) NOT NULL,
             PRIMARY KEY (`tenant_id`),
-            KEY `idx_tenant_config_lease_expiry` (`expires_at`, `tenant_id`),
-            KEY `idx_tenant_config_lease_transfer` (`tenant_id`, `transfer_id`),
-            CONSTRAINT `fk_tenant_config_lease_tenant`
+            KEY `idx_tenant_operation_lease_expiry` (`expires_at`, `tenant_id`),
+            KEY `idx_tenant_operation_lease_resource` (`tenant_id`, `resource_type`, `resource_id`),
+            CONSTRAINT `fk_tenant_operation_lease_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户统一操作租约';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_data_placement` (
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `current_target_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `placement_generation` BIGINT NOT NULL,
+            `state` VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `switch_token` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`tenant_id`),
+            KEY `idx_tenant_data_placement_target` (`current_target_key`, `state`, `tenant_id`),
+            KEY `idx_tenant_data_placement_state` (`state`, `updated_at`),
+            CONSTRAINT `fk_tenant_data_placement_tenant`
                 FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
                 ON UPDATE CASCADE ON DELETE CASCADE,
-            CONSTRAINT `fk_tenant_config_lease_transfer`
-                FOREIGN KEY (`tenant_id`, `transfer_id`)
-                REFERENCES `sys_tenant_config_transfer` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移租约';
+            CONSTRAINT `ck_tenant_data_placement_generation`
+                CHECK (`placement_generation` > 0),
+            CONSTRAINT `ck_tenant_data_placement_state`
+                CHECK (`state` IN ('provisioning', 'active', 'maintenance', 'failed'))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据权威放置';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_data_migration` (
+            `id` BIGINT NOT NULL,
+            `tenant_id` VARCHAR(64) NOT NULL,
+            `source_target_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `target_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `source_target_mode` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `source_target_kind` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `target_target_mode` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `target_target_kind` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `source_generation` BIGINT NOT NULL,
+            `source_switch_token` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `target_generation` BIGINT NOT NULL,
+            `source_schema_fingerprint` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `target_schema_fingerprint` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `plan_hash` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `create_idempotency_key_hash` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `cancel_idempotency_key_hash` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+            `finalize_idempotency_key_hash` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+            `state` VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `switch_token` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `operator_id` BIGINT NOT NULL,
+            `cancelled_by` BIGINT DEFAULT NULL,
+            `finalized_by` BIGINT DEFAULT NULL,
+            `background_job_id` BIGINT DEFAULT NULL,
+            `retention_hours` INT NOT NULL DEFAULT 168,
+            `error_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+            `error_detail` VARCHAR(1000) DEFAULT NULL,
+            `prechecked_at` DATETIME(6) DEFAULT NULL,
+            `queued_at` DATETIME(6) DEFAULT NULL,
+            `quiesced_at` DATETIME(6) DEFAULT NULL,
+            `frozen_at` DATETIME(6) DEFAULT NULL,
+            `copy_started_at` DATETIME(6) DEFAULT NULL,
+            `copy_completed_at` DATETIME(6) DEFAULT NULL,
+            `verified_at` DATETIME(6) DEFAULT NULL,
+            `cut_over_at` DATETIME(6) DEFAULT NULL,
+            `activated_at` DATETIME(6) DEFAULT NULL,
+            `succeeded_at` DATETIME(6) DEFAULT NULL,
+            `retention_until` DATETIME(6) DEFAULT NULL,
+            `cancel_requested_at` DATETIME(6) DEFAULT NULL,
+            `finalize_requested_at` DATETIME(6) DEFAULT NULL,
+            `cleanup_ready_at` DATETIME(6) DEFAULT NULL,
+            `finalized_at` DATETIME(6) DEFAULT NULL,
+            `failed_at` DATETIME(6) DEFAULT NULL,
+            `cancelled_at` DATETIME(6) DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_tenant_data_migration_switch` (`switch_token`),
+            UNIQUE KEY `uq_tenant_data_migration_create_key` (`create_idempotency_key_hash`),
+            UNIQUE KEY `uq_tenant_data_migration_cancel_key` (`cancel_idempotency_key_hash`),
+            UNIQUE KEY `uq_tenant_data_migration_finalize_key` (`finalize_idempotency_key_hash`),
+            KEY `idx_tenant_data_migration_tenant` (`tenant_id`, `state`, `created_at`),
+            KEY `idx_tenant_data_migration_target` (`target_key`, `state`, `created_at`),
+            KEY `idx_tenant_data_migration_job` (`background_job_id`),
+            CONSTRAINT `fk_tenant_data_migration_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `ck_tenant_data_migration_generation`
+                CHECK (`source_generation` > 0 AND `target_generation` > `source_generation`),
+            CONSTRAINT `ck_tenant_data_migration_retention`
+                CHECK (`retention_hours` BETWEEN 1 AND 8760),
+            CONSTRAINT `ck_tenant_data_migration_target_contract`
+                CHECK (`source_target_mode` IN ('shared', 'dedicated')
+                    AND `target_target_mode` IN ('shared', 'dedicated')
+                    AND `source_target_kind` IN ('control', 'mysql')
+                    AND `target_target_kind` IN ('control', 'mysql')),
+            CONSTRAINT `ck_tenant_data_migration_state`
+                CHECK (`state` IN ('prechecking', 'queued', 'quiescing', 'frozen', 'copying', 'verifying', 'cutting_over', 'activating', 'succeeded', 'retention_pending', 'finalized', 'failed', 'cancelled'))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据迁移任务';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_data_migration_item` (
+            `id` BIGINT NOT NULL,
+            `migration_id` BIGINT NOT NULL,
+            `table_name` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `copy_order` INT NOT NULL,
+            `state` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `cursor_json` JSON DEFAULT NULL,
+            `source_row_count` BIGINT DEFAULT NULL,
+            `target_row_count` BIGINT DEFAULT NULL,
+            `source_digest` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+            `target_digest` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+            `error_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+            `error_detail` VARCHAR(1000) DEFAULT NULL,
+            `copy_started_at` DATETIME(6) DEFAULT NULL,
+            `copied_at` DATETIME(6) DEFAULT NULL,
+            `verified_at` DATETIME(6) DEFAULT NULL,
+            `cleanup_state` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'pending',
+            `cleanup_row_count` BIGINT NOT NULL DEFAULT 0,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_tenant_data_migration_item` (`migration_id`, `table_name`),
+            KEY `idx_tenant_data_migration_item_state` (`migration_id`, `state`, `copy_order`),
+            CONSTRAINT `fk_tenant_data_migration_item_migration`
+                FOREIGN KEY (`migration_id`) REFERENCES `sys_tenant_data_migration` (`id`)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT `ck_tenant_data_migration_item_state`
+                CHECK (`state` IN ('pending', 'copying', 'copied', 'verifying', 'verified', 'failed')),
+            CONSTRAINT `ck_tenant_data_migration_item_cleanup_state`
+                CHECK (`cleanup_state` IN ('pending', 'cleaning', 'cleaned')),
+            CONSTRAINT `ck_tenant_data_migration_item_copy_order`
+                CHECK (`copy_order` > 0),
+            CONSTRAINT `ck_tenant_data_migration_item_counts`
+                CHECK ((`source_row_count` IS NULL OR `source_row_count` >= 0)
+                    AND (`target_row_count` IS NULL OR `target_row_count` >= 0)
+                    AND `cleanup_row_count` >= 0)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据迁移表级检查点';
+
+CREATE TABLE IF NOT EXISTS `sys_tenant_data_backup_point` (
+            `id` BIGINT NOT NULL,
+            `scope` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `tenant_id` VARCHAR(64) DEFAULT NULL,
+            `target_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `placement_generation` BIGINT DEFAULT NULL,
+            `schema_fingerprint` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `provider_ref` VARCHAR(512) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `captured_at` DATETIME(6) NOT NULL,
+            `checksum` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,
+            `validation_status` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `validation_detail` VARCHAR(1000) DEFAULT NULL,
+            `retention_until` DATETIME(6) NOT NULL,
+            `expires_at` DATETIME(6) DEFAULT NULL,
+            `last_restore_drill_at` DATETIME(6) DEFAULT NULL,
+            `created_by` BIGINT DEFAULT NULL,
+            `created_at` DATETIME(6) NOT NULL,
+            `updated_at` DATETIME(6) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_tenant_data_backup_provider_ref` (`provider_ref`),
+            KEY `idx_tenant_data_backup_tenant` (`tenant_id`, `captured_at`),
+            KEY `idx_tenant_data_backup_target` (`target_key`, `scope`, `captured_at`),
+            KEY `idx_tenant_data_backup_expiry` (`expires_at`, `validation_status`),
+            CONSTRAINT `fk_tenant_data_backup_tenant`
+                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+                ON DELETE RESTRICT,
+            CONSTRAINT `ck_tenant_data_backup_scope`
+                CHECK ((`scope` = 'tenant' AND `tenant_id` IS NOT NULL AND `placement_generation` > 0)
+                    OR (`scope` = 'shard' AND `tenant_id` IS NULL)),
+            CONSTRAINT `ck_tenant_data_backup_validation`
+                CHECK (`validation_status` IN ('pending', 'valid', 'invalid')),
+            CONSTRAINT `ck_tenant_data_backup_retention`
+                CHECK (`expires_at` IS NULL OR `expires_at` >= `retention_until`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据备份恢复点';
 
 CREATE TABLE IF NOT EXISTS `sys_service_account` (
             `id` BIGINT NOT NULL,
@@ -947,7 +1224,7 @@ CREATE TABLE IF NOT EXISTS `sys_service_access_audit` (
 -- 幂等初始化数据（生产环境用户默认锁定）。
 
 INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
-VALUES (1, 'system', '系统租户', '1') ON DUPLICATE KEY UPDATE `id` = `id`;
+VALUES (1, 'system', '系统租户', 'enabled') ON DUPLICATE KEY UPDATE `id` = `id`;
 
 INSERT INTO `sys_cache_namespace_version` (`tenant_id`, `namespace`, `version`)
 VALUES ('system', 'config', 0) ON DUPLICATE KEY UPDATE `tenant_id` = `tenant_id`;

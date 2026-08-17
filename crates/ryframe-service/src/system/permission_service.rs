@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashSet};
+use std::sync::Arc;
 
 use ryframe_core::{
     Repository,
@@ -10,6 +11,7 @@ use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 
+use super::ProductService;
 use crate::AuthorizationCache;
 
 mod model;
@@ -23,18 +25,25 @@ pub use tree::build_perm_tree;
 
 const SYSTEM_TENANT_ID: &str = "system";
 const TENANT_PERMISSION_PREFIX: &str = "tenant:";
+const PLATFORM_PERMISSION_PREFIX: &str = "platform:";
 
 pub struct PermissionService {
     db: ControlDatabaseCluster,
     perm_repo: PermissionRepository,
+    product_service: Arc<ProductService>,
     authorization_cache: AuthorizationCache,
 }
 
 impl PermissionService {
-    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(
+        db: ControlDatabaseCluster,
+        authorization_cache: AuthorizationCache,
+        product_service: Arc<ProductService>,
+    ) -> Self {
         Self {
             db,
             perm_repo: PermissionRepository,
+            product_service,
             authorization_cache,
         }
     }
@@ -296,10 +305,11 @@ impl PermissionService {
             .map(|code| (*code).to_owned())
             // 编译期目录包含平台租户接口；普通租户同步时必须安全忽略，不能复制或因其存在而失败。
             .filter(|code| {
-                tenant_id == SYSTEM_TENANT_ID || !is_tenant_permission_code(code.as_str())
+                tenant_id == SYSTEM_TENANT_ID
+                    || (!is_tenant_permission_code(code.as_str())
+                        && !is_platform_permission_code(code.as_str()))
             })
             .collect::<BTreeSet<_>>();
-        let scanned_total = scanned.len();
         let transaction = db
             .begin()
             .await
@@ -307,6 +317,11 @@ impl PermissionService {
         TenantConfigTransferRepository
             .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
             .await?;
+        let scanned = self
+            .product_service
+            .filter_syncable_permission_codes_in_txn(&transaction, tenant_id, scanned)
+            .await?;
+        let scanned_total = scanned.len();
         let existing = permission::Entity::find()
             .filter(permission::Column::TenantId.eq(tenant_id))
             .lock(sea_orm::sea_query::LockType::Update)
@@ -381,4 +396,9 @@ fn ensure_tenant_permission_code_boundary(tenant_id: &str, code: &str) -> AppRes
 fn is_tenant_permission_code(code: &str) -> bool {
     code.get(..TENANT_PERMISSION_PREFIX.len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(TENANT_PERMISSION_PREFIX))
+}
+
+fn is_platform_permission_code(code: &str) -> bool {
+    code.get(..PLATFORM_PERMISSION_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(PLATFORM_PERMISSION_PREFIX))
 }

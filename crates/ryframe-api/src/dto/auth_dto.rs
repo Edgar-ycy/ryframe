@@ -1,11 +1,12 @@
 use chrono::{DateTime, Utc};
-use ryframe_service::LoginResult;
+use ryframe_service::{LoginResult, UserInfo as ServiceUserInfo};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::product_dto::SessionCapabilityVo;
 use super::{
-    password_validation::validate_password_complexity, public_dto::UserInfo,
-    tenant_validation::validate_tenant_identifier,
+    fixed_value::TenantBusinessDataState, password_validation::validate_password_complexity,
+    public_dto::MenuTreeNode, tenant_validation::validate_tenant_identifier,
 };
 
 #[derive(Deserialize, validator::Validate, ToSchema)]
@@ -41,26 +42,78 @@ pub struct CompletePasswordResetRequest {
 pub struct LoginResponse {
     pub access_token: String,
     pub expires_in: usize,
-    pub user_info: UserInfo,
+    pub session_context: SessionContextVo,
 }
 
-impl From<LoginResult> for LoginResponse {
-    fn from(value: LoginResult) -> Self {
+impl LoginResponse {
+    pub fn new(value: LoginResult, session_context: SessionContextVo) -> Self {
         let LoginResult {
             access_token,
             refresh_token: _,
             sid: _,
             user_id: _,
-            user_info,
+            user_info: _,
             expires_in,
             refresh_expires_at: _,
         } = value;
         Self {
             access_token,
             expires_in,
-            user_info: user_info.into(),
+            session_context,
         }
     }
+}
+
+/// 会话身份，仅包含稳定身份与展示字段；授权集合只存在于 SessionContext 顶层。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SessionUserVo {
+    pub id: String,
+    pub tenant_id: String,
+    pub tenant_name: String,
+    pub dept_name: Option<String>,
+    pub username: String,
+    pub nickname: String,
+    pub email: String,
+    pub phone: String,
+    pub avatar: Option<String>,
+    pub preferred_locale: Option<String>,
+}
+
+impl From<ServiceUserInfo> for SessionUserVo {
+    fn from(value: ServiceUserInfo) -> Self {
+        Self {
+            id: value.id,
+            tenant_id: value.tenant_id,
+            tenant_name: value.tenant_name,
+            dept_name: value.dept_name,
+            username: value.username,
+            nickname: value.nickname,
+            email: value.email,
+            phone: value.phone,
+            avatar: value.avatar,
+            preferred_locale: value.preferred_locale,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TenantBusinessDataContextVo {
+    pub state: TenantBusinessDataState,
+    pub placement_generation: String,
+}
+
+/// 登录、刷新和 GET /auth/context 共用的会话启动快照。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SessionContextVo {
+    pub user: SessionUserVo,
+    pub roles: Vec<String>,
+    pub permissions: Vec<String>,
+    /// 控制库授权纪元；避免 JavaScript 精度漂移，所有 epoch 均以十进制字符串输出。
+    pub authorization_epoch: String,
+    pub runtime_epoch: String,
+    pub capabilities: Vec<SessionCapabilityVo>,
+    pub business_data: TenantBusinessDataContextVo,
+    pub menus: Vec<MenuTreeNode>,
 }
 
 #[derive(Serialize, ToSchema)]

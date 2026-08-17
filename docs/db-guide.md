@@ -18,7 +18,7 @@
 - `sources` 是独立 MySQL 业务数据库，只能由具体用例按名称显式选择；本机测试数据源为 `ryframe_device`。
 - 没有配置副本时，读取自动使用主库；已经配置的副本不会在连接失败时被静默忽略。
 - 一次 Service 用例只选择一次连接，复合查询不会在执行中途切换副本。
-- Handler、认证和监控 crate 不选择数据库连接，路由策略只存在于 `DatabaseCluster` 和 Service。
+- Handler、认证和监控 crate 不选择数据库连接。控制库路由只存在于 `ControlDatabaseCluster`，租户业务数据路由只存在于 `TenantDatabaseRouter` 和业务 Service。
 - 主库迁移及系统表校验不作用于 `sources`；业务数据源自行管理结构演进。
 
 复制、延迟、只读权限和故障切换由数据库基础设施负责。应用不会把普通查询失败悄悄改发主库，也不会把业务数据源当作副本承接系统查询。
@@ -214,7 +214,7 @@ Handler 不得导入 Entity、Repository 或 SeaORM。数据库实体也不得�
 | `sys_tenant_config_bundle` | 生成或上传的配置包元数据、私有文件引用、摘要、状态与过期时间 |
 | `sys_tenant_config_transfer` | 目标租户预览、应用、回滚状态、计划哈希、版本栅栏与快照引用 |
 | `sys_tenant_config_transfer_item` | 按稳定业务键记录的预览项目、动作、结果和安全说明 |
-| `sys_tenant_config_lease` | 每租户唯一的配置应用/回滚租约 |
+| `sys_tenant_operation_lease` | 每租户唯一的配置包、套餐、Capability、数据迁移和 finalize 统一租约 |
 | `sys_service_account` | 租户服务账号、部门归属、状态、授权版本和请求上限 |
 | `sys_service_credential` | 服务账号 API Key 元数据、Secret MAC、Pepper 版本、到期/撤销和幂等指纹 |
 | `sys_service_delegation` | 用户对服务账号的显式限时委托、Token MAC、版本、到期/撤销和幂等指纹 |
@@ -344,7 +344,7 @@ pub async fn create(&self, command: CreateExampleCommand, actor: &ActorContext)
     -> AppResult<ExampleOutput>;
 ```
 
-命令和事务通过 `DatabaseCluster::write()` 固定使用主库。查询不得使用隐含默认策略的辅助入口，必须显式调用 `select_read(ReadConsistency)`：
+控制面命令和事务通过 `ControlDatabaseCluster::write()` 固定使用主库。控制面查询不得使用隐含默认策略的辅助入口，必须显式调用 `select_read(ReadConsistency)`：
 
 - `Strong`：写后读、认证授权、数据权限、安全决策、配额和唯一性校验。
 - `Eventual`：不参与安全或业务决策的普通只读列表、详情和导出；有健康副本时轮询副本，否则回退主库。
@@ -423,12 +423,13 @@ Secret、Token、Credential 或 Private Key 类键值写入配置包。
 
 ```text
 sys_tenant 行
-  → sys_tenant_config_lease 行
+  → sys_tenant_operation_lease 行
   → 父资源或目标资源行
   → 关系行
 ```
 
-普通写入在锁定租户行后检查有效租约，发现其他所有者的 `apply` 或 `rollback` 租约返回 `409`。
+普通写入在锁定租户行后检查统一操作租约，发现其他所有者的配置包应用、套餐/Capability 变更、
+数据迁移或 finalize 返回 `409 tenant_operation_conflict`。
 应用或回滚使用自己的 `owner_token`，在最终事务内重新核对租约所有权、到期时间、
 `configuration_version`、`authorization_epoch` 和计划哈希，再按稳定业务键顺序锁定并写入资源。
 禁止先在事务外读取旧 Model，再在取得租户栅栏后直接覆盖；更新、删除、父级校验、引用检查和部门
@@ -440,7 +441,13 @@ sys_tenant 行
 
 ## 9. 迁移与重置
 
-应用启动时只在主库自动运行 `ryframe-db-migration`，完成后校验主库结构。副本以不可路由槽位注册：监督器每 5 秒以 2 秒总超时执行连接/PING/结构校验，连续两次完整成功后才接收最终一致性读取；连续三次网络失败会摘除，结构不一致会立即摘除，并按 5、10、20、40、60 秒上限退避重连。主库就绪探针不等待副本。命名业务数据源只执行连接和健康检查，不执行系统迁移或系统表校验。复制延迟或外部迁移系统必须保证副本结构在应用接流量前就绪。新增结构变更时：
+生产 API 和 Worker 不执行 DDL。控制库与租户业务数据目标分别使用 `seaql_migrations` 和
+`seaql_tenant_data_migrations`，运维先运行 `ryframe-migrate control up|verify|status`，再运行
+`ryframe-migrate tenant-data up|verify|status --all`（或 `--target <key>`）。`shared-control` 虽与
+控制库使用同一 MySQL Schema，仍分别执行两本账。副本以不可路由槽位注册：监督器每 5 秒以
+2 秒总超时执行连接/PING/结构校验，连续两次完整成功后才接收最终一致性读取；连续三次网络失败
+会摘除，结构不一致会立即摘除，并按 5、10、20、40、60 秒上限退避重连。命名数据源不参与
+租户路由。新增结构变更时：
 
 `sys_background_job` 与 `sys_outbox_event` 同时保存可空的 `traceparent` 和 `tracestate`；两列共同构成跨进程 W3C Trace Context，迁移、实体和规范结构指纹必须同步演进。
 
@@ -480,7 +487,12 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 | `max_lifetime_secs` | 1800 | 单连接最大生命周期 |
 | `connect_timeout_secs` | 10 | 建连超时 |
 
-`GET /api/v1/monitor/db-pool` 当前展示主库池统计；`GET /api/v1/monitor/runtime` 分别展示主库、副本和业务数据源的状态及有效读取策略，其中副本 `connected` 表示当前可参与读路由。数据库总连接预算为每个应用实例的主库池、全部副本池和全部业务数据源池之和，还要预留迁移任务和管理连接。活跃连接长期接近上限时，应先检查慢查询、长事务和并发模型，不要只按 CPU 公式扩大连接池。
+`GET /api/v1/monitor/db-pool` 展示控制库池统计；`GET /api/v1/monitor/runtime` 展示控制库主库、
+副本和命名数据源的状态。租户数据目标按需延迟建池，并受 `[tenant_data]` 的
+`max_open_targets`、`max_total_connections` 和 `idle_pool_secs` 全局约束；空闲池按 LRU 回收，
+同一目标创建采用 single-flight。单目标故障不拖垮全局 readiness，平台通过数据目标详情 API
+查询低基数健康信息。数据库总预算还要预留迁移任务和管理连接；活跃连接长期接近上限时，应先
+检查慢查询、长事务和并发模型，不要只按 CPU 公式扩大连接池。
 
 ## 11. 提交前检查
 

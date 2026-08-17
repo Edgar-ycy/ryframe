@@ -309,7 +309,40 @@ where
 pub(super) fn filter_exportable_resources(
     mut resources: TenantConfigPackageResources,
     target_catalog: &TenantConfigTargetCatalog,
-) -> AppResult<TenantConfigPackageResources> {
+    enabled_capabilities: &[CapabilityRequirement],
+) -> AppResult<(TenantConfigPackageResources, Vec<CapabilityRequirement>)> {
+    let enabled_by_code = enabled_capabilities
+        .iter()
+        .map(|requirement| (requirement.code.as_str(), requirement))
+        .collect::<BTreeMap<_, _>>();
+    let disabled_permissions = crate::system::CAPABILITY_CATALOG
+        .iter()
+        .filter(|descriptor| !enabled_by_code.contains_key(descriptor.code))
+        .flat_map(|descriptor| descriptor.permission_codes.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let disabled_routes = crate::system::CAPABILITY_CATALOG
+        .iter()
+        .filter(|descriptor| !enabled_by_code.contains_key(descriptor.code))
+        .flat_map(|descriptor| descriptor.route_keys.iter().copied())
+        .collect::<BTreeSet<_>>();
+    resources
+        .permissions
+        .retain(|permission| !disabled_permissions.contains(permission.code.as_str()));
+    for role in &mut resources.roles {
+        role.permission_codes
+            .retain(|permission| !disabled_permissions.contains(permission.as_str()));
+    }
+    resources.menus.retain(|menu| {
+        !menu
+            .permission_code
+            .as_deref()
+            .is_some_and(|permission| disabled_permissions.contains(permission))
+            && !menu
+                .route_key
+                .as_deref()
+                .is_some_and(|route| disabled_routes.contains(route))
+    });
+
     let permission_types = resources
         .permissions
         .iter()
@@ -415,8 +448,41 @@ pub(super) fn filter_exportable_resources(
         role.permission_codes
             .retain(|code| allowed_permissions.contains(code));
     }
+    let required_codes = crate::system::CAPABILITY_CATALOG
+        .iter()
+        .filter(|descriptor| {
+            resources.permissions.iter().any(|permission| {
+                descriptor
+                    .permission_codes
+                    .contains(&permission.code.as_str())
+            }) || resources.roles.iter().any(|role| {
+                role.permission_codes
+                    .iter()
+                    .any(|permission| descriptor.permission_codes.contains(&permission.as_str()))
+            }) || resources.menus.iter().any(|menu| {
+                menu.permission_code
+                    .as_deref()
+                    .is_some_and(|permission| descriptor.permission_codes.contains(&permission))
+                    || menu
+                        .route_key
+                        .as_deref()
+                        .is_some_and(|route| descriptor.route_keys.contains(&route))
+            })
+        })
+        .map(|descriptor| descriptor.code)
+        .collect::<BTreeSet<_>>();
+    let required_capabilities = required_codes
+        .into_iter()
+        .map(|code| {
+            enabled_by_code
+                .get(code)
+                .cloned()
+                .cloned()
+                .ok_or_else(|| AppError::Internal(format!("导出资源引用了未启用能力 {code}")))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
     resources.canonicalize();
-    Ok(resources)
+    Ok((resources, required_capabilities))
 }
 
 pub(super) fn build_department_paths(

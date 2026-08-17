@@ -115,6 +115,17 @@ pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
         .expect("valid compile_error output")
 }
 
+/// 由上方路由属性消费的产品能力标记。
+///
+/// 该标记同时被 API build script 扫描，用于生成权限码→Capability
+/// 的编译期路由契约。
+#[proc_macro_attribute]
+pub fn capability(_args: TokenStream, _input: TokenStream) -> TokenStream {
+    "compile_error!(\"#[capability] must be placed immediately below #[get], #[post], #[put], or #[delete]\");"
+        .parse()
+        .expect("valid compile_error output")
+}
+
 /// 为路由处理函数构建生成的路由器，并将生成的辅助函数名隔离在应用代码之外。
 ///
 /// ```text

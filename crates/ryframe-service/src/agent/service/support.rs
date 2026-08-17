@@ -16,7 +16,16 @@ pub(super) fn classify_error(error: &AppError) -> (i32, &'static str, &'static s
             (503, "query_timeout", RESULT_ERROR)
         }
         AppError::ServiceUnavailable(_) => (503, "service_unavailable", RESULT_ERROR),
-        AppError::FeatureDisabled(_) => (501, "feature_disabled", RESULT_ERROR),
+        AppError::CapabilityUnavailable(_) => (501, "capability_unavailable", RESULT_ERROR),
+        AppError::TenantCapabilityDenied(_) => (403, "tenant_capability_denied", RESULT_DENIED),
+        AppError::PermissionDenied(_) => (403, "permission_denied", RESULT_DENIED),
+        AppError::StaleRuntimeEpoch(_) => (409, "stale_runtime_epoch", RESULT_DENIED),
+        AppError::StalePlacementGeneration(_) => (409, "stale_placement_generation", RESULT_DENIED),
+        AppError::TenantOperationConflict(_) => (409, "tenant_operation_conflict", RESULT_DENIED),
+        AppError::TenantDataMaintenance(_, _) => (423, "tenant_data_maintenance", RESULT_ERROR),
+        AppError::TenantDataTargetUnavailable(_, _) => {
+            (503, "tenant_data_target_unavailable", RESULT_ERROR)
+        }
         AppError::Config(_) | AppError::Internal(_) => (500, "internal", RESULT_ERROR),
     }
 }

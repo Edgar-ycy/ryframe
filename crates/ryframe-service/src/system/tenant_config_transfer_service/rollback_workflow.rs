@@ -45,7 +45,7 @@ impl TenantConfigTransferService {
                 tenant_id,
                 transfer_id,
                 &owner_token,
-                tenant_config_lease::Model::OPERATION_ROLLBACK,
+                "tenant_config.rollback",
             )
             .await?;
         if let Err(error) = self
@@ -72,6 +72,13 @@ impl TenantConfigTransferService {
             let fence = self
                 .repository
                 .lock_tenant_configuration_in_txn(&transaction, tenant_id, Some(&owner_token))
+                .await?;
+            self.product_service
+                .ensure_capability_requirements_in_txn(
+                    &transaction,
+                    tenant_id,
+                    &snapshot.manifest.required_capabilities,
+                )
                 .await?;
             let mut current = self
                 .repository

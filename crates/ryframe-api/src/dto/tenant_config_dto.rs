@@ -45,5 +45,6 @@ pub struct CreateTenantConfigTransferDto {
 pub struct ApplyTenantConfigTransferDto {
     pub plan_hash: String,
     pub target_configuration_version: i64,
-    pub target_authorization_epoch: i32,
+    #[schema(pattern = r"^[0-9]+$")]
+    pub target_authorization_epoch: String,
 }

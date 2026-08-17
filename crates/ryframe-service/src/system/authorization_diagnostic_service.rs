@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use ryframe_db::{
     ControlDatabaseCluster, DataRetentionRepository, DeptRepository, MenuRepository,
     PermissionRepository, RoleRepository, UserRepository,
-    entities::{menu, permission, role},
+    entities::{menu, permission, role, tenant},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 use serde::Serialize;
@@ -326,7 +326,7 @@ impl AuthorizationDiagnosticService {
         if !user_enabled {
             warnings.push("user_disabled".to_owned());
         }
-        if authorization.tenant.status != "1" {
+        if authorization.tenant.status != tenant::Model::STATUS_ENABLED {
             warnings.push("tenant_disabled".to_owned());
         } else if authorization
             .tenant

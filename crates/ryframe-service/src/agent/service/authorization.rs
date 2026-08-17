@@ -79,6 +79,13 @@ impl AgentService {
                 }
                 None => (None, BTreeSet::new()),
             };
+            self.product_service
+                .require_capability_in_txn(
+                    &transaction,
+                    &tenant.tenant_id,
+                    SERVICE_ACCOUNTS_CAPABILITY,
+                )
+                .await?;
             let snapshot = ServiceAuthorizationRepository
                 .lock_snapshot_in_txn(
                     &transaction,
@@ -159,7 +166,7 @@ impl AgentService {
     ) -> AppResult<()> {
         let delegated = context.delegation.is_some();
         if (delegated && !descriptor.delegated) || (!delegated && !descriptor.direct) {
-            return Err(AppError::Authorization("Agent 能力不可用".into()));
+            return Err(AppError::PermissionDenied("Agent 能力不可用".into()));
         }
         if descriptor.required_permission.is_empty() {
             return Ok(());
@@ -173,7 +180,7 @@ impl AgentService {
         if account_allowed && user_allowed && delegated_allowed {
             Ok(())
         } else {
-            Err(AppError::Authorization("Agent 能力不可用".into()))
+            Err(AppError::PermissionDenied("Agent 能力不可用".into()))
         }
     }
 }

@@ -37,8 +37,10 @@ GET /api/v1/api-docs/openapi.json
 | `ryframe` | API、`ryframe-worker`、`ryframe-migrate` 可执行入口，负责配置加载、依赖装配和服务启动 |
 | `ryframe-api` | Router、Handler、传输 DTO、OpenAPI、请求语言与消息 WebSocket 组合策略 |
 | `ryframe-service` | 应用用例、业务规则、输出模型和 Repository 编排 |
-| `ryframe-db` | SeaORM Entity、Repository、数据范围查询、主库/副本和命名业务数据源拓扑 |
-| `ryframe-db-migration` | 可重复执行的数据库迁移 |
+| `ryframe-db` | 控制库 SeaORM Entity、Repository、数据范围查询、主库/副本和命名数据源拓扑 |
+| `ryframe-db-migration` | 控制库可重复执行迁移 |
+| `ryframe-tenant-db` | 租户业务数据目标注册、连接预算、放置解析、fence 与 `TenantDataSession` |
+| `ryframe-tenant-db-migration` | 业务数据目标的独立迁移账本、Schema 指纹与 `TenantDataCatalog` |
 | `ryframe-auth` | JWT、密码、认证中间件、`RequestPrincipal` 和主体解析端口 |
 | `ryframe-middleware` | CORS、限流、请求 ID、遥测等横切 HTTP 能力 |
 | `ryframe-monitor` | 健康、指标、缓存、数据库监控端口和运行时状态 |
@@ -62,7 +64,7 @@ GET /api/v1/api-docs/openapi.json
 
 1. 加载配置，应用环境变量覆盖，再严格校验环境、secret 来源、数据库和依赖模式；运行中不重新加载配置。
 2. 初始化日志和遥测。
-3. 连接主库、全部只读副本和命名业务数据源，在主库执行迁移，并只校验主库与同结构副本的系统表结构。
+3. 连接控制库主库、只读副本和命名数据源，验证控制库及当前使用的租户业务数据目标 Schema；API 与 Worker 在生产不执行 DDL。
 4. 初始化 Redis、refresh family、撤销状态、限流器、对象存储和熔断器；生产 Redis 为 required，任何不可用都会阻止启动或令 readiness 失败，对象存储必须完成连接、凭据以及 `uploads`/`avatar` bucket 检查。
 5. 在 `boot/services.rs` 构造 Service。
 6. 在 `boot/app_state.rs` 聚合运行时依赖。
@@ -96,8 +98,10 @@ flowchart LR
     E --> F["主体限流、作用域幂等、权限、操作日志"]
     F --> G["Handler"]
     G --> H["Service"]
-    H --> I["Repository / SeaORM"]
-    I --> J["主库 / 只读副本"]
+    H --> I["系统 Repository / SeaORM"]
+    I --> J["控制库主库 / 只读副本"]
+    H --> N["TenantDatabaseRouter"]
+    N --> O["TenantDataSession / 业务数据目标"]
     H --> M["显式命名数据源"]
     H --> K["注入的基础设施端口"]
     K --> L["Redis / 对象存储"]
@@ -127,13 +131,14 @@ Redis 模式为 Family 维护租户索引和租户用户索引。注册、轮换
 
 ### 2.4 数据边界
 
-- 应用配置一个唯一写主库 `[database.primary]`，以及零到多个命名只读副本 `[[database.replicas]]`。
+- 应用配置一个唯一控制库写主库 `[database.primary]`，以及零到多个命名只读副本 `[[database.replicas]]`。
 - `[[database.sources]]` 表达按名称显式访问的业务数据库；本机 `ryframe_device` 由代码生成器消费，不参与系统查询路由。
 - 主库、副本和命名业务数据源全部使用 MySQL；业务数据源可以有独立结构，但不参与系统查询路由。
 - 命令和事务使用 `write()` 固定进入主库；所有查询必须调用 `select_read(ReadConsistency)` 显式选择一致性。写后读、认证授权、数据权限、安全决策、配额与唯一性校验选择 `Strong`，普通只读列表和详情选择 `Eventual`，未配置健康副本时才回退主库。
 - 已配置副本始终保留在拓扑中；连接或结构校验失败不会阻止主库启动，但副本在连续两次完整探测成功前不参与路由。监督器每 5 秒以 2 秒超时探测，网络故障连续三次摘除并按 5–60 秒退避重连；结构不一致立即摘除。运行时状态会报告每个节点，查询失败也不会隐式转发主库。
 - 已配置业务数据源连接失败同样阻止启动，但应用不会对其执行主库迁移或系统表校验。
-- 业务表采用共享表加 `tenant_id` 的隔离方式。
+- 控制面表只通过 `ControlDatabaseCluster` 访问。未来业务表以 `biz_` 命名、直接包含 `tenant_id`，并只通过 `TenantDatabaseRouter` 解析得到的 `TenantDataSession` 访问；即使目标为租户专属数据库也保留租户范围键。
+- `[tenant_data]` 注册共享或专属目标。客户端、JWT、请求参数和后台任务载荷均不能指定 `target_key`；路由只信任控制库中的 `sys_tenant_data_placement`。目标不可用、Schema 或 generation 不匹配时关闭失败，不回退控制库、旧目标或其他租户目标。
 - `multi_tenancy.enabled=false` 只关闭多租户入口并把所有业务身份固定到内置 `system` 租户，不提供可配置的其他固定租户；共享表、`tenant_id` 字段、显式租户传递和 Repository 隔离条件始终保留。
 - 认证中间件构造 `RequestPrincipal`，其中唯一的业务主体是不可变 `ActorContext`。
 - Service 的租户业务用例显式接收 `&ActorContext`；预认证流程显式接收经过校验的 `tenant_id`。
@@ -144,14 +149,17 @@ Redis 模式为 Family 维护租户索引和租户用户索引。注册、轮换
 - `AppState` 不暴露数据库连接；`ryframe-api` 的生产依赖不包含 `ryframe-db` 或 `sea_orm`。
 - Handler 不允许导入数据库实现，操作日志等 HTTP 横切能力通过 Service 写入。
 - `ryframe-auth` 和 `ryframe-monitor` 只接收注入端口，不允许依赖 `ryframe-db`、SeaORM 或裸数据库连接。
-- `DatabaseCluster` 和对象存储在组合根注入 Service；公开用例方法只接收主体和业务参数。
+- `ControlDatabaseCluster`、`TenantDatabaseRouter` 和对象存储在组合根注入 Service；系统 Service 只能依赖控制库，业务 Service 只能通过租户数据路由器进入数据面。
 - `ryframe-storage` 拥有对象存储端口与具体后端；`ryframe-db` 不生成公开 URL，也不依赖存储实现。
 - Repository 字段不允许从 Service 公开，事务边界由 Service 用例拥有。
 
 租户配置包迁移继续遵守相同分层：API 只适配 multipart、DTO 和响应；Service 负责无数据库 ID 的
-`ryframe.tenant-config/v1` 模型、ZIP 安全解析、稳定业务键计划、快照和事务编排；Repository 负责
+`ryframe.tenant-config/v2` 模型、ZIP 安全解析、稳定业务键计划、快照和事务编排；Repository 负责
 `configuration_version`、租约、配置包/迁移记录和按租户过滤；对象内容只进入私有
 `config-packages` bucket。MySQL 是迁移状态和计划版本的事实来源，Redis 仍只降低后台任务唤醒延迟。
+v2 清单的 `required_capabilities` 只声明包内权限与菜单实际依赖的能力 code/variant/schema；导出会
+排除未启用能力的休眠资源，导入、预览、应用和回滚在同一控制库事务中验证目标租户的 entitlement、
+部署依赖及版本兼容性。配置包模型不包含产品套餐、租户覆盖或数据放置字段，不能借迁移修改产品上下文。
 
 预览是主库强一致只读，不取得写租约，也不修改资源。应用和回滚必须先取得每租户唯一租约，所有
 配置写入统一按“租户行 → 租约行 → 资源/关系行”锁定。最终事务重新核对租约所有权、计划哈希、
@@ -167,10 +175,12 @@ Redis 模式为 Family 维护租户索引和租户用户索引。注册、轮换
 租户持有的 `tenant:usage:list`，普通租户不能借菜单、角色或同名自定义权限读取跨租户汇总。
 Prometheus 不承载逐租户容量明细，任何容量指标都不得使用租户 ID 或名称作为标签。
 
-服务账号与 Agent 查询在组合根中作为一组可选能力装配。`service_accounts.enabled=false` 时
-`/api/v1/agent/v1/**` 路由不挂载，管理端、个人委托接口挂载统一降级路由并返回
-`501` + `feature_disabled`，`/api/v1/version` 的 `service_accounts_enabled=false` 供前端隐藏
-菜单与个人中心委托卡片；启用时必须同时获得主库、Redis、授权缓存和外部 Pepper Keyring。
+服务账号与 Agent 查询是编译期 Capability `system.service_accounts`。部署配置
+`service_accounts.enabled` 是启用意图；启用时所有环境均要求 `redis.mode = "required"`，组合根还会
+以实际 Redis 连接和 Pepper Keyring 加载结果 fail-closed，只有依赖就绪才向 ProductService 声明可用；
+租户可见性由已发布套餐版本和完整租户覆盖计算。请求固定按“部署能力 → 租户 Capability →
+用户 RBAC → 数据范围”校验，分别返回 `capability_unavailable`、
+`tenant_capability_denied` 或 `permission_denied`，超级管理员不能绕过租户 Capability。
 它不创建新的 Worker、队列或动态代码执行器，固定查询由 API 进程内的 `AgentService` 编排现有
 Repository 完成。服务账号不是 `RequestPrincipal`，API Key 也不能进入普通 Bearer/JWT 会话链路。
 
@@ -258,13 +268,13 @@ Agent 限流依赖 Redis 7 standalone 的原子乐观事务。预认证 IP 桶�
 48. 配置收敛为静态启动配置，环境名统一为 `dev/test/prod`；生产配置文件禁止保存敏感值，secret 仅允许由 `APP_*` 环境变量或外部 secret manager 注入，缺失配置、旧 `ENC[...]` 格式和未知字段都会拒绝启动。
 49. refresh token 只存在于 API 域 HttpOnly Cookie，access token 和 CSRF challenge 只存在于页面内存；Redis 以 `sid` 维护绝对 7 天的 refresh family，并通过乐观事务 CAS 轮换和检测重放。
 50. 根路径 `/livez` 只检查进程；API 与独立 Worker 都由后台任务按固定周期探测依赖，`/readyz` 只读取有时效上限的内存快照，过期时按未就绪处理，请求路径不执行网络 I/O。API 快照覆盖 MySQL、required Redis 和必要对象存储；Worker 快照只要求 MySQL 与 required Redis，对象存储标记为不要求。探针绕过租户、认证、幂等和业务限流。
-51. 幂等只应用于认证后的 system/platform 写请求；存储键仅隔离租户、用户和原始 `Idempotency-Key`，完整指纹绑定方法、真实规范化路径、排序后的查询参数和 body SHA-256。同主体同键同指纹才允许回放，任一请求语义不同均返回 `409`；限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
+51. 幂等由端点显式声明，不再对 `/platform` 统一套 Redis 重放层。短期重放缓存绑定主体、方法、规范化路径、查询和 body；租户创建、配置迁移、服务账号密钥与租户数据迁移另以 MySQL 请求摘要、唯一键和状态机作为权威边界，Redis 仅作加速且故障不能阻止持久 Saga。限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
 52. 稳定发布只接受位于 `main` 的 `vMAJOR.MINOR.PATCH` annotated tag，前后端必须同标签同版本，且 annotation 与各自 CHANGELOG 完整版本章节一致；发布前再次锁定两仓 tag object ID 与完整 commit SHA。后端是唯一联合发布主控：它校验前端仓库和精确 commit、两份 OpenAPI 的 SHA-256，以及两仓精确提交均已有成功的 push CI，然后生成合并发布说明。稳定版 Release 不构建容器、不上传自定义附件，只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照；交付身份直接来自 annotated tag object 及其解引用出的精确提交，两仓均禁止 Nightly 和其他预发布工作流。
 53. 未签名的 `X-Nonce` / `X-Timestamp` 防重放抽象已移除：它从未进入路由或配置，且客户端自报双头不能验证请求主体或内容。浏览器写请求继续使用 HTTPS、Bearer/权限、签名 CSRF、refresh CAS，以及主体作用域键与方法、真实规范化路径、排序查询、body SHA-256 组成的幂等指纹；机器客户端持有者证明必须另行采用可验证消息签名，不得恢复旧裸头契约。
 54. 领域类型、HTTP 响应适配、国际化、通用工具、验证码和 Excel 能力已拆分为独立 crate；废弃邮件 crate 与其依赖均已删除。业务层返回 `ryframe-kernel::AppError/AppResult`，API 边界仅通过 `ryframe-http::HttpAppError/HttpResult` 做单向 HTTP 适配，不再保留重复错误枚举或双向转换。
 55. 旧公共兼容包已从工作区、源码和文档中完全删除；调用方必须直接依赖领域核心、HTTP、国际化或具体功能 crate，旧包路径因不再存在而无法通过编译。
 56. 语言资源由 `ryframe-i18n::Localizer` 显式注入应用状态，启动时校验 `zh-CN` 与 `en-US` 键集一致；REST 响应协商语言并返回 `Content-Language`，同时合并 `Vary: Accept-Language`，用户偏好可持久化。
-57. 数据库迁移支持 `auto`、`verify` 和 `off` 模式；生产可先使用 `ryframe-migrate` 独立验证/执行迁移，再启动 API。持久化后台任务使用租约、死信和空闲退避，开发可内嵌、生产可使用独立 `ryframe-worker`。MySQL 是任务与 Outbox 的唯一可靠事实来源；每个进程最多一个 Redis `ryframe:jobs:wakeup` 订阅循环，进程内/Redis 提示只提前结束等待，丢失、重复或订阅故障均由数据库轮询兜底。空闲等待从 `poll_interval_ms` 起按 2 倍和 ±20% 抖动增长至 `max_idle_poll_interval_ms`，租约恢复按独立的 `lease_recovery_interval_seconds` 周期运行。
+57. 控制库和业务数据目标分别使用独立迁移账本。生产先执行 `ryframe-migrate control up`，再对所有活动目标执行 `ryframe-migrate tenant-data up --all` 与 verify；API 和 Worker 只验证当前要求的 Schema，不执行 DDL。持久化后台任务使用租约、死信和空闲退避，开发可内嵌、生产可使用独立 `ryframe-worker`。MySQL 是任务与 Outbox 的唯一可靠事实来源；每个进程最多一个 Redis `ryframe:jobs:wakeup` 订阅循环，进程内/Redis 提示只提前结束等待，丢失、重复或订阅故障均由数据库轮询兜底。空闲等待从 `poll_interval_ms` 起按 2 倍和 ±20% 抖动增长至 `max_idle_poll_interval_ms`，租约恢复按独立的 `lease_recovery_interval_seconds` 周期运行。
 58. 消息中心在主库事务内写入消息、受众、收件人快照和派发任务；收件人使用 `INSERT … SELECT` 从启用用户集合直接固化，不在 Rust 内加载租户用户全集，并以 `max_recipients_per_message + 1` 检测超限后回滚。消息及收件箱的全部时间列使用 `DATETIME(6)`，与 `UTC_TIMESTAMP(6)` 数据库时钟保持相同精度，禁止恢复会把后半秒舍入到未来一秒的无小数精度列。`MessagingConfig` 由组合根显式注入 Service 与本实例连接中心，统一控制总开关、一次性 ticket 有效期、保留期、每用户连接上限、有界出站队列和单消息收件人数；同一租户用户的连接上限通过并发安全索引原子执行。一次性 WebSocket ticket 经 Redis 原子消费，收件箱、确认、已读和公告显式发布均复用同一服务边界。WebSocket 连接必须先将 hello 帧成功放入有界发送队列，之后才能标记为可投递并触发补拉；ACK 持久化前，实时唤醒与周期补拉共同提供至少一次投递，客户端必须按 message ID 做逻辑合并，不承诺原始帧 exactly-once。ACK 持久化后，新连接跨完整补拉周期必须保持该消息零投递。关闭消息中心后对应 REST、票据、WebSocket、Redis 订阅和消息任务入口不再运行。
 `acked_at` 表示客户端实际收到消息后的自动送达确认；`read_at` 只在用户打开详情后写入，已读必然已送达。`deleted_at` 是当前收件人的软删除标记，不影响主消息、发送者或其他收件人；已删除记录不得进入列表、未读数、重放、补拉、送达确认或已读更新。
 
@@ -272,8 +282,8 @@ Agent 限流依赖 Redis 7 standalone 的原子乐观事务。预认证 IP 桶�
 60. 公告 API 只使用 `content_markdown` 传输 Markdown 原文，旧 `content` 字段会被拒绝；1–60,000 个 UTF-8 字节的限制由后端 OpenAPI `x-ryframe-notice-policy` 发布，前端同步生成策略并按同一字节口径校验。
 61. 统一响应信封覆盖所有 `/api` 路径，未知 API 版本和无版本业务路径返回相同 JSON `404`；响应只能使用 `message/data/request_id/error_key/details`，旧 `msg/rows/total` 顶层字段会被拒绝。
 62. Swagger UI 使用与 utoipa 5 匹配的 Rust crate 在编译期内嵌全部静态资源，不依赖 CDN、外部校验器、内联初始化脚本或兼容重定向。根包默认启用的 `runtime-swagger-ui` feature 仅服务开发和受控测试；生产构建通过 `--no-default-features` 删除整组静态资源。全局 CSP 的脚本源仅允许同源且不启用 `unsafe-eval`；Swagger UI 页面只针对运行时内联样式放宽 `style-src`。无该 feature 却设置 `api_docs.enabled=true` 时，API 必须在连接外部依赖前明确失败，OpenAPI 代码生成与检入契约不受影响。
-63. Service 直接保存具体 Repository，已删除不产生日志的仓储包装层；`DatabaseCluster` 只保留单主库或显式副本槽位构造入口，不再公开旧包装与隐式集群构造函数。
-64. 租户授权规则变化在事务内提升 `authorization_epoch`，提交后先同步 Redis 镜像，再向 `ryframe:authorization:changed` 发布只含租户和纪元的轻量事件。各 API 实例复用消息 WebSocket 向该租户在线连接发送 `authorization_changed` 控制帧；该帧不持久化、不参与消息 ACK。认证中间件同时在受保护响应写入 `X-Authorization-Epoch`，前端只接受单调前进的纪元并合并刷新 `/auth/me`、当前菜单、动态路由和租户查询缓存。实时事件仅加速界面收敛，服务端逐请求主体解析和权限守卫始终是安全边界。
+63. Service 直接保存具体 Repository，已删除不产生日志的仓储包装层；`ControlDatabaseCluster` 只保留单主库或显式副本槽位构造入口，不再公开旧包装与隐式集群构造函数。
+64. 租户授权、套餐、Capability 或数据放置变化分别提升授权或运行时纪元。登录、刷新与 `GET /api/v1/auth/context` 返回同一会话快照；受保护响应同时返回授权纪元、运行时纪元、数据 generation 和数据状态四个响应头。WebSocket 只发送 `tenant_context_changed` 加速收敛，前端把并发变化合并为一次上下文刷新。响应头与逐请求后端守卫仍是最终安全边界。
 65. 可配置 Cron 计划、触发历史和计划来源任务都持久化在 MySQL；调度器按数据库时钟使用 `FOR UPDATE SKIP LOCKED` 领取到期计划，并以 `(schedule_id, fire_key)` 作为最终去重边界。后端注册表是唯一目标白名单，管理端不能提交函数、命令、URL 或任意任务载荷。依赖方向固定为“Cron 调度 → 后台任务队列”，`JobQueue`、`JobWorker`、Outbox、租约、重试和死信不得反向依赖计划、表达式、时区、目标注册表或执行历史。旧每日清理入口只存在于可删除的 Cron 兼容模块。`scheduler_enabled` 关闭后不构造调度服务、不注册路由或启动扫描，但普通任务及已入队计划任务仍可继续消费。Redis 和本地通知仅在入队事务提交后降低 Worker 等待延迟，不参与调度正确性。
 66. 数据生命周期由独立 `DataRetentionService` 执行，Cron 和人工入口只负责入队通用后台任务；死信与活动记录不进入自动清理。异步用户导入只在任务载荷中保存导入 ID，源文件、游标、进度和异常行以 MySQL 与私有对象存储为事实来源。登录、请求主体、长时间操作与只读诊断共用授权解析器，避免产生第二套角色、权限和数据范围规则。运维趋势直接从 MySQL 按当前租户聚合，不代理 Prometheus，也不向系统租户暴露其他普通租户数据。
 67. 租户配置包使用无数据库 ID 的稳定资源模型，包内只允许两个受控 JSON 文件；默认边界为 5 MiB 压缩、20 MiB 解压和 10,000 项。`sys_tenant.configuration_version` 与授权纪元共同保护预览计划，`sys_config.portable` 和敏感键规则共同限制参数导出。应用/回滚通过每租户唯一租约串行化普通配置写，应用前快照和上传包进入私有 `config-packages` bucket，artifact 与 rollback 窗口默认均为 168 小时；历史元数据没有臆定的自动删除期限。

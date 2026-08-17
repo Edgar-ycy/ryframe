@@ -26,6 +26,12 @@ NON_RBAC_FILES = {
     "agent_handler.rs",
 }
 
+CAPABILITY_REQUIRED_FILES = {
+    "service_account_handler.rs": "system.service_accounts",
+    "service_delegation_profile_handler.rs": "system.service_accounts",
+    "agent_handler.rs": "system.service_accounts",
+}
+
 AUTHENTICATED_ONLY_ROUTES = {
     ("menu_handler.rs", "/current"),
     # 消息收件箱是当前认证用户的自有资源，不依赖管理端 RBAC 权限码。
@@ -47,6 +53,7 @@ AUTHENTICATED_ONLY_ROUTES = {
 
 ROUTE_ATTR = re.compile(
     r'^\s*#\[(get|post|put|delete)\(([^\]]+)\)\]'
+    r'(?:\s*\n\s*#\[capability\("([^"]+)"\)\])?'
     r'(?:\s*\n\s*#\[perm\("([^"]+)"\)\])?',
     re.MULTILINE,
 )
@@ -67,13 +74,27 @@ def main() -> int:
         for path in sorted(HANDLERS.rglob("*.rs"))
         if path.relative_to(HANDLERS).parts[0] not in NON_RBAC_FILES
     ] + EXTRA_PROTECTED_FILES
+    for filename in CAPABILITY_REQUIRED_FILES:
+        path = HANDLERS / filename
+        if path not in protected_files:
+            protected_files.append(path)
     for path in protected_files:
         text = path.read_text(encoding="utf-8")
         for match in ROUTE_ATTR.finditer(text):
             route_paths = re.findall(r'"([^"]+)"', match.group(2))
+            expected_capability = CAPABILITY_REQUIRED_FILES.get(path.name)
+            if expected_capability and match.group(3) != expected_capability:
+                route_label = ", ".join(route_paths) or "<unknown>"
+                violations.append(
+                    f"{path.relative_to(ROOT)} :: {route_label} "
+                    f"(missing #[capability(\"{expected_capability}\")])"
+                )
+                continue
+            if path.name in NON_RBAC_FILES:
+                continue
             if routes_are_authenticated_only(path.name, route_paths):
                 continue
-            if match.group(3) is None:
+            if match.group(4) is None:
                 route_label = ", ".join(route_paths) or "<unknown>"
                 violations.append(f"{path.relative_to(ROOT)} :: {route_label}")
 

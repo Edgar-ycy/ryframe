@@ -18,3 +18,4 @@ pub mod readiness;
 pub mod redis;
 pub mod services;
 pub mod storage;
+pub mod tenant_data;

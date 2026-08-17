@@ -11,10 +11,11 @@ use ryframe_service::{
     system::{
         DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
         TenantConfigApplyJobHandler, TenantConfigExportJobHandler, TenantConfigPreviewJobHandler,
-        TenantConfigRollbackJobHandler, TenantConfigTransferService, UserImportJobHandler,
-        UserImportService,
+        TenantConfigRollbackJobHandler, TenantConfigTransferService, TenantDataMigrationJobHandler,
+        TenantDataMigrationService, UserImportJobHandler, UserImportService,
     },
 };
+use ryframe_tenant_db::TenantDatabaseRouter;
 
 /// 构造内置后台任务处理器所需的业务服务。
 pub struct JobWorkerDependencies {
@@ -23,6 +24,8 @@ pub struct JobWorkerDependencies {
     pub data_retention: Arc<DataRetentionService>,
     pub user_import: Arc<UserImportService>,
     pub tenant_config_transfer: Arc<TenantConfigTransferService>,
+    pub tenant_data_migration: Arc<TenantDataMigrationService>,
+    pub tenant_data: Arc<TenantDatabaseRouter>,
     pub redis: Option<RedisClient>,
     pub messaging_enabled: bool,
 }
@@ -35,6 +38,7 @@ pub fn build_job_worker(
     dependencies: JobWorkerDependencies,
 ) -> AppResult<JobWorker> {
     let worker = JobWorker::new(queue, config, execution_tenant_scope)?
+        .with_tenant_data(dependencies.tenant_data)
         .with_handler(Arc::new(ExportJobHandler::new(dependencies.export.clone())))?
         .with_handler(Arc::new(ExportCleanupJobHandler::new(dependencies.export)))?
         .with_handler(Arc::new(DataRetentionJobHandler::new(
@@ -54,6 +58,9 @@ pub fn build_job_worker(
         )))?
         .with_handler(Arc::new(TenantConfigRollbackJobHandler::new(
             dependencies.tenant_config_transfer,
+        )))?
+        .with_handler(Arc::new(TenantDataMigrationJobHandler::new(
+            dependencies.tenant_data_migration,
         )))?;
     if !dependencies.messaging_enabled {
         return Ok(worker);

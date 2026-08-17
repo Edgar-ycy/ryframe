@@ -43,6 +43,21 @@ struct AuthenticatedTenantRateLimitState {
     config: Arc<ryframe_config::RateLimitConfig>,
 }
 
+#[derive(Clone)]
+struct CapabilityGuardState {
+    app: AppState,
+    capability_code: &'static str,
+}
+
+impl CapabilityGuardState {
+    const fn new(app: AppState, capability_code: &'static str) -> Self {
+        Self {
+            app,
+            capability_code,
+        }
+    }
+}
+
 async fn authenticated_tenant_rate_limit(
     State(state): State<AuthenticatedTenantRateLimitState>,
     request: Request,
@@ -100,10 +115,85 @@ where
             },
             authenticated_tenant_rate_limit,
         ))
+        // 认证成功后最先进入上下文响应层，因此用户限流、在线状态与业务 handler
+        // 产生的所有响应都会携带同一份强一致四值快照。
+        .layer(from_fn_with_state(state.clone(), tenant_context_headers))
         .layer(from_fn_with_state(
             state.auth.clone(),
             ryframe_auth::middleware::auth_middleware,
         ))
+}
+
+async fn tenant_context_headers(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, Response> {
+    let tenant_id = request
+        .extensions()
+        .get::<RequestPrincipal>()
+        .map(|principal| principal.tenant_id.clone())
+        .ok_or_else(|| {
+            HttpAppError::from(AppError::Authentication("未认证，请先登录".into())).into_response()
+        })?;
+    let mut response = next.run(request).await;
+    let values = if let Some(values) = response
+        .extensions()
+        .get::<auth_handler::TenantContextHeaderValues>()
+        .cloned()
+    {
+        values
+    } else {
+        let snapshot = state
+            .services
+            .tenant_data
+            .runtime_snapshot(&tenant_id)
+            .await
+            .map_err(|error| {
+                HttpAppError::from(auth_handler::map_tenant_data_error(error)).into_response()
+            })?;
+        auth_handler::TenantContextHeaderValues {
+            authorization_epoch: snapshot.authorization_epoch().to_string(),
+            runtime_epoch: snapshot.runtime_epoch().to_string(),
+            data_generation: snapshot.placement_generation().to_string(),
+            data_state: snapshot.business_data_state().as_str().to_owned(),
+        }
+    };
+    for (name, value) in [
+        ("x-authorization-epoch", values.authorization_epoch),
+        ("x-tenant-runtime-epoch", values.runtime_epoch),
+        ("x-tenant-data-generation", values.data_generation),
+        ("x-tenant-data-state", values.data_state),
+    ] {
+        let value = HeaderValue::from_str(&value).map_err(|_| {
+            HttpAppError::from(AppError::Internal(format!("响应上下文头 {name} 无效")))
+                .into_response()
+        })?;
+        response
+            .headers_mut()
+            .insert(axum::http::HeaderName::from_static(name), value);
+    }
+    Ok(response)
+}
+
+/// 通用能力门禁位于具体路由 RBAC 外层：部署 501 → 租户能力 403 → RBAC 403。
+async fn capability_guard(
+    State(state): State<CapabilityGuardState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, HttpAppError> {
+    let tenant_id = request
+        .extensions()
+        .get::<RequestPrincipal>()
+        .map(|principal| principal.tenant_id.clone())
+        .ok_or_else(|| AppError::Authentication("未认证，请先登录".into()))?;
+    state
+        .app
+        .services
+        .product
+        .require_capability(&tenant_id, state.capability_code)
+        .await?;
+    Ok(next.run(request).await)
 }
 
 async fn auth_no_store(request: Request, next: Next) -> Response {
@@ -140,7 +230,7 @@ async fn online_user_tracking(
 ///
 /// 路由结构：
 /// - 公开路由（无需认证）：/login、/refresh
-/// - 受保护路由（auth → oper_log）：/logout、/me
+/// - 受保护路由（auth → oper_log）：/logout、/context
 /// - 验证码路由（无需认证）：/captcha/generate、/captcha/verify
 /// - 个人资料路由（auth → oper_log）：/profile、/profile/password、/profile/avatar
 ///
@@ -165,7 +255,7 @@ pub fn auth_router(state: AppState) -> Router {
 
     // 当前用户信息是只读技术端点，显式跳过通用操作审计。
     let skipped_protected = Router::new()
-        .route("/me", get_route(auth_handler::me))
+        .route("/context", get_route(auth_handler::context))
         .route("/sessions", get_route(auth_handler::list_sessions))
         .layer(from_fn_with_state(
             oper_log_state.clone(),
@@ -248,8 +338,6 @@ pub struct ApiVersionInfo {
     pub api_prefix: String,
     /// 是否允许客户端选择和管理多个租户。
     pub multi_tenancy_enabled: bool,
-    /// 服务账号与个人服务委托功能是否启用。
-    pub service_accounts_enabled: bool,
     pub endpoints: ApiVersionEndpoints,
 }
 
@@ -267,7 +355,6 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
         source_commit: env!("RYFRAME_BUILD_COMMIT").to_owned(),
         api_prefix: API_PREFIX.to_owned(),
         multi_tenancy_enabled: state.config.multi_tenancy.enabled,
-        service_accounts_enabled: state.services.service_accounts.is_some(),
         endpoints: ApiVersionEndpoints {
             auth: api_path("auth"),
             system: api_path("system"),
@@ -318,36 +405,42 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 
     if state.config.multi_tenancy.enabled {
         let platform = protect(
-            crate::handlers::tenant_handler::tenant_router(state.clone())
-                .layer(from_fn_with_state(
-                    OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-                    oper_log_middleware,
+            Router::new()
+                .nest(
+                    "/tenants",
+                    crate::handlers::tenant_handler::tenant_router(state.clone()),
+                )
+                .merge(crate::handlers::product_handler::product_router(
+                    state.clone(),
+                ))
+                .merge(crate::handlers::tenant_data_handler::tenant_data_router(
+                    state.clone(),
                 ))
                 .layer(from_fn_with_state(
-                    idempotency_state.clone(),
-                    idempotency_middleware,
-                )),
-            &state,
-        );
-        router = router.nest("/platform/tenants", platform);
-    }
-
-    if state.services.service_accounts.is_some() {
-        let profile_delegations = protect(
-            service_delegation_profile_handler::service_delegation_profile_router(state.clone())
-                .layer(from_fn_with_state(
                     OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
                     oper_log_middleware,
                 )),
             &state,
         );
-        router = router.nest("/profile/service-delegations", profile_delegations);
-    } else {
-        router = router.nest(
-            "/profile/service-delegations",
-            feature_disabled_router(state.clone()),
-        );
+        router = router.nest("/platform", platform);
     }
+
+    let profile_delegations = protect(
+        service_delegation_profile_handler::service_delegation_profile_router(state.clone())
+            .layer(from_fn_with_state(
+                CapabilityGuardState::new(
+                    state.clone(),
+                    ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                ),
+                capability_guard,
+            ))
+            .layer(from_fn_with_state(
+                OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+                oper_log_middleware,
+            )),
+        &state,
+    );
+    router = router.nest("/profile/service-delegations", profile_delegations);
     if state.config.api_docs.enabled {
         router = router.route(
             "/api-docs/openapi.json",
@@ -371,26 +464,6 @@ use groups::{common_router, monitor_router, system_router, tools_router};
 use runtime_probe::RuntimeStatus;
 #[cfg(feature = "runtime-swagger-ui")]
 use swagger::swagger_ui_router;
-
-/// 功能开关关闭时挂载的统一降级路由：返回 501 与稳定的 `feature_disabled` 错误键。
-///
-/// 前端通过 `/api/v1/version` 的能力字段提前隐藏入口，这里作为纵深防御，
-/// 避免功能关闭时把请求落入通用的 404 而无法区分“资源不存在”与“功能未启用”。
-pub(super) async fn feature_disabled(State(_state): State<AppState>) -> Response {
-    let mut response =
-        HttpAppError::from(AppError::FeatureDisabled("服务账号功能未启用".into())).into_response();
-    ryframe_http::mark_expected_feature_disabled(&mut response);
-    response
-}
-
-pub(super) fn feature_disabled_router(state: AppState) -> Router {
-    // 使用显式通配路由而不是 fallback：嵌套路由的 fallback 在部分合并/挂载
-    // 路径下会被丢弃，通配路由保证功能关闭时任何子路径都返回 501。
-    Router::new()
-        .route("/", axum::routing::any(feature_disabled))
-        .route("/{*rest}", axum::routing::any(feature_disabled))
-        .with_state(state)
-}
 
 #[get("/runtime")]
 #[perm("monitor:runtime:list")]

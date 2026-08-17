@@ -4,6 +4,8 @@
 
 ### Added
 
+- 新增产品套餐、不可变发布版本、编译期 Capability Catalog、租户完整覆盖和运行时纪元；平台可预览并原子应用套餐变更，首个受控能力为 `system.service_accounts`。
+- 新增租户创建的持久 MySQL Saga 幂等记录，必填 `plan_version_id`、`data_target_key` 和 `Idempotency-Key`，按 provisioning、目标 fence、能力资源同步、active/enabled 顺序安全续跑。
 - 新增不含数据库 ID 和敏感凭据的租户配置包，支持跨环境或同环境上传、预览、合并应用、应用前快照、七天回滚窗口和配置写入租约。
 - 参数配置新增显式 `portable` 标记；只有经管理员审核且不命中敏感键规则的参数才能进入配置包。
 - 新增分级数据保留服务、系统租户预览与人工运行接口、每天 `03:30 UTC` 的安全清理计划；成功任务、已发布 Outbox、调度历史、导出历史、日志、导入历史和导入文件按独立窗口分批清理，后台任务和 Outbox 死信永久保留。
@@ -14,6 +16,7 @@
 
 ### Changed
 
+- 登录、刷新和 `GET /auth/context` 统一返回原子 `session_context`；菜单按 Capability 后 RBAC 过滤，受保护响应返回授权、运行时、数据 generation 和状态四个快照头。
 - 登录、请求主体、长时间用户操作和权限诊断共用授权解析器，统一启用角色、超级角色、权限并集和数据范围语义。
 - API、Embedded Worker、External Worker 与 `ryframe-worker --once` 共用后台任务处理器装配，避免导入或维护任务在不同运行模式下缺少处理器。
 
@@ -25,12 +28,13 @@
 
 - 使用前向数据迁移修复全新数据库中与文档默认密码不匹配的系统管理员和普通用户哈希及登录状态；只更新仍保留旧无效哈希的记录，不覆盖已经修改过的密码。
 - 前端刷新会话无论成功或失败都会作废本次 CSRF 挑战，避免后端清理认证 Cookie 后，登录流程继续复用失配的内存挑战令牌。
-- 服务账号功能关闭时，`/system/service-accounts*`、`/system/service-delegations*`、`/system/service-access-audits*` 与 `/profile/service-delegations*` 改为返回 501 与稳定 `feature_disabled` 错误键，不再落入 404；`/api/v1/version` 新增 `service_accounts_enabled` 能力字段供前端隐藏入口。
+- 服务账号、委托、访问审计与 Agent API 统一接入产品 Capability：部署依赖不可用返回稳定的 `501 capability_unavailable`，租户未开通返回 `403 tenant_capability_denied`，客户端从会话上下文读取有效能力，不再依赖版本接口中的功能开关字段。
 - 在线用户最近活动时间更新遇到并发 CAS 竞争（`Skipped`）或会话已被并发撤销（`Deleted`）时视为成功，不再输出“登录设备元数据暂不可用”WARN，也不再计入 Redis 降级监控。
 - 租户请求限流窗口快照兼容 Redis 整数、bulk string 以及无活跃窗口时的 nil/负 TTL 回复，容量接口不再因序列化类型不匹配而局部降级。
 
 ### Security
 
+- `/platform` 不再依赖 Redis 短期幂等层；租户创建和数据迁移以控制库请求摘要、唯一键及状态机为权威，Redis 故障不会绕过或阻断持久 Saga。
 - MySQL 连接默认要求 TLS，并移除仅供无 TLS 密码认证使用的 SQLx RSA 功能，避免引入没有修复版本的 `RUSTSEC-2023-0071` 依赖；远程生产数据库继续强制使用 `verify_identity`。
 
 ## [v0.9.0] - 2026-08-08

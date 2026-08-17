@@ -14,10 +14,13 @@ pub mod oper_log_service;
 mod option;
 pub mod permission_service;
 pub mod post_service;
+pub mod product_capability_catalog;
+pub mod product_service;
 pub mod role_service;
 pub mod service_account_service;
 pub mod tenant_config_package;
 pub mod tenant_config_transfer_service;
+pub mod tenant_data_migration_service;
 pub mod tenant_service;
 pub mod tenant_usage_service;
 pub mod user_import_service;
@@ -65,6 +68,19 @@ pub use permission_service::{
     PermissionType, PermissionVo, UpdatePermissionCommand,
 };
 pub use post_service::{PostListParams, PostService, PostVo};
+pub use product_capability_catalog::{
+    CAPABILITY_CATALOG, CapabilityDescriptor, CapabilityVariantDescriptor,
+    SERVICE_ACCOUNTS_CAPABILITY, capability_descriptor, validate_capability_snapshot,
+};
+pub use product_service::{
+    ApplyProductChangeCommand, CapabilityCatalogVo, CapabilityOverrideInput, CapabilityOverrideVo,
+    CapabilityRequirement, CapabilitySnapshotInput, CreateProductPlanCommand,
+    CreateProductPlanVersionCommand, EffectiveCapabilityVo, ProductCapabilityChangeVo,
+    ProductCapabilityVo, ProductChangePreviewVo, ProductChangeTarget, ProductContextVo,
+    ProductPlanVersionVo, ProductPlanVo, ProductService, ProvisioningCapabilityResources,
+    SessionCapabilityVo, SessionProductContextVo, UpdateProductPlanCommand,
+    UpdateProductPlanVersionCommand,
+};
 pub use role_service::{RoleListParams, RoleService, RoleVo};
 pub use service_account_service::{
     CreateCredentialCommand, CreateDelegationCommand, CreateServiceAccountCommand,
@@ -85,8 +101,14 @@ pub use tenant_config_transfer_service::{
     TENANT_CONFIG_EXPORT_JOB_TYPE, TENANT_CONFIG_PREVIEW_JOB_TYPE, TENANT_CONFIG_ROLLBACK_JOB_TYPE,
     TenantConfigApplyJobHandler, TenantConfigBundleSummaryVo, TenantConfigBundleVo,
     TenantConfigExportJobHandler, TenantConfigPreviewJobHandler, TenantConfigRollbackJobHandler,
-    TenantConfigTargetCatalog, TenantConfigTransferItemVo, TenantConfigTransferService,
-    TenantConfigTransferVo,
+    TenantConfigTargetCatalog, TenantConfigTransferDependencies, TenantConfigTransferItemVo,
+    TenantConfigTransferService, TenantConfigTransferSettings, TenantConfigTransferVo,
+};
+pub use tenant_data_migration_service::{
+    BackupPointListParams, BackupPointView, CreateMigrationCommand, DataPlacementView,
+    DataTargetDetail, DataTargetListParams, DataTargetSummary, MigrationActionCommand,
+    MigrationImpact, MigrationItemView, MigrationPreview, MigrationPreviewRequest, MigrationView,
+    TENANT_DATA_MIGRATION_JOB_TYPE, TenantDataMigrationJobHandler, TenantDataMigrationService,
 };
 pub use tenant_service::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
 pub use tenant_usage_service::{

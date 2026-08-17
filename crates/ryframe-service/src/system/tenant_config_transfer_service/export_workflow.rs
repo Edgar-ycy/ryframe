@@ -60,25 +60,35 @@ impl TenantConfigTransferService {
                 .map_err(database_error)?
                 .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
             let resources = load_resources_on(&source_transaction, tenant_id).await?;
-            let resources = filter_exportable_resources(resources, &self.target_catalog)?;
-            Ok::<_, AppError>((resources, tenant.name, generated_at))
+            let enabled_capabilities = self
+                .product_service
+                .enabled_capability_requirements_in_txn(&source_transaction, tenant_id)
+                .await?;
+            let (resources, required_capabilities) = filter_exportable_resources(
+                resources,
+                &self.target_catalog,
+                &enabled_capabilities,
+            )?;
+            Ok::<_, AppError>((resources, required_capabilities, tenant.name, generated_at))
         }
         .await;
-        let (source_resources, source_tenant_name, generated_at) = match source_result {
-            Ok(source) => {
-                source_transaction.commit().await.map_err(database_error)?;
-                source
-            }
-            Err(error) => {
-                source_transaction
-                    .rollback()
-                    .await
-                    .map_err(database_error)?;
-                return Err(error);
-            }
-        };
+        let (source_resources, required_capabilities, source_tenant_name, generated_at) =
+            match source_result {
+                Ok(source) => {
+                    source_transaction.commit().await.map_err(database_error)?;
+                    source
+                }
+                Err(error) => {
+                    source_transaction
+                        .rollback()
+                        .await
+                        .map_err(database_error)?;
+                    return Err(error);
+                }
+            };
         let generated = crate::system::build_tenant_config_package(
             source_resources,
+            required_capabilities,
             tenant_id.to_owned(),
             source_tenant_name,
             env!("CARGO_PKG_VERSION").to_owned(),

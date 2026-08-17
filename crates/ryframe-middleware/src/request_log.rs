@@ -9,7 +9,7 @@ use axum::{
     extract::MatchedPath,
     http::{Request, Response, StatusCode},
 };
-use ryframe_http::{ExpectedFeatureDisabledResponse, ExpectedServiceUnavailableResponse};
+use ryframe_http::ExpectedServiceUnavailableResponse;
 use tower_http::{
     LatencyUnit,
     classify::{
@@ -45,13 +45,7 @@ impl ClassifyResponse for RequestLogFailureClassifier {
                 .extensions()
                 .get::<ExpectedServiceUnavailableResponse>()
                 .is_some();
-        let expected_feature_disabled = status == StatusCode::NOT_IMPLEMENTED
-            && response
-                .extensions()
-                .get::<ExpectedFeatureDisabledResponse>()
-                .is_some();
-
-        if status.is_server_error() && !expected_service_unavailable && !expected_feature_disabled {
+        if status.is_server_error() && !expected_service_unavailable {
             ClassifiedResponse::Ready(Err(ServerErrorsFailureClass::StatusCode(status)))
         } else {
             ClassifiedResponse::Ready(Ok(()))

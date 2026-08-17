@@ -12,8 +12,8 @@ use ryframe_db::{
     EnqueueBackgroundJob, FileRepository, TenantConfigTransferRepository,
     entities::{
         background_job, config, dept, dict_data, dict_type, menu, permission, post, role,
-        role_dept, role_permission, tenant, tenant_config_bundle, tenant_config_lease,
-        tenant_config_transfer, tenant_config_transfer_item, user, user_role,
+        role_dept, role_permission, tenant, tenant_config_bundle, tenant_config_transfer,
+        tenant_config_transfer_item, tenant_operation_lease, user, user_role,
     },
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -30,10 +30,11 @@ use uuid::Uuid;
 
 use super::tenant_config_package::TENANT_CONFIG_PACKAGE_SCHEMA;
 use super::{
-    CONFIG_PACKAGE_BUCKET, DownloadedFile, FileService, ParsedTenantConfigPackage, PortableConfig,
-    PortableDepartment, PortableDictData, PortableDictType, PortableMenu, PortablePermission,
-    PortablePost, PortableRole, TenantConfigPackageLimits, TenantConfigPackageResources,
-    UserService, parse_tenant_config_package,
+    CONFIG_PACKAGE_BUCKET, CapabilityRequirement, DownloadedFile, FileService,
+    ParsedTenantConfigPackage, PortableConfig, PortableDepartment, PortableDictData,
+    PortableDictType, PortableMenu, PortablePermission, PortablePost, PortableRole, ProductService,
+    TenantConfigPackageLimits, TenantConfigPackageResources, UserService,
+    parse_tenant_config_package,
 };
 use crate::{AuthorizationCache, JobHandler, JobQueue};
 
@@ -84,27 +85,52 @@ pub struct TenantConfigTransferService {
     queue: Arc<JobQueue>,
     user_service: Arc<UserService>,
     file_service: Arc<FileService>,
+    product_service: Arc<ProductService>,
     authorization_cache: AuthorizationCache,
     target_catalog: TenantConfigTargetCatalog,
     config: TenantConfigTransferConfig,
 }
 
+#[derive(Clone)]
+pub struct TenantConfigTransferDependencies {
+    pub db: ControlDatabaseCluster,
+    pub queue: Arc<JobQueue>,
+    pub user_service: Arc<UserService>,
+    pub file_service: Arc<FileService>,
+    pub product_service: Arc<ProductService>,
+    pub authorization_cache: AuthorizationCache,
+}
+
+#[derive(Clone)]
+pub struct TenantConfigTransferSettings {
+    pub target_catalog: TenantConfigTargetCatalog,
+    pub config: TenantConfigTransferConfig,
+}
+
 impl TenantConfigTransferService {
     pub fn new(
-        db: ControlDatabaseCluster,
-        queue: Arc<JobQueue>,
-        user_service: Arc<UserService>,
-        file_service: Arc<FileService>,
-        authorization_cache: AuthorizationCache,
-        target_catalog: TenantConfigTargetCatalog,
-        config: TenantConfigTransferConfig,
+        dependencies: TenantConfigTransferDependencies,
+        settings: TenantConfigTransferSettings,
     ) -> Self {
+        let TenantConfigTransferDependencies {
+            db,
+            queue,
+            user_service,
+            file_service,
+            product_service,
+            authorization_cache,
+        } = dependencies;
+        let TenantConfigTransferSettings {
+            target_catalog,
+            config,
+        } = settings;
         Self {
             db,
             repository: Arc::new(TenantConfigTransferRepository),
             queue,
             user_service,
             file_service,
+            product_service,
             authorization_cache,
             target_catalog,
             config,

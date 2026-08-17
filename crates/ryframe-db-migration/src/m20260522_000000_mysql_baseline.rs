@@ -84,7 +84,7 @@ pub(crate) const BASELINE_STATEMENTS: &[&str] = &[
     `tenant_id`              VARCHAR(64)  NOT NULL COMMENT '租户标识',
     `name`                   VARCHAR(128) NOT NULL COMMENT '租户名称',
     `domain`                 VARCHAR(255)          DEFAULT NULL COMMENT '绑定域名',
-    `status`                 CHAR(1)      NOT NULL DEFAULT '1' COMMENT '状态: 0停用 1正常',
+    `status`                 VARCHAR(32)  NOT NULL DEFAULT 'enabled' COMMENT '生命周期状态',
     `expire_at`              DATETIME              DEFAULT NULL COMMENT '到期时间',
     `max_users`              INT          NOT NULL DEFAULT 100 COMMENT '最大用户数',
     `max_roles`              INT          NOT NULL DEFAULT 20 COMMENT '最大角色数',
@@ -92,6 +92,7 @@ pub(crate) const BASELINE_STATEMENTS: &[&str] = &[
     `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
     `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
     `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
+    `runtime_epoch`          BIGINT       NOT NULL DEFAULT 1 COMMENT '租户运行时产品上下文纪元',
     `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
     `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -101,7 +102,7 @@ pub(crate) const BASELINE_STATEMENTS: &[&str] = &[
     KEY `idx_tenant_status` (`status`, `expire_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户表'"####,
     r####"INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
-VALUES (1, 'system', '系统租户', '1')"####,
+VALUES (1, 'system', '系统租户', 'enabled')"####,
     r####"CREATE TABLE IF NOT EXISTS `sys_cache_namespace_version` (
     `tenant_id` VARCHAR(64) NOT NULL COMMENT '租户标识',
     `namespace` VARCHAR(64) NOT NULL COMMENT '缓存命名空间',
@@ -904,6 +905,8 @@ pub(crate) fn ddl_statements() -> impl Iterator<Item = &'static str> {
         .filter(|statement| !is_seed_statement(statement))
         .chain(crate::m20260811_000024_data_lifecycle::lifecycle_table_statements())
         .chain(crate::m20260812_000025_tenant_config_transfer::tenant_config_table_statements())
+        .chain(crate::m20260817_000029_product_capabilities::product_capability_table_statements())
+        .chain(crate::m20260817_000030_tenant_data_control::tenant_data_control_table_statements())
 }
 
 pub(crate) fn seed_statements() -> impl Iterator<Item = &'static str> {

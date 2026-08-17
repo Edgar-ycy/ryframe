@@ -96,7 +96,7 @@ export interface PaginationParams {
 
 前端不读取、迁移或清理任何旧版凭据键；租户 ID 可以持久化。所有登录、刷新和登出请求都必须先确保 challenge 未过期，并在 `X-CSRF-Token` 中发送它。
 
-前端不得自行生成或发送 `X-Nonce` / `X-Timestamp`。它们不是 RyFrame API 契约的一部分，裸值也不能替代 CSRF、Bearer 授权或请求签名。业务写请求需要安全重试时使用 `Idempotency-Key`；登录、刷新和登出继续严格使用本节定义的签名 CSRF challenge 与 refresh 轮换流程，不增加额外双头。
+前端不得自行生成或发送 `X-Nonce` / `X-Timestamp`。它们不是 RyFrame API 契约的一部分，裸值也不能替代 CSRF、Bearer 授权或请求签名。只有 OpenAPI 明确声明 `Idempotency-Key` 的写接口才发送该头；登录、刷新和登出继续严格使用本节定义的签名 CSRF challenge 与 refresh 轮换流程，不增加额外双头。
 
 ### 登录
 
@@ -149,36 +149,41 @@ X-CSRF-Token: <csrf_token>
 
 密码重置页面从 URL 读取一次性 token 后，要立即使用 History API 清除查询参数，再继续显示和提交表单，避免 token 进入历史记录、截图或后续 Referer。
 
-### 当前用户
+### 租户会话上下文
+
+登录与刷新直接返回 `session_context`；已登录客户端通过一个强一致入口刷新相同结构：
 
 ```http
-GET /auth/me
+GET /auth/context
 ```
 
-响应数据：
-
 ```ts
-export interface UserInfo {
-  id: string
-  username: string
-  nickname?: string
-  email?: string
-  phone?: string
-  avatar?: string
-  roles?: string[]
-  perms?: string[]
+export interface SessionContext {
+  user: SessionUser
+  roles: string[]
+  permissions: string[]
+  authorization_epoch: string
+  runtime_epoch: string
+  capabilities: Array<{
+    code: string
+    variant: string
+    client_config: unknown
+    schema_version: number
+  }>
+  business_data: {
+    state: 'provisioning' | 'active' | 'maintenance' | 'failed'
+    placement_generation: string
+  }
+  menus: MenuTreeNode[]
 }
 ```
 
-`/auth/login` 和 `/auth/me` 只返回 `perms` 作为当前用户权限码列表。
+会话上下文加载失败时必须关闭失败：不恢复旧菜单、不默认启用 Capability，也不根据部署版本接口
+推断租户能力。用户、授权、Capability、菜单、业务状态和动态路由在同一次提交中原子替换。
 
-## 动态菜单与权限
+## 动态菜单、Capability 与权限
 
-前端通过当前用户菜单树生成动态路由：
-
-```http
-GET /system/menus/current
-```
+前端使用 `session_context.menus` 生成动态路由，不再单独请求菜单启动接口。
 
 菜单节点类型建议：
 
@@ -212,7 +217,7 @@ export interface MenuTreeNode {
 | `perm_id` | 关联的 `sys_permission.id`。 |
 | `children` | 子菜单树。 |
 
-后端返回 `route_key`，前端在 `ryframe-vue3/src/router/pageRegistry.ts` 中按该稳定标识维护页面路径和组件映射。租户管理是明确的例外：路由和侧边栏入口在前端写死，并由 `tenant:list` 及对应操作权限控制。
+后端返回 `route_key`，前端通过 `src/features/*/manifest.ts` 聚合到页面注册表，并按稳定标识维护页面路径和懒加载组件。manifest 同时声明 `capabilityCode`、允许变体与权限；服务端不能返回组件路径或 JavaScript。动态路由、导航守卫、侧边栏、按钮和标签页都复用同一 Capability 判断。
 
 ```txt
 home               -> /index
@@ -227,6 +232,8 @@ system.notice      -> /system/notice
 system.operlog     -> /system/operlog
 system.logininfor  -> /system/logininfor
 system.perm        -> /system/permission
+platform.product-plans -> /platform/product-plans
+platform.data-targets  -> /platform/data-targets
 monitor.runtime    -> /monitor/runtime
 monitor.online     -> /monitor/online
 monitor.server     -> /monitor/server
@@ -239,13 +246,20 @@ tools.gen          -> /tools/gen
 
 ### 动态授权刷新
 
-角色权限、权限目录、菜单、部门或数据范围变化时，后端提升租户授权纪元。正常在线状态下，消息 WebSocket 会收到以下控制帧：
+角色权限、权限目录、菜单、部门或数据范围变化时，后端提升租户授权纪元；套餐、Capability 覆盖或业务数据放置变化时提升运行时纪元。正常在线状态下，消息 WebSocket 会收到完整控制帧：
 
 ```json
-{"v":1,"type":"authorization_changed","authorization_epoch":42}
+{
+  "v": 1,
+  "type": "tenant_context_changed",
+  "authorization_epoch": 42,
+  "runtime_epoch": "18",
+  "placement_generation": "3",
+  "business_data_state": "active"
+}
 ```
 
-所有受保护的 HTTP 响应还会携带 `X-Authorization-Epoch`；该响应头已加入 CORS 暴露列表，用于 WebSocket 断线或 Pub/Sub 瞬时丢失时的最终一致性校准。前端只处理高于已观察值的纪元，并把并发通知合并为一次刷新：重新获取 `/auth/me` 和 `/system/menus/current`、更新 Pinia 权限、重建动态路由、使 `v-perm` 按钮响应式显隐，并使当前租户的服务端查询缓存失效。
+所有受保护的 HTTP 响应还会携带 `X-Authorization-Epoch`、`X-Tenant-Runtime-Epoch`、`X-Tenant-Data-Generation` 和 `X-Tenant-Data-State`；这些响应头已加入 CORS 暴露列表，用于 WebSocket 断线或 Pub/Sub 瞬时丢失时的最终一致性校准。前端发现任一版本变化时合并为一次 `/auth/context` 刷新，原子更新 Pinia 状态和动态路由、使按钮响应式显隐、清理不可访问标签页与当前租户查询缓存。
 
 授权刷新不清除 access token、不要求重新登录，也不执行整页刷新。仍可访问的当前页面和标签页继续保留；已失权标签页被移除，当前页面失权时跳转到 `/403`。前端显隐只负责体验，后端在每个请求中解析最新授权主体并执行最终权限校验。
 
@@ -255,10 +269,12 @@ tools.gen          -> /tools/gen
 
 | 前端模块 | 后端路径前缀 | 说明 |
 | --- | --- | --- |
-| `auth.ts` | `/auth` | 登录、刷新 token、当前用户和验证码。 |
+| `auth.ts` / `authContext.ts` | `/auth` | 登录、刷新 token、会话上下文和验证码。 |
 | `user.ts` | `/system/users` | 用户管理、角色分配、状态和密码重置。 |
 | `role.ts` | `/system/roles` | 角色管理、权限和数据范围分配。 |
-| `menu.ts` | `/system/menus` | 菜单管理和当前用户菜单树。 |
+| `menu.ts` | `/system/menus` | 菜单管理；当前用户菜单由会话上下文返回。 |
+| `productPlan.ts` | `/platform/product-plans` | 套餐、版本、租户产品上下文和变更预览。 |
+| `dataTarget.ts` | `/platform/data-targets` | 数据目标安全元数据、迁移和备份恢复点。 |
 | `dept.ts` | `/system/depts` | 部门管理。 |
 | `post.ts` | `/system/posts` | 岗位管理。 |
 | `config.ts` | `/system/configs` | 参数配置。 |
@@ -312,7 +328,7 @@ DELETE /system/roles/batch/1,2
 短周期 WebSocket 重连，保留收件箱轮询和 HTTP 授权纪元回退；后续按 `Retry-After` 进行低频健康
 复试，成功后再恢复实时连接。
 
-同一条 WebSocket 连接还承载 `authorization_changed` 控制帧。该帧不是收件箱消息，不写入消息表、不参与 ACK、未读数或消息补拉；客户端只使用其中的授权纪元触发上述动态授权刷新。
+同一条 WebSocket 连接还承载 `tenant_context_changed` 控制帧。该帧不是收件箱消息，不写入消息表、不参与 ACK、未读数或消息补拉；客户端只使用其中的授权纪元、运行时纪元、数据 generation 和状态触发上述原子上下文刷新。
 
 ## 上传、下载与导出
 

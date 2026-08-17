@@ -14,6 +14,7 @@
 - [定时任务使用与维护](job-scheduling.md)：可视化规则生成、最近执行时间预览、运行开关和后期移除步骤。
 - [数据生命周期、异步导入与运维诊断](data-lifecycle.md)：永久删除边界、异步用户导入、权限生效诊断、租户运维总览和上线顺序。
 - [租户配置包迁移](tenant-config-transfer.md)：无数据库 ID 的配置包格式、显式预览、原子应用、租约和安全回滚。
+- [租户产品能力与业务数据路由](tenant-product-and-data-routing.md)：套餐与 Capability、业务数据库目标、fence、停写迁移、Schema 与恢复点登记。
 - [容量测试与验收标准](capacity-guide.md)：负载模型、测试场景、SLO 门槛和容量报告证据。
 - [依赖维护与重复版本治理](dependency-maintenance.md)：安全审计、重复版本基线和升级规则。
 - [FILE-A 文件摘要与上传预留单向维护](file-maintenance.md)：SHA-256 回填、旧预留清理与最终迁移前置条件。

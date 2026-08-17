@@ -36,6 +36,7 @@ use crate::service_identity_secret::{
     IP_DIGEST_DOMAIN, ParsedApiKey, ParsedDelegation, USER_AGENT_DIGEST_DOMAIN, invalid_credential,
     keyed_hash, parse_authorization, parse_delegation,
 };
+use crate::system::{ProductService, SERVICE_ACCOUNTS_CAPABILITY};
 
 const ACCESS_MODE_UNKNOWN: &str = "unknown";
 const RESULT_DENIED: &str = service_access_audit::Model::RESULT_DENIED;
@@ -48,6 +49,7 @@ pub struct AgentService {
     multi_tenancy: MultiTenancyConfig,
     keyring: Arc<PepperKeyring>,
     limiter: AgentLimiter,
+    product_service: Arc<ProductService>,
 }
 
 pub(super) struct IdentityHint {
@@ -87,6 +89,7 @@ impl AgentService {
         keyring: Arc<PepperKeyring>,
         config: ServiceAccountsConfig,
         multi_tenancy: MultiTenancyConfig,
+        product_service: Arc<ProductService>,
     ) -> AppResult<Self> {
         config.validate().map_err(AppError::Config)?;
         if !config.enabled {
@@ -98,6 +101,7 @@ impl AgentService {
             multi_tenancy,
             keyring,
             limiter: AgentLimiter::new(redis),
+            product_service,
         })
     }
 

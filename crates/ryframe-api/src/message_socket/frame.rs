@@ -184,20 +184,26 @@ pub(super) fn serialize_message_frame(message: &MessageVo) -> HttpResult<String>
     })
 }
 
-pub(super) fn serialize_authorization_changed_frame(
-    authorization_epoch: i32,
+pub(super) fn serialize_tenant_context_changed_frame(
+    snapshot: &ryframe_tenant_db::TenantRuntimeSnapshot,
 ) -> HttpResult<String> {
     #[derive(Serialize)]
-    struct AuthorizationChanged {
+    struct TenantContextChanged<'a> {
         v: u8,
         #[serde(rename = "type")]
         kind: &'static str,
-        authorization_epoch: i32,
+        authorization_epoch: u64,
+        runtime_epoch: String,
+        placement_generation: String,
+        business_data_state: &'a str,
     }
-    serialize_frame(&AuthorizationChanged {
+    serialize_frame(&TenantContextChanged {
         v: 1,
-        kind: "authorization_changed",
-        authorization_epoch,
+        kind: "tenant_context_changed",
+        authorization_epoch: snapshot.authorization_epoch(),
+        runtime_epoch: snapshot.runtime_epoch().to_string(),
+        placement_generation: snapshot.placement_generation().to_string(),
+        business_data_state: snapshot.business_data_state().as_str(),
     })
 }
 

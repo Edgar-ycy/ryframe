@@ -22,8 +22,8 @@ use ryframe_service::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
         CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportService, FileService,
-        IMPORT_BUCKET, MessageService, OperLogService, TenantConfigTransferService,
-        UserImportService, UserService,
+        IMPORT_BUCKET, MessageService, OperLogService, ProductService, TenantConfigTransferService,
+        TenantDataMigrationService, UserImportService, UserService,
     },
 };
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
@@ -35,6 +35,8 @@ mod process_jobs;
 mod process_logging;
 #[path = "../boot/readiness.rs"]
 mod process_readiness;
+#[path = "../boot/tenant_data.rs"]
+mod process_tenant_data;
 
 /// Worker 进程在收到关闭信号后的全部后台任务总宽限时间。
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
@@ -86,6 +88,11 @@ async fn main() -> Result<(), AppError> {
     ryframe_db_migration::verify_current_schema(database.write())
         .await
         .map_err(|error| AppError::Internal(format!("数据库结构指纹校验失败: {error}")))?;
+    let tenant_data = Arc::new(process_tenant_data::build_router(
+        database.clone(),
+        &config,
+    )?);
+    process_tenant_data::verify_current_targets(&tenant_data).await?;
     if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
         ryframe_db::TenantRepository
             .ensure_available(database.write(), tenant_id)
@@ -121,6 +128,11 @@ async fn main() -> Result<(), AppError> {
         database.clone(),
         authorization_cache.clone(),
     ));
+    let product = Arc::new(ProductService::new(
+        database.clone(),
+        authorization_cache.clone(),
+        config.service_accounts.enabled && redis.is_some(),
+    ));
     let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
     file.spawn_upload_janitor();
     let export = Arc::new(
@@ -142,13 +154,24 @@ async fn main() -> Result<(), AppError> {
         config.user_import.clone(),
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
+        ryframe_service::system::TenantConfigTransferDependencies {
+            db: database.clone(),
+            queue: queue.clone(),
+            user_service: user,
+            file_service: file,
+            product_service: product,
+            authorization_cache: authorization_cache.clone(),
+        },
+        ryframe_service::system::TenantConfigTransferSettings {
+            target_catalog: ryframe_api::tenant_config_target_catalog()?,
+            config: config.tenant_config_transfer.clone(),
+        },
+    ));
+    let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         database.clone(),
+        tenant_data.clone(),
         queue.clone(),
-        user,
-        file,
         authorization_cache.clone(),
-        ryframe_api::tenant_config_target_catalog()?,
-        config.tenant_config_transfer.clone(),
     ));
     let execution_tenant_scope = process_jobs::execution_tenant_scope(&config.multi_tenancy);
     let worker = process_jobs::build_job_worker(
@@ -161,6 +184,8 @@ async fn main() -> Result<(), AppError> {
             data_retention,
             user_import,
             tenant_config_transfer,
+            tenant_data_migration,
+            tenant_data,
             redis: redis.clone(),
             messaging_enabled: config.messaging.enabled,
         },

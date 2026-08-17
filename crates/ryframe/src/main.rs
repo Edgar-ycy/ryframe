@@ -55,6 +55,9 @@ async fn main() -> Result<(), AppError> {
         }
     }
     boot::datasource::verify_schema(&database).await?;
+    let tenant_database_router =
+        Arc::new(boot::tenant_data::build_router(database.clone(), &config)?);
+    boot::tenant_data::verify_current_targets(&tenant_database_router).await?;
     if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
         ryframe_db::TenantRepository
             .ensure_available(database.write(), tenant_id)
@@ -79,6 +82,7 @@ async fn main() -> Result<(), AppError> {
     let limit = boot::limiter::init(&config, &redis.client)?;
     let services = boot::services::build_all(
         &database,
+        tenant_database_router,
         &config,
         &redis.client,
         object_storage,
@@ -105,9 +109,11 @@ async fn main() -> Result<(), AppError> {
     let readiness_redis = state.monitor.redis.clone();
     let readiness_file_service = state.services.file.clone();
     let readiness_cache = state.monitor.readiness.clone();
-    let message_listener = state
-        .message_hub
-        .spawn_redis_listener(redis.client.clone(), services.message.clone());
+    let message_listener = state.message_hub.spawn_redis_listener(
+        redis.client.clone(),
+        services.message.clone(),
+        services.tenant_data.clone(),
+    );
     let mut message_replay_scheduler = state
         .message_hub
         .spawn_replay_scheduler(services.message.clone(), shutdown_receiver.clone());
@@ -139,6 +145,8 @@ async fn main() -> Result<(), AppError> {
                     data_retention: services.data_retention.clone(),
                     user_import: services.user_import.clone(),
                     tenant_config_transfer: services.tenant_config_transfer.clone(),
+                    tenant_data_migration: services.tenant_data_migration.clone(),
+                    tenant_data: services.tenant_data.clone(),
                     redis: redis.client.clone(),
                     messaging_enabled: config.messaging.enabled,
                 },

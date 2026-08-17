@@ -37,6 +37,7 @@ pub fn agent_router(state: AppState) -> Router {
 }
 
 #[get("/capabilities")]
+#[capability("system.service_accounts")]
 #[utoipa::path(get, path = "/api/v1/agent/v1/capabilities", tag = "Agent API",
     responses(
         (status = 200, description = "当前身份真正可用的编译期能力", body = ApiResponse<Vec<AgentCapabilityResponse>>),
@@ -52,6 +53,7 @@ async fn capabilities(State(state): State<AppState>, context: AgentHttpContext) 
 }
 
 #[get("/directory/users")]
+#[capability("system.service_accounts")]
 #[utoipa::path(get, path = "/api/v1/agent/v1/directory/users", tag = "Agent API",
     params(AgentPageQuery),
     responses(
@@ -68,6 +70,7 @@ async fn users(State(state): State<AppState>, context: AgentHttpContext) -> Resp
 }
 
 #[get("/directory/departments")]
+#[capability("system.service_accounts")]
 #[utoipa::path(get, path = "/api/v1/agent/v1/directory/departments", tag = "Agent API",
     params(AgentPageQuery),
     responses(
@@ -84,6 +87,7 @@ async fn departments(State(state): State<AppState>, context: AgentHttpContext) -
 }
 
 #[get("/directory/posts")]
+#[capability("system.service_accounts")]
 #[utoipa::path(get, path = "/api/v1/agent/v1/directory/posts", tag = "Agent API",
     params(AgentPageQuery),
     responses(
@@ -100,6 +104,7 @@ async fn posts(State(state): State<AppState>, context: AgentHttpContext) -> Resp
 }
 
 #[get("/reference/dictionaries/{type_code}")]
+#[capability("system.service_accounts")]
 #[utoipa::path(get, path = "/api/v1/agent/v1/reference/dictionaries/{type_code}", tag = "Agent API",
     params(("type_code" = String, Path), AgentPageQuery),
     responses(

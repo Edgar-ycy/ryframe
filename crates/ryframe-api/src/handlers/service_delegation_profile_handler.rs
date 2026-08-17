@@ -51,6 +51,7 @@ impl From<ServiceDelegationTargetVo> for ServiceDelegationTargetResponse {
 }
 
 #[get("/")]
+#[capability("system.service_accounts")]
 #[utoipa::path(get, path = "/api/v1/profile/service-delegations", tag = "个人服务委托",
     responses(
         (status = 200, description = "当前用户本人创建的委托", body = ApiResponse<Vec<ServiceDelegationVo>>),
@@ -68,6 +69,7 @@ async fn list_my_delegations(
 }
 
 #[get("/capabilities")]
+#[capability("system.service_accounts")]
 #[utoipa::path(get, path = "/api/v1/profile/service-delegations/capabilities", tag = "个人服务委托",
     responses(
         (status = 200, description = "当前用户与服务账号共同可委托的编译期能力", body = ApiResponse<Vec<ServiceDelegationTargetResponse>>),
@@ -85,6 +87,7 @@ async fn delegation_capabilities(
 }
 
 #[post("/")]
+#[capability("system.service_accounts")]
 #[utoipa::path(post, path = "/api/v1/profile/service-delegations", tag = "个人服务委托",
     params(("Idempotency-Key" = String, Header)), request_body = CreateServiceDelegationDto,
     responses(
@@ -120,6 +123,7 @@ async fn create_my_delegation(
 }
 
 #[delete("/{id}")]
+#[capability("system.service_accounts")]
 #[utoipa::path(delete, path = "/api/v1/profile/service-delegations/{id}", tag = "个人服务委托",
     params(("id" = String, Path)),
     responses(

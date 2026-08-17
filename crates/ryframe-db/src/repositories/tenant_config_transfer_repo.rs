@@ -6,9 +6,12 @@ use sea_orm::{
     sea_query::{Expr, LockType},
 };
 
-use crate::entities::{
-    tenant, tenant_config_bundle, tenant_config_lease, tenant_config_transfer,
-    tenant_config_transfer_item,
+use crate::{
+    entities::{
+        tenant, tenant_config_bundle, tenant_config_transfer, tenant_config_transfer_item,
+        tenant_operation_lease,
+    },
+    repositories::TenantOperationLeaseRepository,
 };
 
 /// 在租户行锁保护下读取的配置与授权版本。
@@ -47,38 +50,9 @@ impl TenantConfigTransferRepository {
         tenant_id: &str,
         owner_token: Option<&str>,
     ) -> AppResult<TenantConfigurationFence> {
-        let tenant = tenant::Entity::find()
-            .filter(tenant::Column::TenantId.eq(tenant_id))
-            .lock(LockType::Update)
-            .one(transaction)
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let now = self.database_utc_now(transaction).await?;
-        let lease = tenant_config_lease::Entity::find_by_id(tenant_id.to_owned())
-            .lock(LockType::Update)
-            .one(transaction)
-            .await
-            .map_err(database_error)?;
-        match (owner_token, lease) {
-            (Some(owner_token), Some(lease))
-                if lease.expires_at > now && lease.owner_token == owner_token => {}
-            (Some(_), _) => {
-                return Err(AppError::Conflict(
-                    "配置迁移租约已经过期、丢失或被其他执行者接管".into(),
-                ));
-            }
-            (None, Some(lease)) if lease.expires_at <= now => {
-                tenant_config_lease::Entity::delete_by_id(tenant_id.to_owned())
-                    .exec(transaction)
-                    .await
-                    .map_err(database_error)?;
-            }
-            (None, Some(lease)) => {
-                return Err(retryable_lease_conflict(lease.expires_at, now));
-            }
-            (None, None) => {}
-        }
+        let tenant = TenantOperationLeaseRepository
+            .lock_tenant_and_validate_in_txn(transaction, tenant_id, owner_token)
+            .await?;
         Ok(TenantConfigurationFence {
             configuration_version: tenant.configuration_version,
             authorization_epoch: tenant.authorization_epoch,
@@ -116,67 +90,11 @@ impl TenantConfigTransferRepository {
     pub async fn acquire_lease_in_txn(
         &self,
         transaction: &DatabaseTransaction,
-        lease: tenant_config_lease::Model,
-    ) -> AppResult<tenant_config_lease::Model> {
-        tenant::Entity::find()
-            .filter(tenant::Column::TenantId.eq(&lease.tenant_id))
-            .lock(LockType::Update)
-            .one(transaction)
+        lease: tenant_operation_lease::Model,
+    ) -> AppResult<tenant_operation_lease::Model> {
+        TenantOperationLeaseRepository
+            .acquire_in_txn(transaction, lease)
             .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let now = self.database_utc_now(transaction).await?;
-        let existing = tenant_config_lease::Entity::find_by_id(lease.tenant_id.clone())
-            .lock(LockType::Update)
-            .one(transaction)
-            .await
-            .map_err(database_error)?;
-        if let Some(existing) = existing {
-            let same_operation =
-                existing.transfer_id == lease.transfer_id && existing.operation == lease.operation;
-            if existing.expires_at > now
-                && existing.owner_token != lease.owner_token
-                && !same_operation
-            {
-                return Err(retryable_lease_conflict(existing.expires_at, now));
-            }
-            // 同一迁移的同一操作允许由后台任务重试接管；令牌更新后，旧执行者无法再提交。
-            let tenant_id = lease.tenant_id.clone();
-            tenant_config_lease::Entity::update_many()
-                .col_expr(
-                    tenant_config_lease::Column::OwnerToken,
-                    Expr::value(lease.owner_token),
-                )
-                .col_expr(
-                    tenant_config_lease::Column::TransferId,
-                    Expr::value(lease.transfer_id),
-                )
-                .col_expr(
-                    tenant_config_lease::Column::Operation,
-                    Expr::value(lease.operation),
-                )
-                .col_expr(
-                    tenant_config_lease::Column::ExpiresAt,
-                    Expr::value(lease.expires_at),
-                )
-                .col_expr(
-                    tenant_config_lease::Column::UpdatedAt,
-                    Expr::value(lease.updated_at),
-                )
-                .filter(tenant_config_lease::Column::TenantId.eq(&tenant_id))
-                .exec(transaction)
-                .await
-                .map_err(database_error)?;
-            return tenant_config_lease::Entity::find_by_id(tenant_id)
-                .one(transaction)
-                .await
-                .map_err(database_error)?
-                .ok_or_else(|| AppError::Conflict("配置迁移租约写入失败".into()));
-        }
-        tenant_config_lease::ActiveModel::from(lease)
-            .insert(transaction)
-            .await
-            .map_err(database_error)
     }
 
     pub async fn renew_lease_in_txn(
@@ -186,23 +104,9 @@ impl TenantConfigTransferRepository {
         owner_token: &str,
         expires_at: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.lock_tenant_configuration_in_txn(transaction, tenant_id, Some(owner_token))
-            .await?;
-        tenant_config_lease::Entity::update_many()
-            .col_expr(
-                tenant_config_lease::Column::ExpiresAt,
-                Expr::value(expires_at),
-            )
-            .col_expr(
-                tenant_config_lease::Column::UpdatedAt,
-                Expr::cust("UTC_TIMESTAMP(6)"),
-            )
-            .filter(tenant_config_lease::Column::TenantId.eq(tenant_id))
-            .filter(tenant_config_lease::Column::OwnerToken.eq(owner_token))
-            .exec(transaction)
+        TenantOperationLeaseRepository
+            .renew_in_txn(transaction, tenant_id, owner_token, expires_at)
             .await
-            .map(|result| result.rows_affected == 1)
-            .map_err(database_error)
     }
 
     pub async fn release_lease_in_txn(
@@ -211,15 +115,9 @@ impl TenantConfigTransferRepository {
         tenant_id: &str,
         owner_token: &str,
     ) -> AppResult<bool> {
-        self.lock_tenant_configuration_in_txn(transaction, tenant_id, Some(owner_token))
-            .await?;
-        tenant_config_lease::Entity::delete_many()
-            .filter(tenant_config_lease::Column::TenantId.eq(tenant_id))
-            .filter(tenant_config_lease::Column::OwnerToken.eq(owner_token))
-            .exec(transaction)
+        TenantOperationLeaseRepository
+            .release_in_txn(transaction, tenant_id, owner_token)
             .await
-            .map(|result| result.rows_affected == 1)
-            .map_err(database_error)
     }
 
     pub async fn insert_bundle<C>(
@@ -487,17 +385,6 @@ impl TenantConfigTransferRepository {
             .await
             .map_err(database_error)
     }
-}
-
-fn retryable_lease_conflict(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> AppError {
-    let remaining_seconds = (expires_at - now).num_seconds();
-    let retry_after = std::cmp::max(
-        u64::try_from(remaining_seconds)
-            .unwrap_or(1)
-            .saturating_add(1),
-        1,
-    );
-    AppError::RetryableConflict("配置迁移租约暂时被占用，请稍后重试".into(), retry_after)
 }
 
 fn database_error(error: impl std::fmt::Display) -> AppError {

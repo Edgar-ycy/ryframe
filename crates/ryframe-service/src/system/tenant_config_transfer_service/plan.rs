@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Serialize)]
 pub(super) struct PlanHashInput<'a> {
-    pub(super) resources_sha256: &'a str,
+    pub(super) source_package_sha256: &'a str,
     pub(super) target_resources_sha256: String,
     pub(super) target_configuration_version: i64,
     pub(super) target_authorization_epoch: i32,
@@ -28,7 +28,7 @@ pub(super) fn build_preview_plan(
 ) -> AppResult<PreviewPlan> {
     let target_canonical = canonical_resources(target)?;
     let plan_hash = sha256_json(&PlanHashInput {
-        resources_sha256: &source.manifest.resources_sha256,
+        source_package_sha256: &source.package_sha256,
         target_resources_sha256: sha256_hex(&target_canonical),
         target_configuration_version: configuration_version,
         target_authorization_epoch: authorization_epoch,

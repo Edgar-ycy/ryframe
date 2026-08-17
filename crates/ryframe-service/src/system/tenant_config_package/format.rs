@@ -7,15 +7,17 @@ use serde_json::Value;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use super::{
-    APP_VERSION_MAX_CHARS, GeneratedTenantConfigPackage, MANIFEST_FILE_NAME, MAX_COMPRESSION_RATIO,
-    MAX_JSON_DEPTH, ParsedTenantConfigPackage, RESOURCES_FILE_NAME, TENANT_CONFIG_PACKAGE_SCHEMA,
-    TENANT_KEY_MAX_CHARS, TENANT_NAME_MAX_CHARS, TenantConfigPackageLimits,
-    TenantConfigPackageManifest, TenantConfigPackageResources, required_permission_summary,
-    required_route_summary, sha256_hex,
+    APP_VERSION_MAX_CHARS, CapabilityRequirement, GeneratedTenantConfigPackage, MANIFEST_FILE_NAME,
+    MAX_COMPRESSION_RATIO, MAX_JSON_DEPTH, ParsedTenantConfigPackage, RESOURCES_FILE_NAME,
+    TENANT_CONFIG_PACKAGE_SCHEMA, TENANT_KEY_MAX_CHARS, TENANT_NAME_MAX_CHARS,
+    TenantConfigPackageLimits, TenantConfigPackageManifest, TenantConfigPackageResources,
+    required_permission_summary, required_route_summary, sha256_hex,
+    validate_required_capabilities,
 };
 
 pub(super) fn build_package_blocking(
     mut resources: TenantConfigPackageResources,
+    mut required_capabilities: Vec<CapabilityRequirement>,
     source_tenant_key: String,
     source_tenant_name: String,
     source_app_version: String,
@@ -25,6 +27,8 @@ pub(super) fn build_package_blocking(
     validate_source_metadata(&source_tenant_key, &source_tenant_name, &source_app_version)?;
     resources.canonicalize();
     resources.validate(limits)?;
+    required_capabilities.sort();
+    validate_required_capabilities(&required_capabilities, &resources)?;
     let canonical_resources = serde_json::to_vec(&resources)
         .map_err(|error| AppError::Internal(format!("配置资源序列化失败: {error}")))?;
     let counts = resources.counts();
@@ -38,6 +42,7 @@ pub(super) fn build_package_blocking(
         resource_counts: counts,
         item_count,
         resources_sha256: sha256_hex(&canonical_resources),
+        required_capabilities,
         required_permissions: required_permission_summary(&resources),
         required_page_routes: required_route_summary(&resources),
     };
@@ -163,6 +168,7 @@ pub(super) fn parse_package_blocking(
     {
         return Err(AppError::Validation("配置包目录摘要与资源不一致".into()));
     }
+    validate_required_capabilities(&manifest.required_capabilities, &resources)?;
     resources.canonicalize();
     let canonical_resources = serde_json::to_vec(&resources)
         .map_err(|error| AppError::Internal(format!("规范化配置资源失败: {error}")))?;

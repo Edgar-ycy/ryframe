@@ -228,6 +228,9 @@ where
         }
     }
     for table in actual_tables.keys() {
+        if legacy && is_retired_upgrade_table(table) {
+            continue;
+        }
         if table != "seaql_migrations" && !expected.tables.contains_key(table) {
             problems.push(format!("unexpected application table {table}"));
         }
@@ -1056,7 +1059,6 @@ fn is_upgrade_table(table: &str) -> bool {
             | "sys_tenant_config_bundle"
             | "sys_tenant_config_transfer"
             | "sys_tenant_config_transfer_item"
-            | "sys_tenant_config_lease"
             | "sys_service_account"
             | "sys_service_account_role"
             | "sys_service_credential"
@@ -1066,6 +1068,12 @@ fn is_upgrade_table(table: &str) -> bool {
             | "sys_cache_namespace_version"
             | "sys_outbox_event"
             | "sys_export_job"
+            | "sys_product_plan"
+            | "sys_product_plan_version"
+            | "sys_product_plan_capability"
+            | "sys_tenant_product_plan"
+            | "sys_tenant_capability_override"
+            | "sys_tenant_operation_lease"
             | "sys_message"
             | "sys_message_audience"
             | "sys_message_recipient"
@@ -1079,7 +1087,11 @@ fn is_upgrade_column(table: &str, column: &str) -> bool {
         (table, column),
         (
             "sys_tenant",
-            "session_version" | "authorization_epoch" | "configuration_version"
+            "session_version"
+                | "authorization_epoch"
+                | "runtime_epoch"
+                | "configuration_version"
+                | "status"
         ) | ("sys_config", "portable")
             | ("sys_user", "authorization_version")
             | ("sys_user", "preferred_locale" | "avatar_file_id")
@@ -1096,6 +1108,10 @@ fn is_upgrade_column(table: &str, column: &str) -> bool {
             | ("sys_oper_log", "event_id" | "request_id")
             | ("sys_export_job", "notification_read_at")
     )
+}
+
+fn is_retired_upgrade_table(table: &str) -> bool {
+    table == "sys_tenant_config_lease"
 }
 
 fn is_upgrade_index(table: &str, name: &str) -> bool {

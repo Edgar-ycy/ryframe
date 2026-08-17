@@ -41,7 +41,7 @@ git push origin "refs/tags/$release_tag"
 7. 验证 API 与管理端证书、同站子域、可信代理 CIDR、CORS Origin 和 Cookie Secure 属性。
 8. 准备蓝绿或双 upstream，两端的新版本在未接流量时先通过 `/livez` 和 `/readyz`。
 
-涉及 FILE-A 的版本必须按固定顺序发布：完成备份与隔离恢复演练，停止旧版 API 和 Worker，按 [FILE-A 文件维护](file-maintenance.md)依次执行两类 `dry-run` 与 `apply` 并确认各自 `remaining=0`，再执行 `ryframe-migrate up`、`ryframe-migrate status` 和 `ryframe-migrate verify`。迁移验证通过后先启动新 Worker，再启动同版本 API 和管理端。生产 Compose 已将 API 启动条件绑定为 Worker 健康，不能在部署环境中覆盖或删除这项依赖。全新数据库可以跳过 FILE-A 数据维护，但不能跳过迁移与验证。开发阶段不保留旧数据模型或旧进程并行运行的兼容路径。
+涉及 FILE-A 的版本必须按固定顺序发布：完成备份与隔离恢复演练，停止旧版 API 和 Worker，按 [FILE-A 文件维护](file-maintenance.md)依次执行两类 `dry-run` 与 `apply` 并确认各自 `remaining=0`；随后执行 `ryframe-migrate control up`，再执行 `ryframe-migrate tenant-data up --all`，并分别运行 verify。所有活动数据目标 Schema 指纹验证通过后，依次发布新 Worker/API 和同版本管理端。生产 Compose 已将 API 启动条件绑定为 Worker 健康，不能在部署环境中覆盖或删除这项依赖。全新数据库可以跳过 FILE-A 数据维护，但不能跳过两类迁移与验证。开发阶段不保留旧数据模型或旧进程并行运行的兼容路径。
 
 开发阶段不提供跨版本会话兼容，切换后旧会话可能失效，用户需要重新登录。上线公告必须明确这一点。
 

@@ -198,6 +198,16 @@ impl AppConfig {
                 "auth.refresh_token_expire cannot exceed the 7-day absolute session limit".into(),
             ));
         }
+        if self.service_accounts.enabled
+            && !self
+                .redis
+                .as_ref()
+                .is_some_and(|redis| redis.mode == RedisMode::Required)
+        {
+            return Err(AppError::Config(
+                "启用 service_accounts 时要求 redis.mode = \"required\"".into(),
+            ));
+        }
         if self.environment.is_production()
             && self.messaging.enabled
             && !self
@@ -220,15 +230,6 @@ impl AppConfig {
             ));
         }
         if self.environment.is_production() && self.service_accounts.enabled {
-            if !self
-                .redis
-                .as_ref()
-                .is_some_and(|redis| redis.mode == RedisMode::Required)
-            {
-                return Err(AppError::Config(
-                    "生产环境启用 service_accounts 时要求 redis.mode = \"required\"".into(),
-                ));
-            }
             self.service_accounts
                 .load_pepper_keyring(jwt_secret)
                 .map_err(AppError::Config)?;

@@ -20,6 +20,8 @@ pub struct Model {
     pub session_version: i32,
     /// 租户级授权规则版本，角色权限、菜单权限或部门层级变化时递增。
     pub authorization_epoch: i32,
+    /// 套餐版本或能力覆盖变化时递增；HTTP 契约以十进制字符串传输。
+    pub runtime_epoch: i64,
     /// 部门、岗位、字典、可迁移参数、权限、菜单或角色关系变化时递增。
     pub configuration_version: i64,
     pub created_at: DateTime<Utc>,
@@ -27,8 +29,11 @@ pub struct Model {
 }
 
 impl Model {
-    pub const STATUS_DISABLED: &str = "0";
-    pub const STATUS_NORMAL: &str = "1";
+    pub const STATUS_PROVISIONING: &str = "provisioning";
+    pub const STATUS_ENABLED: &str = "enabled";
+    pub const STATUS_PROVISIONING_FAILED: &str = "provisioning_failed";
+    pub const STATUS_DISABLED: &str = "disabled";
+    pub const STATUS_NORMAL: &str = Self::STATUS_ENABLED;
 
     pub fn is_available(&self, now: DateTime<Utc>) -> bool {
         self.status == Self::STATUS_NORMAL && self.expire_at.is_none_or(|expire_at| expire_at > now)

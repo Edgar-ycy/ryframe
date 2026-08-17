@@ -454,7 +454,9 @@ async fn request_apply(
             ApplyTenantConfigTransferCommand {
                 plan_hash: request.plan_hash,
                 target_configuration_version: request.target_configuration_version,
-                target_authorization_epoch: request.target_authorization_epoch,
+                target_authorization_epoch: parse_authorization_epoch(
+                    &request.target_authorization_epoch,
+                )?,
                 idempotency_key_hash: idempotency_key_hash(&headers)?,
             },
         )
@@ -509,6 +511,14 @@ fn parse_positive_id(value: &str, label: &str) -> HttpResult<i64> {
         .ok()
         .filter(|id| *id > 0)
         .ok_or_else(|| AppError::Validation(format!("{label} ID 必须是正整数")))?)
+}
+
+fn parse_authorization_epoch(value: &str) -> HttpResult<i32> {
+    Ok(value
+        .parse::<i32>()
+        .ok()
+        .filter(|epoch| *epoch >= 0)
+        .ok_or_else(|| AppError::Validation("target_authorization_epoch 必须是非负整数".into()))?)
 }
 
 fn page_response<T: serde::Serialize>(

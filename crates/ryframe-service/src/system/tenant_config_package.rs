@@ -6,10 +6,12 @@ use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::{CAPABILITY_CATALOG, CapabilityRequirement};
+
 mod format;
 
 /// 租户配置包的固定协议标识。
-pub const TENANT_CONFIG_PACKAGE_SCHEMA: &str = "ryframe.tenant-config/v1";
+pub const TENANT_CONFIG_PACKAGE_SCHEMA: &str = "ryframe.tenant-config/v2";
 
 /// 配置包仅允许包含的清单文件名。
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -140,6 +142,8 @@ pub struct TenantConfigPackageManifest {
     pub resource_counts: TenantConfigResourceCounts,
     pub item_count: usize,
     pub resources_sha256: String,
+    /// 包内权限/菜单真实依赖的产品能力版本；仅用于目标兼容校验。
+    pub required_capabilities: Vec<CapabilityRequirement>,
     pub required_permissions: TenantConfigCatalogSummary,
     pub required_page_routes: TenantConfigCatalogSummary,
 }
@@ -628,6 +632,7 @@ pub struct ParsedTenantConfigPackage {
 /// 在阻塞线程中构造只含两个受控文件的配置包。
 pub async fn build_tenant_config_package(
     resources: TenantConfigPackageResources,
+    required_capabilities: Vec<CapabilityRequirement>,
     source_tenant_key: String,
     source_tenant_name: String,
     source_app_version: String,
@@ -637,6 +642,7 @@ pub async fn build_tenant_config_package(
     tokio::task::spawn_blocking(move || {
         format::build_package_blocking(
             resources,
+            required_capabilities,
             source_tenant_key,
             source_tenant_name,
             source_app_version,
@@ -690,6 +696,84 @@ fn required_route_summary(resources: &TenantConfigPackageResources) -> TenantCon
             .iter()
             .filter_map(|item| item.route_key.as_deref()),
     )
+}
+
+fn validate_required_capabilities(
+    requirements: &[CapabilityRequirement],
+    resources: &TenantConfigPackageResources,
+) -> AppResult<()> {
+    let mut canonical = requirements.to_vec();
+    canonical.sort();
+    if canonical != requirements {
+        return Err(AppError::Validation(
+            "配置包 required_capabilities 必须按 code/variant/schema_version 排序".into(),
+        ));
+    }
+    let mut declared_codes = BTreeSet::new();
+    for requirement in requirements {
+        validate_stable_code(&requirement.code, STABLE_CODE_MAX_BYTES, "能力代码")?;
+        validate_stable_code(&requirement.variant, STABLE_CODE_MAX_BYTES, "能力 variant")?;
+        if requirement.schema_version <= 0 {
+            return Err(AppError::Validation(
+                "能力 schema_version 必须是正整数".into(),
+            ));
+        }
+        if !declared_codes.insert(requirement.code.as_str()) {
+            return Err(AppError::Validation(format!(
+                "配置包重复声明能力 {}",
+                requirement.code
+            )));
+        }
+        let descriptor = CAPABILITY_CATALOG
+            .iter()
+            .find(|descriptor| descriptor.code == requirement.code)
+            .ok_or_else(|| {
+                AppError::Validation(format!(
+                    "配置包声明了当前版本未知的能力 {}",
+                    requirement.code
+                ))
+            })?;
+        if !descriptor.variants.iter().any(|variant| {
+            variant.code == requirement.variant
+                && variant.schema_version == requirement.schema_version
+        }) {
+            return Err(AppError::Validation(format!(
+                "配置包能力 {} 的 variant/schema 不受当前版本支持",
+                requirement.code
+            )));
+        }
+    }
+
+    let mut involved_codes = BTreeSet::new();
+    for descriptor in CAPABILITY_CATALOG {
+        let uses_permission = resources.permissions.iter().any(|permission| {
+            descriptor
+                .permission_codes
+                .contains(&permission.code.as_str())
+        }) || resources.roles.iter().any(|role| {
+            role.permission_codes
+                .iter()
+                .any(|permission| descriptor.permission_codes.contains(&permission.as_str()))
+        }) || resources.menus.iter().any(|menu| {
+            menu.permission_code
+                .as_deref()
+                .is_some_and(|permission| descriptor.permission_codes.contains(&permission))
+        });
+        let uses_route = resources.menus.iter().any(|menu| {
+            menu.route_key
+                .as_deref()
+                .is_some_and(|route| descriptor.route_keys.contains(&route))
+        });
+        if uses_permission || uses_route {
+            involved_codes.insert(descriptor.code);
+        }
+    }
+    if involved_codes != declared_codes {
+        return Err(AppError::Validation(
+            "配置包 required_capabilities 与实际权限/菜单资源不一致".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn route_menu_stable_key(route_key: &str) -> String {

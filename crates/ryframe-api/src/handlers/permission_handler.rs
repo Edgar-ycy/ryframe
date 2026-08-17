@@ -49,9 +49,11 @@ pub async fn tree(
         .permission
         .list_all_perms(&current_user, perm_type)
         .await?;
-    Ok(Json(ApiResponse::success(
-        tree.into_iter().map(PermissionTreeNode::from).collect(),
-    )))
+    let tree = tree
+        .into_iter()
+        .map(PermissionTreeNode::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(ApiResponse::success(tree)))
 }
 
 #[get("/{id}")]
@@ -70,7 +72,7 @@ pub async fn detail(
         .find_by_id(&current_user, id)
         .await?;
     match item {
-        Some(item) => Ok(Json(ApiResponse::success(item.into()))),
+        Some(item) => Ok(Json(ApiResponse::success(PermissionVo::try_from(item)?))),
         None => Err(ryframe_kernel::AppError::NotFound("权限不存在".into()).into()),
     }
 }
@@ -103,7 +105,7 @@ pub async fn create(
             },
         )
         .await?;
-    Ok(Json(ApiResponse::success(item.into())))
+    Ok(Json(ApiResponse::success(PermissionVo::try_from(item)?)))
 }
 
 #[put("/{id}")]
@@ -136,7 +138,7 @@ pub async fn update(
             },
         )
         .await?;
-    Ok(Json(ApiResponse::success(item.into())))
+    Ok(Json(ApiResponse::success(PermissionVo::try_from(item)?)))
 }
 
 #[delete("/{id}")]

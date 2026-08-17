@@ -13,18 +13,21 @@ use ryframe_service::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
         DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
         MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
-        OverviewService, PermissionService, PostService, ProfileService, RoleService,
-        ServiceAccountService, TenantConfigTransferService, TenantService, TenantUsageService,
-        UserImportService, UserService, WebSocketTicketService,
+        OverviewService, PermissionService, PostService, ProductService, ProfileService,
+        RoleService, ServiceAccountService, TenantConfigTransferService,
+        TenantDataMigrationService, TenantService, TenantUsageService, UserImportService,
+        UserService, WebSocketTicketService,
     },
 };
 use ryframe_storage::ObjectStorage;
+use ryframe_tenant_db::TenantDatabaseRouter;
 
 /// 构造所有 Service 实例
 ///
 /// 依赖注入顺序：Repository → Redis → Service。
 pub async fn build_all(
     database: &ControlDatabaseCluster,
+    tenant_data: Arc<TenantDatabaseRouter>,
     config: &AppConfig,
     redis_client: &Option<RedisClient>,
     object_storage: Arc<dyn ObjectStorage>,
@@ -42,13 +45,21 @@ pub async fn build_all(
         database.clone(),
         authorization_cache.clone(),
     ));
+    let product = Arc::new(ProductService::new(
+        database.clone(),
+        authorization_cache.clone(),
+        config.service_accounts.enabled && redis_client.is_some(),
+    ));
     let role = Arc::new(RoleService::new(
         database.clone(),
         authorization_cache.clone(),
+        product.clone(),
     ));
     let tenant = Arc::new(TenantService::new(
         database.clone(),
         authorization_cache.clone(),
+        product.clone(),
+        tenant_data.clone(),
     ));
     let tenant_usage = Arc::new(TenantUsageService::new(
         database.clone(),
@@ -80,6 +91,7 @@ pub async fn build_all(
             keyring,
             config.service_accounts.clone(),
             config.multi_tenancy.clone(),
+            product.clone(),
         )?);
         (Some(management), Some(agent))
     } else {
@@ -88,6 +100,7 @@ pub async fn build_all(
     let permission = Arc::new(PermissionService::new(
         database.clone(),
         authorization_cache.clone(),
+        product.clone(),
     ));
     let auth = Arc::new(AuthService::new(
         database.clone(),
@@ -117,6 +130,12 @@ pub async fn build_all(
     file.spawn_upload_janitor();
     let job_queue =
         Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis_client.clone()));
+    let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
+        database.clone(),
+        tenant_data.clone(),
+        job_queue.clone(),
+        authorization_cache.clone(),
+    ));
     let data_retention = Arc::new(DataRetentionService::new(
         database.clone(),
         job_queue.clone(),
@@ -132,13 +151,18 @@ pub async fn build_all(
         config.user_import.clone(),
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
-        database.clone(),
-        job_queue.clone(),
-        user.clone(),
-        file.clone(),
-        authorization_cache.clone(),
-        ryframe_api::tenant_config_target_catalog()?,
-        config.tenant_config_transfer.clone(),
+        ryframe_service::system::TenantConfigTransferDependencies {
+            db: database.clone(),
+            queue: job_queue.clone(),
+            user_service: user.clone(),
+            file_service: file.clone(),
+            product_service: product.clone(),
+            authorization_cache: authorization_cache.clone(),
+        },
+        ryframe_service::system::TenantConfigTransferSettings {
+            target_catalog: ryframe_api::tenant_config_target_catalog()?,
+            config: config.tenant_config_transfer.clone(),
+        },
     ));
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
         database.clone(),
@@ -230,6 +254,8 @@ pub async fn build_all(
         user,
         role,
         tenant,
+        product,
+        tenant_data,
         tenant_usage,
         service_accounts,
         agent,
@@ -250,6 +276,7 @@ pub async fn build_all(
         data_retention,
         user_import,
         tenant_config_transfer,
+        tenant_data_migration,
         authorization_diagnostic,
         overview,
         login_info,

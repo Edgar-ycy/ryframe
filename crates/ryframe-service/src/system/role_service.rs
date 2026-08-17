@@ -18,7 +18,7 @@ use serde::Serialize;
 
 use crate::AuthorizationCache;
 
-use super::{OptionItem, OptionList};
+use super::{OptionItem, OptionList, ProductService};
 
 fn first_missing_id<T, F>(requested_ids: &[i64], existing: &[T], id: F) -> Option<i64>
 where
@@ -85,15 +85,21 @@ pub struct RoleService {
     db: ControlDatabaseCluster,
     role_repo: RoleRepository,
     perm_repo: PermissionRepository,
+    product_service: Arc<ProductService>,
     authorization_cache: AuthorizationCache,
 }
 
 impl RoleService {
-    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(
+        db: ControlDatabaseCluster,
+        authorization_cache: AuthorizationCache,
+        product_service: Arc<ProductService>,
+    ) -> Self {
         Self {
             db,
             role_repo: RoleRepository,
             perm_repo: PermissionRepository,
+            product_service,
             authorization_cache,
         }
     }
@@ -535,6 +541,13 @@ impl RoleService {
         {
             return Err(AppError::NotFound(format!("权限不存在: {perm_id}")));
         }
+        let permission_codes = permissions
+            .iter()
+            .map(|permission| permission.code.clone())
+            .collect::<Vec<_>>();
+        self.product_service
+            .ensure_permission_codes_enabled_in_txn(&transaction, tenant_id, &permission_codes)
+            .await?;
         self.perm_repo
             .assign_perms(&transaction, tenant_id, role_id, &perm_ids)
             .await?;
@@ -662,3 +675,4 @@ impl RoleService {
         Ok(())
     }
 }
+use std::sync::Arc;

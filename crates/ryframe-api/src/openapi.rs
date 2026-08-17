@@ -64,6 +64,11 @@ use utoipa::OpenApi;
         (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重和熔断保护。"),
         (name = "租户管理", description = "系统租户管理租户生命周期、配额和管理员初始化。"),
         (name = "租户配置迁移", description = "导出、上传、预览、应用和回滚不含数据库 ID 与敏感凭据的租户配置包。")
+        ,(name = "产品能力", description = "编译期能力目录与租户有效产品上下文。")
+        ,(name = "产品套餐", description = "产品套餐元数据、不可变发布版本及租户产品变更。")
+        ,(name = "租户数据放置", description = "安全目标元数据、租户 placement 与迁移资格。")
+        ,(name = "租户数据迁移", description = "停写复制、校验、切换、取消与保留期清理。")
+        ,(name = "租户数据备份", description = "数据库平台 opaque 备份恢复点登记结果。")
         ,(name = "服务账号", description = "管理不可登录的服务账号、角色范围和一次性 API Key。")
         ,(name = "服务委托", description = "当前用户本人创建的限时双主体查询委托，以及管理员只读治理入口。")
         ,(name = "服务访问审计", description = "查询 Agent API 的最小化访问审计，不包含请求或响应正文。")
@@ -77,8 +82,8 @@ use utoipa::OpenApi;
         crate::handlers::auth_handler::login::login,
         crate::handlers::auth_handler::session::logout,
         crate::handlers::auth_handler::session::refresh,
+        crate::handlers::auth_handler::context::context,
         crate::handlers::auth_handler::password_reset::complete_password_reset,
-        crate::handlers::auth_handler::session::me,
         crate::handlers::auth_handler::session::list_sessions,
         crate::handlers::auth_handler::session::revoke_session,
         crate::handlers::auth_handler::session::revoke_other_sessions,
@@ -135,7 +140,6 @@ use utoipa::OpenApi;
         crate::handlers::post_handler::request_post_export,
         // 菜单管理
         crate::handlers::menu_handler::tree,
-        crate::handlers::menu_handler::user_tree,
         crate::handlers::menu_handler::list_page,
         crate::handlers::menu_handler::detail,
         crate::handlers::menu_handler::create,
@@ -248,6 +252,30 @@ use utoipa::OpenApi;
         crate::handlers::tenant_handler::create,
         crate::handlers::tenant_handler::update,
         crate::handlers::tenant_handler::update_status,
+        // 产品套餐与租户能力
+        crate::handlers::product_handler::capabilities,
+        crate::handlers::product_handler::list_plans,
+        crate::handlers::product_handler::plan_detail,
+        crate::handlers::product_handler::create_plan,
+        crate::handlers::product_handler::update_plan,
+        crate::handlers::product_handler::list_versions,
+        crate::handlers::product_handler::create_version,
+        crate::handlers::product_handler::update_version,
+        crate::handlers::product_handler::publish_version,
+        crate::handlers::product_handler::retire_version,
+        crate::handlers::product_handler::tenant_context,
+        crate::handlers::product_handler::preview_tenant_change,
+        crate::handlers::product_handler::apply_tenant_change,
+        crate::handlers::tenant_data_handler::list_targets,
+        crate::handlers::tenant_data_handler::target_detail,
+        crate::handlers::tenant_data_handler::backup_points,
+        crate::handlers::tenant_data_handler::placement,
+        crate::handlers::tenant_data_handler::preview_migration,
+        crate::handlers::tenant_data_handler::create_migration,
+        crate::handlers::tenant_data_handler::list_tenant_migrations,
+        crate::handlers::tenant_data_handler::migration_detail,
+        crate::handlers::tenant_data_handler::cancel_migration,
+        crate::handlers::tenant_data_handler::finalize_migration,
         // 租户配置包迁移
         crate::handlers::tenant_config_handler::request_package_export,
         crate::handlers::tenant_config_handler::list_packages,
@@ -292,6 +320,9 @@ use utoipa::OpenApi;
         crate::dto::auth_dto::LoginRequest,
         crate::dto::auth_dto::CompletePasswordResetRequest,
         crate::dto::auth_dto::LoginResponse,
+        crate::dto::auth_dto::SessionUserVo,
+        crate::dto::auth_dto::TenantBusinessDataContextVo,
+        crate::dto::auth_dto::SessionContextVo,
         crate::dto::auth_dto::CsrfResponse,
         crate::dto::auth_dto::AuthSessionResponse,
         crate::dto::auth_dto::RevokeOtherSessionsResponse,
@@ -444,6 +475,38 @@ use utoipa::OpenApi;
         crate::dto::public_dto::TenantQuotaUsageVo,
         crate::dto::public_dto::TenantRequestWindowUsageVo,
         crate::dto::public_dto::TenantAuxiliaryUsageVo,
+        crate::dto::product_dto::CapabilitySnapshotDto,
+        crate::dto::product_dto::CapabilityOverrideDto,
+        crate::dto::product_dto::CreateProductPlanDto,
+        crate::dto::product_dto::UpdateProductPlanDto,
+        crate::dto::product_dto::CreateProductPlanVersionDto,
+        crate::dto::product_dto::ProductChangePreviewDto,
+        crate::dto::product_dto::ProductChangeApplyDto,
+        crate::dto::product_dto::CapabilityVariantVo,
+        crate::dto::product_dto::CapabilityCatalogVo,
+        crate::dto::product_dto::ProductCapabilityVo,
+        crate::dto::product_dto::ProductPlanVersionVo,
+        crate::dto::product_dto::ProductPlanVo,
+        crate::dto::product_dto::EffectiveCapabilityVo,
+        crate::dto::product_dto::CapabilityOverrideVo,
+        crate::dto::product_dto::ProductContextVo,
+        crate::dto::product_dto::ProductCapabilityChangeVo,
+        crate::dto::product_dto::ProductChangePreviewVo,
+        crate::dto::product_dto::SessionCapabilityVo,
+        crate::dto::product_dto::SessionProductContextVo,
+        crate::dto::tenant_data_dto::DataTargetListQuery,
+        crate::dto::tenant_data_dto::BackupPointListQuery,
+        crate::dto::tenant_data_dto::MigrationPreviewDto,
+        crate::dto::tenant_data_dto::CreateMigrationDto,
+        crate::dto::tenant_data_dto::MigrationListQuery,
+        crate::dto::tenant_data_dto::DataTargetSummary,
+        crate::dto::tenant_data_dto::DataTargetDetail,
+        crate::dto::tenant_data_dto::BackupPointView,
+        crate::dto::tenant_data_dto::DataPlacementView,
+        crate::dto::tenant_data_dto::MigrationImpact,
+        crate::dto::tenant_data_dto::MigrationPreview,
+        crate::dto::tenant_data_dto::MigrationItemView,
+        crate::dto::tenant_data_dto::MigrationView,
         crate::dto::tenant_config_dto::TenantConfigPageQuery,
         crate::dto::tenant_config_dto::TenantConfigPackageUploadForm,
         crate::dto::tenant_config_dto::CreateTenantConfigTransferDto,
@@ -513,6 +576,7 @@ pub const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("system", "M"),
     ("monitor", "M"),
     ("tools", "M"),
+    ("platform", "M"),
     ("system.user", "C"),
     ("system.role", "C"),
     ("system.menu", "C"),
@@ -522,6 +586,9 @@ pub const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("system.config", "C"),
     ("system.config-transfer", "C"),
     ("system.service-accounts", "C"),
+    ("platform.product-plans", "C"),
+    ("platform.data-targets", "C"),
+    ("platform.tenant", "C"),
     ("system.notice", "C"),
     ("system.perm", "C"),
     ("system.authorization-diagnostics", "C"),
@@ -546,6 +613,8 @@ fn menu_route_contract() -> serde_json::Value {
             serde_json::json!({
                 "route_key": route_key,
                 "menu_type": menu_type,
+                "permission_code": menu_route_permission(route_key),
+                "capability_code": menu_route_capability(route_key),
             })
         })
         .collect::<Vec<_>>();
@@ -554,6 +623,70 @@ fn menu_route_contract() -> serde_json::Value {
         "version": 1,
         "routes": routes,
     })
+}
+
+fn menu_route_permission(route_key: &str) -> Option<&'static str> {
+    match route_key {
+        "system.user" => Some("system:user:list"),
+        "system.role" => Some("system:role:list"),
+        "system.menu" => Some("system:menu:list"),
+        "system.dept" => Some("system:dept:list"),
+        "system.post" => Some("system:post:list"),
+        "system.dict" => Some("system:dict:list"),
+        "system.config" => Some("system:config:list"),
+        "system.config-transfer" => Some("system:config-transfer:list"),
+        "system.service-accounts" => Some("system:service-account:list"),
+        "platform.product-plans" => Some("platform:product-plan:list"),
+        "platform.data-targets" => Some("tenant:data-placement:view"),
+        "platform.tenant" => Some("tenant:list"),
+        "system.notice" => Some("system:notice:list"),
+        "system.perm" => Some("system:perm:list"),
+        "system.authorization-diagnostics" => Some("system:authorization-diagnostic:list"),
+        "system.operlog" => Some("system:operlog:list"),
+        "system.logininfor" => Some("system:logininfor:list"),
+        "monitor.online" => Some("monitor:online:list"),
+        "monitor.server" => Some("monitor:server:list"),
+        "monitor.runtime" => Some("monitor:runtime:list"),
+        "monitor.cache" => Some("monitor:cache:list"),
+        "monitor.db-pool" => Some("monitor:db-pool:list"),
+        "monitor.jobs" => Some("monitor:job:list"),
+        "monitor.schedules" => Some("monitor:schedule:list"),
+        "monitor.retention" => Some("monitor:retention:list"),
+        "monitor.overview" => Some("monitor:overview:list"),
+        "tools.gen" => Some("tools:gen:list"),
+        _ => None,
+    }
+}
+
+fn menu_route_capability(route_key: &str) -> Option<&'static str> {
+    match route_key {
+        "system.service-accounts" => Some(ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY),
+        _ => None,
+    }
+}
+
+fn product_capability_contract() -> serde_json::Value {
+    let capabilities = ryframe_service::system::CAPABILITY_CATALOG
+        .iter()
+        .map(|descriptor| {
+            serde_json::json!({
+                "code": descriptor.code,
+                "dependencies": descriptor.dependencies,
+                "conflicts": descriptor.conflicts,
+                "route_keys": descriptor.route_keys,
+                "permission_codes": descriptor.permission_codes,
+                "default_admin_permissions": descriptor.default_admin_permissions,
+                "deployment_dependencies": descriptor.deployment_dependencies,
+                "deployment_available": true,
+                "client_config_fields": descriptor.client_config_fields,
+                "variants": descriptor.variants.iter().map(|variant| serde_json::json!({
+                    "code": variant.code,
+                    "schema_version": variant.schema_version,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "version": 1, "capabilities": capabilities })
 }
 
 fn password_policy_contract() -> serde_json::Value {
@@ -588,6 +721,76 @@ fn permission_catalog_contract() -> serde_json::Value {
     serde_json::json!({
         "version": 1,
         "codes": crate::permission_catalog::route_permission_codes(),
+    })
+}
+
+fn route_contract() -> serde_json::Value {
+    let bindings = crate::permission_catalog::route_capability_bindings();
+    for descriptor in ryframe_service::system::CAPABILITY_CATALOG {
+        for permission in descriptor.permission_codes {
+            assert!(
+                bindings
+                    .iter()
+                    .any(|(_, _, _, _, capability, bound_permission)| capability
+                        == &descriptor.code
+                        && bound_permission == &Some(*permission)),
+                "capability permission {permission} has no compiled route binding"
+            );
+        }
+    }
+    let routes = bindings
+        .iter()
+        .map(
+            |(source, handler, method, path, capability_code, permission_code)| {
+                let descriptor = ryframe_service::system::CAPABILITY_CATALOG
+                    .iter()
+                    .find(|descriptor| descriptor.code == *capability_code)
+                    .expect("route capability must exist in the compiled catalog");
+                if let Some(permission_code) = permission_code {
+                    assert!(
+                        descriptor.permission_codes.contains(permission_code),
+                        "route capability permission is outside its descriptor"
+                    );
+                }
+                serde_json::json!({
+                    "source": source,
+                    "handler": handler,
+                    "method": method,
+                    "path": path,
+                    "permission_code": permission_code,
+                    "capability_code": capability_code,
+                })
+            },
+        )
+        .collect::<Vec<_>>();
+    serde_json::json!({ "version": 1, "routes": routes })
+}
+
+fn tenant_context_header_contract() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "headers": [
+            "X-Authorization-Epoch",
+            "X-Tenant-Runtime-Epoch",
+            "X-Tenant-Data-Generation",
+            "X-Tenant-Data-State"
+        ]
+    })
+}
+
+fn product_error_contract() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "errors": [
+            {"error_key": "capability_unavailable", "status": 501},
+            {"error_key": "tenant_capability_denied", "status": 403},
+            {"error_key": "permission_denied", "status": 403},
+            {"error_key": "stale_runtime_epoch", "status": 409},
+            {"error_key": "stale_placement_generation", "status": 409},
+            {"error_key": "tenant_operation_conflict", "status": 409},
+            {"error_key": "tenant_data_maintenance", "status": 423, "retry_after": true},
+            {"error_key": "tenant_data_target_unavailable", "status": 503, "retry_after": true}
+        ]
     })
 }
 
@@ -659,6 +862,10 @@ impl utoipa::Modify for ApiDocModifier {
             .get_or_insert_default()
             .insert("x-ryframe-menu-routes".into(), menu_route_contract());
         openapi.extensions.get_or_insert_default().insert(
+            "x-ryframe-product-capabilities".into(),
+            product_capability_contract(),
+        );
+        openapi.extensions.get_or_insert_default().insert(
             "x-ryframe-password-policy".into(),
             password_policy_contract(),
         );
@@ -674,20 +881,82 @@ impl utoipa::Modify for ApiDocModifier {
             "x-ryframe-permission-catalog".into(),
             permission_catalog_contract(),
         );
+        openapi
+            .extensions
+            .get_or_insert_default()
+            .insert("x-ryframe-route-contract".into(), route_contract());
+        openapi.extensions.get_or_insert_default().insert(
+            "x-ryframe-tenant-context-headers".into(),
+            tenant_context_header_contract(),
+        );
+        openapi
+            .extensions
+            .get_or_insert_default()
+            .insert("x-ryframe-product-errors".into(), product_error_contract());
         openapi.extensions.get_or_insert_default().insert(
             "x-ryframe-agent-capabilities".into(),
             agent_capability_contract(),
         );
 
         for (path, item) in &mut openapi.paths.paths {
-            set_operation_id(&mut item.get, "get", path);
-            set_operation_id(&mut item.post, "post", path);
-            set_operation_id(&mut item.put, "put", path);
-            set_operation_id(&mut item.delete, "delete", path);
-            set_operation_id(&mut item.patch, "patch", path);
-            set_operation_id(&mut item.options, "options", path);
-            set_operation_id(&mut item.head, "head", path);
-            set_operation_id(&mut item.trace, "trace", path);
+            finalize_operation(&mut item.get, "get", path);
+            finalize_operation(&mut item.post, "post", path);
+            finalize_operation(&mut item.put, "put", path);
+            finalize_operation(&mut item.delete, "delete", path);
+            finalize_operation(&mut item.patch, "patch", path);
+            finalize_operation(&mut item.options, "options", path);
+            finalize_operation(&mut item.head, "head", path);
+            finalize_operation(&mut item.trace, "trace", path);
+        }
+    }
+}
+
+fn finalize_operation(
+    operation: &mut Option<utoipa::openapi::path::Operation>,
+    method: &str,
+    path: &str,
+) {
+    set_operation_id(operation, method, path);
+    let Some(operation) = operation else {
+        return;
+    };
+    // utoipa 5 的 tuple 参数语法无法声明 Header required；运行时 handler 已强制
+    // 提取该值，这里把生成契约同步为必填，避免客户端生成可空调用签名。
+    if method == "post"
+        && path == "/api/v1/platform/tenants"
+        && let Some(parameter) = operation.parameters.as_mut().and_then(|parameters| {
+            parameters
+                .iter_mut()
+                .find(|parameter| parameter.name.eq_ignore_ascii_case("Idempotency-Key"))
+        })
+    {
+        parameter.required = utoipa::openapi::Required::True;
+    }
+    let bearer =
+        utoipa::openapi::security::SecurityRequirement::new("bearer", std::iter::empty::<String>());
+    if !operation
+        .security
+        .as_ref()
+        .is_some_and(|requirements| requirements.contains(&bearer))
+    {
+        return;
+    }
+    for response in operation.responses.responses.values_mut() {
+        let utoipa::openapi::RefOr::T(response) = response else {
+            continue;
+        };
+        for (name, description) in [
+            ("X-Authorization-Epoch", "本次响应所依据的租户授权纪元"),
+            ("X-Tenant-Runtime-Epoch", "本次响应所依据的租户产品运行纪元"),
+            (
+                "X-Tenant-Data-Generation",
+                "本次响应所依据的租户数据放置代次",
+            ),
+            ("X-Tenant-Data-State", "本次响应所依据的租户业务数据状态"),
+        ] {
+            let mut header = utoipa::openapi::header::Header::default();
+            header.description = Some(description.to_owned());
+            response.headers.entry(name.to_owned()).or_insert(header);
         }
     }
 }

@@ -11,8 +11,8 @@ use ryframe_kernel::AppError;
 use crate::JobQueue;
 
 use super::{
-    ConfigService, DictService, LoginInfoService, OperLogService, PostService, RoleService,
-    UserService,
+    ConfigService, DictService, LoginInfoService, OperLogService, PostService, ProductService,
+    RoleService, UserService,
 };
 
 mod cleanup;
@@ -72,7 +72,15 @@ impl ExportService {
             background_jobs: BackgroundJobRepository,
             exports: ExportJobRepository,
             files: FileRepository,
-            roles: RoleService::new(db.clone(), crate::AuthorizationCache::disabled()),
+            roles: RoleService::new(
+                db.clone(),
+                crate::AuthorizationCache::disabled(),
+                Arc::new(ProductService::new(
+                    db.clone(),
+                    crate::AuthorizationCache::disabled(),
+                    false,
+                )),
+            ),
             posts: PostService::new(db.clone()),
             configs: ConfigService::new(db.clone(), crate::AuthorizationCache::disabled()),
             dicts: DictService::new(db.clone(), None),

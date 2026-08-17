@@ -59,6 +59,7 @@ pub fn service_access_audit_router(state: AppState) -> Router {
 }
 
 #[get("/")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:list")]
 #[utoipa::path(get, path = "/api/v1/system/service-accounts", tag = "服务账号",
     params(ServiceResourcePageQuery),
@@ -87,6 +88,7 @@ async fn list_accounts(
 }
 
 #[post("/")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:add")]
 #[utoipa::path(post, path = "/api/v1/system/service-accounts", tag = "服务账号",
     request_body = CreateServiceAccountDto,
@@ -120,6 +122,7 @@ async fn create_account(
 }
 
 #[get("/{id}")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:list")]
 #[utoipa::path(get, path = "/api/v1/system/service-accounts/{id}", tag = "服务账号",
     params(("id" = String, Path)),
@@ -143,6 +146,7 @@ async fn account_detail(
 }
 
 #[put("/{id}")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:edit")]
 #[utoipa::path(put, path = "/api/v1/system/service-accounts/{id}", tag = "服务账号",
     params(("id" = String, Path)), request_body = UpdateServiceAccountDto,
@@ -177,6 +181,7 @@ async fn update_account(
 }
 
 #[put("/{id}/status")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:edit")]
 #[utoipa::path(put, path = "/api/v1/system/service-accounts/{id}/status", tag = "服务账号",
     params(("id" = String, Path)), request_body = UpdateServiceAccountStatusDto,
@@ -205,6 +210,7 @@ async fn update_account_status(
 }
 
 #[delete("/{id}")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/service-accounts/{id}", tag = "服务账号",
     params(("id" = String, Path)),
@@ -228,6 +234,7 @@ async fn remove_account(
 }
 
 #[get("/{id}/roles")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:role")]
 #[utoipa::path(get, path = "/api/v1/system/service-accounts/{id}/roles", tag = "服务账号",
     params(("id" = String, Path)),
@@ -251,6 +258,7 @@ async fn account_roles(
 }
 
 #[put("/{id}/roles")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:role")]
 #[utoipa::path(put, path = "/api/v1/system/service-accounts/{id}/roles", tag = "服务账号",
     params(("id" = String, Path)), request_body = ReplaceServiceAccountRolesDto,
@@ -280,6 +288,7 @@ async fn replace_account_roles(
 }
 
 #[get("/{id}/credentials")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:list")]
 #[utoipa::path(get, path = "/api/v1/system/service-accounts/{id}/credentials", tag = "服务账号",
     params(("id" = String, Path)),
@@ -305,6 +314,7 @@ async fn list_credentials(
 }
 
 #[post("/{id}/credentials")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:key-rotate")]
 #[utoipa::path(post, path = "/api/v1/system/service-accounts/{id}/credentials", tag = "服务账号",
     params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
@@ -342,6 +352,7 @@ async fn create_credential(
 }
 
 #[delete("/{id}/credentials/{credential_id}")]
+#[capability("system.service_accounts")]
 #[perm("system:service-account:key-revoke")]
 #[utoipa::path(delete, path = "/api/v1/system/service-accounts/{id}/credentials/{credential_id}", tag = "服务账号",
     params(("id" = String, Path), ("credential_id" = String, Path)),
@@ -370,6 +381,7 @@ async fn revoke_credential(
 }
 
 #[get("/")]
+#[capability("system.service_accounts")]
 #[perm("system:service-delegation:list")]
 #[utoipa::path(get, path = "/api/v1/system/service-delegations", tag = "服务委托",
     params(ServiceResourcePageQuery),
@@ -398,6 +410,7 @@ async fn list_delegations(
 }
 
 #[delete("/{id}")]
+#[capability("system.service_accounts")]
 #[perm("system:service-delegation:revoke")]
 #[utoipa::path(delete, path = "/api/v1/system/service-delegations/{id}", tag = "服务委托",
     params(("id" = String, Path)),
@@ -422,6 +435,7 @@ async fn revoke_delegation(
 }
 
 #[get("/")]
+#[capability("system.service_accounts")]
 #[perm("system:service-access-audit:list")]
 #[utoipa::path(get, path = "/api/v1/system/service-access-audits", tag = "服务访问审计",
     params(ServiceResourcePageQuery),

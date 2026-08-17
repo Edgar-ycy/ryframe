@@ -131,11 +131,7 @@ impl From<ServiceTenantCapacityVo> for TenantCapacityVo {
             tenant_id: tenant.tenant_id,
             name: tenant.name,
             domain: tenant.domain,
-            status: match tenant.status.as_str() {
-                "1" => "enabled".to_owned(),
-                "0" => "disabled".to_owned(),
-                _ => tenant.status,
-            },
+            status: tenant.status,
             expire_at: tenant.expire_at,
             max_users: tenant.max_users,
             max_roles: tenant.max_roles,

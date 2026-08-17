@@ -13,6 +13,7 @@ use ryframe_http::{ApiResponse, HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 
 use super::{
+    context::{build_session_context, login_actor},
     cookies::{
         CSRF_TTL_SECONDS, REFRESH_COOKIE, clear_auth_cookies, csrf_cookie, decode_refresh_cookie,
         refresh_cookie, refresh_cookie_session_id, refresh_cookie_value,
@@ -24,7 +25,6 @@ use crate::{
     dto::{
         auth_dto::{AuthSessionResponse, CsrfResponse, LoginResponse, RevokeOtherSessionsResponse},
         empty_dto::EmptyRequestDto,
-        public_dto::UserInfo,
     },
     state::AppState,
 };
@@ -205,6 +205,22 @@ pub async fn refresh(
         .await
     {
         Ok(result) => {
+            let actor = login_actor(result.user_id, &result.user_info);
+            let session_context = match build_session_context(&state, &actor).await {
+                Ok(context) => context,
+                Err(error) => {
+                    if let Err(revoke_error) = state
+                        .services
+                        .auth
+                        .refresh_sessions()
+                        .revoke_for_user(&result.user_info.tenant_id, result.user_id, &result.sid)
+                        .await
+                    {
+                        tracing::error!(%revoke_error, sid = %result.sid, "刷新上下文构建失败后的会话补偿撤销失败");
+                    }
+                    return Err(error.into());
+                }
+            };
             state
                 .services
                 .online_user
@@ -227,7 +243,10 @@ pub async fn refresh(
                     result.refresh_expires_at,
                     state.config.environment,
                 )),
-                Json(ApiResponse::success(LoginResponse::from(result))),
+                Json(ApiResponse::success(LoginResponse::new(
+                    result,
+                    session_context,
+                ))),
             )
                 .into_response())
         }
@@ -264,28 +283,6 @@ pub async fn refresh(
             Ok(response)
         }
     }
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/v1/auth/me",
-    tag = "认证",
-    responses(
-        (status = 200, description = "用户信息", body = ApiResponse<UserInfo>),
-        (status = 401, description = "未认证")
-    ),
-    security(("bearer" = []))
-)]
-/// 获取当前用户信息
-///
-/// GET /api/v1/auth/me
-pub async fn me(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-) -> HttpResult<Json<ApiResponse<UserInfo>>> {
-    let user_info = state.services.auth.get_current_user(&current_user).await?;
-
-    Ok(Json(ApiResponse::success(user_info.into())))
 }
 
 #[utoipa::path(

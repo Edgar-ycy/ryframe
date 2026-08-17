@@ -95,10 +95,10 @@ pub struct AuthorizationDiagnosticDataScopeSourceVo {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AuthorizationDiagnosticVersionVo {
-    pub tenant_authorization_epoch: i32,
+    pub tenant_authorization_epoch: String,
     pub user_authorization_version: i32,
     pub cache_status: String,
-    pub cached_tenant_authorization_epoch: Option<i32>,
+    pub cached_tenant_authorization_epoch: Option<String>,
     pub cached_user_authorization_version: Option<i32>,
 }
 
@@ -235,10 +235,12 @@ impl From<service::AuthorizationDiagnosticDataScopeSourceVo>
 impl From<service::AuthorizationDiagnosticVersionVo> for AuthorizationDiagnosticVersionVo {
     fn from(value: service::AuthorizationDiagnosticVersionVo) -> Self {
         Self {
-            tenant_authorization_epoch: value.tenant_authorization_epoch,
+            tenant_authorization_epoch: value.tenant_authorization_epoch.to_string(),
             user_authorization_version: value.user_authorization_version,
             cache_status: value.cache_status,
-            cached_tenant_authorization_epoch: value.cached_tenant_authorization_epoch,
+            cached_tenant_authorization_epoch: value
+                .cached_tenant_authorization_epoch
+                .map(|epoch| epoch.to_string()),
             cached_user_authorization_version: value.cached_user_authorization_version,
         }
     }

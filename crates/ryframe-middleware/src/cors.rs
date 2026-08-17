@@ -57,6 +57,9 @@ pub fn cors_layer(config: &CorsConfig) -> AppResult<CorsLayer> {
             http::HeaderName::from_static("x-request-id"),
             http::HeaderName::from_static("x-idempotency-replay"),
             http::HeaderName::from_static("x-authorization-epoch"),
+            http::HeaderName::from_static("x-tenant-runtime-epoch"),
+            http::HeaderName::from_static("x-tenant-data-generation"),
+            http::HeaderName::from_static("x-tenant-data-state"),
             http::HeaderName::from_static("x-ryframe-realtime"),
         ])
         .allow_credentials(true)

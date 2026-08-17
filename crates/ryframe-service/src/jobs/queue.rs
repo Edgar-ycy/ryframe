@@ -130,6 +130,28 @@ impl JobQueue {
         self
     }
 
+    /// 在业务 control 事务内原地复活已关联任务，不创建并发副本。
+    pub async fn reactivate_linked_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        job_id: i64,
+        expected_job_type: &str,
+        payload_key: &str,
+        expected_resource_id: i64,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        self.repository
+            .reactivate_linked_in_txn(
+                transaction,
+                job_id,
+                expected_job_type,
+                payload_key,
+                expected_resource_id,
+                now,
+            )
+            .await
+    }
+
     /// 安装应用层提供的任务指标观察者。
     pub fn with_metrics_observer(self, observer: Arc<dyn JobMetricsObserver>) -> Self {
         self.set_metrics_observer(observer);
@@ -221,6 +243,11 @@ impl JobQueue {
         self.repository
             .enqueue_in_transaction(transaction, command, now)
             .await
+    }
+
+    /// 仅供持有 control 业务资源的 watchdog 核对权威关联任务。
+    pub async fn linked_job(&self, job_id: i64) -> AppResult<Option<background_job::Model>> {
+        self.repository.find_by_id(self.primary(), job_id).await
     }
 
     /// 查询当前租户的后台任务；任务类型和状态均为精确匹配。

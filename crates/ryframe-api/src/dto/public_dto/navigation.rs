@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use ryframe_kernel::AppError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -30,13 +31,29 @@ impl From<MenuType> for ServiceMenuType {
     }
 }
 
+impl TryFrom<&str> for MenuType {
+    type Error = AppError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "M" => Ok(Self::Directory),
+            "C" => Ok(Self::Page),
+            "F" => Ok(Self::Action),
+            _ => {
+                tracing::error!(menu_type = value, "服务层返回了未识别的菜单类型");
+                Err(AppError::Internal("菜单数据包含未识别的 menu_type".into()))
+            }
+        }
+    }
+}
+
 /// 菜单响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MenuVo {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
-    pub menu_type: String,
+    pub menu_type: MenuType,
     pub perm_id: Option<String>,
     pub route_key: Option<String>,
     pub icon: Option<String>,
@@ -47,8 +64,10 @@ pub struct MenuVo {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<ServiceMenuVo> for MenuVo {
-    fn from(value: ServiceMenuVo) -> Self {
+impl TryFrom<ServiceMenuVo> for MenuVo {
+    type Error = AppError;
+
+    fn try_from(value: ServiceMenuVo) -> Result<Self, Self::Error> {
         let ServiceMenuVo {
             id,
             name,
@@ -63,11 +82,11 @@ impl From<ServiceMenuVo> for MenuVo {
             remark,
             created_at,
         } = value;
-        Self {
+        Ok(Self {
             id,
             name,
             parent_id,
-            menu_type,
+            menu_type: MenuType::try_from(menu_type.as_str())?,
             perm_id,
             route_key,
             icon,
@@ -76,7 +95,7 @@ impl From<ServiceMenuVo> for MenuVo {
             status,
             remark,
             created_at,
-        }
+        })
     }
 }
 
@@ -86,7 +105,7 @@ pub struct MenuTreeNode {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
-    pub menu_type: String,
+    pub menu_type: MenuType,
     pub perm_id: Option<String>,
     pub perm_code: Option<String>,
     pub route_key: Option<String>,
@@ -98,8 +117,10 @@ pub struct MenuTreeNode {
     pub children: Vec<MenuTreeNode>,
 }
 
-impl From<ServiceMenuTreeNode> for MenuTreeNode {
-    fn from(value: ServiceMenuTreeNode) -> Self {
+impl TryFrom<ServiceMenuTreeNode> for MenuTreeNode {
+    type Error = AppError;
+
+    fn try_from(value: ServiceMenuTreeNode) -> Result<Self, Self::Error> {
         let ServiceMenuTreeNode {
             id,
             name,
@@ -114,11 +135,15 @@ impl From<ServiceMenuTreeNode> for MenuTreeNode {
             status,
             children,
         } = value;
-        Self {
+        let children = children
+            .into_iter()
+            .map(Self::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
             id,
             name,
             parent_id,
-            menu_type,
+            menu_type: MenuType::try_from(menu_type.as_str())?,
             perm_id,
             perm_code,
             route_key,
@@ -126,8 +151,8 @@ impl From<ServiceMenuTreeNode> for MenuTreeNode {
             sort,
             visible,
             status,
-            children: children.into_iter().map(Self::from).collect(),
-        }
+            children,
+        })
     }
 }
 
@@ -157,6 +182,21 @@ impl From<PermissionType> for ServicePermissionType {
     }
 }
 
+impl TryFrom<&str> for PermissionType {
+    type Error = AppError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "api" => Ok(Self::Api),
+            "menu" => Ok(Self::Menu),
+            _ => {
+                tracing::error!(perm_type = value, "服务层返回了未识别的权限类型");
+                Err(AppError::Internal("权限数据包含未识别的 perm_type".into()))
+            }
+        }
+    }
+}
+
 /// 权限树节点。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PermissionTreeNode {
@@ -164,7 +204,7 @@ pub struct PermissionTreeNode {
     pub name: String,
     pub code: String,
     pub parent_id: Option<String>,
-    pub perm_type: String,
+    pub perm_type: PermissionType,
     pub icon: Option<String>,
     pub sort: i32,
     pub status: String,
@@ -172,8 +212,10 @@ pub struct PermissionTreeNode {
     pub children: Vec<PermissionTreeNode>,
 }
 
-impl From<ServicePermissionTreeNode> for PermissionTreeNode {
-    fn from(value: ServicePermissionTreeNode) -> Self {
+impl TryFrom<ServicePermissionTreeNode> for PermissionTreeNode {
+    type Error = AppError;
+
+    fn try_from(value: ServicePermissionTreeNode) -> Result<Self, Self::Error> {
         let ServicePermissionTreeNode {
             id,
             name,
@@ -185,17 +227,21 @@ impl From<ServicePermissionTreeNode> for PermissionTreeNode {
             status,
             children,
         } = value;
-        Self {
+        let children = children
+            .into_iter()
+            .map(Self::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
             id,
             name,
             code,
             parent_id,
-            perm_type,
+            perm_type: PermissionType::try_from(perm_type.as_str())?,
             icon,
             sort,
             status,
-            children: children.into_iter().map(Self::from).collect(),
-        }
+            children,
+        })
     }
 }
 
@@ -206,15 +252,17 @@ pub struct PermissionVo {
     pub name: String,
     pub code: String,
     pub parent_id: Option<String>,
-    pub perm_type: String,
+    pub perm_type: PermissionType,
     pub icon: Option<String>,
     pub sort: i32,
     pub status: String,
     pub created_at: DateTime<Utc>,
 }
 
-impl From<ServicePermissionVo> for PermissionVo {
-    fn from(value: ServicePermissionVo) -> Self {
+impl TryFrom<ServicePermissionVo> for PermissionVo {
+    type Error = AppError;
+
+    fn try_from(value: ServicePermissionVo) -> Result<Self, Self::Error> {
         let ServicePermissionVo {
             id,
             name,
@@ -226,17 +274,17 @@ impl From<ServicePermissionVo> for PermissionVo {
             status,
             created_at,
         } = value;
-        Self {
+        Ok(Self {
             id,
             name,
             code,
             parent_id,
-            perm_type,
+            perm_type: PermissionType::try_from(perm_type.as_str())?,
             icon,
             sort,
             status,
             created_at,
-        }
+        })
     }
 }
 

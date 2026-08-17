@@ -45,34 +45,45 @@ pub(super) fn system_router(
             "/config-transfers",
             tenant_config_handler::config_transfer_router(state.clone()),
         );
-    // 服务账号功能关闭时仍挂载统一降级路由，返回 501 + `feature_disabled`，
-    // 避免前端在配置回退或菜单残留时把请求落入通用 404。
-    let database_idempotent = if state.services.service_accounts.is_some() {
-        database_idempotent
-            .nest(
-                "/service-accounts",
-                service_account_handler::service_account_router(state.clone()),
-            )
-            .nest(
-                "/service-delegations",
-                service_account_handler::service_delegation_router(state.clone()),
-            )
-            .nest(
-                "/service-access-audits",
-                service_account_handler::service_access_audit_router(state.clone()),
-            )
-    } else {
-        database_idempotent
-            .nest("/service-accounts", feature_disabled_router(state.clone()))
-            .nest(
-                "/service-delegations",
-                feature_disabled_router(state.clone()),
-            )
-            .nest(
-                "/service-access-audits",
-                feature_disabled_router(state.clone()),
-            )
-    };
+    // 始终挂载稳定路由：外层通用 Capability guard 会先区分部署 501
+    // 和租户产品授权 403，通过后才进入具体 RBAC 和 handler。
+    let database_idempotent = database_idempotent
+        .nest(
+            "/service-accounts",
+            service_account_handler::service_account_router(state.clone()).layer(
+                from_fn_with_state(
+                    CapabilityGuardState::new(
+                        state.clone(),
+                        ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                    ),
+                    capability_guard,
+                ),
+            ),
+        )
+        .nest(
+            "/service-delegations",
+            service_account_handler::service_delegation_router(state.clone()).layer(
+                from_fn_with_state(
+                    CapabilityGuardState::new(
+                        state.clone(),
+                        ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                    ),
+                    capability_guard,
+                ),
+            ),
+        )
+        .nest(
+            "/service-access-audits",
+            service_account_handler::service_access_audit_router(state.clone()).layer(
+                from_fn_with_state(
+                    CapabilityGuardState::new(
+                        state.clone(),
+                        ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                    ),
+                    capability_guard,
+                ),
+            ),
+        );
     let database_idempotent = database_idempotent.layer(from_fn_with_state(
         OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
         oper_log_middleware,

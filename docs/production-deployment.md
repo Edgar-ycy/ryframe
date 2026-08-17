@@ -158,11 +158,14 @@ Worker 服务上显式配置同一个具名卷或经过验证的共享挂载，�
 - 并发建立超过 `APP_MESSAGING_MAX_CONNECTIONS_PER_USER` 的同租户用户连接会被拒绝；慢消费者以 `1013` 关闭，大受众发布超过配置上限时整笔事务回滚且无部分收件人记录。
 - Prometheus 从允许网段携带 Bearer Token 抓取成功；公网或无 Token 请求被拒绝。
 - MySQL/Redis/对象存储 TLS 证书校验成功，数据库迁移和隔离库恢复演练通过。
+- `[tenant_data]` 的目标只从启动配置与 Secret 注入，平台接口和日志不出现 DSN、主机、数据库名、用户名、密码环境变量名或证书路径；专属目标至多绑定一个活动租户。
+- 先迁移并验证控制库，再迁移所有活动租户数据目标并核对 Schema 指纹；随后依次发布同版本 Worker/API 和前端。未使用或故障目标不得拖垮全局 `/readyz`，但受影响租户业务请求必须返回 `503 tenant_data_target_unavailable`。
+- 至少演练一次 shared→dedicated 停写迁移：维护窗口返回 `423`，切换后旧 generation 的读写均被 fence 拒绝，源数据保持冻结 168 小时；只有目标存在已验证恢复点后才允许人工 finalize。
 - API 与 Worker 使用相同的 `APP_DATA_RETENTION_*` 和 `APP_USER_IMPORT_*`；用户导入私有 bucket 对两类进程都可读写。
 - API 与 Worker 使用相同的 `APP_TENANT_CONFIG_TRANSFER_*`；默认保持 5 MiB 压缩包、20 MiB
   解压、10,000 项、168 小时 artifact 和 168 小时 rollback 窗口。两类进程都能访问私有
   `config-packages` bucket，bucket policy 不允许匿名读取或客户端选择对象路径。
-- 先部署迁移，再部署已经注册 `system.user.import` 和数据保留处理器的新 Worker，然后部署 API，最后发布前端；不得先让新 API 向旧 Worker 入队未知任务。
+- 先部署迁移，再部署已经注册 `system.user.import`、数据保留和租户数据迁移处理器的新 Worker，然后部署 API，最后发布前端；不得先让新 API 向旧 Worker 入队未知任务。
 - 配置迁移同样遵循“数据库迁移 → 已注册 export/preview/apply/rollback 处理器的新 Worker → API
   → 前端”；上线前生成配置包并完成一次只读预览，不得让新 API 向旧 Worker 入队未知任务。
 - 验证普通配置写在有效迁移租约期间返回 `409`，租约锁顺序为“租户行 → 租约行 → 资源/关系行”；

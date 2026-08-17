@@ -128,6 +128,7 @@ impl TenantConfigTransferService {
                 actor.user_id,
                 idempotency_key_hash,
                 &parsed.package_sha256,
+                &parsed.manifest.required_capabilities,
             )
             .await?
         {
@@ -168,11 +169,19 @@ impl TenantConfigTransferService {
         requested_by: i64,
         idempotency_key_hash: &str,
         package_sha256: &str,
+        required_capabilities: &[CapabilityRequirement],
     ) -> AppResult<Option<(tenant_config_transfer::Model, tenant_config_bundle::Model)>> {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let result = async {
             self.repository
                 .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+                .await?;
+            self.product_service
+                .ensure_capability_requirements_in_txn(
+                    &transaction,
+                    tenant_id,
+                    required_capabilities,
+                )
                 .await?;
             let existing = self
                 .repository
@@ -224,6 +233,7 @@ impl TenantConfigTransferService {
     ) -> AppResult<RequestTenantConfigTransferOutcome> {
         validate_sha256(idempotency_key_hash)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
+        let parsed = self.load_bundle_package(tenant_id, bundle_id).await?;
         let request_fingerprint =
             transfer_request_fingerprint(REQUEST_KIND_FROM_PACKAGE, bundle_id);
         let transaction = self.db.write().begin().await.map_err(database_error)?;
@@ -231,6 +241,13 @@ impl TenantConfigTransferService {
             let fence = self
                 .repository
                 .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+                .await?;
+            self.product_service
+                .ensure_capability_requirements_in_txn(
+                    &transaction,
+                    tenant_id,
+                    &parsed.manifest.required_capabilities,
+                )
                 .await?;
             if let Some(existing) = self
                 .repository
@@ -316,6 +333,13 @@ impl TenantConfigTransferService {
             let fence = self
                 .repository
                 .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+                .await?;
+            self.product_service
+                .ensure_capability_requirements_in_txn(
+                    &transaction,
+                    tenant_id,
+                    &parsed.manifest.required_capabilities,
+                )
                 .await?;
             if let Some(existing) = self
                 .repository

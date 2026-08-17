@@ -38,17 +38,6 @@ pub fn mark_expected_service_unavailable(response: &mut Response) {
         .insert(ExpectedServiceUnavailableResponse);
 }
 
-/// 标记已由功能开关确认的预期 501 响应。
-#[derive(Clone, Copy, Debug)]
-pub struct ExpectedFeatureDisabledResponse;
-
-/// 为已确认的功能未启用响应添加内部日志标记，避免每个降级请求重复输出 ERROR。
-pub fn mark_expected_feature_disabled(response: &mut Response) {
-    response
-        .extensions_mut()
-        .insert(ExpectedFeatureDisabledResponse);
-}
-
 /// 将稳定错误码映射为同名本地化资源键。
 pub const fn error_message_key(error_code: ErrorCode) -> &'static str {
     match error_code {
@@ -63,7 +52,14 @@ pub const fn error_message_key(error_code: ErrorCode) -> &'static str {
         ErrorCode::Config => "error.config",
         ErrorCode::Internal => "error.internal",
         ErrorCode::ServiceUnavailable => "error.service_unavailable",
-        ErrorCode::FeatureDisabled => "error.feature_disabled",
+        ErrorCode::CapabilityUnavailable => "error.capability_unavailable",
+        ErrorCode::TenantCapabilityDenied => "error.tenant_capability_denied",
+        ErrorCode::PermissionDenied => "error.permission_denied",
+        ErrorCode::StaleRuntimeEpoch => "error.stale_runtime_epoch",
+        ErrorCode::StalePlacementGeneration => "error.stale_placement_generation",
+        ErrorCode::TenantOperationConflict => "error.tenant_operation_conflict",
+        ErrorCode::TenantDataMaintenance => "error.tenant_data_maintenance",
+        ErrorCode::TenantDataTargetUnavailable => "error.tenant_data_target_unavailable",
     }
 }
 
@@ -275,7 +271,19 @@ impl IntoResponse for HttpAppError {
             // 依赖故障或显式禁用的日志应由拥有该依赖状态的边界负责；此处仅做
             // HTTP 映射，避免同一个 503 在每个请求上重复输出 ERROR。
             AppError::ServiceUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, None),
-            AppError::FeatureDisabled(_) => (StatusCode::NOT_IMPLEMENTED, None),
+            AppError::CapabilityUnavailable(_) => (StatusCode::NOT_IMPLEMENTED, None),
+            AppError::TenantCapabilityDenied(_) | AppError::PermissionDenied(_) => {
+                (StatusCode::FORBIDDEN, None)
+            }
+            AppError::StaleRuntimeEpoch(_)
+            | AppError::StalePlacementGeneration(_)
+            | AppError::TenantOperationConflict(_) => (StatusCode::CONFLICT, None),
+            AppError::TenantDataMaintenance(_, retry_after) => {
+                (StatusCode::LOCKED, Some(*retry_after))
+            }
+            AppError::TenantDataTargetUnavailable(_, retry_after) => {
+                (StatusCode::SERVICE_UNAVAILABLE, Some(*retry_after))
+            }
         };
 
         let body = ApiResponse::<()>::fail(

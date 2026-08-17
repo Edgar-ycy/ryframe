@@ -69,7 +69,7 @@ async fn create_transfer_tables(manager: &SchemaManager<'_>) -> Result<(), DbErr
     Ok(())
 }
 
-pub(crate) fn tenant_config_table_statements() -> [&'static str; 4] {
+pub(crate) fn tenant_config_table_statements() -> [&'static str; 3] {
     [
         r#"CREATE TABLE IF NOT EXISTS `sys_tenant_config_bundle` (
             `id` BIGINT NOT NULL,
@@ -177,25 +177,6 @@ pub(crate) fn tenant_config_table_statements() -> [&'static str; 4] {
                 REFERENCES `sys_tenant_config_transfer` (`tenant_id`, `id`)
                 ON UPDATE CASCADE ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移明细'"#,
-        r#"CREATE TABLE IF NOT EXISTS `sys_tenant_config_lease` (
-            `tenant_id` VARCHAR(64) NOT NULL,
-            `owner_token` VARCHAR(64) NOT NULL,
-            `transfer_id` BIGINT NOT NULL,
-            `operation` VARCHAR(16) NOT NULL,
-            `expires_at` DATETIME(6) NOT NULL,
-            `created_at` DATETIME(6) NOT NULL,
-            `updated_at` DATETIME(6) NOT NULL,
-            PRIMARY KEY (`tenant_id`),
-            KEY `idx_tenant_config_lease_expiry` (`expires_at`, `tenant_id`),
-            KEY `idx_tenant_config_lease_transfer` (`tenant_id`, `transfer_id`),
-            CONSTRAINT `fk_tenant_config_lease_tenant`
-                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
-                ON UPDATE CASCADE ON DELETE CASCADE,
-            CONSTRAINT `fk_tenant_config_lease_transfer`
-                FOREIGN KEY (`tenant_id`, `transfer_id`)
-                REFERENCES `sys_tenant_config_transfer` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户配置迁移租约'"#,
     ]
 }
 

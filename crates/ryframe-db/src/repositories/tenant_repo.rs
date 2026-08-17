@@ -80,6 +80,21 @@ impl TenantRepository {
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 
+    /// 在创建 Saga 首事务内查询并锁定可能存在的租户。
+    ///
+    /// MySQL 8.4/InnoDB 在默认 REPEATABLE READ 下会对未命中的唯一索引范围持有间隙锁，
+    /// 使“检查不存在→创建”不会在事务外留下竞态窗口。
+    pub async fn lock_optional_tenant_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+    ) -> AppResult<Option<tenant::Model>> {
+        Self::locked_tenant_query(tenant_id)
+            .one(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     /// 在调用方事务内递增租户授权纪元，并返回递增后的持久化值。
     pub async fn increment_authorization_epoch_in_txn(
         &self,
@@ -106,6 +121,35 @@ impl TenantRepository {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?
             .map(|tenant| tenant.authorization_epoch)
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))
+    }
+
+    /// 在已锁定租户的控制事务内递增运行时纪元并返回新值。
+    pub async fn increment_runtime_epoch_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+    ) -> AppResult<i64> {
+        self.lock_tenant_in_txn(txn, tenant_id).await?;
+        let result = tenant::Entity::update_many()
+            .col_expr(
+                tenant::Column::RuntimeEpoch,
+                Expr::col(tenant::Column::RuntimeEpoch).add(1),
+            )
+            .col_expr(tenant::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .exec(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("租户不存在".into()));
+        }
+        tenant::Entity::find()
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .one(txn)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .map(|tenant| tenant.runtime_epoch)
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 

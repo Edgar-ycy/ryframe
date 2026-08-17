@@ -35,9 +35,60 @@ pub use jobs::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 
-use ryframe_kernel::{ActorContext, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_tenant_db::TenantDataError;
 
 pub(crate) fn validated_tenant_id(actor: &ActorContext) -> AppResult<&str> {
     ryframe_core::validate_explicit_tenant(&actor.tenant_id)?;
     Ok(&actor.tenant_id)
+}
+
+/// 在应用边界把租户数据基础设施错误映射为稳定领域错误，不依赖展示字符串。
+pub fn map_tenant_data_error(error: TenantDataError) -> AppError {
+    match error {
+        TenantDataError::InvalidConfiguration(message) => AppError::Config(message),
+        TenantDataError::InvalidTenantId(message) => AppError::Validation(message),
+        TenantDataError::StalePlacementGeneration {
+            tenant_id,
+            session_generation,
+            current_generation,
+        } => AppError::StalePlacementGeneration(format!(
+            "tenant={tenant_id}, session={session_generation}, current={current_generation}"
+        )),
+        TenantDataError::TenantDataMaintenance {
+            tenant_id,
+            generation,
+        } => AppError::TenantDataMaintenance(
+            format!("tenant={tenant_id}, generation={generation}"),
+            5,
+        ),
+        TenantDataError::FenceRejected {
+            tenant_id,
+            target_key,
+            ..
+        } => AppError::TenantDataMaintenance(format!("tenant={tenant_id}, target={target_key}"), 5),
+        TenantDataError::DedicatedTargetOccupied { target_key } => {
+            AppError::TenantOperationConflict(format!(
+                "dedicated tenant-data target is occupied: {target_key}"
+            ))
+        }
+        TenantDataError::UnknownTarget { target_key }
+        | TenantDataError::TargetUnavailable { target_key } => {
+            AppError::TenantDataTargetUnavailable(
+                format!("tenant-data target unavailable: {target_key}"),
+                5,
+            )
+        }
+        TenantDataError::PlacementUnavailable { tenant_id }
+        | TenantDataError::InvalidPlacement { tenant_id, .. } => {
+            AppError::TenantDataTargetUnavailable(
+                format!("tenant-data placement unavailable: {tenant_id}"),
+                5,
+            )
+        }
+        TenantDataError::PoolCapacityExhausted { .. }
+        | TenantDataError::ConnectionBudgetExhausted { .. } => {
+            AppError::TenantDataTargetUnavailable("tenant-data pool capacity exhausted".into(), 5)
+        }
+    }
 }

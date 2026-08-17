@@ -14,6 +14,7 @@ use ryframe_service::system::{LoginStatus, RecordLoginCommand};
 use validator::Validate;
 
 use super::{
+    context::{build_session_context, login_actor},
     cookies::{refresh_cookie, refresh_cookie_session_id},
     guards::{
         enforce_login_rate_limit, extract_ip, extract_user_agent, tenant_id, validate_auth_origin,
@@ -200,6 +201,22 @@ pub async fn login(
                 }
                 return Err(error.into());
             }
+            let actor = login_actor(result.user_id, &result.user_info);
+            let session_context = match build_session_context(&state, &actor).await {
+                Ok(context) => context,
+                Err(error) => {
+                    if let Err(revoke_error) = state
+                        .services
+                        .auth
+                        .refresh_sessions()
+                        .revoke_for_user(&tenant_id, result.user_id, &result.sid)
+                        .await
+                    {
+                        tracing::error!(%revoke_error, sid = %result.sid, "会话上下文构建失败后的会话补偿撤销失败");
+                    }
+                    return Err(error.into());
+                }
+            };
             if let Err(error) = add_online_user(&state, &tenant_id, &result, &ip, user_agent).await
             {
                 ryframe_middleware::metrics::record_redis_degraded("login_session_metadata");
@@ -222,7 +239,10 @@ pub async fn login(
                     result.refresh_expires_at,
                     state.config.environment,
                 )),
-                Json(ApiResponse::success(LoginResponse::from(result))),
+                Json(ApiResponse::success(LoginResponse::new(
+                    result,
+                    session_context,
+                ))),
             )
                 .into_response())
         }
