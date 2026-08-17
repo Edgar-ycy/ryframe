@@ -40,7 +40,7 @@ docker build \
 `repository@sha256:digest` 写入 `RYFRAME_IMAGE`。`deploy/.env.production.example` 中的值
 仅表示部署方构建产物，不引用 GHCR 或任何 GitHub Release 自定义附件。
 
-`deploy/compose.prod.yml` 仅编排 API、独立迁移进程和独立 Worker，MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。复制 `deploy/.env.production.example` 到部署平台配置，生成主库密码、数据库副本 JSON、业务数据源 JSON、Redis 密码、对象存储凭据、JWT 密钥和指标 Token 文件，并全部以 Docker secret 只读挂载；没有副本或业务数据源时对应文件内容为 `[]`。不得把真实密码、令牌、私钥、连接 JSON 或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，镜像必须采用部署环境构建并审计过的 digest 引用。
+`deploy/compose.prod.yml` 依次编排控制库迁移、租户数据迁移、API 和独立 Worker；MySQL、Redis 与对象存储均应为受控网络中的外部托管服务。控制库迁移完成后，Compose 会执行 `ryframe-migrate tenant-data up --all`，包括 `shared-control` 的独立数据面迁移账本；两个迁移服务成功退出后才允许 Worker 和 API 启动。复制 `deploy/.env.production.example` 到部署平台配置，生成主库密码、数据库副本 JSON、业务数据源 JSON、Redis 密码、对象存储凭据、JWT 密钥和指标 Token 文件，并全部以 Docker secret 只读挂载；没有副本或业务数据源时对应文件内容为 `[]`。不得把真实密码、令牌、私钥、连接 JSON 或可变镜像 tag 写入仓库。Compose 中 API 与 Worker 的 Snowflake 节点号必须不同，镜像必须采用部署环境构建并审计过的 digest 引用。
 
 Compose 默认使用只读根文件系统、删除全部 Linux capability、启用 `no-new-privileges`、限制
 每个容器最多 256 个进程，并给停止流程保留 15 秒优雅退出时间。CPU、内存和更严格的进程

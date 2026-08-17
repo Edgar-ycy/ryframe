@@ -139,20 +139,33 @@ x-ryframe-service: &ryframe-service
     - backend
 
 services:
-  migrate:
+  migrate-control:
     <<: *ryframe-service
     restart: "no"
     entrypoint: ["/usr/local/bin/ryframe-migrate"]
-    command: ["up"]
+    command: ["control", "up"]
     environment:
       <<: *ryframe-environment
-      # 独立迁移二进制负责执行 DDL；API 与 Worker 仍使用 verify。
-      APP_DATABASE_MIGRATION_MODE: auto
+      # 独立迁移二进制显式执行 DDL；生产配置本身仍只能使用 verify。
+      APP_DATABASE_MIGRATION_MODE: verify
+
+  migrate-tenant-data:
+    <<: *ryframe-service
+    restart: "no"
+    entrypoint: ["/usr/local/bin/ryframe-migrate"]
+    command: ["tenant-data", "up", "--all"]
+    depends_on:
+      migrate-control:
+        condition: service_completed_successfully
+    environment:
+      <<: *ryframe-environment
+      # shared-control 与控制库共用 Schema，但两类迁移账本必须分别完成。
+      APP_DATABASE_MIGRATION_MODE: verify
 
   api:
     <<: *ryframe-service
     depends_on:
-      migrate:
+      migrate-tenant-data:
         condition: service_completed_successfully
       worker:
         condition: service_healthy
@@ -175,7 +188,7 @@ services:
   worker:
     <<: *ryframe-service
     depends_on:
-      migrate:
+      migrate-tenant-data:
         condition: service_completed_successfully
     entrypoint: ["/usr/local/bin/ryframe-worker"]
     environment:
