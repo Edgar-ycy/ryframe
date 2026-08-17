@@ -8,6 +8,7 @@ uploads/
 __pycache__/
 *.pyc
 .local-tests/
+/.local-secrets/
 **/mutants.out*/
 .idea/
 .claude
