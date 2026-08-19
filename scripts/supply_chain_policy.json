@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "tools": {
+    "cargo-audit": "0.22.2",
+    "cargo-deny": "0.20.2",
+    "cargo-cyclonedx": "0.5.9",
+    "trivy": "0.72.0"
+  },
+  "vulnerability_gate": {
+    "severities": [
+      "HIGH",
+      "CRITICAL"
+    ],
+    "exceptions": []
+  },
+  "dependency_graph_exceptions": [
+    {
+      "package": "rkyv",
+      "version": "0.7.46",
+      "enforcement": "must_be_absent_from_resolved_graph",
+      "owner": "backend-maintainers",
+      "expires": "2026-12-31",
+      "reason": "rust_decimal 未启用的可选依赖；一旦进入实际构建图就必须升级"
+    }
+  ]
+}

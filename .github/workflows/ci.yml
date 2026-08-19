@@ -67,6 +67,9 @@ jobs:
       - name: Test repository policy scripts
         run: python -m unittest discover -s scripts/tests -p 'test_*.py'
 
+      - name: 校验供应链固定版本与例外策略
+        run: python scripts/check_supply_chain.py
+
       - name: Check workspace architecture and production source size
         run: python scripts/check_architecture.py
 
@@ -196,15 +199,11 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
-          tool: cargo-audit
+          tool: cargo-audit@0.22.2
+          fallback: none
 
-      # rkyv 0.7.46 是 rust_decimal 未启用的可选依赖；若它进入实际构建图，则禁止继续忽略该漏洞。
-      - name: Verify conditional rkyv audit exception
-        run: |
-          if cargo tree --locked --workspace --all-features --target all --invert rkyv@0.7.46 2>/dev/null | grep -Fxq 'rkyv v0.7.46'; then
-            echo "::error::rkyv 0.7.46 已进入实际构建依赖图，必须先升级再通过安全审计"
-            exit 1
-          fi
+      - name: 校验供应链策略和条件依赖例外
+        run: python scripts/check_supply_chain.py --verify-cargo-graph
 
       - name: Run cargo audit
         run: cargo audit --deny warnings
@@ -212,10 +211,61 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
+          fallback: none
 
       - name: Check licenses, bans, and sources
         run: cargo deny check licenses bans sources
+
+  # ============================================================
+  # 可复现软件物料清单
+  # ============================================================
+  supply-chain:
+    name: 后端 CycloneDX 物料清单
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 安装固定版本 CycloneDX 工具
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: cargo-cyclonedx@0.5.9
+          fallback: none
+
+      - name: 生成并校验可复现 Cargo CycloneDX 清单
+        shell: bash
+        env:
+          SBOM_PATH: ${{ runner.temp }}/supply-chain/ryframe-backend.cdx.json
+        run: |
+          set -euo pipefail
+          mkdir --parents "$(dirname "$SBOM_PATH")"
+          export SOURCE_DATE_EPOCH="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
+          cargo cyclonedx \
+            --manifest-path crates/ryframe/Cargo.toml \
+            --format json \
+            --spec-version 1.5 \
+            --target x86_64-unknown-linux-gnu \
+            --all \
+            --override-filename ryframe-backend.cdx.json
+          mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"
+          python scripts/check_supply_chain.py \
+            --cyclonedx "$SBOM_PATH" \
+            --require-reproducible-cyclonedx
+
+      - name: 保存 Cargo CycloneDX 清单
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-cargo-cyclonedx-${{ github.sha }}
+          path: ${{ runner.temp }}/supply-chain/ryframe-backend.cdx.json
+          if-no-files-found: error
+          retention-days: 30
 
   # ============================================================
   # 部署资产校验
@@ -279,6 +329,10 @@ jobs:
         if: steps.deployment-changes.outputs.required == 'true'
         run: python scripts/check_deployment_assets.py
 
+      - name: 校验供应链固定版本与例外策略
+        if: steps.deployment-changes.outputs.required == 'true'
+        run: python scripts/check_supply_chain.py
+
       - name: 校验 Compose 展开结果
         if: steps.deployment-changes.outputs.required == 'true'
         run: >-
@@ -328,3 +382,67 @@ jobs:
           python scripts/check_deployment_assets.py
           --image "ryframe-ci:$GITHUB_SHA"
           --expected-commit "$GITHUB_SHA"
+
+      - name: 安装固定版本镜像扫描器
+        if: >-
+          steps.deployment-changes.outputs.required == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: trivy@0.72.0
+          fallback: none
+
+      - name: 生成并校验生产镜像 CycloneDX 清单
+        id: image-sbom
+        if: >-
+          steps.deployment-changes.outputs.required == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/supply-chain"
+          mkdir --parents "$output_dir"
+          trivy image \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" \
+            --timeout 30m \
+            --format cyclonedx \
+            --output "$output_dir/ryframe-image.cdx.json" \
+            "ryframe-ci:$GITHUB_SHA"
+          python scripts/check_supply_chain.py \
+            --cyclonedx "$output_dir/ryframe-image.cdx.json"
+
+      - name: 扫描生产镜像高危漏洞
+        id: image-scan
+        if: >-
+          steps.deployment-changes.outputs.required == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy image \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" \
+            --timeout 30m \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output "$RUNNER_TEMP/supply-chain/trivy-report.json" \
+            "ryframe-ci:$GITHUB_SHA"
+
+      - name: 应用有期限的漏洞例外策略
+        if: >-
+          steps.deployment-changes.outputs.required == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        run: >-
+          python scripts/check_supply_chain.py
+          --trivy-report "$RUNNER_TEMP/supply-chain/trivy-report.json"
+
+      - name: 保存镜像清单与漏洞报告
+        if: >-
+          always() &&
+          (steps.image-sbom.outcome == 'success' || steps.image-scan.outcome == 'success')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-image-security-${{ github.sha }}
+          path: ${{ runner.temp }}/supply-chain
+          if-no-files-found: error
+          retention-days: 30
