@@ -144,6 +144,31 @@ pub(super) fn login_actor(user_id: i64, user: &UserInfo) -> ActorContext {
     }
 }
 
+pub(crate) fn map_tenant_data_error(error: TenantDataError) -> AppError {
+    match error {
+        TenantDataError::StalePlacementGeneration { .. } => {
+            AppError::StalePlacementGeneration(error.to_string())
+        }
+        TenantDataError::TenantDataMaintenance { .. } => {
+            AppError::TenantDataMaintenance(error.to_string(), 5)
+        }
+        TenantDataError::InvalidTenantId(message) => AppError::Validation(message),
+        TenantDataError::InvalidConfiguration(message)
+        | TenantDataError::InvalidPlacement {
+            reason: message, ..
+        } => AppError::Config(message),
+        TenantDataError::UnknownTarget { .. }
+        | TenantDataError::PlacementUnavailable { .. }
+        | TenantDataError::TargetUnavailable { .. }
+        | TenantDataError::PoolCapacityExhausted { .. }
+        | TenantDataError::ConnectionBudgetExhausted { .. }
+        | TenantDataError::FenceRejected { .. }
+        | TenantDataError::DedicatedTargetOccupied { .. } => {
+            AppError::TenantDataTargetUnavailable(error.to_string(), 5)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ryframe_application::UserInfo;
@@ -172,30 +197,5 @@ mod tests {
     fn login_actor_does_not_infer_super_admin_from_role_code() {
         assert!(!login_actor(1, &user("admin", false)).is_super_admin);
         assert!(login_actor(1, &user("ordinary", true)).is_super_admin);
-    }
-}
-
-pub(crate) fn map_tenant_data_error(error: TenantDataError) -> AppError {
-    match error {
-        TenantDataError::StalePlacementGeneration { .. } => {
-            AppError::StalePlacementGeneration(error.to_string())
-        }
-        TenantDataError::TenantDataMaintenance { .. } => {
-            AppError::TenantDataMaintenance(error.to_string(), 5)
-        }
-        TenantDataError::InvalidTenantId(message) => AppError::Validation(message),
-        TenantDataError::InvalidConfiguration(message)
-        | TenantDataError::InvalidPlacement {
-            reason: message, ..
-        } => AppError::Config(message),
-        TenantDataError::UnknownTarget { .. }
-        | TenantDataError::PlacementUnavailable { .. }
-        | TenantDataError::TargetUnavailable { .. }
-        | TenantDataError::PoolCapacityExhausted { .. }
-        | TenantDataError::ConnectionBudgetExhausted { .. }
-        | TenantDataError::FenceRejected { .. }
-        | TenantDataError::DedicatedTargetOccupied { .. } => {
-            AppError::TenantDataTargetUnavailable(error.to_string(), 5)
-        }
     }
 }
