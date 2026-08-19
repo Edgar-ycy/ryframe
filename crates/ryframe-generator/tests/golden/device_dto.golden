@@ -1,0 +1,72 @@
+// 此文件由 ryframe-generator v0.9.0 自动生成。
+// 租户数据边界：API 数据传输
+use ryframe_application::business::{
+    CreateDeviceCommand, DeviceKey, DevicePageQuery,
+    UpdateDeviceCommand,
+};
+use ryframe_kernel::AppResult;
+use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
+
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceKeyDto {
+    pub id: i64,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceListDto {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+}
+
+impl DeviceListDto {
+    pub fn into_query(self, default_page_size: u64, max_page_size: u64) -> AppResult<DevicePageQuery> {
+        DevicePageQuery::new(
+            self.page.unwrap_or(1),
+            self.page_size.unwrap_or(default_page_size),
+            max_page_size,
+        )
+    }
+}
+
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateDeviceDto {
+    pub name: String,
+    pub status: i8,
+}
+
+#[derive(Debug, Deserialize, validator::Validate, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateDeviceDto {
+    pub name: String,
+    pub status: i8,
+}
+
+impl From<DeviceKeyDto> for DeviceKey {
+    fn from(value: DeviceKeyDto) -> Self {
+        Self {
+            id: value.id,
+        }
+    }
+}
+
+impl From<CreateDeviceDto> for CreateDeviceCommand {
+    fn from(value: CreateDeviceDto) -> Self {
+        Self {
+            name: value.name,
+            status: value.status,
+        }
+    }
+}
+
+impl From<UpdateDeviceDto> for UpdateDeviceCommand {
+    fn from(value: UpdateDeviceDto) -> Self {
+        Self {
+            name: value.name,
+            status: value.status,
+        }
+    }
+}

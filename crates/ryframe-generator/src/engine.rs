@@ -13,7 +13,7 @@ fn default_entity_dir() -> String {
 fn default_repository_dir() -> String {
     "crates/ryframe-db/src/repositories/business".into()
 }
-fn default_service_dir() -> String {
+fn default_use_case_dir() -> String {
     "crates/ryframe-application/src/business".into()
 }
 fn default_handler_dir() -> String {
@@ -25,6 +25,7 @@ fn default_dto_dir() -> String {
 
 /// 代码生成选项（多表支持 + 路径独立配置 + 选择性生成）
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GenerateOptions {
     /// 要生成的表名列表
     pub tables: Vec<String>,
@@ -34,8 +35,8 @@ pub struct GenerateOptions {
     pub entity_dir: String,
     #[serde(default = "default_repository_dir")]
     pub repository_dir: String,
-    #[serde(default = "default_service_dir")]
-    pub service_dir: String,
+    #[serde(default = "default_use_case_dir")]
+    pub use_case_dir: String,
     #[serde(default = "default_handler_dir")]
     pub handler_dir: String,
     #[serde(default = "default_dto_dir")]
@@ -47,7 +48,7 @@ pub struct GenerateOptions {
     #[serde(default = "default_true")]
     pub generate_repository: bool,
     #[serde(default = "default_true")]
-    pub generate_service: bool,
+    pub generate_use_case: bool,
     #[serde(default = "default_true")]
     pub generate_handler: bool,
     #[serde(default = "default_true")]
@@ -71,12 +72,12 @@ impl Default for GenerateOptions {
             tables: Vec::new(),
             entity_dir: default_entity_dir(),
             repository_dir: default_repository_dir(),
-            service_dir: default_service_dir(),
+            use_case_dir: default_use_case_dir(),
             handler_dir: default_handler_dir(),
             dto_dir: default_dto_dir(),
             generate_entity: true,
             generate_repository: true,
-            generate_service: true,
+            generate_use_case: true,
             generate_handler: true,
             generate_dto: true,
             table_prefixes: Vec::new(),
@@ -138,55 +139,42 @@ pub async fn generate(
     if opts.tables.is_empty() {
         return Err(AppError::Validation("未指定要生成的表名".into()));
     }
-
-    let entity_base = normalize_relative_output_path(&opts.entity_dir, "实体输出目录")?;
-    let repository_base =
-        normalize_relative_output_path(&opts.repository_dir, "Repository 输出目录")?;
-    let service_base = normalize_relative_output_path(&opts.service_dir, "Service 输出目录")?;
-    let handler_base = normalize_relative_output_path(&opts.handler_dir, "Handler 输出目录")?;
-    let dto_base = normalize_relative_output_path(&opts.dto_dir, "DTO 输出目录")?;
-    for (label, path, required_prefix) in [
-        (
-            "Repository",
-            repository_base.as_str(),
-            "crates/ryframe-db/src/repositories",
-        ),
-        (
-            "Service",
-            service_base.as_str(),
-            "crates/ryframe-application/src/business",
-        ),
-        (
-            "Handler",
-            handler_base.as_str(),
-            "crates/ryframe-api/src/handlers/business",
-        ),
-        (
-            "DTO",
-            dto_base.as_str(),
-            "crates/ryframe-api/src/dto/business",
-        ),
-    ] {
-        if path != required_prefix && !path.starts_with(&format!("{required_prefix}/")) {
-            return Err(AppError::Validation(format!(
-                "biz_ {label} 输出必须位于 {required_prefix} 边界内"
-            )));
-        }
-    }
-
-    let mut all_files: Vec<GeneratedFile> = Vec::new();
-    let mut generated_paths = HashSet::new();
+    output_directories(opts)?;
 
     let mut tables = Vec::with_capacity(opts.tables.len());
     for table_name in &opts.tables {
         validate_table_name(table_name)?;
         let table = crate::schema::fetch_table(db, table_name).await?;
-        validate_business_table(&table)?;
         tables.push(table);
     }
-    let catalog_tables = order_catalog_tables(&tables)?;
+    render_tables(&tables, opts)
+}
 
-    for table in &tables {
+/// 根据已读取的数据库结构纯渲染代码，不连接数据库也不写入磁盘。
+///
+/// 该入口用于确定性 golden 测试，也让预览阶段与写入阶段共享完全相同的结果。
+pub fn render_tables(
+    tables: &[crate::schema::TableInfo],
+    opts: &GenerateOptions,
+) -> AppResult<Vec<GeneratedFile>> {
+    if tables.is_empty() {
+        return Err(AppError::Validation("未提供可生成的表结构".into()));
+    }
+
+    let directories = output_directories(opts)?;
+    let entity_base = directories.entity;
+    let repository_base = directories.repository;
+    let use_case_base = directories.use_case;
+    let handler_base = directories.handler;
+    let dto_base = directories.dto;
+    for table in tables {
+        validate_business_table(table)?;
+    }
+    let catalog_tables = order_catalog_tables(tables)?;
+    let mut all_files = Vec::new();
+    let mut generated_paths = HashSet::new();
+
+    for table in tables {
         let table_name = &table.table_name;
         let base_name = crate::naming::strip_prefixes(table_name, &opts.table_prefixes);
         if base_name.is_empty() {
@@ -228,12 +216,12 @@ pub async fn generate(
             )?;
         }
 
-        if opts.generate_service {
-            let content = crate::template::service::render_service(table, &base_name);
+        if opts.generate_use_case {
+            let content = crate::template::use_case::render_use_case(table, &base_name);
             push_generated_file(
                 &mut all_files,
                 &mut generated_paths,
-                format!("{}/{}_service.rs", service_base, snake),
+                format!("{}/{}_use_case.rs", use_case_base, snake),
                 content,
             )?;
         }
@@ -258,6 +246,54 @@ pub async fn generate(
     )?;
 
     Ok(all_files)
+}
+
+struct OutputDirectories {
+    entity: String,
+    repository: String,
+    use_case: String,
+    handler: String,
+    dto: String,
+}
+
+fn output_directories(opts: &GenerateOptions) -> AppResult<OutputDirectories> {
+    let entity = normalize_relative_output_path(&opts.entity_dir, "实体输出目录")?;
+    let repository = normalize_relative_output_path(&opts.repository_dir, "Repository 输出目录")?;
+    let use_case = normalize_relative_output_path(&opts.use_case_dir, "用例输出目录")?;
+    let handler = normalize_relative_output_path(&opts.handler_dir, "Handler 输出目录")?;
+    let dto = normalize_relative_output_path(&opts.dto_dir, "DTO 输出目录")?;
+    for (label, path, required_prefix) in [
+        ("实体", entity.as_str(), "crates/ryframe-db/src/entities"),
+        (
+            "Repository",
+            repository.as_str(),
+            "crates/ryframe-db/src/repositories",
+        ),
+        (
+            "应用用例",
+            use_case.as_str(),
+            "crates/ryframe-application/src/business",
+        ),
+        (
+            "Handler",
+            handler.as_str(),
+            "crates/ryframe-api/src/handlers/business",
+        ),
+        ("DTO", dto.as_str(), "crates/ryframe-api/src/dto/business"),
+    ] {
+        if path != required_prefix && !path.starts_with(&format!("{required_prefix}/")) {
+            return Err(AppError::Validation(format!(
+                "biz_ {label} 输出必须位于 {required_prefix} 边界内"
+            )));
+        }
+    }
+    Ok(OutputDirectories {
+        entity,
+        repository,
+        use_case,
+        handler,
+        dto,
+    })
 }
 
 fn validate_business_table(table: &crate::schema::TableInfo) -> AppResult<()> {
@@ -420,12 +456,13 @@ fn push_generated_file(
     path: String,
     content: String,
 ) -> AppResult<()> {
-    if !paths.insert(path.clone()) {
+    if paths.contains(path.as_str()) {
         return Err(AppError::Validation(format!(
             "多个表生成了相同文件路径: {}",
             path
         )));
     }
+    paths.insert(path.clone());
     files.push(GeneratedFile { path, content });
     Ok(())
 }

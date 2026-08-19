@@ -3,7 +3,7 @@ pub mod dto;
 pub mod entity;
 pub mod handler;
 pub mod repository;
-pub mod service;
+pub mod use_case;
 
 use crate::schema::{ColumnInfo, TableInfo};
 

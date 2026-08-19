@@ -1,0 +1,300 @@
+// 此文件由 ryframe-generator v0.9.0 自动生成。
+// 租户数据边界：应用用例
+use chrono::{DateTime, Utc};
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use ryframe_kernel::{ActorContext, AppError, AppResult};
+use serde::Serialize;
+
+#[derive(Debug)]
+pub struct DeviceKey {
+    pub id: i64,
+}
+
+#[derive(Debug)]
+pub struct DeviceRecord {
+    pub tenant_id: String,
+    pub id: i64,
+    pub name: String,
+    pub status: i8,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub del_flag: i8,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceVo {
+    pub id: String,
+    pub name: String,
+    pub status: i8,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct CreateDeviceCommand {
+    pub name: String,
+    pub status: i8,
+}
+
+#[derive(Debug)]
+pub struct UpdateDeviceCommand {
+    pub name: String,
+    pub status: i8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DevicePageQuery {
+    page: u64,
+    page_size: u64,
+}
+
+impl DevicePageQuery {
+    pub fn new(page: u64, page_size: u64, max_page_size: u64) -> AppResult<Self> {
+        if page == 0 || page_size == 0 || page_size > max_page_size {
+            return Err(AppError::Validation("分页参数超出允许范围".into()));
+        }
+        page.checked_sub(1)
+            .and_then(|index| index.checked_mul(page_size))
+            .ok_or_else(|| AppError::Validation("分页偏移量溢出".into()))?;
+        Ok(Self { page, page_size })
+    }
+
+    pub const fn page(self) -> u64 {
+        self.page
+    }
+
+    pub const fn page_size(self) -> u64 {
+        self.page_size
+    }
+}
+
+#[derive(Debug)]
+pub struct DevicePage<T> {
+    pub records: Vec<T>,
+    pub total: u64,
+    pub page: u64,
+    pub page_size: u64,
+}
+
+impl<T> DevicePage<T> {
+    pub fn new(records: Vec<T>, total: u64, query: DevicePageQuery) -> Self {
+        Self {
+            records,
+            total,
+            page: query.page(),
+            page_size: query.page_size(),
+        }
+    }
+}
+
+#[async_trait]
+pub trait DeviceDataSource: Send + Sync {
+    type ReadConnection: Send + Sync;
+    type Transaction: Send + Sync;
+
+    async fn read_connection(&self, tenant_id: &str) -> AppResult<Self::ReadConnection>;
+    async fn begin(&self, tenant_id: &str) -> AppResult<Self::Transaction>;
+    async fn commit(&self, transaction: Self::Transaction) -> AppResult<()>;
+    async fn rollback(&self, transaction: Self::Transaction) -> AppResult<()>;
+}
+
+#[async_trait]
+pub trait DeviceRepositoryPort<C, T>: Send + Sync {
+    async fn find_by_id(
+        &self,
+        connection: &C,
+        tenant_id: &str,
+        key: &DeviceKey,
+    ) -> AppResult<Option<DeviceRecord>>;
+
+    async fn find_by_id_for_update(
+        &self,
+        transaction: &T,
+        tenant_id: &str,
+        key: &DeviceKey,
+    ) -> AppResult<Option<DeviceRecord>>;
+
+    async fn find_by_page(
+        &self,
+        connection: &C,
+        tenant_id: &str,
+        query: &DevicePageQuery,
+    ) -> AppResult<DevicePage<DeviceRecord>>;
+
+    async fn insert(
+        &self,
+        transaction: &T,
+        tenant_id: &str,
+        record: DeviceRecord,
+    ) -> AppResult<DeviceRecord>;
+
+    async fn update(
+        &self,
+        transaction: &T,
+        tenant_id: &str,
+        record: DeviceRecord,
+    ) -> AppResult<DeviceRecord>;
+
+    async fn delete(
+        &self,
+        transaction: &T,
+        tenant_id: &str,
+        key: &DeviceKey,
+    ) -> AppResult<()>;
+}
+
+pub trait DeviceKeyGenerator: Send + Sync {
+    fn next_key(&self) -> AppResult<DeviceKey>;
+}
+
+pub struct DeviceUseCase<D, R, I> {
+    data_source: Arc<D>,
+    repository: Arc<R>,
+    key_generator: Arc<I>,
+}
+
+impl<D, R, I> DeviceUseCase<D, R, I>
+where
+    D: DeviceDataSource,
+    R: DeviceRepositoryPort<D::ReadConnection, D::Transaction>,
+    I: DeviceKeyGenerator,
+{
+    pub fn new(data_source: Arc<D>, repository: Arc<R>, key_generator: Arc<I>) -> Self {
+        Self {
+            data_source,
+            repository,
+            key_generator,
+        }
+    }
+
+    pub async fn find_by_page(
+        &self,
+        actor: &ActorContext,
+        query: DevicePageQuery,
+    ) -> AppResult<DevicePage<DeviceVo>> {
+        let tenant_id = validated_tenant_id(actor)?;
+        let connection = self.data_source.read_connection(tenant_id).await?;
+        let page = self
+            .repository
+            .find_by_page(&connection, tenant_id, &query)
+            .await?;
+        Ok(DevicePage::new(
+            page.records.into_iter().map(DeviceVo::from).collect(),
+            page.total,
+            query,
+        ))
+    }
+
+    pub async fn find_by_id(
+        &self,
+        actor: &ActorContext,
+        key: &DeviceKey,
+    ) -> AppResult<Option<DeviceVo>> {
+        let tenant_id = validated_tenant_id(actor)?;
+        let connection = self.data_source.read_connection(tenant_id).await?;
+        Ok(self
+            .repository
+            .find_by_id(&connection, tenant_id, key)
+            .await?
+            .map(DeviceVo::from))
+    }
+
+    pub async fn create(
+        &self,
+        actor: &ActorContext,
+        command: CreateDeviceCommand,
+    ) -> AppResult<DeviceVo> {
+        let tenant_id = validated_tenant_id(actor)?;
+        let key = self.key_generator.next_key()?;
+        let record = DeviceRecord {
+            tenant_id: tenant_id.to_owned(),
+            id: key.id,
+            name: command.name,
+            status: command.status,
+            created_at: Utc::now(),
+            updated_at: Some(Utc::now()),
+            del_flag: 0,
+        };
+        let transaction = self.data_source.begin(tenant_id).await?;
+        let result = self
+            .repository
+            .insert(&transaction, tenant_id, record)
+            .await
+            .map(DeviceVo::from);
+        self.finish(transaction, result).await
+    }
+
+    pub async fn update(
+        &self,
+        actor: &ActorContext,
+        key: &DeviceKey,
+        command: UpdateDeviceCommand,
+    ) -> AppResult<DeviceVo> {
+        let tenant_id = validated_tenant_id(actor)?;
+        let transaction = self.data_source.begin(tenant_id).await?;
+        let result = async {
+            let mut record = self
+                .repository
+                .find_by_id_for_update(&transaction, tenant_id, key)
+                .await?
+                .ok_or_else(|| AppError::NotFound("记录不存在".into()))?;
+            record.name = command.name;
+            record.status = command.status;
+            record.updated_at = Some(Utc::now());
+            self.repository
+                .update(&transaction, tenant_id, record)
+                .await
+                .map(DeviceVo::from)
+        }
+        .await;
+        self.finish(transaction, result).await
+    }
+
+    pub async fn delete(
+        &self,
+        actor: &ActorContext,
+        key: &DeviceKey,
+    ) -> AppResult<()> {
+        let tenant_id = validated_tenant_id(actor)?;
+        let transaction = self.data_source.begin(tenant_id).await?;
+        let result = self
+            .repository
+            .delete(&transaction, tenant_id, key)
+            .await;
+        self.finish(transaction, result).await
+    }
+
+    async fn finish<T>(&self, transaction: D::Transaction, result: AppResult<T>) -> AppResult<T> {
+        match result {
+            Ok(value) => {
+                self.data_source.commit(transaction).await?;
+                Ok(value)
+            }
+            Err(error) => {
+                if self.data_source.rollback(transaction).await.is_err() {
+                    return Err(AppError::Internal("业务事务回滚失败".into()));
+                }
+                Err(error)
+            }
+        }
+    }
+}
+
+impl From<DeviceRecord> for DeviceVo {
+    fn from(record: DeviceRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            name: record.name,
+            status: record.status,
+            created_at: record.created_at,
+        }
+    }
+}
+
+fn validated_tenant_id(actor: &ActorContext) -> AppResult<&str> {
+    if actor.tenant_id.is_empty() || actor.tenant_id.trim() != actor.tenant_id {
+        return Err(AppError::Validation("租户标识无效".into()));
+    }
+    Ok(&actor.tenant_id)
+}

@@ -75,7 +75,7 @@ struct RawOptions {
     table_prefixes: Option<String>,
     entity_dir: Option<String>,
     repository_dir: Option<String>,
-    service_dir: Option<String>,
+    use_case_dir: Option<String>,
     handler_dir: Option<String>,
     dto_dir: Option<String>,
     comments: bool,
@@ -215,10 +215,10 @@ where
                 next_value(&mut arguments, "--repository-dir")?,
                 "--repository-dir",
             )?,
-            "--service-dir" => set_value(
-                &mut raw.service_dir,
-                next_value(&mut arguments, "--service-dir")?,
-                "--service-dir",
+            "--use-case-dir" => set_value(
+                &mut raw.use_case_dir,
+                next_value(&mut arguments, "--use-case-dir")?,
+                "--use-case-dir",
             )?,
             "--handler-dir" => set_value(
                 &mut raw.handler_dir,
@@ -291,9 +291,9 @@ fn apply_output_paths(options: &mut GenerateOptions, raw: &RawOptions) -> Result
             .unwrap_or(&options.repository_dir),
         "Repository 输出目录",
     )?;
-    options.service_dir = normalized_output_path(
-        raw.service_dir.as_deref().unwrap_or(&options.service_dir),
-        "Service 输出目录",
+    options.use_case_dir = normalized_output_path(
+        raw.use_case_dir.as_deref().unwrap_or(&options.use_case_dir),
+        "应用用例输出目录",
     )?;
     options.handler_dir = normalized_output_path(
         raw.handler_dir.as_deref().unwrap_or(&options.handler_dir),
@@ -447,19 +447,20 @@ fn help_text() -> String {
   --comments                 生成数据库注释
   --entity-dir <路径>        默认：{entity_dir}
   --repository-dir <路径>    默认：{repository_dir}
-  --service-dir <路径>       默认：{service_dir}
+  --use-case-dir <路径>      默认：{use_case_dir}
   --handler-dir <路径>       默认：{handler_dir}
   --dto-dir <路径>           默认：{dto_dir}
 
 所有输出目录必须是工作区相对路径，禁止绝对路径、空片段、`.` 与 `..`。
-Repository 必须位于 crates/ryframe-db/src/repositories，Service 必须位于 crates/ryframe-application/src/business。
+实体和 Repository 只能生成到 ryframe-db，应用用例只能生成到 ryframe-application，Handler 和 DTO 只能生成到 ryframe-api。
+Repository 只接收连接或事务；事务边界由应用用例控制。
 
 其他：
   -h, --help                 显示帮助
 "#,
         entity_dir = defaults.entity_dir,
         repository_dir = defaults.repository_dir,
-        service_dir = defaults.service_dir,
+        use_case_dir = defaults.use_case_dir,
         handler_dir = defaults.handler_dir,
         dto_dir = defaults.dto_dir,
     )
@@ -508,7 +509,7 @@ mod tests {
             "crates/ryframe-db/src/repositories/business"
         );
         assert_eq!(
-            options.generate.service_dir,
+            options.generate.use_case_dir,
             "crates/ryframe-application/src/business"
         );
         assert_eq!(options.generate.tables, ["biz_device", "biz_work_order"]);
@@ -523,7 +524,7 @@ mod tests {
             "biz_alpha,biz_beta",
             "--repository-dir",
             "crates/ryframe-db/src/repositories/generated",
-            "--service-dir",
+            "--use-case-dir",
             "crates/ryframe-application/src/business/generated",
             "--write",
             "--overwrite",
@@ -553,7 +554,7 @@ mod tests {
         for (flag, path) in [
             ("--entity-dir", "../outside"),
             ("--repository-dir", "C:\\outside"),
-            ("--service-dir", "/tmp/outside"),
+            ("--use-case-dir", "/tmp/outside"),
             ("--handler-dir", "crates/ryframe-api/../outside"),
         ] {
             let error = parse_error(&[flag, path]);

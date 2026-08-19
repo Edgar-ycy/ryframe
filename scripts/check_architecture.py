@@ -484,7 +484,7 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
     if re.search(r"(?m)^\s*ryframe-db-migration\s*=", tenant_manifest):
         errors.append("tenant-data migration module must not depend on the control migrator")
 
-    service_template = read("crates/ryframe-generator/src/template/service.rs")
+    use_case_template = read("crates/ryframe-generator/src/template/use_case.rs")
     repository_template = read("crates/ryframe-generator/src/template/repository.rs")
     tenant_data_repository = read(
         "crates/ryframe-db/src/repositories/tenant_data_repo.rs"
@@ -492,17 +492,28 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
     catalog_template = read("crates/ryframe-generator/src/template/catalog.rs")
     generator_engine = read("crates/ryframe-generator/src/engine.rs")
     for fragment in (
-        "Arc<TenantDatabaseRouter>",
-        ".resolve(tenant_id)",
-        ".find_by_page(&session",
-        ".insert(&session",
+        "DataSource",
+        "RepositoryPort",
+        ".begin(tenant_id)",
+        ".commit(transaction)",
+        ".rollback(transaction)",
+        ".insert(&transaction",
     ):
-        if fragment not in service_template:
-            errors.append(f"generator service template misses tenant-data chain: {fragment}")
+        if fragment not in use_case_template:
+            errors.append(f"generator use-case template misses application boundary: {fragment}")
+    for forbidden in (
+        "ryframe_db",
+        "ryframe_tenant_db",
+        "ryframe_adapters",
+        "ryframe_http",
+        "sea_orm",
+        "axum",
+    ):
+        if forbidden in use_case_template:
+            errors.append(f"generator use-case template crosses application boundary: {forbidden}")
     for fragment in (
-        "TenantDataSession",
-        ".select_read(ReadConsistency::Eventual)",
-        ".begin_write()",
+        "connection: &DatabaseConnection",
+        "transaction: &DatabaseTransaction",
         "find_by_id",
         "insert",
         "update",
@@ -510,7 +521,10 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
         ".reset_all()",
     ):
         if fragment not in repository_template:
-            errors.append(f"generator repository template misses transaction support: {fragment}")
+            errors.append(f"generator repository template misses SQL boundary: {fragment}")
+    for forbidden in (".begin(", ".commit(", ".rollback(", "TransactionTrait"):
+        if forbidden in repository_template:
+            errors.append(f"generator repository template owns transaction boundary: {forbidden}")
     if tenant_data_repository.count(".reset_all()") < 3:
         errors.append(
             "tenant-data repository saves must mark mutated model fields for UPDATE"
@@ -527,17 +541,24 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
     ):
         if fragment not in catalog_template:
             errors.append(f"generator catalog template misses: {fragment}")
-    for forbidden in ("ControlDatabaseCluster", "DatabaseConnection", ".write(", ".source("):
-        if forbidden in service_template or forbidden in repository_template:
+    for forbidden in ("ControlDatabaseCluster", ".write(", ".source("):
+        if forbidden in use_case_template or forbidden in repository_template:
             errors.append(f"generator business template reaches control data source: {forbidden}")
 
     for path in business_sources():
         source = path.read_text(encoding="utf-8")
-        forbidden_types = re.search(
-            r"\b(?:ControlDatabaseCluster|DatabaseConnection|"
-            r"TenantDataTargetHandle|TenantDatabaseTargetRegistry)\b",
-            source,
+        relative = path.relative_to(ROOT).as_posix()
+        is_generated_sql_boundary = relative.startswith(
+            "crates/ryframe-db/src/repositories/business/"
         )
+        forbidden_type_pattern = (
+            r"\b(?:ControlDatabaseCluster|TenantDataTargetHandle|"
+            r"TenantDatabaseTargetRegistry)\b"
+            if is_generated_sql_boundary
+            else r"\b(?:ControlDatabaseCluster|DatabaseConnection|"
+            r"TenantDataTargetHandle|TenantDatabaseTargetRegistry)\b"
+        )
+        forbidden_types = re.search(forbidden_type_pattern, source)
         forbidden_methods = re.search(
             r"\.(?:write|source|open_target(?:_for_catalog)?|verify_target_now(?:_for_catalog)?|"
             r"target_occupancy(?:_for_catalog)?|tenant_is_empty_on_target(?:_for_catalog)?|"
@@ -552,7 +573,7 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
         if forbidden_types or forbidden_methods:
             errors.append(
                 "tenant business module bypasses TenantDataSession: "
-                f"{path.relative_to(ROOT)}"
+                f"{relative}"
             )
 
     generated_catalog = read(

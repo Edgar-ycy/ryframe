@@ -3371,10 +3371,14 @@ dependencies = [
 name = "ryframe-generator"
 version = "0.10.0"
 dependencies = [
+ "async-trait",
+ "chrono",
  "ryframe-kernel",
  "ryframe-tenant-db",
  "sea-orm",
  "serde",
+ "syn 3.0.3",
+ "tempfile",
  "tokio",
 ]
 

@@ -145,7 +145,7 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 │   ├── ryframe-config/       # 配置加载与环境覆盖
 │   ├── ryframe-middleware/   # 通用中间件
 │   ├── ryframe-monitor/      # 监控与健康检查
-│   ├── ryframe-generator/    # 代码生成
+│   ├── ryframe-generator/    # 默认预览的离线代码生成 CLI
 │   ├── ryframe-storage/      # 本地与 RustFS/MinIO/S3 对象存储端口及实现
 │   └── ryframe-macro/        # 过程宏
 ├── config/                   # app.toml 与环境配置

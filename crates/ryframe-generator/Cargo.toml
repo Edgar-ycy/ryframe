@@ -15,6 +15,12 @@ sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
 
+[dev-dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+syn = { workspace = true }
+tempfile = { workspace = true }
+
 [[bin]]
 name = "ryframe-gen"
 path = "src/bin/gen.rs"
