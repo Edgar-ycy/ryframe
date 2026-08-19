@@ -1,7 +1,4 @@
-//! 仅支持 MySQL 的 schema 初始化与版本升级。
-//!
-//! 基线迁移会创建完整的空安装。仅当现有 v0.4 数据库包含全部基线表时才会被接受；
-//! 不完整初始化的 schema 会被拒绝，而不会被静默修复。
+//! 仅支持 MySQL 的控制库新基线。
 
 use sea_orm::{
     ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, FromQueryResult, Statement,
@@ -9,37 +6,7 @@ use sea_orm::{
 };
 use sea_orm_migration::prelude::*;
 
-mod m20260522_000000_mysql_baseline;
-mod m20260625_000001_tenant_completion;
-mod m20260701_000002_menu_permission_binding;
-mod m20260701_000003_user_auth_version;
-mod m20260705_000004_relation_foreign_keys;
-mod m20260714_000005_super_role_permissions;
-mod m20260723_000006_file_upload_reservations;
-mod m20260726_000007_file_sha256;
-mod m20260726_000008_background_jobs;
-mod m20260726_000009_message_center;
-mod m20260726_000010_message_job_permissions;
-mod m20260726_000011_platform_message_permission_scope;
-mod m20260727_000012_avatar_file_relation;
-mod m20260728_000013_outbox_events;
-mod m20260728_000014_export_jobs;
-mod m20260803_000015_authorization_snapshot;
-mod m20260803_000016_cache_namespace_versions;
-mod m20260803_000017_file_digest_finalization;
-mod m20260803_000018_audit_operation_outbox;
-mod m20260805_000019_trace_context_state;
-mod m20260805_000020_message_time_precision;
-mod m20260806_000021_message_recipient_soft_delete;
-mod m20260809_000022_job_schedules;
-mod m20260811_000023_default_password_hashes;
-mod m20260811_000024_data_lifecycle;
-mod m20260812_000025_tenant_config_transfer;
-mod m20260813_000026_tenant_usage_governance;
-mod m20260813_000027_service_accounts;
-mod m20260813_000028_export_job_notifications;
-mod m20260817_000029_product_capabilities;
-mod m20260817_000030_tenant_data_control;
+mod m20260820_000000_control_baseline;
 mod schema;
 mod seeder;
 
@@ -47,6 +14,7 @@ pub use schema::verify_current_schema;
 pub use seeder::{mysql_snapshot_sql, seed};
 
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
+pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";
 
 /// 迁移账本状态，适用于部署 CLI 和就绪报告。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,39 +34,11 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![
-            Box::new(m20260522_000000_mysql_baseline::Migration),
-            Box::new(m20260625_000001_tenant_completion::Migration),
-            Box::new(m20260701_000002_menu_permission_binding::Migration),
-            Box::new(m20260701_000003_user_auth_version::Migration),
-            Box::new(m20260705_000004_relation_foreign_keys::Migration),
-            Box::new(m20260714_000005_super_role_permissions::Migration),
-            Box::new(m20260723_000006_file_upload_reservations::Migration),
-            Box::new(m20260726_000007_file_sha256::Migration),
-            Box::new(m20260726_000008_background_jobs::Migration),
-            Box::new(m20260726_000009_message_center::Migration),
-            Box::new(m20260726_000010_message_job_permissions::Migration),
-            Box::new(m20260726_000011_platform_message_permission_scope::Migration),
-            Box::new(m20260727_000012_avatar_file_relation::Migration),
-            Box::new(m20260728_000013_outbox_events::Migration),
-            Box::new(m20260728_000014_export_jobs::Migration),
-            Box::new(m20260803_000015_authorization_snapshot::Migration),
-            Box::new(m20260803_000016_cache_namespace_versions::Migration),
-            Box::new(m20260803_000017_file_digest_finalization::Migration),
-            Box::new(m20260803_000018_audit_operation_outbox::Migration),
-            Box::new(m20260805_000019_trace_context_state::Migration),
-            Box::new(m20260805_000020_message_time_precision::Migration),
-            Box::new(m20260806_000021_message_recipient_soft_delete::Migration),
-            Box::new(m20260809_000022_job_schedules::Migration),
-            Box::new(m20260811_000023_default_password_hashes::Migration),
-            Box::new(m20260811_000024_data_lifecycle::Migration),
-            Box::new(m20260812_000025_tenant_config_transfer::Migration),
-            Box::new(m20260813_000026_tenant_usage_governance::Migration),
-            Box::new(m20260813_000027_service_accounts::Migration),
-            Box::new(m20260813_000028_export_job_notifications::Migration),
-            Box::new(m20260817_000029_product_capabilities::Migration),
-            Box::new(m20260817_000030_tenant_data_control::Migration),
-        ]
+        vec![Box::new(m20260820_000000_control_baseline::Migration)]
+    }
+
+    fn migration_table_name() -> DynIden {
+        Alias::new(CONTROL_MIGRATION_LEDGER).into_iden()
     }
 }
 

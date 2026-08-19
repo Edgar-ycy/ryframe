@@ -193,6 +193,7 @@ fn expected_mysql_target_table_names(catalog: &TenantDataCatalog) -> Vec<String>
         TENANT_DATA_MIGRATION_LEDGER.to_owned(),
         "biz_tenant_fence".to_owned(),
         "biz_tenant_target_slot".to_owned(),
+        "ryframe_resource_ownership".to_owned(),
     ];
     expected.extend(
         catalog
@@ -235,7 +236,7 @@ pub async fn canonical_table_schema(
     table_name: &str,
 ) -> Result<String, DbErr> {
     ensure_mysql(db)?;
-    if !table_name.starts_with("biz_")
+    if !(table_name.starts_with("biz_") || table_name == "ryframe_resource_ownership")
         || !table_name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
@@ -647,11 +648,20 @@ async fn verify_fence_schema(
         return Err(schema_fingerprint_mismatch("fence check constraints"));
     }
     verify_target_slot_schema(db, &tables).await?;
+    verify_resource_ownership_schema(db).await?;
     for descriptor in catalog.tables() {
         let actual = canonical_table_schema(db, descriptor.table).await?;
         if actual != descriptor.schema_canonical {
             return Err(schema_fingerprint_mismatch("catalog table structure"));
         }
+    }
+    Ok(())
+}
+
+async fn verify_resource_ownership_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let actual = canonical_table_schema(db, "ryframe_resource_ownership").await?;
+    if actual != super::m20260820_000000_tenant_baseline::RESOURCE_OWNERSHIP_SCHEMA_DESCRIPTOR {
+        return Err(schema_fingerprint_mismatch("resource ownership marker"));
     }
     Ok(())
 }

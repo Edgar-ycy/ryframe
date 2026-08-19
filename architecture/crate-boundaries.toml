@@ -12,12 +12,6 @@ path = "crates/ryframe-tenant-db/src/migration/generated_catalog.rs"
 required_marker = "此文件是 ryframe-generator 的编译输入"
 reason = "由代码生成器维护的租户数据 catalog"
 
-# 仅锁住已存在的超限文件，禁止继续增长；拆分到全局上限以内后必须删除对应豁免。
-[[source_size.legacy_exceptions]]
-path = "crates/ryframe-db/src/migration/schema.rs"
-max_lines = 1188
-reason = "控制库 schema 校验待随迁移能力并入 ryframe-db 后拆分"
-
 # 当前 15 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
 expected_package_count = 15

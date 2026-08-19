@@ -1,4 +1,5 @@
--- 自动生成文件：RyFrame v0.5 规范 MySQL 架构快照。
+-- 自动生成文件：RyFrame 控制库新基线快照。
+-- schema fingerprint: 5f4a35deaa7f715e
 -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
 -- 重新生成命令：cargo run -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -424,12 +425,12 @@ CREATE TABLE IF NOT EXISTS `sys_file` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_sys_file_tenant_id` (`tenant_id`, `id`),
     KEY `idx_tenant_id` (`tenant_id`),
-    KEY `idx_file_tenant_del_size` (`tenant_id`, `del_flag`, `file_size`),
     KEY `idx_bucket` (`bucket`),
     KEY `idx_upload_by` (`upload_by`),
     KEY `idx_del_flag` (`del_flag`),
     KEY `idx_file_sha256` (`tenant_id`, `bucket`, `file_sha256`, `upload_status`),
     KEY `idx_file_reservation_expiry` (`upload_status`, `reservation_expires_at`),
+    KEY `idx_file_tenant_del_size` (`tenant_id`, `del_flag`, `file_size`),
     CONSTRAINT `fk_sys_file_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -442,6 +443,7 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
     `scheduled_for` DATETIME(6)           DEFAULT NULL COMMENT '计划或立即执行时间',
     `max_runtime_seconds` INT              DEFAULT NULL COMMENT '最大运行时长（秒）',
     `job_type`      VARCHAR(96)  NOT NULL COMMENT '任务类型',
+    `payload_version` SMALLINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '任务载荷版本',
     `payload`       JSON         NOT NULL COMMENT '任务载荷',
     `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
     `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
@@ -1221,6 +1223,84 @@ CREATE TABLE IF NOT EXISTS `sys_service_access_audit` (
             )
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Agent API 访问审计';
 
+CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
+    `id` BIGINT NOT NULL,
+    `tenant_id` VARCHAR(64) DEFAULT NULL,
+    `event_type` VARCHAR(96) NOT NULL,
+    `aggregate_type` VARCHAR(64) NOT NULL,
+    `aggregate_id` VARCHAR(128) NOT NULL,
+    `payload` JSON NOT NULL,
+    `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
+    `available_at` DATETIME NOT NULL,
+    `attempts` INT NOT NULL DEFAULT 0,
+    `max_attempts` INT NOT NULL DEFAULT 5,
+    `lease_owner` VARCHAR(128) DEFAULT NULL,
+    `lease_until` DATETIME DEFAULT NULL,
+    `dedupe_key` VARCHAR(191) DEFAULT NULL,
+    `traceparent` VARCHAR(255) DEFAULT NULL,
+    `tracestate` VARCHAR(512) DEFAULT NULL,
+    `last_error` TEXT DEFAULT NULL,
+    `published_at` DATETIME DEFAULT NULL,
+    `created_at` DATETIME NOT NULL,
+    `updated_at` DATETIME NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_outbox_event_dedupe` (`event_type`, `dedupe_key`),
+    KEY `idx_outbox_event_claim` (`status`, `available_at`, `id`),
+    KEY `idx_outbox_event_lease` (`status`, `lease_until`),
+    KEY `idx_outbox_event_aggregate` (`aggregate_type`, `aggregate_id`, `created_at`),
+    KEY `idx_outbox_event_retention` (`status`, `published_at`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `sys_export_job` (
+    `id` BIGINT NOT NULL,
+    `tenant_id` VARCHAR(64) NOT NULL,
+    `requester_id` BIGINT NOT NULL,
+    `resource` VARCHAR(64) NOT NULL,
+    `background_job_id` BIGINT NOT NULL,
+    `request_params` JSON NOT NULL,
+    `request_version` SMALLINT UNSIGNED NOT NULL,
+    `permission_code` VARCHAR(128) NOT NULL,
+    `authorization_fingerprint` CHAR(64) NOT NULL,
+    `request_fingerprint` CHAR(64) NOT NULL,
+    `active_request_fingerprint` CHAR(64) DEFAULT NULL,
+    `snapshot_at` DATETIME NOT NULL,
+    `upper_id` BIGINT NOT NULL,
+    `matched_rows` BIGINT NOT NULL,
+    `exported_rows` BIGINT NOT NULL DEFAULT 0,
+    `status` VARCHAR(16) NOT NULL DEFAULT 'queued',
+    `result_file_id` BIGINT DEFAULT NULL,
+    `result_file_name` VARCHAR(255) DEFAULT NULL,
+    `content_type` VARCHAR(128) DEFAULT NULL,
+    `file_size` BIGINT DEFAULT NULL,
+    `expires_at` DATETIME DEFAULT NULL,
+    `error_message` TEXT DEFAULT NULL,
+    `created_at` DATETIME NOT NULL,
+    `updated_at` DATETIME NOT NULL,
+    `completed_at` DATETIME DEFAULT NULL,
+    `notification_read_at` DATETIME DEFAULT NULL,
+    `delete_pending_at` DATETIME DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_export_job_background` (`background_job_id`),
+    UNIQUE KEY `uq_export_job_result_file` (`result_file_id`),
+    UNIQUE KEY `uq_export_job_active_request` (`active_request_fingerprint`),
+    KEY `idx_export_job_requester` (`tenant_id`, `requester_id`, `delete_pending_at`, `created_at`, `id`),
+    KEY `idx_export_job_expiry` (`status`, `expires_at`),
+    KEY `idx_export_job_history` (`status`, `completed_at`, `id`),
+    KEY `idx_export_job_notification` (`tenant_id`, `requester_id`, `delete_pending_at`, `notification_read_at`, `status`, `completed_at`, `id`),
+    KEY `idx_export_job_delete_pending` (`delete_pending_at`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `ryframe_resource_ownership` (
+    `resource_kind` VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `scope_id` VARCHAR(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `marker` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `created_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (`resource_kind`),
+    UNIQUE KEY `uq_resource_ownership_marker` (`marker`),
+    UNIQUE KEY `uq_resource_ownership_scope` (`scope_id`, `resource_kind`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='物理数据库资源作用域所有权';
+
 -- 幂等初始化数据（生产环境用户默认锁定）。
 
 INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
@@ -1514,3 +1594,243 @@ INSERT INTO `sys_role_permission` (`role_id`, `perm_id`) VALUES
     (2, 17),
     (2, 67),
     (2, 43) ON DUPLICATE KEY UPDATE `role_id` = `role_id`;
+
+-- 访问目录、产品套餐和租户数据放置种子。
+
+INSERT INTO `sys_permission` (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) VALUES
+(10000, 'system', 'monitor:cache:list', 'monitor:cache:list', NULL, 'api', NULL, 0, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10001, 'system', 'monitor:db-pool:list', 'monitor:db-pool:list', NULL, 'api', NULL, 1, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10002, 'system', 'monitor:job:list', 'monitor:job:list', NULL, 'api', NULL, 2, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10003, 'system', 'monitor:job:retry', 'monitor:job:retry', NULL, 'api', NULL, 3, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10004, 'system', 'monitor:online:force-logout', 'monitor:online:force-logout', NULL, 'api', NULL, 4, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10005, 'system', 'monitor:online:list', 'monitor:online:list', NULL, 'api', NULL, 5, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10006, 'system', 'monitor:overview:list', 'monitor:overview:list', NULL, 'api', NULL, 6, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10007, 'system', 'monitor:retention:list', 'monitor:retention:list', NULL, 'api', NULL, 7, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10008, 'system', 'monitor:retention:run', 'monitor:retention:run', NULL, 'api', NULL, 8, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10009, 'system', 'monitor:runtime:list', 'monitor:runtime:list', NULL, 'api', NULL, 9, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10010, 'system', 'monitor:schedule:add', 'monitor:schedule:add', NULL, 'api', NULL, 10, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10011, 'system', 'monitor:schedule:edit', 'monitor:schedule:edit', NULL, 'api', NULL, 11, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10012, 'system', 'monitor:schedule:list', 'monitor:schedule:list', NULL, 'api', NULL, 12, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10013, 'system', 'monitor:schedule:remove', 'monitor:schedule:remove', NULL, 'api', NULL, 13, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10014, 'system', 'monitor:schedule:run', 'monitor:schedule:run', NULL, 'api', NULL, 14, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10015, 'system', 'monitor:server:list', 'monitor:server:list', NULL, 'api', NULL, 15, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10016, 'system', 'platform:product-plan:add', 'platform:product-plan:add', NULL, 'api', NULL, 16, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10017, 'system', 'platform:product-plan:edit', 'platform:product-plan:edit', NULL, 'api', NULL, 17, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10018, 'system', 'platform:product-plan:list', 'platform:product-plan:list', NULL, 'api', NULL, 18, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10019, 'system', 'platform:product-plan:publish', 'platform:product-plan:publish', NULL, 'api', NULL, 19, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10020, 'system', 'system:authorization-diagnostic:list', 'system:authorization-diagnostic:list', NULL, 'api', NULL, 20, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10021, 'system', 'system:config-package:download', 'system:config-package:download', NULL, 'api', NULL, 21, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10022, 'system', 'system:config-package:export', 'system:config-package:export', NULL, 'api', NULL, 22, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10023, 'system', 'system:config-package:list', 'system:config-package:list', NULL, 'api', NULL, 23, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10024, 'system', 'system:config-transfer:add', 'system:config-transfer:add', NULL, 'api', NULL, 24, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10025, 'system', 'system:config-transfer:apply', 'system:config-transfer:apply', NULL, 'api', NULL, 25, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10026, 'system', 'system:config-transfer:list', 'system:config-transfer:list', NULL, 'api', NULL, 26, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10027, 'system', 'system:config-transfer:preview', 'system:config-transfer:preview', NULL, 'api', NULL, 27, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10028, 'system', 'system:config-transfer:rollback', 'system:config-transfer:rollback', NULL, 'api', NULL, 28, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10029, 'system', 'system:config:add', 'system:config:add', NULL, 'api', NULL, 29, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10030, 'system', 'system:config:edit', 'system:config:edit', NULL, 'api', NULL, 30, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10031, 'system', 'system:config:export', 'system:config:export', NULL, 'api', NULL, 31, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10032, 'system', 'system:config:list', 'system:config:list', NULL, 'api', NULL, 32, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10033, 'system', 'system:config:remove', 'system:config:remove', NULL, 'api', NULL, 33, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10034, 'system', 'system:dept:add', 'system:dept:add', NULL, 'api', NULL, 34, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10035, 'system', 'system:dept:edit', 'system:dept:edit', NULL, 'api', NULL, 35, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10036, 'system', 'system:dept:list', 'system:dept:list', NULL, 'api', NULL, 36, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10037, 'system', 'system:dept:remove', 'system:dept:remove', NULL, 'api', NULL, 37, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10038, 'system', 'system:dict:add', 'system:dict:add', NULL, 'api', NULL, 38, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10039, 'system', 'system:dict:edit', 'system:dict:edit', NULL, 'api', NULL, 39, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10040, 'system', 'system:dict:export', 'system:dict:export', NULL, 'api', NULL, 40, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10041, 'system', 'system:dict:list', 'system:dict:list', NULL, 'api', NULL, 41, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10042, 'system', 'system:dict:remove', 'system:dict:remove', NULL, 'api', NULL, 42, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10043, 'system', 'system:logininfor:export', 'system:logininfor:export', NULL, 'api', NULL, 43, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10044, 'system', 'system:logininfor:list', 'system:logininfor:list', NULL, 'api', NULL, 44, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10045, 'system', 'system:menu:add', 'system:menu:add', NULL, 'api', NULL, 45, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10046, 'system', 'system:menu:edit', 'system:menu:edit', NULL, 'api', NULL, 46, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10047, 'system', 'system:menu:list', 'system:menu:list', NULL, 'api', NULL, 47, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10048, 'system', 'system:menu:remove', 'system:menu:remove', NULL, 'api', NULL, 48, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10049, 'system', 'system:message:publish', 'system:message:publish', NULL, 'api', NULL, 49, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10050, 'system', 'system:notice:add', 'system:notice:add', NULL, 'api', NULL, 50, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10051, 'system', 'system:notice:edit', 'system:notice:edit', NULL, 'api', NULL, 51, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10052, 'system', 'system:notice:list', 'system:notice:list', NULL, 'api', NULL, 52, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10053, 'system', 'system:notice:remove', 'system:notice:remove', NULL, 'api', NULL, 53, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10054, 'system', 'system:operlog:export', 'system:operlog:export', NULL, 'api', NULL, 54, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10055, 'system', 'system:operlog:list', 'system:operlog:list', NULL, 'api', NULL, 55, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10056, 'system', 'system:perm:add', 'system:perm:add', NULL, 'api', NULL, 56, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10057, 'system', 'system:perm:edit', 'system:perm:edit', NULL, 'api', NULL, 57, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10058, 'system', 'system:perm:list', 'system:perm:list', NULL, 'api', NULL, 58, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10059, 'system', 'system:perm:remove', 'system:perm:remove', NULL, 'api', NULL, 59, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10060, 'system', 'system:perm:sync', 'system:perm:sync', NULL, 'api', NULL, 60, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10061, 'system', 'system:post:add', 'system:post:add', NULL, 'api', NULL, 61, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10062, 'system', 'system:post:edit', 'system:post:edit', NULL, 'api', NULL, 62, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10063, 'system', 'system:post:export', 'system:post:export', NULL, 'api', NULL, 63, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10064, 'system', 'system:post:list', 'system:post:list', NULL, 'api', NULL, 64, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10065, 'system', 'system:post:remove', 'system:post:remove', NULL, 'api', NULL, 65, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10066, 'system', 'system:role:add', 'system:role:add', NULL, 'api', NULL, 66, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10067, 'system', 'system:role:edit', 'system:role:edit', NULL, 'api', NULL, 67, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10068, 'system', 'system:role:export', 'system:role:export', NULL, 'api', NULL, 68, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10069, 'system', 'system:role:list', 'system:role:list', NULL, 'api', NULL, 69, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10070, 'system', 'system:role:remove', 'system:role:remove', NULL, 'api', NULL, 70, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10071, 'system', 'system:service-access-audit:list', 'system:service-access-audit:list', NULL, 'api', NULL, 71, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10072, 'system', 'system:service-account:add', 'system:service-account:add', NULL, 'api', NULL, 72, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10073, 'system', 'system:service-account:edit', 'system:service-account:edit', NULL, 'api', NULL, 73, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10074, 'system', 'system:service-account:key-revoke', 'system:service-account:key-revoke', NULL, 'api', NULL, 74, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10075, 'system', 'system:service-account:key-rotate', 'system:service-account:key-rotate', NULL, 'api', NULL, 75, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10076, 'system', 'system:service-account:list', 'system:service-account:list', NULL, 'api', NULL, 76, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10077, 'system', 'system:service-account:remove', 'system:service-account:remove', NULL, 'api', NULL, 77, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10078, 'system', 'system:service-account:role', 'system:service-account:role', NULL, 'api', NULL, 78, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10079, 'system', 'system:service-delegation:list', 'system:service-delegation:list', NULL, 'api', NULL, 79, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10080, 'system', 'system:service-delegation:revoke', 'system:service-delegation:revoke', NULL, 'api', NULL, 80, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10081, 'system', 'system:user-import:add', 'system:user-import:add', NULL, 'api', NULL, 81, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10082, 'system', 'system:user-import:cancel', 'system:user-import:cancel', NULL, 'api', NULL, 82, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10083, 'system', 'system:user-import:list', 'system:user-import:list', NULL, 'api', NULL, 83, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10084, 'system', 'system:user:add', 'system:user:add', NULL, 'api', NULL, 84, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10085, 'system', 'system:user:edit', 'system:user:edit', NULL, 'api', NULL, 85, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10086, 'system', 'system:user:export', 'system:user:export', NULL, 'api', NULL, 86, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10087, 'system', 'system:user:list', 'system:user:list', NULL, 'api', NULL, 87, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10088, 'system', 'system:user:remove', 'system:user:remove', NULL, 'api', NULL, 88, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10089, 'system', 'tenant:add', 'tenant:add', NULL, 'api', NULL, 89, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10090, 'system', 'tenant:capability:override', 'tenant:capability:override', NULL, 'api', NULL, 90, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10091, 'system', 'tenant:data-backup:list', 'tenant:data-backup:list', NULL, 'api', NULL, 91, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10092, 'system', 'tenant:data-migration:cancel', 'tenant:data-migration:cancel', NULL, 'api', NULL, 92, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10093, 'system', 'tenant:data-migration:create', 'tenant:data-migration:create', NULL, 'api', NULL, 93, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10094, 'system', 'tenant:data-migration:finalize', 'tenant:data-migration:finalize', NULL, 'api', NULL, 94, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10095, 'system', 'tenant:data-migration:list', 'tenant:data-migration:list', NULL, 'api', NULL, 95, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10096, 'system', 'tenant:data-placement:view', 'tenant:data-placement:view', NULL, 'api', NULL, 96, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10097, 'system', 'tenant:edit', 'tenant:edit', NULL, 'api', NULL, 97, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10098, 'system', 'tenant:list', 'tenant:list', NULL, 'api', NULL, 98, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10099, 'system', 'tenant:product:assign', 'tenant:product:assign', NULL, 'api', NULL, 99, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10100, 'system', 'tenant:product:view', 'tenant:product:view', NULL, 'api', NULL, 100, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10101, 'system', 'tenant:status', 'tenant:status', NULL, 'api', NULL, 101, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10102, 'system', 'tenant:usage:list', 'tenant:usage:list', NULL, 'api', NULL, 102, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+ON DUPLICATE KEY UPDATE `code` = `code`;
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20000, 'system', 'home', NULL, 'C', NULL, 'home', NULL, 0, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'home');
+
+UPDATE `sys_menu` SET `parent_id` = NULL, `menu_type` = 'C', `perm_id` = NULL, `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'home';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20001, 'system', 'system', NULL, 'M', NULL, 'system', NULL, 1, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system');
+
+UPDATE `sys_menu` SET `parent_id` = NULL, `menu_type` = 'M', `perm_id` = NULL, `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20002, 'system', 'monitor', NULL, 'M', NULL, 'monitor', NULL, 2, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor');
+
+UPDATE `sys_menu` SET `parent_id` = NULL, `menu_type` = 'M', `perm_id` = NULL, `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20003, 'system', 'platform', NULL, 'M', NULL, 'platform', NULL, 3, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform');
+
+UPDATE `sys_menu` SET `parent_id` = NULL, `menu_type` = 'M', `perm_id` = NULL, `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'platform';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20004, 'system', 'system.user', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:user:list' LIMIT 1), 'system.user', NULL, 4, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.user');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:user:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.user';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20005, 'system', 'system.role', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:role:list' LIMIT 1), 'system.role', NULL, 5, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.role');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:role:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.role';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20006, 'system', 'system.menu', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:menu:list' LIMIT 1), 'system.menu', NULL, 6, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.menu');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:menu:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.menu';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20007, 'system', 'system.dept', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:dept:list' LIMIT 1), 'system.dept', NULL, 7, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.dept');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:dept:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.dept';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20008, 'system', 'system.post', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:post:list' LIMIT 1), 'system.post', NULL, 8, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.post');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:post:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.post';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20009, 'system', 'system.dict', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:dict:list' LIMIT 1), 'system.dict', NULL, 9, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.dict');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:dict:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.dict';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20010, 'system', 'system.config', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:config:list' LIMIT 1), 'system.config', NULL, 10, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.config');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:config:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.config';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20011, 'system', 'system.config-transfer', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:config-transfer:list' LIMIT 1), 'system.config-transfer', NULL, 11, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.config-transfer');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:config-transfer:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.config-transfer';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20012, 'system', 'system.service-accounts', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:service-account:list' LIMIT 1), 'system.service-accounts', NULL, 12, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.service-accounts');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:service-account:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.service-accounts';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20013, 'system', 'platform.product-plans', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'platform:product-plan:list' LIMIT 1), 'platform.product-plans', NULL, 13, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform.product-plans');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'platform:product-plan:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'platform.product-plans';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20014, 'system', 'platform.data-targets', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'tenant:data-placement:view' LIMIT 1), 'platform.data-targets', NULL, 14, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform.data-targets');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'tenant:data-placement:view' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'platform.data-targets';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20015, 'system', 'platform.tenant', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'tenant:list' LIMIT 1), 'platform.tenant', NULL, 15, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform.tenant');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'platform' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'tenant:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'platform.tenant';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20016, 'system', 'system.notice', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:notice:list' LIMIT 1), 'system.notice', NULL, 16, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.notice');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:notice:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.notice';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20017, 'system', 'system.perm', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:perm:list' LIMIT 1), 'system.perm', NULL, 17, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.perm');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:perm:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.perm';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20018, 'system', 'system.authorization-diagnostics', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:authorization-diagnostic:list' LIMIT 1), 'system.authorization-diagnostics', NULL, 18, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.authorization-diagnostics');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:authorization-diagnostic:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.authorization-diagnostics';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20019, 'system', 'system.operlog', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:operlog:list' LIMIT 1), 'system.operlog', NULL, 19, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.operlog');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:operlog:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.operlog';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20020, 'system', 'system.logininfor', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:logininfor:list' LIMIT 1), 'system.logininfor', NULL, 20, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.logininfor');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:logininfor:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.logininfor';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20021, 'system', 'monitor.online', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:online:list' LIMIT 1), 'monitor.online', NULL, 21, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.online');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:online:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.online';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20022, 'system', 'monitor.server', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:server:list' LIMIT 1), 'monitor.server', NULL, 22, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.server');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:server:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.server';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20023, 'system', 'monitor.runtime', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:runtime:list' LIMIT 1), 'monitor.runtime', NULL, 23, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.runtime');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:runtime:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.runtime';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20024, 'system', 'monitor.cache', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:cache:list' LIMIT 1), 'monitor.cache', NULL, 24, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.cache');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:cache:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.cache';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20025, 'system', 'monitor.db-pool', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:db-pool:list' LIMIT 1), 'monitor.db-pool', NULL, 25, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.db-pool');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:db-pool:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.db-pool';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20026, 'system', 'monitor.jobs', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:job:list' LIMIT 1), 'monitor.jobs', NULL, 26, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.jobs');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:job:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.jobs';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20027, 'system', 'monitor.schedules', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:schedule:list' LIMIT 1), 'monitor.schedules', NULL, 27, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.schedules');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:schedule:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.schedules';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20028, 'system', 'monitor.retention', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:retention:list' LIMIT 1), 'monitor.retention', NULL, 28, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.retention');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:retention:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.retention';
+
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20029, 'system', 'monitor.overview', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:overview:list' LIMIT 1), 'monitor.overview', NULL, 29, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.overview');
+
+UPDATE `sys_menu` SET `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'monitor' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'monitor:overview:list' LIMIT 1), `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'monitor.overview';
+
+INSERT INTO `sys_product_plan` (`id`, `plan_key`, `name`, `description`, `status`, `created_by`, `created_at`, `updated_at`) VALUES (1, 'standard', '标准版', '普通租户的默认产品套餐', '1', 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), (2, 'platform', '平台版', '系统租户的平台控制面套餐', '1', 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `id` = `id`;
+
+INSERT INTO `sys_product_plan_version` (`id`, `plan_id`, `version`, `name`, `description`, `status`, `created_by`, `published_by`, `published_at`, `created_at`, `updated_at`) VALUES (1, 1, 1, '标准版 v1', '标准版初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), (2, 2, 1, '平台版 v1', '平台控制面初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `id` = `id`;
+
+INSERT INTO `sys_product_plan_capability` (`plan_version_id`, `capability_code`, `variant_code`, `schema_version`, `config`, `created_at`, `updated_at`) VALUES (2, 'system.service_accounts', 'default', 1, JSON_OBJECT(), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `plan_version_id` = `plan_version_id`;
+
+INSERT INTO `sys_tenant_product_plan` (`tenant_id`, `plan_version_id`, `changed_by`, `change_reason`, `created_at`, `updated_at`) SELECT `tenant_id`, IF(`tenant_id` = 'system', 2, 1), NULL, 'fresh_baseline', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) FROM `sys_tenant` ON DUPLICATE KEY UPDATE `tenant_id` = `sys_tenant_product_plan`.`tenant_id`;
+
+INSERT INTO `sys_tenant_data_placement` (`tenant_id`, `current_target_key`, `placement_generation`, `state`, `switch_token`, `created_at`, `updated_at`) SELECT `tenant_id`, 'shared-control', 1, 'active', SHA2(CONCAT('ryframe:tenant-data:shared-control:v1:', `tenant_id`), 256), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) FROM `sys_tenant` ON DUPLICATE KEY UPDATE `tenant_id` = `sys_tenant_data_placement`.`tenant_id`;
+
+INSERT INTO `sys_job_schedule` (`id`, `tenant_id`, `name`, `handler_key`, `cron_expression`, `timezone`, `enabled`, `misfire_policy`, `concurrency_policy`, `max_runtime_seconds`, `next_run_at`, `last_run_at`, `version`, `del_flag`, `created_at`, `updated_at`) VALUES (3, 'system', '数据保留清理', 'system.data_retention_cleanup', '0 30 3 * * * *', 'UTC', 1, 'fire_once', 'forbid', 900, UTC_TIMESTAMP(6), NULL, 1, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `id` = `id`;

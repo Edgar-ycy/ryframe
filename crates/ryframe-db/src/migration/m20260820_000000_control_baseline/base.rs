@@ -1,84 +1,4 @@
-use sea_orm::{ConnectionTrait, DatabaseBackend};
-use sea_orm_migration::prelude::*;
-
-#[derive(DeriveMigrationName)]
-pub struct Migration;
-
-pub(crate) const REQUIRED_TABLES: &[&str] = &[
-    "sys_tenant",
-    "sys_dept",
-    "sys_user",
-    "password_reset_requests",
-    "sys_role",
-    "sys_permission",
-    "sys_menu",
-    "sys_post",
-    "sys_config",
-    "sys_dict_type",
-    "sys_dict_data",
-    "sys_notice",
-    "sys_oper_log",
-    "sys_login_info",
-    "sys_user_role",
-    "sys_role_permission",
-    "sys_role_dept",
-    "sys_file",
-];
-
-#[async_trait::async_trait]
-impl MigrationTrait for Migration {
-    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        if manager.get_database_backend() != DatabaseBackend::MySql {
-            return Err(DbErr::Custom("RyFrame v0.5 only supports MySQL".into()));
-        }
-        let mut existing = Vec::new();
-        for table in REQUIRED_TABLES {
-            if manager.has_table(*table).await? {
-                existing.push(*table);
-            }
-        }
-        if existing.len() == REQUIRED_TABLES.len() {
-            crate::migration::schema::verify_legacy_schema(manager.get_connection()).await?;
-            return Ok(());
-        }
-        if !existing.is_empty() {
-            let missing = REQUIRED_TABLES
-                .iter()
-                .filter(|table| !existing.contains(table))
-                .copied()
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(DbErr::Custom(format!(
-                "partial RyFrame schema detected; refusing baseline migration; missing: {missing}"
-            )));
-        }
-
-        let unrelated_tables =
-            crate::migration::schema::user_tables(manager.get_connection()).await?;
-        if !unrelated_tables.is_empty() {
-            return Err(DbErr::Custom(format!(
-                "database is not empty and does not contain a RyFrame schema; refusing baseline migration; existing tables: {}",
-                unrelated_tables.join(", ")
-            )));
-        }
-
-        for statement in ddl_statements() {
-            manager
-                .get_connection()
-                .execute_unprepared(statement)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
-        // 回滚基线会破坏应用数据，因此有意不支持。
-        Ok(())
-    }
-}
-
-// 规范的可执行 schema 与引导数据。sql/ryframe_config.sql 仅是生成的审查快照，
-// 运行时和部署工具绝不使用它。
+// 控制库基础表与确定性种子；DDL、菜单和权限共同属于当前唯一基线。
 pub(crate) const BASELINE_STATEMENTS: &[&str] = &[
     r####"CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `id`                     BIGINT       NOT NULL COMMENT '租户ID',
@@ -130,6 +50,7 @@ VALUES ('system', 'config', 0)"####,
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_dept_tenant_id` (`tenant_id`, `id`),
     KEY `idx_tenant_id` (`tenant_id`),
     KEY `idx_parent_id` (`parent_id`),
     CONSTRAINT `fk_sys_dept_tenant`
@@ -160,8 +81,10 @@ VALUES ('system', 'config', 0)"####,
     `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_user_tenant_id` (`tenant_id`, `id`),
     UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
     KEY `idx_tenant_id` (`tenant_id`),
+    KEY `idx_user_tenant_del` (`tenant_id`, `del_flag`),
     KEY `idx_dept_id` (`dept_id`),
     KEY `idx_user_avatar_file` (`avatar_file_id`),
     CONSTRAINT `fk_sys_user_tenant`
@@ -211,8 +134,10 @@ VALUES ('system', 'config', 0)"####,
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_sys_role_tenant_id` (`tenant_id`, `id`),
     UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
     KEY `idx_tenant_id` (`tenant_id`),
+    KEY `idx_role_tenant_del` (`tenant_id`, `del_flag`, `id`),
     CONSTRAINT `fk_sys_role_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -487,6 +412,7 @@ VALUES ('system', 'config', 0)"####,
     KEY `idx_del_flag` (`del_flag`),
     KEY `idx_file_sha256` (`tenant_id`, `bucket`, `file_sha256`, `upload_status`),
     KEY `idx_file_reservation_expiry` (`upload_status`, `reservation_expires_at`),
+    KEY `idx_file_tenant_del_size` (`tenant_id`, `del_flag`, `file_size`),
     CONSTRAINT `fk_sys_file_tenant`
         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -498,6 +424,7 @@ VALUES ('system', 'config', 0)"####,
     `scheduled_for` DATETIME(6)           DEFAULT NULL COMMENT '计划或立即执行时间',
     `max_runtime_seconds` INT              DEFAULT NULL COMMENT '最大运行时长（秒）',
     `job_type`      VARCHAR(96)  NOT NULL COMMENT '任务类型',
+    `payload_version` SMALLINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '任务载荷版本',
     `payload`       JSON         NOT NULL COMMENT '任务载荷',
     `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
     `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
@@ -541,7 +468,8 @@ VALUES ('system', 'config', 0)"####,
     `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
     PRIMARY KEY (`id`),
     KEY `idx_job_schedule_scan` (`enabled`, `del_flag`, `next_run_at`, `id`),
-    KEY `idx_job_schedule_tenant` (`tenant_id`, `del_flag`, `created_at`)
+    KEY `idx_job_schedule_tenant` (`tenant_id`, `del_flag`, `created_at`),
+    KEY `idx_schedule_tenant_del_enabled` (`tenant_id`, `enabled`, `del_flag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务调度计划'"####,
     r####"CREATE TABLE IF NOT EXISTS `sys_job_schedule_execution` (
     `id` BIGINT NOT NULL COMMENT '执行记录ID',
@@ -604,9 +532,11 @@ VALUES ('system', 'config', 0)"####,
     `enqueued_at` DATETIME(6) DEFAULT NULL COMMENT '已推送时间',
     `acked_at` DATETIME(6) DEFAULT NULL COMMENT '已确认时间',
     `read_at` DATETIME(6) DEFAULT NULL COMMENT '已读时间',
+    `deleted_at` DATETIME(6) DEFAULT NULL COMMENT '收件人删除时间',
     PRIMARY KEY (`message_id`, `user_id`),
-    KEY `idx_message_recipient_inbox` (`tenant_id`, `user_id`, `read_at`, `created_at`, `message_id`),
-    KEY `idx_message_recipient_ack` (`tenant_id`, `user_id`, `acked_at`, `message_id`),
+    KEY `idx_message_recipient_visible` (`tenant_id`, `user_id`, `deleted_at`, `message_id` DESC),
+    KEY `idx_message_recipient_unread` (`tenant_id`, `user_id`, `deleted_at`, `read_at`, `message_id` DESC),
+    KEY `idx_message_recipient_unacked` (`tenant_id`, `user_id`, `deleted_at`, `acked_at`, `message_id` DESC),
     CONSTRAINT `fk_message_recipient_message`
         FOREIGN KEY (`message_id`) REFERENCES `sys_message` (`id`)
         ON UPDATE CASCADE ON DELETE CASCADE
@@ -886,33 +816,3 @@ VALUES ('system', 'config', 0)"####,
     (2, 67),
     (2, 43)"####,
 ];
-
-pub(crate) fn ddl_statements() -> impl Iterator<Item = &'static str> {
-    BASELINE_STATEMENTS
-        .iter()
-        .copied()
-        .filter(|statement| !is_seed_statement(statement))
-        .chain(
-            crate::migration::m20260811_000024_data_lifecycle::lifecycle_table_statements(),
-        )
-        .chain(
-            crate::migration::m20260812_000025_tenant_config_transfer::tenant_config_table_statements(),
-        )
-        .chain(
-            crate::migration::m20260817_000029_product_capabilities::product_capability_table_statements(),
-        )
-        .chain(
-            crate::migration::m20260817_000030_tenant_data_control::tenant_data_control_table_statements(),
-        )
-}
-
-pub(crate) fn seed_statements() -> impl Iterator<Item = &'static str> {
-    BASELINE_STATEMENTS
-        .iter()
-        .copied()
-        .filter(|statement| is_seed_statement(statement))
-}
-
-fn is_seed_statement(statement: &str) -> bool {
-    statement.trim_start().starts_with("INSERT INTO")
-}

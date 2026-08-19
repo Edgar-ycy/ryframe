@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 /// fence 与当前编译期 catalog 的规范化描述。变更 schema/catalog 时必须同步更新。
 const TENANT_DATA_FENCE_SCHEMA_CANONICAL: &str = "v4|table=biz_tenant_fence|engine=innodb|charset=utf8mb4|collation=utf8mb4_general_ci|columns=tenant_id:varchar(64):not-null:null-default:no-extra:utf8mb4:utf8mb4_general_ci;target_key:varchar(64):not-null:null-default:no-extra:ascii:ascii_bin;placement_generation:bigint:not-null:null-default:no-extra:none:none;state:varchar(16):not-null:null-default:no-extra:ascii:ascii_bin;switch_token:varchar(64):not-null:null-default:no-extra:ascii:ascii_bin;updated_at:datetime(6):not-null:current_timestamp(6):on update current_timestamp(6):none:none|indexes=PRIMARY:unique:btree:tenant_id;idx_biz_tenant_fence_state:nonunique:btree:state,tenant_id|constraints=PRIMARY:PRIMARY KEY;ck_biz_tenant_fence_generation:CHECK:placement_generation>0;ck_biz_tenant_fence_state:CHECK:statein('active','frozen')";
 const TENANT_DATA_TARGET_SLOT_SCHEMA_CANONICAL: &str = "v4|table=biz_tenant_target_slot|engine=innodb|charset=utf8mb4|collation=utf8mb4_general_ci|columns=slot_id:tinyint unsigned:not-null:null-default:no-extra:none:none;tenant_id:varchar(64):nullable:null-default:no-extra:utf8mb4:utf8mb4_general_ci;placement_generation:bigint:nullable:null-default:no-extra:none:none;switch_token:varchar(64):nullable:null-default:no-extra:ascii:ascii_bin;updated_at:datetime(6):not-null:current_timestamp(6):on update current_timestamp(6):none:none|indexes=PRIMARY:unique:btree:slot_id|constraints=PRIMARY:PRIMARY KEY;ck_biz_tenant_target_slot_id:CHECK:slot_id=1;ck_biz_tenant_target_slot_value:CHECK:((tenant_idisnull)and(placement_generationisnull)and(switch_tokenisnull))or((tenant_idisnotnull)and(placement_generation>0)and(switch_tokenisnotnull))";
+const RESOURCE_OWNERSHIP_SCHEMA_CANONICAL: &str = "v4|table=ryframe_resource_ownership|engine=innodb|charset=utf8mb4|collation=utf8mb4_general_ci|columns=resource_kind:varchar(32):not-null:null-default:no-extra:ascii:ascii_bin;scope_id:varchar(48):not-null:null-default:no-extra:ascii:ascii_bin;marker:varchar(128):not-null:null-default:no-extra:ascii:ascii_bin;created_at:datetime(6):not-null:current_timestamp(6):no-extra:none:none;updated_at:datetime(6):not-null:current_timestamp(6):on update current_timestamp(6):none:none|indexes=PRIMARY:unique:btree:resource_kind;uq_resource_ownership_marker:unique:btree:marker;uq_resource_ownership_scope:unique:btree:scope_id,resource_kind|constraints=PRIMARY:PRIMARY KEY;uq_resource_ownership_marker:UNIQUE;uq_resource_ownership_scope:UNIQUE";
 
 /// 应用构建所要求的稳定、小写十六进制 SHA-256 schema 指纹。
 pub const TENANT_DATA_SCHEMA_FINGERPRINT: &str =
@@ -320,6 +321,8 @@ pub fn schema_fingerprint_for_catalog(entries: &[String]) -> String {
     let mut canonical = String::from(TENANT_DATA_FENCE_SCHEMA_CANONICAL);
     canonical.push('|');
     canonical.push_str(TENANT_DATA_TARGET_SLOT_SCHEMA_CANONICAL);
+    canonical.push('|');
+    canonical.push_str(RESOURCE_OWNERSHIP_SCHEMA_CANONICAL);
     canonical.push_str("|catalog=[");
     canonical.push_str(&entries.join(";"));
     canonical.push(']');

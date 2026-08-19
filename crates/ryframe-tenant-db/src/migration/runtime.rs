@@ -27,11 +27,7 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![
-            Box::new(super::m20260817_000001_tenant_fence::Migration),
-            Box::new(super::m20260817_000002_reconcile_shared_control_fence::Migration),
-            Box::new(super::m20260817_000003_target_slot::Migration),
-        ]
+        vec![Box::new(super::m20260820_000000_tenant_baseline::Migration)]
     }
 
     fn migration_table_name() -> DynIden {
@@ -156,4 +152,17 @@ where
         .ok_or_else(|| DbErr::Custom("tenant-data migration lock returned no result".into()))?;
     Option::<i64>::try_get_by_index(&row, 0)?
         .ok_or_else(|| DbErr::Custom("tenant-data migration lock returned NULL".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
+        let migrations = Migrator::migrations();
+        assert_eq!(migrations.len(), 1);
+        assert_eq!(TENANT_DATA_MIGRATION_LEDGER, "seaql_tenant_data_migrations");
+        assert_eq!(migrations[0].name(), "m20260820_000000_tenant_baseline");
+    }
 }

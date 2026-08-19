@@ -4,4 +4,4 @@ use super::catalog::TenantDataTableDescriptor;
 pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[];
 
 pub const GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT: &str =
-    "5f037254db2188e2196d3071f366b57dccff7d0265aaf368ed3c0bae8a689090";
+    "a0a5cf5e7aae4ec0cdfe15765d450539dd32e7b7119846aac319ec98e122b04e";

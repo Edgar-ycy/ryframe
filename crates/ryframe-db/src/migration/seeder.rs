@@ -1,6 +1,6 @@
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
-use crate::migration::m20260522_000000_mysql_baseline::{ddl_statements, seed_statements};
+use crate::migration::m20260820_000000_control_baseline::{ddl_statements, seed_statements};
 
 /// 插入规范的引导记录，而不覆盖运行中的变更。
 ///
@@ -17,45 +17,289 @@ where
         db.execute_unprepared(&idempotent_upsert(statement)?)
             .await?;
     }
-    crate::migration::m20260726_000010_message_job_permissions::seed_permissions(db).await?;
-    crate::migration::m20260809_000022_job_schedules::seed_schedule_management(db).await?;
-    crate::migration::m20260811_000024_data_lifecycle::seed_lifecycle_management(db).await?;
-    crate::migration::m20260812_000025_tenant_config_transfer::seed_tenant_config_management(db)
-        .await?;
-    crate::migration::m20260813_000026_tenant_usage_governance::seed_tenant_usage_governance(db)
-        .await?;
-    crate::migration::m20260813_000027_service_accounts::seed_service_account_management(db)
-        .await?;
-    crate::migration::m20260817_000029_product_capabilities::seed_product_capabilities(db).await?;
-    crate::migration::m20260817_000030_tenant_data_control::seed_tenant_data_placements(db).await?;
+    seed_access_catalog(db).await?;
+    seed_product_baseline(db).await?;
+    seed_tenant_data_placements(db).await?;
+    seed_retention_schedule(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }
 
+const ACCESS_CATALOG: &str = include_str!("../../../../catalog/access.toml");
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AccessMenu<'a> {
+    route_key: &'a str,
+    menu_type: &'a str,
+    permission: Option<&'a str>,
+}
+
+impl AccessMenu<'_> {
+    fn parent_route_key(&self) -> Option<&str> {
+        (self.menu_type == "C")
+            .then(|| self.route_key.split_once('.').map(|(parent, _)| parent))
+            .flatten()
+    }
+}
+
+async fn seed_access_catalog<C>(db: &C) -> Result<(), DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    let permissions = access_permission_codes()?;
+    for (index, code) in permissions.iter().enumerate() {
+        let index = i32::try_from(index)
+            .map_err(|_| DbErr::Custom("访问目录权限数量超出基线可表示范围".into()))?;
+        let id = 10_000_i64 + i64::from(index);
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "INSERT INTO `sys_permission` \
+             (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) \
+             VALUES (?, 'system', ?, ?, NULL, 'api', NULL, ?, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
+             ON DUPLICATE KEY UPDATE `code` = `code`",
+            [id.into(), (*code).into(), (*code).into(), index.into()],
+        ))
+        .await?;
+    }
+
+    for (index, menu) in access_menus()?.iter().enumerate() {
+        let index = i32::try_from(index)
+            .map_err(|_| DbErr::Custom("访问目录菜单数量超出基线可表示范围".into()))?;
+        let permission_id = match menu.permission {
+            Some(code) => permission_id(db, code).await?,
+            None => None,
+        };
+        let parent_id = match menu.parent_route_key() {
+            Some(route_key) => menu_id(db, route_key).await?,
+            None => None,
+        };
+        if let Some(id) = menu_id(db, menu.route_key).await? {
+            db.execute_raw(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "UPDATE `sys_menu` SET `parent_id` = ?, `menu_type` = ?, `perm_id` = ?, `status` = '1', \
+                 `del_flag` = '0', `updated_at` = UTC_TIMESTAMP(6) \
+                 WHERE `id` = ? AND `tenant_id` = 'system'",
+                [
+                    parent_id.into(),
+                    menu.menu_type.into(),
+                    permission_id.into(),
+                    id.into(),
+                ],
+            ))
+            .await?;
+            continue;
+        }
+        let id = 20_000_i64 + i64::from(index);
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "INSERT INTO `sys_menu` \
+             (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
+             VALUES (?, 'system', ?, ?, ?, ?, ?, NULL, ?, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+            [
+                id.into(),
+                menu.route_key.into(),
+                parent_id.into(),
+                menu.menu_type.into(),
+                permission_id.into(),
+                menu.route_key.into(),
+                index.into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
+fn access_permission_codes() -> Result<Vec<&'static str>, DbErr> {
+    let mut values = Vec::new();
+    let mut inside = false;
+    for line in ACCESS_CATALOG.lines().map(str::trim) {
+        if line == "permissions = [" && !inside {
+            inside = true;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if line == "]" {
+            break;
+        }
+        let value = line.trim_end_matches(',').trim_matches('"');
+        if value.is_empty()
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b":-*._".contains(&byte))
+        {
+            return Err(DbErr::Custom("访问目录包含非法权限编码，拒绝初始化".into()));
+        }
+        values.push(value);
+    }
+    if values.is_empty() {
+        return Err(DbErr::Custom("访问目录没有权限定义".into()));
+    }
+    Ok(values)
+}
+
+fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
+    let mut menus = Vec::new();
+    let mut current = None;
+    for line in ACCESS_CATALOG.lines().map(str::trim) {
+        if line == "[[menus]]" {
+            if let Some(menu) = current.take() {
+                menus.push(menu);
+            }
+            current = Some(AccessMenu {
+                route_key: "",
+                menu_type: "",
+                permission: None,
+            });
+            continue;
+        }
+        if line.starts_with("[[") {
+            if let Some(menu) = current.take() {
+                menus.push(menu);
+            }
+            continue;
+        }
+        let Some(menu) = current.as_mut() else {
+            continue;
+        };
+        if let Some(value) = catalog_string_value(line, "route_key") {
+            menu.route_key = value;
+        } else if let Some(value) = catalog_string_value(line, "menu_type") {
+            menu.menu_type = value;
+        } else if let Some(value) = catalog_string_value(line, "permission") {
+            menu.permission = Some(value);
+        }
+    }
+    if let Some(menu) = current {
+        menus.push(menu);
+    }
+    if menus.iter().any(|menu| {
+        menu.route_key.is_empty()
+            || !matches!(menu.menu_type, "M" | "C")
+            || !menu
+                .route_key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+    }) {
+        return Err(DbErr::Custom("访问目录包含非法菜单定义".into()));
+    }
+    Ok(menus)
+}
+
+fn catalog_string_value(line: &'static str, key: &str) -> Option<&'static str> {
+    let value = line
+        .strip_prefix(key)?
+        .trim_start()
+        .strip_prefix('=')?
+        .trim();
+    value.strip_prefix('"')?.strip_suffix('"')
+}
+
+async fn permission_id<C>(db: &C, code: &str) -> Result<Option<i64>, DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "SELECT `id` FROM `sys_permission` \
+             WHERE `tenant_id` = 'system' AND `code` = ? LIMIT 1",
+            [code.into()],
+        ))
+        .await?;
+    Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
+}
+
+async fn menu_id<C>(db: &C, route_key: &str) -> Result<Option<i64>, DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "SELECT `id` FROM `sys_menu` \
+             WHERE `tenant_id` = 'system' AND `route_key` = ? LIMIT 1",
+            [route_key.into()],
+        ))
+        .await?;
+    Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
+}
+
+async fn seed_product_baseline<C>(db: &C) -> Result<(), DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    for statement in PRODUCT_SEED_STATEMENTS {
+        db.execute_unprepared(statement).await?;
+    }
+    Ok(())
+}
+
+const PRODUCT_SEED_STATEMENTS: &[&str] = &[
+    "INSERT INTO `sys_product_plan` \
+         (`id`, `plan_key`, `name`, `description`, `status`, `created_by`, `created_at`, `updated_at`) VALUES \
+         (1, 'standard', '标准版', '普通租户的默认产品套餐', '1', 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (2, 'platform', '平台版', '系统租户的平台控制面套餐', '1', 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
+         ON DUPLICATE KEY UPDATE `id` = `id`",
+    "INSERT INTO `sys_product_plan_version` \
+         (`id`, `plan_id`, `version`, `name`, `description`, `status`, `created_by`, `published_by`, `published_at`, `created_at`, `updated_at`) VALUES \
+         (1, 1, 1, '标准版 v1', '标准版初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (2, 2, 1, '平台版 v1', '平台控制面初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
+         ON DUPLICATE KEY UPDATE `id` = `id`",
+    "INSERT INTO `sys_product_plan_capability` \
+         (`plan_version_id`, `capability_code`, `variant_code`, `schema_version`, `config`, `created_at`, `updated_at`) VALUES \
+         (2, 'system.service_accounts', 'default', 1, JSON_OBJECT(), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
+         ON DUPLICATE KEY UPDATE `plan_version_id` = `plan_version_id`",
+    "INSERT INTO `sys_tenant_product_plan` \
+         (`tenant_id`, `plan_version_id`, `changed_by`, `change_reason`, `created_at`, `updated_at`) \
+         SELECT `tenant_id`, IF(`tenant_id` = 'system', 2, 1), NULL, 'fresh_baseline', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
+         FROM `sys_tenant` ON DUPLICATE KEY UPDATE \
+         `tenant_id` = `sys_tenant_product_plan`.`tenant_id`",
+];
+
+const TENANT_PLACEMENT_SEED_STATEMENT: &str = "INSERT INTO `sys_tenant_data_placement` \
+    (`tenant_id`, `current_target_key`, `placement_generation`, `state`, `switch_token`, `created_at`, `updated_at`) \
+    SELECT `tenant_id`, 'shared-control', 1, 'active', \
+           SHA2(CONCAT('ryframe:tenant-data:shared-control:v1:', `tenant_id`), 256), \
+           UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) FROM `sys_tenant` \
+    ON DUPLICATE KEY UPDATE \
+    `tenant_id` = `sys_tenant_data_placement`.`tenant_id`";
+
+const RETENTION_SCHEDULE_SEED_STATEMENT: &str = "INSERT INTO `sys_job_schedule` \
+    (`id`, `tenant_id`, `name`, `handler_key`, `cron_expression`, `timezone`, `enabled`, `misfire_policy`, `concurrency_policy`, `max_runtime_seconds`, `next_run_at`, `last_run_at`, `version`, `del_flag`, `created_at`, `updated_at`) VALUES \
+    (3, 'system', '数据保留清理', 'system.data_retention_cleanup', '0 30 3 * * * *', 'UTC', 1, 'fire_once', 'forbid', 900, UTC_TIMESTAMP(6), NULL, 1, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
+    ON DUPLICATE KEY UPDATE `id` = `id`";
+
+async fn seed_tenant_data_placements<C>(db: &C) -> Result<(), DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    db.execute_unprepared(TENANT_PLACEMENT_SEED_STATEMENT)
+        .await?;
+    Ok(())
+}
+
+async fn seed_retention_schedule<C>(db: &C) -> Result<(), DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    db.execute_unprepared(RETENTION_SCHEDULE_SEED_STATEMENT)
+        .await?;
+    Ok(())
+}
+
 pub fn mysql_snapshot_sql() -> String {
-    let mut snapshot = String::from(
-        "-- 自动生成文件：RyFrame v0.5 规范 MySQL 架构快照。\n\
+    let mut snapshot = format!(
+        "-- 自动生成文件：RyFrame 控制库新基线快照。\n\
+         -- schema fingerprint: {}\n\
          -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。\n\
          -- 仅供审阅：部署和重置工具不得执行此文件。\n\
          -- 重新生成命令：cargo run -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
+        crate::migration::m20260820_000000_control_baseline::schema_fingerprint()
     );
     for statement in ddl_statements() {
-        let statement =
-            crate::migration::m20260806_000021_message_recipient_soft_delete::current_snapshot_statement(statement);
-        let statement =
-            crate::migration::m20260813_000026_tenant_usage_governance::current_snapshot_statement(
-                statement,
-            );
-        let statement =
-            crate::migration::m20260813_000027_service_accounts::current_snapshot_statement(
-                &statement,
-            );
-        snapshot.push_str(statement.trim());
-        snapshot.push_str(";\n\n");
-    }
-    for statement in
-        crate::migration::m20260813_000027_service_accounts::service_account_table_statements()
-    {
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }
@@ -67,9 +311,86 @@ pub fn mysql_snapshot_sql() -> String {
         );
         snapshot.push_str(";\n\n");
     }
+    snapshot.push_str("-- 访问目录、产品套餐和租户数据放置种子。\n\n");
+    for statement in access_catalog_snapshot_statements().expect("访问目录必须在构建时通过严格解析")
+    {
+        append_snapshot_statement(&mut snapshot, &statement);
+    }
+    for statement in PRODUCT_SEED_STATEMENTS {
+        append_snapshot_statement(&mut snapshot, statement);
+    }
+    append_snapshot_statement(&mut snapshot, TENANT_PLACEMENT_SEED_STATEMENT);
+    append_snapshot_statement(&mut snapshot, RETENTION_SCHEDULE_SEED_STATEMENT);
     snapshot.truncate(snapshot.trim_end().len());
     snapshot.push('\n');
     snapshot
+}
+
+fn append_snapshot_statement(snapshot: &mut String, statement: &str) {
+    snapshot.push_str(statement.trim());
+    snapshot.push_str(";\n\n");
+}
+
+fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
+    let permissions = access_permission_codes()?;
+    let permission_rows = permissions
+        .iter()
+        .enumerate()
+        .map(|(index, code)| {
+            format!(
+                "({}, 'system', '{}', '{}', NULL, 'api', NULL, {}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+                10_000 + index,
+                code,
+                code,
+                index
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let mut statements = vec![format!(
+        "INSERT INTO `sys_permission` \
+         (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) VALUES\n{permission_rows}\n\
+         ON DUPLICATE KEY UPDATE `code` = `code`"
+    )];
+
+    for (index, menu) in access_menus()?.iter().enumerate() {
+        let permission_id = menu.permission.map_or_else(
+            || "NULL".to_owned(),
+            |code| {
+                format!(
+                    "(SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = '{code}' LIMIT 1)"
+                )
+            },
+        );
+        let parent_id = menu.parent_route_key().map_or_else(
+            || "NULL".to_owned(),
+            |route_key| {
+                format!(
+                    "(SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{route_key}' LIMIT 1)"
+                )
+            },
+        );
+        statements.push(format!(
+            "INSERT INTO `sys_menu` \
+             (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
+             SELECT {}, 'system', '{}', {}, '{}', {}, '{}', NULL, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
+             WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{}')",
+            20_000 + index,
+            menu.route_key,
+            parent_id,
+            menu.menu_type,
+            permission_id,
+            menu.route_key,
+            index,
+            menu.route_key,
+        ));
+        statements.push(format!(
+            "UPDATE `sys_menu` SET `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `status` = '1', `del_flag` = '0' \
+             WHERE `tenant_id` = 'system' AND `route_key` = '{}'",
+            parent_id, menu.menu_type, permission_id, menu.route_key,
+        ));
+    }
+    Ok(statements)
 }
 
 #[derive(Debug)]
@@ -376,4 +697,71 @@ fn backtick_identifiers(value: &str) -> Vec<String> {
         .filter(|(index, _)| index % 2 == 1)
         .map(|(_, identifier)| identifier.to_owned())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn access_catalog_seed_is_complete_and_unambiguous() {
+        let permissions = access_permission_codes().expect("访问目录权限应可解析");
+        let permission_set = permissions.iter().copied().collect::<BTreeSet<_>>();
+        assert_eq!(permission_set.len(), permissions.len());
+        assert!(permissions.iter().all(|code| code.len() <= 64));
+        assert!(permission_set.contains("tenant:capability:override"));
+
+        let menus = access_menus().expect("访问目录菜单应可解析");
+        let mut preceding_routes = BTreeSet::new();
+        for menu in &menus {
+            assert!(menu.route_key.len() <= 64);
+            if let Some(parent) = menu.parent_route_key() {
+                assert!(preceding_routes.contains(parent));
+            }
+            preceding_routes.insert(menu.route_key);
+        }
+        let route_keys = menus
+            .iter()
+            .map(|menu| menu.route_key)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(route_keys.len(), menus.len());
+        for menu in menus {
+            if let Some(permission) = menu.permission {
+                assert!(permission_set.contains(permission));
+            }
+        }
+    }
+
+    #[test]
+    fn review_snapshot_matches_the_fresh_schema() {
+        let snapshot = mysql_snapshot_sql();
+        assert!(snapshot.contains("schema fingerprint: 5f4a35deaa7f715e"));
+        assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 51);
+        for required in [
+            "`sys_background_job`",
+            "`payload_version`",
+            "`sys_export_job`",
+            "`active_request_fingerprint`",
+            "`delete_pending_at`",
+        ] {
+            assert!(snapshot.contains(required));
+        }
+    }
+
+    #[test]
+    fn canonical_seed_statements_are_strictly_parseable() {
+        for statement in seed_statements() {
+            let parsed = parse_seed_insert(statement).expect("基线种子应可解析");
+            assert!(!parsed.table.is_empty());
+            assert!(!parsed.rows.is_empty());
+            assert!(
+                parsed
+                    .rows
+                    .iter()
+                    .all(|row| row.len() == parsed.columns.len())
+            );
+        }
+    }
 }

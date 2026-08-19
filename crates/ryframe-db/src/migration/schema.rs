@@ -2,38 +2,7 @@ use std::collections::BTreeMap;
 
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
-use crate::migration::m20260522_000000_mysql_baseline::ddl_statements;
-
-pub(super) mod export_job;
-use export_job::EXPORT_JOB_DDL;
-
-const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
-    `id` BIGINT NOT NULL,
-    `tenant_id` VARCHAR(64) DEFAULT NULL,
-    `event_type` VARCHAR(96) NOT NULL,
-    `aggregate_type` VARCHAR(64) NOT NULL,
-    `aggregate_id` VARCHAR(128) NOT NULL,
-    `payload` JSON NOT NULL,
-    `status` VARCHAR(16) NOT NULL DEFAULT 'pending',
-    `available_at` DATETIME NOT NULL,
-    `attempts` INT NOT NULL DEFAULT 0,
-    `max_attempts` INT NOT NULL DEFAULT 5,
-    `lease_owner` VARCHAR(128) DEFAULT NULL,
-    `lease_until` DATETIME DEFAULT NULL,
-    `dedupe_key` VARCHAR(191) DEFAULT NULL,
-    `traceparent` VARCHAR(255) DEFAULT NULL,
-    `tracestate` VARCHAR(512) DEFAULT NULL,
-    `last_error` TEXT DEFAULT NULL,
-    `published_at` DATETIME DEFAULT NULL,
-    `created_at` DATETIME NOT NULL,
-    `updated_at` DATETIME NOT NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uq_outbox_event_dedupe` (`event_type`, `dedupe_key`),
-    KEY `idx_outbox_event_claim` (`status`, `available_at`, `id`),
-    KEY `idx_outbox_event_lease` (`status`, `lease_until`),
-    KEY `idx_outbox_event_aggregate` (`aggregate_type`, `aggregate_id`, `created_at`),
-    KEY `idx_outbox_event_retention` (`status`, `published_at`, `id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
+use crate::migration::m20260820_000000_control_baseline::ddl_statements;
 
 #[derive(Debug, PartialEq, Eq)]
 struct ExpectedTable {
@@ -126,19 +95,9 @@ where
         .await?;
     let mut tables = Vec::with_capacity(rows.len());
     for row in rows {
-        let table = String::try_get_by_index(&row, 0)?;
-        if !is_tenant_data_object(&table) {
-            tables.push(table);
-        }
+        tables.push(String::try_get_by_index(&row, 0)?);
     }
     Ok(tables)
-}
-
-pub(crate) async fn verify_legacy_schema<C>(db: &C) -> Result<(), DbErr>
-where
-    C: ConnectionTrait + ?Sized,
-{
-    verify_schema(db, true).await
 }
 
 /// 校验完整的规范 MySQL 指纹。
@@ -150,10 +109,10 @@ pub async fn verify_current_schema<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
 {
-    verify_schema(db, false).await
+    verify_schema(db).await
 }
 
-async fn verify_schema<C>(db: &C, legacy: bool) -> Result<(), DbErr>
+async fn verify_schema<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
 {
@@ -178,9 +137,6 @@ where
 
     for (table, expected_table) in &expected.tables {
         let Some(actual) = actual_tables.get(table) else {
-            if legacy && is_upgrade_table(table) {
-                continue;
-            }
             problems.push(format!("missing table {table}"));
             continue;
         };
@@ -204,18 +160,13 @@ where
         }
     }
     for table in actual_tables.keys() {
-        if legacy && is_retired_upgrade_table(table) {
-            continue;
-        }
         if table != "seaql_migrations" && !expected.tables.contains_key(table) {
             problems.push(format!("unexpected application table {table}"));
         }
     }
 
     for ((table, column), expected_column) in &expected.columns {
-        if !actual_tables.contains_key(table)
-            || (legacy && (is_upgrade_table(table) || is_upgrade_column(table, column)))
-        {
+        if !actual_tables.contains_key(table) {
             continue;
         }
         let Some(actual) = actual_columns.get(&(table.clone(), column.clone())) else {
@@ -271,22 +222,13 @@ where
             && !expected
                 .columns
                 .contains_key(&(table.clone(), column.clone()))
-            && !(legacy && is_legacy_extra_column(table, column))
         {
             problems.push(format!("unexpected column {table}.{column}"));
         }
     }
 
     for ((table, name), expected_index) in &expected.indexes {
-        if !actual_tables.contains_key(table)
-            || (legacy
-                && (is_upgrade_table(table)
-                    || expected_index
-                        .columns
-                        .iter()
-                        .any(|column| is_upgrade_column(table, column))
-                    || is_upgrade_index(table, name)))
-        {
+        if !actual_tables.contains_key(table) {
             continue;
         }
         let Some(actual) = actual_indexes.get(&(table.clone(), name.clone())) else {
@@ -307,24 +249,13 @@ where
     }
     for table_and_name in actual_indexes.keys() {
         let (table, name) = table_and_name;
-        if expected.tables.contains_key(table)
-            && !expected.indexes.contains_key(table_and_name)
-            && !(legacy && is_legacy_extra_index(table, name))
-        {
+        if expected.tables.contains_key(table) && !expected.indexes.contains_key(table_and_name) {
             problems.push(format!("unexpected index {table}.{name}"));
         }
     }
 
     for ((table, name), expected_foreign_key) in &expected.foreign_keys {
-        if !actual_tables.contains_key(table)
-            || (legacy
-                && (is_upgrade_table(table)
-                    || expected_foreign_key
-                        .columns
-                        .iter()
-                        .any(|column| is_upgrade_column(table, column))
-                    || is_upgrade_foreign_key(table, name)))
-        {
+        if !actual_tables.contains_key(table) {
             continue;
         }
         let Some(actual) = actual_foreign_keys.get(&(table.clone(), name.clone())) else {
@@ -348,7 +279,6 @@ where
         let (table, name) = table_and_name;
         if expected.tables.contains_key(table)
             && !expected.foreign_keys.contains_key(table_and_name)
-            && !(legacy && is_legacy_extra_foreign_key(table, name))
         {
             problems.push(format!("unexpected foreign key {table}.{name}"));
         }
@@ -545,12 +475,7 @@ where
 
 fn expected_schema() -> Result<ExpectedSchema, DbErr> {
     let mut schema = ExpectedSchema::default();
-    for statement in ddl_statements()
-        .chain([OUTBOX_EVENT_DDL, EXPORT_JOB_DDL])
-        .chain(
-            crate::migration::m20260813_000027_service_accounts::service_account_table_statements(),
-        )
-    {
+    for statement in ddl_statements() {
         let table = extract_table_name(statement).ok_or_else(|| {
             DbErr::Custom("canonical baseline contains an invalid CREATE TABLE statement".into())
         })?;
@@ -674,127 +599,11 @@ fn expected_schema() -> Result<ExpectedSchema, DbErr> {
             index += 1;
         }
     }
-    add_post_baseline_columns(&mut schema);
-    add_post_baseline_indexes(&mut schema);
     add_post_baseline_constraints(&mut schema);
     Ok(schema)
 }
 
-/// 补充由增量迁移添加、不能追写到历史基线中的规范列。
-fn add_post_baseline_columns(schema: &mut ExpectedSchema) {
-    schema.columns.insert(
-        ("sys_message_recipient".into(), "deleted_at".into()),
-        ExpectedColumn {
-            column_type: "datetime(6)".into(),
-            nullable: true,
-            default: None,
-            extra: String::new(),
-            character_set: None,
-            collation: None,
-            generation_expression: String::new(),
-        },
-    );
-}
-
-/// 用增量迁移已验证的收件箱索引替换历史基线中的旧索引声明。
-fn add_post_baseline_indexes(schema: &mut ExpectedSchema) {
-    let table = "sys_message_recipient".to_owned();
-    schema
-        .indexes
-        .remove(&(table.clone(), "idx_message_recipient_inbox".into()));
-    schema
-        .indexes
-        .remove(&(table.clone(), "idx_message_recipient_ack".into()));
-    for (name, columns) in [
-        (
-            "idx_message_recipient_visible",
-            vec!["tenant_id", "user_id", "deleted_at", "message_id"],
-        ),
-        (
-            "idx_message_recipient_unread",
-            vec![
-                "tenant_id",
-                "user_id",
-                "deleted_at",
-                "read_at",
-                "message_id",
-            ],
-        ),
-        (
-            "idx_message_recipient_unacked",
-            vec![
-                "tenant_id",
-                "user_id",
-                "deleted_at",
-                "acked_at",
-                "message_id",
-            ],
-        ),
-    ] {
-        schema.indexes.insert(
-            (table.clone(), name.into()),
-            ExpectedIndex {
-                unique: false,
-                columns: columns.into_iter().map(str::to_owned).collect(),
-            },
-        );
-    }
-
-    for (table, name, unique, columns) in [
-        (
-            "sys_dept",
-            "uq_sys_dept_tenant_id",
-            true,
-            vec!["tenant_id", "id"],
-        ),
-        (
-            "sys_user",
-            "uq_sys_user_tenant_id",
-            true,
-            vec!["tenant_id", "id"],
-        ),
-        (
-            "sys_role",
-            "uq_sys_role_tenant_id",
-            true,
-            vec!["tenant_id", "id"],
-        ),
-        (
-            "sys_user",
-            "idx_user_tenant_del",
-            false,
-            vec!["tenant_id", "del_flag"],
-        ),
-        (
-            "sys_role",
-            "idx_role_tenant_del",
-            false,
-            vec!["tenant_id", "del_flag", "id"],
-        ),
-        (
-            "sys_file",
-            "idx_file_tenant_del_size",
-            false,
-            vec!["tenant_id", "del_flag", "file_size"],
-        ),
-        (
-            "sys_job_schedule",
-            "idx_schedule_tenant_del_enabled",
-            false,
-            vec!["tenant_id", "enabled", "del_flag"],
-        ),
-    ] {
-        schema.indexes.insert(
-            (table.into(), name.into()),
-            ExpectedIndex {
-                unique,
-                columns: columns.into_iter().map(str::to_owned).collect(),
-            },
-        );
-    }
-}
-
-/// 补充必须在基线表创建完成后才能添加的跨表约束。
+/// 补充必须等被引用表创建完成后再由同一基线安装的跨表约束。
 fn add_post_baseline_constraints(schema: &mut ExpectedSchema) {
     schema.foreign_keys.insert(
         ("sys_user".into(), "fk_user_avatar_file".into()),
@@ -1023,144 +832,4 @@ fn compatible_column_type(expected: &str, actual: &str) -> bool {
 
 fn nullable_label(nullable: bool) -> &'static str {
     if nullable { "NULL" } else { "NOT NULL" }
-}
-
-fn is_upgrade_table(table: &str) -> bool {
-    matches!(
-        table,
-        "sys_background_job"
-            | "sys_job_schedule"
-            | "sys_job_schedule_execution"
-            | "sys_data_retention_run"
-            | "sys_user_import_job"
-            | "sys_user_import_row_result"
-            | "sys_tenant_config_bundle"
-            | "sys_tenant_config_transfer"
-            | "sys_tenant_config_transfer_item"
-            | "sys_service_account"
-            | "sys_service_account_role"
-            | "sys_service_credential"
-            | "sys_service_delegation"
-            | "sys_service_delegation_capability"
-            | "sys_service_access_audit"
-            | "sys_cache_namespace_version"
-            | "sys_outbox_event"
-            | "sys_export_job"
-            | "sys_product_plan"
-            | "sys_product_plan_version"
-            | "sys_product_plan_capability"
-            | "sys_tenant_product_plan"
-            | "sys_tenant_capability_override"
-            | "sys_tenant_operation_lease"
-            | "sys_message"
-            | "sys_message_audience"
-            | "sys_message_recipient"
-    )
-}
-
-// 这些是 v0.5 前的 RyFrame schema 可能缺失的唯一规范 v0.5 对象。其他任何差异
-// 都会被视为不完整或不兼容的初始化。
-fn is_upgrade_column(table: &str, column: &str) -> bool {
-    matches!(
-        (table, column),
-        (
-            "sys_tenant",
-            "session_version"
-                | "authorization_epoch"
-                | "runtime_epoch"
-                | "configuration_version"
-                | "status"
-        ) | ("sys_config", "portable")
-            | ("sys_user", "authorization_version")
-            | ("sys_user", "preferred_locale" | "avatar_file_id")
-            | ("sys_role", "is_super")
-            | ("sys_menu", "perm_id" | "route_key")
-            | (
-                "sys_file",
-                "upload_status" | "reservation_token" | "reservation_expires_at" | "file_sha256"
-            )
-            | (
-                "sys_login_info" | "sys_oper_log" | "password_reset_requests",
-                "tenant_id"
-            )
-            | ("sys_oper_log", "event_id" | "request_id")
-            | ("sys_export_job", "notification_read_at")
-    )
-}
-
-fn is_retired_upgrade_table(table: &str) -> bool {
-    table == "sys_tenant_config_lease"
-}
-
-fn is_upgrade_index(table: &str, name: &str) -> bool {
-    matches!(
-        (table, name),
-        (
-            "sys_menu",
-            "idx_perm_id" | "idx_menu_tenant_perm" | "idx_menu_tenant_route"
-        ) | ("sys_user", "idx_user_avatar_file")
-            | (
-                "sys_background_job",
-                "idx_bg_job_retention" | "idx_bg_job_tenant_created_status"
-            )
-            | ("sys_outbox_event", "idx_outbox_event_retention")
-            | (
-                "sys_job_schedule_execution",
-                "idx_job_schedule_execution_retention" | "idx_job_schedule_execution_trend"
-            )
-            | (
-                "sys_export_job",
-                "idx_export_job_history" | "idx_export_job_notification"
-            )
-            | ("sys_oper_log", "idx_oper_log_tenant_time_status")
-            | ("sys_login_info", "idx_login_info_tenant_time_status")
-            | ("sys_login_info" | "sys_oper_log", "idx_tenant_id")
-            | ("sys_oper_log", "uq_oper_log_event_id")
-            | ("password_reset_requests", "idx_password_reset_tenant")
-            | (
-                "sys_file",
-                "idx_file_reservation_expiry" | "idx_file_sha256" | "uq_sys_file_tenant_id"
-            )
-            | ("sys_user", "idx_user_tenant_del")
-            | ("sys_role", "idx_role_tenant_del")
-            | ("sys_file", "idx_file_tenant_del_size")
-            | ("sys_job_schedule", "idx_schedule_tenant_del_enabled")
-            | ("sys_dept", "uq_sys_dept_tenant_id")
-            | ("sys_user", "uq_sys_user_tenant_id")
-            | ("sys_role", "uq_sys_role_tenant_id")
-    )
-}
-
-fn is_upgrade_foreign_key(table: &str, name: &str) -> bool {
-    matches!(
-        (table, name),
-        ("sys_user", "fk_user_avatar_file")
-            | ("sys_menu", "fk_sys_menu_permission")
-            | ("sys_login_info", "fk_sys_login_info_tenant")
-            | ("sys_oper_log", "fk_sys_oper_log_tenant")
-            | ("password_reset_requests", "fk_password_reset_tenant")
-            | (
-                "sys_role_permission",
-                "fk_sys_role_permission_role" | "fk_sys_role_permission_permission"
-            )
-            | (
-                "sys_role_dept",
-                "fk_sys_role_dept_role" | "fk_sys_role_dept_dept"
-            )
-    )
-}
-
-fn is_legacy_extra_index(table: &str, name: &str) -> bool {
-    matches!((table, name), ("sys_file", "idx_file_upload_reservation"))
-}
-
-fn is_legacy_extra_column(table: &str, column: &str) -> bool {
-    matches!(
-        (table, column),
-        ("sys_user", "auth_version") | ("sys_file", "file_md5")
-    )
-}
-
-fn is_legacy_extra_foreign_key(_table: &str, _name: &str) -> bool {
-    false
 }

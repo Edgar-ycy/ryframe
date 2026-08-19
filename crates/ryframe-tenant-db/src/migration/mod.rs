@@ -6,9 +6,7 @@
 
 mod catalog;
 mod generated_catalog;
-mod m20260817_000001_tenant_fence;
-mod m20260817_000002_reconcile_shared_control_fence;
-mod m20260817_000003_target_slot;
+mod m20260820_000000_tenant_baseline;
 mod normalization;
 mod runtime;
 mod schema;
