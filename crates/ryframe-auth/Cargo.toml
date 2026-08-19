@@ -9,19 +9,13 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-ryframe-http = { path = "../ryframe-http" }
 ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-config = { path = "../ryframe-config" }
-ryframe-adapters = { path = "../ryframe-adapters" }
-async-trait = { workspace = true }
 jsonwebtoken = { workspace = true, features = ["aws_lc_rs"] }
 argon2 = { workspace = true }
 rand = { workspace = true }
-axum = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
-tracing = { workspace = true }
 lazy_static = { workspace = true }
 
 [lints]

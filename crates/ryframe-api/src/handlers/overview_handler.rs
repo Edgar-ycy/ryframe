@@ -1,9 +1,9 @@
+use crate::RequestPrincipal;
 use axum::{
     Json, Router,
     extract::{Query, State},
 };
 use ryframe_application::system::OverviewRange;
-use ryframe_auth::RequestPrincipal;
 use ryframe_config::RedisMode;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};

@@ -9,14 +9,13 @@ pub(crate) use password_reset::*;
 use axum::{Router, routing::post};
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::UserListParams;
-use ryframe_auth::{RequestPrincipal, rbac};
+use ryframe_auth::rbac;
 use ryframe_config::PaginationConfig;
 use ryframe_http::HttpResult;
 use ryframe_kernel::AppError;
 use ryframe_macro::route;
 
-use crate::list_query;
-use crate::state::AppState;
+use crate::{RequestPrincipal, list_query, state::AppState};
 
 fn ensure_current_user_permission(
     actor: &RequestPrincipal,

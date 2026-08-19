@@ -5,13 +5,14 @@ use axum::{
 use ryframe_application::system::{
     MessageAudienceKind, MessageAudienceSelector, PublishMessageParams,
 };
-use ryframe_auth::{RequestPrincipal, permission::check_permission};
+use ryframe_auth::permission::check_permission;
 use ryframe_http::{ApiEmptyResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
 use validator::Validate;
 
 use crate::{
+    RequestPrincipal,
     dto::message_dto::{
         AcknowledgeMessagesDto, DeleteMessagesDto, MessageInboxQuery, PublishMessageDto,
     },

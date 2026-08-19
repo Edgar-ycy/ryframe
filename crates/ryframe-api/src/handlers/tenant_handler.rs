@@ -4,13 +4,14 @@ use axum::{
     http::HeaderMap,
 };
 use ryframe_application::system::{CreateTenantParams, UpdateTenantParams};
-use ryframe_auth::{RequestPrincipal, rbac};
+use ryframe_auth::rbac;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
 use validator::Validate;
 
 use crate::{
+    RequestPrincipal,
     dto::{
         public_dto::{TenantCapacityVo, TenantUsageVo, TenantVo},
         tenant_dto::{

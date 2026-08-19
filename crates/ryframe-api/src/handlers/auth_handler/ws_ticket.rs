@@ -4,12 +4,13 @@ use axum::{
     http::{HeaderName, HeaderValue, header},
     response::{IntoResponse, Response},
 };
-use ryframe_auth::{RequestPrincipal, jwt::Claims};
+use ryframe_auth::jwt::Claims;
 use ryframe_http::{ApiResponse, HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 
 use crate::{
-    message_socket::WebSocketTicketResponse, request_locale::RequestLocale, state::AppState,
+    RequestPrincipal, message_socket::WebSocketTicketResponse, request_locale::RequestLocale,
+    state::AppState,
 };
 
 /// 实时通道不可用时供客户端识别受控降级的响应头。

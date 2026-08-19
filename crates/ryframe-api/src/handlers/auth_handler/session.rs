@@ -8,7 +8,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use ryframe_adapters::RefreshSessionRevocation;
-use ryframe_auth::{RequestPrincipal, jwt::Claims};
+use ryframe_auth::jwt::Claims;
 use ryframe_http::{ApiResponse, HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 
@@ -22,6 +22,7 @@ use super::{
     login::{record_login_failure_log, record_login_success},
 };
 use crate::{
+    RequestPrincipal,
     dto::{
         auth_dto::{AuthSessionResponse, CsrfResponse, LoginResponse, RevokeOtherSessionsResponse},
         empty_dto::EmptyRequestDto,
@@ -44,9 +45,9 @@ pub async fn csrf(
     jar: CookieJar,
 ) -> HttpResult<Response> {
     validate_auth_origin(&state, &headers)?;
-    let sid = refresh_cookie_session_id(&jar, &state.config.auth.jwt_secret);
+    let sid = refresh_cookie_session_id(&jar, &state.auth.token_settings);
     let token = ryframe_auth::jwt::encode_csrf(
-        &state.config.auth.jwt_secret,
+        &state.auth.token_settings,
         sid.as_deref(),
         CSRF_TTL_SECONDS,
     )?;
@@ -86,11 +87,11 @@ pub async fn logout(
 ) -> HttpResult<Response> {
     validate_auth_origin(&state, &headers)?;
     let has_refresh_cookie = jar.get(REFRESH_COOKIE).is_some();
-    let decoded_refresh = decode_refresh_cookie(&jar, &state.config.auth.jwt_secret);
+    let decoded_refresh = decode_refresh_cookie(&jar, &state.auth.token_settings);
     verify_csrf(
         &jar,
         &headers,
-        &state.config.auth.jwt_secret,
+        &state.auth.token_settings,
         decoded_refresh
             .as_ref()
             .ok()
@@ -107,7 +108,7 @@ pub async fn logout(
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        && let Ok(claims) = ryframe_auth::jwt::decode_token(value, &state.config.auth.jwt_secret)
+        && let Ok(claims) = ryframe_auth::jwt::decode_token(value, &state.auth.token_settings)
         && claims.token_type == "access"
     {
         let now = chrono::Utc::now().timestamp().max(0) as usize;
@@ -174,7 +175,7 @@ pub async fn refresh(
     jar: CookieJar,
 ) -> HttpResult<Response> {
     validate_auth_origin(&state, &headers)?;
-    let claims = match decode_refresh_cookie(&jar, &state.config.auth.jwt_secret) {
+    let claims = match decode_refresh_cookie(&jar, &state.auth.token_settings) {
         Ok(claims) => claims,
         Err(error) => {
             return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
@@ -189,7 +190,7 @@ pub async fn refresh(
     let rotation_attempt_id = verify_csrf(
         &jar,
         &headers,
-        &state.config.auth.jwt_secret,
+        &state.auth.token_settings,
         Some(&claims.sid),
     )?;
     let refresh_token = refresh_cookie_value(&jar)
@@ -370,7 +371,7 @@ pub async fn revoke_session(
     verify_csrf(
         &jar,
         &headers,
-        &state.config.auth.jwt_secret,
+        &state.auth.token_settings,
         Some(&claims.sid),
     )?;
     let result = state
@@ -431,7 +432,7 @@ pub async fn revoke_other_sessions(
     verify_csrf(
         &jar,
         &headers,
-        &state.config.auth.jwt_secret,
+        &state.auth.token_settings,
         Some(&claims.sid),
     )?;
     let sessions = state

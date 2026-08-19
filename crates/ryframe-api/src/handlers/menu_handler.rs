@@ -8,12 +8,12 @@ use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
+use crate::RequestPrincipal;
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};
 use crate::dto::public_dto::{MenuTreeNode, MenuVo};
 use crate::handler_utils::{parse_optional_i64, parse_optional_i64_str};
 use crate::state::AppState;
 use crate::{list_query, remove_body};
-use ryframe_auth::RequestPrincipal;
 
 list_query!(pub MenuListQuery, MenuFilterQuery {
     name: String,

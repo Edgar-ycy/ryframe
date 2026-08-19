@@ -1,8 +1,43 @@
 use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use ryframe_config::AuthConfig;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+/// JWT 签名与有效期设置。
+///
+/// 配置加载由组合根负责；认证核心只接收已经解析、校验完成的安全设置。
+pub struct TokenSettings {
+    secret: Arc<str>,
+    access_token_ttl_seconds: usize,
+    refresh_token_ttl_seconds: usize,
+}
+
+impl TokenSettings {
+    pub fn new(
+        secret: impl Into<Arc<str>>,
+        access_token_expire: &str,
+        refresh_token_expire: &str,
+    ) -> AppResult<Self> {
+        Ok(Self {
+            secret: secret.into(),
+            access_token_ttl_seconds: parse_duration(access_token_expire)?,
+            refresh_token_ttl_seconds: parse_duration(refresh_token_expire)?,
+        })
+    }
+
+    fn secret(&self) -> &str {
+        &self.secret
+    }
+
+    pub const fn access_token_ttl_seconds(&self) -> usize {
+        self.access_token_ttl_seconds
+    }
+
+    pub const fn refresh_token_ttl_seconds(&self) -> usize {
+        self.refresh_token_ttl_seconds
+    }
+}
 
 /// JWT 声明
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,18 +78,18 @@ pub struct TokenIdentity<'a> {
 /// 返回 `(token_string, jti)` 元组，jti 用于在线用户管理。
 pub fn encode_access(
     identity: &TokenIdentity<'_>,
-    config: &AuthConfig,
+    settings: &TokenSettings,
 ) -> AppResult<(String, String)> {
     let sid = new_sid();
-    encode_access_for_session(identity, &sid, config)
+    encode_access_for_session(identity, &sid, settings)
 }
 
 pub fn encode_access_for_session(
     identity: &TokenIdentity<'_>,
     sid: &str,
-    config: &AuthConfig,
+    settings: &TokenSettings,
 ) -> AppResult<(String, String)> {
-    let ttl = parse_duration(&config.access_token_expire)?;
+    let ttl = settings.access_token_ttl_seconds();
     let now = current_timestamp();
     let jti = new_jti();
     let claims = Claims {
@@ -69,18 +104,18 @@ pub fn encode_access_for_session(
         iat: now,
         exp: now + ttl,
     };
-    let token = encode_claims(&claims, config)?;
+    let token = encode_claims(&claims, settings)?;
     Ok((token, jti))
 }
 
 /// 签发刷新令牌
 ///
 /// 刷新令牌仅包含用户身份信息。
-pub fn encode_refresh(identity: &TokenIdentity<'_>, config: &AuthConfig) -> AppResult<String> {
-    let ttl = parse_duration(&config.refresh_token_expire)?;
+pub fn encode_refresh(identity: &TokenIdentity<'_>, settings: &TokenSettings) -> AppResult<String> {
+    let ttl = settings.refresh_token_ttl_seconds();
     let now = current_timestamp();
     let sid = new_sid();
-    encode_refresh_for_session(identity, &sid, new_jti(), now + ttl, config)
+    encode_refresh_for_session(identity, &sid, new_jti(), now + ttl, settings)
 }
 
 pub fn encode_refresh_for_session(
@@ -88,10 +123,10 @@ pub fn encode_refresh_for_session(
     sid: &str,
     jti: String,
     absolute_exp: usize,
-    config: &AuthConfig,
+    settings: &TokenSettings,
 ) -> AppResult<String> {
     let now = current_timestamp();
-    encode_refresh_for_session_at(identity, sid, jti, now, absolute_exp, config)
+    encode_refresh_for_session_at(identity, sid, jti, now, absolute_exp, settings)
 }
 
 /// 使用明确的签发时间戳编码刷新令牌。
@@ -103,7 +138,7 @@ pub fn encode_refresh_for_session_at(
     jti: String,
     issued_at: usize,
     absolute_exp: usize,
-    config: &AuthConfig,
+    settings: &TokenSettings,
 ) -> AppResult<String> {
     if issued_at > absolute_exp {
         return Err(AppError::Authentication("refresh session expired".into()));
@@ -120,7 +155,7 @@ pub fn encode_refresh_for_session_at(
         iat: issued_at,
         exp: absolute_exp,
     };
-    encode_claims(&claims, config)
+    encode_claims(&claims, settings)
 }
 
 fn current_timestamp() -> usize {
@@ -148,7 +183,11 @@ pub struct CsrfClaims {
     pub exp: usize,
 }
 
-pub fn encode_csrf(secret: &str, sid: Option<&str>, ttl_seconds: usize) -> AppResult<String> {
+pub fn encode_csrf(
+    settings: &TokenSettings,
+    sid: Option<&str>,
+    ttl_seconds: usize,
+) -> AppResult<String> {
     let now = current_timestamp();
     let claims = CsrfClaims {
         token_type: "csrf".into(),
@@ -160,15 +199,15 @@ pub fn encode_csrf(secret: &str, sid: Option<&str>, ttl_seconds: usize) -> AppRe
     encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
+        &EncodingKey::from_secret(settings.secret().as_bytes()),
     )
     .map_err(|e| AppError::Internal(format!("CSRF encode failed: {e}")))
 }
 
-pub fn decode_csrf(token: &str, secret: &str) -> AppResult<CsrfClaims> {
+pub fn decode_csrf(token: &str, settings: &TokenSettings) -> AppResult<CsrfClaims> {
     let claims = decode::<CsrfClaims>(
         token,
-        &DecodingKey::from_secret(secret.as_bytes()),
+        &DecodingKey::from_secret(settings.secret().as_bytes()),
         &Validation::default(),
     )
     .map(|data| data.claims)
@@ -179,20 +218,20 @@ pub fn decode_csrf(token: &str, secret: &str) -> AppResult<CsrfClaims> {
     Ok(claims)
 }
 
-fn encode_claims(claims: &Claims, config: &AuthConfig) -> AppResult<String> {
+fn encode_claims(claims: &Claims, settings: &TokenSettings) -> AppResult<String> {
     encode(
         &Header::default(),
         claims,
-        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+        &EncodingKey::from_secret(settings.secret().as_bytes()),
     )
     .map_err(|e| AppError::Internal(format!("JWT encode failed: {}", e)))
 }
 
 /// 验证并解码 JWT
-pub fn decode_token(token: &str, secret: &str) -> AppResult<Claims> {
+pub fn decode_token(token: &str, settings: &TokenSettings) -> AppResult<Claims> {
     let claims = decode::<Claims>(
         token,
-        &DecodingKey::from_secret(secret.as_bytes()),
+        &DecodingKey::from_secret(settings.secret().as_bytes()),
         &Validation::default(),
     )
     .map(|data| data.claims)
@@ -223,5 +262,24 @@ pub fn parse_duration(s: &str) -> AppResult<usize> {
     } else {
         s.parse::<usize>()
             .map_err(|_| AppError::Config(format!("无效的 duration: {}", s)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_settings_parse_expirations_once() {
+        let settings = TokenSettings::new("test-secret", "1h", "30m").unwrap();
+
+        assert_eq!(settings.secret(), "test-secret");
+        assert_eq!(settings.access_token_ttl_seconds(), 3_600);
+        assert_eq!(settings.refresh_token_ttl_seconds(), 1_800);
+    }
+
+    #[test]
+    fn token_settings_reject_invalid_expiration() {
+        assert!(TokenSettings::new("test-secret", "later", "7d").is_err());
     }
 }

@@ -12,13 +12,13 @@ use ryframe_kernel::LocalizedText;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
+use crate::RequestPrincipal;
 use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};
 use crate::dto::public_dto::NoticeVo;
 use crate::message_presenter::{PublishedMessageVo, into_message_text, render_published};
 use crate::request_locale::RequestLocale;
 use crate::state::AppState;
 use crate::{detail_body, list_query, remove_body};
-use ryframe_auth::RequestPrincipal;
 
 list_query!(pub NoticeListQuery, NoticeFilterQuery {
     title: String,

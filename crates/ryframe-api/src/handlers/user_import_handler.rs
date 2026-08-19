@@ -1,10 +1,10 @@
+use crate::RequestPrincipal;
 use axum::{
     Json, Router,
     extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
 use ryframe_application::system::{RequestUserImportCommand, UserImportData, UserImportListParams};
-use ryframe_auth::RequestPrincipal;
 use ryframe_excel::ExcelImporter;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;

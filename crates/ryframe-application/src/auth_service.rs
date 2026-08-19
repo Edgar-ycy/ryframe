@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_adapters::{RedisClient, RefreshSessionStore};
+use ryframe_auth::jwt::TokenSettings;
 use ryframe_config::AppConfig;
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{DeptRepository, UserRepository, entities::user};
@@ -70,6 +71,7 @@ pub struct AuthService {
     dept_repo: DeptRepository,
     authorization_resolver: AuthorizationResolver,
     config: Arc<AppConfig>,
+    token_settings: Arc<TokenSettings>,
     /// Redis 客户端（用于 refresh family 与登录暴力破解防护，可空）
     redis: Option<RedisClient>,
     refresh_sessions: RefreshSessionStore,
@@ -80,6 +82,7 @@ impl AuthService {
     pub fn new(
         db: ControlDatabaseCluster,
         config: Arc<AppConfig>,
+        token_settings: Arc<TokenSettings>,
         redis: Option<RedisClient>,
         authorization_cache: AuthorizationCache,
     ) -> Self {
@@ -91,6 +94,7 @@ impl AuthService {
             dept_repo: DeptRepository,
             authorization_resolver: AuthorizationResolver::new(),
             config,
+            token_settings,
             redis,
             refresh_sessions,
             authorization_cache,
@@ -99,5 +103,9 @@ impl AuthService {
 
     pub fn refresh_sessions(&self) -> RefreshSessionStore {
         self.refresh_sessions.clone()
+    }
+
+    pub fn token_settings(&self) -> Arc<TokenSettings> {
+        Arc::clone(&self.token_settings)
     }
 }

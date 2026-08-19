@@ -57,7 +57,7 @@ impl AuthService {
         token: &str,
         rotation_attempt_id: &str,
     ) -> AppResult<LoginResult> {
-        let claims = jwt::decode_token(token, &self.config.auth.jwt_secret)?;
+        let claims = jwt::decode_token(token, &self.token_settings)?;
         if claims.token_type != "refresh" {
             return Err(AppError::Authentication(
                 "令牌类型错误，请使用刷新令牌".into(),
@@ -117,19 +117,22 @@ impl AuthService {
         let sid = jwt::new_sid();
         let refresh_jti = jwt::generate_jti();
         let now = chrono::Utc::now().timestamp() as usize;
-        let expires_in = jwt::parse_duration(&self.config.auth.access_token_expire)?;
-        let refresh_ttl = jwt::parse_duration(&self.config.auth.refresh_token_expire)?
+        let expires_in = self.token_settings.access_token_ttl_seconds();
+        let refresh_ttl = self
+            .token_settings
+            .refresh_token_ttl_seconds()
             .min(MAX_REFRESH_SESSION_SECONDS);
         let refresh_expires_at = now
             .checked_add(refresh_ttl)
             .ok_or_else(|| AppError::Config("refresh token expiry is too large".into()))?;
-        let (access_token, _) = jwt::encode_access_for_session(&identity, &sid, &self.config.auth)?;
+        let (access_token, _) =
+            jwt::encode_access_for_session(&identity, &sid, &self.token_settings)?;
         let refresh_token = jwt::encode_refresh_for_session(
             &identity,
             &sid,
             refresh_jti.clone(),
             refresh_expires_at,
-            &self.config.auth,
+            &self.token_settings,
         )?;
         self.refresh_sessions
             .register(RefreshFamily {
@@ -175,7 +178,7 @@ impl AuthService {
             user_authorization_version: user.authorization_version,
             username: &user.username,
         };
-        let expires_in = jwt::parse_duration(&self.config.auth.access_token_expire)?;
+        let expires_in = self.token_settings.access_token_ttl_seconds();
         let proposed_jti = jwt::generate_jti();
         let (committed_jti, issued_at) = match self
             .refresh_sessions
@@ -211,14 +214,14 @@ impl AuthService {
             }
         };
         let (access_token, _) =
-            jwt::encode_access_for_session(&identity, &claims.sid, &self.config.auth)?;
+            jwt::encode_access_for_session(&identity, &claims.sid, &self.token_settings)?;
         let refresh_token = jwt::encode_refresh_for_session_at(
             &identity,
             &claims.sid,
             committed_jti,
             issued_at.max(0) as usize,
             claims.exp,
-            &self.config.auth,
+            &self.token_settings,
         )?;
         Ok(LoginResult {
             access_token,

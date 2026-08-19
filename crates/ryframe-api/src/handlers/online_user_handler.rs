@@ -1,3 +1,4 @@
+use crate::RequestPrincipal;
 use crate::dto::public_dto::OnlineUserVo;
 use crate::list_query;
 use crate::state::AppState;
@@ -5,7 +6,6 @@ use axum::{
     Extension, Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, route};

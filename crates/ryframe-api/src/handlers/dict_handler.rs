@@ -1,3 +1,4 @@
+use crate::RequestPrincipal;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -5,7 +6,6 @@ use axum::{
 };
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::DictTypeListParams;
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use serde::Deserialize;

@@ -1,8 +1,8 @@
+use crate::RequestPrincipal;
 use axum::{
     Json, Router,
     extract::{Path, State},
 };
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};
 

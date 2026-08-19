@@ -7,6 +7,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use ryframe_adapters::TenantContext;
+use ryframe_auth::jwt::TokenSettings;
 use ryframe_http::{ApiResponse, HttpResult, api_path};
 use ryframe_kernel::AppError;
 
@@ -30,7 +31,7 @@ pub(super) fn extract_user_agent(headers: &HeaderMap) -> &str {
 pub(super) fn verify_csrf(
     jar: &CookieJar,
     headers: &HeaderMap,
-    secret: &str,
+    settings: &TokenSettings,
     expected_sid: Option<&str>,
 ) -> HttpResult<String> {
     let header_token = csrf_header(headers).ok_or_else(|| {
@@ -45,7 +46,7 @@ pub(super) fn verify_csrf(
         ryframe_middleware::metrics::record_csrf_rejection();
         return Err(AppError::Authorization("CSRF challenge mismatch".into()).into());
     }
-    let claims = ryframe_auth::jwt::decode_csrf(header_token, secret).inspect_err(|_| {
+    let claims = ryframe_auth::jwt::decode_csrf(header_token, settings).inspect_err(|_| {
         ryframe_middleware::metrics::record_csrf_rejection();
     })?;
     if claims.sid.as_deref() != expected_sid {

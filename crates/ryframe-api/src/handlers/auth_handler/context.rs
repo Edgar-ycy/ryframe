@@ -1,10 +1,10 @@
+use crate::RequestPrincipal;
 use axum::{
     Json,
     extract::State,
     response::{IntoResponse, Response},
 };
 use ryframe_application::UserInfo;
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 use ryframe_tenant_db::{TenantDataError, TenantRuntimeSnapshot};

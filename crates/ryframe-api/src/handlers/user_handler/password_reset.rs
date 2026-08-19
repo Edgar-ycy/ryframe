@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
 
+use crate::RequestPrincipal;
 use axum::{
     Json,
     extract::{ConnectInfo, Path, State},
 };
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::post;
 use ryframe_utils::ip::ClientIp;

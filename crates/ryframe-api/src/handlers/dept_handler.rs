@@ -7,12 +7,12 @@ use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
+use crate::RequestPrincipal;
 use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};
 use crate::dto::public_dto::{DeptTreeNode, DeptVo};
 use crate::handler_utils::parse_optional_i64;
 use crate::state::AppState;
 use crate::{list_query, remove_body};
-use ryframe_auth::RequestPrincipal;
 
 list_query!(pub DeptListQuery, DeptFilterQuery {
     name: String,

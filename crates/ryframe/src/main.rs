@@ -15,7 +15,7 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    ryframe_auth::middleware::set_backend_failure_hook(
+    ryframe_api::auth_middleware::set_backend_failure_hook(
         ryframe_middleware::metrics::record_redis_degraded,
     );
     ryframe_application::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);

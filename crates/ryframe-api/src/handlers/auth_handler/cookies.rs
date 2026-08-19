@@ -1,6 +1,6 @@
 use axum::http::HeaderMap;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use ryframe_auth::jwt::Claims;
+use ryframe_auth::jwt::{Claims, TokenSettings};
 use ryframe_config::Environment;
 use ryframe_http::{HttpResult, api_path};
 use ryframe_kernel::AppError;
@@ -67,21 +67,27 @@ pub(super) fn clear_auth_cookies(jar: CookieJar, environment: Environment) -> Co
         .add(removal_cookie(CSRF_COOKIE, environment))
 }
 
-pub(super) fn decode_refresh_cookie(jar: &CookieJar, secret: &str) -> HttpResult<Claims> {
+pub(super) fn decode_refresh_cookie(
+    jar: &CookieJar,
+    settings: &TokenSettings,
+) -> HttpResult<Claims> {
     let token = jar
         .get(REFRESH_COOKIE)
         .map(Cookie::value)
         .ok_or_else(|| AppError::Authentication("missing refresh cookie".into()))?;
-    let claims = ryframe_auth::jwt::decode_token(token, secret)?;
+    let claims = ryframe_auth::jwt::decode_token(token, settings)?;
     if claims.token_type != "refresh" || claims.sid.is_empty() {
         return Err(AppError::Authentication("invalid refresh cookie".into()).into());
     }
     Ok(claims)
 }
 
-pub(super) fn refresh_cookie_session_id(jar: &CookieJar, secret: &str) -> Option<String> {
+pub(super) fn refresh_cookie_session_id(
+    jar: &CookieJar,
+    settings: &TokenSettings,
+) -> Option<String> {
     jar.get(REFRESH_COOKIE)
-        .and_then(|cookie| ryframe_auth::jwt::decode_token(cookie.value(), secret).ok())
+        .and_then(|cookie| ryframe_auth::jwt::decode_token(cookie.value(), settings).ok())
         .filter(|claims| claims.token_type == "refresh" && !claims.sid.is_empty())
         .map(|claims| claims.sid)
 }

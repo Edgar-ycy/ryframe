@@ -1,10 +1,10 @@
+use crate::RequestPrincipal;
 use axum::{
     extract::Request,
     http::{HeaderMap, HeaderValue, header},
     middleware::Next,
     response::Response,
 };
-use ryframe_auth::RequestPrincipal;
 use ryframe_kernel::Locale;
 
 /// 当前请求协商出的语言，可由处理器读取并用于渲染本地化文本。

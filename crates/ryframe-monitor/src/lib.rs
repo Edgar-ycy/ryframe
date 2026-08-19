@@ -4,7 +4,45 @@ pub mod server_info;
 
 #[doc(hidden)]
 pub mod __macro_support {
-    pub use ryframe_auth::middleware::perm_route;
+    use std::{future::Future, pin::Pin, sync::Arc};
+
+    use axum::{
+        extract::Request,
+        middleware::{self, Next},
+        response::{IntoResponse, Response},
+        routing::MethodRouter,
+    };
+    use ryframe_auth::{RequestPrincipal, permission::check_permission};
+    use ryframe_http::HttpAppError;
+    use ryframe_kernel::AppError;
+
+    type PermissionFuture = Pin<Box<dyn Future<Output = Result<Response, Response>> + Send>>;
+
+    fn require_permission(
+        permission: &'static str,
+    ) -> impl Fn(Request, Next) -> PermissionFuture + Clone {
+        move |request: Request, next: Next| {
+            Box::pin(async move {
+                let principal = request
+                    .extensions()
+                    .get::<Arc<RequestPrincipal>>()
+                    .ok_or_else(|| {
+                        HttpAppError::from(AppError::Authentication("未认证，请先登录".into()))
+                            .into_response()
+                    })?;
+                check_permission(principal, permission)
+                    .map_err(|error| HttpAppError::from(error).into_response())?;
+                Ok(next.run(request).await)
+            })
+        }
+    }
+
+    pub fn perm_route<S>(route: MethodRouter<S>, permission: &'static str) -> MethodRouter<S>
+    where
+        S: Clone + Send + Sync + 'static,
+    {
+        route.route_layer(middleware::from_fn(require_permission(permission)))
+    }
 }
 
 use std::sync::Arc;

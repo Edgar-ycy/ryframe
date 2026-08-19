@@ -13,7 +13,6 @@ use ryframe_application::{
         TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
     },
 };
-use ryframe_auth::middleware::AuthState;
 use ryframe_config::AppConfig;
 use ryframe_kernel::Localizer;
 use ryframe_middleware::RateLimiter;
@@ -21,7 +20,7 @@ use ryframe_monitor::MonitorState;
 use ryframe_tenant_db::TenantDatabaseRouter;
 use ryframe_utils::ip::TrustedProxySet;
 
-use crate::runtime::RuntimeComponents;
+use crate::{auth_middleware::AuthState, runtime::RuntimeComponents};
 
 #[derive(Clone)]
 pub struct AppServices {

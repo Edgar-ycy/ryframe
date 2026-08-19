@@ -11,6 +11,7 @@ use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
+use crate::RequestPrincipal;
 use crate::dto::option_dto::OptionQuery;
 use crate::dto::public_dto::{ExportJobVo, OptionList, RoleVo};
 use crate::dto::role_dto::{
@@ -20,7 +21,6 @@ use crate::handler_utils::{parse_csv_i64, parse_i64_strings};
 use crate::state::AppState;
 use crate::{detail_body, list_query};
 use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
-use ryframe_auth::RequestPrincipal;
 
 list_query!(pub RoleListQuery, RoleFilterQuery {
     name: String,

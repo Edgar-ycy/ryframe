@@ -1,3 +1,4 @@
+use crate::RequestPrincipal;
 use crate::dto::login_log_dto::LoginLogPageQuery;
 use crate::dto::public_dto::{ExportJobVo, LoginInfoVo};
 use crate::state::AppState;
@@ -7,7 +8,6 @@ use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{get, post, route};
 

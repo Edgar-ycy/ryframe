@@ -4,9 +4,10 @@ use ryframe_kernel::{AppError, AppResult};
 
 #[doc(hidden)]
 pub mod __macro_support {
-    pub use ryframe_auth::middleware::perm_route;
+    pub use crate::auth_middleware::perm_route;
 }
 
+pub mod auth_middleware;
 mod captcha;
 pub mod dto;
 mod handler_utils;
@@ -18,6 +19,7 @@ pub mod message_socket;
 pub mod openapi;
 pub mod oper_log_middleware;
 pub mod permission_catalog;
+mod principal;
 pub mod probes;
 pub mod request_locale;
 pub mod router;
@@ -26,6 +28,7 @@ pub mod state;
 pub mod versioning;
 
 pub use handlers::common_handler::{download_router, upload_router};
+pub use principal::RequestPrincipal;
 pub use probes::{livez, readyz};
 pub use request_locale::RequestLocale;
 pub use router::{api_router, auth_router};

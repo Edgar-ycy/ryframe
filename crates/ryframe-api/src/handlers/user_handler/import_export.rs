@@ -1,10 +1,10 @@
+use crate::RequestPrincipal;
 use axum::{
     Json,
     extract::State,
     http::{HeaderMap, StatusCode},
 };
 use ryframe_application::system::UserExportFilters;
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post};

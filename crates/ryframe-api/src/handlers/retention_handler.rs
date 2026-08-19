@@ -1,9 +1,9 @@
+use crate::RequestPrincipal;
 use axum::{
     Json, Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{get, post, route};
 

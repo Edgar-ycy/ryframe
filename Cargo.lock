@@ -3303,18 +3303,12 @@ name = "ryframe-auth"
 version = "0.10.0"
 dependencies = [
  "argon2",
- "async-trait",
- "axum",
  "chrono",
  "jsonwebtoken",
  "lazy_static",
  "rand 0.10.1",
- "ryframe-adapters",
- "ryframe-config",
- "ryframe-http",
  "ryframe-kernel",
  "serde",
- "tracing",
  "uuid",
 ]
 

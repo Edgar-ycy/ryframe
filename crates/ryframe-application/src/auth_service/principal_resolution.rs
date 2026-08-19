@@ -1,9 +1,11 @@
 use async_trait::async_trait;
-use ryframe_auth::{PrincipalResolver, RequestPrincipal, jwt::Claims};
+use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_db::ReadConsistency;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
-use crate::{AuthorizationSnapshot, AuthorizationVersions, ResolvedAuthorization};
+use crate::{
+    AuthorizationSnapshot, AuthorizationVersions, PrincipalResolver, ResolvedAuthorization,
+};
 
 use super::{AuthService, identity::ValidatedIdentity};
 

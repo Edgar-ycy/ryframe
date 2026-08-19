@@ -24,7 +24,7 @@ use axum::{
     routing::{delete as delete_route, get as get_route, post},
 };
 use ryframe_application::system::OnlineUserService;
-use ryframe_auth::{RequestPrincipal, jwt::Claims};
+use ryframe_auth::jwt::Claims;
 use ryframe_config::RedisMode;
 use ryframe_http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
 use ryframe_kernel::AppError;
@@ -36,6 +36,8 @@ use ryframe_middleware::{
 };
 use serde::Serialize;
 use utoipa::ToSchema;
+
+use crate::RequestPrincipal;
 
 #[derive(Clone)]
 struct AuthenticatedTenantRateLimitState {
@@ -120,7 +122,7 @@ where
         .layer(from_fn_with_state(state.clone(), tenant_context_headers))
         .layer(from_fn_with_state(
             state.auth.clone(),
-            ryframe_auth::middleware::auth_middleware,
+            crate::auth_middleware::auth_middleware,
         ))
 }
 

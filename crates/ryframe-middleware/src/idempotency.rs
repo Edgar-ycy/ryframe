@@ -435,7 +435,11 @@ pub async fn idempotency_middleware(
         return (StatusCode::BAD_REQUEST, "invalid Idempotency-Key").into_response();
     }
 
-    let Some(principal) = request.extensions().get::<RequestPrincipal>().cloned() else {
+    let Some(principal) = request
+        .extensions()
+        .get::<Arc<RequestPrincipal>>()
+        .map(Arc::clone)
+    else {
         return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
     };
     let method = request.method().clone();

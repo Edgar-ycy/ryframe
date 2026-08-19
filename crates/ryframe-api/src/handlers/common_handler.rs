@@ -12,9 +12,9 @@ use ryframe_macro::{get, post, route};
 use ryframe_utils::file_upload::UploadConfig;
 use serde::Deserialize;
 
+use crate::RequestPrincipal;
 use crate::dto::{multipart_dto::FileUploadForm, public_dto::UploadResponse};
 use crate::{handler_utils::attachment_content_disposition, state::AppState};
-use ryframe_auth::RequestPrincipal;
 
 /// 多文件上传响应
 pub type MultiUploadResponse = Vec<UploadResponse>;

@@ -4,6 +4,7 @@ mod auth_service;
 mod authorization_cache;
 mod authorization_resolver;
 pub mod jobs;
+mod principal_resolver;
 mod service_identity_secret;
 pub mod system;
 mod trace_context;
@@ -34,6 +35,7 @@ pub use jobs::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
+pub use principal_resolver::PrincipalResolver;
 
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_tenant_db::TenantDataError;

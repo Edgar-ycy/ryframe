@@ -151,11 +151,11 @@ pub async fn login(
 ) -> HttpResult<Response> {
     req.validate()?;
     validate_auth_origin(&state, &headers)?;
-    let csrf_sid = refresh_cookie_session_id(&jar, &state.config.auth.jwt_secret);
+    let csrf_sid = refresh_cookie_session_id(&jar, &state.auth.token_settings);
     verify_csrf(
         &jar,
         &headers,
-        &state.config.auth.jwt_secret,
+        &state.auth.token_settings,
         csrf_sid.as_deref(),
     )?;
 

@@ -1,3 +1,4 @@
+use crate::RequestPrincipal;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -7,7 +8,6 @@ use axum::{
 use ryframe_application::system::{
     CreateDelegationCommand, ServiceAccountService, ServiceDelegationTargetVo,
 };
-use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, route};

@@ -7,13 +7,14 @@ use ryframe_application::system::{
     CreateProductPlanCommand, CreateProductPlanVersionCommand, ProductChangeTarget,
     UpdateProductPlanCommand, UpdateProductPlanVersionCommand,
 };
-use ryframe_auth::{RequestPrincipal, rbac};
+use ryframe_auth::rbac;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
 use validator::Validate;
 
 use crate::{
+    RequestPrincipal,
     dto::product_dto::{
         CapabilityCatalogVo, CapabilityOverrideDto, CapabilitySnapshotDto, CreateProductPlanDto,
         CreateProductPlanVersionDto, ProductChangeApplyDto, ProductChangePreviewDto,

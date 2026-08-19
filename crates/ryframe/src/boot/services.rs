@@ -101,9 +101,15 @@ pub async fn build_all(
         authorization_cache.clone(),
         product.clone(),
     ));
+    let token_settings = Arc::new(ryframe_auth::jwt::TokenSettings::new(
+        Arc::<str>::from(config.auth.jwt_secret.as_str()),
+        &config.auth.access_token_expire,
+        &config.auth.refresh_token_expire,
+    )?);
     let auth = Arc::new(AuthService::new(
         database.clone(),
         Arc::new(config.clone()),
+        token_settings,
         redis_client.clone(),
         authorization_cache.clone(),
     ));
