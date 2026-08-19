@@ -15,7 +15,6 @@ ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-config = { path = "../ryframe-config" }
-ryframe-generator = { path = "../ryframe-generator" }
 ryframe-excel = { path = "../ryframe-excel" }
 ryframe-storage = { path = "../ryframe-storage" }
 ryframe-middleware = { path = "../ryframe-middleware" }

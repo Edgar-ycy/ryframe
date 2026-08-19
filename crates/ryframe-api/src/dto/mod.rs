@@ -6,7 +6,6 @@ pub mod dict_dto;
 pub mod empty_dto;
 pub mod export_dto;
 pub mod fixed_value;
-pub mod generator_dto;
 pub mod job_dto;
 pub mod login_log_dto;
 pub mod menu_dto;

@@ -3,10 +3,10 @@ use std::sync::Arc;
 use crate::{
     handlers::{
         auth_handler, authorization_diagnostic_handler, captcha_handler, common_handler,
-        config_handler, dept_handler, dict_handler, export_handler, generator_handler, job_handler,
-        login_log_handler, menu_handler, message_handler, notice_handler, online_user_handler,
-        oper_log_handler, overview_handler, permission_handler, post_handler, profile_handler,
-        retention_handler, role_handler, schedule_handler, service_account_handler,
+        config_handler, dept_handler, dict_handler, export_handler, job_handler, login_log_handler,
+        menu_handler, message_handler, notice_handler, online_user_handler, oper_log_handler,
+        overview_handler, permission_handler, post_handler, profile_handler, retention_handler,
+        role_handler, schedule_handler, service_account_handler,
         service_delegation_profile_handler, tenant_config_handler, user_handler,
         user_import_handler,
     },
@@ -323,7 +323,6 @@ pub struct ApiVersionEndpoints {
     pub auth: String,
     pub system: String,
     pub monitor: String,
-    pub tools: String,
     pub common: String,
     pub openapi: String,
     pub swagger: String,
@@ -359,7 +358,6 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
             auth: api_path("auth"),
             system: api_path("system"),
             monitor: api_path("monitor"),
-            tools: api_path("tools"),
             common: api_path("common"),
             openapi: api_path("api-docs/openapi.json"),
             swagger: api_path("swagger-ui"),
@@ -387,13 +385,12 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .nest("/auth", auth_router(state.clone()))
         .nest(
             "/system",
-            system_router(state.clone(), rate_limit_state.clone(), idempotency_state),
+            system_router(state.clone(), rate_limit_state, idempotency_state),
         )
         .nest(
             "/monitor",
             monitor_router(state.clone(), state.monitor.clone()),
         )
-        .nest("/tools", tools_router(state.clone(), rate_limit_state))
         .nest("/common", common_router(state.clone()));
 
     if state.config.multi_tenancy.enabled {
@@ -453,7 +450,7 @@ mod runtime_probe;
 #[cfg(feature = "runtime-swagger-ui")]
 mod swagger;
 
-use groups::{common_router, monitor_router, system_router, tools_router};
+use groups::{common_router, monitor_router, system_router};
 use runtime_probe::RuntimeStatus;
 #[cfg(feature = "runtime-swagger-ui")]
 use swagger::swagger_ui_router;

@@ -6,12 +6,11 @@ use ryframe_application::{
     agent::AgentService,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
-        DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
-        MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
-        OverviewService, PermissionService, PostService, ProductService, ProfileService,
-        RoleService, ServiceAccountService, TenantConfigTransferService,
-        TenantDataMigrationService, TenantService, TenantUsageService, UserImportService,
-        UserService, WebSocketTicketService,
+        DeptService, DictService, ExportService, FileService, LoginInfoService, MenuService,
+        MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
+        PermissionService, PostService, ProductService, ProfileService, RoleService,
+        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
+        TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_auth::middleware::AuthState;
@@ -56,7 +55,6 @@ pub struct AppServices {
     pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,
     pub overview: Arc<OverviewService>,
     pub login_info: Arc<LoginInfoService>,
-    pub generator: Arc<GeneratorService>,
     pub profile: Arc<ProfileService>,
     pub file: Arc<FileService>,
     pub online_user: Arc<OnlineUserService>,

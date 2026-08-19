@@ -132,7 +132,7 @@ async fn backfill_route_keys(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
         .execute_unprepared(
             "UPDATE sys_menu SET route_key = CASE name \
              WHEN '首页' THEN 'home' WHEN '系统管理' THEN 'system' \
-             WHEN '系统监控' THEN 'monitor' WHEN '系统工具' THEN 'tools' \
+             WHEN '系统监控' THEN 'monitor' \
              WHEN '用户管理' THEN 'system.user' WHEN '角色管理' THEN 'system.role' \
              WHEN '菜单管理' THEN 'system.menu' WHEN '部门管理' THEN 'system.dept' \
              WHEN '岗位管理' THEN 'system.post' WHEN '字典管理' THEN 'system.dict' \
@@ -141,7 +141,7 @@ async fn backfill_route_keys(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
              WHEN '登录日志' THEN 'system.logininfor' WHEN '在线用户' THEN 'monitor.online' \
              WHEN '服务监控' THEN 'monitor.server' WHEN '运行时监控' THEN 'monitor.runtime' \
              WHEN '缓存监控' THEN 'monitor.cache' WHEN '连接池监控' THEN 'monitor.db-pool' \
-             WHEN '代码生成' THEN 'tools.gen' ELSE route_key END \
+             ELSE route_key END \
              WHERE route_key IS NULL AND menu_type IN ('M', 'C')",
         )
         .await?;
@@ -163,7 +163,7 @@ async fn backfill_permission_ids(manager: &SchemaManager<'_>) -> Result<(), DbEr
         WHEN '登录日志' THEN 'system:logininfor:list' WHEN '在线用户' THEN 'monitor:online:list' \
         WHEN '服务监控' THEN 'monitor:server:list' WHEN '运行时监控' THEN 'monitor:runtime:list' \
         WHEN '缓存监控' THEN 'monitor:cache:list' WHEN '连接池监控' THEN 'monitor:db-pool:list' \
-        WHEN '代码生成' THEN 'tools:gen:list' WHEN '用户查询' THEN 'system:user:list' \
+        WHEN '用户查询' THEN 'system:user:list' \
         WHEN '用户新增' THEN 'system:user:add' WHEN '用户修改' THEN 'system:user:edit' \
         WHEN '用户删除' THEN 'system:user:remove' WHEN '用户导出' THEN 'system:user:export' \
         ELSE NULL END";

@@ -3280,7 +3280,6 @@ dependencies = [
  "ryframe-config",
  "ryframe-db",
  "ryframe-excel",
- "ryframe-generator",
  "ryframe-kernel",
  "ryframe-middleware",
  "ryframe-storage",

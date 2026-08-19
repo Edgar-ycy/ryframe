@@ -23,20 +23,6 @@ min_connections = 1
 
 # 同结构只读副本通过 `[[database.replicas]]` 单独配置；本机开发环境暂不配置。
 
-# 独立业务数据源必须按名称显式使用，不参与主库读写路由。
-[[database.sources]]
-name = "ryframe_device"
-host = "localhost"
-port = 3306
-database = "ryframe_device"
-username = "root"
-password = "123456"
-max_connections = 5
-min_connections = 1
-
-[generator]
-data_source = "ryframe_device"
-
 [object_storage]
 backend = "rustfs"
 endpoint = "http://localhost:9000"

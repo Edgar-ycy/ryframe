@@ -1287,8 +1287,6 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
 
     (22, '通知公告', 'system:notice', 1, 'menu', 'Bell', 11, '1'),
 
-    (23, '代码生成', 'tools:gen', NULL, 'menu', 'MagicStick', 3, '1'),
-
     (24, '角色查询', 'system:role:list', 3, 'api', NULL, 1, '1'),
     (25, '角色新增', 'system:role:add', 3, 'api', NULL, 2, '1'),
     (26, '角色修改', 'system:role:edit', 3, 'api', NULL, 3, '1'),
@@ -1348,9 +1346,6 @@ INSERT INTO `sys_permission` (`id`, `name`, `code`, `parent_id`, `perm_type`, `i
     (66, '缓存监控查询', 'monitor:cache:list', 16, 'api', NULL, 1, '1'),
     (67, '连接池监控查询', 'monitor:db-pool:list', 17, 'api', NULL, 1, '1'),
 
-    (68, '代码生成查询', 'tools:gen:list', 23, 'api', NULL, 1, '1'),
-    (69, '代码生成操作', 'tools:gen:add', 23, 'api', NULL, 2, '1'),
-
     (70, '运行时监控', 'monitor:runtime', 13, 'menu', 'Operation', 5, '1'),
     (71, '运行时监控查询', 'monitor:runtime:list', 70, 'api', NULL, 1, '1') ON DUPLICATE KEY UPDATE `id` = `id`;
 
@@ -1360,8 +1355,6 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `rout
 
     (1,  '系统管理', NULL, 'M', NULL, 'system', 'Setting', 1, 1, '1'),
     (2,  '系统监控', NULL, 'M', NULL, 'monitor', 'Monitor', 2, 1, '1'),
-    (3,  '系统工具', NULL, 'M', NULL, 'tools', 'Tools', 3, 1, '1'),
-
     (4,  '用户管理', 1, 'C', 7,  'system.user', 'User', 1, 1, '1'),
     (5,  '角色管理', 1, 'C', 24, 'system.role', 'UserFilled', 2, 1, '1'),
     (6,  '菜单管理', 1, 'C', 29, 'system.menu', 'Grid', 3, 1, '1'),
@@ -1379,8 +1372,6 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `rout
     (14, '运行时监控', 2, 'C', 71, 'monitor.runtime', 'Operation', 3, 1, '1'),
     (23, '缓存监控', 2, 'C', 66, 'monitor.cache', 'Coin', 4, 1, '1'),
     (24, '连接池监控', 2, 'C', 67, 'monitor.db-pool', 'Connection', 5, 1, '1'),
-
-    (17, '代码生成', 3, 'C', 68, 'tools.gen', 'MagicStick', 1, 1, '1'),
 
     (18, '用户查询', 4, 'F', 7,  NULL, NULL, 1, 1, '1'),
     (19, '用户新增', 4, 'F', 8,  NULL, NULL, 2, 1, '1'),
@@ -1446,10 +1437,7 @@ INSERT INTO `sys_menu` (`id`, `name`, `parent_id`, `menu_type`, `perm_id`, `rout
     (1064, '在线用户强退', 15, 'F', 64, NULL, NULL, 2, 1, '1'),
     (1065, '服务器监控查询', 16, 'F', 65, NULL, NULL, 1, 1, '1'),
     (1066, '缓存监控查询', 23, 'F', 66, NULL, NULL, 1, 1, '1'),
-    (1067, '连接池监控查询', 24, 'F', 67, NULL, NULL, 1, 1, '1'),
-
-    (1068, '代码生成查询', 17, 'F', 68, NULL, NULL, 1, 1, '1'),
-    (1069, '代码生成操作', 17, 'F', 69, NULL, NULL, 2, 1, '1') ON DUPLICATE KEY UPDATE `id` = `id`;
+    (1067, '连接池监控查询', 24, 'F', 67, NULL, NULL, 1, 1, '1') ON DUPLICATE KEY UPDATE `id` = `id`;
 
 INSERT INTO `sys_job_schedule`
     (`id`, `tenant_id`, `name`, `handler_key`, `cron_expression`, `timezone`, `enabled`, `misfire_policy`, `concurrency_policy`, `max_runtime_seconds`, `next_run_at`, `last_run_at`, `version`, `del_flag`, `created_at`, `updated_at`) VALUES

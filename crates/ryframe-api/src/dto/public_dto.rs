@@ -1,7 +1,6 @@
 mod audit;
 mod authorization_diagnostic;
 mod files;
-mod generator;
 mod identity;
 mod jobs;
 mod navigation;
@@ -23,7 +22,6 @@ pub use authorization_diagnostic::{
     AuthorizationDiagnosticVersionVo, AuthorizationDiagnosticVo,
 };
 pub use files::UploadResponse;
-pub use generator::{ColumnInfo, GeneratedFile, TableInfo, WriteReport};
 pub use identity::{RoleBriefVo, UserDetailVo, UserInfo, UserProfileResponse, UserVo};
 pub use jobs::{BackgroundJobQueueStats, BackgroundJobVo, ExportJobVo};
 pub use navigation::{

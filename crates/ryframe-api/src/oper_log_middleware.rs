@@ -245,7 +245,6 @@ fn resource_to_title(module: &str, resource: &str) -> String {
         ("platform", "tenants") => "租户管理".into(),
         ("monitor", "jobs") => "后台任务".into(),
         ("monitor", _) => "服务监控".into(),
-        ("tools", "gen") => "代码生成".into(),
         ("common", _) => "通用功能".into(),
         _ => {
             // 兜底：资源名首字母大写

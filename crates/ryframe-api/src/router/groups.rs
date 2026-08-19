@@ -145,24 +145,6 @@ pub(super) fn system_router(
     protect(router, &state)
 }
 
-/// 工具路由（认证主体 + 租户限流 + 用户限流 + 操作日志）
-///
-/// 执行顺序（从外到内）：auth → tenant_rate_limit → user_rate_limit → oper_log
-pub(super) fn tools_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
-    let router = Router::new()
-        .nest("/gen", generator_handler::generator_router(state.clone()))
-        .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-            oper_log_middleware,
-        ))
-        .layer(from_fn_with_state(
-            rate_limit_state,
-            user_rate_limit_middleware,
-        ));
-
-    protect(router, &state)
-}
-
 /// 通用功能路由（文件上传等）
 /// 上传和下载都要求认证主体，并记录操作日志。
 pub(super) fn common_router(state: AppState) -> Router {

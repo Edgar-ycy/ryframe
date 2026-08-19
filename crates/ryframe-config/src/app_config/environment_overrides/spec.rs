@@ -379,7 +379,6 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     ),
     EnvOverride::json_file("APP_DATABASE_REPLICAS", &["database", "replicas"]),
     EnvOverride::json_file("APP_DATABASE_SOURCES", &["database", "sources"]),
-    EnvOverride::string("APP_GENERATOR_DATA_SOURCE", &["generator", "data_source"]),
     EnvOverride::secret("APP_AUTH_JWT_SECRET", &["auth", "jwt_secret"]),
     EnvOverride::string(
         "APP_AUTH_ACCESS_TOKEN_EXPIRE",

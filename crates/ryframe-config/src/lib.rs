@@ -5,7 +5,6 @@ mod data_retention_config;
 mod db_config;
 mod environment;
 mod exposure_config;
-mod generator_config;
 mod job_config;
 mod logger_config;
 mod messaging_config;
@@ -31,7 +30,6 @@ pub use db_config::{
 };
 pub use environment::Environment;
 pub use exposure_config::{ApiDocsConfig, MonitorConfig};
-pub use generator_config::GeneratorConfig;
 pub use job_config::{JobConfig, JobWorkerMode};
 pub use logger_config::{LoggerConfig, LoggerFormat, LoggerLevel, LoggerOutput};
 pub use messaging_config::MessagingConfig;

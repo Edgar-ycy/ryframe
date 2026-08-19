@@ -70,10 +70,6 @@ tls_mode = "required"
 # MySQL TLS 客户端证书路径示例：tls_client_cert = "/run/secrets/mysql-client.pem"
 # MySQL TLS 客户端私钥路径示例：tls_client_key = "/run/secrets/mysql-client.key"
 
-[generator]
-# 读取表结构的数据源名称；默认使用 primary。
-data_source = "primary"
-
 [auth]
 jwt_secret = "change-me-in-production"
 access_token_expire = "1h"

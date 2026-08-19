@@ -7,12 +7,11 @@ use ryframe_application::{
     agent::{AgentService, service_capability_descriptors},
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
-        DeptService, DictService, ExportService, FileService, GeneratorService, LoginInfoService,
-        MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
-        OverviewService, PermissionService, PostService, ProductService, ProfileService,
-        RoleService, ServiceAccountService, TenantConfigTransferService,
-        TenantDataMigrationService, TenantService, TenantUsageService, UserImportService,
-        UserService, WebSocketTicketService,
+        DeptService, DictService, ExportService, FileService, LoginInfoService, MenuService,
+        MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
+        PermissionService, PostService, ProductService, ProfileService, RoleService,
+        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
+        TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_config::{AppConfig, RedisMode};
@@ -205,24 +204,6 @@ pub async fn build_all(
     ));
     let login_info = Arc::new(LoginInfoService::new(database.clone()));
 
-    let project_root = std::env::current_dir()
-        .map_err(|e| AppError::Internal(format!("无法获取项目根目录: {}", e)))?;
-    if config.generator.data_source != "primary" {
-        database
-            .source(&config.generator.data_source)
-            .ok_or_else(|| {
-                AppError::Config(format!(
-                    "代码生成器数据源未连接: {}",
-                    config.generator.data_source
-                ))
-            })?;
-    }
-    let generator = Arc::new(GeneratorService::new(
-        database.clone(),
-        config.generator.data_source.clone(),
-        project_root,
-    ));
-
     let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
     let export = Arc::new(
         ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
@@ -277,7 +258,6 @@ pub async fn build_all(
         authorization_diagnostic,
         overview,
         login_info,
-        generator,
         profile,
         file,
         online_user,

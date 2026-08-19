@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::{
     ApiDocsConfig, AuthConfig, CorsConfig, DataRetentionConfig, DatabaseConfig, Environment,
-    GeneratorConfig, JobConfig, LoggerConfig, MessagingConfig, MonitorConfig, MultiTenancyConfig,
+    JobConfig, LoggerConfig, MessagingConfig, MonitorConfig, MultiTenancyConfig,
     ObjectStorageConfig, PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig,
     ServiceAccountsConfig, TelemetryConfig, TenantConfigTransferConfig, TenantDataConfig,
     UploadLimitsConfig, UserImportConfig,
@@ -38,8 +38,6 @@ pub struct AppConfig {
     pub snowflake_worker_id: i64,
     pub app: AppSettings,
     pub database: DatabaseConfig,
-    #[serde(default)]
-    pub generator: GeneratorConfig,
     pub auth: AuthConfig,
     #[serde(default)]
     pub multi_tenancy: MultiTenancyConfig,

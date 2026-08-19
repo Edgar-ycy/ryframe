@@ -59,7 +59,6 @@ use utoipa::OpenApi;
         (name = "定时任务", description = "管理租户隔离的 Cron 计划、立即执行和执行历史。"),
         (name = "服务器监控", description = "/metrics(Prometheus) 公开；进程与依赖探针分别使用根路径 /livez、/readyz；/server、/cache、/db-pool、/runtime 需认证。"),
         (name = "运行探针", description = "/livez 只报告进程存活；后台任务检查 MySQL、required Redis 与对象存储，/readyz 只读取有时效上限的内存快照。"),
-        (name = "代码生成", description = "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。"),
         (name = "个人中心", description = "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。"),
         (name = "通用", description = "/upload、/upload/image、/upload/avatar、/file/download 均需认证。上传链路包含魔数校验、去重和熔断保护。"),
         (name = "租户管理", description = "系统租户管理租户生命周期、配额和管理员初始化。"),
@@ -224,10 +223,6 @@ use utoipa::OpenApi;
         ryframe_monitor::cache_commands_handler,
         ryframe_monitor::db_pool_handler,
         crate::router::runtime_status,
-        crate::handlers::generator_handler::list_tables,
-        crate::handlers::generator_handler::preview,
-        crate::handlers::generator_handler::generate,
-        crate::handlers::generator_handler::download,
         crate::handlers::common_handler::upload_file,
         crate::handlers::common_handler::upload_image,
         crate::handlers::common_handler::upload_avatar,
@@ -456,12 +451,6 @@ use utoipa::OpenApi;
         crate::dto::profile_dto::ChangePasswordRequest,
         crate::dto::profile_dto::AvatarResponse,
         crate::dto::public_dto::UserProfileResponse,
-        crate::dto::generator_dto::GenerateOptionsDto,
-        crate::dto::generator_dto::GenerateRequestDto,
-        crate::dto::public_dto::TableInfo,
-        crate::dto::public_dto::ColumnInfo,
-        crate::dto::public_dto::GeneratedFile,
-        crate::dto::public_dto::WriteReport,
         crate::dto::tenant_dto::CreateTenantDto,
         crate::dto::tenant_dto::UpdateTenantDto,
         crate::dto::tenant_dto::UpdateTenantStatusDto,
@@ -575,7 +564,6 @@ pub const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("home", "C"),
     ("system", "M"),
     ("monitor", "M"),
-    ("tools", "M"),
     ("platform", "M"),
     ("system.user", "C"),
     ("system.role", "C"),
@@ -603,7 +591,6 @@ pub const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
     ("monitor.schedules", "C"),
     ("monitor.retention", "C"),
     ("monitor.overview", "C"),
-    ("tools.gen", "C"),
 ];
 
 fn menu_route_contract() -> serde_json::Value {
@@ -653,7 +640,6 @@ fn menu_route_permission(route_key: &str) -> Option<&'static str> {
         "monitor.schedules" => Some("monitor:schedule:list"),
         "monitor.retention" => Some("monitor:retention:list"),
         "monitor.overview" => Some("monitor:overview:list"),
-        "tools.gen" => Some("tools:gen:list"),
         _ => None,
     }
 }

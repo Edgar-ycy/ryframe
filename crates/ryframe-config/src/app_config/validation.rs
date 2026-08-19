@@ -138,15 +138,6 @@ impl AppConfig {
                 )));
             }
         }
-        let generator_source = self.generator.data_source.trim();
-        if generator_source.is_empty() {
-            return Err(AppError::Config("generator.data_source 不能为空".into()));
-        }
-        if generator_source != "primary" && !source_names.contains(generator_source) {
-            return Err(AppError::Config(format!(
-                "generator.data_source 未注册: {generator_source}"
-            )));
-        }
         let jwt_secret = self.auth.jwt_secret.trim();
         if jwt_secret.is_empty() {
             return Err(AppError::Config("auth.jwt_secret 不能为空".into()));

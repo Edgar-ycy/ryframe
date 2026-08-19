@@ -15,6 +15,20 @@ EXTRA_PROTECTED_FILES = [
     ROOT / "crates" / "ryframe-monitor" / "src" / "lib.rs",
 ]
 
+PRODUCT_SOURCE_ROOTS = [
+    path / "src"
+    for path in sorted((ROOT / "crates").iterdir())
+    if path.is_dir() and path.name != "ryframe-generator" and (path / "src").is_dir()
+]
+
+FORBIDDEN_ONLINE_GENERATOR_PATTERNS = {
+    "在线生成器 handler": re.compile(r"\bgenerator_handler\b"),
+    "在线生成器 API 路径": re.compile(r"/api/v1/tools/gen(?:/|[\"'])"),
+    "在线生成器路由段": re.compile(r"[\"']/gen[\"']"),
+    "在线生成器权限": re.compile(r"\btools:gen(?::[a-z]+)?\b"),
+    "在线生成器菜单路由": re.compile(r"\btools\.gen\b"),
+}
+
 # 这些文件要么公开挂载，要么位于仅认证路由策略之后，故意不使用逐路由 RBAC 权限码。
 NON_RBAC_FILES = {
     "auth_handler.rs",
@@ -69,6 +83,13 @@ def routes_are_authenticated_only(filename: str, route_paths: list[str]) -> bool
 def main() -> int:
     violations: list[str] = []
 
+    for source_root in PRODUCT_SOURCE_ROOTS:
+        for path in sorted(source_root.rglob("*.rs")):
+            text = path.read_text(encoding="utf-8")
+            for label, pattern in FORBIDDEN_ONLINE_GENERATOR_PATTERNS.items():
+                if pattern.search(text):
+                    violations.append(f"{path.relative_to(ROOT)} :: {label}")
+
     protected_files = [
         path
         for path in sorted(HANDLERS.rglob("*.rs"))
@@ -99,13 +120,14 @@ def main() -> int:
                 violations.append(f"{path.relative_to(ROOT)} :: {route_label}")
 
     if violations:
-        print("Missing permission binding in protected routes:")
+        print("Permission route violations:")
         for item in violations:
             print(f"  - {item}")
         print()
         print(
             "Add `#[perm(\"permission:code\")]` below the route attribute, "
-            "or explicitly allowlist an authentication-only path."
+            "explicitly allowlist an authentication-only path, or remove the "
+            "forbidden online generator product route."
         )
         return 1
 

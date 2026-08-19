@@ -964,39 +964,6 @@
         ],
         "type": "object"
       },
-      "ApiPageResponse_TableInfo": {
-        "description": "统一分页 API 响应结构。",
-        "properties": {
-          "code": {
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/PageData_TableInfo"
-          },
-          "details": {},
-          "error_key": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "type": "string"
-          },
-          "request_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "data",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiPageResponse_TenantCapacityVo": {
         "description": "统一分页 API 响应结构。",
         "properties": {
@@ -6957,60 +6924,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_Vec_GeneratedFile": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "items": {
-              "description": "代码生成预览文件。",
-              "properties": {
-                "content": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "path",
-                "content"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_Vec_MenuTreeNode": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -8103,63 +8016,6 @@
         ],
         "type": "object"
       },
-      "ApiResponse_WriteReport": {
-        "description": "统一 API 响应结构。",
-        "properties": {
-          "code": {
-            "description": "与 HTTP 状态码一致的业务结果码。",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "data": {
-            "description": "代码生成写入报告。",
-            "properties": {
-              "skipped": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "written": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "written",
-              "skipped"
-            ],
-            "type": "object"
-          },
-          "details": {
-            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
-          },
-          "error_key": {
-            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "description": "面向用户的可读消息。",
-            "type": "string"
-          },
-          "request_id": {
-            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
-        "type": "object"
-      },
       "ApiResponse_u64": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -8220,16 +8076,12 @@
           },
           "system": {
             "type": "string"
-          },
-          "tools": {
-            "type": "string"
           }
         },
         "required": [
           "auth",
           "system",
           "monitor",
-          "tools",
           "common",
           "openapi",
           "swagger"
@@ -9456,48 +9308,6 @@
         "required": [
           "old_password",
           "new_password"
-        ],
-        "type": "object"
-      },
-      "ColumnInfo": {
-        "description": "数据库列结构响应。",
-        "properties": {
-          "comment": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "data_type": {
-            "type": "string"
-          },
-          "is_auto_increment": {
-            "type": "boolean"
-          },
-          "is_nullable": {
-            "type": "boolean"
-          },
-          "is_primary_key": {
-            "type": "boolean"
-          },
-          "is_unique": {
-            "type": "boolean"
-          },
-          "name": {
-            "type": "string"
-          },
-          "rust_type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "data_type",
-          "rust_type",
-          "is_nullable",
-          "is_primary_key",
-          "is_unique",
-          "is_auto_increment"
         ],
         "type": "object"
       },
@@ -11068,181 +10878,6 @@
         },
         "required": [
           "file"
-        ],
-        "type": "object"
-      },
-      "ForeignKeyInfo": {
-        "properties": {
-          "columns": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "name": {
-            "type": "string"
-          },
-          "referenced_columns": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "referenced_table": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "columns",
-          "referenced_table",
-          "referenced_columns"
-        ],
-        "type": "object"
-      },
-      "GenerateOptionsDto": {
-        "additionalProperties": false,
-        "properties": {
-          "dto_dir": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "entity_dir": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "generate_comments": {
-            "type": "boolean"
-          },
-          "generate_dto": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "generate_entity": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "generate_handler": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "generate_repository": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "generate_service": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "handler_dir": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "overwrite": {
-            "type": "boolean"
-          },
-          "repository_dir": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "service_dir": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "table_prefixes": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "tables": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "tables"
-        ],
-        "type": "object"
-      },
-      "GenerateRequestDto": {
-        "additionalProperties": false,
-        "properties": {
-          "options": {
-            "$ref": "#/components/schemas/GenerateOptionsDto"
-          },
-          "output_dir": {
-            "description": "后端服务所在机器上的代码输出根目录。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "output_dir",
-          "options"
-        ],
-        "type": "object"
-      },
-      "GeneratedFile": {
-        "description": "代码生成预览文件。",
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "path",
-          "content"
-        ],
-        "type": "object"
-      },
-      "IndexInfo": {
-        "properties": {
-          "columns": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "index_type": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "unique": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "name",
-          "unique",
-          "index_type",
-          "columns"
         ],
         "type": "object"
       },
@@ -14956,98 +14591,6 @@
         ],
         "type": "object"
       },
-      "PageData_TableInfo": {
-        "description": "分页接口的业务数据。",
-        "properties": {
-          "items": {
-            "items": {
-              "description": "数据库表结构响应。",
-              "properties": {
-                "columns": {
-                  "items": {
-                    "$ref": "#/components/schemas/ColumnInfo"
-                  },
-                  "type": "array"
-                },
-                "comment": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "foreign_key_dependencies": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "foreign_keys": {
-                  "items": {
-                    "$ref": "#/components/schemas/ForeignKeyInfo"
-                  },
-                  "type": "array"
-                },
-                "indexes": {
-                  "items": {
-                    "$ref": "#/components/schemas/IndexInfo"
-                  },
-                  "type": "array"
-                },
-                "schema_canonical": {
-                  "type": "string"
-                },
-                "table_name": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "table_name",
-                "columns",
-                "indexes",
-                "foreign_keys",
-                "foreign_key_dependencies",
-                "schema_canonical"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "max_page_size": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "page": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "page_size": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "total": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "total_pages": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "page",
-          "page_size",
-          "total",
-          "total_pages",
-          "max_page_size"
-        ],
-        "type": "object"
-      },
       "PageData_TenantCapacityVo": {
         "description": "分页接口的业务数据。",
         "properties": {
@@ -17695,56 +17238,6 @@
         ],
         "type": "object"
       },
-      "TableInfo": {
-        "description": "数据库表结构响应。",
-        "properties": {
-          "columns": {
-            "items": {
-              "$ref": "#/components/schemas/ColumnInfo"
-            },
-            "type": "array"
-          },
-          "comment": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "foreign_key_dependencies": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "foreign_keys": {
-            "items": {
-              "$ref": "#/components/schemas/ForeignKeyInfo"
-            },
-            "type": "array"
-          },
-          "indexes": {
-            "items": {
-              "$ref": "#/components/schemas/IndexInfo"
-            },
-            "type": "array"
-          },
-          "schema_canonical": {
-            "type": "string"
-          },
-          "table_name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "table_name",
-          "columns",
-          "indexes",
-          "foreign_keys",
-          "foreign_key_dependencies",
-          "schema_canonical"
-        ],
-        "type": "object"
-      },
       "TenantAuxiliaryUsageVo": {
         "description": "租户后台运行状态汇总。",
         "properties": {
@@ -19551,28 +19044,6 @@
         "required": [
           "ticket",
           "expires_in"
-        ],
-        "type": "object"
-      },
-      "WriteReport": {
-        "description": "代码生成写入报告。",
-        "properties": {
-          "skipped": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "written": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "written",
-          "skipped"
         ],
         "type": "object"
       }
@@ -40372,289 +39843,6 @@
         ]
       }
     },
-    "/api/v1/tools/gen/download": {
-      "post": {
-        "operationId": "post_tools_gen_download",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GenerateOptionsDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/zip": {
-                "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "下载生成代码",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "打包 zip 下载",
-        "tags": [
-          "代码生成"
-        ]
-      }
-    },
-    "/api/v1/tools/gen/generate": {
-      "post": {
-        "operationId": "post_tools_gen_generate",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GenerateRequestDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_WriteReport"
-                }
-              }
-            },
-            "description": "代码生成报告",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "写入磁盘",
-        "tags": [
-          "代码生成"
-        ]
-      }
-    },
-    "/api/v1/tools/gen/preview": {
-      "post": {
-        "operationId": "post_tools_gen_preview",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GenerateOptionsDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_Vec_GeneratedFile"
-                }
-              }
-            },
-            "description": "生成结果预览",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "预览生成内容",
-        "tags": [
-          "代码生成"
-        ]
-      }
-    },
-    "/api/v1/tools/gen/tables": {
-      "get": {
-        "operationId": "get_tools_gen_tables",
-        "parameters": [
-          {
-            "description": "页码，从 1 开始。",
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "description": "每页记录数，受 `pagination.max_page_size` 限制（默认值为 100）。",
-            "in": "query",
-            "name": "page_size",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "table_name",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "table_comment",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiPageResponse_TableInfo"
-                }
-              }
-            },
-            "description": "数据库表列表",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "列出数据库表",
-        "tags": [
-          "代码生成"
-        ]
-      }
-    },
     "/api/v1/version": {
       "get": {
         "operationId": "get_version",
@@ -40817,10 +40005,6 @@
       "name": "运行探针"
     },
     {
-      "description": "读取数据库表结构，生成 Entity/Repository/Service/Handler/DTO 五层代码。",
-      "name": "代码生成"
-    },
-    {
       "description": "当前用户信息查看/修改、密码修改、头像更新（全部需认证）。",
       "name": "个人中心"
     },
@@ -40955,12 +40139,6 @@
         "menu_type": "M",
         "permission_code": null,
         "route_key": "monitor"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "M",
-        "permission_code": null,
-        "route_key": "tools"
       },
       {
         "capability_code": null,
@@ -41123,12 +40301,6 @@
         "menu_type": "C",
         "permission_code": "monitor:overview:list",
         "route_key": "monitor.overview"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "permission_code": "tools:gen:list",
-        "route_key": "tools.gen"
       }
     ],
     "version": 1
@@ -41256,9 +40428,7 @@
       "tenant:product:assign",
       "tenant:product:view",
       "tenant:status",
-      "tenant:usage:list",
-      "tools:gen:add",
-      "tools:gen:list"
+      "tenant:usage:list"
     ],
     "version": 1
   },

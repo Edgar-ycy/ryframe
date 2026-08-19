@@ -7,7 +7,6 @@ pub mod config_handler;
 pub mod dept_handler;
 pub mod dict_handler;
 pub mod export_handler;
-pub mod generator_handler;
 pub mod job_handler;
 pub mod login_log_handler;
 pub mod menu_handler;

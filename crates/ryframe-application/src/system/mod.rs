@@ -125,8 +125,6 @@ pub use user_service::{
     UserListParams, UserService, UserVo,
 };
 pub use websocket_ticket_service::{WebSocketTicket, WebSocketTicketGrant, WebSocketTicketService};
-pub mod generator_service;
-pub use generator_service::{GeneratorService, TableListParams};
 pub mod profile_service;
 pub use profile_service::ProfileService;
 pub mod file_service;
