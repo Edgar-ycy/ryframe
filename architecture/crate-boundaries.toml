@@ -1,0 +1,241 @@
+schema_version = 1
+active_profile = "transition"
+
+# 源码规模检查从当前 profile 的 product_packages 自动发现所有生产 crate，
+# 不再维护容易漏项的目录白名单。
+[source_size]
+max_lines = 1000
+
+# 生成文件必须精确登记，并保留可验证的生成标记；禁止按目录名宽泛排除。
+[[source_size.generated_exclusions]]
+path = "crates/ryframe-tenant-db-migration/src/generated_catalog.rs"
+required_marker = "此文件是 ryframe-generator 的编译输入"
+reason = "由代码生成器维护的租户数据 catalog"
+
+# 仅锁住已存在的超限文件，禁止继续增长；拆分到全局上限以内后必须删除对应豁免。
+[[source_size.legacy_exceptions]]
+path = "crates/ryframe-tenant-db/src/router.rs"
+max_lines = 2472
+reason = "租户数据路由待按目标注册、路由解析和迁移协调拆分"
+
+[[source_size.legacy_exceptions]]
+path = "crates/ryframe-tenant-db-migration/src/lib.rs"
+max_lines = 1290
+reason = "租户迁移实现将在并入 ryframe-tenant-db 时拆分"
+
+[[source_size.legacy_exceptions]]
+path = "crates/ryframe-api/src/openapi.rs"
+max_lines = 1007
+reason = "OpenAPI 注册表待按契约域拆分"
+
+[[source_size.legacy_exceptions]]
+path = "crates/ryframe-db-migration/src/schema.rs"
+max_lines = 1188
+reason = "控制库 schema 校验待随迁移能力并入 ryframe-db 后拆分"
+
+# 当前 22 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+[profiles.transition]
+expected_package_count = 22
+run_tenant_data_legacy_checks = true
+packages = [
+    "ryframe",
+    "ryframe-api",
+    "ryframe-auth",
+    "ryframe-captcha",
+    "ryframe-config",
+    "ryframe-core",
+    "ryframe-db",
+    "ryframe-db-migration",
+    "ryframe-excel",
+    "ryframe-generator",
+    "ryframe-http",
+    "ryframe-i18n",
+    "ryframe-kernel",
+    "ryframe-macro",
+    "ryframe-middleware",
+    "ryframe-monitor",
+    "ryframe-service",
+    "ryframe-storage",
+    "ryframe-tenant-db",
+    "ryframe-tenant-db-migration",
+    "ryframe-utils",
+    "xtask",
+]
+product_packages = [
+    "ryframe",
+    "ryframe-api",
+    "ryframe-auth",
+    "ryframe-captcha",
+    "ryframe-config",
+    "ryframe-core",
+    "ryframe-db",
+    "ryframe-db-migration",
+    "ryframe-excel",
+    "ryframe-http",
+    "ryframe-i18n",
+    "ryframe-kernel",
+    "ryframe-macro",
+    "ryframe-middleware",
+    "ryframe-monitor",
+    "ryframe-service",
+    "ryframe-storage",
+    "ryframe-tenant-db",
+    "ryframe-tenant-db-migration",
+    "ryframe-utils",
+]
+tool_packages = ["ryframe-generator", "xtask"]
+allowed_internal_edges = [
+    "ryframe -> ryframe-api",
+    "ryframe -> ryframe-auth",
+    "ryframe -> ryframe-config",
+    "ryframe -> ryframe-core",
+    "ryframe -> ryframe-db",
+    "ryframe -> ryframe-db-migration",
+    "ryframe -> ryframe-i18n",
+    "ryframe -> ryframe-kernel",
+    "ryframe -> ryframe-middleware",
+    "ryframe -> ryframe-monitor",
+    "ryframe -> ryframe-service",
+    "ryframe -> ryframe-storage",
+    "ryframe -> ryframe-tenant-db",
+    "ryframe -> ryframe-tenant-db-migration",
+    "ryframe -> ryframe-utils",
+    "ryframe-api -> ryframe-auth",
+    "ryframe-api -> ryframe-captcha",
+    "ryframe-api -> ryframe-config",
+    "ryframe-api -> ryframe-core",
+    "ryframe-api -> ryframe-excel",
+    "ryframe-api -> ryframe-http",
+    "ryframe-api -> ryframe-i18n",
+    "ryframe-api -> ryframe-kernel",
+    "ryframe-api -> ryframe-macro",
+    "ryframe-api -> ryframe-middleware",
+    "ryframe-api -> ryframe-monitor",
+    "ryframe-api -> ryframe-service",
+    "ryframe-api -> ryframe-tenant-db",
+    "ryframe-api -> ryframe-utils",
+    "ryframe-auth -> ryframe-config",
+    "ryframe-auth -> ryframe-core",
+    "ryframe-auth -> ryframe-http",
+    "ryframe-auth -> ryframe-kernel",
+    "ryframe-captcha -> ryframe-kernel",
+    "ryframe-config -> ryframe-kernel",
+    "ryframe-config -> ryframe-utils",
+    "ryframe-core -> ryframe-config",
+    "ryframe-core -> ryframe-kernel",
+    "ryframe-db -> ryframe-config",
+    "ryframe-db -> ryframe-core",
+    "ryframe-db -> ryframe-kernel",
+    "ryframe-db -> ryframe-macro",
+    "ryframe-db -> ryframe-utils",
+    "ryframe-db-migration -> ryframe-utils",
+    "ryframe-excel -> ryframe-kernel",
+    "ryframe-generator -> ryframe-kernel",
+    "ryframe-generator -> ryframe-tenant-db-migration",
+    "ryframe-http -> ryframe-kernel",
+    "ryframe-macro -> ryframe-core",
+    "ryframe-middleware -> ryframe-auth",
+    "ryframe-middleware -> ryframe-config",
+    "ryframe-middleware -> ryframe-core",
+    "ryframe-middleware -> ryframe-http",
+    "ryframe-middleware -> ryframe-i18n",
+    "ryframe-middleware -> ryframe-kernel",
+    "ryframe-middleware -> ryframe-utils",
+    "ryframe-monitor -> ryframe-auth",
+    "ryframe-monitor -> ryframe-core",
+    "ryframe-monitor -> ryframe-http",
+    "ryframe-monitor -> ryframe-kernel",
+    "ryframe-monitor -> ryframe-macro",
+    "ryframe-monitor -> ryframe-middleware",
+    "ryframe-service -> ryframe-auth",
+    "ryframe-service -> ryframe-config",
+    "ryframe-service -> ryframe-core",
+    "ryframe-service -> ryframe-db",
+    "ryframe-service -> ryframe-excel",
+    "ryframe-service -> ryframe-generator",
+    "ryframe-service -> ryframe-kernel",
+    "ryframe-service -> ryframe-middleware",
+    "ryframe-service -> ryframe-storage",
+    "ryframe-service -> ryframe-tenant-db",
+    "ryframe-service -> ryframe-tenant-db-migration",
+    "ryframe-service -> ryframe-utils",
+    "ryframe-tenant-db -> ryframe-config",
+    "ryframe-tenant-db -> ryframe-core",
+    "ryframe-tenant-db -> ryframe-db",
+    "ryframe-tenant-db -> ryframe-tenant-db-migration",
+    "ryframe-utils -> ryframe-kernel",
+]
+
+# 代码生成 HTTP 入口移除前的唯一产品 -> 工具债务；任何新增同类边都会失败。
+temporary_product_tool_edges = ["ryframe-service -> ryframe-generator"]
+
+# 最终 10 个产品 crate + 2 个工具 crate。此 profile 即使尚未启用，也会被检查完整性与无环性。
+[profiles.final]
+expected_package_count = 12
+run_tenant_data_legacy_checks = false
+packages = [
+    "ryframe",
+    "ryframe-adapters",
+    "ryframe-api",
+    "ryframe-application",
+    "ryframe-auth",
+    "ryframe-config",
+    "ryframe-db",
+    "ryframe-generator",
+    "ryframe-kernel",
+    "ryframe-macro",
+    "ryframe-tenant-db",
+    "xtask",
+]
+product_packages = [
+    "ryframe",
+    "ryframe-adapters",
+    "ryframe-api",
+    "ryframe-application",
+    "ryframe-auth",
+    "ryframe-config",
+    "ryframe-db",
+    "ryframe-kernel",
+    "ryframe-macro",
+    "ryframe-tenant-db",
+]
+tool_packages = ["ryframe-generator", "xtask"]
+allowed_internal_edges = [
+    "ryframe -> ryframe-adapters",
+    "ryframe -> ryframe-api",
+    "ryframe -> ryframe-application",
+    "ryframe -> ryframe-auth",
+    "ryframe -> ryframe-config",
+    "ryframe -> ryframe-db",
+    "ryframe -> ryframe-kernel",
+    "ryframe -> ryframe-tenant-db",
+    "ryframe-adapters -> ryframe-application",
+    "ryframe-adapters -> ryframe-config",
+    "ryframe-adapters -> ryframe-kernel",
+    "ryframe-api -> ryframe-application",
+    "ryframe-api -> ryframe-auth",
+    "ryframe-api -> ryframe-kernel",
+    "ryframe-api -> ryframe-macro",
+    "ryframe-application -> ryframe-auth",
+    "ryframe-application -> ryframe-kernel",
+    "ryframe-auth -> ryframe-kernel",
+    "ryframe-config -> ryframe-kernel",
+    "ryframe-db -> ryframe-application",
+    "ryframe-db -> ryframe-config",
+    "ryframe-db -> ryframe-kernel",
+    "ryframe-db -> ryframe-macro",
+    "ryframe-generator -> ryframe-config",
+    "ryframe-generator -> ryframe-db",
+    "ryframe-generator -> ryframe-kernel",
+    "ryframe-generator -> ryframe-tenant-db",
+    "ryframe-tenant-db -> ryframe-application",
+    "ryframe-tenant-db -> ryframe-config",
+    "ryframe-tenant-db -> ryframe-db",
+    "ryframe-tenant-db -> ryframe-kernel",
+    "xtask -> ryframe-config",
+    "xtask -> ryframe-db",
+    "xtask -> ryframe-generator",
+    "xtask -> ryframe-kernel",
+    "xtask -> ryframe-tenant-db",
+]
+temporary_product_tool_edges = []
