@@ -5,9 +5,10 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::IntoResponse,
 };
-use ryframe_config::PaginationConfig;
+use ryframe_config::{Environment, PaginationConfig};
 use ryframe_core::ValidatedPageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
+use ryframe_kernel::{AppError, AppResult};
 use ryframe_macro::{get, post, route};
 use ryframe_service::system::generator_service::TableListParams;
 use serde::Deserialize;
@@ -22,12 +23,30 @@ use crate::{
 };
 
 pub fn generator_router(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new()
         .merge(route!(list_tables))
         .merge(route!(preview))
-        .merge(route!(generate))
-        .merge(route!(download))
-        .with_state(state)
+        .merge(route!(download));
+    let router = if online_write_enabled(state.config.environment) {
+        router.merge(route!(generate))
+    } else {
+        router
+    };
+    router.with_state(state)
+}
+
+const fn online_write_enabled(environment: Environment) -> bool {
+    !environment.is_production()
+}
+
+fn ensure_online_write_enabled(environment: Environment) -> AppResult<()> {
+    if online_write_enabled(environment) {
+        Ok(())
+    } else {
+        Err(AppError::CapabilityUnavailable(
+            "生产环境禁用在线代码生成写盘，请使用独立命令行工具".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -105,6 +124,7 @@ async fn generate(
     State(state): State<AppState>,
     Json(request): Json<GenerateRequestDto>,
 ) -> HttpResult<Json<ApiResponse<WriteReport>>> {
+    ensure_online_write_enabled(state.config.environment)?;
     let written = state
         .services
         .generator
@@ -135,4 +155,26 @@ async fn download(
     );
 
     Ok((headers, Body::from(zip_data)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_disables_online_disk_writes() {
+        assert!(!online_write_enabled(Environment::Prod));
+        assert!(matches!(
+            ensure_online_write_enabled(Environment::Prod),
+            Err(AppError::CapabilityUnavailable(_))
+        ));
+    }
+
+    #[test]
+    fn isolated_environments_keep_online_disk_writes_available() {
+        for environment in [Environment::Dev, Environment::Test] {
+            assert!(online_write_enabled(environment));
+            assert!(ensure_online_write_enabled(environment).is_ok());
+        }
+    }
 }
