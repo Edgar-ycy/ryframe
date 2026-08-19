@@ -71,8 +71,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         services: Arc::new(services),
         redis: redis_client.clone(),
         message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
-            localizer.clone(),
-            messaging,
+            localizer, messaging,
         )),
         token_blacklist,
         rate_limiter: limiter,

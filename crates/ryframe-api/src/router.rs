@@ -387,20 +387,13 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .nest("/auth", auth_router(state.clone()))
         .nest(
             "/system",
-            system_router(
-                state.clone(),
-                rate_limit_state.clone(),
-                idempotency_state.clone(),
-            ),
+            system_router(state.clone(), rate_limit_state.clone(), idempotency_state),
         )
         .nest(
             "/monitor",
             monitor_router(state.clone(), state.monitor.clone()),
         )
-        .nest(
-            "/tools",
-            tools_router(state.clone(), rate_limit_state.clone()),
-        )
+        .nest("/tools", tools_router(state.clone(), rate_limit_state))
         .nest("/common", common_router(state.clone()));
 
     if state.config.multi_tenancy.enabled {

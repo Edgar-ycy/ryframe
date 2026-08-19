@@ -997,7 +997,7 @@ impl TenantDatabaseRouter {
         )?;
         if !self.inner.targets.contains(&placement.current_target_key) {
             return Err(TenantDataError::UnknownTarget {
-                target_key: placement.current_target_key.clone(),
+                target_key: placement.current_target_key,
             });
         }
         Ok(placement)

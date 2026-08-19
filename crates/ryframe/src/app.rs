@@ -78,7 +78,7 @@ pub fn build_app(
         Router::new()
             .nest(
                 "/api/v1/agent/v1",
-                ryframe_api::handlers::agent_handler::agent_router(state.clone()),
+                ryframe_api::handlers::agent_handler::agent_router(state),
             )
             .layer(from_fn_with_state(
                 agent_security_headers,

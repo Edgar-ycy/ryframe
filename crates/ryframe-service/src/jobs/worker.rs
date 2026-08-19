@@ -240,7 +240,7 @@ impl JobWorker {
             .cloned()
             .collect::<Vec<_>>();
         if !reconcilers.is_empty() {
-            let mut receiver = shutdown.clone();
+            let mut receiver = shutdown;
             tasks.push(tokio::spawn(async move {
                 loop {
                     if *receiver.borrow() {

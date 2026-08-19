@@ -77,10 +77,7 @@ impl MessageHub {
         }
         let id = uuid::Uuid::now_v7().to_string();
         let identity = (ticket.tenant_id.clone(), ticket.user_id);
-        let mut connections = self
-            .connections_by_identity
-            .entry(identity.clone())
-            .or_default();
+        let mut connections = self.connections_by_identity.entry(identity).or_default();
         if connections.len() >= self.config.max_connections_per_user {
             return None;
         }

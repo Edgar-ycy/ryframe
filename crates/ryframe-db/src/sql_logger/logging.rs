@@ -135,7 +135,7 @@ where
         };
         let record = SqlLogRecord {
             dispatch,
-            parent: ctx.event_span(event).map(|span| span.id().clone()),
+            parent: ctx.event_span(event).map(|span| span.id()),
             summary: clean_sql(fields.summary()),
             statement: (self.level == SqlLogLevel::Slow || self.level == SqlLogLevel::Full)
                 .then(|| clean_sql(fields.statement())),

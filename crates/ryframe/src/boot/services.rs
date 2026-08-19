@@ -223,10 +223,7 @@ pub async fn build_all(
         project_root,
     ));
 
-    let profile = Arc::new(ProfileService::new(
-        database.clone(),
-        authorization_cache.clone(),
-    ));
+    let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
     let export = Arc::new(
         ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
             .with_job_queue(job_queue.clone()),

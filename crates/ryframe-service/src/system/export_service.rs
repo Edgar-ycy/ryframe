@@ -85,7 +85,7 @@ impl ExportService {
             configs: ConfigService::new(db.clone(), crate::AuthorizationCache::disabled()),
             dicts: DictService::new(db.clone(), None),
             oper_logs: OperLogService::new(db.clone()),
-            login_infos: LoginInfoService::new(db.clone()),
+            login_infos: LoginInfoService::new(db),
             users,
             storage,
             default_max_attempts: jobs.default_max_attempts,

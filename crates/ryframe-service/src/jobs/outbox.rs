@@ -105,7 +105,7 @@ impl OutboxWorker {
         if let Some(listener) = self.queue.spawn_wakeup_listener(shutdown.clone()) {
             tasks.push(listener);
         }
-        let worker = self.clone();
+        let worker = self;
         tasks.push(tokio::spawn(async move {
             worker.recover_expired_leases_until_shutdown(shutdown).await;
         }));
