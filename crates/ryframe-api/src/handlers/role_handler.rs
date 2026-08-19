@@ -12,10 +12,10 @@ use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
 use crate::RequestPrincipal;
-use crate::dto::option_dto::OptionQuery;
 use crate::dto::public_dto::{ExportJobVo, OptionList, RoleVo};
 use crate::dto::role_dto::{
-    CreateRoleDto, ReplaceRoleDataScopeDto, ReplaceRolePermissionsDto, UpdateRoleDto,
+    CreateRoleDto, ReplaceRoleDataScopeDto, ReplaceRolePermissionsDto, RoleOptionQuery,
+    UpdateRoleDto,
 };
 use crate::handler_utils::{parse_csv_i64, parse_i64_strings};
 use crate::state::AppState;
@@ -78,19 +78,24 @@ pub fn role_router(state: AppState) -> Router {
 #[get("/options")]
 #[perm("system:role:list")]
 #[utoipa::path(get, path = "/api/v1/system/roles/options", tag = "角色管理",
-    params(OptionQuery),
+    params(RoleOptionQuery),
     responses((status = 200, description = "角色选项", body = ApiResponse<OptionList>)),
     security(("bearer" = [])))]
 async fn options(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Query(query): Query<OptionQuery>,
+    Query(query): Query<RoleOptionQuery>,
 ) -> HttpResult<Json<ApiResponse<OptionList>>> {
     let query = query.resolve(&state.config.pagination)?;
     state
         .services
         .role
-        .find_options(&current_user, query.q.as_deref(), query.limit)
+        .find_options(
+            &current_user,
+            query.purpose,
+            query.q.as_deref(),
+            query.limit,
+        )
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(OptionList::from)

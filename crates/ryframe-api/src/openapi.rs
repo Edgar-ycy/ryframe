@@ -364,6 +364,7 @@ use utoipa::OpenApi;
         crate::dto::role_dto::UpdateRoleDto,
         crate::dto::role_dto::ReplaceRolePermissionsDto,
         crate::dto::role_dto::ReplaceRoleDataScopeDto,
+        crate::dto::role_dto::RoleOptionPurposeDto,
         crate::dto::public_dto::RoleVo,
         crate::dto::public_dto::PermissionType,
         // 部门 DTO
@@ -921,4 +922,38 @@ fn set_operation_id(
 pub async fn openapi_json() -> impl axum::response::IntoResponse {
     use axum::Json;
     Json(ApiDoc::openapi())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+    use utoipa::OpenApi;
+
+    use super::ApiDoc;
+
+    #[test]
+    fn role_option_purpose_is_required_and_complete_in_openapi() {
+        let document = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 必须可序列化");
+        let parameters = document["paths"]["/api/v1/system/roles/options"]["get"]["parameters"]
+            .as_array()
+            .expect("角色选项接口必须声明查询参数");
+        let purpose = parameters
+            .iter()
+            .find(|parameter| parameter["name"] == "purpose")
+            .expect("角色选项接口必须声明 purpose");
+        assert_eq!(purpose["in"], "query");
+        assert_eq!(purpose["required"], true);
+        assert_eq!(
+            purpose["schema"]["$ref"],
+            "#/components/schemas/RoleOptionPurposeDto"
+        );
+
+        let values = document["components"]["schemas"]["RoleOptionPurposeDto"]["enum"]
+            .as_array()
+            .expect("角色选项用途必须声明枚举")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(values, ["user_assignment", "service_account_assignment"]);
+    }
 }

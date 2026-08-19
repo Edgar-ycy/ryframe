@@ -16618,6 +16618,14 @@
         ],
         "type": "object"
       },
+      "RoleOptionPurposeDto": {
+        "description": "角色选项的使用场景。",
+        "enum": [
+          "user_assignment",
+          "service_account_assignment"
+        ],
+        "type": "string"
+      },
       "RoleVo": {
         "description": "角色响应。",
         "properties": {
@@ -35679,6 +35687,15 @@
       "get": {
         "operationId": "get_system_roles_options",
         "parameters": [
+          {
+            "description": "角色选项的使用场景。",
+            "in": "query",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/RoleOptionPurposeDto"
+            }
+          },
           {
             "description": "按名称或稳定编码做前缀搜索；首尾空白会被移除。",
             "in": "query",

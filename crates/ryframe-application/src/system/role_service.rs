@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ryframe_adapters::snowflake;
 use ryframe_adapters::{
     Repository,
@@ -79,6 +81,19 @@ pub struct RoleListParams {
     pub name: Option<String>,
     pub code: Option<String>,
     pub status: Option<String>,
+}
+
+/// 角色选项的明确分配用途。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoleOptionPurpose {
+    UserAssignment,
+    ServiceAccountAssignment,
+}
+
+impl RoleOptionPurpose {
+    const fn includes_super_role(self, actor_is_super_admin: bool) -> bool {
+        matches!(self, Self::UserAssignment) && actor_is_super_admin
+    }
 }
 
 pub struct RoleService {
@@ -168,6 +183,7 @@ impl RoleService {
     pub async fn find_options(
         &self,
         actor: &ActorContext,
+        purpose: RoleOptionPurpose,
         query: Option<&str>,
         limit: u64,
     ) -> AppResult<OptionList> {
@@ -178,7 +194,13 @@ impl RoleService {
         let db = self.db.select_read(ReadConsistency::Strong).connection;
         let mut roles = self
             .role_repo
-            .find_options(&db, tenant_id, query, actor.is_super_admin, fetch_limit)
+            .find_options(
+                &db,
+                tenant_id,
+                query,
+                purpose.includes_super_role(actor.is_super_admin),
+                fetch_limit,
+            )
             .await?;
         let has_more = roles.len() > limit as usize;
         roles.truncate(limit as usize);
@@ -661,4 +683,16 @@ impl RoleService {
         Ok(())
     }
 }
-use std::sync::Arc;
+
+#[cfg(test)]
+mod tests {
+    use super::RoleOptionPurpose;
+
+    #[test]
+    fn role_option_purpose_strictly_controls_super_role_visibility() {
+        assert!(RoleOptionPurpose::UserAssignment.includes_super_role(true));
+        assert!(!RoleOptionPurpose::UserAssignment.includes_super_role(false));
+        assert!(!RoleOptionPurpose::ServiceAccountAssignment.includes_super_role(true));
+        assert!(!RoleOptionPurpose::ServiceAccountAssignment.includes_super_role(false));
+    }
+}

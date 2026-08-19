@@ -84,7 +84,7 @@ pub use product_service::{
     SessionCapabilityVo, SessionProductContextVo, UpdateProductPlanCommand,
     UpdateProductPlanVersionCommand,
 };
-pub use role_service::{RoleListParams, RoleService, RoleVo};
+pub use role_service::{RoleListParams, RoleOptionPurpose, RoleService, RoleVo};
 pub use service_account_service::{
     CreateCredentialCommand, CreateDelegationCommand, CreateServiceAccountCommand,
     CreatedCredentialVo, CreatedDelegationVo, ServiceAccessAuditVo, ServiceAccountDetailVo,

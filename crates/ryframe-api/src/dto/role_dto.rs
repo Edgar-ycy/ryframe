@@ -1,5 +1,61 @@
+use crate::{
+    dto::option_dto::{OptionQuery, ResolvedOptionQuery},
+    http::HttpResult,
+};
+use ryframe_application::system::RoleOptionPurpose;
+use ryframe_config::PaginationConfig;
 use serde::Deserialize;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
+
+/// 角色选项的使用场景。
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RoleOptionPurposeDto {
+    UserAssignment,
+    ServiceAccountAssignment,
+}
+
+impl From<RoleOptionPurposeDto> for RoleOptionPurpose {
+    fn from(value: RoleOptionPurposeDto) -> Self {
+        match value {
+            RoleOptionPurposeDto::UserAssignment => Self::UserAssignment,
+            RoleOptionPurposeDto::ServiceAccountAssignment => Self::ServiceAccountAssignment,
+        }
+    }
+}
+
+/// 角色选项查询参数；用途必须由调用方明确指定。
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct RoleOptionQuery {
+    /// 角色选项的使用场景。
+    pub purpose: RoleOptionPurposeDto,
+    /// 按名称或稳定编码做前缀搜索；首尾空白会被移除。
+    #[param(max_length = 64)]
+    pub q: Option<String>,
+    /// 返回上限；省略时使用服务端默认分页大小。
+    #[param(minimum = 1)]
+    pub limit: Option<u64>,
+}
+
+pub struct ResolvedRoleOptionQuery {
+    pub purpose: RoleOptionPurpose,
+    pub q: Option<String>,
+    pub limit: u64,
+}
+
+impl RoleOptionQuery {
+    pub fn resolve(self, policy: &PaginationConfig) -> HttpResult<ResolvedRoleOptionQuery> {
+        let purpose = self.purpose.into();
+        let ResolvedOptionQuery { q, limit } = OptionQuery {
+            q: self.q,
+            limit: self.limit,
+        }
+        .resolve(policy)?;
+        Ok(ResolvedRoleOptionQuery { purpose, q, limit })
+    }
+}
 
 #[derive(Debug, Deserialize, validator::Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -43,5 +99,52 @@ fn validate_data_scope(value: &str) -> Result<(), validator::ValidationError> {
         Ok(())
     } else {
         Err(validator::ValidationError::new("invalid_data_scope"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{extract::Query, http::Uri};
+    use ryframe_application::system::RoleOptionPurpose;
+    use ryframe_config::PaginationConfig;
+
+    use super::{RoleOptionPurposeDto, RoleOptionQuery};
+
+    fn parse_query(uri: &str) -> Result<RoleOptionQuery, axum::extract::rejection::QueryRejection> {
+        let uri = uri.parse::<Uri>().expect("测试 URI 必须有效");
+        Query::<RoleOptionQuery>::try_from_uri(&uri).map(|Query(query)| query)
+    }
+
+    #[test]
+    fn role_option_query_accepts_both_explicit_purposes() {
+        let user = parse_query("/?purpose=user_assignment").expect("用户分配用途应可解析");
+        assert_eq!(user.purpose, RoleOptionPurposeDto::UserAssignment);
+        assert_eq!(
+            user.resolve(&PaginationConfig::default())
+                .expect("用户分配用途应可转换")
+                .purpose,
+            RoleOptionPurpose::UserAssignment
+        );
+
+        let service =
+            parse_query("/?purpose=service_account_assignment").expect("服务账号分配用途应可解析");
+        assert_eq!(
+            service.purpose,
+            RoleOptionPurposeDto::ServiceAccountAssignment
+        );
+        assert_eq!(
+            service
+                .resolve(&PaginationConfig::default())
+                .expect("服务账号分配用途应可转换")
+                .purpose,
+            RoleOptionPurpose::ServiceAccountAssignment
+        );
+    }
+
+    #[test]
+    fn role_option_query_rejects_missing_invalid_and_unknown_fields() {
+        assert!(parse_query("/?q=admin").is_err());
+        assert!(parse_query("/?purpose=role_code").is_err());
+        assert!(parse_query("/?purpose=user_assignment&unexpected=true").is_err());
     }
 }
