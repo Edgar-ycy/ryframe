@@ -11,7 +11,7 @@ use validator::Validate;
 use crate::dto::config_dto::{ConfigListQuery, CreateConfigDto, UpdateConfigDto};
 use crate::dto::public_dto::{ConfigVo, ExportJobVo};
 use crate::state::AppState;
-use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
+use crate::{dto::export_dto::ConfigExportRequestDto, handlers::export_handler::request_export};
 
 pub fn config_router(state: AppState) -> Router {
     Router::new()
@@ -178,21 +178,22 @@ async fn refresh_cache(
 #[post("/exports")]
 #[perm("system:config:export")]
 #[utoipa::path(post, path = "/api/v1/system/configs/exports", tag = "参数配置",
-    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ConfigExportRequestDto,
     responses((status = 202, description = "参数配置导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_config_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    Json(request): Json<ExportRequestDto>,
+    Json(request): Json<ConfigExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+    let (selection, confirm_all) = request.into_selection();
     request_export(
         state,
         current_user,
         headers,
-        "configs",
         "system:config:export",
-        request.0,
+        selection,
+        confirm_all,
     )
     .await
 }

@@ -6,6 +6,9 @@ pub(super) fn classify_error(error: &AppError) -> (i32, &'static str, &'static s
         AppError::Authorization(_) => (403, "capability_denied", RESULT_DENIED),
         AppError::NotFound(_) => (404, "not_found", RESULT_DENIED),
         AppError::Validation(_) => (400, "validation", RESULT_DENIED),
+        AppError::ExportAllConfirmationRequired(_) => {
+            (400, "EXPORT_ALL_CONFIRMATION_REQUIRED", RESULT_DENIED)
+        }
         AppError::PayloadTooLarge(_) => (413, "response_too_large", RESULT_ERROR),
         AppError::RateLimited(_, _) => (429, "rate_limited", RESULT_DENIED),
         AppError::Conflict(_) | AppError::RetryableConflict(_, _) => {

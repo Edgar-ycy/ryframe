@@ -2,7 +2,7 @@ use crate::RequestPrincipal;
 use crate::dto::oper_log_dto::OperLogPageQuery;
 use crate::dto::public_dto::{ExportJobVo, OperLogVo};
 use crate::state::AppState;
-use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
+use crate::{dto::export_dto::OperLogExportRequestDto, handlers::export_handler::request_export};
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -53,21 +53,22 @@ async fn list(
 #[post("/exports")]
 #[perm("system:operlog:export")]
 #[utoipa::path(post, path = "/api/v1/system/operlogs/exports", tag = "操作日志",
-    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = OperLogExportRequestDto,
     responses((status = 202, description = "操作日志导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_oper_log_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    Json(request): Json<ExportRequestDto>,
+    Json(request): Json<OperLogExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+    let (selection, confirm_all) = request.into_selection()?;
     request_export(
         state,
         current_user,
         headers,
-        "operlogs",
         "system:operlog:export",
-        request.0,
+        selection,
+        confirm_all,
     )
     .await
 }

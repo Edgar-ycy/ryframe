@@ -17,7 +17,7 @@ use crate::dto::dict_dto::{
 use crate::dto::public_dto::{DictDataVo, DictTypeVo, ExportJobVo};
 use crate::list_query;
 use crate::state::AppState;
-use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
+use crate::{dto::export_dto::DictTypeExportRequestDto, handlers::export_handler::request_export};
 
 list_query!(pub DictTypeListQuery, DictTypeFilterQuery {
     name: String,
@@ -275,21 +275,22 @@ async fn delete_data(
 #[post("/types/exports")]
 #[perm("system:dict:export")]
 #[utoipa::path(post, path = "/api/v1/system/dict/types/exports", tag = "字典管理",
-    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = DictTypeExportRequestDto,
     responses((status = 202, description = "字典类型导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_dict_type_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    Json(request): Json<ExportRequestDto>,
+    Json(request): Json<DictTypeExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+    let (selection, confirm_all) = request.into_selection();
     request_export(
         state,
         current_user,
         headers,
-        "dict-types",
         "system:dict:export",
-        request.0,
+        selection,
+        confirm_all,
     )
     .await
 }

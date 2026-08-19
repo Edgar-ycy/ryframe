@@ -202,7 +202,7 @@ impl OperLogService {
         let scope_ctx = actor.data_scope_context();
         let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let (begin_time, end_time) =
-            parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref());
+            parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref())?;
         let filter = OperLogFilter {
             oper_name: query.oper_name.as_deref(),
             status: query.status.as_deref(),
@@ -228,8 +228,8 @@ impl OperLogService {
         actor: &ActorContext,
         oper_name: Option<&str>,
         status: Option<&str>,
-        begin_time: Option<&str>,
-        end_time: Option<&str>,
+        begin_time: Option<chrono::DateTime<Utc>>,
+        end_time: Option<chrono::DateTime<Utc>>,
         maximum_records: usize,
     ) -> AppResult<Vec<OperLogVo>> {
         const BATCH_SIZE: u64 = 1_000;
@@ -237,7 +237,6 @@ impl OperLogService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
         let db = self.db.select_read(ReadConsistency::Eventual).connection;
-        let (begin_time, end_time) = parse_log_time_range(begin_time, end_time);
         let mut after_id = None;
         let mut records = Vec::new();
         loop {

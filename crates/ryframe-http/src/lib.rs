@@ -60,6 +60,7 @@ pub const fn error_message_key(error_code: ErrorCode) -> &'static str {
         ErrorCode::TenantOperationConflict => "error.tenant_operation_conflict",
         ErrorCode::TenantDataMaintenance => "error.tenant_data_maintenance",
         ErrorCode::TenantDataTargetUnavailable => "error.tenant_data_target_unavailable",
+        ErrorCode::ExportAllConfirmationRequired => "error.export_all_confirmation_required",
     }
 }
 
@@ -284,6 +285,7 @@ impl IntoResponse for HttpAppError {
             AppError::TenantDataTargetUnavailable(_, retry_after) => {
                 (StatusCode::SERVICE_UNAVAILABLE, Some(*retry_after))
             }
+            AppError::ExportAllConfirmationRequired(_) => (StatusCode::BAD_REQUEST, None),
         };
 
         let body = ApiResponse::<()>::fail(

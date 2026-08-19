@@ -14,7 +14,7 @@ use crate::dto::post_dto::{CreatePostDto, UpdatePostDto};
 use crate::dto::public_dto::{ExportJobVo, PostVo};
 use crate::state::AppState;
 use crate::{detail_body, list_query, remove_body};
-use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
+use crate::{dto::export_dto::PostExportRequestDto, handlers::export_handler::request_export};
 
 list_query!(pub PostListQuery, PostFilterQuery {
     name: String,
@@ -153,21 +153,22 @@ async fn remove(
 #[post("/exports")]
 #[perm("system:post:export")]
 #[utoipa::path(post, path = "/api/v1/system/posts/exports", tag = "岗位管理",
-    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = PostExportRequestDto,
     responses((status = 202, description = "岗位导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_post_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    Json(request): Json<ExportRequestDto>,
+    Json(request): Json<PostExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+    let (selection, confirm_all) = request.into_selection();
     request_export(
         state,
         current_user,
         headers,
-        "posts",
         "system:post:export",
-        request.0,
+        selection,
+        confirm_all,
     )
     .await
 }

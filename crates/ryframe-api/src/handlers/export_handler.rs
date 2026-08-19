@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_application::system::RequestExportCommand;
+use ryframe_application::system::{ExportSelection, RequestExportCommand};
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
@@ -185,9 +185,9 @@ pub(crate) async fn request_export(
     state: AppState,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    resource: &str,
     permission_code: &str,
-    request_params: serde_json::Value,
+    selection: ExportSelection,
+    confirm_all: bool,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
     require_idempotency_key(&headers)?;
     let export = state
@@ -196,9 +196,9 @@ pub(crate) async fn request_export(
         .request(
             &current_user,
             RequestExportCommand {
-                resource: resource.into(),
                 permission_code: permission_code.into(),
-                request_params,
+                selection,
+                confirm_all,
             },
         )
         .await

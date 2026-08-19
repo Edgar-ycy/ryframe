@@ -4,13 +4,11 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
 };
-use ryframe_application::system::UserExportFilters;
 use ryframe_http::{ApiResponse, HttpResult};
-use ryframe_kernel::AppError;
 use ryframe_macro::{get, post};
 
 use crate::{
-    dto::{public_dto::ExportJobVo, user_dto::UserExportRequestDto},
+    dto::{export_dto::UserExportRequestDto, public_dto::ExportJobVo},
     handler_utils::excel_response,
     handlers::export_handler::request_export,
     state::AppState,
@@ -30,29 +28,14 @@ pub(crate) async fn request_user_export(
     headers: HeaderMap,
     Json(request): Json<UserExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
-    let dept_id = request
-        .dept_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(|id| {
-            id.parse::<i64>()
-                .map_err(|_| AppError::Validation(format!("无效的部门ID: {id}")))
-        })
-        .transpose()?;
+    let (selection, confirm_all) = request.into_selection()?;
     request_export(
         state,
         current_user,
         headers,
-        "users",
         "system:user:export",
-        serde_json::to_value(UserExportFilters {
-            username: request.username,
-            phone: request.phone,
-            status: request.status,
-            dept_id,
-        })
-        .map_err(|error| AppError::Internal(format!("用户导出筛选条件序列化失败: {error}")))?,
+        selection,
+        confirm_all,
     )
     .await
 }

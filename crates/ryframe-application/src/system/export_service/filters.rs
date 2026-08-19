@@ -1,53 +1,257 @@
+use chrono::{DateTime, Utc};
 use ryframe_db::entities::export_job;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::RequestExportCommand;
 
-/// 用户导出的可持久化筛选条件。
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct UserExportFilters {
-    pub username: Option<String>,
-    pub phone: Option<String>,
-    pub status: Option<String>,
-    pub dept_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct RoleExportFilters {
-    pub(super) name: Option<String>,
-    pub(super) code: Option<String>,
-    pub(super) status: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct PostExportFilters {
-    pub(super) name: Option<String>,
-    pub(super) code: Option<String>,
-    pub(super) status: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct ConfigExportFilters {
-    pub(super) name: Option<String>,
-    pub(super) key: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(super) struct DictTypeExportFilters {
-    pub(super) name: Option<String>,
-    pub(super) code: Option<String>,
-    pub(super) status: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
+/// 用户导出的规范化筛选条件。
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct LogExportFilters {
-    pub(super) name: Option<String>,
-    pub(super) status: Option<String>,
-    pub(super) begin_time: Option<String>,
-    pub(super) end_time: Option<String>,
+pub struct UserExportFilter {
+    username: Option<String>,
+    phone: Option<String>,
+    status: Option<String>,
+    dept_id: Option<i64>,
+}
+
+impl UserExportFilter {
+    pub fn new(
+        username: Option<String>,
+        phone: Option<String>,
+        status: Option<String>,
+        dept_id: Option<i64>,
+    ) -> Self {
+        Self {
+            username: normalize_optional_text(username),
+            phone: normalize_optional_text(phone),
+            status: normalize_optional_text(status),
+            dept_id,
+        }
+    }
+
+    pub(super) fn username(&self) -> Option<&str> {
+        self.username.as_deref()
+    }
+
+    pub(super) fn phone(&self) -> Option<&str> {
+        self.phone.as_deref()
+    }
+
+    pub(super) fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    pub(super) const fn dept_id(&self) -> Option<i64> {
+        self.dept_id
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.username.is_none()
+            && self.phone.is_none()
+            && self.status.is_none()
+            && self.dept_id.is_none()
+    }
+}
+
+macro_rules! text_export_filter {
+    ($name:ident { $($field:ident),+ $(,)? }) => {
+        #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct $name {
+            $(
+                $field: Option<String>,
+            )+
+        }
+
+        impl $name {
+            pub fn new($($field: Option<String>),+) -> Self {
+                Self {
+                    $($field: normalize_optional_text($field)),+
+                }
+            }
+
+            $(
+                pub(super) fn $field(&self) -> Option<&str> {
+                    self.$field.as_deref()
+                }
+            )+
+
+            const fn is_empty(&self) -> bool {
+                $(self.$field.is_none())&&+
+            }
+        }
+    };
+}
+
+text_export_filter!(RoleExportFilter { name, code, status });
+text_export_filter!(PostExportFilter { name, code, status });
+text_export_filter!(ConfigExportFilter { name, key });
+text_export_filter!(DictTypeExportFilter { name, code, status });
+
+/// 操作日志导出的规范化筛选条件。
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperLogExportFilter {
+    oper_name: Option<String>,
+    status: Option<String>,
+    begin_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+}
+
+impl OperLogExportFilter {
+    pub fn new(
+        oper_name: Option<String>,
+        status: Option<String>,
+        begin_time: Option<String>,
+        end_time: Option<String>,
+    ) -> AppResult<Self> {
+        let (begin_time, end_time) = parse_export_time_range(begin_time, end_time)?;
+        Ok(Self {
+            oper_name: normalize_optional_text(oper_name),
+            status: normalize_optional_text(status),
+            begin_time,
+            end_time,
+        })
+    }
+
+    pub(super) fn oper_name(&self) -> Option<&str> {
+        self.oper_name.as_deref()
+    }
+
+    pub(super) fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    pub(super) const fn begin_time(&self) -> Option<DateTime<Utc>> {
+        self.begin_time
+    }
+
+    pub(super) const fn end_time(&self) -> Option<DateTime<Utc>> {
+        self.end_time
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.oper_name.is_none()
+            && self.status.is_none()
+            && self.begin_time.is_none()
+            && self.end_time.is_none()
+    }
+}
+
+/// 登录日志导出的规范化筛选条件。
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoginLogExportFilter {
+    user_name: Option<String>,
+    status: Option<String>,
+    begin_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+}
+
+impl LoginLogExportFilter {
+    pub fn new(
+        user_name: Option<String>,
+        status: Option<String>,
+        begin_time: Option<String>,
+        end_time: Option<String>,
+    ) -> AppResult<Self> {
+        let (begin_time, end_time) = parse_export_time_range(begin_time, end_time)?;
+        Ok(Self {
+            user_name: normalize_optional_text(user_name),
+            status: normalize_optional_text(status),
+            begin_time,
+            end_time,
+        })
+    }
+
+    pub(super) fn user_name(&self) -> Option<&str> {
+        self.user_name.as_deref()
+    }
+
+    pub(super) fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    pub(super) const fn begin_time(&self) -> Option<DateTime<Utc>> {
+        self.begin_time
+    }
+
+    pub(super) const fn end_time(&self) -> Option<DateTime<Utc>> {
+        self.end_time
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.user_name.is_none()
+            && self.status.is_none()
+            && self.begin_time.is_none()
+            && self.end_time.is_none()
+    }
+}
+
+/// Worker 可严格解析的资源选择集合。
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "resource", content = "filter", deny_unknown_fields)]
+pub enum ExportSelection {
+    #[serde(rename = "users")]
+    Users(UserExportFilter),
+    #[serde(rename = "roles")]
+    Roles(RoleExportFilter),
+    #[serde(rename = "posts")]
+    Posts(PostExportFilter),
+    #[serde(rename = "configs")]
+    Configs(ConfigExportFilter),
+    #[serde(rename = "dict-types")]
+    DictTypes(DictTypeExportFilter),
+    #[serde(rename = "operlogs")]
+    OperLogs(OperLogExportFilter),
+    #[serde(rename = "loginlogs")]
+    LoginLogs(LoginLogExportFilter),
+}
+
+impl ExportSelection {
+    pub const fn resource(&self) -> &'static str {
+        match self {
+            Self::Users(_) => "users",
+            Self::Roles(_) => "roles",
+            Self::Posts(_) => "posts",
+            Self::Configs(_) => "configs",
+            Self::DictTypes(_) => "dict-types",
+            Self::OperLogs(_) => "operlogs",
+            Self::LoginLogs(_) => "loginlogs",
+        }
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        match self {
+            Self::Users(filter) => filter.is_empty(),
+            Self::Roles(filter) => filter.is_empty(),
+            Self::Posts(filter) => filter.is_empty(),
+            Self::Configs(filter) => filter.is_empty(),
+            Self::DictTypes(filter) => filter.is_empty(),
+            Self::OperLogs(filter) => filter.is_empty(),
+            Self::LoginLogs(filter) => filter.is_empty(),
+        }
+    }
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else if trimmed.len() == value.len() {
+        Some(value)
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn parse_export_time_range(
+    begin_time: Option<String>,
+    end_time: Option<String>,
+) -> AppResult<crate::system::log_time_range::ParsedLogTimeRange> {
+    crate::system::log_time_range::parse_log_time_range(begin_time.as_deref(), end_time.as_deref())
 }
 
 pub(super) const ROLE_HEADERS: &[(&str, &str)] = &[
@@ -104,14 +308,6 @@ pub(super) const LOGIN_LOG_HEADERS: &[(&str, &str)] = &[
     ("login_time", "登录时间"),
 ];
 
-pub(super) fn decode_export_filters<T: serde::de::DeserializeOwned>(
-    request: Value,
-    resource: &str,
-) -> AppResult<T> {
-    serde_json::from_value(request)
-        .map_err(|error| AppError::Validation(format!("{resource} 导出筛选条件无效: {error}")))
-}
-
 #[derive(Serialize)]
 pub(super) struct UserExportRow {
     pub(super) user_id: String,
@@ -142,15 +338,16 @@ impl UserExportRow {
 }
 
 pub(super) fn validate_request_command(command: &RequestExportCommand) -> AppResult<()> {
-    for (name, value, maximum) in [
-        ("resource", command.resource.as_str(), 64),
-        ("permission_code", command.permission_code.as_str(), 128),
-    ] {
-        if value.trim().is_empty() || value.len() > maximum {
-            return Err(AppError::Validation(format!(
-                "导出请求 {name} 长度必须介于 1 和 {maximum} 之间"
-            )));
-        }
+    let permission_code = command.permission_code.as_str();
+    if permission_code.trim().is_empty() || permission_code.len() > 128 {
+        return Err(AppError::Validation(
+            "导出请求 permission_code 长度必须介于 1 和 128 之间".into(),
+        ));
+    }
+    if command.selection.is_empty() && !command.confirm_all {
+        return Err(AppError::ExportAllConfirmationRequired(
+            "导出全部匹配数据前必须二次确认".into(),
+        ));
     }
     Ok(())
 }
@@ -177,18 +374,119 @@ pub(super) const fn deterministic_export_file_id(export_id: i64) -> i64 {
 }
 
 pub(super) fn ensure_download_authorization_matches(
-    stored_fingerprint: Option<&str>,
+    stored_fingerprint: &str,
     current_fingerprint: &str,
 ) -> AppResult<()> {
-    if stored_fingerprint.is_some_and(|stored| stored == current_fingerprint) {
+    if !stored_fingerprint.is_empty() && stored_fingerprint == current_fingerprint {
         Ok(())
     } else {
         Err(AppError::Authorization(
-            "导出完成后的授权或数据范围已变化，请重新创建导出任务".into(),
+            "导出申请后的授权或数据范围已变化，请重新创建导出任务".into(),
         ))
     }
 }
 
 pub(super) fn should_delete_uncommitted_object(status: &str) -> bool {
     status != export_job::Model::STATUS_SUCCEEDED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_text_and_preserves_numeric_zero() {
+        let selection = ExportSelection::Users(UserExportFilter::new(
+            Some("  alice  ".into()),
+            Some("   ".into()),
+            Some("0".into()),
+            Some(0),
+        ));
+        let ExportSelection::Users(filter) = selection else {
+            panic!("应为用户筛选");
+        };
+        assert_eq!(filter.username(), Some("alice"));
+        assert_eq!(filter.phone(), None);
+        assert_eq!(filter.status(), Some("0"));
+        assert_eq!(filter.dept_id(), Some(0));
+        assert!(!filter.is_empty());
+    }
+
+    #[test]
+    fn requires_confirmation_for_empty_filter() {
+        let command = RequestExportCommand {
+            permission_code: "system:role:export".into(),
+            selection: ExportSelection::Roles(RoleExportFilter::new(None, None, None)),
+            confirm_all: false,
+        };
+        let error = validate_request_command(&command).expect_err("空筛选必须拒绝");
+        assert_eq!(
+            error.error_code().as_str(),
+            "EXPORT_ALL_CONFIRMATION_REQUIRED"
+        );
+
+        let confirmed = RequestExportCommand {
+            confirm_all: true,
+            ..command
+        };
+        validate_request_command(&confirmed).expect("显式确认后应允许空筛选");
+    }
+
+    #[test]
+    fn requires_rfc3339_timezone_and_normalizes_to_utc() {
+        let filter = OperLogExportFilter::new(
+            Some(" operator ".into()),
+            None,
+            Some("2026-08-20T10:00:00+08:00".into()),
+            Some("2026-08-20T03:00:00Z".into()),
+        )
+        .expect("有效时间区间应通过");
+        assert_eq!(filter.oper_name(), Some("operator"));
+        assert_eq!(
+            filter.begin_time().map(|time| time.to_rfc3339()),
+            Some("2026-08-20T02:00:00+00:00".into())
+        );
+
+        let missing_timezone =
+            LoginLogExportFilter::new(None, None, Some("2026-08-20T10:00:00".into()), None);
+        assert!(matches!(missing_timezone, Err(AppError::Validation(_))));
+
+        let reversed = LoginLogExportFilter::new(
+            None,
+            None,
+            Some("2026-08-20T04:00:00Z".into()),
+            Some("2026-08-20T03:00:00Z".into()),
+        );
+        assert!(matches!(reversed, Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn persisted_filter_rejects_pagination_and_unknown_fields() {
+        let with_page = serde_json::json!({
+            "resource": "roles",
+            "filter": {"name": "ops", "page": 2}
+        });
+        assert!(serde_json::from_value::<ExportSelection>(with_page).is_err());
+
+        let unknown_resource_field = serde_json::json!({
+            "resource": "roles",
+            "filter": {"name": "ops"},
+            "legacy": true
+        });
+        assert!(serde_json::from_value::<ExportSelection>(unknown_resource_field).is_err());
+    }
+
+    #[test]
+    fn authorization_change_fails_closed() {
+        ensure_download_authorization_matches("fingerprint-a", "fingerprint-a")
+            .expect("相同授权指纹应通过");
+        assert!(matches!(
+            ensure_download_authorization_matches("fingerprint-a", "fingerprint-b"),
+            Err(AppError::Authorization(_))
+        ));
+        assert!(matches!(
+            ensure_download_authorization_matches("", "fingerprint-b"),
+            Err(AppError::Authorization(_))
+        ));
+    }
 }

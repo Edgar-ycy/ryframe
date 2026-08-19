@@ -43,8 +43,10 @@ pub use data_retention_service::{
 pub use dept_service::{CreateDeptCommand, DeptService, DeptTreeNode, DeptVo, UpdateDeptCommand};
 pub use dict_service::{DictDataVo, DictService, DictTypeListParams, DictTypeVo};
 pub use export_service::{
-    EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, ExportDownloadLocation, ExportJobVo,
-    ExportService, RequestExportCommand, UserExportFilters,
+    ConfigExportFilter, DictTypeExportFilter, EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE,
+    EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION, ExportDownloadLocation, ExportJobPayload, ExportJobVo,
+    ExportSelection, ExportService, LoginLogExportFilter, OperLogExportFilter, PostExportFilter,
+    RequestExportCommand, RoleExportFilter, UserExportFilter,
 };
 pub use login_info_service::{
     LoginInfoQuery, LoginInfoService, LoginInfoVo, LoginStatus, RecordLoginCommand,

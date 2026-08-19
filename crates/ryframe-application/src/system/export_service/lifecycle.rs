@@ -13,7 +13,9 @@ impl ExportService {
     ) -> AppResult<ExportJobVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_request_command(&command)?;
-        self.users
+        let resource = command.selection.resource();
+        let (_, authorization_fingerprint) = self
+            .users
             .resolve_current_export_authorization(
                 tenant_id,
                 actor.user_id,
@@ -24,38 +26,42 @@ impl ExportService {
         let result = async {
             let now = self.background_jobs.database_utc_now(&transaction).await?;
             let trace_context = crate::trace_context::current_trace_context();
-            let job = self
-                .background_jobs
-                .enqueue_in_transaction(
-                    &transaction,
-                    EnqueueBackgroundJob {
-                        tenant_id: Some(tenant_id.to_owned()),
-                        schedule_id: None,
-                        scheduled_for: Some(now),
-                        max_runtime_seconds: None,
-                        job_type: EXPORT_JOB_TYPE.to_owned(),
-                        payload: serde_json::json!({ "resource": command.resource }),
-                        priority: 5,
-                        available_at: now,
-                        max_attempts: self.default_max_attempts,
-                        dedupe_key: None,
-                        traceparent: trace_context.traceparent,
-                        tracestate: trace_context.tracestate,
-                    },
-                    now,
-                )
-                .await?;
+            let job =
+                self.background_jobs
+                    .enqueue_in_transaction(
+                        &transaction,
+                        EnqueueBackgroundJob {
+                            tenant_id: Some(tenant_id.to_owned()),
+                            schedule_id: None,
+                            scheduled_for: Some(now),
+                            max_runtime_seconds: None,
+                            job_type: EXPORT_JOB_TYPE.to_owned(),
+                            payload: serde_json::to_value(ExportJobPayload::new(resource))
+                                .map_err(|error| {
+                                    AppError::Internal(format!("导出后台任务载荷编码失败: {error}"))
+                                })?,
+                            priority: 5,
+                            available_at: now,
+                            max_attempts: self.default_max_attempts,
+                            dedupe_key: None,
+                            traceparent: trace_context.traceparent,
+                            tracestate: trace_context.tracestate,
+                        },
+                        now,
+                    )
+                    .await?;
             self.exports
                 .create_in_transaction(
                     &transaction,
                     CreateExportJob {
                         tenant_id: tenant_id.to_owned(),
                         requester_id: actor.user_id,
-                        resource: command.resource,
+                        resource: resource.to_owned(),
                         background_job_id: job.job.id,
                         request_params: serde_json::to_value(StoredExportRequest {
-                            request: command.request_params,
-                            authorization_fingerprint: None,
+                            request_version: EXPORT_REQUEST_VERSION,
+                            selection: command.selection,
+                            authorization_fingerprint,
                         })
                         .map_err(|error| {
                             AppError::Internal(format!("导出请求编码失败: {error}"))
@@ -237,8 +243,11 @@ impl ExportService {
         let stored_request: StoredExportRequest =
             serde_json::from_value(export.request_params.clone())
                 .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
+        stored_request
+            .validate(&export.resource)
+            .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         ensure_download_authorization_matches(
-            stored_request.authorization_fingerprint.as_deref(),
+            &stored_request.authorization_fingerprint,
             &current_fingerprint,
         )?;
         let now = self

@@ -2,13 +2,17 @@ use chrono::{DateTime, Utc};
 use ryframe_db::entities::export_job;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
-use serde_json::Value;
 
 use super::*;
 
 impl ExportService {
     /// 执行一个已领取的后台导出任务。
-    pub async fn execute_background_job(&self, background_job_id: i64) -> AppResult<()> {
+    pub async fn execute_background_job(
+        &self,
+        background_job_id: i64,
+        payload: &ExportJobPayload,
+    ) -> AppResult<()> {
+        payload.validate()?;
         let now = self
             .background_jobs
             .database_utc_now(self.db.write())
@@ -18,6 +22,11 @@ impl ExportService {
             .find_by_background_job_id(self.db.write(), background_job_id)
             .await?
             .ok_or_else(|| AppError::NotFound("后台任务未关联导出请求".into()))?;
+        if export.resource != payload.resource() {
+            return Err(AppError::Validation(
+                "导出后台任务资源与公开任务资源不一致".into(),
+            ));
+        }
         if export.status == export_job::Model::STATUS_CANCELLED {
             return Ok(());
         }
@@ -30,9 +39,9 @@ impl ExportService {
         if !marked_running && export.status != export_job::Model::STATUS_RUNNING {
             return Ok(());
         }
-        let mut request: StoredExportRequest =
-            serde_json::from_value(export.request_params.clone())
-                .map_err(|error| AppError::Validation(format!("导出请求快照无效: {error}")))?;
+        let request: StoredExportRequest = serde_json::from_value(export.request_params.clone())
+            .map_err(|error| AppError::Validation(format!("导出请求快照无效: {error}")))?;
+        request.validate(&export.resource)?;
         let (actor, authorization_fingerprint) = self
             .users
             .resolve_current_export_authorization(
@@ -41,35 +50,36 @@ impl ExportService {
                 &export.permission_code,
             )
             .await?;
-        request.authorization_fingerprint = Some(authorization_fingerprint);
-        let request_params = serde_json::to_value(&request)
-            .map_err(|error| AppError::Internal(format!("导出授权记录编码失败: {error}")))?;
-        let request = request.request;
-        let mut export = export;
-        export.request_params = request_params;
-        match export.resource.as_str() {
-            "users" => self.execute_user_export(export, actor, request, now).await,
-            "roles" => self.execute_role_export(export, actor, request, now).await,
-            "posts" => self.execute_post_export(export, actor, request, now).await,
-            "configs" => {
-                self.execute_config_export(export, actor, request, now)
+        ensure_download_authorization_matches(
+            &request.authorization_fingerprint,
+            &authorization_fingerprint,
+        )?;
+        let selection = request.selection;
+        match selection {
+            ExportSelection::Users(filter) => {
+                self.execute_user_export(export, actor, filter, now).await
+            }
+            ExportSelection::Roles(filter) => {
+                self.execute_role_export(export, actor, filter, now).await
+            }
+            ExportSelection::Posts(filter) => {
+                self.execute_post_export(export, actor, filter, now).await
+            }
+            ExportSelection::Configs(filter) => {
+                self.execute_config_export(export, actor, filter, now).await
+            }
+            ExportSelection::DictTypes(filter) => {
+                self.execute_dict_type_export(export, actor, filter, now)
                     .await
             }
-            "dict-types" => {
-                self.execute_dict_type_export(export, actor, request, now)
+            ExportSelection::OperLogs(filter) => {
+                self.execute_oper_log_export(export, actor, filter, now)
                     .await
             }
-            "operlogs" => {
-                self.execute_oper_log_export(export, actor, request, now)
+            ExportSelection::LoginLogs(filter) => {
+                self.execute_login_log_export(export, actor, filter, now)
                     .await
             }
-            "loginlogs" => {
-                self.execute_login_log_export(export, actor, request, now)
-                    .await
-            }
-            resource => Err(AppError::Validation(format!(
-                "不支持的导出资源: {resource}"
-            ))),
         }
     }
 
@@ -77,19 +87,17 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        request: Value,
+        filters: UserExportFilter,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
-        let filters: UserExportFilters = serde_json::from_value(request)
-            .map_err(|error| AppError::Validation(format!("用户导出筛选条件无效: {error}")))?;
         let users = self
             .users
             .find_for_export(
                 &actor,
-                filters.username.as_deref(),
-                filters.phone.as_deref(),
-                filters.status.as_deref(),
-                filters.dept_id,
+                filters.username(),
+                filters.phone(),
+                filters.status(),
+                filters.dept_id(),
                 self.export_max_rows,
             )
             .await?;
@@ -120,17 +128,16 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        request: Value,
+        filters: RoleExportFilter,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
-        let filters: RoleExportFilters = decode_export_filters(request, "角色")?;
         let roles = self
             .roles
             .find_for_export(
                 &actor,
-                filters.name.as_deref(),
-                filters.code.as_deref(),
-                filters.status.as_deref(),
+                filters.name(),
+                filters.code(),
+                filters.status(),
                 self.export_max_rows,
             )
             .await?;
@@ -153,17 +160,16 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        request: Value,
+        filters: PostExportFilter,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
-        let filters: PostExportFilters = decode_export_filters(request, "岗位")?;
         let posts = self
             .posts
             .find_for_export(
                 &actor,
-                filters.name.as_deref(),
-                filters.code.as_deref(),
-                filters.status.as_deref(),
+                filters.name(),
+                filters.code(),
+                filters.status(),
                 self.export_max_rows,
             )
             .await?;
@@ -185,18 +191,12 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        request: Value,
+        filters: ConfigExportFilter,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
-        let filters: ConfigExportFilters = decode_export_filters(request, "参数配置")?;
         let configs = self
             .configs
-            .find_for_export(
-                &actor,
-                filters.name.as_deref(),
-                filters.key.as_deref(),
-                self.export_max_rows,
-            )
+            .find_for_export(&actor, filters.name(), filters.key(), self.export_max_rows)
             .await?;
         let data = configs
             .into_iter()
@@ -217,17 +217,16 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        request: Value,
+        filters: DictTypeExportFilter,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
-        let filters: DictTypeExportFilters = decode_export_filters(request, "字典类型")?;
         let types = self
             .dicts
             .find_types_for_export(
                 &actor,
-                filters.name.as_deref(),
-                filters.code.as_deref(),
-                filters.status.as_deref(),
+                filters.name(),
+                filters.code(),
+                filters.status(),
                 self.export_max_rows,
             )
             .await?;
@@ -250,18 +249,17 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        request: Value,
+        filters: OperLogExportFilter,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
-        let filters: LogExportFilters = decode_export_filters(request, "操作日志")?;
         let logs = self
             .oper_logs
             .find_for_export(
                 &actor,
-                filters.name.as_deref(),
-                filters.status.as_deref(),
-                filters.begin_time.as_deref(),
-                filters.end_time.as_deref(),
+                filters.oper_name(),
+                filters.status(),
+                filters.begin_time(),
+                filters.end_time(),
                 self.export_max_rows,
             )
             .await?;
@@ -285,18 +283,17 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        request: Value,
+        filters: LoginLogExportFilter,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
-        let filters: LogExportFilters = decode_export_filters(request, "登录日志")?;
         let logs = self
             .login_infos
             .find_for_export(
                 &actor,
-                filters.name.as_deref(),
-                filters.status.as_deref(),
-                filters.begin_time.as_deref(),
-                filters.end_time.as_deref(),
+                filters.user_name(),
+                filters.status(),
+                filters.begin_time(),
+                filters.end_time(),
                 self.export_max_rows,
             )
             .await?;

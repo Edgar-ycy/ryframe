@@ -11,8 +11,9 @@ use serde::Deserialize;
 
 use super::worker::JobHandler;
 use crate::system::{
-    EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, ExportService, MESSAGE_DISPATCH_JOB_TYPE,
-    MESSAGE_DISPATCH_REDIS_CHANNEL, MESSAGE_RETENTION_JOB_TYPE, MessageService,
+    EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, ExportJobPayload, ExportService,
+    MESSAGE_DISPATCH_JOB_TYPE, MESSAGE_DISPATCH_REDIS_CHANNEL, MESSAGE_RETENTION_JOB_TYPE,
+    MessageService,
 };
 
 type RedisWakeupFailureCallback = dyn Fn() + Send + Sync;
@@ -47,7 +48,9 @@ impl JobHandler for ExportJobHandler {
     }
 
     async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
-        self.service.execute_background_job(job.id).await
+        let payload: ExportJobPayload = serde_json::from_value(job.payload.clone())
+            .map_err(|error| AppError::Validation(format!("导出后台任务载荷无效: {error}")))?;
+        self.service.execute_background_job(job.id, &payload).await
     }
 
     fn should_dead_letter(&self, error: &AppError) -> bool {

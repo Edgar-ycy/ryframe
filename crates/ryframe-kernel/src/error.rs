@@ -28,6 +28,8 @@ pub enum ErrorCode {
     TenantOperationConflict,
     TenantDataMaintenance,
     TenantDataTargetUnavailable,
+    #[serde(rename = "EXPORT_ALL_CONFIRMATION_REQUIRED")]
+    ExportAllConfirmationRequired,
 }
 
 impl ErrorCode {
@@ -53,6 +55,7 @@ impl ErrorCode {
             Self::TenantOperationConflict => "tenant_operation_conflict",
             Self::TenantDataMaintenance => "tenant_data_maintenance",
             Self::TenantDataTargetUnavailable => "tenant_data_target_unavailable",
+            Self::ExportAllConfirmationRequired => "EXPORT_ALL_CONFIRMATION_REQUIRED",
         }
     }
 }
@@ -97,6 +100,8 @@ pub enum AppError {
     TenantDataMaintenance(String, u64),
     /// 租户绑定的数据目标当前不可用。
     TenantDataTargetUnavailable(String, u64),
+    /// 规范化后的筛选为空，调用方尚未显式确认导出全部匹配数据。
+    ExportAllConfirmationRequired(String),
 }
 
 impl fmt::Display for AppError {
@@ -122,6 +127,7 @@ impl fmt::Display for AppError {
             Self::TenantOperationConflict(_) => "租户操作冲突",
             Self::TenantDataMaintenance(_, _) => "租户业务数据维护中",
             Self::TenantDataTargetUnavailable(_, _) => "租户业务数据库不可用",
+            Self::ExportAllConfirmationRequired(_) => "导出全部数据需要确认",
         };
         write!(formatter, "{category}: {}", self.message())
     }
@@ -153,6 +159,7 @@ impl AppError {
             Self::TenantOperationConflict(_) => ErrorCode::TenantOperationConflict,
             Self::TenantDataMaintenance(_, _) => ErrorCode::TenantDataMaintenance,
             Self::TenantDataTargetUnavailable(_, _) => ErrorCode::TenantDataTargetUnavailable,
+            Self::ExportAllConfirmationRequired(_) => ErrorCode::ExportAllConfirmationRequired,
         }
     }
 
@@ -176,6 +183,7 @@ impl AppError {
             | Self::StaleRuntimeEpoch(message)
             | Self::StalePlacementGeneration(message)
             | Self::TenantOperationConflict(message)
+            | Self::ExportAllConfirmationRequired(message)
             | Self::TenantDataMaintenance(message, _)
             | Self::TenantDataTargetUnavailable(message, _) => message,
             Self::RateLimited(message, _) => message,

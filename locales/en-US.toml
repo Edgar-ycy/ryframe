@@ -31,6 +31,7 @@ stale_placement_generation = "The tenant data placement changed; refresh and ret
 tenant_operation_conflict = "A mutually exclusive tenant operation is already running"
 tenant_data_maintenance = "Tenant business data is under maintenance; retry later"
 tenant_data_target_unavailable = "The tenant business database is unavailable"
+export_all_confirmation_required = "Confirm before exporting all matching records"
 
 [auth]
 login_success = "Login successful"

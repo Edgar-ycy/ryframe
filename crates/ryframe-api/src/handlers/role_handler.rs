@@ -20,7 +20,7 @@ use crate::dto::role_dto::{
 use crate::handler_utils::{parse_csv_i64, parse_i64_strings};
 use crate::state::AppState;
 use crate::{detail_body, list_query};
-use crate::{dto::export_dto::ExportRequestDto, handlers::export_handler::request_export};
+use crate::{dto::export_dto::RoleExportRequestDto, handlers::export_handler::request_export};
 
 list_query!(pub RoleListQuery, RoleFilterQuery {
     name: String,
@@ -240,21 +240,22 @@ async fn batch_remove(
 #[post("/exports")]
 #[perm("system:role:export")]
 #[utoipa::path(post, path = "/api/v1/system/roles/exports", tag = "角色管理",
-    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ExportRequestDto,
+    params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = RoleExportRequestDto,
     responses((status = 202, description = "角色导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
 async fn request_role_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    Json(request): Json<ExportRequestDto>,
+    Json(request): Json<RoleExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
+    let (selection, confirm_all) = request.into_selection();
     request_export(
         state,
         current_user,
         headers,
-        "roles",
         "system:role:export",
-        request.0,
+        selection,
+        confirm_all,
     )
     .await
 }
