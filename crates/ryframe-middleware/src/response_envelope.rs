@@ -7,7 +7,7 @@ use axum::{
 };
 use ryframe_http::{API_PREFIX, api_path};
 use ryframe_http::{QUERY_SUCCESS_MESSAGE_KEY, SUCCESS_MESSAGE_KEY};
-use ryframe_i18n::{Locale, Localizer, negotiate_locale};
+use ryframe_kernel::{Locale, Localizer};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -35,13 +35,6 @@ pub async fn api_response_envelope_middleware(
     let path = request.uri().path();
     let is_api_request = is_api_namespace_path(path);
     let bypass_contract_document = is_contract_document_path(path);
-    let requested_locale = negotiate_locale(
-        request
-            .headers()
-            .get(header::ACCEPT_LANGUAGE)
-            .and_then(|value| value.to_str().ok()),
-        None,
-    );
     let request_id = request
         .extensions()
         .get::<RequestId>()
@@ -58,7 +51,7 @@ pub async fn api_response_envelope_middleware(
         .get(header::CONTENT_LANGUAGE)
         .and_then(|value| value.to_str().ok())
         .and_then(Locale::parse)
-        .unwrap_or(requested_locale);
+        .unwrap_or(Locale::DEFAULT);
     ensure_locale_headers(response.headers_mut(), locale);
 
     if response.status().is_success()

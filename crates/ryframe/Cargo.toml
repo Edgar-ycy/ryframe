@@ -12,7 +12,6 @@ default-run = "ryframe"
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
-ryframe-i18n = { path = "../ryframe-i18n" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-db-migration = { path = "../ryframe-db-migration" }

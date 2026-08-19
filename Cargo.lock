@@ -3178,17 +3178,16 @@ dependencies = [
  "hex",
  "md5",
  "redis",
+ "ryframe-adapters",
  "ryframe-api",
+ "ryframe-application",
  "ryframe-auth",
  "ryframe-config",
- "ryframe-adapters",
  "ryframe-db",
  "ryframe-db-migration",
- "ryframe-i18n",
  "ryframe-kernel",
  "ryframe-middleware",
  "ryframe-monitor",
- "ryframe-application",
  "ryframe-storage",
  "ryframe-tenant-db",
  "ryframe-tenant-db-migration",
@@ -3199,6 +3198,26 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ryframe-adapters"
+version = "0.10.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "rand 0.10.1",
+ "redis",
+ "ryframe-config",
+ "ryframe-kernel",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3215,18 +3234,17 @@ dependencies = [
  "hex",
  "percent-encoding",
  "regex",
+ "ryframe-adapters",
+ "ryframe-application",
  "ryframe-auth",
  "ryframe-captcha",
  "ryframe-config",
- "ryframe-adapters",
  "ryframe-excel",
  "ryframe-http",
- "ryframe-i18n",
  "ryframe-kernel",
  "ryframe-macro",
  "ryframe-middleware",
  "ryframe-monitor",
- "ryframe-application",
  "ryframe-tenant-db",
  "ryframe-utils",
  "serde",
@@ -3242,6 +3260,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "ryframe-application"
+version = "0.10.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "chrono",
+ "chrono-tz",
+ "cron",
+ "futures-util",
+ "hex",
+ "hmac",
+ "opentelemetry",
+ "rand 0.10.1",
+ "redis",
+ "ryframe-adapters",
+ "ryframe-auth",
+ "ryframe-config",
+ "ryframe-db",
+ "ryframe-excel",
+ "ryframe-generator",
+ "ryframe-kernel",
+ "ryframe-middleware",
+ "ryframe-storage",
+ "ryframe-tenant-db",
+ "ryframe-tenant-db-migration",
+ "ryframe-utils",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "uuid",
+ "validator",
+ "zip 8.6.0",
+]
+
+[[package]]
 name = "ryframe-auth"
 version = "0.10.0"
 dependencies = [
@@ -3252,8 +3309,8 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "rand 0.10.1",
- "ryframe-config",
  "ryframe-adapters",
+ "ryframe-config",
  "ryframe-http",
  "ryframe-kernel",
  "serde",
@@ -3284,25 +3341,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryframe-adapters"
-version = "0.10.0"
-dependencies = [
- "async-trait",
- "chrono",
- "dashmap",
- "rand 0.10.1",
- "redis",
- "ryframe-config",
- "ryframe-kernel",
- "sea-orm",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "ryframe-db"
 version = "0.10.0"
 dependencies = [
@@ -3312,8 +3350,8 @@ dependencies = [
  "log",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
- "ryframe-config",
  "ryframe-adapters",
+ "ryframe-config",
  "ryframe-kernel",
  "ryframe-macro",
  "ryframe-utils",
@@ -3372,15 +3410,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryframe-i18n"
-version = "0.10.0"
-dependencies = [
- "serde",
- "thiserror 2.0.18",
- "toml",
-]
-
-[[package]]
 name = "ryframe-kernel"
 version = "0.10.0"
 dependencies = [
@@ -3412,11 +3441,10 @@ dependencies = [
  "opentelemetry_sdk",
  "prometheus",
  "redis",
+ "ryframe-adapters",
  "ryframe-auth",
  "ryframe-config",
- "ryframe-adapters",
  "ryframe-http",
- "ryframe-i18n",
  "ryframe-kernel",
  "ryframe-utils",
  "serde",
@@ -3438,8 +3466,8 @@ dependencies = [
  "axum",
  "chrono",
  "redis",
- "ryframe-auth",
  "ryframe-adapters",
+ "ryframe-auth",
  "ryframe-http",
  "ryframe-kernel",
  "ryframe-macro",
@@ -3449,45 +3477,6 @@ dependencies = [
  "tokio",
  "tracing",
  "utoipa",
-]
-
-[[package]]
-name = "ryframe-application"
-version = "0.10.0"
-dependencies = [
- "async-trait",
- "base64 0.23.1",
- "chrono",
- "chrono-tz",
- "cron",
- "futures-util",
- "hex",
- "hmac",
- "opentelemetry",
- "rand 0.10.1",
- "redis",
- "ryframe-auth",
- "ryframe-config",
- "ryframe-adapters",
- "ryframe-db",
- "ryframe-excel",
- "ryframe-generator",
- "ryframe-kernel",
- "ryframe-middleware",
- "ryframe-storage",
- "ryframe-tenant-db",
- "ryframe-tenant-db-migration",
- "ryframe-utils",
- "sea-orm",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "uuid",
- "validator",
- "zip 8.6.0",
 ]
 
 [[package]]
@@ -3512,8 +3501,8 @@ dependencies = [
 name = "ryframe-tenant-db"
 version = "0.10.0"
 dependencies = [
- "ryframe-config",
  "ryframe-adapters",
+ "ryframe-config",
  "ryframe-db",
  "ryframe-tenant-db-migration",
  "sea-orm",

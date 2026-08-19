@@ -140,7 +140,7 @@ struct AgentHttpContext {
     request_id: String,
     client_ip: IpAddr,
     user_agent: Option<String>,
-    locale: ryframe_i18n::Locale,
+    locale: ryframe_kernel::Locale,
     started_at: chrono::DateTime<Utc>,
 }
 
@@ -187,7 +187,7 @@ where
             locale: parts
                 .extensions
                 .get::<RequestLocale>()
-                .map_or(ryframe_i18n::Locale::ZhCn, |value| value.0),
+                .map_or(ryframe_kernel::Locale::ZhCn, |value| value.0),
             started_at,
         })
     }

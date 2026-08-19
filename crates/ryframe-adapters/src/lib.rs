@@ -2,6 +2,7 @@ pub mod auto_fill;
 pub mod cache;
 pub mod database_monitor;
 pub mod distributed_lock;
+pub mod i18n;
 pub mod multi_tenant;
 pub mod redis_client;
 pub mod refresh_session;

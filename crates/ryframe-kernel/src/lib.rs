@@ -9,6 +9,7 @@ pub mod constants;
 mod data_scope;
 pub mod enums;
 mod error;
+mod localization;
 mod result;
 
 pub use actor_context::ActorContext;
@@ -16,4 +17,5 @@ pub use constants::*;
 pub use data_scope::{DataScope, DataScopeContext};
 pub use enums::{BusinessType, UserStatus};
 pub use error::{AppError, ErrorCode};
+pub use localization::{Locale, LocalizationError, LocalizedText, Localizer};
 pub use result::AppResult;

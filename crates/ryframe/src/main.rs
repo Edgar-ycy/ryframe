@@ -3,10 +3,10 @@ mod boot;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
+use ryframe_adapters::i18n::LocalizerLoader;
 use ryframe_application::{AuthorizationCache, CallbackJobMetricsObserver, JobQueue, OutboxWorker};
 use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode};
 use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
-use ryframe_i18n::Localizer;
 use ryframe_kernel::AppError;
 use tokio::sync::{oneshot, watch};
 
@@ -29,7 +29,7 @@ async fn main() -> Result<(), AppError> {
     ryframe_utils::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     let localizer = Arc::new(
-        Localizer::load_from_environment(config.environment.is_production())
+        LocalizerLoader::load_from_environment(config.environment.is_production())
             .map_err(|error| AppError::Config(format!("国际化资源加载失败: {error}")))?,
     );
     let (_logger_guard, _telemetry_guard) = boot::logging::init(&config)?;

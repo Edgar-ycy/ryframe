@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use ryframe_http::HttpResult;
-use ryframe_i18n::LocalizedText;
 use ryframe_kernel::AppError;
+use ryframe_kernel::LocalizedText;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};

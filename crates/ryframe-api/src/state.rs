@@ -16,7 +16,7 @@ use ryframe_application::{
 };
 use ryframe_auth::middleware::AuthState;
 use ryframe_config::AppConfig;
-use ryframe_i18n::Localizer;
+use ryframe_kernel::Localizer;
 use ryframe_middleware::RateLimiter;
 use ryframe_monitor::MonitorState;
 use ryframe_tenant_db::TenantDatabaseRouter;

@@ -17,7 +17,6 @@ ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
 ryframe-captcha = { path = "../ryframe-captcha" }
 ryframe-excel = { path = "../ryframe-excel" }
-ryframe-i18n = { path = "../ryframe-i18n" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }
 ryframe-config = { path = "../ryframe-config" }

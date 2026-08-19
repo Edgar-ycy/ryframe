@@ -7,8 +7,8 @@ use ryframe_application::system::{
     MessageAudienceKind, MessageAudienceSelector, NoticeListParams, PublishMessageParams,
 };
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
-use ryframe_i18n::LocalizedText;
 use ryframe_kernel::AppError;
+use ryframe_kernel::LocalizedText;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 

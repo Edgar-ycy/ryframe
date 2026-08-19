@@ -11,7 +11,6 @@ description.workspace = true
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-http = { path = "../ryframe-http" }
-ryframe-i18n = { path = "../ryframe-i18n" }
 ryframe-utils = { path = "../ryframe-utils" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-adapters = { path = "../ryframe-adapters" }
