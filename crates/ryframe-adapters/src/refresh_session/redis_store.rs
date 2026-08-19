@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use redis::AsyncCommands;
 use ryframe_kernel::{AppError, AppResult};
 
-use crate::RedisClient;
+use crate::{RedisClient, RedisNamespace};
 
 use super::{
     CONCURRENT_GRACE_SECONDS, MAX_BULK_SESSION_CANDIDATES, RefreshFamily, RefreshRotation,
@@ -21,9 +21,10 @@ impl RedisRefreshSessionStore {
     }
 
     pub(super) async fn register(&self, family: &RefreshFamily) -> AppResult<()> {
-        let family_key = keyspace::family(&family.sid);
-        let tenant_key = keyspace::tenant_index(&family.tenant_id);
-        let user_key = keyspace::tenant_user_index(&family.tenant_id, family.user_id);
+        let scope = self.client.keyspace();
+        let family_key = scoped_family(&scope, &family.sid);
+        let tenant_key = scoped_tenant_index(&scope, &family.tenant_id);
+        let user_key = scoped_tenant_user_index(&scope, &family.tenant_id, family.user_id);
         let watched = [family_key.clone(), tenant_key.clone(), user_key.clone()];
         let family = family.clone();
         let code = self
@@ -33,6 +34,7 @@ impl RedisRefreshSessionStore {
                 let family_key = family_key.clone();
                 let tenant_key = tenant_key.clone();
                 let user_key = user_key.clone();
+                let scope = scope.clone();
                 async move {
                     ensure_types(
                         &mut connection,
@@ -50,7 +52,7 @@ impl RedisRefreshSessionStore {
                     }
                     let indexed_family_keys = indexed_sids
                         .iter()
-                        .map(|sid| keyspace::family(sid))
+                        .map(|sid| scoped_family(&scope, sid))
                         .collect::<Vec<_>>();
                     watch_additional(&mut connection, &indexed_family_keys).await?;
 
@@ -83,8 +85,9 @@ impl RedisRefreshSessionStore {
                     }
 
                     if let Some(old) = load_family(&mut connection, &family_key).await? {
-                        let old_tenant_key = keyspace::tenant_index(&old.tenant_id);
-                        let old_user_key = keyspace::tenant_user_index(&old.tenant_id, old.user_id);
+                        let old_tenant_key = scoped_tenant_index(&scope, &old.tenant_id);
+                        let old_user_key =
+                            scoped_tenant_user_index(&scope, &old.tenant_id, old.user_id);
                         watch_additional(
                             &mut connection,
                             &[old_tenant_key.clone(), old_user_key.clone()],
@@ -141,7 +144,8 @@ impl RedisRefreshSessionStore {
         now: i64,
         attempt_id: &str,
     ) -> AppResult<RefreshRotation> {
-        let family_key = keyspace::family(sid);
+        let scope = self.client.keyspace();
+        let family_key = scoped_family(&scope, sid);
         let watched = [family_key.clone()];
         let presented_jti = presented_jti.to_owned();
         let new_jti = new_jti.to_owned();
@@ -153,6 +157,7 @@ impl RedisRefreshSessionStore {
                 let presented_jti = presented_jti.clone();
                 let new_jti = new_jti.clone();
                 let attempt_id = attempt_id.clone();
+                let scope = scope.clone();
                 async move {
                     ensure_types(&mut connection, &[(&family_key, "hash")]).await?;
                     let Some(family) = load_family(&mut connection, &family_key).await? else {
@@ -161,8 +166,9 @@ impl RedisRefreshSessionStore {
                     if family.revoked {
                         return Ok(Some((0, String::new(), 0)));
                     }
-                    let tenant_key = keyspace::tenant_index(&family.tenant_id);
-                    let user_key = keyspace::tenant_user_index(&family.tenant_id, family.user_id);
+                    let tenant_key = scoped_tenant_index(&scope, &family.tenant_id);
+                    let user_key =
+                        scoped_tenant_user_index(&scope, &family.tenant_id, family.user_id);
                     watch_additional(&mut connection, &[tenant_key.clone(), user_key.clone()])
                         .await?;
                     ensure_types(&mut connection, &[(&tenant_key, "set"), (&user_key, "set")])
@@ -295,7 +301,8 @@ impl RedisRefreshSessionStore {
         sid: &str,
         now: i64,
     ) -> AppResult<i64> {
-        let family_key = keyspace::family(sid);
+        let scope = self.client.keyspace();
+        let family_key = scoped_family(&scope, sid);
         let watched = [family_key.clone()];
         let tenant_id = tenant_id.map(str::to_owned);
         let sid = sid.to_owned();
@@ -304,6 +311,7 @@ impl RedisRefreshSessionStore {
                 let family_key = family_key.clone();
                 let tenant_id = tenant_id.clone();
                 let sid = sid.clone();
+                let scope = scope.clone();
                 async move {
                     ensure_types(&mut connection, &[(&family_key, "hash")]).await?;
                     let Some(family) = load_family(&mut connection, &family_key).await? else {
@@ -316,8 +324,9 @@ impl RedisRefreshSessionStore {
                     {
                         return Ok(Some(0_i64));
                     }
-                    let tenant_key = keyspace::tenant_index(&family.tenant_id);
-                    let user_key = keyspace::tenant_user_index(&family.tenant_id, family.user_id);
+                    let tenant_key = scoped_tenant_index(&scope, &family.tenant_id);
+                    let user_key =
+                        scoped_tenant_user_index(&scope, &family.tenant_id, family.user_id);
                     watch_additional(&mut connection, &[tenant_key.clone(), user_key.clone()])
                         .await?;
                     ensure_types(&mut connection, &[(&tenant_key, "set"), (&user_key, "set")])
@@ -355,8 +364,9 @@ impl RedisRefreshSessionStore {
         candidates: Vec<&str>,
         now: i64,
     ) -> AppResult<u64> {
-        let tenant_key = keyspace::tenant_index(tenant_id);
-        let user_key = keyspace::tenant_user_index(tenant_id, user_id);
+        let scope = self.client.keyspace();
+        let tenant_key = scoped_tenant_index(&scope, tenant_id);
+        let user_key = scoped_tenant_user_index(&scope, tenant_id, user_id);
         let watched = [tenant_key.clone(), user_key.clone()];
         let tenant_id = tenant_id.to_owned();
         let current_sid = current_sid.to_owned();
@@ -372,6 +382,7 @@ impl RedisRefreshSessionStore {
                 let tenant_id = tenant_id.clone();
                 let current_sid = current_sid.clone();
                 let candidates = candidates.clone();
+                let scope = scope.clone();
                 async move {
                     ensure_types(&mut connection, &[(&tenant_key, "set"), (&user_key, "set")])
                         .await?;
@@ -386,7 +397,7 @@ impl RedisRefreshSessionStore {
                     }
                     let family_keys = all
                         .iter()
-                        .map(|sid| keyspace::family(sid))
+                        .map(|sid| scoped_family(&scope, sid))
                         .collect::<Vec<_>>();
                     watch_additional(&mut connection, &family_keys).await?;
                     let mut revoked = 0_i64;
@@ -436,12 +447,14 @@ impl RedisRefreshSessionStore {
         sid: &str,
         now: i64,
     ) -> AppResult<Option<RefreshSessionIdentity>> {
-        let family_key = keyspace::family(sid);
+        let scope = self.client.keyspace();
+        let family_key = scoped_family(&scope, sid);
         let watched = [family_key.clone()];
         let values: Vec<String> = self
             .client
             .transaction(&watched, move |mut connection, mut transaction| {
                 let family_key = family_key.clone();
+                let scope = scope.clone();
                 async move {
                     ensure_types(&mut connection, &[(&family_key, "hash")]).await?;
                     let Some(family) = load_family(&mut connection, &family_key).await? else {
@@ -454,8 +467,9 @@ impl RedisRefreshSessionStore {
                             family.absolute_exp.to_string(),
                         ]));
                     }
-                    let tenant_key = keyspace::tenant_index(&family.tenant_id);
-                    let user_key = keyspace::tenant_user_index(&family.tenant_id, family.user_id);
+                    let tenant_key = scoped_tenant_index(&scope, &family.tenant_id);
+                    let user_key =
+                        scoped_tenant_user_index(&scope, &family.tenant_id, family.user_id);
                     watch_additional(&mut connection, &[tenant_key.clone(), user_key.clone()])
                         .await?;
                     ensure_types(&mut connection, &[(&tenant_key, "set"), (&user_key, "set")])
@@ -517,9 +531,10 @@ impl RedisRefreshSessionStore {
         user_id: Option<i64>,
         now: i64,
     ) -> AppResult<Vec<String>> {
-        let tenant_key = keyspace::tenant_index(tenant_id);
+        let scope = self.client.keyspace();
+        let tenant_key = scoped_tenant_index(&scope, tenant_id);
         let primary_key = user_id
-            .map(|user_id| keyspace::tenant_user_index(tenant_id, user_id))
+            .map(|user_id| scoped_tenant_user_index(&scope, tenant_id, user_id))
             .unwrap_or_else(|| tenant_key.clone());
         let watched = [primary_key.clone(), tenant_key.clone()];
         let tenant_id = tenant_id.to_owned();
@@ -528,6 +543,7 @@ impl RedisRefreshSessionStore {
                 let primary_key = primary_key.clone();
                 let tenant_key = tenant_key.clone();
                 let tenant_id = tenant_id.clone();
+                let scope = scope.clone();
                 async move {
                     ensure_types(
                         &mut connection,
@@ -537,7 +553,7 @@ impl RedisRefreshSessionStore {
                     let sids: Vec<String> = connection.smembers(&primary_key).await?;
                     let family_keys = sids
                         .iter()
-                        .map(|sid| keyspace::family(sid))
+                        .map(|sid| scoped_family(&scope, sid))
                         .collect::<Vec<_>>();
                     watch_additional(&mut connection, &family_keys).await?;
                     let mut active = Vec::new();
@@ -588,6 +604,18 @@ impl RedisRefreshSessionStore {
             .await
             .map_err(codec::redis_unavailable)
     }
+}
+
+fn scoped_family(scope: &RedisNamespace, sid: &str) -> String {
+    scope.key(&keyspace::family(sid))
+}
+
+fn scoped_tenant_index(scope: &RedisNamespace, tenant_id: &str) -> String {
+    scope.key(&keyspace::tenant_index(tenant_id))
+}
+
+fn scoped_tenant_user_index(scope: &RedisNamespace, tenant_id: &str, user_id: i64) -> String {
+    scope.key(&keyspace::tenant_user_index(tenant_id, user_id))
 }
 
 async fn redis_type(

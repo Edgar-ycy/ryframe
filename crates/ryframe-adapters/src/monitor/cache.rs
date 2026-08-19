@@ -207,12 +207,8 @@ async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
         used_memory: info_parse(&info_map, "used_memory", 0),
     };
 
-    // 获取 DBSIZE
-    let total_keys = {
-        let mut conn = client.conn().clone();
-        let result: Result<u64, _> = redis::cmd("DBSIZE").query_async(&mut conn).await;
-        result.unwrap_or(0)
-    };
+    // Redis DB 允许多个环境共享，监控只统计当前 scope，不能暴露或混入其他环境。
+    let total_keys = count_keys(client, "*").await;
 
     // 统计各前缀的键数
     let online_users = count_keys(client, "ryframe:v0.5:online-user:*").await;

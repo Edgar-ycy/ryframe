@@ -25,7 +25,7 @@ pub use distributed_lock::{
 pub use multi_tenant::{
     TenantContext, validate_explicit_tenant, validate_tenant_identifier, with_tenant_context,
 };
-pub use redis_client::RedisClient;
+pub use redis_client::{RedisClient, RedisNamespace};
 pub use refresh_session::{
     RefreshFamily, RefreshRotation, RefreshSessionIdentity, RefreshSessionRevocation,
     RefreshSessionStore,

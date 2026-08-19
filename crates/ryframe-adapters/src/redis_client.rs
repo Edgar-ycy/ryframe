@@ -3,10 +3,10 @@
 //! 提供异步 Redis 连接管理器和常用操作封装。
 //! 当 Redis 未配置时，调用方应回退到内存存储。
 
-use std::{future::Future, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use redis::{
-    AsyncCommands, FromRedisValue, Pipeline, ToRedisArgs,
+    AsyncCommands, FromRedisValue, Pipeline,
     aio::{ConnectionManager, ConnectionManagerConfig, MultiplexedConnection},
 };
 use ryframe_config::RedisConfig;
@@ -94,10 +94,10 @@ fn redis_result_label<T>(result: &Result<T, redis::RedisError>) -> &'static str 
     if result.is_ok() { "success" } else { "error" }
 }
 
-fn prepare_mget_command<K: AsRef<str>>(keys: &[K]) -> redis::Cmd {
+fn prepare_mget_command(keys: &[String]) -> redis::Cmd {
     let mut command = redis::cmd("MGET");
     for key in keys {
-        command.arg(key.as_ref());
+        command.arg(key);
     }
     command
 }
@@ -110,6 +110,25 @@ pub struct RedisClient {
     client: redis::Client,
     conn: ConnectionManager,
     timeout: Duration,
+    namespace: RedisNamespace,
+}
+
+/// 可安全传入 Redis 事务闭包的不可变命名空间生成器。
+#[derive(Clone, Debug)]
+pub struct RedisNamespace(Arc<str>);
+
+impl RedisNamespace {
+    pub fn key(&self, logical: &str) -> String {
+        if logical.starts_with(self.0.as_ref()) {
+            return logical.to_owned();
+        }
+        let suffix = logical.strip_prefix("ryframe:").unwrap_or(logical);
+        format!("{}{suffix}", self.0)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl RedisClient {
@@ -149,7 +168,66 @@ impl RedisClient {
             client,
             conn,
             timeout: Duration::from_secs(config.timeout_secs.max(1)),
+            namespace: RedisNamespace(Arc::from(config.namespace())),
         })
+    }
+
+    /// 将逻辑键转换为当前部署环境唯一的物理键。
+    ///
+    /// 已生成的当前 scope 物理键保持不变，方便事务同时用于 WATCH 和命令参数；任何其他
+    /// `ryframe:` 前缀都只会成为当前 namespace 内的后缀，不能逃逸到其他环境。
+    pub fn scoped_key(&self, key: &str) -> String {
+        self.scoped_name(key)
+    }
+
+    /// 将逻辑频道转换为当前部署环境唯一的物理频道。
+    pub fn scoped_channel(&self, channel: &str) -> String {
+        self.scoped_name(channel)
+    }
+
+    pub fn namespace(&self) -> &str {
+        self.namespace.as_str()
+    }
+
+    fn scoped_name(&self, logical: &str) -> String {
+        self.namespace.key(logical)
+    }
+
+    pub fn keyspace(&self) -> RedisNamespace {
+        self.namespace.clone()
+    }
+
+    pub fn ownership_marker_key(&self) -> String {
+        self.scoped_key(".ryframe-owner")
+    }
+
+    /// 在当前 scope 内原子声明所有权；已有标记只允许与期望值完全一致。
+    pub async fn ensure_scope_ownership(&self, expected: &str) -> Result<(), redis::RedisError> {
+        let key = self.ownership_marker_key();
+        let mut connection = self.conn.clone();
+        let _: Option<String> = trace_redis_operation(
+            RedisOperation::Set,
+            redis::cmd("SET")
+                .arg(&key)
+                .arg(expected)
+                .arg("NX")
+                .query_async(&mut connection),
+        )
+        .await?;
+        self.verify_scope_ownership(expected).await
+    }
+
+    /// 只读校验 Redis namespace 的所有权标记。
+    pub async fn verify_scope_ownership(&self, expected: &str) -> Result<(), redis::RedisError> {
+        let actual = self.get(self.ownership_marker_key()).await?;
+        if actual.as_deref() != Some(expected) {
+            return Err(redis::RedisError::from((
+                redis::ErrorKind::Client,
+                "Redis scope ownership marker mismatch",
+                format!("namespace={}", self.namespace()),
+            )));
+        }
+        Ok(())
     }
 
     /// 获取底层连接管理器（用于高级操作）
@@ -175,16 +253,20 @@ impl RedisClient {
         operation: F,
     ) -> Result<T, redis::RedisError>
     where
-        K: ToRedisArgs,
+        K: AsRef<str>,
         T: FromRedisValue,
         F: FnMut(MultiplexedConnection, Pipeline) -> Fut,
         Fut: Future<Output = Result<Option<T>, redis::RedisError>>,
     {
         let connection = self.dedicated_connection().await?;
+        let keys = keys
+            .iter()
+            .map(|key| self.scoped_key(key.as_ref()))
+            .collect::<Vec<_>>();
         trace_redis_operation(RedisOperation::Transaction, async {
             tokio::time::timeout(
                 self.timeout,
-                redis::aio::transaction_async(connection, keys, operation),
+                redis::aio::transaction_async(connection, &keys, operation),
             )
             .await
             .map_err(|_| redis_timeout_error("Redis 事务超时"))?
@@ -196,6 +278,7 @@ impl RedisClient {
     ///
     /// 该连接不能与普通命令复用，调用方应在连接中断后自行按退避策略重建。
     pub async fn subscribe(&self, channel: &str) -> Result<redis::aio::PubSub, redis::RedisError> {
+        let channel = self.scoped_channel(channel);
         trace_redis_operation(RedisOperation::Subscribe, async {
             let mut subscription = self.client.get_async_pubsub().await?;
             subscription.subscribe(channel).await?;
@@ -209,10 +292,14 @@ impl RedisClient {
         &self,
         channels: &[&str],
     ) -> Result<redis::aio::PubSub, redis::RedisError> {
+        let channels = channels
+            .iter()
+            .map(|channel| self.scoped_channel(channel))
+            .collect::<Vec<_>>();
         trace_redis_operation(RedisOperation::Subscribe, async {
             let mut subscription = self.client.get_async_pubsub().await?;
             for channel in channels {
-                subscription.subscribe(*channel).await?;
+                subscription.subscribe(channel).await?;
             }
             Ok(subscription)
         })
@@ -228,7 +315,8 @@ impl RedisClient {
         value: V,
     ) -> Result<(), redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Set, conn.set(key.as_ref(), value.as_ref())).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Set, conn.set(key, value.as_ref())).await
     }
 
     /// 执行 `SET key value EX seconds`（带过期时间）。
@@ -239,9 +327,10 @@ impl RedisClient {
         seconds: u64,
     ) -> Result<(), redis::RedisError> {
         let mut conn = self.conn.clone();
+        let key = self.scoped_key(key.as_ref());
         trace_redis_operation(
             RedisOperation::SetEx,
-            conn.set_ex(key.as_ref(), value.as_ref(), seconds),
+            conn.set_ex(key, value.as_ref(), seconds),
         )
         .await
     }
@@ -249,7 +338,8 @@ impl RedisClient {
     /// 执行 `GET key`（不存在时返回 `None`）。
     pub async fn get<K: AsRef<str>>(&self, key: K) -> Result<Option<String>, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Get, conn.get(key.as_ref())).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Get, conn.get(key)).await
     }
 
     /// 对多个键执行 `MGET`。返回值与输入键一一对应，不存在或已过期的键为 `None`。
@@ -261,10 +351,14 @@ impl RedisClient {
             return Ok(Vec::new());
         }
 
+        let keys = keys
+            .iter()
+            .map(|key| self.scoped_key(key.as_ref()))
+            .collect::<Vec<_>>();
         let mut conn = self.conn.clone();
         trace_redis_operation(
             RedisOperation::Mget,
-            prepare_mget_command(keys).query_async(&mut conn),
+            prepare_mget_command(&keys).query_async(&mut conn),
         )
         .await
     }
@@ -272,7 +366,8 @@ impl RedisClient {
     /// 执行 `DEL key`，删除键并返回删除数量。
     pub async fn del<K: AsRef<str>>(&self, key: K) -> Result<u64, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Del, conn.del(key.as_ref())).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Del, conn.del(key)).await
     }
 
     /// 向 Redis Pub/Sub 频道发布文本负载，并返回已接收的订阅者数量。
@@ -284,9 +379,10 @@ impl RedisClient {
         payload: P,
     ) -> Result<i64, redis::RedisError> {
         let mut conn = self.conn.clone();
+        let channel = self.scoped_channel(channel.as_ref());
         trace_redis_operation(
             RedisOperation::Publish,
-            conn.publish(channel.as_ref(), payload.as_ref()),
+            conn.publish(channel, payload.as_ref()),
         )
         .await
     }
@@ -297,11 +393,10 @@ impl RedisClient {
         key: K,
     ) -> Result<Option<String>, redis::RedisError> {
         let mut conn = self.conn.clone();
+        let key = self.scoped_key(key.as_ref());
         trace_redis_operation(
             RedisOperation::GetAndDel,
-            redis::cmd("GETDEL")
-                .arg(key.as_ref())
-                .query_async(&mut conn),
+            redis::cmd("GETDEL").arg(key).query_async(&mut conn),
         )
         .await
     }
@@ -309,13 +404,15 @@ impl RedisClient {
     /// 执行 `EXISTS key`。
     pub async fn exists<K: AsRef<str>>(&self, key: K) -> Result<bool, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Exists, conn.exists(key.as_ref())).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Exists, conn.exists(key)).await
     }
 
     /// 执行 `TTL key`（返回剩余秒数，-1 表示永不过期，-2 表示不存在）。
     pub async fn ttl<K: AsRef<str>>(&self, key: K) -> Result<i64, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Ttl, conn.ttl(key.as_ref())).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Ttl, conn.ttl(key)).await
     }
 
     /// 执行 `PING`。
@@ -347,6 +444,7 @@ impl RedisClient {
         &self,
         pattern: K,
     ) -> Result<Vec<String>, redis::RedisError> {
+        let pattern = self.scoped_key(pattern.as_ref());
         let mut conn = self.conn.clone();
         let mut cursor = 0_u64;
         let mut keys = Vec::new();
@@ -357,7 +455,7 @@ impl RedisClient {
                 redis::cmd("SCAN")
                     .arg(cursor)
                     .arg("MATCH")
-                    .arg(pattern.as_ref())
+                    .arg(&pattern)
                     .arg("COUNT")
                     .arg(SCAN_BATCH_SIZE)
                     .query_async(&mut conn),
@@ -386,7 +484,7 @@ impl RedisClient {
             let mut deleted = 0_u64;
 
             for batch in keys.chunks(SCAN_BATCH_SIZE) {
-                let mut command = redis::cmd("DEL");
+                let mut command = redis::cmd("UNLINK");
                 for key in batch {
                     command.arg(key);
                 }
@@ -408,9 +506,10 @@ impl RedisClient {
         value: V,
     ) -> Result<(), redis::RedisError> {
         let mut conn = self.conn.clone();
+        let key = self.scoped_key(key.as_ref());
         trace_redis_operation(
             RedisOperation::Hset,
-            conn.hset(key.as_ref(), field.as_ref(), value.as_ref()),
+            conn.hset(key, field.as_ref(), value.as_ref()),
         )
         .await
     }
@@ -421,7 +520,8 @@ impl RedisClient {
         key: K,
     ) -> Result<std::collections::HashMap<String, String>, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Hgetall, conn.hgetall(key.as_ref())).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Hgetall, conn.hgetall(key)).await
     }
 
     /// 执行 `HDEL key field`。
@@ -431,11 +531,8 @@ impl RedisClient {
         field: F,
     ) -> Result<u64, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(
-            RedisOperation::Hdel,
-            conn.hdel(key.as_ref(), field.as_ref()),
-        )
-        .await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Hdel, conn.hdel(key, field.as_ref())).await
     }
 
     /// 执行 `EXPIRE key seconds`。
@@ -445,23 +542,47 @@ impl RedisClient {
         seconds: u64,
     ) -> Result<bool, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(
-            RedisOperation::Expire,
-            conn.expire(key.as_ref(), seconds as i64),
-        )
-        .await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Expire, conn.expire(key, seconds as i64)).await
     }
 
     /// 执行 `INCR key`（原子递增）。
     pub async fn incr<K: AsRef<str>>(&self, key: K) -> Result<i64, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Incr, conn.incr(key.as_ref(), 1)).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Incr, conn.incr(key, 1)).await
     }
 
     /// 执行 `DECR key`（原子递减）。
     pub async fn decr<K: AsRef<str>>(&self, key: K) -> Result<i64, redis::RedisError> {
         let mut conn = self.conn.clone();
-        trace_redis_operation(RedisOperation::Decr, conn.decr(key.as_ref(), 1)).await
+        let key = self.scoped_key(key.as_ref());
+        trace_redis_operation(RedisOperation::Decr, conn.decr(key, 1)).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::RedisNamespace;
+
+    #[test]
+    fn namespace_is_idempotent_and_cannot_escape_to_another_scope() {
+        let namespace = RedisNamespace(Arc::from("ryframe:{dev-a}:"));
+        assert_eq!(namespace.key("jobs:wakeup"), "ryframe:{dev-a}:jobs:wakeup");
+        assert_eq!(
+            namespace.key("ryframe:v0.5:lock:tenant"),
+            "ryframe:{dev-a}:v0.5:lock:tenant"
+        );
+        assert_eq!(
+            namespace.key("ryframe:{dev-a}:jobs:wakeup"),
+            "ryframe:{dev-a}:jobs:wakeup"
+        );
+        assert_eq!(
+            namespace.key("ryframe:{other}:jobs:wakeup"),
+            "ryframe:{dev-a}:{other}:jobs:wakeup"
+        );
     }
 }
 

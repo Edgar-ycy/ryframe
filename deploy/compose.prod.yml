@@ -2,6 +2,7 @@ name: ryframe
 
 x-ryframe-environment: &ryframe-environment
   APP_ENV: prod
+  APP_SCOPE_ID: ${APP_SCOPE_ID:?必须设置稳定且唯一的 APP_SCOPE_ID}
   APP_MULTI_TENANCY_ENABLED: ${APP_MULTI_TENANCY_ENABLED:-true}
   APP_JOBS_MODE: external
   APP_JOBS_POLL_INTERVAL_MS: ${APP_JOBS_POLL_INTERVAL_MS:-500}

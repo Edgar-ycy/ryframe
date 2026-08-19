@@ -19,9 +19,11 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         tenant_id: &str,
         user_id: i64,
     ) -> Result<AuthorizationCacheLookup, String> {
-        let tenant_key = tenant_epoch_key(tenant_id);
-        let user_key = user_version_key(tenant_id, user_id);
-        let snapshot_key = snapshot_hash_key(tenant_id, user_id);
+        let tenant_key = self.redis.scoped_key(&tenant_epoch_key(tenant_id));
+        let user_key = self.redis.scoped_key(&user_version_key(tenant_id, user_id));
+        let snapshot_key = self
+            .redis
+            .scoped_key(&snapshot_hash_key(tenant_id, user_id));
         let watched = [tenant_key.clone(), user_key.clone(), snapshot_key.clone()];
         let values: (Option<String>, Option<String>, Option<String>) = self
             .redis
@@ -72,9 +74,11 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let tenant_id = &snapshot.principal.actor.tenant_id;
         let user_id = snapshot.principal.actor.user_id;
         let versions = snapshot.versions;
-        let tenant_key = tenant_epoch_key(tenant_id);
-        let user_key = user_version_key(tenant_id, user_id);
-        let snapshot_key = snapshot_hash_key(tenant_id, user_id);
+        let tenant_key = self.redis.scoped_key(&tenant_epoch_key(tenant_id));
+        let user_key = self.redis.scoped_key(&user_version_key(tenant_id, user_id));
+        let snapshot_key = self
+            .redis
+            .scoped_key(&snapshot_hash_key(tenant_id, user_id));
         let watched = [tenant_key.clone(), user_key.clone(), snapshot_key.clone()];
         let payload = serde_json::to_string(snapshot).map_err(|error| error.to_string())?;
         let tenant_epoch = versions.tenant_authorization_epoch.to_string();
@@ -153,8 +157,10 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         tenant_id: &str,
         namespace: &str,
     ) -> Result<Option<TenantCacheLookup>, String> {
-        let tenant_key = tenant_epoch_key(tenant_id);
-        let value_key = tenant_value_hash_key(tenant_id, namespace);
+        let tenant_key = self.redis.scoped_key(&tenant_epoch_key(tenant_id));
+        let value_key = self
+            .redis
+            .scoped_key(&tenant_value_hash_key(tenant_id, namespace));
         let watched = [tenant_key.clone(), value_key.clone()];
         let values: (Option<String>, Option<String>) = self
             .redis
@@ -189,8 +195,10 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         value: &str,
         ttl_secs: u64,
     ) -> Result<bool, String> {
-        let tenant_key = tenant_epoch_key(tenant_id);
-        let value_key = tenant_value_hash_key(tenant_id, namespace);
+        let tenant_key = self.redis.scoped_key(&tenant_epoch_key(tenant_id));
+        let value_key = self
+            .redis
+            .scoped_key(&tenant_value_hash_key(tenant_id, namespace));
         let watched = [tenant_key.clone(), value_key.clone()];
         let epoch = authorization_epoch.to_string();
         let value = value.to_owned();
@@ -226,8 +234,12 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         namespace: &str,
         namespace_version: i64,
     ) -> Result<(), String> {
-        let version_key = namespace_version_key(tenant_id, namespace);
-        let values_key = namespace_values_hash_key(tenant_id, namespace);
+        let version_key = self
+            .redis
+            .scoped_key(&namespace_version_key(tenant_id, namespace));
+        let values_key = self
+            .redis
+            .scoped_key(&namespace_values_hash_key(tenant_id, namespace));
         let watched = [version_key.clone(), values_key.clone()];
         let incoming = namespace_version.to_string();
         validate_canonical_decimal(&incoming)?;
@@ -262,8 +274,12 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         namespace: &str,
         item: &str,
     ) -> Result<Option<NamespaceCacheLookup>, String> {
-        let version_key = namespace_version_key(tenant_id, namespace);
-        let values_key = namespace_values_hash_key(tenant_id, namespace);
+        let version_key = self
+            .redis
+            .scoped_key(&namespace_version_key(tenant_id, namespace));
+        let values_key = self
+            .redis
+            .scoped_key(&namespace_values_hash_key(tenant_id, namespace));
         let watched = [version_key.clone(), values_key.clone()];
         let item = item.to_owned();
         let values: (Option<String>, Option<String>) = self
@@ -301,8 +317,12 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         value: &str,
         ttl_secs: u64,
     ) -> Result<bool, String> {
-        let version_key = namespace_version_key(tenant_id, namespace);
-        let values_key = namespace_values_hash_key(tenant_id, namespace);
+        let version_key = self
+            .redis
+            .scoped_key(&namespace_version_key(tenant_id, namespace));
+        let values_key = self
+            .redis
+            .scoped_key(&namespace_values_hash_key(tenant_id, namespace));
         let watched = [version_key.clone(), values_key.clone()];
         let expected_version = namespace_version.to_string();
         let item = item.to_owned();
@@ -334,6 +354,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
 }
 
 async fn update_mirror(redis: &RedisClient, key: String, version: i64) -> Result<(), String> {
+    let key = redis.scoped_key(&key);
     let watched = [key.clone()];
     let incoming = version.to_string();
     redis

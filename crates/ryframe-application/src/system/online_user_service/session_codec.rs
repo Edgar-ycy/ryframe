@@ -1,4 +1,5 @@
 use chrono::Utc;
+use ryframe_adapters::RedisNamespace;
 use ryframe_kernel::{AppError, AppResult};
 
 use super::{UserSession, keyspace::session_key};
@@ -13,6 +14,7 @@ pub(super) fn encode(session: &UserSession) -> serde_json::Result<String> {
 }
 
 pub(super) fn decode_batch(
+    scope: &RedisNamespace,
     expected_tenant_id: &str,
     keys: &[String],
     values: Vec<Option<String>>,
@@ -36,7 +38,7 @@ pub(super) fn decode_batch(
             AppError::ServiceUnavailable("登录设备元数据损坏".into())
         })?;
         if session.tenant_id != expected_tenant_id
-            || key != &session_key(expected_tenant_id, &session.sid)
+            || key != &scope.key(&session_key(expected_tenant_id, &session.sid))
         {
             tracing::warn!(
                 %key,

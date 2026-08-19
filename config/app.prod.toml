@@ -1,6 +1,9 @@
 # 生产环境配置
 # 敏感信息通过 APP_*_FILE 或部署平台的环境变量注入，不写入配置文件
 
+# 每个生产部署必须覆盖为自身稳定且唯一的资源作用域。
+scope_id = "production"
+
 [api_docs]
 enabled = false
 

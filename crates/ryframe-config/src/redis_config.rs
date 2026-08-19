@@ -1,6 +1,8 @@
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 
+use crate::ResourceScopeId;
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RedisMode {
@@ -22,6 +24,9 @@ impl RedisMode {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RedisConfig {
+    /// 由顶层 `scope_id` 注入，不允许在 `[redis]` 中单独覆盖。
+    #[serde(skip)]
+    pub(crate) scope_id: Option<ResourceScopeId>,
     #[serde(default)]
     pub mode: RedisMode,
     /// Redis 主机地址
@@ -59,6 +64,7 @@ pub struct RedisConfig {
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
+            scope_id: None,
             mode: RedisMode::Optional,
             host: default_redis_host(),
             port: default_redis_port(),
@@ -91,6 +97,24 @@ fn default_redis_timeout() -> u64 {
 }
 
 impl RedisConfig {
+    pub(crate) fn set_scope_id(&mut self, scope_id: ResourceScopeId) {
+        self.scope_id = Some(scope_id);
+    }
+
+    pub(crate) fn has_scope_id(&self, scope_id: &ResourceScopeId) -> bool {
+        self.scope_id.as_ref() == Some(scope_id)
+    }
+
+    pub fn scope_id(&self) -> &ResourceScopeId {
+        self.scope_id
+            .as_ref()
+            .expect("AppConfig 加载后 Redis 必须具有资源作用域")
+    }
+
+    pub fn namespace(&self) -> String {
+        self.scope_id().redis_namespace()
+    }
+
     /// 生成 Redis 连接字符串
     ///
     /// 示例："redis://:password@127.0.0.1:6379/0"

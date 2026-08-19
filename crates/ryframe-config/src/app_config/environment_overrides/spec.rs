@@ -73,6 +73,7 @@ pub(super) enum EnvValueType {
 }
 
 pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
+    EnvOverride::string("APP_SCOPE_ID", &["scope_id"]),
     EnvOverride::string("APP_APP_NAME", &["app", "name"]),
     EnvOverride::string("APP_APP_HOST", &["app", "host"]),
     EnvOverride::integer("APP_APP_PORT", &["app", "port"]),

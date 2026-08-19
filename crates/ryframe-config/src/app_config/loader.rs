@@ -42,6 +42,9 @@ impl AppConfig {
 
         config.environment = environment;
         config.snowflake_worker_id = resolve_snowflake_worker_id(environment)?;
+        if let Some(redis) = &mut config.redis {
+            redis.set_scope_id(config.scope_id.clone());
+        }
 
         config.validate()?;
         if environment.is_production()

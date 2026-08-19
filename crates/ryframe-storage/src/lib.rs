@@ -2,6 +2,7 @@
 
 mod local;
 mod s3;
+mod scoped;
 mod signing;
 
 use std::{future::Future, path::Path, time::Duration};
@@ -10,6 +11,7 @@ use async_trait::async_trait;
 pub use local::LocalObjectStorage;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 pub use s3::{S3Config, S3ObjectStorage};
+pub use scoped::ScopedObjectStorage;
 use tracing::Instrument;
 
 const OBJECT_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS

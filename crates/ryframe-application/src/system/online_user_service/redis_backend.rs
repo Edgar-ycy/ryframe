@@ -50,9 +50,9 @@ async fn apply_touch_if_unchanged(
     expected_json: &str,
     replacement: Option<(&str, u64)>,
 ) -> AppResult<TouchCasOutcome> {
-    let metadata_key = session_key(&session.tenant_id, &session.sid);
-    let tenant_key = tenant_index_key(&session.tenant_id);
-    let user_key = tenant_user_index_key(&session.tenant_id, session.user_id);
+    let metadata_key = client.scoped_key(&session_key(&session.tenant_id, &session.sid));
+    let tenant_key = client.scoped_key(&tenant_index_key(&session.tenant_id));
+    let user_key = client.scoped_key(&tenant_user_index_key(&session.tenant_id, session.user_id));
     let watched = [metadata_key.clone(), tenant_key.clone(), user_key.clone()];
     let expected_json = expected_json.to_owned();
     let replacement = replacement.map(|(json, ttl)| (json.to_owned(), ttl));
@@ -100,9 +100,9 @@ async fn apply_touch_if_unchanged(
 }
 
 pub(super) async fn add(client: &RedisClient, session: &UserSession, ttl: u64) -> AppResult<()> {
-    let metadata_key = session_key(&session.tenant_id, &session.sid);
-    let tenant_key = tenant_index_key(&session.tenant_id);
-    let user_key = tenant_user_index_key(&session.tenant_id, session.user_id);
+    let metadata_key = client.scoped_key(&session_key(&session.tenant_id, &session.sid));
+    let tenant_key = client.scoped_key(&tenant_index_key(&session.tenant_id));
+    let user_key = client.scoped_key(&tenant_user_index_key(&session.tenant_id, session.user_id));
     let json = encode(session).map_err(|error| {
         tracing::error!(%error, "序列化在线用户失败");
         AppError::Internal("无法序列化登录设备元数据".into())
@@ -135,8 +135,8 @@ pub(super) async fn add(client: &RedisClient, session: &UserSession, ttl: u64) -
 }
 
 pub(super) async fn remove(client: &RedisClient, tenant_id: &str, sid: &str) -> AppResult<()> {
-    let metadata_key = session_key(tenant_id, sid);
-    let tenant_key = tenant_index_key(tenant_id);
+    let metadata_key = client.scoped_key(&session_key(tenant_id, sid));
+    let tenant_key = client.scoped_key(&tenant_index_key(tenant_id));
     // 在 Rust 中解析 Snowflake ID，避免经浮点转换时丢失精度。
     let metadata = client
         .get(&metadata_key)
@@ -152,7 +152,7 @@ pub(super) async fn remove(client: &RedisClient, tenant_id: &str, sid: &str) -> 
             .map(|session| session.user_id)
     });
     let user_key = user_id
-        .map(|user_id| tenant_user_index_key(tenant_id, user_id))
+        .map(|user_id| client.scoped_key(&tenant_user_index_key(tenant_id, user_id)))
         .unwrap_or_else(|| tenant_key.clone());
     let watched = [metadata_key.clone(), tenant_key.clone(), user_key.clone()];
     let sid = sid.to_owned();
@@ -223,7 +223,12 @@ async fn load_keys(
             .mget(key_batch)
             .await
             .map_err(|error| unavailable("list", error))?;
-        sessions.extend(decode_batch(tenant_id, key_batch, values)?);
+        sessions.extend(decode_batch(
+            &client.keyspace(),
+            tenant_id,
+            key_batch,
+            values,
+        )?);
     }
     Ok(sessions)
 }
@@ -237,13 +242,13 @@ pub(super) async fn list(client: &RedisClient, tenant_id: &str) -> AppResult<Vec
     let indexed_sids: Vec<String> = client
         .conn()
         .clone()
-        .smembers(tenant_index_key(tenant_id))
+        .smembers(client.scoped_key(&tenant_index_key(tenant_id)))
         .await
         .map_err(|error| unavailable("tenant_index", error))?;
     keys.extend(
         indexed_sids
             .into_iter()
-            .map(|sid| session_key(tenant_id, &sid)),
+            .map(|sid| client.scoped_key(&session_key(tenant_id, &sid))),
     );
     keys.sort_unstable();
     keys.dedup();
@@ -263,13 +268,13 @@ pub(super) async fn list_for_user(
     let indexed_sids: Vec<String> = client
         .conn()
         .clone()
-        .smembers(tenant_user_index_key(tenant_id, user_id))
+        .smembers(client.scoped_key(&tenant_user_index_key(tenant_id, user_id)))
         .await
         .map_err(|error| unavailable("user_index", error))?;
     keys.extend(
         indexed_sids
             .into_iter()
-            .map(|sid| session_key(tenant_id, &sid)),
+            .map(|sid| client.scoped_key(&session_key(tenant_id, &sid))),
     );
     keys.sort_unstable();
     keys.dedup();

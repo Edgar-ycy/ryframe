@@ -8,7 +8,9 @@ use std::{error::Error, sync::Arc};
 use chrono::{DateTime, Utc};
 use ryframe_config::{AppConfig, Environment, StorageBackend};
 use ryframe_db::entities::sys_file;
-use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
+use ryframe_storage::{
+    LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
+};
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
     FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
@@ -205,7 +207,7 @@ fn usage() -> &'static str {
 }
 
 fn build_storage(config: &AppConfig) -> Result<Arc<dyn ObjectStorage>, DynError> {
-    let storage: Arc<dyn ObjectStorage> = match config.object_storage.backend {
+    let raw_storage: Arc<dyn ObjectStorage> = match config.object_storage.backend {
         StorageBackend::Local => Arc::new(LocalObjectStorage::new(
             &config.object_storage.local_base_dir,
         )),
@@ -219,7 +221,10 @@ fn build_storage(config: &AppConfig) -> Result<Arc<dyn ObjectStorage>, DynError>
             })?)
         }
     };
-    Ok(storage)
+    Ok(Arc::new(ScopedObjectStorage::new(
+        raw_storage,
+        config.scope_id.as_str(),
+    )))
 }
 
 async fn verify_connected_database(

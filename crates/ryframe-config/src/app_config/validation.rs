@@ -226,6 +226,11 @@ impl AppConfig {
                 .map_err(AppError::Config)?;
         }
         if let Some(redis) = &self.redis {
+            if !redis.has_scope_id(&self.scope_id) {
+                return Err(AppError::Config(
+                    "Redis 必须使用顶层 scope_id 生成资源命名空间".into(),
+                ));
+            }
             validate_redis_tls(redis, self.environment.is_production())?;
         }
         if self.environment.is_production() && self.cors.allow_origins.is_empty() {

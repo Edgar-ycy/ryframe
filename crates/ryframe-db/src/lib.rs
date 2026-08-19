@@ -7,6 +7,7 @@ mod execution_tenant_scope;
 pub mod migration;
 pub mod pagination;
 pub mod repositories;
+pub mod resource_ownership;
 pub mod sql_logger;
 pub use cluster::{
     CallbackDatabaseMetricsObserver, ControlDatabaseCluster, DatabaseMetricsObserver,

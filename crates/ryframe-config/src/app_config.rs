@@ -4,8 +4,8 @@ use crate::{
     ApiDocsConfig, AuthConfig, CorsConfig, DataRetentionConfig, DatabaseConfig, Environment,
     JobConfig, LoggerConfig, MessagingConfig, MonitorConfig, MultiTenancyConfig,
     ObjectStorageConfig, PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig,
-    ServiceAccountsConfig, TelemetryConfig, TenantConfigTransferConfig, TenantDataConfig,
-    UploadLimitsConfig, UserImportConfig,
+    ResourceScopeId, ServiceAccountsConfig, TelemetryConfig, TenantConfigTransferConfig,
+    TenantDataConfig, UploadLimitsConfig, UserImportConfig,
 };
 
 mod defaults;
@@ -36,6 +36,8 @@ pub struct AppConfig {
     /// 当前进程使用的 Snowflake worker ID，不参与配置文件反序列化。
     #[serde(skip)]
     pub snowflake_worker_id: i64,
+    /// 共享 MySQL、Redis 和对象存储资源的强制环境作用域。
+    pub scope_id: ResourceScopeId,
     pub app: AppSettings,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,

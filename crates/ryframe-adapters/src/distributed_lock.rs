@@ -192,7 +192,7 @@ impl DistributedLock for RedisDistributedLock {
     async fn try_acquire(&self, key: &str, ttl: Duration) -> AppResult<Option<LockGuard>> {
         let holder_id = Self::holder_id();
         let ttl_secs = ttl.as_secs().max(1);
-        let redis_key = format!("{LOCK_KEY_PREFIX}{key}");
+        let redis_key = self.client.scoped_key(&format!("{LOCK_KEY_PREFIX}{key}"));
 
         let mut conn = self.client.conn().clone();
         let acquired: Option<String> = conn

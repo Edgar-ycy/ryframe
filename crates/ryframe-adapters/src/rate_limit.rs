@@ -93,7 +93,7 @@ impl RateLimiter {
 
         match &self.mode {
             RateLimiterMode::Redis { client, .. } => {
-                let redis_key = format!("{RATE_LIMIT_KEY_PREFIX}{key}");
+                let redis_key = client.scoped_key(&format!("{RATE_LIMIT_KEY_PREFIX}{key}"));
                 let watched = [redis_key.clone()];
                 match client
                     .transaction(&watched, move |mut connection, mut transaction| {
@@ -168,7 +168,7 @@ impl RateLimiter {
             RateLimiterMode::Redis { client, .. } => {
                 let redis_keys = keys
                     .iter()
-                    .map(|key| format!("{RATE_LIMIT_KEY_PREFIX}{key}"))
+                    .map(|key| client.scoped_key(&format!("{RATE_LIMIT_KEY_PREFIX}{key}")))
                     .collect::<Vec<_>>();
                 let watched = redis_keys.clone();
                 let values = client

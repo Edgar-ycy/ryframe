@@ -5,12 +5,14 @@ use ryframe_application::system::{
 };
 use ryframe_config::{AppConfig, StorageBackend};
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
+use ryframe_storage::{
+    LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
+};
 
 /// 初始化对象存储，并在启动阶段验证连接、凭据和业务桶。
 pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
     let storage_config = &config.object_storage;
-    let storage: Arc<dyn ObjectStorage> = match storage_config.backend {
+    let raw_storage: Arc<dyn ObjectStorage> = match storage_config.backend {
         StorageBackend::Local => Arc::new(LocalObjectStorage::new(&storage_config.local_base_dir)),
         StorageBackend::Rustfs | StorageBackend::Minio | StorageBackend::S3 => Arc::new(
             S3ObjectStorage::new(S3Config {
@@ -23,6 +25,10 @@ pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
             .map_err(|error| AppError::Config(error.to_string()))?,
         ),
     };
+    let storage: Arc<dyn ObjectStorage> = Arc::new(ScopedObjectStorage::new(
+        raw_storage,
+        config.scope_id.as_str(),
+    ));
 
     for bucket in [
         UPLOAD_BUCKET,
@@ -42,6 +48,7 @@ pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
     tracing::info!(
         backend = storage_config.backend.as_str(),
         endpoint = storage_config.endpoint,
+        scope_id = %config.scope_id,
         "对象存储连接与业务桶检查通过"
     );
 

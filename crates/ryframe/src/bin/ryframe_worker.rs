@@ -26,7 +26,9 @@ use ryframe_config::{
 };
 use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
-use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
+use ryframe_storage::{
+    LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
+};
 use tokio::sync::watch;
 
 #[path = "../boot/jobs.rs"]
@@ -398,7 +400,7 @@ fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
 async fn connect_storage_for_worker(
     config: &AppConfig,
 ) -> Result<Arc<dyn ObjectStorage>, AppError> {
-    let storage: Arc<dyn ObjectStorage> = match config.object_storage.backend {
+    let raw_storage: Arc<dyn ObjectStorage> = match config.object_storage.backend {
         StorageBackend::Local => Arc::new(LocalObjectStorage::new(
             &config.object_storage.local_base_dir,
         )),
@@ -413,6 +415,10 @@ async fn connect_storage_for_worker(
             .map_err(|error| AppError::Config(error.to_string()))?,
         ),
     };
+    let storage: Arc<dyn ObjectStorage> = Arc::new(ScopedObjectStorage::new(
+        raw_storage,
+        config.scope_id.as_str(),
+    ));
     for bucket in [EXPORT_BUCKET, IMPORT_BUCKET, CONFIG_PACKAGE_BUCKET] {
         storage.ensure_bucket(bucket).await.map_err(|error| {
             AppError::ServiceUnavailable(format!("Worker 对象存储不可用: {error}"))
@@ -430,7 +436,19 @@ async fn connect_redis_for_worker(config: &AppConfig) -> Result<Option<RedisClie
     }
     match RedisClient::connect(redis_config).await {
         Ok(client) => match client.ping().await {
-            Ok(_) => Ok(Some(client)),
+            Ok(_) => match client
+                .ensure_scope_ownership(&redis_config.scope_id().ownership_marker("redis"))
+                .await
+            {
+                Ok(()) => Ok(Some(client)),
+                Err(error) if redis_config.mode == RedisMode::Required => Err(AppError::Config(
+                    format!("Worker Redis scope 所有权校验失败: {error}"),
+                )),
+                Err(error) => {
+                    tracing::warn!(%error, "Worker Redis scope 所有权校验失败，消息将通过收件箱补拉");
+                    Ok(None)
+                }
+            },
             Err(error) if redis_config.mode == RedisMode::Required => Err(
                 AppError::ServiceUnavailable(format!("Worker Redis PING 失败: {error}")),
             ),

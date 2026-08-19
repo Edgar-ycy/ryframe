@@ -55,6 +55,14 @@ async fn connect_and_verify(config: &RedisConfig) -> AppResult<RedisClient> {
         .ping()
         .await
         .map_err(|error| AppError::ServiceUnavailable(format!("Redis PING failed: {error}")))?;
+    client
+        .ensure_scope_ownership(&config.scope_id().ownership_marker("redis"))
+        .await
+        .map_err(|error| {
+            AppError::Config(format!(
+                "Redis scope ownership verification failed: {error}"
+            ))
+        })?;
     tracing::info!(mode = ?config.mode, host = %config.host, port = config.port, "Redis is ready");
     Ok(client)
 }

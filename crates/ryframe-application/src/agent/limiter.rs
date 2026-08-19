@@ -40,7 +40,7 @@ impl AgentLimiter {
 
     /// 在读取公开 Key ID 前先执行独立的 IP 防刷；正式身份验证后仍会原子执行完整七维决策。
     pub async fn guard_pre_auth_ip(&self, ip: &str, limit: u32) -> AppResult<()> {
-        let key = digest_key("pre-auth-ip", ip);
+        let key = self.redis.scoped_key(&digest_key("pre-auth-ip", ip));
         let watched = [key.clone()];
         let code: i64 = self
             .redis
@@ -83,42 +83,56 @@ impl AgentLimiter {
     pub async fn acquire(&self, input: AgentLimitInput<'_>) -> AppResult<AgentConcurrencyLease> {
         let mut dimensions = Vec::<(String, u32, u32)>::new();
         // 预认证 IP 桶已经承担独立 IP 维度；完整决策仍会读取该桶，避免重复计数。
-        dimensions.push((digest_key("pre-auth-ip", input.ip), input.default_limit, 0));
+        dimensions.push((
+            self.redis.scoped_key(&digest_key("pre-auth-ip", input.ip)),
+            input.default_limit,
+            0,
+        ));
         if let Ok(limit) = u32::try_from(input.tenant_limit)
             && limit > 0
         {
-            dimensions.push((digest_key("tenant", input.tenant_id), limit, 1));
+            dimensions.push((
+                self.redis
+                    .scoped_key(&digest_key("tenant", input.tenant_id)),
+                limit,
+                1,
+            ));
         }
         let account_limit = u32::try_from(input.account_limit)
             .ok()
             .filter(|limit| *limit > 0)
             .unwrap_or(input.default_limit);
         dimensions.push((
-            digest_key("account", &input.account_id.to_string()),
+            self.redis
+                .scoped_key(&digest_key("account", &input.account_id.to_string())),
             account_limit,
             1,
         ));
         dimensions.push((
-            digest_key("credential", &input.credential_id.to_string()),
+            self.redis
+                .scoped_key(&digest_key("credential", &input.credential_id.to_string())),
             input.default_limit,
             1,
         ));
         if let Some(user_id) = input.represented_user_id {
             dimensions.push((
-                digest_key("delegated-user", &user_id.to_string()),
+                self.redis
+                    .scoped_key(&digest_key("delegated-user", &user_id.to_string())),
                 input.default_limit,
                 1,
             ));
         }
         dimensions.push((
-            digest_key(
+            self.redis.scoped_key(&digest_key(
                 "capability",
                 &format!("{}:{}", input.account_id, input.capability_key),
-            ),
+            )),
             account_limit,
             input.capability_cost.max(1),
         ));
-        let concurrency_key = digest_key("concurrency", &input.account_id.to_string());
+        let concurrency_key = self
+            .redis
+            .scoped_key(&digest_key("concurrency", &input.account_id.to_string()));
         let mut keys = dimensions
             .iter()
             .map(|(key, _, _)| key.clone())
