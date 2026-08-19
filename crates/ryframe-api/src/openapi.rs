@@ -660,13 +660,13 @@ fn menu_route_permission(route_key: &str) -> Option<&'static str> {
 
 fn menu_route_capability(route_key: &str) -> Option<&'static str> {
     match route_key {
-        "system.service-accounts" => Some(ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY),
+        "system.service-accounts" => Some(ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY),
         _ => None,
     }
 }
 
 fn product_capability_contract() -> serde_json::Value {
-    let capabilities = ryframe_service::system::CAPABILITY_CATALOG
+    let capabilities = ryframe_application::system::CAPABILITY_CATALOG
         .iter()
         .map(|descriptor| {
             serde_json::json!({
@@ -727,7 +727,7 @@ fn permission_catalog_contract() -> serde_json::Value {
 fn route_contract() -> serde_json::Value {
     let bindings = crate::permission_catalog::route_capability_bindings();
     let mut endpoint_keys = std::collections::BTreeSet::new();
-    for descriptor in ryframe_service::system::CAPABILITY_CATALOG {
+    for descriptor in ryframe_application::system::CAPABILITY_CATALOG {
         for permission in descriptor.permission_codes {
             assert!(
                 bindings
@@ -752,7 +752,7 @@ fn route_contract() -> serde_json::Value {
                     endpoint_keys.insert((*method, *path)),
                     "route contract has duplicate method/path binding: {method} {path}"
                 );
-                let descriptor = ryframe_service::system::CAPABILITY_CATALOG
+                let descriptor = ryframe_application::system::CAPABILITY_CATALOG
                     .iter()
                     .find(|descriptor| descriptor.code == *capability_code)
                     .expect("route capability must exist in the compiled catalog");
@@ -805,7 +805,7 @@ fn product_error_contract() -> serde_json::Value {
 }
 
 fn agent_capability_contract() -> serde_json::Value {
-    let capabilities = ryframe_service::agent::AgentCapability::ALL
+    let capabilities = ryframe_application::agent::AgentCapability::ALL
         .into_iter()
         .map(|capability| {
             let descriptor = capability.descriptor();

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ryframe_core::repository::{PageResult, Repository, ValidatedPageQuery};
+use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,

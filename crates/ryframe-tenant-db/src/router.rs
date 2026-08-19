@@ -835,7 +835,7 @@ impl TenantDatabaseRouter {
         &self,
         tenant_id: &str,
     ) -> Result<TenantRuntimeSnapshot, TenantDataError> {
-        ryframe_core::validate_tenant_identifier(tenant_id)
+        ryframe_adapters::validate_tenant_identifier(tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         let row = RuntimeSnapshotRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::MySql,
@@ -1043,7 +1043,7 @@ impl TenantDatabaseRouter {
         placement_generation: i64,
         switch_token: &str,
     ) -> Result<FenceProvision, TenantDataError> {
-        ryframe_core::validate_tenant_identifier(tenant_id)
+        ryframe_adapters::validate_tenant_identifier(tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         if target_key.trim().is_empty()
             || placement_generation <= 0
@@ -1101,7 +1101,7 @@ impl TenantDatabaseRouter {
 
     /// 强一致解析 placement，并在返回前校验目标 schema 和 fence。
     pub async fn resolve(&self, tenant_id: &str) -> Result<TenantDataSession, TenantDataError> {
-        ryframe_core::validate_tenant_identifier(tenant_id)
+        ryframe_adapters::validate_tenant_identifier(tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         let placement = self.load_placement(tenant_id).await?;
         let target_mode = self

@@ -4,11 +4,11 @@ use axum::{
     http::{HeaderMap, header},
     response::IntoResponse,
 };
-use ryframe_core::resilience::CircuitBreaker;
+use ryframe_adapters::resilience::CircuitBreaker;
+use ryframe_application::system::file_service::{AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET};
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::{AppError, AppResult as KernelAppResult};
 use ryframe_macro::{get, post, route};
-use ryframe_service::system::file_service::{AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET};
 use ryframe_utils::file_upload::UploadConfig;
 use serde::Deserialize;
 
@@ -209,7 +209,7 @@ async fn process_multipart_upload(
             .file
             .upload_single(
                 &current_user,
-                ryframe_service::system::UploadCommand {
+                ryframe_application::system::UploadCommand {
                     original_name: filename,
                     data: data.to_vec(),
                     config,

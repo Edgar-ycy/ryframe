@@ -3,7 +3,7 @@ use ryframe_http::api_path;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_service::system::UploadResponse as ServiceUploadResponse;
+use ryframe_application::system::UploadResponse as ServiceUploadResponse;
 
 /// 文件上传响应。
 #[derive(Debug, Serialize, ToSchema)]

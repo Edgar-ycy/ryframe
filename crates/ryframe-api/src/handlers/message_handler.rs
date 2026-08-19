@@ -2,11 +2,13 @@ use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
 };
+use ryframe_application::system::{
+    MessageAudienceKind, MessageAudienceSelector, PublishMessageParams,
+};
 use ryframe_auth::{RequestPrincipal, permission::check_permission};
 use ryframe_http::{ApiEmptyResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
-use ryframe_service::system::{MessageAudienceKind, MessageAudienceSelector, PublishMessageParams};
 use validator::Validate;
 
 use crate::{

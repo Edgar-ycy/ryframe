@@ -1,7 +1,7 @@
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::OperLogQuery;
 use ryframe_config::PaginationConfig;
-use ryframe_core::ValidatedPageQuery;
 use ryframe_http::HttpResult;
-use ryframe_service::system::OperLogQuery;
 
 crate::list_query!(pub OperLogPageQuery, OperLogFilterQuery {
     oper_name: String,

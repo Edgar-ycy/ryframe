@@ -98,7 +98,7 @@ pub fn render_repository(table: &TableInfo, base_name: &str) -> String {
     format!(
         r#"// 此文件由 ryframe-generator v{generator_version} 自动生成。
 // tenant-data-boundary: business
-use ryframe_core::repository::{{PageResult, ValidatedPageQuery}};
+use ryframe_adapters::repository::{{PageResult, ValidatedPageQuery}};
 use ryframe_db::{{ReadConsistency, entities::{snake}}};
 use ryframe_kernel::{{AppError, AppResult}};
 use ryframe_tenant_db::TenantDataSession;

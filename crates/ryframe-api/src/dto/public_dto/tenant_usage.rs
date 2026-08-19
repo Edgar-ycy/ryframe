@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_service::system::{
+use ryframe_application::system::{
     QuotaUsage as ServiceQuotaUsage, RequestWindowUsage as ServiceRequestWindowUsage,
     TenantAuxiliaryUsage as ServiceTenantAuxiliaryUsage,
     TenantCapacityVo as ServiceTenantCapacityVo, TenantUsageVo as ServiceTenantUsageVo,

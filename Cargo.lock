@@ -3181,14 +3181,14 @@ dependencies = [
  "ryframe-api",
  "ryframe-auth",
  "ryframe-config",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-db",
  "ryframe-db-migration",
  "ryframe-i18n",
  "ryframe-kernel",
  "ryframe-middleware",
  "ryframe-monitor",
- "ryframe-service",
+ "ryframe-application",
  "ryframe-storage",
  "ryframe-tenant-db",
  "ryframe-tenant-db-migration",
@@ -3218,7 +3218,7 @@ dependencies = [
  "ryframe-auth",
  "ryframe-captcha",
  "ryframe-config",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-excel",
  "ryframe-http",
  "ryframe-i18n",
@@ -3226,7 +3226,7 @@ dependencies = [
  "ryframe-macro",
  "ryframe-middleware",
  "ryframe-monitor",
- "ryframe-service",
+ "ryframe-application",
  "ryframe-tenant-db",
  "ryframe-utils",
  "serde",
@@ -3253,7 +3253,7 @@ dependencies = [
  "lazy_static",
  "rand 0.10.1",
  "ryframe-config",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-http",
  "ryframe-kernel",
  "serde",
@@ -3284,7 +3284,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryframe-core"
+name = "ryframe-adapters"
 version = "0.10.0"
 dependencies = [
  "async-trait",
@@ -3313,7 +3313,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-semantic-conventions",
  "ryframe-config",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-kernel",
  "ryframe-macro",
  "ryframe-utils",
@@ -3394,7 +3394,7 @@ version = "0.10.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "ryframe-core",
+ "ryframe-adapters",
  "syn 3.0.3",
 ]
 
@@ -3414,7 +3414,7 @@ dependencies = [
  "redis",
  "ryframe-auth",
  "ryframe-config",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-http",
  "ryframe-i18n",
  "ryframe-kernel",
@@ -3439,7 +3439,7 @@ dependencies = [
  "chrono",
  "redis",
  "ryframe-auth",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-http",
  "ryframe-kernel",
  "ryframe-macro",
@@ -3452,7 +3452,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryframe-service"
+name = "ryframe-application"
 version = "0.10.0"
 dependencies = [
  "async-trait",
@@ -3468,7 +3468,7 @@ dependencies = [
  "redis",
  "ryframe-auth",
  "ryframe-config",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-db",
  "ryframe-excel",
  "ryframe-generator",
@@ -3513,7 +3513,7 @@ name = "ryframe-tenant-db"
 version = "0.10.0"
 dependencies = [
  "ryframe-config",
- "ryframe-core",
+ "ryframe-adapters",
  "ryframe-db",
  "ryframe-tenant-db-migration",
  "sea-orm",

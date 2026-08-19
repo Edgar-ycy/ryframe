@@ -34,10 +34,10 @@ const TABLE_PREFIXES: &[&str] = &["biz_"];
 const ENTITY_DIR: &str = "crates/ryframe-db/src/entities";
 
 /// 仓储输出目录
-const REPOSITORY_DIR: &str = "crates/ryframe-service/src/business";
+const REPOSITORY_DIR: &str = "crates/ryframe-application/src/business";
 
 /// 服务输出目录
-const SERVICE_DIR: &str = "crates/ryframe-service/src/business";
+const SERVICE_DIR: &str = "crates/ryframe-application/src/business";
 
 /// 处理器输出目录
 const HANDLER_DIR: &str = "crates/ryframe-api/src/handlers/business";

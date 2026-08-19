@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use ryframe_core::{DatabaseMonitor, DatabaseTopologyHealth};
+use ryframe_adapters::{DatabaseMonitor, DatabaseTopologyHealth};
 use sea_orm::{DatabaseBackend, FromQueryResult, Statement};
 
 #[derive(Debug, FromQueryResult)]

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use ryframe_config::{AppConfig, StorageBackend};
-use ryframe_kernel::{AppError, AppResult};
-use ryframe_service::system::{
+use ryframe_application::system::{
     AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, EXPORT_BUCKET, IMPORT_BUCKET, UPLOAD_BUCKET,
 };
+use ryframe_config::{AppConfig, StorageBackend};
+use ryframe_kernel::{AppError, AppResult};
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
 
 /// 初始化对象存储，并在启动阶段验证连接、凭据和业务桶。

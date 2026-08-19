@@ -351,7 +351,7 @@ fn parse_schedule_id(value: &str) -> HttpResult<i64> {
         .ok_or_else(|| AppError::Validation("定时任务 ID 必须是正整数".into()))?)
 }
 
-fn schedule_service(state: &AppState) -> HttpResult<&ryframe_service::JobScheduleService> {
+fn schedule_service(state: &AppState) -> HttpResult<&ryframe_application::JobScheduleService> {
     state.services.job_schedules.as_deref().ok_or_else(|| {
         ryframe_http::HttpAppError::from(AppError::NotFound("定时任务调度未启用".into()))
     })

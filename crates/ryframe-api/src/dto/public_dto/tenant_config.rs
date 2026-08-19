@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use ryframe_service::system::{
+use ryframe_application::system::{
     TenantConfigBundleSummaryVo as ServiceBundleSummary, TenantConfigBundleVo as ServiceBundle,
     TenantConfigTransferItemVo as ServiceItem, TenantConfigTransferVo as ServiceTransfer,
 };

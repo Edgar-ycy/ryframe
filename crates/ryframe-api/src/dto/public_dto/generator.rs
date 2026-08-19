@@ -1,7 +1,7 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_service::system::generator_service::{
+use ryframe_application::system::generator_service::{
     ColumnInfo as ServiceColumnInfo, ForeignKeyInfo as ServiceForeignKeyInfo,
     GeneratedFile as ServiceGeneratedFile, IndexInfo as ServiceIndexInfo,
     TableInfo as ServiceTableInfo, WriteReport as ServiceWriteReport,

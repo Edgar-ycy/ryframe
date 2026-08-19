@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_service::{LoginResult, UserInfo as ServiceUserInfo};
+use ryframe_application::{LoginResult, UserInfo as ServiceUserInfo};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 

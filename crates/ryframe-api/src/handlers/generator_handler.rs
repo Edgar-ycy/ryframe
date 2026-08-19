@@ -5,12 +5,12 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::IntoResponse,
 };
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::generator_service::TableListParams;
 use ryframe_config::{Environment, PaginationConfig};
-use ryframe_core::ValidatedPageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_macro::{get, post, route};
-use ryframe_service::system::generator_service::TableListParams;
 use serde::Deserialize;
 
 use crate::{

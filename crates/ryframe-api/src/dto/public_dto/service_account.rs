@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_service::system::{
+use ryframe_application::system::{
     CreatedCredentialVo as ServiceCreatedCredentialVo,
     CreatedDelegationVo as ServiceCreatedDelegationVo, ServiceAccessAuditVo as ServiceAccessAudit,
     ServiceAccountDetailVo as ServiceAccountDetail, ServiceAccountVo as ServiceAccount,

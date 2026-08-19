@@ -17,15 +17,15 @@ use axum::{
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use futures_util::{SinkExt, StreamExt};
+use ryframe_adapters::RedisClient;
+use ryframe_application::system::{
+    MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService, MessageTemplate, WebSocketTicket,
+};
+use ryframe_application::{AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangedEvent};
 use ryframe_config::MessagingConfig;
-use ryframe_core::RedisClient;
 use ryframe_http::{HttpAppError, HttpResult};
 use ryframe_i18n::{Locale, Localizer};
 use ryframe_kernel::AppError;
-use ryframe_service::system::{
-    MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService, MessageTemplate, WebSocketTicket,
-};
-use ryframe_service::{AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangedEvent};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{mpsc, watch},

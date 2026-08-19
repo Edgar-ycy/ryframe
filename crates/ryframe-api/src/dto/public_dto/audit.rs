@@ -1,7 +1,7 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_service::system::{
+use ryframe_application::system::{
     LoginInfoVo as ServiceLoginInfoVo, OnlineUserVo as ServiceOnlineUserVo,
     OperLogVo as ServiceOperLogVo,
 };

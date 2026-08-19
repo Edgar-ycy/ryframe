@@ -3,11 +3,11 @@ use axum::{
     extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode, header::CONTENT_LENGTH},
 };
+use ryframe_application::system::ApplyTenantConfigTransferCommand;
 use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
-use ryframe_service::system::ApplyTenantConfigTransferCommand;
 
 use crate::{
     dto::{

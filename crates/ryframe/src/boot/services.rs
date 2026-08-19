@@ -1,12 +1,8 @@
 use std::sync::Arc;
 
+use ryframe_adapters::RedisClient;
 use ryframe_api::AppServices;
-use ryframe_config::{AppConfig, RedisMode};
-use ryframe_core::RedisClient;
-use ryframe_db::ControlDatabaseCluster;
-use ryframe_kernel::AppError;
-use ryframe_middleware::RateLimiter;
-use ryframe_service::{
+use ryframe_application::{
     AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
     agent::{AgentService, service_capability_descriptors},
     system::{
@@ -19,6 +15,10 @@ use ryframe_service::{
         UserService, WebSocketTicketService,
     },
 };
+use ryframe_config::{AppConfig, RedisMode};
+use ryframe_db::ControlDatabaseCluster;
+use ryframe_kernel::AppError;
+use ryframe_middleware::RateLimiter;
 use ryframe_storage::ObjectStorage;
 use ryframe_tenant_db::TenantDatabaseRouter;
 
@@ -151,7 +151,7 @@ pub async fn build_all(
         config.user_import.clone(),
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
-        ryframe_service::system::TenantConfigTransferDependencies {
+        ryframe_application::system::TenantConfigTransferDependencies {
             db: database.clone(),
             queue: job_queue.clone(),
             user_service: user.clone(),
@@ -159,7 +159,7 @@ pub async fn build_all(
             product_service: product.clone(),
             authorization_cache: authorization_cache.clone(),
         },
-        ryframe_service::system::TenantConfigTransferSettings {
+        ryframe_application::system::TenantConfigTransferSettings {
             target_catalog: ryframe_api::tenant_config_target_catalog()?,
             config: config.tenant_config_transfer.clone(),
         },

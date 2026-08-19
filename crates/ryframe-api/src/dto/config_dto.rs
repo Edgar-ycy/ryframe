@@ -1,10 +1,10 @@
 use serde::Deserialize;
 use utoipa::ToSchema;
 
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::ConfigListParams;
 use ryframe_config::PaginationConfig;
-use ryframe_core::ValidatedPageQuery;
 use ryframe_http::HttpResult;
-use ryframe_service::system::ConfigListParams;
 
 crate::list_query!(pub ConfigListQuery, ConfigFilterQuery {
     name: String,

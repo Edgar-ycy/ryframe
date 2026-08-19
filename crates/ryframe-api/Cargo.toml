@@ -19,9 +19,9 @@ ryframe-captcha = { path = "../ryframe-captcha" }
 ryframe-excel = { path = "../ryframe-excel" }
 ryframe-i18n = { path = "../ryframe-i18n" }
 ryframe-auth = { path = "../ryframe-auth" }
-ryframe-service = { path = "../ryframe-service" }
+ryframe-application = { path = "../ryframe-application" }
 ryframe-config = { path = "../ryframe-config" }
-ryframe-core = { path = "../ryframe-core" }
+ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-monitor = { path = "../ryframe-monitor" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 ryframe-middleware = { path = "../ryframe-middleware" }

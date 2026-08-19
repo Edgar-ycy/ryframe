@@ -12,7 +12,7 @@ use axum::{
 };
 use dashmap::DashMap;
 use redis::AsyncCommands;
-use ryframe_core::RedisClient;
+use ryframe_adapters::RedisClient;
 use ryframe_utils::ip::{ClientIp, TrustedProxySet};
 
 use crate::metrics::{record_rate_limit_rejection, record_redis_degraded};

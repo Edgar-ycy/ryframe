@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_service::UserInfo as ServiceUserInfo;
-use ryframe_service::system::profile_service::UserProfileResponse as ServiceUserProfileResponse;
-use ryframe_service::system::{
+use ryframe_application::UserInfo as ServiceUserInfo;
+use ryframe_application::system::profile_service::UserProfileResponse as ServiceUserProfileResponse;
+use ryframe_application::system::{
     RoleBriefVo as ServiceRoleBriefVo, UserDetailVo as ServiceUserDetailVo, UserVo as ServiceUserVo,
 };
 

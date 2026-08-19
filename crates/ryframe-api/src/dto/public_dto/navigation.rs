@@ -3,7 +3,7 @@ use ryframe_kernel::AppError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use ryframe_service::system::{
+use ryframe_application::system::{
     MenuTreeNode as ServiceMenuTreeNode, MenuType as ServiceMenuType, MenuVo as ServiceMenuVo,
     PermissionSyncReport as ServicePermissionSyncReport,
     PermissionTreeNode as ServicePermissionTreeNode, PermissionType as ServicePermissionType,

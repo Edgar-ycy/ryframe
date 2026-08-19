@@ -15,8 +15,8 @@ use axum::{
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use redis::AsyncCommands;
+use ryframe_adapters::RedisClient;
 use ryframe_auth::RequestPrincipal;
-use ryframe_core::RedisClient;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

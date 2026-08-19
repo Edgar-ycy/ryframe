@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_core::repository::{PageResult, ValidatedPageQuery};
+use ryframe_adapters::repository::{PageResult, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,

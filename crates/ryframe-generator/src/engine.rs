@@ -11,10 +11,10 @@ fn default_entity_dir() -> String {
     "crates/ryframe-db/src/entities".into()
 }
 fn default_repository_dir() -> String {
-    "crates/ryframe-service/src/business".into()
+    "crates/ryframe-application/src/business".into()
 }
 fn default_service_dir() -> String {
-    "crates/ryframe-service/src/business".into()
+    "crates/ryframe-application/src/business".into()
 }
 fn default_handler_dir() -> String {
     "crates/ryframe-api/src/handlers/business".into()
@@ -148,12 +148,12 @@ pub async fn generate(
         (
             "Repository",
             repository_base.as_str(),
-            "crates/ryframe-service/src/business",
+            "crates/ryframe-application/src/business",
         ),
         (
             "Service",
             service_base.as_str(),
-            "crates/ryframe-service/src/business",
+            "crates/ryframe-application/src/business",
         ),
         (
             "Handler",

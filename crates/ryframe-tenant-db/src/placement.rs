@@ -106,7 +106,7 @@ impl TenantDataPlacement {
         state: TenantDataState,
     ) -> Result<Self, TenantDataError> {
         let tenant_id = tenant_id.into();
-        ryframe_core::validate_tenant_identifier(&tenant_id)
+        ryframe_adapters::validate_tenant_identifier(&tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         let target_key = target_key.into();
         let switch_token = switch_token.into();

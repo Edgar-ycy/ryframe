@@ -9,8 +9,8 @@ from pathlib import Path
 MAX_LINES = 1000
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
-    ROOT / "crates" / "ryframe-service" / "src",
-    ROOT / "crates" / "ryframe-core" / "src",
+    ROOT / "crates" / "ryframe-application" / "src",
+    ROOT / "crates" / "ryframe-adapters" / "src",
 )
 EXCLUDED_PARTS = {"generated", "schema", "migration", "migrations", "snapshots"}
 

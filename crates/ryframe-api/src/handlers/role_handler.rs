@@ -3,12 +3,12 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::RoleListParams;
 use ryframe_auth::rbac;
-use ryframe_core::ValidatedPageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::RoleListParams;
 use validator::Validate;
 
 use crate::dto::option_dto::OptionQuery;

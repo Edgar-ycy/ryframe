@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_service::{
+use ryframe_application::{
     JobScheduleExecutionVo as ServiceExecutionVo, JobScheduleOccurrence as ServiceOccurrence,
     JobSchedulePreview as ServicePreview, JobScheduleVo as ServiceScheduleVo,
     ScheduledJobTargetDescriptor as ServiceTargetDescriptor, ScheduledJobTargetScope,

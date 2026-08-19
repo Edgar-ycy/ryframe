@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_service::system::ExportJobVo as ServiceExportJobVo;
-use ryframe_service::{
+use ryframe_application::system::ExportJobVo as ServiceExportJobVo;
+use ryframe_application::{
     BackgroundJobQueueStats as ServiceBackgroundJobQueueStats,
     BackgroundJobVo as ServiceBackgroundJobVo,
 };

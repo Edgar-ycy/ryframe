@@ -87,8 +87,8 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         filter: BackgroundJobFilter<'_>,
-        query: &ryframe_core::repository::ValidatedPageQuery,
-    ) -> AppResult<ryframe_core::repository::PageResult<background_job::Model>> {
+        query: &ryframe_adapters::repository::ValidatedPageQuery,
+    ) -> AppResult<ryframe_adapters::repository::PageResult<background_job::Model>> {
         crate::pagination::paginate(
             db,
             Self::filtered_query(filter)

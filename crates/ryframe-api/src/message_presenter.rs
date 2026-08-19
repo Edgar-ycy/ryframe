@@ -1,10 +1,10 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use ryframe_application::system::{MessageInbox, MessageTemplate, MessageText, PublishedMessage};
 use ryframe_http::HttpResult;
 use ryframe_i18n::{Locale, LocalizedText, Localizer};
 use ryframe_kernel::AppError;
-use ryframe_service::system::{MessageInbox, MessageTemplate, MessageText, PublishedMessage};
 
 /// 面向 REST 与 WebSocket 客户端的已渲染消息。
 #[derive(Debug, Clone, Serialize, ToSchema)]

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use ryframe_service::system::{
+use ryframe_application::system::{
     DataRetentionOverview as ServiceOverview, DataRetentionPolicy as ServicePolicy,
     DataRetentionPreview as ServicePreview, DataRetentionRunVo as ServiceRun,
 };

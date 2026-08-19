@@ -10,7 +10,7 @@
 //!
 //! ```text
 //! use chrono::{DateTime, Utc};
-//! use ryframe_core::auto_fill::{AutoFill as AutoFillModel, FillContext};
+//! use ryframe_adapters::auto_fill::{AutoFill as AutoFillModel, FillContext};
 //! use ryframe_macro::AutoFill;
 //!
 //! // 自动填充（字段级标注，推荐）
@@ -54,7 +54,7 @@ use syn::parse_macro_input;
 ///
 /// ```text
 /// use chrono::{DateTime, Utc};
-/// use ryframe_core::auto_fill::{AutoFill as AutoFillModel, FillContext};
+/// use ryframe_adapters::auto_fill::{AutoFill as AutoFillModel, FillContext};
 /// use ryframe_macro::AutoFill;
 ///
 /// #[derive(AutoFill)]

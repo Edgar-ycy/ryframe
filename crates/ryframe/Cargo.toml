@@ -18,8 +18,8 @@ ryframe-db = { path = "../ryframe-db" }
 ryframe-db-migration = { path = "../ryframe-db-migration" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 ryframe-tenant-db-migration = { path = "../ryframe-tenant-db-migration" }
-ryframe-core = { path = "../ryframe-core" }
-ryframe-service = { path = "../ryframe-service" }
+ryframe-adapters = { path = "../ryframe-adapters" }
+ryframe-application = { path = "../ryframe-application" }
 ryframe-api = { path = "../ryframe-api", default-features = false }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-middleware = { path = "../ryframe-middleware" }

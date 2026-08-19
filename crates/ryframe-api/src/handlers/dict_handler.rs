@@ -3,11 +3,11 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::DictTypeListParams;
 use ryframe_auth::RequestPrincipal;
-use ryframe_core::ValidatedPageQuery;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::DictTypeListParams;
 use serde::Deserialize;
 use validator::Validate;
 

@@ -2,10 +2,10 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_core::ValidatedPageQuery;
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::{CreateMenuCommand, MenuListParams, UpdateMenuCommand};
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{CreateMenuCommand, MenuListParams, UpdateMenuCommand};
 use validator::Validate;
 
 use crate::dto::menu_dto::{CreateMenuDto, UpdateMenuDto};

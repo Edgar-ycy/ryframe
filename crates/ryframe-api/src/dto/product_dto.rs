@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
-use ryframe_kernel::AppError;
-use ryframe_service::system::{
+use ryframe_application::system::{
     CapabilityCatalogVo as ServiceCapabilityCatalogVo,
     CapabilityOverrideVo as ServiceCapabilityOverrideVo,
     EffectiveCapabilityVo as ServiceEffectiveCapabilityVo,
@@ -13,6 +12,7 @@ use ryframe_service::system::{
     SessionCapabilityVo as ServiceSessionCapabilityVo,
     SessionProductContextVo as ServiceSessionProductContextVo,
 };
+use ryframe_kernel::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -53,8 +53,8 @@ pub struct ProductPlanPageQuery {
 impl ProductPlanPageQuery {
     pub fn validate_page(
         &self,
-    ) -> Result<ryframe_core::ValidatedPageQuery, ryframe_kernel::AppError> {
-        ryframe_core::ValidatedPageQuery::from_optional(
+    ) -> Result<ryframe_adapters::ValidatedPageQuery, ryframe_kernel::AppError> {
+        ryframe_adapters::ValidatedPageQuery::from_optional(
             self.page,
             self.page_size,
             &ryframe_config::PaginationConfig {

@@ -2,14 +2,14 @@ use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
 };
-use ryframe_core::ValidatedPageQuery;
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::{
+    MessageAudienceKind, MessageAudienceSelector, NoticeListParams, PublishMessageParams,
+};
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_i18n::LocalizedText;
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{
-    MessageAudienceKind, MessageAudienceSelector, NoticeListParams, PublishMessageParams,
-};
 use validator::Validate;
 
 use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};

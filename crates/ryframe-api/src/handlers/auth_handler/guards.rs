@@ -6,7 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
-use ryframe_core::TenantContext;
+use ryframe_adapters::TenantContext;
 use ryframe_http::{ApiResponse, HttpResult, api_path};
 use ryframe_kernel::AppError;
 

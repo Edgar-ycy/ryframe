@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures_util::future::join_all;
-use ryframe_core::{DatabaseNodeHealth, DatabaseTopologyHealth};
+use ryframe_adapters::{DatabaseNodeHealth, DatabaseTopologyHealth};
 use sea_orm::DatabaseConnection;
 
 const REPLICA_FAILURE_THRESHOLD: usize = 3;

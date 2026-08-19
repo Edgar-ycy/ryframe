@@ -1,12 +1,7 @@
 use std::sync::Arc;
 
-use ryframe_auth::middleware::AuthState;
-use ryframe_config::AppConfig;
-use ryframe_core::{RedisClient, TokenBlacklist};
-use ryframe_i18n::Localizer;
-use ryframe_middleware::RateLimiter;
-use ryframe_monitor::MonitorState;
-use ryframe_service::{
+use ryframe_adapters::{RedisClient, TokenBlacklist};
+use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
     agent::AgentService,
     system::{
@@ -19,6 +14,11 @@ use ryframe_service::{
         UserService, WebSocketTicketService,
     },
 };
+use ryframe_auth::middleware::AuthState;
+use ryframe_config::AppConfig;
+use ryframe_i18n::Localizer;
+use ryframe_middleware::RateLimiter;
+use ryframe_monitor::MonitorState;
 use ryframe_tenant_db::TenantDatabaseRouter;
 use ryframe_utils::ip::TrustedProxySet;
 

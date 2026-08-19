@@ -10,7 +10,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
-use ryframe_core::{DatabaseMonitor, RedisClient};
+use ryframe_adapters::{DatabaseMonitor, RedisClient};
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};
 use serde::Serialize;

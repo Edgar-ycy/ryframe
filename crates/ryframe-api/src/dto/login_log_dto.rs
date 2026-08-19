@@ -1,7 +1,7 @@
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::LoginInfoQuery;
 use ryframe_config::PaginationConfig;
-use ryframe_core::ValidatedPageQuery;
 use ryframe_http::HttpResult;
-use ryframe_service::system::LoginInfoQuery;
 
 crate::list_query!(pub LoginLogPageQuery, LoginLogFilterQuery {
     user_name: String,

@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_service::system::{
+use ryframe_application::system::{
     ConfigVo as ServiceConfigVo, DeptTreeNode as ServiceDeptTreeNode, DeptVo as ServiceDeptVo,
     DictDataVo as ServiceDictDataVo, DictTypeVo as ServiceDictTypeVo, NoticeVo as ServiceNoticeVo,
     OptionItem as ServiceOptionItem, OptionList as ServiceOptionList, PostVo as ServicePostVo,

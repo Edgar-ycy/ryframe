@@ -1,9 +1,9 @@
-use ryframe_config::PaginationConfig;
-use ryframe_core::ValidatedPageQuery;
-use ryframe_http::HttpResult;
-use ryframe_service::{
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::{
     CreateJobSchedule, JobScheduleExecutionListParams, JobScheduleListParams, UpdateJobSchedule,
 };
+use ryframe_config::PaginationConfig;
+use ryframe_http::HttpResult;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 

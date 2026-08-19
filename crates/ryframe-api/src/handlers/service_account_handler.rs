@@ -4,14 +4,14 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
+use ryframe_application::system::{
+    CreateCredentialCommand, CreateServiceAccountCommand, ServiceAccountService,
+    UpdateServiceAccountCommand,
+};
 use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{
-    CreateCredentialCommand, CreateServiceAccountCommand, ServiceAccountService,
-    UpdateServiceAccountCommand,
-};
 use validator::Validate;
 
 use crate::{

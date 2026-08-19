@@ -2,9 +2,9 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
+use ryframe_application::system::{CreateDeptCommand, UpdateDeptCommand};
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
-use ryframe_service::system::{CreateDeptCommand, UpdateDeptCommand};
 use validator::Validate;
 
 use crate::dto::dept_dto::{CreateDeptDto, UpdateDeptDto};

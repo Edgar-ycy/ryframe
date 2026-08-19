@@ -8,11 +8,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
+use ryframe_application::agent::{AgentCapability, AgentRequest};
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpAppError};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
 use ryframe_middleware::{PrebuiltApiEnvelope, request_id::RequestId};
-use ryframe_service::agent::{AgentCapability, AgentRequest};
 use ryframe_utils::ip::ClientIp;
 
 use crate::{

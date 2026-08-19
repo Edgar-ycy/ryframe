@@ -7,13 +7,13 @@ pub(crate) use import_export::*;
 pub(crate) use password_reset::*;
 
 use axum::{Router, routing::post};
+use ryframe_adapters::ValidatedPageQuery;
+use ryframe_application::system::UserListParams;
 use ryframe_auth::{RequestPrincipal, rbac};
 use ryframe_config::PaginationConfig;
-use ryframe_core::ValidatedPageQuery;
 use ryframe_http::HttpResult;
 use ryframe_kernel::AppError;
 use ryframe_macro::route;
-use ryframe_service::system::UserListParams;
 
 use crate::list_query;
 use crate::state::AppState;

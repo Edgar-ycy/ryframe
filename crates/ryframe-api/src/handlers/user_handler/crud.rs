@@ -2,11 +2,11 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
+use ryframe_application::system::{CreateUserParams, UpdateUserParams};
 use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put};
-use ryframe_service::system::{CreateUserParams, UpdateUserParams};
 use validator::Validate;
 
 use super::{UserListQuery, ensure_current_user_permission};

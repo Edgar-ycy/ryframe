@@ -12,13 +12,8 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use ryframe_config::{
-    AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode, StorageBackend,
-};
-use ryframe_core::RedisClient;
-use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
-use ryframe_kernel::AppError;
-use ryframe_service::{
+use ryframe_adapters::RedisClient;
+use ryframe_application::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
         CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportService, FileService,
@@ -26,6 +21,11 @@ use ryframe_service::{
         TenantDataMigrationService, UserImportService, UserService,
     },
 };
+use ryframe_config::{
+    AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode, StorageBackend,
+};
+use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
+use ryframe_kernel::AppError;
 use ryframe_storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage};
 use tokio::sync::watch;
 
@@ -43,8 +43,8 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    ryframe_service::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
-    ryframe_service::set_authorization_cache_lookup_hook(
+    ryframe_application::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
+    ryframe_application::set_authorization_cache_lookup_hook(
         ryframe_middleware::metrics::record_authorization_cache_lookup,
     );
     let run_once = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
@@ -154,7 +154,7 @@ async fn main() -> Result<(), AppError> {
         config.user_import.clone(),
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
-        ryframe_service::system::TenantConfigTransferDependencies {
+        ryframe_application::system::TenantConfigTransferDependencies {
             db: database.clone(),
             queue: queue.clone(),
             user_service: user,
@@ -162,7 +162,7 @@ async fn main() -> Result<(), AppError> {
             product_service: product,
             authorization_cache: authorization_cache.clone(),
         },
-        ryframe_service::system::TenantConfigTransferSettings {
+        ryframe_application::system::TenantConfigTransferSettings {
             target_catalog: ryframe_api::tenant_config_target_catalog()?,
             config: config.tenant_config_transfer.clone(),
         },

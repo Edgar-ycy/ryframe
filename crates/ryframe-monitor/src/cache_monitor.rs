@@ -10,7 +10,7 @@ use std::{
     str::FromStr,
 };
 
-use ryframe_core::RedisClient;
+use ryframe_adapters::RedisClient;
 use serde::Serialize;
 use utoipa::ToSchema;
 

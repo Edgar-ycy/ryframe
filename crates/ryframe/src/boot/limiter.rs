@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use ryframe_adapters::RedisClient;
 use ryframe_config::AppConfig;
-use ryframe_core::RedisClient;
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_middleware::{RateLimitState, RateLimiter};
 use ryframe_utils::ip::TrustedProxySet;

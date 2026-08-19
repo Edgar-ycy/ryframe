@@ -477,7 +477,7 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
     """保留现有租户数据专项门禁，后续随 crate 搬迁更新定位。"""
 
     tenant_manifest = read("crates/ryframe-tenant-db/Cargo.toml")
-    for forbidden in ("ryframe-kernel", "ryframe-service", "ryframe-api"):
+    for forbidden in ("ryframe-kernel", "ryframe-application", "ryframe-api"):
         if re.search(rf"(?m)^\s*{re.escape(forbidden)}\s*=", tenant_manifest):
             errors.append(f"ryframe-tenant-db must not depend on {forbidden}")
 
@@ -570,9 +570,9 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
         if fragment not in generated_catalog or fragment not in migration_catalog:
             errors.append(f"tenant-data compiled catalog misses: {fragment}")
 
-    core_multi_tenant = ROOT / "crates/ryframe-core/src/multi_tenant.rs"
-    if core_multi_tenant.is_file():
-        source = core_multi_tenant.read_text(encoding="utf-8")
+    adapters_multi_tenant = ROOT / "crates/ryframe-adapters/src/multi_tenant.rs"
+    if adapters_multi_tenant.is_file():
+        source = adapters_multi_tenant.read_text(encoding="utf-8")
         for removed in ("IsolationStrategy", "TenantFilter"):
             if re.search(rf"\b{removed}\b", source):
                 errors.append(f"removed multi-tenant shell remains: {removed}")

@@ -4,13 +4,13 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
+use ryframe_application::system::{
+    CreateDelegationCommand, ServiceAccountService, ServiceDelegationTargetVo,
+};
 use ryframe_auth::RequestPrincipal;
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, route};
-use ryframe_service::system::{
-    CreateDelegationCommand, ServiceAccountService, ServiceDelegationTargetVo,
-};
 use validator::Validate;
 
 use crate::{

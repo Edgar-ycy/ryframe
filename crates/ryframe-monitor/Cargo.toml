@@ -15,7 +15,7 @@ ignored = ["ryframe-auth"]
 [dependencies]
 ryframe-http = { path = "../ryframe-http", features = ["openapi"] }
 ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-core = { path = "../ryframe-core" }
+ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-middleware = { path = "../ryframe-middleware" }
 # 由 ryframe-macro 生成的 `#[perm]` 路由展开所需。
 ryframe-auth = { path = "../ryframe-auth" }

@@ -10,12 +10,12 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use ryframe_auth::RequestPrincipal;
-use ryframe_middleware::request_id::RequestId;
-use ryframe_service::{
+use ryframe_application::{
     AuditOutbox, AuditRequestContext, scope_audit_request,
     system::{OperLogStatus, RecordOperLogCommand},
 };
+use ryframe_auth::RequestPrincipal;
+use ryframe_middleware::request_id::RequestId;
 use ryframe_utils::ip::ClientIp;
 use uuid::Uuid;
 
@@ -128,7 +128,7 @@ pub async fn oper_log_middleware(
     ) {
         Ok(context) => context,
         Err(error) => {
-            ryframe_service::record_audit_failure("context");
+            ryframe_application::record_audit_failure("context");
             tracing::error!(%error, "无法创建操作审计上下文");
             return next.run(request).await;
         }
@@ -151,12 +151,12 @@ pub async fn oper_log_middleware(
     // 审计故障只记录指标与错误日志，绝不覆盖原始业务响应。
     if !(is_success && context.transaction_committed()) {
         if is_success && audit_mode.requires_transaction() && !context.transaction_bound() {
-            ryframe_service::record_audit_failure("transaction_unbound");
+            ryframe_application::record_audit_failure("transaction_unbound");
             tracing::warn!("事务型写请求尚未接入业务事务审计绑定，使用独立 Outbox 事务");
         }
         let event = context.event(status, error_msg);
         if let Err(error) = state.outbox.record(&event).await {
-            ryframe_service::record_audit_failure("outbox_record");
+            ryframe_application::record_audit_failure("outbox_record");
             tracing::error!(
                 error = %error,
                 event_id = %event.event_id,

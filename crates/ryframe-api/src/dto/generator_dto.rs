@@ -1,4 +1,4 @@
-use ryframe_service::system::generator_service::GenerateOptions;
+use ryframe_application::system::generator_service::GenerateOptions;
 use serde::Deserialize;
 use utoipa::ToSchema;
 

@@ -12,7 +12,7 @@ description.workspace = true
 ryframe-http = { path = "../ryframe-http" }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-config = { path = "../ryframe-config" }
-ryframe-core = { path = "../ryframe-core" }
+ryframe-adapters = { path = "../ryframe-adapters" }
 async-trait = { workspace = true }
 jsonwebtoken = { workspace = true, features = ["aws_lc_rs"] }
 argon2 = { workspace = true }

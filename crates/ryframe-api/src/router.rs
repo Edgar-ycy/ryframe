@@ -23,6 +23,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete as delete_route, get as get_route, post},
 };
+use ryframe_application::system::OnlineUserService;
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_config::RedisMode;
 use ryframe_http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
@@ -33,7 +34,6 @@ use ryframe_middleware::{
     metrics::{record_rate_limit_rejection, record_redis_degraded},
     rate_limit::{RateLimitState, user_rate_limit_middleware},
 };
-use ryframe_service::system::OnlineUserService;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -423,7 +423,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
             .layer(from_fn_with_state(
                 CapabilityGuardState::new(
                     state.clone(),
-                    ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                    ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
                 ),
                 capability_guard,
             ))

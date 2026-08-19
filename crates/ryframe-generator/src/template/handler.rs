@@ -40,7 +40,7 @@ use ryframe_auth::RequestPrincipal;
 use ryframe_http::{{ApiPageResponse, ApiResponse, HttpResult}};
 use ryframe_kernel::AppError;
 use ryframe_macro::{{delete, get, post, put, route}};
-use ryframe_service::system::{{
+use ryframe_application::system::{{
     Create{struct_name}Command, {struct_name}Key, {struct_name}Vo, Update{struct_name}Command,
 }};
 use validator::Validate;

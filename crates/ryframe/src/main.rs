@@ -3,11 +3,11 @@ mod boot;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
+use ryframe_application::{AuthorizationCache, CallbackJobMetricsObserver, JobQueue, OutboxWorker};
 use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode};
 use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_i18n::Localizer;
 use ryframe_kernel::AppError;
-use ryframe_service::{AuthorizationCache, CallbackJobMetricsObserver, JobQueue, OutboxWorker};
 use tokio::sync::{oneshot, watch};
 
 /// API 进程在收到关闭信号后的全部后台任务总宽限时间。
@@ -18,8 +18,8 @@ async fn main() -> Result<(), AppError> {
     ryframe_auth::middleware::set_backend_failure_hook(
         ryframe_middleware::metrics::record_redis_degraded,
     );
-    ryframe_service::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
-    ryframe_service::set_authorization_cache_lookup_hook(
+    ryframe_application::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
+    ryframe_application::set_authorization_cache_lookup_hook(
         ryframe_middleware::metrics::record_authorization_cache_lookup,
     );
 

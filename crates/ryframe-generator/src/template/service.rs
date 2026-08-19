@@ -112,7 +112,7 @@ pub fn render_service(table: &TableInfo, base_name: &str) -> String {
 {chrono_import}{common_import}
 use std::sync::Arc;
 
-use ryframe_core::{{
+use ryframe_adapters::{{
     auto_fill::{{AutoFill, FillContext}},
     repository::{{ValidatedPageQuery, PageResult}},
 }};

@@ -42,9 +42,9 @@ macro_rules! list_query {
             pub fn into_parts(
                 self,
                 policy: &ryframe_config::PaginationConfig,
-            ) -> ryframe_http::HttpResult<(ryframe_core::ValidatedPageQuery, $filter_name)> {
+            ) -> ryframe_http::HttpResult<(ryframe_adapters::ValidatedPageQuery, $filter_name)> {
                 Ok((
-                    ryframe_core::ValidatedPageQuery::from_optional(
+                    ryframe_adapters::ValidatedPageQuery::from_optional(
                         self.page,
                         self.page_size,
                         policy,

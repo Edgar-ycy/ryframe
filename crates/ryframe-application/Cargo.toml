@@ -1,0 +1,47 @@
+[package]
+name = "ryframe-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+ryframe-kernel = { path = "../ryframe-kernel" }
+ryframe-utils = { path = "../ryframe-utils" }
+ryframe-adapters = { path = "../ryframe-adapters" }
+ryframe-db = { path = "../ryframe-db" }
+ryframe-auth = { path = "../ryframe-auth" }
+ryframe-config = { path = "../ryframe-config" }
+ryframe-generator = { path = "../ryframe-generator" }
+ryframe-excel = { path = "../ryframe-excel" }
+ryframe-storage = { path = "../ryframe-storage" }
+ryframe-middleware = { path = "../ryframe-middleware" }
+ryframe-tenant-db = { path = "../ryframe-tenant-db" }
+ryframe-tenant-db-migration = { path = "../ryframe-tenant-db-migration" }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+redis = { workspace = true }
+base64 = { workspace = true }
+hmac = { workspace = true }
+rand = { workspace = true }
+zip = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+chrono-tz = { workspace = true }
+cron = { workspace = true }
+sea-orm = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+validator = { workspace = true, features = ["derive"] }
+opentelemetry = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+
+[lints]
+workspace = true

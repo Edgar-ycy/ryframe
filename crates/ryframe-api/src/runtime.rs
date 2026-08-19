@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ryframe_core::{
+use ryframe_adapters::{
     DistributedLock, RedisClient, create_distributed_lock, resilience::CircuitBreaker,
 };
 

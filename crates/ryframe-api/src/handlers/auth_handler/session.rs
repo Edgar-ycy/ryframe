@@ -7,8 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::CookieJar;
+use ryframe_adapters::RefreshSessionRevocation;
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
-use ryframe_core::RefreshSessionRevocation;
 use ryframe_http::{ApiResponse, HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 

@@ -1,6 +1,6 @@
+use ryframe_application::system::TenantConfigTargetCatalog;
 use ryframe_config::AppConfig;
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_service::system::TenantConfigTargetCatalog;
 
 pub mod dto;
 mod handler_utils;

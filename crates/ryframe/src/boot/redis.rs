@@ -1,6 +1,6 @@
 use redis::RedisError;
+use ryframe_adapters::{RedisClient, TokenBlacklist};
 use ryframe_config::{Environment, RedisConfig, RedisMode};
-use ryframe_core::{RedisClient, TokenBlacklist};
 use ryframe_kernel::{AppError, AppResult};
 
 pub struct RedisState {

@@ -54,7 +54,7 @@ pub(super) fn system_router(
                 from_fn_with_state(
                     CapabilityGuardState::new(
                         state.clone(),
-                        ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                        ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
                     ),
                     capability_guard,
                 ),
@@ -66,7 +66,7 @@ pub(super) fn system_router(
                 from_fn_with_state(
                     CapabilityGuardState::new(
                         state.clone(),
-                        ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                        ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
                     ),
                     capability_guard,
                 ),
@@ -78,7 +78,7 @@ pub(super) fn system_router(
                 from_fn_with_state(
                     CapabilityGuardState::new(
                         state.clone(),
-                        ryframe_service::system::SERVICE_ACCOUNTS_CAPABILITY,
+                        ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
                     ),
                     capability_guard,
                 ),

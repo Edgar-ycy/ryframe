@@ -7,10 +7,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::CookieJar;
-use ryframe_core::TenantContext;
+use ryframe_adapters::TenantContext;
+use ryframe_application::system::{LoginStatus, RecordLoginCommand};
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_service::system::{LoginStatus, RecordLoginCommand};
 use validator::Validate;
 
 use super::{
@@ -98,11 +98,11 @@ async fn record_login_event(
 async fn add_online_user(
     state: &AppState,
     tenant_id: &str,
-    result: &ryframe_service::LoginResult,
+    result: &ryframe_application::LoginResult,
     ip: &str,
     user_agent: &str,
 ) -> AppResult<()> {
-    use ryframe_service::system::UserSession;
+    use ryframe_application::system::UserSession;
 
     let login_location = ryframe_utils::ip::get_ip_location(ip);
     let now = chrono::Utc::now();

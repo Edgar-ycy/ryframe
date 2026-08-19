@@ -7,7 +7,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use ryframe_core::auto_fill::{DEFAULTS, FillSource, FillStrategy};
+use ryframe_adapters::auto_fill::{DEFAULTS, FillSource, FillStrategy};
 use syn::{Data, DeriveInput, Fields, Ident, parse_macro_input};
 
 // ============================================================
@@ -128,18 +128,18 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
 
     // 5. 生成 impl
     let expanded = quote! {
-        impl ryframe_core::auto_fill::AutoFill for #name {
+        impl ryframe_adapters::auto_fill::AutoFill for #name {
             fn fill_on_insert(
                 &mut self,
-                ctx: &ryframe_core::auto_fill::FillContext,
-            ) -> ryframe_core::auto_fill::AppResult<()> {
+                ctx: &ryframe_adapters::auto_fill::FillContext,
+            ) -> ryframe_adapters::auto_fill::AppResult<()> {
                 #(#insert_stmts)*
                 Ok(())
             }
             fn fill_on_update(
                 &mut self,
-                ctx: &ryframe_core::auto_fill::FillContext,
-            ) -> ryframe_core::auto_fill::AppResult<()> {
+                ctx: &ryframe_adapters::auto_fill::FillContext,
+            ) -> ryframe_adapters::auto_fill::AppResult<()> {
                 #(#update_stmts)*
                 Ok(())
             }

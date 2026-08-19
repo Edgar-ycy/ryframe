@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-use ryframe_config::{JobConfig, MultiTenancyConfig};
-use ryframe_core::RedisClient;
-use ryframe_db::ExecutionTenantScope;
-use ryframe_kernel::{AppError, AppResult};
-use ryframe_service::{
+use ryframe_adapters::RedisClient;
+use ryframe_application::{
     CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
     JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, ScheduleMetricsObserver,
     ScheduledJobTargetRegistry,
@@ -15,6 +12,9 @@ use ryframe_service::{
         TenantDataMigrationService, UserImportJobHandler, UserImportService,
     },
 };
+use ryframe_config::{JobConfig, MultiTenancyConfig};
+use ryframe_db::ExecutionTenantScope;
+use ryframe_kernel::{AppError, AppResult};
 use ryframe_tenant_db::TenantDatabaseRouter;
 
 /// 构造内置后台任务处理器所需的业务服务。
