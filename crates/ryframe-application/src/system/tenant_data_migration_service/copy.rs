@@ -1,5 +1,4 @@
 use chrono::Utc;
-use ryframe_config::TenantDatabaseTargetMode;
 use ryframe_db::{tenant_data_migration, tenant_data_migration_item};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_tenant_db::TenantDataTargetHandle;
@@ -381,7 +380,7 @@ async fn lock_target_fence(
             "迁移目标 fence 已变化".into(),
         ));
     }
-    if target.mode() == TenantDatabaseTargetMode::Dedicated {
+    if target.is_dedicated() {
         let slot = transaction
             .query_one_raw(Statement::from_string(
                 DbBackend::MySql,

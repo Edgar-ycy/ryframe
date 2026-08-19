@@ -13,7 +13,7 @@ impl AuthService {
         ip: &str,
     ) -> AppResult<()> {
         crate::enforce_tenant_scope(tenant_id)?;
-        let max_attempts = self.config.auth.max_login_attempts;
+        let max_attempts = self.policy.max_login_attempts;
         let Some(redis) = self.redis.as_ref() else {
             return Ok(());
         };
@@ -61,7 +61,7 @@ impl AuthService {
         let Some(redis) = self.redis.as_ref() else {
             return Ok(());
         };
-        let lockout_seconds = (self.config.auth.lockout_duration_minutes * 60) as u64;
+        let lockout_seconds = self.policy.lockout_seconds;
         let user_key = login_subject_key(tenant_id, username);
         let ip_key = format!("ryframe:v0.5:login_fail:{tenant_id}:ip:{ip}");
 

@@ -6,7 +6,7 @@ impl JobScheduleService {
         queue: Arc<JobQueue>,
         execution_tenant_scope: ExecutionTenantScope,
         targets: ScheduledJobTargetRegistry,
-        config: &JobConfig,
+        policy: crate::JobSchedulePolicy,
     ) -> Self {
         Self {
             database,
@@ -15,9 +15,9 @@ impl JobScheduleService {
             execution_tenant_scope,
             targets,
             metrics: None,
-            poll_interval: StdDuration::from_millis(config.scheduler_poll_interval_ms),
-            batch_size: config.scheduler_batch_size,
-            max_enabled_per_tenant: config.max_enabled_schedules_per_tenant,
+            poll_interval: policy.poll_interval,
+            batch_size: policy.batch_size,
+            max_enabled_per_tenant: policy.max_enabled_per_tenant,
         }
     }
 

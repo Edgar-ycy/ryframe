@@ -7,7 +7,6 @@ mod workflow;
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
-use ryframe_config::{TenantDatabaseTargetKind, TenantDatabaseTargetMode};
 use ryframe_db::{
     ControlDatabaseCluster, CreateTenantDataMigration, EnqueueBackgroundJob, TenantDataRepository,
     TenantOperationLeaseRepository, tenant_data_backup_point, tenant_data_migration,
@@ -151,8 +150,7 @@ impl TenantDataMigrationService {
                     target.eligible = false;
                     target.reasons.push("source_equals_target".into());
                 }
-                if self.router.targets().target_mode(&target.key)
-                    == Some(TenantDatabaseTargetMode::Dedicated)
+                if self.router.targets().target_is_dedicated(&target.key) == Some(true)
                     && occupied.contains(&target.key)
                 {
                     target.eligible = false;
@@ -165,8 +163,7 @@ impl TenantDataMigrationService {
         }
 
         for target in &mut targets {
-            if self.router.targets().target_mode(&target.key)
-                == Some(TenantDatabaseTargetMode::Dedicated)
+            if self.router.targets().target_is_dedicated(&target.key) == Some(true)
                 && occupied.contains(&target.key)
             {
                 target.eligible = false;
@@ -308,7 +305,7 @@ impl TenantDataMigrationService {
                 .await
             {
                 Ok(target) => {
-                    if target.mode() == TenantDatabaseTargetMode::Dedicated {
+                    if target.is_dedicated() {
                         match self
                             .router
                             .target_occupancy_for_catalog(&request.target_key, &self.catalog)
@@ -348,13 +345,13 @@ impl TenantDataMigrationService {
             source_mode: self
                 .router
                 .targets()
-                .target_mode(&placement.current_target_key),
+                .target_mode_code(&placement.current_target_key),
             source_kind: self
                 .router
                 .targets()
-                .target_kind(&placement.current_target_key),
-            target_mode: self.router.targets().target_mode(&request.target_key),
-            target_kind: self.router.targets().target_kind(&request.target_key),
+                .target_kind_code(&placement.current_target_key),
+            target_mode: self.router.targets().target_mode_code(&request.target_key),
+            target_kind: self.router.targets().target_kind_code(&request.target_key),
             schema_fingerprint: &self.catalog.schema_fingerprint(),
         });
         Ok(MigrationPreview {
@@ -430,22 +427,22 @@ impl TenantDataMigrationService {
         let source_mode = self
             .router
             .targets()
-            .target_mode(&preview.source_target_key)
+            .target_mode_code(&preview.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let source_kind = self
             .router
             .targets()
-            .target_kind(&preview.source_target_key)
+            .target_kind_code(&preview.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let target_mode = self
             .router
             .targets()
-            .target_mode(&command.target_key)
+            .target_mode_code(&command.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
         let target_kind = self
             .router
             .targets()
-            .target_kind(&command.target_key)
+            .target_kind_code(&command.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
         let transaction = self
             .database
@@ -514,10 +511,10 @@ impl TenantDataMigrationService {
                     tenant_id: tenant_id.to_owned(),
                     source_target_key: placement.current_target_key,
                     target_key: command.target_key.clone(),
-                    source_target_mode: target_mode_code(source_mode).into(),
-                    source_target_kind: target_kind_code(source_kind).into(),
-                    target_target_mode: target_mode_code(target_mode).into(),
-                    target_target_kind: target_kind_code(target_kind).into(),
+                    source_target_mode: source_mode.into(),
+                    source_target_kind: source_kind.into(),
+                    target_target_mode: target_mode.into(),
+                    target_target_kind: target_kind.into(),
                     source_generation: placement.placement_generation,
                     source_switch_token: placement.switch_token,
                     target_generation,
@@ -758,6 +755,8 @@ fn create_blocker_error(blockers: &[String]) -> AppError {
 }
 
 fn target_summary(metadata: TenantDatabaseTargetMetadata) -> DataTargetSummary {
+    let mode = metadata.mode_code().to_owned();
+    let kind = metadata.kind_code().to_owned();
     let health = match metadata.health {
         TenantDatabaseTargetHealthStatus::Unknown => "unknown",
         TenantDatabaseTargetHealthStatus::Verified => "verified",
@@ -776,14 +775,8 @@ fn target_summary(metadata: TenantDatabaseTargetMetadata) -> DataTargetSummary {
     DataTargetSummary {
         key: metadata.key,
         display_name: metadata.display_name,
-        mode: match metadata.mode {
-            TenantDatabaseTargetMode::Shared => "shared".into(),
-            TenantDatabaseTargetMode::Dedicated => "dedicated".into(),
-        },
-        kind: match metadata.kind {
-            TenantDatabaseTargetKind::Control => "control".into(),
-            TenantDatabaseTargetKind::Mysql => "mysql".into(),
-        },
+        mode,
+        kind,
         region: metadata.region,
         health: health.into(),
         schema_fingerprint: metadata.schema_fingerprint,
@@ -795,30 +788,16 @@ fn target_summary(metadata: TenantDatabaseTargetMetadata) -> DataTargetSummary {
     }
 }
 
-const fn target_mode_code(mode: TenantDatabaseTargetMode) -> &'static str {
-    match mode {
-        TenantDatabaseTargetMode::Shared => "shared",
-        TenantDatabaseTargetMode::Dedicated => "dedicated",
-    }
-}
-
-const fn target_kind_code(kind: TenantDatabaseTargetKind) -> &'static str {
-    match kind {
-        TenantDatabaseTargetKind::Control => "control",
-        TenantDatabaseTargetKind::Mysql => "mysql",
-    }
-}
-
 struct MigrationPlanHashInput<'a> {
     tenant_id: &'a str,
     source_target_key: &'a str,
     target_key: &'a str,
     source_generation: i64,
     target_generation: i64,
-    source_mode: Option<TenantDatabaseTargetMode>,
-    source_kind: Option<TenantDatabaseTargetKind>,
-    target_mode: Option<TenantDatabaseTargetMode>,
-    target_kind: Option<TenantDatabaseTargetKind>,
+    source_mode: Option<&'static str>,
+    source_kind: Option<&'static str>,
+    target_mode: Option<&'static str>,
+    target_kind: Option<&'static str>,
     schema_fingerprint: &'a str,
 }
 
@@ -835,26 +814,10 @@ fn migration_plan_hash(input: MigrationPlanHashInput<'_>) -> String {
         target_kind,
         schema_fingerprint,
     } = input;
-    let source_mode = match source_mode {
-        Some(TenantDatabaseTargetMode::Shared) => "shared",
-        Some(TenantDatabaseTargetMode::Dedicated) => "dedicated",
-        None => "unknown",
-    };
-    let source_kind = match source_kind {
-        Some(TenantDatabaseTargetKind::Control) => "control",
-        Some(TenantDatabaseTargetKind::Mysql) => "mysql",
-        None => "unknown",
-    };
-    let target_mode = match target_mode {
-        Some(TenantDatabaseTargetMode::Shared) => "shared",
-        Some(TenantDatabaseTargetMode::Dedicated) => "dedicated",
-        None => "unknown",
-    };
-    let target_kind = match target_kind {
-        Some(TenantDatabaseTargetKind::Control) => "control",
-        Some(TenantDatabaseTargetKind::Mysql) => "mysql",
-        None => "unknown",
-    };
+    let source_mode = source_mode.unwrap_or("unknown");
+    let source_kind = source_kind.unwrap_or("unknown");
+    let target_mode = target_mode.unwrap_or("unknown");
+    let target_kind = target_kind.unwrap_or("unknown");
     sha256_hex(&format!(
         "ryframe:tenant-data:plan:v1|tenant={tenant_id}|source={source_target_key}|target={target_key}|source_generation={source_generation}|target_generation={target_generation}|schema={schema_fingerprint}|source_mode={source_mode}|source_kind={source_kind}|target_mode={target_mode}|target_kind={target_kind}|migration_mode=stop_write|retention_hours={RETENTION_HOURS}",
     ))

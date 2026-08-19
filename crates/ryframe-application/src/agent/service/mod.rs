@@ -8,7 +8,6 @@ use chrono::{DateTime, Utc};
 use ryframe_adapters::RedisClient;
 use ryframe_adapters::snowflake;
 use ryframe_auth::rbac;
-use ryframe_config::{MultiTenancyConfig, PepperKeyring, ServiceAccountsConfig};
 use ryframe_db::{
     AgentQueryRepository, AgentRowScope, ControlDatabaseCluster, DataRetentionRepository,
     ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
@@ -37,6 +36,7 @@ use crate::service_identity_secret::{
     keyed_hash, parse_authorization, parse_delegation,
 };
 use crate::system::{ProductService, SERVICE_ACCOUNTS_CAPABILITY};
+use crate::{MultiTenancyPolicy, PepperKeyring, ServiceAccountPolicy};
 
 const ACCESS_MODE_UNKNOWN: &str = "unknown";
 const RESULT_DENIED: &str = service_access_audit::Model::RESULT_DENIED;
@@ -45,8 +45,8 @@ const RESULT_ERROR: &str = service_access_audit::Model::RESULT_ERROR;
 #[derive(Clone)]
 pub struct AgentService {
     db: ControlDatabaseCluster,
-    config: ServiceAccountsConfig,
-    multi_tenancy: MultiTenancyConfig,
+    config: ServiceAccountPolicy,
+    multi_tenancy: MultiTenancyPolicy,
     keyring: Arc<PepperKeyring>,
     limiter: AgentLimiter,
     product_service: Arc<ProductService>,
@@ -87,12 +87,11 @@ impl AgentService {
         db: ControlDatabaseCluster,
         redis: RedisClient,
         keyring: Arc<PepperKeyring>,
-        config: ServiceAccountsConfig,
-        multi_tenancy: MultiTenancyConfig,
+        config: ServiceAccountPolicy,
+        multi_tenancy: MultiTenancyPolicy,
         product_service: Arc<ProductService>,
     ) -> AppResult<Self> {
-        config.validate().map_err(AppError::Config)?;
-        if !config.enabled {
+        if !config.enabled() {
             return Err(AppError::Config("服务账号功能未启用".into()));
         }
         Ok(Self {

@@ -3297,7 +3297,6 @@ dependencies = [
  "redis",
  "ryframe-adapters",
  "ryframe-auth",
- "ryframe-config",
  "ryframe-db",
  "ryframe-kernel",
  "ryframe-tenant-db",

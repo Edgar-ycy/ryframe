@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use ryframe_config::{DataRetentionConfig, TenantConfigTransferConfig};
 use ryframe_db::{
     ControlDatabaseCluster, DataRetentionRepository, EnqueueBackgroundJob, FileRepository,
     RetentionCleanupResult, RetentionCutoff, RetentionResource, TenantRepository,
@@ -35,7 +34,7 @@ pub use handler::DataRetentionJobHandler;
 
 use support::*;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct DataRetentionPolicy {
     pub cleanup_batch_size: usize,
     pub max_rows_per_resource_per_run: usize,
@@ -53,32 +52,6 @@ pub struct DataRetentionPolicy {
     pub service_access_audit_days: u32,
     pub dead_background_jobs_permanent: bool,
     pub dead_outbox_events_permanent: bool,
-}
-
-impl DataRetentionPolicy {
-    fn from_configs(
-        config: &DataRetentionConfig,
-        tenant_config: &TenantConfigTransferConfig,
-    ) -> Self {
-        Self {
-            cleanup_batch_size: config.cleanup_batch_size,
-            max_rows_per_resource_per_run: config.max_rows_per_resource_per_run,
-            background_job_succeeded_days: config.background_job_succeeded_days,
-            outbox_published_days: config.outbox_published_days,
-            schedule_execution_days: config.schedule_execution_days,
-            export_job_history_days: config.export_job_history_days,
-            operation_log_days: config.operation_log_days,
-            login_log_days: config.login_log_days,
-            user_import_history_days: config.user_import_history_days,
-            user_import_artifact_hours: config.user_import_artifact_hours,
-            tenant_config_artifact_hours: tenant_config.artifact_hours,
-            tenant_config_rollback_hours: tenant_config.rollback_hours,
-            retention_run_days: config.retention_run_days,
-            service_access_audit_days: config.service_access_audit_days,
-            dead_background_jobs_permanent: true,
-            dead_outbox_events_permanent: true,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -147,8 +120,7 @@ pub struct DataRetentionService {
     repository: Arc<DataRetentionRepository>,
     queue: Arc<JobQueue>,
     file_service: Arc<FileService>,
-    config: DataRetentionConfig,
-    tenant_config: TenantConfigTransferConfig,
+    config: DataRetentionPolicy,
 }
 
 impl DataRetentionService {
@@ -156,8 +128,7 @@ impl DataRetentionService {
         db: ControlDatabaseCluster,
         queue: Arc<JobQueue>,
         file_service: Arc<FileService>,
-        config: DataRetentionConfig,
-        tenant_config: TenantConfigTransferConfig,
+        config: DataRetentionPolicy,
     ) -> Self {
         Self {
             db,
@@ -165,7 +136,6 @@ impl DataRetentionService {
             queue,
             file_service,
             config,
-            tenant_config,
         }
     }
 
@@ -195,7 +165,7 @@ impl DataRetentionService {
         eligible_counts.extend(self.preview_tenant_config_artifacts(calculated_at).await?);
         Ok(DataRetentionPreview {
             calculated_at,
-            policy: DataRetentionPolicy::from_configs(&self.config, &self.tenant_config),
+            policy: self.config,
             cutoffs: cutoff_views(&cutoffs),
             eligible_counts,
         })
@@ -313,7 +283,7 @@ impl DataRetentionService {
         });
         DataRetentionOverview {
             calculated_at,
-            policy: DataRetentionPolicy::from_configs(&self.config, &self.tenant_config),
+            policy: self.config,
             cutoffs: cutoff_views,
         }
     }

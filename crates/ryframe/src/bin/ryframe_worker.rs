@@ -31,6 +31,8 @@ use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
 use tokio::sync::watch;
 
+#[path = "../boot/application_policy.rs"]
+mod process_application_policy;
 #[path = "../boot/jobs.rs"]
 mod process_jobs;
 #[path = "../boot/logging.rs"]
@@ -56,6 +58,8 @@ async fn main() -> Result<(), AppError> {
     };
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
+    let application_policies =
+        process_application_policy::ApplicationPolicies::from_config(&config)?;
     if config.jobs.mode != JobWorkerMode::External {
         return Err(AppError::Config(
             "ryframe-worker 仅在 jobs.mode = \"external\" 时运行；embedded 由 API 进程消费，disabled 不消费任务".into(),
@@ -108,14 +112,7 @@ async fn main() -> Result<(), AppError> {
     }
 
     let redis = connect_redis_for_worker(&config).await?;
-    let authorization_cache = AuthorizationCache::new(
-        redis.clone(),
-        config
-            .redis
-            .as_ref()
-            .map(|redis| redis.mode)
-            .unwrap_or(RedisMode::Disabled),
-    );
+    let authorization_cache = AuthorizationCache::new(redis.clone(), application_policies.cache);
     let object_storage = connect_storage_for_worker(&config).await?;
 
     let queue = Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis.clone()));
@@ -124,7 +121,7 @@ async fn main() -> Result<(), AppError> {
     let message = Arc::new(MessageService::new(
         database.clone(),
         queue.clone(),
-        config.messaging.clone(),
+        application_policies.messaging,
     ));
     let user = Arc::new(UserService::new(
         database.clone(),
@@ -133,27 +130,31 @@ async fn main() -> Result<(), AppError> {
     let product = Arc::new(ProductService::new(
         database.clone(),
         authorization_cache.clone(),
-        config.service_accounts.enabled && redis.is_some(),
+        application_policies.service_accounts.enabled() && redis.is_some(),
     ));
     let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
     file.spawn_upload_janitor();
     let export = Arc::new(
-        ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
-            .with_job_queue(queue.clone()),
+        ExportService::new(
+            database.clone(),
+            user.clone(),
+            object_storage,
+            application_policies.export,
+        )
+        .with_job_queue(queue.clone()),
     );
     let data_retention = Arc::new(DataRetentionService::new(
         database.clone(),
         queue.clone(),
         file.clone(),
-        config.data_retention.clone(),
-        config.tenant_config_transfer.clone(),
+        application_policies.retention,
     ));
     let user_import = Arc::new(UserImportService::new(
         database.clone(),
         queue.clone(),
         user.clone(),
         file.clone(),
-        config.user_import.clone(),
+        application_policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
         ryframe_application::system::TenantConfigTransferDependencies {
@@ -166,7 +167,7 @@ async fn main() -> Result<(), AppError> {
         },
         ryframe_application::system::TenantConfigTransferSettings {
             target_catalog: ryframe_api::tenant_config_target_catalog()?,
-            config: config.tenant_config_transfer.clone(),
+            config: application_policies.tenant_config_transfer,
         },
     ));
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
@@ -175,10 +176,11 @@ async fn main() -> Result<(), AppError> {
         queue.clone(),
         authorization_cache.clone(),
     ));
-    let execution_tenant_scope = process_jobs::execution_tenant_scope(&config.multi_tenancy);
+    let execution_tenant_scope =
+        process_jobs::execution_tenant_scope(application_policies.multi_tenancy);
     let worker = process_jobs::build_job_worker(
         queue.clone(),
-        &config.jobs,
+        &application_policies.job_worker,
         execution_tenant_scope.clone(),
         process_jobs::JobWorkerDependencies {
             export: export.clone(),
@@ -189,11 +191,12 @@ async fn main() -> Result<(), AppError> {
             tenant_data_migration,
             tenant_data,
             redis: redis.clone(),
-            messaging_enabled: config.messaging.enabled,
+            messaging_enabled: application_policies.messaging.enabled(),
         },
     )?;
-    let schedules = if config.jobs.scheduler_enabled {
-        let schedule_targets = process_jobs::build_schedule_targets(config.messaging.enabled)?;
+    let schedules = if application_policies.job_schedule.enabled {
+        let schedule_targets =
+            process_jobs::build_schedule_targets(application_policies.messaging.enabled())?;
         process_jobs::validate_schedule_targets(&worker, &schedule_targets)?;
         Some(Arc::new(
             JobScheduleService::new(
@@ -201,7 +204,7 @@ async fn main() -> Result<(), AppError> {
                 queue.clone(),
                 execution_tenant_scope.clone(),
                 schedule_targets,
-                &config.jobs,
+                application_policies.job_schedule,
             )
             .with_metrics_observer(process_jobs::build_schedule_metrics_observer()),
         ))
@@ -215,9 +218,13 @@ async fn main() -> Result<(), AppError> {
         } else {
             0
         };
-        let outbox_worker = OutboxWorker::new(queue, &config.jobs, execution_tenant_scope.clone())?
-            .with_authorization_cache(authorization_cache.clone())
-            .with_audit_service(oper_log.clone());
+        let outbox_worker = OutboxWorker::new(
+            queue,
+            &application_policies.job_worker,
+            execution_tenant_scope.clone(),
+        )?
+        .with_authorization_cache(authorization_cache.clone())
+        .with_audit_service(oper_log.clone());
         let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
         let job_result = worker.run_once("ryframe-worker-once-job").await?;
         tracing::info!(
@@ -251,10 +258,14 @@ async fn main() -> Result<(), AppError> {
         tracing::info!("Cron 调度已关闭，独立 Worker 仅消费普通后台任务");
     }
     worker_tasks.extend(
-        OutboxWorker::new(queue.clone(), &config.jobs, execution_tenant_scope)?
-            .with_authorization_cache(authorization_cache)
-            .with_audit_service(oper_log)
-            .spawn(shutdown_receiver),
+        OutboxWorker::new(
+            queue.clone(),
+            &application_policies.job_worker,
+            execution_tenant_scope,
+        )?
+        .with_authorization_cache(authorization_cache)
+        .with_audit_service(oper_log)
+        .spawn(shutdown_receiver),
     );
     tracing::info!(
         concurrency = config.jobs.concurrency,

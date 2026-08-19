@@ -13,7 +13,6 @@ ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-auth = { path = "../ryframe-auth" }
-ryframe-config = { path = "../ryframe-config" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
@@ -28,7 +27,7 @@ cron = { workspace = true }
 sea-orm = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
 tracing = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }

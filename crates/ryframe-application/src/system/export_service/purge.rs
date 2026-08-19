@@ -221,6 +221,15 @@ mod tests {
             unreachable!("测试不读对象")
         }
 
+        async fn get_bounded(
+            &self,
+            _bucket: &str,
+            _key: &str,
+            _max_bytes: usize,
+        ) -> StorageResult<Vec<u8>> {
+            unreachable!("测试不读对象")
+        }
+
         async fn delete(&self, _bucket: &str, _key: &str) -> StorageResult<()> {
             if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
                 Err(StorageError::Readiness("临时不可用".into()))

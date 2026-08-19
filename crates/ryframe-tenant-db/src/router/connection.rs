@@ -278,6 +278,11 @@ impl TenantDataTargetHandle {
         self.kind
     }
 
+    /// 上层用例只需要独占语义，不需要依赖配置枚举。
+    pub const fn is_dedicated(&self) -> bool {
+        matches!(self.mode, TenantDatabaseTargetMode::Dedicated)
+    }
+
     pub fn connection(&self) -> &DatabaseConnection {
         self.database.writer()
     }

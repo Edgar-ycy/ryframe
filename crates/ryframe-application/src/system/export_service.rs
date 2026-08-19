@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use chrono::Duration;
-use ryframe_config::JobConfig;
 use ryframe_db::{
     BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
     Repository,
@@ -77,7 +76,7 @@ impl ExportService {
         db: ControlDatabaseCluster,
         users: Arc<UserService>,
         storage: Arc<dyn ryframe_adapters::storage::ObjectStorage>,
-        jobs: &JobConfig,
+        policy: crate::ExportPolicy,
     ) -> Self {
         let purge = ExportPurgeUseCase::new(db.clone(), Arc::clone(&storage));
         Self {
@@ -101,9 +100,9 @@ impl ExportService {
             login_infos: LoginInfoService::new(db),
             users,
             storage,
-            default_max_attempts: jobs.default_max_attempts,
-            export_max_rows: jobs.export_max_rows.min(EXPORT_BUSINESS_MAX_ROWS),
-            export_retention: Duration::hours(i64::from(jobs.export_retention_hours)),
+            default_max_attempts: policy.default_max_attempts,
+            export_max_rows: policy.max_rows.min(EXPORT_BUSINESS_MAX_ROWS),
+            export_retention: policy.retention,
             job_queue: None,
             purge,
         }

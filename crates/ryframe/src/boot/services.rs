@@ -15,10 +15,12 @@ use ryframe_application::{
         TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
     },
 };
-use ryframe_config::{AppConfig, RedisMode};
+use ryframe_config::AppConfig;
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 use ryframe_tenant_db::TenantDatabaseRouter;
+
+use super::application_policy::{ApplicationPolicies, load_pepper_keyring};
 
 /// 构造所有 Service 实例
 ///
@@ -27,18 +29,12 @@ pub async fn build_all(
     database: &ControlDatabaseCluster,
     tenant_data: Arc<TenantDatabaseRouter>,
     config: &AppConfig,
+    policies: &ApplicationPolicies,
     redis_client: &Option<RedisClient>,
     object_storage: Arc<dyn ObjectStorage>,
     rate_limiter: Arc<RateLimiter>,
 ) -> Result<AppServices, AppError> {
-    let authorization_cache = AuthorizationCache::new(
-        redis_client.clone(),
-        config
-            .redis
-            .as_ref()
-            .map(|redis| redis.mode)
-            .unwrap_or(RedisMode::Disabled),
-    );
+    let authorization_cache = AuthorizationCache::new(redis_client.clone(), policies.cache);
     let user = Arc::new(UserService::new(
         database.clone(),
         authorization_cache.clone(),
@@ -46,7 +42,7 @@ pub async fn build_all(
     let product = Arc::new(ProductService::new(
         database.clone(),
         authorization_cache.clone(),
-        config.service_accounts.enabled && redis_client.is_some(),
+        policies.service_accounts.enabled() && redis_client.is_some(),
     ));
     let role = Arc::new(RoleService::new(
         database.clone(),
@@ -63,23 +59,18 @@ pub async fn build_all(
         database.clone(),
         rate_limiter,
         config.rate_limit.enabled,
-        config.jobs.scheduler_enabled,
+        policies.job_schedule.enabled,
     ));
-    let (service_accounts, agent) = if config.service_accounts.enabled {
+    let (service_accounts, agent) = if policies.service_accounts.enabled() {
         let redis = redis_client.clone().ok_or_else(|| {
             AppError::Config("启用服务账号后必须配置 Redis，以保证 Agent 多实例限流一致".into())
         })?;
-        let keyring = Arc::new(
-            config
-                .service_accounts
-                .load_pepper_keyring(&config.auth.jwt_secret)
-                .map_err(AppError::Config)?,
-        );
+        let keyring = load_pepper_keyring(config)?;
         let descriptors = service_capability_descriptors();
         let management = Arc::new(ServiceAccountService::new(
             database.clone(),
-            config.service_accounts.clone(),
-            keyring.clone(),
+            policies.service_accounts,
+            Arc::clone(&keyring),
             descriptors,
             authorization_cache.clone(),
         )?);
@@ -87,8 +78,8 @@ pub async fn build_all(
             database.clone(),
             redis,
             keyring,
-            config.service_accounts.clone(),
-            config.multi_tenancy.clone(),
+            policies.service_accounts,
+            policies.multi_tenancy,
             product.clone(),
         )?);
         (Some(management), Some(agent))
@@ -107,7 +98,7 @@ pub async fn build_all(
     )?);
     let auth = Arc::new(AuthService::new(
         database.clone(),
-        Arc::new(config.clone()),
+        policies.auth,
         token_settings,
         redis_client.clone(),
         authorization_cache.clone(),
@@ -144,15 +135,14 @@ pub async fn build_all(
         database.clone(),
         job_queue.clone(),
         file.clone(),
-        config.data_retention.clone(),
-        config.tenant_config_transfer.clone(),
+        policies.retention,
     ));
     let user_import = Arc::new(UserImportService::new(
         database.clone(),
         job_queue.clone(),
         user.clone(),
         file.clone(),
-        config.user_import.clone(),
+        policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
         ryframe_application::system::TenantConfigTransferDependencies {
@@ -165,29 +155,29 @@ pub async fn build_all(
         },
         ryframe_application::system::TenantConfigTransferSettings {
             target_catalog: ryframe_api::tenant_config_target_catalog()?,
-            config: config.tenant_config_transfer.clone(),
+            config: policies.tenant_config_transfer,
         },
     ));
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
         database.clone(),
         user.clone(),
         authorization_cache.clone(),
-        config.messaging.enabled && redis_client.is_some(),
+        policies.messaging.enabled() && redis_client.is_some(),
     ));
     let overview = Arc::new(OverviewService::new(
         database.clone(),
         job_queue.clone(),
-        &config.jobs,
+        policies.job_runtime,
     ));
-    let job_schedules = if config.jobs.scheduler_enabled {
-        let schedule_targets = super::jobs::build_schedule_targets(config.messaging.enabled)?;
+    let job_schedules = if policies.job_schedule.enabled {
+        let schedule_targets = super::jobs::build_schedule_targets(policies.messaging.enabled())?;
         Some(Arc::new(
             JobScheduleService::new(
                 database.clone(),
                 job_queue.clone(),
-                super::jobs::execution_tenant_scope(&config.multi_tenancy),
+                super::jobs::execution_tenant_scope(policies.multi_tenancy),
                 schedule_targets,
-                &config.jobs,
+                policies.job_schedule,
             )
             .with_metrics_observer(super::jobs::build_schedule_metrics_observer()),
         ))
@@ -201,18 +191,23 @@ pub async fn build_all(
     let message = Arc::new(MessageService::new(
         database.clone(),
         job_queue.clone(),
-        config.messaging.clone(),
+        policies.messaging,
     ));
     let websocket_ticket = Arc::new(WebSocketTicketService::new(
         redis_client.clone(),
-        config.messaging.clone(),
+        policies.messaging,
     ));
     let login_info = Arc::new(LoginInfoService::new(database.clone()));
 
     let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
     let export = Arc::new(
-        ExportService::new(database.clone(), user.clone(), object_storage, &config.jobs)
-            .with_job_queue(job_queue.clone()),
+        ExportService::new(
+            database.clone(),
+            user.clone(),
+            object_storage,
+            policies.export,
+        )
+        .with_job_queue(job_queue.clone()),
     );
 
     let refresh_sessions = auth.refresh_sessions();

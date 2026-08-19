@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
-use ryframe_config::TenantConfigTransferConfig;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -73,8 +72,8 @@ impl TenantConfigPackageLimits {
     }
 }
 
-impl From<&TenantConfigTransferConfig> for TenantConfigPackageLimits {
-    fn from(config: &TenantConfigTransferConfig) -> Self {
+impl From<&crate::TenantConfigTransferPolicy> for TenantConfigPackageLimits {
+    fn from(config: &crate::TenantConfigTransferPolicy) -> Self {
         Self {
             max_package_bytes: config.max_package_bytes,
             max_uncompressed_bytes: config.max_uncompressed_bytes,

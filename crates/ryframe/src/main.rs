@@ -5,7 +5,7 @@ use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
 use ryframe_adapters::i18n::LocalizerLoader;
 use ryframe_application::{AuthorizationCache, CallbackJobMetricsObserver, JobQueue, OutboxWorker};
-use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode};
+use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode};
 use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
 use tokio::sync::{oneshot, watch};
@@ -25,6 +25,7 @@ async fn main() -> Result<(), AppError> {
 
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
+    let application_policies = boot::application_policy::ApplicationPolicies::from_config(&config)?;
     ryframe_api::validate_runtime_features(&config)?;
     ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
@@ -84,6 +85,7 @@ async fn main() -> Result<(), AppError> {
         &database,
         tenant_database_router,
         &config,
+        &application_policies,
         &redis.client,
         object_storage,
         limit.limiter.clone(),
@@ -134,10 +136,11 @@ async fn main() -> Result<(), AppError> {
     );
     let mut worker_tasks = match config.jobs.mode {
         JobWorkerMode::Embedded => {
-            let execution_tenant_scope = boot::jobs::execution_tenant_scope(&config.multi_tenancy);
+            let execution_tenant_scope =
+                boot::jobs::execution_tenant_scope(application_policies.multi_tenancy);
             let worker = boot::jobs::build_job_worker(
                 services.job_queue.clone(),
-                &config.jobs,
+                &application_policies.job_worker,
                 execution_tenant_scope.clone(),
                 boot::jobs::JobWorkerDependencies {
                     export: services.export.clone(),
@@ -148,7 +151,7 @@ async fn main() -> Result<(), AppError> {
                     tenant_data_migration: services.tenant_data_migration.clone(),
                     tenant_data: services.tenant_data.clone(),
                     redis: redis.client.clone(),
-                    messaging_enabled: config.messaging.enabled,
+                    messaging_enabled: application_policies.messaging.enabled(),
                 },
             )?;
             if let Some(schedules) = services.job_schedules.as_ref() {
@@ -164,18 +167,12 @@ async fn main() -> Result<(), AppError> {
             } else {
                 tracing::info!("Cron 调度已关闭，内置 Worker 仅消费普通后台任务");
             }
-            let authorization_cache = AuthorizationCache::new(
-                redis.client.clone(),
-                config
-                    .redis
-                    .as_ref()
-                    .map(|redis| redis.mode)
-                    .unwrap_or(RedisMode::Disabled),
-            );
+            let authorization_cache =
+                AuthorizationCache::new(redis.client.clone(), application_policies.cache);
             tasks.extend(
                 OutboxWorker::new(
                     services.job_queue.clone(),
-                    &config.jobs,
+                    &application_policies.job_worker,
                     execution_tenant_scope,
                 )?
                 .with_authorization_cache(authorization_cache)

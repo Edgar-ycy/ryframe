@@ -1,7 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ryframe_adapters::RedisClient;
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
-use ryframe_config::MessagingConfig;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -30,11 +29,11 @@ pub struct WebSocketTicketGrant {
 #[derive(Clone)]
 pub struct WebSocketTicketService {
     redis: Option<RedisClient>,
-    config: MessagingConfig,
+    config: crate::MessagingPolicy,
 }
 
 impl WebSocketTicketService {
-    pub fn new(redis: Option<RedisClient>, config: MessagingConfig) -> Self {
+    pub fn new(redis: Option<RedisClient>, config: crate::MessagingPolicy) -> Self {
         Self { redis, config }
     }
 

@@ -32,6 +32,28 @@ pub struct TenantDatabaseTargetMetadata {
     pub last_verified_at: Option<SystemTime>,
 }
 
+impl TenantDatabaseTargetMetadata {
+    /// 返回不泄露配置类型的稳定目标占用模式代码。
+    pub const fn mode_code(&self) -> &'static str {
+        match self.mode {
+            TenantDatabaseTargetMode::Shared => "shared",
+            TenantDatabaseTargetMode::Dedicated => "dedicated",
+        }
+    }
+
+    /// 返回不泄露配置类型的稳定连接来源代码。
+    pub const fn kind_code(&self) -> &'static str {
+        match self.kind {
+            TenantDatabaseTargetKind::Control => "control",
+            TenantDatabaseTargetKind::Mysql => "mysql",
+        }
+    }
+
+    pub const fn is_dedicated(&self) -> bool {
+        matches!(self.mode, TenantDatabaseTargetMode::Dedicated)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TenantDatabaseTargetHealthStatus {
     Unknown,
@@ -414,6 +436,27 @@ impl TenantDatabaseTargetRegistry {
 
     pub fn target_kind(&self, target_key: &str) -> Option<TenantDatabaseTargetKind> {
         self.inner.targets.get(target_key).map(|target| target.kind)
+    }
+
+    /// 返回供上层用例持久化和生成指纹使用的稳定模式代码。
+    pub fn target_mode_code(&self, target_key: &str) -> Option<&'static str> {
+        self.target_mode(target_key).map(|mode| match mode {
+            TenantDatabaseTargetMode::Shared => "shared",
+            TenantDatabaseTargetMode::Dedicated => "dedicated",
+        })
+    }
+
+    /// 返回供上层用例持久化和生成指纹使用的稳定来源代码。
+    pub fn target_kind_code(&self, target_key: &str) -> Option<&'static str> {
+        self.target_kind(target_key).map(|kind| match kind {
+            TenantDatabaseTargetKind::Control => "control",
+            TenantDatabaseTargetKind::Mysql => "mysql",
+        })
+    }
+
+    pub fn target_is_dedicated(&self, target_key: &str) -> Option<bool> {
+        self.target_mode(target_key)
+            .map(|mode| mode == TenantDatabaseTargetMode::Dedicated)
     }
 
     pub fn target_health(&self, target_key: &str) -> Option<TenantDatabaseTargetHealthStatus> {

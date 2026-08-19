@@ -15,7 +15,6 @@ use crate::JobHandler;
 use super::recovery::RecoveryIntent;
 use super::{
     OPERATION_LEASE_HOURS, TenantDataMigrationService, checked_generation, database_error,
-    target_kind_code, target_mode_code,
 };
 
 pub struct TenantDataMigrationJobHandler {
@@ -726,27 +725,27 @@ impl TenantDataMigrationService {
         let source_mode = self
             .router
             .targets()
-            .target_mode(&migration.source_target_key)
+            .target_mode_code(&migration.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let source_kind = self
             .router
             .targets()
-            .target_kind(&migration.source_target_key)
+            .target_kind_code(&migration.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let target_mode = self
             .router
             .targets()
-            .target_mode(&migration.target_key)
+            .target_mode_code(&migration.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
         let target_kind = self
             .router
             .targets()
-            .target_kind(&migration.target_key)
+            .target_kind_code(&migration.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
-        if migration.source_target_mode != target_mode_code(source_mode)
-            || migration.source_target_kind != target_kind_code(source_kind)
-            || migration.target_target_mode != target_mode_code(target_mode)
-            || migration.target_target_kind != target_kind_code(target_kind)
+        if migration.source_target_mode != source_mode
+            || migration.source_target_kind != source_kind
+            || migration.target_target_mode != target_mode
+            || migration.target_target_kind != target_kind
         {
             return Err(AppError::TenantOperationConflict(
                 "迁移期间目标 mode/kind 配置发生漂移，已 fail-closed".into(),

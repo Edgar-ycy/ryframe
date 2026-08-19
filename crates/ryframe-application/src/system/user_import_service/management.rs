@@ -4,7 +4,7 @@ impl UserImportService {
         queue: Arc<JobQueue>,
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,
-        config: UserImportConfig,
+        config: crate::UserImportPolicy,
     ) -> Self {
         Self {
             db,

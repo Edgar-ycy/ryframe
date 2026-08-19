@@ -6,7 +6,6 @@ use std::{
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_adapters::snowflake::try_next_snowflake_id;
-use ryframe_config::TenantConfigTransferConfig;
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ControlDatabaseCluster,
     EnqueueBackgroundJob, FileRepository, TenantConfigTransferRepository,
@@ -87,7 +86,7 @@ pub struct TenantConfigTransferService {
     product_service: Arc<ProductService>,
     authorization_cache: AuthorizationCache,
     target_catalog: TenantConfigTargetCatalog,
-    config: TenantConfigTransferConfig,
+    config: crate::TenantConfigTransferPolicy,
 }
 
 #[derive(Clone)]
@@ -103,7 +102,7 @@ pub struct TenantConfigTransferDependencies {
 #[derive(Clone)]
 pub struct TenantConfigTransferSettings {
     pub target_catalog: TenantConfigTargetCatalog,
-    pub config: TenantConfigTransferConfig,
+    pub config: crate::TenantConfigTransferPolicy,
 }
 
 impl TenantConfigTransferService {

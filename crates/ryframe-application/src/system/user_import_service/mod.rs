@@ -9,7 +9,6 @@ use futures_util::future::try_join_all;
 use ryframe_adapters::excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
 use ryframe_adapters::snowflake::try_next_snowflake_id;
 use ryframe_auth::password;
-use ryframe_config::UserImportConfig;
 use ryframe_db::{
     ControlDatabaseCluster, CreateUserImportJob, DeptRepository, EnqueueBackgroundJob,
     FileRepository, TenantConfigTransferRepository, TenantRepository, UserImportFilter,
@@ -48,7 +47,7 @@ pub struct UserImportService {
     queue: Arc<JobQueue>,
     user_service: Arc<UserService>,
     file_service: Arc<FileService>,
-    config: UserImportConfig,
+    config: crate::UserImportPolicy,
     hash_permits: Arc<Semaphore>,
 }
 

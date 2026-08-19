@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ryframe_adapters::RedisClient;
 use ryframe_application::{
     CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
-    JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, ScheduleMetricsObserver,
-    ScheduledJobTargetRegistry,
+    JobWorker, JobWorkerPolicy, MessageDispatchJobHandler, MessageRetentionJobHandler,
+    MultiTenancyPolicy, ScheduleMetricsObserver, ScheduledJobTargetRegistry,
     system::{
         DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
         TenantConfigApplyJobHandler, TenantConfigExportJobHandler, TenantConfigPreviewJobHandler,
@@ -12,7 +12,6 @@ use ryframe_application::{
         TenantDataMigrationService, UserImportJobHandler, UserImportService,
     },
 };
-use ryframe_config::{JobConfig, MultiTenancyConfig};
 use ryframe_db::ExecutionTenantScope;
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_tenant_db::TenantDatabaseRouter;
@@ -33,11 +32,11 @@ pub struct JobWorkerDependencies {
 /// 统一构造 Embedded 与 External 模式使用的后台任务处理器。
 pub fn build_job_worker(
     queue: Arc<JobQueue>,
-    config: &JobConfig,
+    policy: &JobWorkerPolicy,
     execution_tenant_scope: ExecutionTenantScope,
     dependencies: JobWorkerDependencies,
 ) -> AppResult<JobWorker> {
-    let worker = JobWorker::new(queue, config, execution_tenant_scope)?
+    let worker = JobWorker::new(queue, policy, execution_tenant_scope)?
         .with_tenant_data(dependencies.tenant_data)
         .with_handler(Arc::new(ExportJobHandler::new(dependencies.export.clone())))?
         .with_handler(Arc::new(ExportCleanupJobHandler::new(dependencies.export)))?
@@ -80,8 +79,8 @@ pub fn build_job_worker(
 }
 
 /// 将应用的多租户开关转换为后台执行器使用的数据库范围。
-pub fn execution_tenant_scope(config: &MultiTenancyConfig) -> ExecutionTenantScope {
-    config.fixed_tenant_id().map_or_else(
+pub fn execution_tenant_scope(policy: MultiTenancyPolicy) -> ExecutionTenantScope {
+    policy.fixed_tenant_id().map_or_else(
         ExecutionTenantScope::all,
         ExecutionTenantScope::tenant_and_platform,
     )

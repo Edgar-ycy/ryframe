@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as St
 
 use async_trait::async_trait;
 use chrono::Duration;
-use ryframe_config::JobConfig;
 use ryframe_db::{ExecutionTenantScope, FailBackgroundJob, JobFailureDisposition, background_job};
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_tenant_db::TenantDatabaseRouter;
@@ -110,7 +109,7 @@ pub struct JobWorker {
     execution_tenant_scope: ExecutionTenantScope,
     handlers: Arc<BTreeMap<String, Arc<dyn JobHandler>>>,
     tenant_data: Option<Arc<TenantDatabaseRouter>>,
-    worker_prefix: String,
+    worker_prefix: Arc<str>,
     lease_duration: Duration,
     heartbeat_interval: StdDuration,
     poll_interval: StdDuration,
@@ -123,27 +122,21 @@ impl JobWorker {
     /// 根据运行配置创建 Worker。处理器需要通过 `with_handler` 显式注册。
     pub fn new(
         queue: Arc<JobQueue>,
-        config: &JobConfig,
+        policy: &crate::JobWorkerPolicy,
         execution_tenant_scope: ExecutionTenantScope,
     ) -> AppResult<Self> {
-        let lease_seconds = i64::try_from(config.lease_seconds)
-            .map_err(|_| AppError::Config("jobs.lease_seconds 超出支持范围".into()))?;
-        let worker_prefix = config
-            .worker_id
-            .clone()
-            .unwrap_or_else(|| "ryframe-worker".into());
         Ok(Self {
             queue,
             execution_tenant_scope,
             handlers: Arc::new(BTreeMap::new()),
             tenant_data: None,
-            worker_prefix,
-            lease_duration: Duration::seconds(lease_seconds),
-            heartbeat_interval: StdDuration::from_secs(config.heartbeat_seconds),
-            poll_interval: StdDuration::from_millis(config.poll_interval_ms),
-            max_idle_poll_interval: StdDuration::from_millis(config.max_idle_poll_interval_ms),
-            lease_recovery_interval: StdDuration::from_secs(config.lease_recovery_interval_seconds),
-            concurrency: config.concurrency,
+            worker_prefix: policy.worker_prefix("ryframe-worker"),
+            lease_duration: policy.lease_duration,
+            heartbeat_interval: policy.heartbeat_interval,
+            poll_interval: policy.poll_interval,
+            max_idle_poll_interval: policy.max_idle_poll_interval,
+            lease_recovery_interval: policy.lease_recovery_interval,
+            concurrency: policy.concurrency,
         })
     }
 

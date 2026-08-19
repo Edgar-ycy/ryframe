@@ -5,6 +5,7 @@ mod authorization_cache;
 mod authorization_resolver;
 pub mod jobs;
 mod principal_resolver;
+mod runtime_policy;
 mod service_identity_secret;
 pub mod system;
 mod trace_context;
@@ -36,6 +37,11 @@ pub use jobs::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 pub use principal_resolver::PrincipalResolver;
+pub use runtime_policy::{
+    AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
+    JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
+    ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
+};
 
 use ryframe_kernel::{ActorContext, AppError, AppResult, TenantId};
 use ryframe_tenant_db::TenantDataError;

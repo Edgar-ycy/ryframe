@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use ryframe_adapters::{RedisClient, RefreshSessionStore};
 use ryframe_auth::jwt::TokenSettings;
-use ryframe_config::AppConfig;
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{DeptRepository, UserRepository, entities::user};
 use serde::Serialize;
 
-use crate::{AuthorizationCache, AuthorizationResolver};
+use crate::{AuthPolicy, AuthorizationCache, AuthorizationResolver};
 
 mod brute_force;
 mod identity;
@@ -73,7 +72,7 @@ pub struct AuthService {
     user_repo: UserRepository,
     dept_repo: DeptRepository,
     authorization_resolver: AuthorizationResolver,
-    config: Arc<AppConfig>,
+    policy: AuthPolicy,
     token_settings: Arc<TokenSettings>,
     /// Redis 客户端（用于 refresh family 与登录暴力破解防护，可空）
     redis: Option<RedisClient>,
@@ -84,7 +83,7 @@ pub struct AuthService {
 impl AuthService {
     pub fn new(
         db: ControlDatabaseCluster,
-        config: Arc<AppConfig>,
+        policy: AuthPolicy,
         token_settings: Arc<TokenSettings>,
         redis: Option<RedisClient>,
         authorization_cache: AuthorizationCache,
@@ -96,7 +95,7 @@ impl AuthService {
             user_repo: UserRepository,
             dept_repo: DeptRepository,
             authorization_resolver: AuthorizationResolver::new(),
-            config,
+            policy,
             token_settings,
             redis,
             refresh_sessions,

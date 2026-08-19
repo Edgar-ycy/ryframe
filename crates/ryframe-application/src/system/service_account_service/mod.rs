@@ -5,7 +5,6 @@ use std::{
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_adapters::snowflake;
-use ryframe_config::{PepperKeyring, ServiceAccountsConfig};
 use ryframe_db::{
     ControlDatabaseCluster, DataRetentionRepository, PermissionRepository, ReadConsistency,
     Repository, RoleRepository, ServiceAccountLock, ServiceAccountRepository,
@@ -25,7 +24,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache,
+    AuthorizationCache, PepperKeyring, ServiceAccountPolicy,
     service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
 };
 
@@ -47,7 +46,7 @@ pub use model::*;
 use validation::*;
 pub struct ServiceAccountService {
     db: ControlDatabaseCluster,
-    config: ServiceAccountsConfig,
+    config: ServiceAccountPolicy,
     keyring: Arc<PepperKeyring>,
     capabilities: Vec<ServiceCapabilityDescriptor>,
     account_repo: ServiceAccountRepository,
@@ -62,12 +61,11 @@ pub struct ServiceAccountService {
 impl ServiceAccountService {
     pub fn new(
         db: ControlDatabaseCluster,
-        config: ServiceAccountsConfig,
+        config: ServiceAccountPolicy,
         keyring: Arc<PepperKeyring>,
         capabilities: Vec<ServiceCapabilityDescriptor>,
         authorization_cache: AuthorizationCache,
     ) -> AppResult<Self> {
-        config.validate().map_err(AppError::Config)?;
         validate_capabilities(&capabilities)?;
         Ok(Self {
             db,

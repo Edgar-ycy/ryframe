@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration as StdDuration};
 
 use chrono::{DateTime, Duration, Utc};
-use ryframe_config::JobConfig;
 use ryframe_db::{
     EnqueueBackgroundJob, ExecutionTenantScope, OutboxEventRepository, OutboxFailureDisposition,
     outbox_event,
@@ -40,7 +39,7 @@ pub struct OutboxWorker {
     queue: Arc<JobQueue>,
     repository: Arc<OutboxEventRepository>,
     execution_tenant_scope: ExecutionTenantScope,
-    worker_prefix: String,
+    worker_prefix: Arc<str>,
     lease_duration: Duration,
     poll_interval: StdDuration,
     max_idle_poll_interval: StdDuration,
@@ -54,24 +53,19 @@ impl OutboxWorker {
     /// 根据后台任务配置构建 Outbox Worker，复用相同的租约、轮询与并发策略。
     pub fn new(
         queue: Arc<JobQueue>,
-        config: &JobConfig,
+        policy: &crate::JobWorkerPolicy,
         execution_tenant_scope: ExecutionTenantScope,
     ) -> AppResult<Self> {
-        let lease_seconds = i64::try_from(config.lease_seconds)
-            .map_err(|_| AppError::Config("jobs.lease_seconds 超出支持范围".into()))?;
         Ok(Self {
             queue,
             repository: Arc::new(OutboxEventRepository),
             execution_tenant_scope,
-            worker_prefix: config
-                .worker_id
-                .clone()
-                .unwrap_or_else(|| "ryframe-outbox".into()),
-            lease_duration: Duration::seconds(lease_seconds),
-            poll_interval: StdDuration::from_millis(config.poll_interval_ms),
-            max_idle_poll_interval: StdDuration::from_millis(config.max_idle_poll_interval_ms),
-            lease_recovery_interval: StdDuration::from_secs(config.lease_recovery_interval_seconds),
-            concurrency: config.concurrency,
+            worker_prefix: policy.worker_prefix("ryframe-outbox"),
+            lease_duration: policy.lease_duration,
+            poll_interval: policy.poll_interval,
+            max_idle_poll_interval: policy.max_idle_poll_interval,
+            lease_recovery_interval: policy.lease_recovery_interval,
+            concurrency: policy.concurrency,
             authorization_cache: AuthorizationCache::disabled(),
             audit_service: None,
         })

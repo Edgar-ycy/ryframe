@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, KeyInit, Mac};
-use ryframe_config::is_valid_target_key;
 use ryframe_db::{
     ControlDatabaseCluster, ProductRepository, ProvisionTenantCommand, ReadConsistency,
     TenantProvisioningRepository, TenantRepository, entities::tenant,
@@ -605,7 +604,7 @@ fn validate_tenant_limits(
 }
 
 fn validate_data_target_key(value: &str) -> AppResult<()> {
-    if value == value.trim() && is_valid_target_key(value) {
+    if value == value.trim() && crate::runtime_policy::is_valid_tenant_target_key(value) {
         Ok(())
     } else {
         Err(AppError::Validation(

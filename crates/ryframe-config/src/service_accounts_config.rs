@@ -207,6 +207,11 @@ impl PepperKeyring {
     pub fn is_empty(&self) -> bool {
         self.peppers.is_empty()
     }
+
+    /// 把已校验的密钥材料移交给组合根，避免跨边界再复制一份密钥字节。
+    pub fn into_parts(self) -> (i32, BTreeMap<i32, Vec<u8>>) {
+        (self.active_version, self.peppers)
+    }
 }
 
 #[derive(Deserialize)]

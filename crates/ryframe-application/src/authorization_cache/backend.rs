@@ -1,9 +1,10 @@
 use std::{fmt, sync::Arc};
 
 use ryframe_adapters::RedisClient;
-use ryframe_config::RedisMode;
 use ryframe_db::validate_cache_namespace;
 use ryframe_kernel::{AppError, AppResult};
+
+use crate::CacheAvailabilityPolicy;
 
 use super::keyspace::validate_namespace_version;
 use super::redis_backend::RedisAuthorizationCacheBackend;
@@ -27,14 +28,14 @@ impl fmt::Debug for AuthorizationCache {
 }
 
 impl AuthorizationCache {
-    pub fn new(redis: Option<RedisClient>, mode: RedisMode) -> Self {
+    pub fn new(redis: Option<RedisClient>, policy: CacheAvailabilityPolicy) -> Self {
         let backend = redis.clone().map(|redis| {
             Arc::new(RedisAuthorizationCacheBackend { redis }) as Arc<dyn AuthorizationCacheBackend>
         });
         Self {
             backend,
             redis,
-            required: mode.is_required(),
+            required: policy.is_required(),
         }
     }
 
