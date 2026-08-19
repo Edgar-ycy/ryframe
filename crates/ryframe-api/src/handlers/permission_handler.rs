@@ -166,10 +166,7 @@ pub async fn sync_perm_from_route(
     let report = state
         .services
         .permission
-        .sync_route_permissions(
-            &current_user,
-            crate::permission_catalog::route_permission_codes(),
-        )
+        .sync_route_permissions(&current_user, crate::permission_catalog::permission_codes())
         .await?;
     Ok(Json(ApiResponse::success(report.into())))
 }

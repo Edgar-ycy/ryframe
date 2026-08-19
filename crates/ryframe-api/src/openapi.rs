@@ -561,48 +561,15 @@ pub fn render_openapi_json(
 /// Bearer Token 安全方案
 struct ApiDocModifier;
 
-pub const DEFAULT_MENU_ROUTES: &[(&str, &str)] = &[
-    ("home", "C"),
-    ("system", "M"),
-    ("monitor", "M"),
-    ("platform", "M"),
-    ("system.user", "C"),
-    ("system.role", "C"),
-    ("system.menu", "C"),
-    ("system.dept", "C"),
-    ("system.post", "C"),
-    ("system.dict", "C"),
-    ("system.config", "C"),
-    ("system.config-transfer", "C"),
-    ("system.service-accounts", "C"),
-    ("platform.product-plans", "C"),
-    ("platform.data-targets", "C"),
-    ("platform.tenant", "C"),
-    ("system.notice", "C"),
-    ("system.perm", "C"),
-    ("system.authorization-diagnostics", "C"),
-    ("system.operlog", "C"),
-    ("system.logininfor", "C"),
-    ("monitor.online", "C"),
-    ("monitor.server", "C"),
-    ("monitor.runtime", "C"),
-    ("monitor.cache", "C"),
-    ("monitor.db-pool", "C"),
-    ("monitor.jobs", "C"),
-    ("monitor.schedules", "C"),
-    ("monitor.retention", "C"),
-    ("monitor.overview", "C"),
-];
-
 fn menu_route_contract() -> serde_json::Value {
-    let routes = DEFAULT_MENU_ROUTES
+    let routes = crate::permission_catalog::menu_routes()
         .iter()
-        .map(|(route_key, menu_type)| {
+        .map(|menu| {
             serde_json::json!({
-                "route_key": route_key,
-                "menu_type": menu_type,
-                "permission_code": menu_route_permission(route_key),
-                "capability_code": menu_route_capability(route_key),
+                "route_key": menu.route_key,
+                "menu_type": menu.menu_type,
+                "permission_code": menu.permission_code,
+                "capability_code": menu.capability_code,
             })
         })
         .collect::<Vec<_>>();
@@ -611,45 +578,6 @@ fn menu_route_contract() -> serde_json::Value {
         "version": 1,
         "routes": routes,
     })
-}
-
-fn menu_route_permission(route_key: &str) -> Option<&'static str> {
-    match route_key {
-        "system.user" => Some("system:user:list"),
-        "system.role" => Some("system:role:list"),
-        "system.menu" => Some("system:menu:list"),
-        "system.dept" => Some("system:dept:list"),
-        "system.post" => Some("system:post:list"),
-        "system.dict" => Some("system:dict:list"),
-        "system.config" => Some("system:config:list"),
-        "system.config-transfer" => Some("system:config-transfer:list"),
-        "system.service-accounts" => Some("system:service-account:list"),
-        "platform.product-plans" => Some("platform:product-plan:list"),
-        "platform.data-targets" => Some("tenant:data-placement:view"),
-        "platform.tenant" => Some("tenant:list"),
-        "system.notice" => Some("system:notice:list"),
-        "system.perm" => Some("system:perm:list"),
-        "system.authorization-diagnostics" => Some("system:authorization-diagnostic:list"),
-        "system.operlog" => Some("system:operlog:list"),
-        "system.logininfor" => Some("system:logininfor:list"),
-        "monitor.online" => Some("monitor:online:list"),
-        "monitor.server" => Some("monitor:server:list"),
-        "monitor.runtime" => Some("monitor:runtime:list"),
-        "monitor.cache" => Some("monitor:cache:list"),
-        "monitor.db-pool" => Some("monitor:db-pool:list"),
-        "monitor.jobs" => Some("monitor:job:list"),
-        "monitor.schedules" => Some("monitor:schedule:list"),
-        "monitor.retention" => Some("monitor:retention:list"),
-        "monitor.overview" => Some("monitor:overview:list"),
-        _ => None,
-    }
-}
-
-fn menu_route_capability(route_key: &str) -> Option<&'static str> {
-    match route_key {
-        "system.service-accounts" => Some(ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY),
-        _ => None,
-    }
 }
 
 fn product_capability_contract() -> serde_json::Value {
@@ -707,7 +635,7 @@ fn api_prefix_contract() -> serde_json::Value {
 fn permission_catalog_contract() -> serde_json::Value {
     serde_json::json!({
         "version": 1,
-        "codes": crate::permission_catalog::route_permission_codes(),
+        "codes": crate::permission_catalog::permission_codes(),
     })
 }
 
@@ -719,46 +647,48 @@ fn route_contract() -> serde_json::Value {
             assert!(
                 bindings
                     .iter()
-                    .any(|(_, _, _, _, capability, bound_permission)| capability
-                        == &descriptor.code
-                        && bound_permission == &Some(*permission)),
+                    .any(|binding| binding.capability_code == descriptor.code
+                        && binding.permission_code == Some(*permission)),
                 "capability permission {permission} has no compiled route binding"
             );
         }
     }
     let routes = bindings
         .iter()
-        .map(
-            |(source, handler, method, path, capability_code, permission_code)| {
+        .map(|binding| {
+            assert!(
+                binding.path == crate::http::API_PREFIX
+                    || binding
+                        .path
+                        .starts_with(&format!("{}/", crate::http::API_PREFIX)),
+                "route contract path must include the public API prefix: {}",
+                binding.path
+            );
+            assert!(
+                endpoint_keys.insert((binding.method, binding.path)),
+                "route contract has duplicate method/path binding: {} {}",
+                binding.method,
+                binding.path
+            );
+            let descriptor = ryframe_application::system::CAPABILITY_CATALOG
+                .iter()
+                .find(|descriptor| descriptor.code == binding.capability_code)
+                .expect("route capability must exist in the compiled catalog");
+            if let Some(permission_code) = binding.permission_code {
                 assert!(
-                    *path == crate::http::API_PREFIX
-                        || path.starts_with(&format!("{}/", crate::http::API_PREFIX)),
-                    "route contract path must include the public API prefix: {path}"
+                    descriptor.permission_codes.contains(&permission_code),
+                    "route capability permission is outside its descriptor"
                 );
-                assert!(
-                    endpoint_keys.insert((*method, *path)),
-                    "route contract has duplicate method/path binding: {method} {path}"
-                );
-                let descriptor = ryframe_application::system::CAPABILITY_CATALOG
-                    .iter()
-                    .find(|descriptor| descriptor.code == *capability_code)
-                    .expect("route capability must exist in the compiled catalog");
-                if let Some(permission_code) = permission_code {
-                    assert!(
-                        descriptor.permission_codes.contains(permission_code),
-                        "route capability permission is outside its descriptor"
-                    );
-                }
-                serde_json::json!({
-                    "source": source,
-                    "handler": handler,
-                    "method": method,
-                    "path": path,
-                    "permission_code": permission_code,
-                    "capability_code": capability_code,
-                })
-            },
-        )
+            }
+            serde_json::json!({
+                "source": binding.source,
+                "handler": binding.handler,
+                "method": binding.method,
+                "path": binding.path,
+                "permission_code": binding.permission_code,
+                "capability_code": binding.capability_code,
+            })
+        })
         .collect::<Vec<_>>();
     serde_json::json!({ "version": 1, "routes": routes })
 }

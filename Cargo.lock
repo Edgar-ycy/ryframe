@@ -3397,6 +3397,7 @@ dependencies = [
 name = "ryframe-macro"
 version = "0.10.0"
 dependencies = [
+ "axum",
  "proc-macro2",
  "quote",
  "syn 3.0.3",

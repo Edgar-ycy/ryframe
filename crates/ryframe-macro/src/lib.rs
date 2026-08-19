@@ -99,6 +99,12 @@ pub fn put(args: TokenStream, input: TokenStream) -> TokenStream {
     route::expand_route(route::HttpMethod::Put, args, input)
 }
 
+/// 声明 PATCH 路由。
+#[proc_macro_attribute]
+pub fn patch(args: TokenStream, input: TokenStream) -> TokenStream {
+    route::expand_route(route::HttpMethod::Patch, args, input)
+}
+
 /// 声明 DELETE 路由。
 #[proc_macro_attribute]
 pub fn delete(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -110,7 +116,7 @@ pub fn delete(args: TokenStream, input: TokenStream) -> TokenStream {
 /// 若 `#[perm]` 进入展开阶段，说明属性顺序错误；否则会生成未受保护的路由。
 #[proc_macro_attribute]
 pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
-    "compile_error!(\"#[perm] must be placed immediately below #[get], #[post], #[put], or #[delete]\");"
+    "compile_error!(\"#[perm] 必须紧接在 #[get]、#[post]、#[put]、#[patch] 或 #[delete] 下方\");"
         .parse()
         .expect("valid compile_error output")
 }
@@ -121,7 +127,7 @@ pub fn perm(_args: TokenStream, _input: TokenStream) -> TokenStream {
 /// 的编译期路由契约。
 #[proc_macro_attribute]
 pub fn capability(_args: TokenStream, _input: TokenStream) -> TokenStream {
-    "compile_error!(\"#[capability] must be placed immediately below #[get], #[post], #[put], or #[delete]\");"
+    "compile_error!(\"#[capability] 必须紧接在 #[get]、#[post]、#[put]、#[patch] 或 #[delete] 下方\");"
         .parse()
         .expect("valid compile_error output")
 }

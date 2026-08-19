@@ -43,10 +43,10 @@ pub const RUNTIME_SWAGGER_UI_AVAILABLE: bool = cfg!(feature = "runtime-swagger-u
 /// 返回当前 API 二进制编译时注册的租户配置迁移目标目录。
 pub fn tenant_config_target_catalog() -> AppResult<TenantConfigTargetCatalog> {
     TenantConfigTargetCatalog::new(
-        openapi::DEFAULT_MENU_ROUTES
+        permission_catalog::menu_routes()
             .iter()
-            .map(|(route_key, menu_type)| ((*route_key).to_owned(), (*menu_type).to_owned())),
-        permission_catalog::route_permission_codes()
+            .map(|menu| (menu.route_key.to_owned(), menu.menu_type.to_owned())),
+        permission_catalog::permission_codes()
             .iter()
             .map(|code| (*code).to_owned()),
     )

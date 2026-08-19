@@ -5272,6 +5272,10 @@
                 },
                 "type": "array"
               },
+              "is_super_admin": {
+                "description": "仅由后端权威角色标记确定，客户端不得从角色编码或名称推断。",
+                "type": "boolean"
+              },
               "menus": {
                 "items": {
                   "$ref": "#/components/schemas/MenuTreeNode"
@@ -5299,6 +5303,7 @@
             },
             "required": [
               "user",
+              "is_super_admin",
               "roles",
               "permissions",
               "authorization_epoch",
@@ -17511,6 +17516,10 @@
             },
             "type": "array"
           },
+          "is_super_admin": {
+            "description": "仅由后端权威角色标记确定，客户端不得从角色编码或名称推断。",
+            "type": "boolean"
+          },
           "menus": {
             "items": {
               "$ref": "#/components/schemas/MenuTreeNode"
@@ -17538,6 +17547,7 @@
         },
         "required": [
           "user",
+          "is_super_admin",
           "roles",
           "permissions",
           "authorization_epoch",
@@ -40950,6 +40960,7 @@
       "system:user:list",
       "system:user:remove",
       "tenant:add",
+      "tenant:capability:override",
       "tenant:data-backup:list",
       "tenant:data-migration:cancel",
       "tenant:data-migration:create",

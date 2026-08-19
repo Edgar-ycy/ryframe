@@ -1,0 +1,523 @@
+version = 1
+
+permissions = [
+    "monitor:cache:list",
+    "monitor:db-pool:list",
+    "monitor:job:list",
+    "monitor:job:retry",
+    "monitor:online:force-logout",
+    "monitor:online:list",
+    "monitor:overview:list",
+    "monitor:retention:list",
+    "monitor:retention:run",
+    "monitor:runtime:list",
+    "monitor:schedule:add",
+    "monitor:schedule:edit",
+    "monitor:schedule:list",
+    "monitor:schedule:remove",
+    "monitor:schedule:run",
+    "monitor:server:list",
+    "platform:product-plan:add",
+    "platform:product-plan:edit",
+    "platform:product-plan:list",
+    "platform:product-plan:publish",
+    "system:authorization-diagnostic:list",
+    "system:config-package:download",
+    "system:config-package:export",
+    "system:config-package:list",
+    "system:config-transfer:add",
+    "system:config-transfer:apply",
+    "system:config-transfer:list",
+    "system:config-transfer:preview",
+    "system:config-transfer:rollback",
+    "system:config:add",
+    "system:config:edit",
+    "system:config:export",
+    "system:config:list",
+    "system:config:remove",
+    "system:dept:add",
+    "system:dept:edit",
+    "system:dept:list",
+    "system:dept:remove",
+    "system:dict:add",
+    "system:dict:edit",
+    "system:dict:export",
+    "system:dict:list",
+    "system:dict:remove",
+    "system:logininfor:export",
+    "system:logininfor:list",
+    "system:menu:add",
+    "system:menu:edit",
+    "system:menu:list",
+    "system:menu:remove",
+    "system:message:publish",
+    "system:notice:add",
+    "system:notice:edit",
+    "system:notice:list",
+    "system:notice:remove",
+    "system:operlog:export",
+    "system:operlog:list",
+    "system:perm:add",
+    "system:perm:edit",
+    "system:perm:list",
+    "system:perm:remove",
+    "system:perm:sync",
+    "system:post:add",
+    "system:post:edit",
+    "system:post:export",
+    "system:post:list",
+    "system:post:remove",
+    "system:role:add",
+    "system:role:edit",
+    "system:role:export",
+    "system:role:list",
+    "system:role:remove",
+    "system:service-access-audit:list",
+    "system:service-account:add",
+    "system:service-account:edit",
+    "system:service-account:key-revoke",
+    "system:service-account:key-rotate",
+    "system:service-account:list",
+    "system:service-account:remove",
+    "system:service-account:role",
+    "system:service-delegation:list",
+    "system:service-delegation:revoke",
+    "system:user-import:add",
+    "system:user-import:cancel",
+    "system:user-import:list",
+    "system:user:add",
+    "system:user:edit",
+    "system:user:export",
+    "system:user:list",
+    "system:user:remove",
+    "tenant:add",
+    "tenant:capability:override",
+    "tenant:data-backup:list",
+    "tenant:data-migration:cancel",
+    "tenant:data-migration:create",
+    "tenant:data-migration:finalize",
+    "tenant:data-migration:list",
+    "tenant:data-placement:view",
+    "tenant:edit",
+    "tenant:list",
+    "tenant:product:assign",
+    "tenant:product:view",
+    "tenant:status",
+    "tenant:usage:list",
+]
+
+non_route_permissions = ["tenant:capability:override"]
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/context"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/auth/login"
+policy = "public"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/auth/password-reset/complete"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/csrf"
+policy = "public"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/auth/logout"
+policy = "public"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/auth/refresh"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/sessions"
+policy = "authenticated"
+
+[[route_policies]]
+method = "DELETE"
+path = "/api/v1/auth/sessions/{sid}"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/auth/sessions/revoke-others"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/auth/ws-ticket"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/captcha/generate"
+policy = "public"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/auth/captcha/verify"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/captcha/config"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/captcha/image"
+policy = "public"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/common/upload"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/common/upload/image"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/common/upload/avatar"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/common/file/download"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/common/jobs/deletions"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/common/jobs/notifications/unread-count"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/common/jobs/notifications/read"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/common/jobs"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/common/jobs/{id}"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/common/jobs/{id}/cancel"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/common/jobs/{id}/download"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/system/messages"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/system/messages/unread-count"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/system/messages/ack"
+policy = "authenticated"
+
+[[route_policies]]
+method = "POST"
+path = "/api/v1/system/messages/delete"
+policy = "authenticated"
+
+[[route_policies]]
+method = "PUT"
+path = "/api/v1/system/messages/{id}/read"
+policy = "authenticated"
+
+[[route_policies]]
+method = "PUT"
+path = "/api/v1/system/messages/read-all"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/profile"
+policy = "authenticated"
+
+[[route_policies]]
+method = "PUT"
+path = "/api/v1/auth/profile"
+policy = "authenticated"
+
+[[route_policies]]
+method = "PUT"
+path = "/api/v1/auth/profile/password"
+policy = "authenticated"
+
+[[route_policies]]
+method = "PUT"
+path = "/api/v1/auth/profile/avatar"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/monitor/metrics"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
+path = "/livez"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
+path = "/readyz"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/version"
+policy = "public"
+
+[[manual_routes]]
+source = "crates/ryframe-api/src/message_socket/session.rs"
+handler = "upgrade"
+method = "GET"
+path = "/api/v1/ws"
+policy = "public"
+
+[[manual_routes]]
+source = "crates/ryframe-api/src/openapi.rs"
+handler = "openapi_json"
+method = "GET"
+path = "/api/v1/api-docs/openapi.json"
+policy = "public"
+
+[[manual_routes]]
+source = "crates/ryframe-api/src/router/swagger.rs"
+handler = "swagger_ui_index"
+method = "GET"
+path = "/api/v1/swagger-ui"
+policy = "public"
+
+[[manual_routes]]
+source = "crates/ryframe-api/src/router/swagger.rs"
+handler = "swagger_ui_asset"
+method = "GET"
+path = "/api/v1/swagger-ui/{*asset}"
+policy = "public"
+
+[[menus]]
+route_key = "home"
+menu_type = "C"
+page_key = "home"
+
+[[menus]]
+route_key = "system"
+menu_type = "M"
+
+[[menus]]
+route_key = "monitor"
+menu_type = "M"
+
+[[menus]]
+route_key = "platform"
+menu_type = "M"
+
+[[menus]]
+route_key = "system.user"
+menu_type = "C"
+page_key = "system.user"
+permission = "system:user:list"
+
+[[menus]]
+route_key = "system.role"
+menu_type = "C"
+page_key = "system.role"
+permission = "system:role:list"
+
+[[menus]]
+route_key = "system.menu"
+menu_type = "C"
+page_key = "system.menu"
+permission = "system:menu:list"
+
+[[menus]]
+route_key = "system.dept"
+menu_type = "C"
+page_key = "system.dept"
+permission = "system:dept:list"
+
+[[menus]]
+route_key = "system.post"
+menu_type = "C"
+page_key = "system.post"
+permission = "system:post:list"
+
+[[menus]]
+route_key = "system.dict"
+menu_type = "C"
+page_key = "system.dict"
+permission = "system:dict:list"
+
+[[menus]]
+route_key = "system.config"
+menu_type = "C"
+page_key = "system.config"
+permission = "system:config:list"
+
+[[menus]]
+route_key = "system.config-transfer"
+menu_type = "C"
+page_key = "system.config-transfer"
+permission = "system:config-transfer:list"
+
+[[menus]]
+route_key = "system.service-accounts"
+menu_type = "C"
+page_key = "system.service-accounts"
+permission = "system:service-account:list"
+capability = "system.service_accounts"
+
+[[menus]]
+route_key = "platform.product-plans"
+menu_type = "C"
+page_key = "platform.product-plans"
+permission = "platform:product-plan:list"
+
+[[menus]]
+route_key = "platform.data-targets"
+menu_type = "C"
+page_key = "platform.data-targets"
+permission = "tenant:data-placement:view"
+
+[[menus]]
+route_key = "platform.tenant"
+menu_type = "C"
+page_key = "platform.tenant"
+permission = "tenant:list"
+
+[[menus]]
+route_key = "system.notice"
+menu_type = "C"
+page_key = "system.notice"
+permission = "system:notice:list"
+
+[[menus]]
+route_key = "system.perm"
+menu_type = "C"
+page_key = "system.perm"
+permission = "system:perm:list"
+
+[[menus]]
+route_key = "system.authorization-diagnostics"
+menu_type = "C"
+page_key = "system.authorization-diagnostics"
+permission = "system:authorization-diagnostic:list"
+
+[[menus]]
+route_key = "system.operlog"
+menu_type = "C"
+page_key = "system.operlog"
+permission = "system:operlog:list"
+
+[[menus]]
+route_key = "system.logininfor"
+menu_type = "C"
+page_key = "system.logininfor"
+permission = "system:logininfor:list"
+
+[[menus]]
+route_key = "monitor.online"
+menu_type = "C"
+page_key = "monitor.online"
+permission = "monitor:online:list"
+
+[[menus]]
+route_key = "monitor.server"
+menu_type = "C"
+page_key = "monitor.server"
+permission = "monitor:server:list"
+
+[[menus]]
+route_key = "monitor.runtime"
+menu_type = "C"
+page_key = "monitor.runtime"
+permission = "monitor:runtime:list"
+
+[[menus]]
+route_key = "monitor.cache"
+menu_type = "C"
+page_key = "monitor.cache"
+permission = "monitor:cache:list"
+
+[[menus]]
+route_key = "monitor.db-pool"
+menu_type = "C"
+page_key = "monitor.db-pool"
+permission = "monitor:db-pool:list"
+
+[[menus]]
+route_key = "monitor.jobs"
+menu_type = "C"
+page_key = "monitor.jobs"
+permission = "monitor:job:list"
+
+[[menus]]
+route_key = "monitor.schedules"
+menu_type = "C"
+page_key = "monitor.schedules"
+permission = "monitor:schedule:list"
+
+[[menus]]
+route_key = "monitor.retention"
+menu_type = "C"
+page_key = "monitor.retention"
+permission = "monitor:retention:list"
+
+[[menus]]
+route_key = "monitor.overview"
+menu_type = "C"
+page_key = "monitor.overview"
+permission = "monitor:overview:list"
+
+[[capabilities]]
+code = "system.service_accounts"
+route_keys = ["system.service-accounts"]
+page_keys = ["system.service-accounts"]
+permissions = [
+    "system:service-account:list",
+    "system:service-account:add",
+    "system:service-account:edit",
+    "system:service-account:remove",
+    "system:service-account:role",
+    "system:service-account:key-rotate",
+    "system:service-account:key-revoke",
+    "system:service-delegation:list",
+    "system:service-delegation:revoke",
+    "system:service-access-audit:list",
+]

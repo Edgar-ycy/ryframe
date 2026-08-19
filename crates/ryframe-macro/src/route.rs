@@ -9,6 +9,7 @@ pub enum HttpMethod {
     Get,
     Post,
     Put,
+    Patch,
     Delete,
 }
 
@@ -35,6 +36,7 @@ pub fn expand_route(method: HttpMethod, args: TokenStream, input: TokenStream) -
         HttpMethod::Get => quote!(::axum::routing::get),
         HttpMethod::Post => quote!(::axum::routing::post),
         HttpMethod::Put => quote!(::axum::routing::put),
+        HttpMethod::Patch => quote!(::axum::routing::patch),
         HttpMethod::Delete => quote!(::axum::routing::delete),
     };
     let method_router = if let Some(permission) = permission {

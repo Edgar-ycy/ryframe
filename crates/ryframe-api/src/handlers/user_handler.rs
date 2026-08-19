@@ -7,7 +7,7 @@ pub(crate) use import_export::*;
 pub(crate) use password_reset::*;
 
 use crate::http::HttpResult;
-use axum::{Router, routing::post};
+use axum::Router;
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::UserListParams;
 use ryframe_auth::rbac;
@@ -67,7 +67,6 @@ impl UserFilterQuery {
 
 pub fn user_router(state: AppState) -> Router {
     Router::new()
-        .route("/import", post(removed_synchronous_import))
         .merge(route!(list))
         .merge(route!(options))
         .merge(route!(detail))
@@ -81,8 +80,4 @@ pub fn user_router(state: AppState) -> Router {
         .merge(route!(request_user_export))
         .merge(route!(download_import_template))
         .with_state(state)
-}
-
-async fn removed_synchronous_import() -> HttpResult<()> {
-    Err(AppError::NotFound("同步用户导入接口已移除，请使用异步用户导入接口".into()).into())
 }
