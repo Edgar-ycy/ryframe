@@ -3218,6 +3218,7 @@ dependencies = [
  "opentelemetry_sdk",
  "percent-encoding",
  "prometheus",
+ "quick-xml",
  "rand 0.10.1",
  "redis",
  "reqwest",

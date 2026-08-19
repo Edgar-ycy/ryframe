@@ -2,7 +2,8 @@ use std::{io::SeekFrom, path::Path, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
+use quick_xml::{Reader, escape::unescape, events::Event};
 use reqwest::{Body, Method, RequestBuilder, Response, Url};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -10,9 +11,12 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tracing::Instrument;
 
 use super::{
-    ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
+    ObjectListPage, ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
     signing::SigV4Signer, storage_operation_span, trace_storage_operation, validate_bucket,
+    validate_list_request,
 };
+
+const MAX_LIST_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 /// 路径风格 S3 兼容端点的连接与签名配置。
 #[derive(Clone, Debug)]
@@ -161,6 +165,27 @@ impl S3ObjectStorage {
         self.location_url(bucket, Some(key_segments(key)?))
     }
 
+    fn list_url(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> StorageResult<Url> {
+        validate_list_request(bucket, prefix, cursor, limit)?;
+        let mut url = self.bucket_url(bucket)?;
+        let mut query = url.query_pairs_mut();
+        query
+            .append_pair("list-type", "2")
+            .append_pair("prefix", prefix)
+            .append_pair("max-keys", &limit.to_string());
+        if let Some(cursor) = cursor {
+            query.append_pair("continuation-token", cursor);
+        }
+        drop(query);
+        Ok(url)
+    }
+
     fn location_url(&self, bucket: &str, key: Option<Vec<&str>>) -> StorageResult<Url> {
         let mut url = self.endpoint.clone();
         let mut path = url.path_segments_mut().map_err(|_| {
@@ -256,6 +281,32 @@ impl S3ObjectStorage {
         };
 
         Ok((file, metadata.len(), payload_hash))
+    }
+
+    async fn read_bounded_list_response(response: Response) -> StorageResult<Vec<u8>> {
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_LIST_RESPONSE_BYTES as u64)
+        {
+            return Err(StorageError::InvalidResponse(format!(
+                "S3 object list response exceeds {MAX_LIST_RESPONSE_BYTES} bytes"
+            )));
+        }
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            let next_length = body.len().checked_add(chunk.len()).ok_or_else(|| {
+                StorageError::InvalidResponse("S3 object list response length overflow".to_owned())
+            })?;
+            if next_length > MAX_LIST_RESPONSE_BYTES {
+                return Err(StorageError::InvalidResponse(format!(
+                    "S3 object list response exceeds {MAX_LIST_RESPONSE_BYTES} bytes"
+                )));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
     }
 }
 
@@ -370,6 +421,30 @@ impl ObjectStorage for S3ObjectStorage {
         }
     }
 
+    async fn list_page(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> StorageResult<ObjectListPage> {
+        trace_storage_operation("s3", StorageOperation::List, async {
+            let url = self.list_url(bucket, prefix, cursor, limit)?;
+            let response = self
+                .send_request(
+                    StorageOperation::List,
+                    self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?,
+                )
+                .await?;
+            if !response.status().is_success() {
+                return Err(service_error("list S3 objects", response).await);
+            }
+            let body = Self::read_bounded_list_response(response).await?;
+            parse_list_objects_response(&body, prefix, limit)
+        })
+        .await
+    }
+
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         trace_storage_operation("s3", StorageOperation::EnsureBucket, async {
             if !self.bucket_exists(bucket).await? {
@@ -391,6 +466,120 @@ impl ObjectStorage for S3ObjectStorage {
             }
         })
         .await
+    }
+}
+
+fn parse_list_objects_response(
+    body: &[u8],
+    expected_prefix: &str,
+    limit: usize,
+) -> StorageResult<ObjectListPage> {
+    let mut reader = Reader::from_reader(body);
+    reader.config_mut().trim_text(true);
+    let mut keys = Vec::new();
+    let mut next_cursor = None;
+    let mut is_truncated = None;
+    loop {
+        match reader.read_event().map_err(|error| {
+            StorageError::InvalidResponse(format!("invalid S3 object list XML: {error}"))
+        })? {
+            Event::Start(element) if element.local_name().as_ref() == b"Key" => {
+                let name = element.name();
+                let text = reader.read_text(name).map_err(|error| {
+                    StorageError::InvalidResponse(format!("invalid S3 object key element: {error}"))
+                })?;
+                let decoded = text.decode().map_err(|error| {
+                    StorageError::InvalidResponse(format!(
+                        "invalid S3 object key encoding: {error}"
+                    ))
+                })?;
+                let key = unescape(&decoded)
+                    .map_err(|error| {
+                        StorageError::InvalidResponse(format!(
+                            "invalid S3 object key escaping: {error}"
+                        ))
+                    })?
+                    .into_owned();
+                key_segments(&key)?;
+                if !key.starts_with(expected_prefix) {
+                    return Err(StorageError::InvalidResponse(
+                        "S3 object list returned a key outside the requested prefix".to_owned(),
+                    ));
+                }
+                if keys.last().is_some_and(|previous| previous >= &key) {
+                    return Err(StorageError::InvalidResponse(
+                        "S3 object list keys are not strictly ordered".to_owned(),
+                    ));
+                }
+                keys.push(key);
+                if keys.len() > limit {
+                    return Err(StorageError::InvalidResponse(
+                        "S3 object list returned more keys than requested".to_owned(),
+                    ));
+                }
+            }
+            Event::Start(element) if element.local_name().as_ref() == b"NextContinuationToken" => {
+                let name = element.name();
+                let text = reader.read_text(name).map_err(|error| {
+                    StorageError::InvalidResponse(format!(
+                        "invalid S3 continuation token element: {error}"
+                    ))
+                })?;
+                let decoded = text.decode().map_err(|error| {
+                    StorageError::InvalidResponse(format!(
+                        "invalid S3 continuation token encoding: {error}"
+                    ))
+                })?;
+                let token = unescape(&decoded)
+                    .map_err(|error| {
+                        StorageError::InvalidResponse(format!(
+                            "invalid S3 continuation token escaping: {error}"
+                        ))
+                    })?
+                    .into_owned();
+                if token.is_empty() || token.len() > 4_096 || token.chars().any(char::is_control) {
+                    return Err(StorageError::InvalidResponse(
+                        "S3 continuation token is invalid".to_owned(),
+                    ));
+                }
+                next_cursor = Some(token);
+            }
+            Event::Start(element) if element.local_name().as_ref() == b"IsTruncated" => {
+                let name = element.name();
+                let text = reader.read_text(name).map_err(|error| {
+                    StorageError::InvalidResponse(format!("invalid S3 truncation element: {error}"))
+                })?;
+                let decoded = text.decode().map_err(|error| {
+                    StorageError::InvalidResponse(format!(
+                        "invalid S3 truncation flag encoding: {error}"
+                    ))
+                })?;
+                is_truncated = Some(match decoded.as_ref() {
+                    "true" => true,
+                    "false" => false,
+                    _ => {
+                        return Err(StorageError::InvalidResponse(
+                            "S3 truncation flag must be true or false".to_owned(),
+                        ));
+                    }
+                });
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    match is_truncated {
+        Some(true) if next_cursor.is_none() => Err(StorageError::InvalidResponse(
+            "truncated S3 object list has no continuation token".to_owned(),
+        )),
+        Some(false) => Ok(ObjectListPage {
+            keys,
+            next_cursor: None,
+        }),
+        Some(true) => Ok(ObjectListPage { keys, next_cursor }),
+        None => Err(StorageError::InvalidResponse(
+            "S3 object list has no truncation flag".to_owned(),
+        )),
     }
 }
 
@@ -498,7 +687,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use tokio::io::AsyncReadExt;
 
-    use super::{S3ObjectStorage, normalize_sha256};
+    use super::{S3Config, S3ObjectStorage, normalize_sha256, parse_list_objects_response};
 
     #[tokio::test]
     async fn upload_file_hashes_and_rewinds_the_same_handle() {
@@ -528,5 +717,47 @@ mod tests {
             "a".repeat(64)
         );
         assert!(normalize_sha256("not-a-hash").is_err());
+    }
+
+    #[test]
+    fn list_request_contains_exact_prefix_cursor_and_limit() {
+        let storage = S3ObjectStorage::new(S3Config {
+            endpoint: "127.0.0.1:9000".to_owned(),
+            access_key: "test-access".to_owned(),
+            secret_key: "test-secret".to_owned(),
+            use_ssl: false,
+            region: "us-east-1".to_owned(),
+        })
+        .expect("创建离线 S3 客户端");
+        let url = storage
+            .list_url("exports", "scope/jobs/", Some("opaque+cursor"), 37)
+            .expect("构造列举地址");
+        let query = url.query_pairs().collect::<Vec<_>>();
+
+        assert!(query.contains(&("list-type".into(), "2".into())));
+        assert!(query.contains(&("prefix".into(), "scope/jobs/".into())));
+        assert!(query.contains(&("max-keys".into(), "37".into())));
+        assert!(query.contains(&("continuation-token".into(), "opaque+cursor".into())));
+        assert!(storage.list_url("exports", "scope", None, 1).is_err());
+    }
+
+    #[test]
+    fn list_response_is_unescaped_bounded_and_prefix_checked() {
+        let body = br#"<?xml version="1.0" encoding="UTF-8"?>
+            <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+              <IsTruncated>true</IsTruncated>
+              <Contents><Key>scope/a&amp;b.txt</Key></Contents>
+              <Contents><Key>scope/b.txt</Key></Contents>
+              <NextContinuationToken>next&amp;token</NextContinuationToken>
+            </ListBucketResult>"#;
+        let page = parse_list_objects_response(body, "scope/", 2).expect("解析 S3 列举结果");
+        assert_eq!(page.keys, ["scope/a&b.txt", "scope/b.txt"]);
+        assert_eq!(page.next_cursor.as_deref(), Some("next&token"));
+
+        let outside = br#"<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>scope-other/a.txt</Key></Contents></ListBucketResult>"#;
+        assert!(parse_list_objects_response(outside, "scope/", 1).is_err());
+
+        let too_many = br#"<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>scope/a.txt</Key></Contents><Contents><Key>scope/b.txt</Key></Contents></ListBucketResult>"#;
+        assert!(parse_list_objects_response(too_many, "scope/", 1).is_err());
     }
 }

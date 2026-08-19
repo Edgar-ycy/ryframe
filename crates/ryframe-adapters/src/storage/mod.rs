@@ -47,6 +47,23 @@ const OBJECT_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
 
 pub type StorageResult<T> = Result<T, StorageError>;
 
+/// 单次对象列举或清理允许处理的最大对象数。
+pub const MAX_OBJECT_LIST_PAGE_SIZE: usize = 1_000;
+
+/// 有界对象列举结果。`next_cursor` 是后端不透明游标，只能原样用于同一存储桶和前缀。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObjectListPage {
+    pub keys: Vec<String>,
+    pub next_cursor: Option<String>,
+}
+
+/// 单次精确前缀清理结果。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefixDeleteBatch {
+    pub deleted_count: usize,
+    pub may_have_more: bool,
+}
+
 /// 对象存储 span 使用的固定操作集合，禁止将存储桶、对象键、端点或签名写入属性。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StorageOperation {
@@ -54,6 +71,7 @@ pub(crate) enum StorageOperation {
     Get,
     Delete,
     Exists,
+    List,
     Readiness,
     EnsureBucket,
     BucketHead,
@@ -70,6 +88,7 @@ impl StorageOperation {
             Self::Get => "GET",
             Self::Delete => "DELETE",
             Self::Exists => "EXISTS",
+            Self::List => "LIST",
             Self::Readiness => "READINESS",
             Self::EnsureBucket => "ENSURE_BUCKET",
             Self::BucketHead => "BUCKET_HEAD",
@@ -134,6 +153,10 @@ pub enum StorageError {
     Signing(String),
     #[error("object storage readiness check failed: {0}")]
     Readiness(String),
+    #[error("object storage returned an invalid response: {0}")]
+    InvalidResponse(String),
+    #[error("object storage operation is unsupported: {0}")]
+    Unsupported(String),
 }
 
 /// 在不暴露具体后端的前提下上传、下载、删除和定位对象。
@@ -174,6 +197,52 @@ pub trait ObjectStorage: Send + Sync {
 
     async fn exists(&self, bucket: &str, key: &str) -> StorageResult<bool>;
 
+    /// 按精确目录前缀列举一页对象。前缀必须非空且以 `/` 结尾，页大小必须在
+    /// `1..=MAX_OBJECT_LIST_PAGE_SIZE` 内。游标由实现定义，调用方不得解析或跨前缀复用。
+    async fn list_page(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> StorageResult<ObjectListPage> {
+        validate_list_request(bucket, prefix, cursor, limit)?;
+        Err(StorageError::Unsupported(
+            "bounded object listing is not implemented by this backend".to_owned(),
+        ))
+    }
+
+    /// 删除精确目录前缀下的一批对象。此操作不接受游标，每次都从前缀首项开始，
+    /// 因而调用方可在部分失败后使用相同参数安全重试。
+    async fn delete_prefix_batch(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> StorageResult<PrefixDeleteBatch> {
+        let page = self.list_page(bucket, prefix, None, limit).await?;
+        if page.keys.len() > limit || page.keys.iter().any(|key| !key.starts_with(prefix)) {
+            return Err(StorageError::InvalidResponse(
+                "object list page escaped its requested prefix or limit".to_owned(),
+            ));
+        }
+        let deleted_count = page.keys.len();
+        let may_have_more = page.next_cursor.is_some();
+        for key in page.keys {
+            self.delete(bucket, &key).await?;
+        }
+        Ok(PrefixDeleteBatch {
+            deleted_count,
+            may_have_more,
+        })
+    }
+
+    /// 验证精确目录前缀下已经没有对象，不执行任何写操作。
+    async fn prefix_is_empty(&self, bucket: &str, prefix: &str) -> StorageResult<bool> {
+        let page = self.list_page(bucket, prefix, None, 1).await?;
+        Ok(page.keys.is_empty() && page.next_cursor.is_none())
+    }
+
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         validate_bucket(bucket)
     }
@@ -206,6 +275,49 @@ fn validate_bucket(bucket: &str) -> StorageResult<()> {
         return Err(StorageError::InvalidLocation(format!(
             "bucket '{bucket}' must be 3-63 lowercase letters, digits, dots, or hyphens"
         )));
+    }
+    Ok(())
+}
+
+fn validate_object_prefix(prefix: &str) -> StorageResult<()> {
+    if prefix.len() > 1024 {
+        return Err(StorageError::InvalidLocation(
+            "object prefix must not exceed 1024 bytes".to_owned(),
+        ));
+    }
+    let Some(without_separator) = prefix.strip_suffix('/') else {
+        return Err(StorageError::InvalidLocation(
+            "object prefix must be a non-empty directory prefix ending with '/'".to_owned(),
+        ));
+    };
+    if without_separator.is_empty() {
+        return Err(StorageError::InvalidLocation(
+            "object prefix must not address the whole bucket".to_owned(),
+        ));
+    }
+    key_segments(without_separator)?;
+    Ok(())
+}
+
+fn validate_list_request(
+    bucket: &str,
+    prefix: &str,
+    cursor: Option<&str>,
+    limit: usize,
+) -> StorageResult<()> {
+    validate_bucket(bucket)?;
+    validate_object_prefix(prefix)?;
+    if !(1..=MAX_OBJECT_LIST_PAGE_SIZE).contains(&limit) {
+        return Err(StorageError::InvalidLocation(format!(
+            "object list limit must be between 1 and {MAX_OBJECT_LIST_PAGE_SIZE}"
+        )));
+    }
+    if cursor.is_some_and(|value| {
+        value.is_empty() || value.len() > 4_096 || value.chars().any(char::is_control)
+    }) {
+        return Err(StorageError::InvalidLocation(
+            "object list cursor is invalid".to_owned(),
+        ));
     }
     Ok(())
 }

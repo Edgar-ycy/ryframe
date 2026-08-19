@@ -2,7 +2,10 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 
-use super::{ObjectStorage, StorageError, StorageResult};
+use super::{
+    ObjectListPage, ObjectStorage, PrefixDeleteBatch, StorageError, StorageResult,
+    validate_object_prefix,
+};
 
 const OWNERSHIP_MARKER_NAME: &str = ".ryframe-owner";
 
@@ -63,6 +66,24 @@ impl ScopedObjectStorage {
             ));
         }
         Ok(format!("{}{}", self.prefix, logical_key))
+    }
+
+    fn physical_prefix(&self, logical_prefix: &str) -> StorageResult<String> {
+        if logical_prefix.is_empty() {
+            return Ok(self.prefix.clone());
+        }
+        validate_object_prefix(logical_prefix)?;
+        if logical_prefix.starts_with(&self.prefix)
+            || logical_prefix
+                .split('/')
+                .next()
+                .is_some_and(|segment| segment == self.scope_id)
+        {
+            return Err(StorageError::InvalidLocation(
+                "对象前缀必须是未加 scope 前缀的业务逻辑前缀".to_owned(),
+            ));
+        }
+        Ok(format!("{}{}", self.prefix, logical_prefix))
     }
 
     fn marker_value(&self, bucket: &str) -> String {
@@ -131,6 +152,54 @@ impl ObjectStorage for ScopedObjectStorage {
         self.inner.exists(bucket, &self.physical_key(key)?).await
     }
 
+    async fn list_page(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> StorageResult<ObjectListPage> {
+        let physical_prefix = self.physical_prefix(prefix)?;
+        let page = self
+            .inner
+            .list_page(bucket, &physical_prefix, cursor, limit)
+            .await?;
+        let keys = page
+            .keys
+            .into_iter()
+            .map(|key| {
+                key.strip_prefix(&self.prefix)
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        StorageError::InvalidResponse(
+                            "scoped storage received an object outside its scope".to_owned(),
+                        )
+                    })
+            })
+            .collect::<StorageResult<Vec<_>>>()?;
+        Ok(ObjectListPage {
+            keys,
+            next_cursor: page.next_cursor,
+        })
+    }
+
+    async fn delete_prefix_batch(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> StorageResult<PrefixDeleteBatch> {
+        self.inner
+            .delete_prefix_batch(bucket, &self.physical_prefix(prefix)?, limit)
+            .await
+    }
+
+    async fn prefix_is_empty(&self, bucket: &str, prefix: &str) -> StorageResult<bool> {
+        self.inner
+            .prefix_is_empty(bucket, &self.physical_prefix(prefix)?)
+            .await
+    }
+
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         self.inner.ensure_bucket(bucket).await?;
         self.ensure_ownership_marker(bucket).await
@@ -145,7 +214,7 @@ impl ObjectStorage for ScopedObjectStorage {
 #[cfg(test)]
 mod tests {
     use super::ScopedObjectStorage;
-    use crate::storage::LocalObjectStorage;
+    use crate::storage::{LocalObjectStorage, ObjectStorage};
     use std::sync::Arc;
 
     fn storage() -> ScopedObjectStorage {
@@ -165,5 +234,80 @@ mod tests {
         );
         assert!(storage.physical_key("test-a/jobs/result.xlsx").is_err());
         assert!(storage.physical_key(".ryframe-owner").is_err());
+    }
+
+    #[test]
+    fn physical_prefix_rejects_fuzzy_and_pre_scoped_values() {
+        let storage = storage();
+        assert_eq!(
+            storage.physical_prefix("").expect("scope 根前缀"),
+            "test-a/"
+        );
+        assert_eq!(
+            storage.physical_prefix("jobs/").expect("业务目录前缀"),
+            "test-a/jobs/"
+        );
+        assert!(storage.physical_prefix("jobs").is_err());
+        assert!(storage.physical_prefix("test-a/jobs/").is_err());
+    }
+
+    #[tokio::test]
+    async fn root_cleanup_is_confined_to_the_current_scope() {
+        let directory = tempfile::tempdir().expect("创建测试目录");
+        let inner: Arc<dyn ObjectStorage> =
+            Arc::new(LocalObjectStorage::new(directory.path().join("objects")));
+        let scope_a = ScopedObjectStorage::new(Arc::clone(&inner), "test-a");
+        let scope_b = ScopedObjectStorage::new(inner, "test-b");
+        scope_a
+            .ensure_bucket("exports")
+            .await
+            .expect("初始化 scope A");
+        scope_b
+            .ensure_bucket("exports")
+            .await
+            .expect("初始化 scope B");
+        scope_a
+            .put("exports", "jobs/a.xlsx", b"a", "application/octet-stream")
+            .await
+            .expect("写入 scope A");
+        scope_b
+            .put("exports", "jobs/b.xlsx", b"b", "application/octet-stream")
+            .await
+            .expect("写入 scope B");
+
+        loop {
+            let batch = scope_a
+                .delete_prefix_batch("exports", "", 1)
+                .await
+                .expect("分批清理 scope A");
+            if !batch.may_have_more {
+                break;
+            }
+        }
+
+        assert!(
+            scope_a
+                .prefix_is_empty("exports", "")
+                .await
+                .expect("验证 scope A 为空")
+        );
+        assert!(
+            scope_b
+                .exists("exports", "jobs/b.xlsx")
+                .await
+                .expect("检查 scope B 对象")
+        );
+        scope_b
+            .verify_ownership_marker("exports")
+            .await
+            .expect("scope B 所有权标记必须保留");
+        scope_a
+            .ensure_bucket("exports")
+            .await
+            .expect("重建 scope A 所有权标记");
+        scope_a
+            .verify_ownership_marker("exports")
+            .await
+            .expect("scope A 所有权标记必须可重新建立");
     }
 }

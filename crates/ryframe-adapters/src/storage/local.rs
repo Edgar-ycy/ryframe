@@ -1,4 +1,5 @@
 use std::{
+    collections::BinaryHeap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -8,8 +9,8 @@ use async_trait::async_trait;
 use tokio::io::AsyncWriteExt;
 
 use super::{
-    ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
-    trace_storage_operation, validate_bucket,
+    ObjectListPage, ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
+    trace_storage_operation, validate_bucket, validate_list_request,
 };
 use cleanup::{ActiveStagingFile, ActiveStagingRegistry, CleanupSchedule};
 
@@ -418,6 +419,157 @@ impl LocalObjectStorage {
         let publish_path = self.validate_publish_path(bucket_root, segments).await?;
         staging.persist(&publish_path)
     }
+
+    async fn resolve_prefix_directory(
+        &self,
+        bucket: &str,
+        prefix: &str,
+    ) -> StorageResult<Option<PathBuf>> {
+        let bucket_root = match self.canonical_bucket_directory(bucket, false).await {
+            Ok(path) => path,
+            Err(StorageError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        let prefix_key = prefix
+            .strip_suffix('/')
+            .expect("调用前已经校验目录型对象前缀");
+        let segments = local_key_segments(prefix_key)?;
+        let mut current = bucket_root.clone();
+        for segment in segments {
+            let candidate = current.join(segment);
+            let metadata = match tokio::fs::symlink_metadata(&candidate).await {
+                Ok(metadata) => metadata,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(source) => {
+                    return Err(StorageError::Io {
+                        operation: "inspect local object prefix",
+                        source,
+                    });
+                }
+            };
+            if is_link_or_reparse(&metadata) {
+                return Err(StorageError::InvalidLocation(
+                    "local object prefix traverses a link or reparse point".to_owned(),
+                ));
+            }
+            if !metadata.is_dir() {
+                return Ok(None);
+            }
+            let resolved = tokio::fs::canonicalize(&candidate)
+                .await
+                .map_err(|source| StorageError::Io {
+                    operation: "resolve local object prefix",
+                    source,
+                })?;
+            if !resolved.starts_with(&bucket_root) {
+                return Err(StorageError::InvalidLocation(
+                    "local object prefix escapes its bucket root".to_owned(),
+                ));
+            }
+            current = resolved;
+        }
+        Ok(Some(current))
+    }
+
+    async fn collect_page_candidates(
+        &self,
+        prefix_root: PathBuf,
+        prefix: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> StorageResult<ObjectListPage> {
+        if let Some(cursor) = cursor {
+            local_key_segments(cursor)?;
+            if !cursor.starts_with(prefix) {
+                return Err(StorageError::InvalidLocation(
+                    "local object list cursor does not belong to the requested prefix".to_owned(),
+                ));
+            }
+        }
+
+        // 扫描过程中只保留当前游标之后最小的 limit + 1 个键。目录数量可能随存储内容
+        // 增长，但结果内存始终受调用方页大小和对象键长度上限约束。
+        let allowed_root = prefix_root.clone();
+        let mut directories = vec![(prefix_root, prefix.to_owned())];
+        let mut candidates = BinaryHeap::with_capacity(limit + 1);
+        while let Some((directory, logical_prefix)) = directories.pop() {
+            let mut entries =
+                tokio::fs::read_dir(&directory)
+                    .await
+                    .map_err(|source| StorageError::Io {
+                        operation: "list local object directory",
+                        source,
+                    })?;
+            while let Some(entry) =
+                entries
+                    .next_entry()
+                    .await
+                    .map_err(|source| StorageError::Io {
+                        operation: "read local object directory entry",
+                        source,
+                    })?
+            {
+                let name = entry.file_name().into_string().map_err(|_| {
+                    StorageError::InvalidLocation(
+                        "local object path contains a non-Unicode segment".to_owned(),
+                    )
+                })?;
+                if name == STAGING_DIRECTORY_NAME {
+                    continue;
+                }
+                let key = format!("{logical_prefix}{name}");
+                local_key_segments(&key)?;
+                let metadata =
+                    tokio::fs::symlink_metadata(entry.path())
+                        .await
+                        .map_err(|source| StorageError::Io {
+                            operation: "inspect listed local object",
+                            source,
+                        })?;
+                if is_link_or_reparse(&metadata) {
+                    return Err(StorageError::InvalidLocation(
+                        "listed local object traverses a link or reparse point".to_owned(),
+                    ));
+                }
+                if metadata.is_dir() {
+                    let resolved =
+                        tokio::fs::canonicalize(entry.path())
+                            .await
+                            .map_err(|source| StorageError::Io {
+                                operation: "resolve listed local object directory",
+                                source,
+                            })?;
+                    if !resolved.starts_with(&allowed_root) {
+                        return Err(StorageError::InvalidLocation(
+                            "listed local object directory escapes its prefix root".to_owned(),
+                        ));
+                    }
+                    directories.push((resolved, format!("{key}/")));
+                    continue;
+                }
+                if !metadata.is_file() || cursor.is_some_and(|cursor| key.as_str() <= cursor) {
+                    continue;
+                }
+                candidates.push(key);
+                if candidates.len() > limit + 1 {
+                    candidates.pop();
+                }
+            }
+        }
+
+        let mut keys = candidates.into_sorted_vec();
+        let has_more = keys.len() > limit;
+        if has_more {
+            keys.truncate(limit);
+        }
+        let next_cursor =
+            has_more.then(|| keys.last().expect("存在下一页时当前页必定包含对象").clone());
+        Ok(ObjectListPage { keys, next_cursor })
+    }
 }
 
 #[async_trait]
@@ -576,6 +728,27 @@ impl ObjectStorage for LocalObjectStorage {
         .await
     }
 
+    async fn list_page(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> StorageResult<ObjectListPage> {
+        trace_storage_operation("local", StorageOperation::List, async {
+            validate_list_request(bucket, prefix, cursor, limit)?;
+            let Some(prefix_root) = self.resolve_prefix_directory(bucket, prefix).await? else {
+                return Ok(ObjectListPage {
+                    keys: Vec::new(),
+                    next_cursor: None,
+                });
+            };
+            self.collect_page_candidates(prefix_root, prefix, cursor, limit)
+                .await
+        })
+        .await
+    }
+
     async fn ensure_bucket(&self, bucket: &str) -> StorageResult<()> {
         trace_storage_operation("local", StorageOperation::EnsureBucket, async {
             self.canonical_bucket_directory(bucket, true).await?;
@@ -602,7 +775,7 @@ impl ObjectStorage for LocalObjectStorage {
 #[cfg(test)]
 mod tests {
     use super::LocalObjectStorage;
-    use crate::storage::ObjectStorage;
+    use crate::storage::{MAX_OBJECT_LIST_PAGE_SIZE, ObjectStorage};
 
     #[tokio::test]
     async fn put_file_streams_through_private_staging() {
@@ -630,5 +803,95 @@ mod tests {
             .await
             .expect("读取上传结果");
         assert_eq!(stored, content);
+    }
+
+    #[tokio::test]
+    async fn exact_prefix_listing_is_paginated_and_bounded() {
+        let directory = tempfile::tempdir().expect("创建测试目录");
+        let storage = LocalObjectStorage::new(directory.path().join("objects"));
+        for key in [
+            "scope/a.txt",
+            "scope/b.txt",
+            "scope/nested/c.txt",
+            "scope-other/outside.txt",
+        ] {
+            storage
+                .put("exports", key, key.as_bytes(), "text/plain")
+                .await
+                .expect("写入测试对象");
+        }
+
+        let first = storage
+            .list_page("exports", "scope/", None, 2)
+            .await
+            .expect("列举第一页");
+        assert_eq!(first.keys, ["scope/a.txt", "scope/b.txt"]);
+        let second = storage
+            .list_page("exports", "scope/", first.next_cursor.as_deref(), 2)
+            .await
+            .expect("列举第二页");
+        assert_eq!(second.keys, ["scope/nested/c.txt"]);
+        assert!(second.next_cursor.is_none());
+
+        assert!(
+            storage
+                .list_page("exports", "scope", None, 1)
+                .await
+                .is_err()
+        );
+        assert!(storage.list_page("exports", "", None, 1).await.is_err());
+        assert!(
+            storage
+                .list_page("exports", "scope/", None, 0)
+                .await
+                .is_err()
+        );
+        assert!(
+            storage
+                .list_page("exports", "scope/", None, MAX_OBJECT_LIST_PAGE_SIZE + 1,)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn prefix_cleanup_never_deletes_a_neighboring_prefix() {
+        let directory = tempfile::tempdir().expect("创建测试目录");
+        let storage = LocalObjectStorage::new(directory.path().join("objects"));
+        for key in ["scope/a.txt", "scope/b.txt", "scope/c.txt"] {
+            storage
+                .put("exports", key, b"inside", "text/plain")
+                .await
+                .expect("写入前缀内对象");
+        }
+        storage
+            .put("exports", "scope-other/keep.txt", b"outside", "text/plain")
+            .await
+            .expect("写入相邻前缀对象");
+
+        let first = storage
+            .delete_prefix_batch("exports", "scope/", 2)
+            .await
+            .expect("清理第一批");
+        assert_eq!(first.deleted_count, 2);
+        assert!(first.may_have_more);
+        let second = storage
+            .delete_prefix_batch("exports", "scope/", 2)
+            .await
+            .expect("清理第二批");
+        assert_eq!(second.deleted_count, 1);
+        assert!(!second.may_have_more);
+        assert!(
+            storage
+                .prefix_is_empty("exports", "scope/")
+                .await
+                .expect("验证前缀为空")
+        );
+        assert!(
+            storage
+                .exists("exports", "scope-other/keep.txt")
+                .await
+                .expect("检查相邻前缀对象")
+        );
     }
 }
