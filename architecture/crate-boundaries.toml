@@ -33,15 +33,14 @@ path = "crates/ryframe-db-migration/src/schema.rs"
 max_lines = 1188
 reason = "控制库 schema 校验待随迁移能力并入 ryframe-db 后拆分"
 
-# 当前 21 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+# 当前 20 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
-expected_package_count = 21
+expected_package_count = 20
 run_tenant_data_legacy_checks = true
 packages = [
     "ryframe",
     "ryframe-api",
     "ryframe-auth",
-    "ryframe-captcha",
     "ryframe-config",
     "ryframe-adapters",
     "ryframe-db",
@@ -64,7 +63,6 @@ product_packages = [
     "ryframe",
     "ryframe-api",
     "ryframe-auth",
-    "ryframe-captcha",
     "ryframe-config",
     "ryframe-adapters",
     "ryframe-db",
@@ -98,7 +96,6 @@ allowed_internal_edges = [
     "ryframe -> ryframe-tenant-db-migration",
     "ryframe -> ryframe-utils",
     "ryframe-api -> ryframe-auth",
-    "ryframe-api -> ryframe-captcha",
     "ryframe-api -> ryframe-config",
     "ryframe-api -> ryframe-adapters",
     "ryframe-api -> ryframe-excel",
@@ -114,7 +111,6 @@ allowed_internal_edges = [
     "ryframe-auth -> ryframe-adapters",
     "ryframe-auth -> ryframe-http",
     "ryframe-auth -> ryframe-kernel",
-    "ryframe-captcha -> ryframe-kernel",
     "ryframe-config -> ryframe-kernel",
     "ryframe-config -> ryframe-utils",
     "ryframe-adapters -> ryframe-config",

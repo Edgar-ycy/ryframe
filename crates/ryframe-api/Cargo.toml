@@ -15,7 +15,6 @@ runtime-swagger-ui = ["dep:utoipa-swagger-ui"]
 ryframe-http = { path = "../ryframe-http", features = ["openapi"] }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
-ryframe-captcha = { path = "../ryframe-captcha" }
 ryframe-excel = { path = "../ryframe-excel" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }
@@ -37,6 +36,8 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v7"] }
 base64 = { workspace = true }
+rand = { workspace = true }
+image = { workspace = true }
 regex = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true, optional = true }

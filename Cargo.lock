@@ -3232,12 +3232,13 @@ dependencies = [
  "dashmap",
  "futures-util",
  "hex",
+ "image",
  "percent-encoding",
+ "rand 0.10.1",
  "regex",
  "ryframe-adapters",
  "ryframe-application",
  "ryframe-auth",
- "ryframe-captcha",
  "ryframe-config",
  "ryframe-excel",
  "ryframe-http",
@@ -3316,15 +3317,6 @@ dependencies = [
  "serde",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "ryframe-captcha"
-version = "0.10.0"
-dependencies = [
- "image",
- "rand 0.10.1",
- "ryframe-kernel",
 ]
 
 [[package]]

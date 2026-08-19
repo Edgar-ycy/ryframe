@@ -7,7 +7,6 @@ use axum::{
     response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ryframe_captcha::{CaptchaType, generate_captcha};
 use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
@@ -16,7 +15,11 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::{handler_utils::tenant_id_from_headers, state::AppState};
+use crate::{
+    captcha::{CaptchaType, generate_captcha},
+    handler_utils::tenant_id_from_headers,
+    state::AppState,
+};
 
 /// 验证码生成查询参数
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq, ToSchema)]
