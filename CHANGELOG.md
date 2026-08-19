@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-08-19
+
 ### Added
 
 - 新增产品套餐、不可变发布版本、编译期 Capability Catalog、租户完整覆盖和运行时纪元；平台可预览并原子应用套餐变更，首个受控能力为 `system.service_accounts`。

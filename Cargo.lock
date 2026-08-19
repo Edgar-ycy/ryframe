@@ -3171,7 +3171,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "ryframe"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "chrono",
@@ -3203,7 +3203,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-api"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -3243,7 +3243,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-auth"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-captcha"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "image",
  "rand 0.10.1",
@@ -3272,7 +3272,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-config"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.23.1",
  "percent-encoding",
@@ -3285,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3304,7 +3304,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-db"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3327,7 +3327,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-db-migration"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "ryframe-utils",
@@ -3337,7 +3337,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-excel"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "calamine",
  "rust_xlsxwriter",
@@ -3348,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-generator"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ryframe-kernel",
  "ryframe-tenant-db-migration",
@@ -3359,7 +3359,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-http"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "http",
@@ -3373,7 +3373,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-i18n"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -3382,7 +3382,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-kernel"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "validator",
@@ -3390,7 +3390,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-macro"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3400,7 +3400,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-middleware"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "dashmap",
@@ -3433,7 +3433,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-monitor"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "chrono",
@@ -3453,7 +3453,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-service"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3492,7 +3492,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-storage"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3510,7 +3510,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-tenant-db"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ryframe-config",
  "ryframe-core",
@@ -3524,7 +3524,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-tenant-db-migration"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "hex",
@@ -3535,7 +3535,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-utils"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "chrono",
@@ -5265,7 +5265,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "libc",
  "serde_json",

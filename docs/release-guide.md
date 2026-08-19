@@ -6,10 +6,10 @@ RyFrame 后端与 `ryframe-vue3` 位于独立仓库，仅使用同名稳定版 S
 
 ## 1. 创建稳定版 tag
 
-只接受 `vMAJOR.MINOR.PATCH` 格式的 annotated tag，例如当前路线的 `v0.7.0`；不接受 RC、beta、nightly 或 lightweight tag。tag annotation 必须与该仓库 `CHANGELOG.md` 中对应版本的完整章节完全一致。前端和后端分别执行以下命令，仅替换 `release_tag`；如需 GPG 签名，可将 `-a` 改为 `-s`，但必须保留 `--cleanup=verbatim` 和 `-F`：
+只接受 `vMAJOR.MINOR.PATCH` 格式的 annotated tag，例如 `v0.10.0`；不接受 RC、beta、nightly 或 lightweight tag。tag annotation 必须与该仓库 `CHANGELOG.md` 中对应版本的完整章节完全一致。前端和后端分别执行以下命令，仅替换 `release_tag`；如需 GPG 签名，可将 `-a` 改为 `-s`，但必须保留 `--cleanup=verbatim` 和 `-F`：
 
 ```bash
-release_tag=v0.7.0
+release_tag=v0.10.0
 notes_file="$(mktemp)"
 trap 'rm -f "$notes_file"' EXIT
 
