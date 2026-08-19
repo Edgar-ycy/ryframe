@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
+use ryframe_adapters::monitor::ServerInfo;
 use ryframe_application::system as service;
-use ryframe_monitor::ServerInfo;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -45,8 +45,8 @@ pub struct MonitorOverviewSystemVo {
 impl From<ServerInfo> for MonitorOverviewSystemVo {
     fn from(value: ServerInfo) -> Self {
         Self {
-            os: value.os,
-            hostname: value.hostname,
+            os: value.os.to_string(),
+            hostname: value.hostname.to_string(),
             cpu_cores: value.cpu_cores,
             cpu_usage: value.cpu_usage,
             total_memory_gb: value.total_memory,

@@ -28,10 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parent()
         .and_then(Path::parent)
         .ok_or("ryframe-api must be located under the workspace crates directory")?;
-    let source_roots = [
-        manifest_dir.join("src"),
-        workspace_root.join("crates/ryframe-monitor/src"),
-    ];
+    let source_roots = [manifest_dir.join("src")];
 
     let mut source_files = Vec::new();
     for root in &source_roots {

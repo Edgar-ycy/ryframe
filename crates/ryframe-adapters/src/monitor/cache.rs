@@ -10,12 +10,10 @@ use std::{
     str::FromStr,
 };
 
-use ryframe_adapters::RedisClient;
-use serde::Serialize;
-use utoipa::ToSchema;
+use crate::RedisClient;
 
 /// 缓存信息响应
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct CacheInfo {
     /// Redis 是否可用
     pub available: bool,
@@ -30,7 +28,7 @@ pub struct CacheInfo {
 }
 
 /// Redis 服务器基本信息
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct RedisServerInfo {
     /// Redis 版本
     pub version: String,
@@ -45,7 +43,7 @@ pub struct RedisServerInfo {
 }
 
 /// 缓存键统计
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct CacheKeysInfo {
     /// 当前数据库键总数
     pub total_keys: u64,
@@ -75,7 +73,7 @@ impl CacheKeysInfo {
 }
 
 /// Redis 内存信息
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct RedisMemoryInfo {
     /// 已用内存（人类可读）
     pub used_memory_human: String,
@@ -92,8 +90,7 @@ pub struct RedisMemoryInfo {
 /// `not_configured` 表示当前实例没有启用 Redis；`unavailable` 表示 Redis
 /// 已配置但连接或查询失败。两种情况下均返回空的 `commands`，避免让调用方
 /// 将错误文本误当作命令名称渲染。
-#[derive(Debug, Clone, Copy, Serialize, ToSchema, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum CacheCommandStatsStatus {
     Available,
     NotConfigured,
@@ -101,7 +98,7 @@ pub enum CacheCommandStatsStatus {
 }
 
 /// Redis 命令统计响应。
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug)]
 pub struct CacheCommandStats {
     pub status: CacheCommandStatsStatus,
     pub commands: BTreeMap<String, String>,
@@ -144,8 +141,8 @@ fn parse_info_map(info: &str) -> HashMap<String, String> {
     map
 }
 
-fn info_string(map: &HashMap<String, String>, key: &str, default: &str) -> String {
-    map.get(key).cloned().unwrap_or_else(|| default.to_string())
+fn take_info_string(map: &mut HashMap<String, String>, key: &str, default: &str) -> String {
+    map.remove(key).unwrap_or_else(|| default.to_owned())
 }
 
 fn info_parse<T>(map: &HashMap<String, String>, key: &str, default: T) -> T
@@ -191,21 +188,21 @@ async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
         }
     };
 
-    let info_map = parse_info_map(&info);
+    let mut info_map = parse_info_map(&info);
 
     // 解析服务器信息
     let server = RedisServerInfo {
-        version: info_string(&info_map, "redis_version", "unknown"),
-        mode: info_string(&info_map, "redis_mode", "standalone"),
-        os: info_string(&info_map, "os", "unknown"),
+        version: take_info_string(&mut info_map, "redis_version", "unknown"),
+        mode: take_info_string(&mut info_map, "redis_mode", "standalone"),
+        os: take_info_string(&mut info_map, "os", "unknown"),
         uptime_days: info_parse(&info_map, "uptime_in_days", 0),
         connected_clients: info_parse(&info_map, "connected_clients", 0),
     };
 
     // 解析内存信息
     let memory = RedisMemoryInfo {
-        used_memory_human: info_string(&info_map, "used_memory_human", "0B"),
-        used_memory_peak_human: info_string(&info_map, "used_memory_peak_human", "0B"),
+        used_memory_human: take_info_string(&mut info_map, "used_memory_human", "0B"),
+        used_memory_peak_human: take_info_string(&mut info_map, "used_memory_peak_human", "0B"),
         mem_fragmentation_ratio: info_parse(&info_map, "mem_fragmentation_ratio", 0.0),
         used_memory: info_parse(&info_map, "used_memory", 0),
     };
@@ -289,4 +286,46 @@ fn parse_command_stats(info: &str) -> BTreeMap<String, String> {
         }
     }
     stats
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CacheCommandStatsStatus, parse_command_stats, parse_info_map};
+
+    #[test]
+    fn redis_info_parser_ignores_headers_and_blank_lines() {
+        let parsed =
+            parse_info_map("# Server\r\nredis_version:7.4.0\r\n\r\nredis_mode:standalone\r\n");
+
+        assert_eq!(
+            parsed.get("redis_version").map(String::as_str),
+            Some("7.4.0")
+        );
+        assert_eq!(
+            parsed.get("redis_mode").map(String::as_str),
+            Some("standalone")
+        );
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn command_stats_parser_keeps_only_command_entries() {
+        let parsed = parse_command_stats(
+            "# Commandstats\r\ncmdstat_get:calls=3,usec=5\r\nignored:value\r\n",
+        );
+
+        assert_eq!(
+            parsed.get("get").map(String::as_str),
+            Some("calls=3,usec=5")
+        );
+        assert_eq!(parsed.len(), 1);
+    }
+
+    #[test]
+    fn unavailable_status_remains_distinct_from_not_configured() {
+        assert_ne!(
+            CacheCommandStatsStatus::Unavailable,
+            CacheCommandStatsStatus::NotConfigured
+        );
+    }
 }

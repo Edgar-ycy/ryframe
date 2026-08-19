@@ -1,19 +1,17 @@
-use std::{thread, time::Duration};
+use std::{sync::Arc, thread, time::Duration};
 
 use ryframe_kernel::{AppError, AppResult};
-use serde::Serialize;
 use sysinfo::System;
 use tokio::sync::watch;
-use utoipa::ToSchema;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug)]
 pub struct ServerInfo {
     /// 操作系统。
-    pub os: String,
+    pub os: Arc<str>,
     /// 主机名。
-    pub hostname: String,
+    pub hostname: Arc<str>,
     /// CPU 核心数。
     pub cpu_cores: usize,
     /// CPU 使用率（百分比）。
@@ -60,8 +58,8 @@ impl ServerInfoSampler {
 
 struct ServerInfoCollector {
     system: System,
-    os: String,
-    hostname: String,
+    os: Arc<str>,
+    hostname: Arc<str>,
     cpu_cores: usize,
     pid: u32,
 }
@@ -75,8 +73,8 @@ impl ServerInfoCollector {
         Self {
             cpu_cores: system.cpus().len(),
             system,
-            os: std::env::consts::OS.to_owned(),
-            hostname: System::host_name().unwrap_or_default(),
+            os: Arc::from(std::env::consts::OS),
+            hostname: Arc::from(System::host_name().unwrap_or_default()),
             pid: std::process::id(),
         }
     }
@@ -95,8 +93,8 @@ impl ServerInfoCollector {
             0.0
         };
         ServerInfo {
-            os: self.os.clone(),
-            hostname: self.hostname.clone(),
+            os: Arc::clone(&self.os),
+            hostname: Arc::clone(&self.hostname),
             cpu_cores: self.cpu_cores,
             cpu_usage: round_percent(f64::from(self.system.global_cpu_usage())),
             total_memory: round_two_decimals(total_memory),

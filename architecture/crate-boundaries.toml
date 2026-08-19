@@ -18,9 +18,9 @@ path = "crates/ryframe-db/src/migration/schema.rs"
 max_lines = 1188
 reason = "控制库 schema 校验待随迁移能力并入 ryframe-db 后拆分"
 
-# 当前 18 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+# 当前 17 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
-expected_package_count = 18
+expected_package_count = 17
 run_tenant_data_legacy_checks = true
 packages = [
     "ryframe",
@@ -35,7 +35,6 @@ packages = [
     "ryframe-kernel",
     "ryframe-macro",
     "ryframe-middleware",
-    "ryframe-monitor",
     "ryframe-application",
     "ryframe-storage",
     "ryframe-tenant-db",
@@ -54,7 +53,6 @@ product_packages = [
     "ryframe-kernel",
     "ryframe-macro",
     "ryframe-middleware",
-    "ryframe-monitor",
     "ryframe-application",
     "ryframe-storage",
     "ryframe-tenant-db",
@@ -69,7 +67,6 @@ allowed_internal_edges = [
     "ryframe -> ryframe-db",
     "ryframe -> ryframe-kernel",
     "ryframe -> ryframe-middleware",
-    "ryframe -> ryframe-monitor",
     "ryframe -> ryframe-application",
     "ryframe -> ryframe-storage",
     "ryframe -> ryframe-tenant-db",
@@ -82,7 +79,6 @@ allowed_internal_edges = [
     "ryframe-api -> ryframe-kernel",
     "ryframe-api -> ryframe-macro",
     "ryframe-api -> ryframe-middleware",
-    "ryframe-api -> ryframe-monitor",
     "ryframe-api -> ryframe-application",
     "ryframe-api -> ryframe-tenant-db",
     "ryframe-api -> ryframe-utils",
@@ -110,12 +106,6 @@ allowed_internal_edges = [
     "ryframe-middleware -> ryframe-http",
     "ryframe-middleware -> ryframe-kernel",
     "ryframe-middleware -> ryframe-utils",
-    "ryframe-monitor -> ryframe-auth",
-    "ryframe-monitor -> ryframe-adapters",
-    "ryframe-monitor -> ryframe-http",
-    "ryframe-monitor -> ryframe-kernel",
-    "ryframe-monitor -> ryframe-macro",
-    "ryframe-monitor -> ryframe-middleware",
     "ryframe-application -> ryframe-auth",
     "ryframe-application -> ryframe-config",
     "ryframe-application -> ryframe-adapters",

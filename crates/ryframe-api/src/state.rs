@@ -16,11 +16,10 @@ use ryframe_application::{
 use ryframe_config::AppConfig;
 use ryframe_kernel::Localizer;
 use ryframe_middleware::RateLimiter;
-use ryframe_monitor::MonitorState;
 use ryframe_tenant_db::TenantDatabaseRouter;
 use ryframe_utils::ip::TrustedProxySet;
 
-use crate::{auth_middleware::AuthState, runtime::RuntimeComponents};
+use crate::{auth_middleware::AuthState, monitor::MonitorState, runtime::RuntimeComponents};
 
 #[derive(Clone)]
 pub struct AppServices {

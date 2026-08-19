@@ -130,7 +130,8 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 .
 ├── crates/
 │   ├── ryframe/              # 应用、迁移与独立 Worker 的可执行入口
-│   ├── ryframe-api/          # HTTP 路由、处理器、DTO、OpenAPI 与消息 WebSocket
+│   ├── ryframe-api/          # HTTP 路由、监控端点、DTO、OpenAPI 与消息 WebSocket
+│   ├── ryframe-adapters/     # Redis、系统采样、就绪状态与非 SQL 出站实现
 │   ├── ryframe-service/      # 业务用例、后台任务与消息中心
 │   ├── ryframe-db/           # SeaORM 实体、仓储、事务、数据库拓扑和控制库迁移
 │   ├── ryframe-auth/         # 认证、授权、权限中间件
@@ -143,7 +144,6 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 │   ├── ryframe-core/         # 分页、缓存、租户上下文、分布式锁与熔断
 │   ├── ryframe-config/       # 配置加载与环境覆盖
 │   ├── ryframe-middleware/   # 通用中间件
-│   ├── ryframe-monitor/      # 监控与健康检查
 │   ├── ryframe-generator/    # 默认预览的离线代码生成 CLI
 │   ├── ryframe-storage/      # 本地与 RustFS/MinIO/S3 对象存储端口及实现
 │   └── ryframe-macro/        # 过程宏

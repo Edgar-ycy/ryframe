@@ -3186,7 +3186,6 @@ dependencies = [
  "ryframe-db",
  "ryframe-kernel",
  "ryframe-middleware",
- "ryframe-monitor",
  "ryframe-storage",
  "ryframe-tenant-db",
  "ryframe-utils",
@@ -3212,6 +3211,7 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
+ "sysinfo",
  "thiserror 2.0.18",
  "tokio",
  "toml",
@@ -3243,7 +3243,6 @@ dependencies = [
  "ryframe-kernel",
  "ryframe-macro",
  "ryframe-middleware",
- "ryframe-monitor",
  "ryframe-tenant-db",
  "ryframe-utils",
  "serde",
@@ -3433,26 +3432,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "ryframe-monitor"
-version = "0.10.0"
-dependencies = [
- "axum",
- "chrono",
- "redis",
- "ryframe-adapters",
- "ryframe-auth",
- "ryframe-http",
- "ryframe-kernel",
- "ryframe-macro",
- "ryframe-middleware",
- "serde",
- "sysinfo",
- "tokio",
- "tracing",
- "utoipa",
 ]
 
 [[package]]

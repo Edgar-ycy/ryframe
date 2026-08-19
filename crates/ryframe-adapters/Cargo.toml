@@ -17,6 +17,7 @@ async-trait = {workspace = true}
 sea-orm = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 redis = { workspace = true }
+sysinfo = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "fs"] }
 tracing = { workspace = true }
 dashmap = { workspace = true }

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HANDLERS = ROOT / "crates" / "ryframe-api" / "src" / "handlers"
 EXTRA_PROTECTED_FILES = [
     ROOT / "crates" / "ryframe-api" / "src" / "router.rs",
-    ROOT / "crates" / "ryframe-monitor" / "src" / "lib.rs",
+    ROOT / "crates" / "ryframe-api" / "src" / "monitor.rs",
 ]
 
 PRODUCT_SOURCE_ROOTS = [

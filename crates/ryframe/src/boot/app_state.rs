@@ -19,7 +19,7 @@ pub struct AppStateAssembly {
     pub token_blacklist: TokenBlacklist,
     pub services: AppServices,
     pub limiter: Arc<RateLimiter>,
-    pub server_info: ryframe_monitor::ServerInfoSampler,
+    pub server_info: ryframe_adapters::monitor::ServerInfoSampler,
 }
 
 /// 将所有已初始化的组件聚合为 AppState。
@@ -45,14 +45,14 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         refresh_sessions: services.auth.refresh_sessions(),
         principal_resolver,
     };
-    let monitor = ryframe_monitor::MonitorState {
+    let monitor = ryframe_api::monitor::MonitorState {
         database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
         redis: redis_client.clone(),
         redis_configured: config
             .redis
             .as_ref()
             .is_some_and(|redis| redis.mode != RedisMode::Disabled),
-        readiness: ryframe_monitor::DependencyHealthCache::new(
+        readiness: ryframe_adapters::monitor::DependencyHealthCache::new(
             config
                 .redis
                 .as_ref()

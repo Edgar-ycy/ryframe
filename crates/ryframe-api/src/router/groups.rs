@@ -2,10 +2,10 @@ use super::*;
 
 pub(super) fn monitor_router(
     state: AppState,
-    monitor_state: ryframe_monitor::MonitorState,
+    monitor_state: crate::monitor::MonitorState,
 ) -> Router {
-    let public = ryframe_monitor::public_monitor_router(monitor_state.clone());
-    let mut protected = ryframe_monitor::protected_monitor_router(monitor_state)
+    let public = crate::monitor::public_router(monitor_state.clone());
+    let mut protected = crate::monitor::protected_router(monitor_state)
         .merge(route!(runtime_status).with_state(state.clone()))
         .merge(overview_handler::overview_router(state.clone()))
         .merge(job_handler::job_router(state.clone()))

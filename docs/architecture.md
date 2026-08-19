@@ -35,13 +35,13 @@ GET /api/v1/api-docs/openapi.json
 | Crate | 当前职责 |
 | --- | --- |
 | `ryframe` | API、`ryframe-worker`、`ryframe-migrate` 可执行入口，负责配置加载、依赖装配和服务启动 |
-| `ryframe-api` | Router、Handler、传输 DTO、OpenAPI、请求语言与消息 WebSocket 组合策略 |
+| `ryframe-api` | HTTP、OpenAPI、DTO、路由、提取器、监控端点与消息 WebSocket 组合策略 |
 | `ryframe-service` | 应用用例、业务规则、输出模型和 Repository 编排 |
 | `ryframe-db` | 控制库 SeaORM Entity、Repository、数据范围查询、主库/副本、命名数据源拓扑和可重复执行迁移 |
 | `ryframe-tenant-db` | 租户业务数据目标注册、连接预算、放置解析、fence、`TenantDataSession`、独立迁移账本、Schema 指纹与 `TenantDataCatalog` |
 | `ryframe-auth` | JWT、密码、认证中间件、`RequestPrincipal` 和主体解析端口 |
 | `ryframe-middleware` | CORS、限流、请求 ID、遥测等横切 HTTP 能力 |
-| `ryframe-monitor` | 健康、指标、缓存、数据库监控端口和运行时状态 |
+| `ryframe-adapters` | Redis、缓存监控、系统采样、就绪快照等非 SQL 出站实现 |
 | `ryframe-generator` | Entity、Repository、Service、Handler、DTO 代码生成 |
 | `ryframe-storage` | `ObjectStorage` 端口、本地/RustFS/MinIO/S3 后端、路径校验和 SigV4 签名 |
 | `ryframe-config` | 类型化配置、环境变量覆盖和生产 secret 来源校验 |
@@ -146,7 +146,7 @@ Redis 模式为 Family 维护租户索引和租户用户索引。注册、轮换
 - 数据库内部 ID 使用 `i64`；HTTP DTO/输出统一使用字符串，避免 JavaScript 64 位整数精度丢失。
 - `AppState` 不暴露数据库连接；`ryframe-api` 的生产依赖不包含 `ryframe-db` 或 `sea_orm`。
 - Handler 不允许导入数据库实现，操作日志等 HTTP 横切能力通过 Service 写入。
-- `ryframe-auth` 和 `ryframe-monitor` 只接收注入端口，不允许依赖 `ryframe-db`、SeaORM 或裸数据库连接。
+- `ryframe-auth` 只接收注入端口；监控 HTTP 能力位于 `ryframe-api`，非 HTTP 采样与缓存查询位于 `ryframe-adapters`。
 - `ControlDatabaseCluster`、`TenantDatabaseRouter` 和对象存储在组合根注入 Service；系统 Service 只能依赖控制库，业务 Service 只能通过租户数据路由器进入数据面。
 - `ryframe-storage` 拥有对象存储端口与具体后端；`ryframe-db` 不生成公开 URL，也不依赖存储实现。
 - Repository 字段不允许从 Service 公开，事务边界由 Service 用例拥有。
@@ -248,7 +248,7 @@ Agent 限流依赖 Redis 7 standalone 的原子乐观事务。预认证 IP 桶�
 30. 角色权限和数据范围改为 `/{id}/permissions`、`/{id}/data-scope` 子资源；数据范围字段与部门关系在同一事务中替换并覆盖回滚场景。
 31. 用户资料、角色和状态写入职责已分离为资源根、`/{id}/roles` 和 `/{id}/status`；创建用户可在同一事务内写入角色，Repository 的角色整体替换也统一为原子操作。
 32. 权限类型改为后端枚举和前端联合类型；角色、菜单、权限和用户页面已拆出领域 composable、表单对话框与纯转换函数，确认取消不再吞掉真实请求错误。
-33. `ryframe-auth` 通过 `PrincipalResolver` 委托 `AuthService` 解析租户、用户、角色、权限和数据范围；`ryframe-monitor` 通过 `DatabaseMonitor` 使用 `ryframe-db` 的 SeaORM 适配器。两个横切 crate 已移除 `ryframe-db`、SeaORM 和裸数据库连接依赖，边界由 crate 依赖声明、模块可见性与编译检查共同维护。
+33. `ryframe-auth` 通过 `PrincipalResolver` 委托 `AuthService` 解析租户、用户、角色、权限和数据范围；`ryframe-api` 通过 `DatabaseMonitor` 使用组合根注入的数据库监控实现，非 HTTP 监控实现集中在 `ryframe-adapters`。
 34. `AuthService` 已拆为会话签发、身份与授权装载、主体解析和暴力破解防护模块；登录、刷新、当前用户和请求主体共享身份/授权规则。请求授权每次从 MySQL 解析，不使用 Redis 权限缓存，避免缓存删除失败形成旧权限窗口。
 35. 路由权限目录由 `ryframe-api/build.rs` 在编译期使用 `syn` 解析并嵌入二进制，覆盖 API 与监控路由；权限 Service 只同步显式传入的目录，不再依赖源码路径或部署环境中的 Rust 文件。
 36. Redis 模式匹配统一使用游标 `SCAN` 和批量删除，不暴露阻塞式 `KEYS`；一次性数据通过原生命令原子取删，缓存写失败必须记录上下文。

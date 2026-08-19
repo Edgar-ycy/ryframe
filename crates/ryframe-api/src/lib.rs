@@ -16,6 +16,7 @@ pub mod handlers;
 pub mod macros;
 pub mod message_presenter;
 pub mod message_socket;
+pub mod monitor;
 pub mod openapi;
 pub mod oper_log_middleware;
 pub mod permission_catalog;

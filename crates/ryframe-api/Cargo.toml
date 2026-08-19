@@ -20,7 +20,6 @@ ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-adapters = { path = "../ryframe-adapters" }
-ryframe-monitor = { path = "../ryframe-monitor" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-macro = { path = "../ryframe-macro" }

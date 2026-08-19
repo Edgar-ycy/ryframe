@@ -93,7 +93,7 @@ async fn main() -> Result<(), AppError> {
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let (server_info, mut server_info_sampler) =
-        ryframe_monitor::ServerInfoSampler::spawn(shutdown_receiver.clone()).await?;
+        ryframe_adapters::monitor::ServerInfoSampler::spawn(shutdown_receiver.clone()).await?;
     let state = boot::app_state::assemble(boot::app_state::AppStateAssembly {
         database,
         config: config_arc,

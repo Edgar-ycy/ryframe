@@ -1,8 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
-use ryframe_adapters::{DatabaseMonitor, RedisClient};
+use ryframe_adapters::{
+    DatabaseMonitor, RedisClient,
+    monitor::{DependencyHealthCache, DependencyStatus},
+};
 use ryframe_application::system::FileService;
-use ryframe_monitor::{DependencyHealthCache, DependencyStatus};
 use tokio::{sync::watch, task::JoinHandle};
 
 pub const PROBE_INTERVAL: Duration = Duration::from_secs(5);

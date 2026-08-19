@@ -12,7 +12,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use ryframe_adapters::RedisClient;
+use ryframe_adapters::{RedisClient, monitor::DependencyHealthCache};
 use ryframe_application::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
@@ -286,7 +286,7 @@ async fn main() -> Result<(), AppError> {
 
 #[derive(Clone)]
 struct WorkerHealthState {
-    readiness: ryframe_monitor::DependencyHealthCache,
+    readiness: DependencyHealthCache,
     metrics_bearer_token: Arc<str>,
 }
 
@@ -308,11 +308,8 @@ async fn start_health_server(
         .map_err(|error| {
             AppError::Internal(format!("无法绑定 Worker 健康探针 {address}: {error}"))
         })?;
-    let readiness = ryframe_monitor::DependencyHealthCache::new(
-        redis_required,
-        false,
-        process_readiness::CACHE_MAX_AGE,
-    );
+    let readiness =
+        DependencyHealthCache::new(redis_required, false, process_readiness::CACHE_MAX_AGE);
     let readiness_task = process_readiness::spawn(
         Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
         redis,
