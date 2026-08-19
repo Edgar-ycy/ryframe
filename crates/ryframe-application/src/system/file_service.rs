@@ -693,14 +693,17 @@ impl FileService {
 fn map_storage_write_error(error: StorageError) -> AppError {
     match error {
         StorageError::InvalidLocation(_) => AppError::Validation("非法的对象存储路径".into()),
-        StorageError::Configuration(_) | StorageError::Signing(_) => {
-            AppError::Internal("对象存储配置错误".into())
-        }
+        StorageError::Configuration(_)
+        | StorageError::Signing(_)
+        | StorageError::Unsupported(_) => AppError::Internal("对象存储配置错误".into()),
         StorageError::Service { status, .. } if status == 429 || status >= 500 => {
             AppError::ServiceUnavailable("对象存储暂不可用".into())
         }
         StorageError::Service { .. } => AppError::Internal("对象存储拒绝写入请求".into()),
-        StorageError::Transport(_) | StorageError::Io { .. } | StorageError::Readiness(_) => {
+        StorageError::Transport(_)
+        | StorageError::Io { .. }
+        | StorageError::Readiness(_)
+        | StorageError::InvalidResponse(_) => {
             AppError::ServiceUnavailable("对象存储暂不可用".into())
         }
     }
@@ -713,15 +716,49 @@ fn map_storage_read_error(error: StorageError) -> AppError {
             AppError::NotFound("文件不存在".into())
         }
         StorageError::InvalidLocation(_) => AppError::Validation("非法的对象存储路径".into()),
-        StorageError::Configuration(_) | StorageError::Signing(_) => {
-            AppError::Internal("对象存储配置错误".into())
-        }
+        StorageError::Configuration(_)
+        | StorageError::Signing(_)
+        | StorageError::Unsupported(_) => AppError::Internal("对象存储配置错误".into()),
         StorageError::Service { status, .. } if status == 429 || status >= 500 => {
             AppError::ServiceUnavailable("对象存储暂不可用".into())
         }
         StorageError::Service { .. } => AppError::Internal("对象存储拒绝读取请求".into()),
-        StorageError::Transport(_) | StorageError::Io { .. } | StorageError::Readiness(_) => {
+        StorageError::Transport(_)
+        | StorageError::Io { .. }
+        | StorageError::Readiness(_)
+        | StorageError::InvalidResponse(_) => {
             AppError::ServiceUnavailable("对象存储暂不可用".into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{map_storage_read_error, map_storage_write_error};
+    use ryframe_adapters::storage::StorageError;
+    use ryframe_kernel::AppError;
+
+    #[test]
+    fn maps_unsupported_storage_operation_to_internal_error() {
+        assert!(matches!(
+            map_storage_write_error(StorageError::Unsupported("list".into())),
+            AppError::Internal(_)
+        ));
+        assert!(matches!(
+            map_storage_read_error(StorageError::Unsupported("list".into())),
+            AppError::Internal(_)
+        ));
+    }
+
+    #[test]
+    fn maps_invalid_storage_response_to_service_unavailable() {
+        assert!(matches!(
+            map_storage_write_error(StorageError::InvalidResponse("truncated".into())),
+            AppError::ServiceUnavailable(_)
+        ));
+        assert!(matches!(
+            map_storage_read_error(StorageError::InvalidResponse("truncated".into())),
+            AppError::ServiceUnavailable(_)
+        ));
     }
 }
