@@ -41,6 +41,8 @@ pub struct UserInfo {
     pub phone: String,
     pub avatar: Option<String>,
     pub preferred_locale: Option<String>,
+    /// 仅来自角色表的显式超级管理员标记，不根据角色编码或名称推断。
+    pub is_super_admin: bool,
     pub roles: Vec<String>,
     pub perms: Vec<String>,
 }
@@ -58,6 +60,7 @@ impl From<&user::Model> for UserInfo {
             phone: user.phone.clone(),
             avatar: user.avatar.clone(),
             preferred_locale: user.preferred_locale.clone(),
+            is_super_admin: false,
             roles: Vec::new(),
             perms: Vec::new(),
         }

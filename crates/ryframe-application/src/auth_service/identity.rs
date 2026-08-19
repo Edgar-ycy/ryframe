@@ -17,6 +17,7 @@ pub(super) struct ValidatedIdentity {
 pub(super) struct AuthorizationProfile {
     pub(super) roles: Vec<role::Model>,
     pub(super) permissions: Vec<String>,
+    pub(super) is_super_admin: bool,
 }
 
 impl AuthService {
@@ -134,10 +135,12 @@ impl AuthService {
             .authorization_resolver
             .resolve(db, tenant_id, &user)
             .await?;
+        let is_super_admin = resolved.is_super_admin();
 
         Ok(AuthorizationProfile {
             roles: resolved.roles,
             permissions: resolved.permission_codes,
+            is_super_admin,
         })
     }
 
@@ -145,8 +148,13 @@ impl AuthService {
         &self,
         tenant_name: &str,
         user: &user::Model,
-        authorization: &AuthorizationProfile,
+        authorization: AuthorizationProfile,
     ) -> AppResult<UserInfo> {
+        let AuthorizationProfile {
+            roles,
+            permissions,
+            is_super_admin,
+        } = authorization;
         let mut user_info = UserInfo::from(user);
         user_info.tenant_name = tenant_name.to_owned();
         user_info.dept_name = match user.dept_id {
@@ -157,12 +165,9 @@ impl AuthService {
                 .map(|dept| dept.name),
             None => None,
         };
-        user_info.roles = authorization
-            .roles
-            .iter()
-            .map(|role| role.code.clone())
-            .collect();
-        user_info.perms = authorization.permissions.clone();
+        user_info.roles = roles.into_iter().map(|role| role.code).collect();
+        user_info.perms = permissions;
+        user_info.is_super_admin = is_super_admin;
         Ok(user_info)
     }
 }

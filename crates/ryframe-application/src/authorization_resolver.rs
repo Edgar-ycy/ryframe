@@ -16,6 +16,13 @@ pub(crate) struct ResolvedAuthorization {
     pub data_scope: DataScopeContext,
 }
 
+impl ResolvedAuthorization {
+    /// 超级管理员身份只由角色表的显式标记决定，禁止从角色编码或名称推断。
+    pub(crate) fn is_super_admin(&self) -> bool {
+        self.roles.iter().any(|role| role.is_super == 1)
+    }
+}
+
 pub(crate) struct AuthorizationResolver {
     role_repo: RoleRepository,
     permission_repo: PermissionRepository,
@@ -135,5 +142,46 @@ impl AuthorizationResolver {
             });
         }
         Ok(DataScopeContext::merge(scopes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use ryframe_db::entities::role;
+    use ryframe_kernel::DataScopeContext;
+
+    use super::ResolvedAuthorization;
+
+    fn role(code: &str, is_super: i8) -> role::Model {
+        let now = Utc::now();
+        role::Model {
+            id: 1,
+            tenant_id: "tenant-a".into(),
+            name: "测试角色".into(),
+            code: code.into(),
+            is_super,
+            data_scope: role::Model::DATA_SCOPE_SELF.into(),
+            status: role::Model::STATUS_NORMAL.into(),
+            sort: 1,
+            remark: None,
+            del_flag: role::Model::DEL_FLAG_NORMAL.into(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn authorization(roles: Vec<role::Model>) -> ResolvedAuthorization {
+        ResolvedAuthorization {
+            roles,
+            permission_codes: Vec::new(),
+            data_scope: DataScopeContext::super_admin(1),
+        }
+    }
+
+    #[test]
+    fn super_admin_uses_explicit_role_marker_instead_of_code() {
+        assert!(!authorization(vec![role("admin", 0)]).is_super_admin());
+        assert!(authorization(vec![role("ordinary", 1)]).is_super_admin());
     }
 }

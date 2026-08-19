@@ -38,6 +38,7 @@ impl From<ServiceUserInfo> for UserInfo {
             phone,
             avatar,
             preferred_locale,
+            is_super_admin: _,
             roles,
             perms,
         } = value;

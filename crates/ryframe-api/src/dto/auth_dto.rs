@@ -106,6 +106,8 @@ pub struct TenantBusinessDataContextVo {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SessionContextVo {
     pub user: SessionUserVo,
+    /// 仅由后端权威角色标记确定，客户端不得从角色编码或名称推断。
+    pub is_super_admin: bool,
     pub roles: Vec<String>,
     pub permissions: Vec<String>,
     /// 控制库授权纪元；避免 JavaScript 精度漂移，所有 epoch 均以十进制字符串输出。
@@ -141,4 +143,44 @@ pub struct AuthSessionResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RevokeOtherSessionsResponse {
     pub revoked_count: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{SessionContextVo, SessionUserVo, TenantBusinessDataContextVo};
+    use crate::dto::fixed_value::TenantBusinessDataState;
+
+    #[test]
+    fn session_context_serializes_explicit_super_admin_marker() {
+        let context = SessionContextVo {
+            user: SessionUserVo {
+                id: "1".into(),
+                tenant_id: "tenant-a".into(),
+                tenant_name: "租户甲".into(),
+                dept_name: None,
+                username: "tester".into(),
+                nickname: "测试用户".into(),
+                email: String::new(),
+                phone: String::new(),
+                avatar: None,
+                preferred_locale: None,
+            },
+            is_super_admin: true,
+            roles: vec!["ordinary".into()],
+            permissions: Vec::new(),
+            authorization_epoch: "1".into(),
+            runtime_epoch: "1".into(),
+            capabilities: Vec::new(),
+            business_data: TenantBusinessDataContextVo {
+                state: TenantBusinessDataState::Active,
+                placement_generation: "1".into(),
+            },
+            menus: Vec::new(),
+        };
+
+        let value = serde_json::to_value(context).expect("会话上下文应能序列化");
+        assert_eq!(value["is_super_admin"], json!(true));
+    }
 }

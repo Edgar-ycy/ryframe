@@ -45,7 +45,7 @@ impl AuthService {
 
         let authorization = self.load_authorization_profile(tenant_id, user.id).await?;
         let user_info = self
-            .build_user_info(&tenant.name, &user, &authorization)
+            .build_user_info(&tenant.name, &user, authorization)
             .await?;
         self.issue_login_result(&user, tenant.session_version, user_info)
             .await
@@ -69,7 +69,7 @@ impl AuthService {
             .load_authorization_profile(&identity.user.tenant_id, identity.user.id)
             .await?;
         let user_info = self
-            .build_user_info(&identity.tenant.name, &identity.user, &authorization)
+            .build_user_info(&identity.tenant.name, &identity.user, authorization)
             .await?;
         self.issue_refresh_result(
             &identity.user,
@@ -97,7 +97,7 @@ impl AuthService {
         }
 
         let authorization = self.load_authorization_profile(tenant_id, user.id).await?;
-        self.build_user_info(&tenant.name, &user, &authorization)
+        self.build_user_info(&tenant.name, &user, authorization)
             .await
     }
 

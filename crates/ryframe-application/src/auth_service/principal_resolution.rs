@@ -79,7 +79,7 @@ fn build_authorization_snapshot(
     authorization: ResolvedAuthorization,
 ) -> AuthorizationSnapshot {
     let user = &identity.user;
-    let is_super_admin = authorization.roles.iter().any(|role| role.is_super == 1);
+    let is_super_admin = authorization.is_super_admin();
     let role_ids = authorization.roles.iter().map(|role| role.id).collect();
     let roles = authorization
         .roles

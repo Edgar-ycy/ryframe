@@ -68,8 +68,6 @@ pub(super) async fn build_session_context(
             .await
             .map_err(map_tenant_data_error)?;
         let user = state.services.auth.get_current_user(actor).await?;
-        let roles = user.roles.clone();
-        let permissions = user.perms.clone();
         let service_product = state
             .services
             .product
@@ -83,7 +81,7 @@ pub(super) async fn build_session_context(
         let menus = state
             .services
             .menu
-            .find_session_tree(actor, &permissions, &excluded_routes)
+            .find_session_tree(actor, &user.perms, &excluded_routes)
             .await?
             .into_iter()
             .map(MenuTreeNode::try_from)
@@ -99,7 +97,7 @@ pub(super) async fn build_session_context(
             && product.runtime_epoch == before.runtime_epoch().to_string()
             && product.authorization_epoch.parse::<u64>().ok() == Some(before.authorization_epoch())
         {
-            return assemble_context(user, roles, permissions, product, menus, &before);
+            return assemble_context(user, product, menus, &before);
         }
     }
     Err(AppError::ServiceUnavailable(
@@ -108,15 +106,17 @@ pub(super) async fn build_session_context(
 }
 
 fn assemble_context(
-    user: UserInfo,
-    roles: Vec<String>,
-    permissions: Vec<String>,
+    mut user: UserInfo,
     product: SessionProductContextVo,
     menus: Vec<MenuTreeNode>,
     snapshot: &TenantRuntimeSnapshot,
 ) -> AppResult<SessionContextVo> {
+    let is_super_admin = user.is_super_admin;
+    let roles = std::mem::take(&mut user.roles);
+    let permissions = std::mem::take(&mut user.perms);
     Ok(SessionContextVo {
         user: SessionUserVo::from(user),
+        is_super_admin,
         roles,
         permissions,
         authorization_epoch: snapshot.authorization_epoch().to_string(),
@@ -140,7 +140,38 @@ pub(super) fn login_actor(user_id: i64, user: &UserInfo) -> ActorContext {
         data_scope: DataScope::SelfOnly,
         custom_dept_ids: Vec::new(),
         include_self: true,
-        is_super_admin: false,
+        is_super_admin: user.is_super_admin,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ryframe_application::UserInfo;
+
+    use super::login_actor;
+
+    fn user(role: &str, is_super_admin: bool) -> UserInfo {
+        UserInfo {
+            id: "1".into(),
+            tenant_id: "tenant-a".into(),
+            tenant_name: "租户甲".into(),
+            dept_name: None,
+            username: "tester".into(),
+            nickname: "测试用户".into(),
+            email: String::new(),
+            phone: String::new(),
+            avatar: None,
+            preferred_locale: None,
+            is_super_admin,
+            roles: vec![role.into()],
+            perms: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn login_actor_does_not_infer_super_admin_from_role_code() {
+        assert!(!login_actor(1, &user("admin", false)).is_super_admin);
+        assert!(login_actor(1, &user("ordinary", true)).is_super_admin);
     }
 }
 
