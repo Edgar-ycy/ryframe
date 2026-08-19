@@ -147,7 +147,7 @@ pub(super) fn system_router(
 
 /// 通用功能路由（文件上传等）
 /// 上传和下载都要求认证主体，并记录操作日志。
-pub(super) fn common_router(state: AppState) -> Router {
+pub(super) fn common_router(state: AppState, idempotency_state: IdempotencyState) -> Router {
     let oper_log_state = OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone());
 
     let upload = protect(
@@ -159,11 +159,21 @@ pub(super) fn common_router(state: AppState) -> Router {
     );
 
     let download = protect(
-        common_handler::download_router(state.clone())
-            .layer(from_fn_with_state(oper_log_state, oper_log_middleware)),
+        common_handler::download_router(state.clone()).layer(from_fn_with_state(
+            oper_log_state.clone(),
+            oper_log_middleware,
+        )),
         &state,
     );
-    let exports = protect(export_handler::export_router(state.clone()), &state);
+    let exports = protect(
+        export_handler::export_router(state.clone())
+            .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
+            .layer(from_fn_with_state(
+                idempotency_state,
+                idempotency_middleware,
+            )),
+        &state,
+    );
 
     Router::new()
         .nest("/upload", upload)

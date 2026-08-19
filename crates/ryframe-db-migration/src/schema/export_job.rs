@@ -20,10 +20,25 @@ pub(super) const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_ex
     `updated_at` DATETIME NOT NULL,
     `completed_at` DATETIME DEFAULT NULL,
     `notification_read_at` DATETIME DEFAULT NULL,
+    `delete_pending_at` DATETIME DEFAULT NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_export_job_background` (`background_job_id`),
-    KEY `idx_export_job_requester` (`tenant_id`, `requester_id`, `created_at`),
+    UNIQUE KEY `uq_export_job_result_file` (`result_file_id`),
+    KEY `idx_export_job_requester` (`tenant_id`, `requester_id`, `delete_pending_at`, `created_at`, `id`),
     KEY `idx_export_job_expiry` (`status`, `expires_at`),
     KEY `idx_export_job_history` (`status`, `completed_at`, `id`),
-    KEY `idx_export_job_notification` (`tenant_id`, `requester_id`, `notification_read_at`, `status`, `completed_at`, `id`)
+    KEY `idx_export_job_notification` (`tenant_id`, `requester_id`, `delete_pending_at`, `notification_read_at`, `status`, `completed_at`, `id`),
+    KEY `idx_export_job_delete_pending` (`delete_pending_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn result_file_is_exclusive_to_one_export() {
+        assert!(
+            EXPORT_JOB_DDL.contains("UNIQUE KEY `uq_export_job_result_file` (`result_file_id`)")
+        );
+    }
+}

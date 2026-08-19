@@ -12,6 +12,10 @@ use serde_json::Value;
 
 use crate::entities::export_job;
 
+mod deletion;
+
+pub use deletion::MarkExportJobsDeletePending;
+
 /// 创建导出任务时写入的不可变请求快照。
 #[derive(Clone, Debug)]
 pub struct CreateExportJob {
@@ -85,6 +89,7 @@ impl ExportJobRepository {
             updated_at: Set(now),
             completed_at: Set(None),
             notification_read_at: Set(None),
+            delete_pending_at: Set(None),
         }
         .insert(transaction)
         .await
@@ -99,9 +104,8 @@ impl ExportJobRepository {
         requester_id: i64,
         id: i64,
     ) -> AppResult<Option<export_job::Model>> {
-        export_job::Entity::find_by_id(id)
-            .filter(export_job::Column::TenantId.eq(tenant_id))
-            .filter(export_job::Column::RequesterId.eq(requester_id))
+        visible_for_requester_query(tenant_id, requester_id)
+            .filter(export_job::Column::Id.eq(id))
             .one(db)
             .await
             .map_err(database_error)
@@ -115,9 +119,7 @@ impl ExportJobRepository {
         requester_id: i64,
         limit: u64,
     ) -> AppResult<Vec<export_job::Model>> {
-        export_job::Entity::find()
-            .filter(export_job::Column::TenantId.eq(tenant_id))
-            .filter(export_job::Column::RequesterId.eq(requester_id))
+        visible_for_requester_query(tenant_id, requester_id)
             .order_by_desc(export_job::Column::CreatedAt)
             .order_by_desc(export_job::Column::Id)
             .limit(limit.clamp(1, 100))
@@ -144,6 +146,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::RequesterId.eq(requester_id))
             .filter(export_job::Column::Id.is_in(ids.iter().copied()))
             .filter(export_job::Column::NotificationReadAt.is_null())
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .filter(export_job::Column::Status.is_in([
                 export_job::Model::STATUS_SUCCEEDED,
                 export_job::Model::STATUS_FAILED,
@@ -162,6 +165,7 @@ impl ExportJobRepository {
     ) -> AppResult<Option<export_job::Model>> {
         export_job::Entity::find()
             .filter(export_job::Column::BackgroundJobId.eq(background_job_id))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .one(db)
             .await
             .map_err(database_error)
@@ -193,6 +197,7 @@ impl ExportJobRepository {
             .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_QUEUED))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
             .map_err(database_error)?;
@@ -241,6 +246,7 @@ impl ExportJobRepository {
             )
             .filter(export_job::Column::Id.eq(command.id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(transaction)
             .await
             .map_err(database_error)?;
@@ -271,6 +277,7 @@ impl ExportJobRepository {
             .col_expr(export_job::Column::CompletedAt, Expr::value(now))
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
             .map_err(database_error)?;
@@ -300,6 +307,7 @@ impl ExportJobRepository {
             .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
             .map_err(database_error)?;
@@ -332,6 +340,7 @@ impl ExportJobRepository {
                 export_job::Model::STATUS_QUEUED,
                 export_job::Model::STATUS_RUNNING,
             ]))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
             .map_err(database_error)?;
@@ -348,6 +357,7 @@ impl ExportJobRepository {
     ) -> AppResult<Vec<export_job::Model>> {
         let mut query = export_job::Entity::find()
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_SUCCEEDED))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .filter(export_job::Column::ExpiresAt.lte(now))
             .order_by_asc(export_job::Column::Id)
             .limit(limit.clamp(1, 1_000));
@@ -368,9 +378,26 @@ impl ExportJobRepository {
                 Expr::value(export_job::Model::STATUS_EXPIRED),
             )
             .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
+            .col_expr(
+                export_job::Column::ResultFileId,
+                Expr::value(Option::<i64>::None),
+            )
+            .col_expr(
+                export_job::Column::ResultFileName,
+                Expr::value(Option::<String>::None),
+            )
+            .col_expr(
+                export_job::Column::ContentType,
+                Expr::value(Option::<String>::None),
+            )
+            .col_expr(
+                export_job::Column::FileSize,
+                Expr::value(Option::<i64>::None),
+            )
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_SUCCEEDED))
             .filter(export_job::Column::ExpiresAt.lte(now))
+            .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
             .map_err(database_error)?;
@@ -403,6 +430,16 @@ fn validate_create_command(command: &CreateExportJob) -> AppResult<()> {
     Ok(())
 }
 
+fn visible_for_requester_query(
+    tenant_id: &str,
+    requester_id: i64,
+) -> sea_orm::Select<export_job::Entity> {
+    export_job::Entity::find()
+        .filter(export_job::Column::TenantId.eq(tenant_id))
+        .filter(export_job::Column::RequesterId.eq(requester_id))
+        .filter(export_job::Column::DeletePendingAt.is_null())
+}
+
 fn truncate_error(error: &str) -> String {
     const MAX_ERROR_BYTES: usize = 4_000;
     if error.len() <= MAX_ERROR_BYTES {
@@ -417,4 +454,17 @@ fn truncate_error(error: &str) -> String {
 
 fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{DatabaseBackend, QueryTrait};
+
+    use super::*;
+
+    #[test]
+    fn requester_queries_hide_delete_tombstones() {
+        let statement = visible_for_requester_query("tenant-a", 7).build(DatabaseBackend::MySql);
+        assert!(statement.sql.contains("delete_pending_at` IS NULL"));
+    }
 }

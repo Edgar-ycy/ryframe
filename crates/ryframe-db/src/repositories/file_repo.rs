@@ -71,6 +71,40 @@ impl Repository<sys_file::Model, i64> for FileRepository {
 }
 
 impl FileRepository {
+    /// 读取导出清理需要的文件元数据，包括已经软删除的历史记录。
+    pub async fn find_file_for_purge(
+        &self,
+        db: &DatabaseConnection,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<Option<sys_file::Model>> {
+        sys_file::Entity::find_by_id(id)
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
+            .one(db)
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 硬删除仅由指定导出任务引用的结果文件元数据。
+    ///
+    /// 新基线通过 `uq_export_job_result_file` 消除跨导出任务共享；应用启动时的 schema
+    /// 指纹校验保证清理器不会在缺少该约束的数据库上运行。
+    pub async fn hard_delete_exclusive_export_file_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        tenant_id: &str,
+        id: i64,
+    ) -> AppResult<bool> {
+        sys_file::Entity::delete_many()
+            .filter(sys_file::Column::Id.eq(id))
+            .filter(sys_file::Column::TenantId.eq(tenant_id))
+            .filter(sys_file::Column::Bucket.eq("exports"))
+            .exec(txn)
+            .await
+            .map(|result| result.rows_affected == 1)
+            .map_err(|error| AppError::Database(error.to_string()))
+    }
+
     /// 读取主数据库的 UTC 时钟，确保每个应用节点对租约和过期作出的决策均使用
     /// 同一权威来源。
     pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<chrono::DateTime<chrono::Utc>>

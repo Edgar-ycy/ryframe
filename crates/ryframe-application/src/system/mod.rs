@@ -44,9 +44,10 @@ pub use dept_service::{CreateDeptCommand, DeptService, DeptTreeNode, DeptVo, Upd
 pub use dict_service::{DictDataVo, DictService, DictTypeListParams, DictTypeVo};
 pub use export_service::{
     ConfigExportFilter, DictTypeExportFilter, EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE,
-    EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION, ExportDownloadLocation, ExportJobPayload, ExportJobVo,
-    ExportSelection, ExportService, LoginLogExportFilter, OperLogExportFilter, PostExportFilter,
-    RequestExportCommand, RoleExportFilter, UserExportFilter,
+    EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION, ExportDeletionResult, ExportDownloadLocation,
+    ExportJobPayload, ExportJobVo, ExportPurgeUseCase, ExportSelection, ExportService,
+    LoginLogExportFilter, OperLogExportFilter, PostExportFilter, RequestExportCommand,
+    RoleExportFilter, UserExportFilter,
 };
 pub use login_info_service::{
     LoginInfoQuery, LoginInfoService, LoginInfoVo, LoginStatus, RecordLoginCommand,

@@ -387,13 +387,13 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         .nest("/auth", auth_router(state.clone()))
         .nest(
             "/system",
-            system_router(state.clone(), rate_limit_state, idempotency_state),
+            system_router(state.clone(), rate_limit_state, idempotency_state.clone()),
         )
         .nest(
             "/monitor",
             monitor_router(state.clone(), state.monitor.clone()),
         )
-        .nest("/common", common_router(state.clone()));
+        .nest("/common", common_router(state.clone(), idempotency_state));
 
     if state.config.multi_tenancy.enabled {
         let platform = protect(

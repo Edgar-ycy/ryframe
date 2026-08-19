@@ -30,6 +30,8 @@ pub struct Model {
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub notification_read_at: Option<DateTime<Utc>>,
+    /// 非空后立即从所有用户查询中隐藏，直到清理器删除对象与元数据。
+    pub delete_pending_at: Option<DateTime<Utc>>,
 }
 
 impl Model {

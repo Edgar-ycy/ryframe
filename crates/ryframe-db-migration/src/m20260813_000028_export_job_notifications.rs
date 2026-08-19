@@ -50,6 +50,7 @@ impl MigrationTrait for Migration {
                         .table(Alias::new(TABLE))
                         .col(Alias::new("tenant_id"))
                         .col(Alias::new("requester_id"))
+                        .col(Alias::new("delete_pending_at"))
                         .col(Alias::new(READ_AT_COLUMN))
                         .col(Alias::new("status"))
                         .col(Alias::new("completed_at"))

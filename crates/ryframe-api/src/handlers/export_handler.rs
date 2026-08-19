@@ -12,6 +12,7 @@ use ryframe_macro::{get, post, route};
 use crate::{
     dto::{
         export_dto::{CancelExportJobDto, MarkExportNotificationsReadDto},
+        export_dto::{DeleteExportJobsDto, ExportDeletionAcceptedDto},
         public_dto::ExportJobVo,
     },
     handler_utils::excel_response,
@@ -24,10 +25,41 @@ pub fn export_router(state: AppState) -> Router {
         .merge(route!(list))
         .merge(route!(unread_notification_count))
         .merge(route!(mark_notifications_read))
+        .merge(route!(delete_records))
         .merge(route!(detail))
         .merge(route!(cancel))
         .merge(route!(download))
         .with_state(state)
+}
+
+/// 永久删除当前用户的一批终态导出记录及结果文件。
+#[post("/deletions")]
+#[utoipa::path(post, path = "/api/v1/common/jobs/deletions", tag = "导出任务",
+    params(("Idempotency-Key" = String, Header, description = "必填幂等键")),
+    request_body = DeleteExportJobsDto,
+    responses(
+        (status = 202, description = "导出记录删除已受理", body = ApiResponse<ExportDeletionAcceptedDto>),
+        (status = 404, description = "任一任务不存在或不属于当前用户"),
+        (status = 409, description = "任一任务仍在排队、执行或持有活动租约")
+    ),
+    security(("bearer" = [])))]
+async fn delete_records(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+    headers: HeaderMap,
+    Json(request): Json<DeleteExportJobsDto>,
+) -> HttpResult<(StatusCode, Json<ApiResponse<ExportDeletionAcceptedDto>>)> {
+    require_idempotency_key(&headers)?;
+    let accepted = state
+        .services
+        .export
+        .delete_for_requester(&current_user, request.into_ids()?)
+        .await
+        .map_err(ryframe_http::HttpAppError::from)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ApiResponse::success(accepted.into())),
+    ))
 }
 
 /// 查询当前用户尚未查看的导出完成或失败通知数量。
@@ -213,8 +245,34 @@ fn require_idempotency_key(headers: &HeaderMap) -> HttpResult<()> {
     let valid = headers
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| !value.trim().is_empty());
+        .is_some_and(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+        });
     Ok(valid
         .then_some(())
         .ok_or_else(|| AppError::Validation("导出任务必须提供 Idempotency-Key 请求头".into()))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::HeaderValue;
+
+    use super::*;
+
+    #[test]
+    fn deletion_requires_a_bounded_visible_ascii_idempotency_key() {
+        assert!(require_idempotency_key(&HeaderMap::new()).is_err());
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Idempotency-Key",
+            HeaderValue::from_static("delete-export-01"),
+        );
+        require_idempotency_key(&headers).expect("有效幂等键应通过");
+
+        headers.insert("Idempotency-Key", HeaderValue::from_static("has space"));
+        assert!(require_idempotency_key(&headers).is_err());
+    }
 }

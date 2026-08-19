@@ -74,7 +74,7 @@ impl RetentionResource {
                 "created_at < ? AND (background_job_id IS NULL OR NOT EXISTS (SELECT 1 FROM sys_background_job linked_job WHERE linked_job.id = sys_job_schedule_execution.background_job_id AND linked_job.status <> 'succeeded'))"
             }
             Self::ExportJobs => {
-                "status IN ('succeeded', 'failed', 'cancelled', 'expired') AND completed_at < ?"
+                "delete_pending_at IS NULL AND result_file_id IS NULL AND status IN ('succeeded', 'failed', 'cancelled', 'expired') AND completed_at < ?"
             }
             Self::OperationLogs => "oper_time < ?",
             Self::LoginLogs => "login_time < ?",
@@ -395,4 +395,16 @@ fn database_error(error: impl std::fmt::Display) -> AppError {
 
 fn try_get_error(error: sea_orm::TryGetError) -> AppError {
     AppError::Database(format!("{error:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_retention_never_bypasses_artifact_purge() {
+        let predicate = RetentionResource::ExportJobs.predicate();
+        assert!(predicate.contains("delete_pending_at IS NULL"));
+        assert!(predicate.contains("result_file_id IS NULL"));
+    }
 }

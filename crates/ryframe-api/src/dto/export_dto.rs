@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use ryframe_application::system::{
@@ -219,6 +219,51 @@ pub struct MarkExportNotificationsReadDto {
     pub ids: Vec<String>,
 }
 
+/// 单删与批删共用的导出记录删除命令。
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteExportJobsDto {
+    #[schema(min_items = 1, max_items = 100, value_type = Vec<String>)]
+    pub ids: Vec<String>,
+}
+
+impl DeleteExportJobsDto {
+    pub fn into_ids(self) -> AppResult<Vec<i64>> {
+        self.ids
+            .into_iter()
+            .map(|id| {
+                id.parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| AppError::Validation("导出任务 ID 必须是正整数".into()))
+            })
+            .collect()
+    }
+}
+
+/// 服务端已受理的导出记录删除结果。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ExportDeletionAcceptedDto {
+    #[schema(value_type = Vec<String>)]
+    pub accepted_ids: Vec<String>,
+    pub accepted_count: u64,
+    pub removed_unread_count: u64,
+}
+
+impl From<ryframe_application::system::ExportDeletionResult> for ExportDeletionAcceptedDto {
+    fn from(result: ryframe_application::system::ExportDeletionResult) -> Self {
+        Self {
+            accepted_ids: result
+                .accepted_ids
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+            accepted_count: result.accepted_count,
+            removed_unread_count: result.removed_unread_count,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +337,25 @@ mod tests {
         }))
         .expect("DTO 解析不应隐藏时间错误");
         assert!(matches!(log.into_selection(), Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn deletion_command_is_strict_and_preserves_ids_for_application_normalization() {
+        let request: DeleteExportJobsDto = serde_json::from_value(serde_json::json!({
+            "ids": ["9", "3", "9"]
+        }))
+        .expect("严格删除命令应可解析");
+        assert_eq!(request.into_ids().expect("ID 应有效"), vec![9, 3, 9]);
+
+        assert!(
+            serde_json::from_value::<DeleteExportJobsDto>(serde_json::json!({
+                "ids": ["1"],
+                "legacy": true
+            }))
+            .is_err()
+        );
+        let invalid: DeleteExportJobsDto =
+            serde_json::from_value(serde_json::json!({"ids": ["0"]})).expect("结构应先解析");
+        assert!(invalid.into_ids().is_err());
     }
 }

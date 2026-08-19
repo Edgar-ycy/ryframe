@@ -1,10 +1,81 @@
 use ryframe_db::{CreateExportJob, EnqueueBackgroundJob, ReadConsistency, entities::export_job};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
+use sha2::{Digest, Sha256};
 
 use super::*;
 
 impl ExportService {
+    /// 原子受理当前申请人的终态导出记录删除，并可靠投递异步清理任务。
+    pub async fn delete_for_requester(
+        &self,
+        actor: &ActorContext,
+        mut ids: Vec<i64>,
+    ) -> AppResult<ExportDeletionResult> {
+        normalize_deletion_ids(&mut ids)?;
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let result = async {
+            let now = self.background_jobs.database_utc_now(&transaction).await?;
+            let marked = self
+                .exports
+                .mark_delete_pending_in_transaction(
+                    &transaction,
+                    tenant_id,
+                    actor.user_id,
+                    &ids,
+                    now,
+                )
+                .await?;
+            let trace_context = crate::trace_context::current_trace_context();
+            self.background_jobs
+                .enqueue_in_transaction(
+                    &transaction,
+                    EnqueueBackgroundJob {
+                        tenant_id: None,
+                        schedule_id: None,
+                        scheduled_for: Some(now),
+                        max_runtime_seconds: None,
+                        job_type: EXPORT_CLEANUP_JOB_TYPE.to_owned(),
+                        payload: serde_json::json!({"request_version": 1}),
+                        priority: -5,
+                        available_at: now,
+                        max_attempts: self.default_max_attempts,
+                        dedupe_key: Some(deletion_cleanup_dedupe_key(
+                            tenant_id,
+                            actor.user_id,
+                            &ids,
+                        )),
+                        traceparent: trace_context.traceparent,
+                        tracestate: trace_context.tracestate,
+                    },
+                    now,
+                )
+                .await?;
+            Ok::<_, AppError>(marked)
+        }
+        .await;
+        let marked = match result {
+            Ok(marked) => {
+                crate::commit_current_audit(transaction).await?;
+                if let Some(job_queue) = &self.job_queue {
+                    job_queue.notify_background_jobs().await;
+                }
+                marked
+            }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                return Err(error);
+            }
+        };
+
+        Ok(ExportDeletionResult {
+            accepted_count: ids.len() as u64,
+            accepted_ids: ids,
+            removed_unread_count: marked.removed_unread_count,
+        })
+    }
+
     /// 在同一事务内创建内部 Worker 任务与公开导出任务。
     pub async fn request(
         &self,
@@ -284,5 +355,54 @@ impl ExportService {
             bucket: file.bucket,
             path: file.storage_path,
         })
+    }
+}
+
+fn normalize_deletion_ids(ids: &mut Vec<i64>) -> AppResult<()> {
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() || ids.len() > 100 || ids.iter().any(|id| *id <= 0) {
+        return Err(AppError::Validation(
+            "导出任务 ID 排序去重后必须包含 1 到 100 个正整数".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn deletion_cleanup_dedupe_key(tenant_id: &str, requester_id: i64, ids: &[i64]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"ryframe:export-deletion-cleanup:v1\0");
+    digest.update(tenant_id.as_bytes());
+    digest.update([0]);
+    digest.update(requester_id.to_be_bytes());
+    for id in ids {
+        digest.update(id.to_be_bytes());
+    }
+    format!("export:delete:{}", hex::encode(digest.finalize()))
+}
+
+#[cfg(test)]
+mod deletion_tests {
+    use super::*;
+
+    #[test]
+    fn deletion_ids_are_sorted_deduplicated_and_bounded() {
+        let mut ids = vec![9, 3, 9, 5];
+        normalize_deletion_ids(&mut ids).expect("有效 ID 应通过");
+        assert_eq!(ids, vec![3, 5, 9]);
+
+        assert!(normalize_deletion_ids(&mut Vec::new()).is_err());
+        assert!(normalize_deletion_ids(&mut vec![0]).is_err());
+        let mut too_many = (1..=101).collect::<Vec<_>>();
+        assert!(normalize_deletion_ids(&mut too_many).is_err());
+
+        assert_eq!(
+            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 9]),
+            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 9])
+        );
+        assert_ne!(
+            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 9]),
+            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 10])
+        );
     }
 }

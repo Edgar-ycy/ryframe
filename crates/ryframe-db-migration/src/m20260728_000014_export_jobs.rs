@@ -111,6 +111,11 @@ impl MigrationTrait for Migration {
                             .date_time()
                             .null(),
                     )
+                    .col(
+                        ColumnDef::new(Alias::new("delete_pending_at"))
+                            .date_time()
+                            .null(),
+                    )
                     .to_owned(),
             )
             .await?;
@@ -121,14 +126,31 @@ impl MigrationTrait for Migration {
                 ["background_job_id"].as_slice(),
             ),
             (
+                "uq_export_job_result_file",
+                true,
+                ["result_file_id"].as_slice(),
+            ),
+            (
                 "idx_export_job_requester",
                 false,
-                ["tenant_id", "requester_id", "created_at"].as_slice(),
+                [
+                    "tenant_id",
+                    "requester_id",
+                    "delete_pending_at",
+                    "created_at",
+                    "id",
+                ]
+                .as_slice(),
             ),
             (
                 "idx_export_job_expiry",
                 false,
                 ["status", "expires_at"].as_slice(),
+            ),
+            (
+                "idx_export_job_delete_pending",
+                false,
+                ["delete_pending_at", "id"].as_slice(),
             ),
         ] {
             let mut index = Index::create();

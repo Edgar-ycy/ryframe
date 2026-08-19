@@ -90,6 +90,14 @@ pub struct ExportDownloadLocation {
     pub path: String,
 }
 
+/// 一批导出记录被服务端受理删除后的稳定结果。
+#[derive(Debug, Eq, PartialEq, Serialize)]
+pub struct ExportDeletionResult {
+    pub accepted_ids: Vec<i64>,
+    pub accepted_count: u64,
+    pub removed_unread_count: u64,
+}
+
 impl From<export_job::Model> for ExportJobVo {
     fn from(job: export_job::Model) -> Self {
         Self {

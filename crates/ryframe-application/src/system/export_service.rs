@@ -19,6 +19,7 @@ mod cleanup;
 mod filters;
 mod lifecycle;
 mod preflight;
+mod purge;
 mod resources;
 mod storage;
 mod types;
@@ -27,9 +28,11 @@ pub use filters::{
     ConfigExportFilter, DictTypeExportFilter, ExportSelection, LoginLogExportFilter,
     OperLogExportFilter, PostExportFilter, RoleExportFilter, UserExportFilter,
 };
+pub use purge::ExportPurgeUseCase;
 pub use types::{
     EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION,
-    ExportDownloadLocation, ExportJobPayload, ExportJobVo, RequestExportCommand,
+    ExportDeletionResult, ExportDownloadLocation, ExportJobPayload, ExportJobVo,
+    RequestExportCommand,
 };
 
 use filters::{
@@ -61,6 +64,7 @@ pub struct ExportService {
     export_max_rows: usize,
     export_retention: Duration,
     job_queue: Option<Arc<JobQueue>>,
+    purge: ExportPurgeUseCase,
 }
 
 impl ExportService {
@@ -70,6 +74,7 @@ impl ExportService {
         storage: Arc<dyn ryframe_storage::ObjectStorage>,
         jobs: &JobConfig,
     ) -> Self {
+        let purge = ExportPurgeUseCase::new(db.clone(), Arc::clone(&storage));
         Self {
             db: db.clone(),
             background_jobs: BackgroundJobRepository,
@@ -95,6 +100,7 @@ impl ExportService {
             export_max_rows: jobs.export_max_rows,
             export_retention: Duration::hours(i64::from(jobs.export_retention_hours)),
             job_queue: None,
+            purge,
         }
     }
 
