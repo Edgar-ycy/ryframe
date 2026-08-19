@@ -4,10 +4,10 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::RoleListParams;
 use ryframe_auth::rbac;
 use ryframe_kernel::AppError;
+use ryframe_kernel::ValidatedPageQuery;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 

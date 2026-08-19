@@ -3,13 +3,12 @@ mod password_reset;
 mod queries;
 mod roles;
 
-use ryframe_adapters::repository::ValidatedPageQuery;
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{
     DeptRepository, RoleRepository, UserRepository,
     entities::{password_reset_request, role, user},
 };
-use ryframe_kernel::AppResult;
+use ryframe_kernel::{AppResult, ValidatedPageQuery};
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 

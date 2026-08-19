@@ -1,11 +1,9 @@
-use ryframe_adapters::{
-    Repository,
-    auto_fill::{AutoFill, FillContext},
-};
+use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_auth::password;
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency, TenantRepository};
 use ryframe_db::{
-    DeptRepository, FileRepository, PermissionRepository, RoleRepository, UserRepository,
+    DeptRepository, FileRepository, PermissionRepository, Repository, RoleRepository,
+    UserRepository,
     entities::{sys_file, user},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};

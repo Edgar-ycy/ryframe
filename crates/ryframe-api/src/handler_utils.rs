@@ -45,7 +45,7 @@ pub(crate) fn tenant_id_from_headers(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .ok_or_else(|| AppError::Validation("缺少租户信息".into()))?;
-    ryframe_adapters::validate_tenant_identifier(&tenant_id)?;
+    ryframe_kernel::TenantId::parse(&tenant_id)?;
     Ok(tenant_id)
 }
 

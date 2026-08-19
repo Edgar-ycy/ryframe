@@ -1,11 +1,8 @@
+use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
-use ryframe_adapters::{
-    Repository,
-    auto_fill::{AutoFill, FillContext},
-};
 use ryframe_auth::password;
 use ryframe_db::{
-    PasswordResetRequestRepository, TenantRepository,
+    PasswordResetRequestRepository, Repository, TenantRepository,
     entities::{password_reset_request, user_role},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -80,7 +77,7 @@ impl UserService {
         token: &str,
         new_password: &str,
     ) -> AppResult<i64> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         self.complete_password_reset(tenant_id, request_id, token, new_password)
             .await
     }

@@ -32,7 +32,7 @@ impl MessageService {
         let actor_tenant_id = crate::validated_tenant_id(actor)?;
         let tenant_id = match requested_tenant_id.as_deref() {
             Some(tenant_id) => {
-                ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+                crate::enforce_tenant_scope(tenant_id)?;
                 tenant_id.to_owned()
             }
             None => actor_tenant_id.to_owned(),

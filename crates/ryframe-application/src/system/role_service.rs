@@ -1,17 +1,13 @@
 use std::sync::Arc;
 
+use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
-use ryframe_adapters::{
-    Repository,
-    auto_fill::{AutoFill, FillContext},
-    repository::{PageResult, ValidatedPageQuery},
-};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
-    ExportCursorWindow, PermissionRepository, RoleFilter, RoleRepository,
+    ExportCursorWindow, PermissionRepository, Repository, RoleFilter, RoleRepository,
     TenantConfigTransferRepository, TenantRepository, entities::role,
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait, sea_query::LockType,
@@ -169,7 +165,7 @@ impl RoleService {
             .find_by_page_filtered(
                 &db,
                 tenant_id,
-                params.page.clone(),
+                params.page,
                 params.name.as_deref(),
                 params.code.as_deref(),
                 params.status.as_deref(),

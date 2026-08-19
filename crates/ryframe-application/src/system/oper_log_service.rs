@@ -1,9 +1,10 @@
 use chrono::Utc;
 use ryframe_adapters::snowflake;
-use ryframe_adapters::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{ExportCursorWindow, OperLogFilter, OperLogRepository, entities::oper_log};
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_db::{
+    ExportCursorWindow, OperLogFilter, OperLogRepository, Repository, entities::oper_log,
+};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -121,7 +122,7 @@ impl OperLogService {
         tenant_id: &str,
         command: RecordOperLogCommand,
     ) -> AppResult<()> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         let log = oper_log::Model {
             id: snowflake::try_next_snowflake_id()?,
             tenant_id: tenant_id.to_owned(),
@@ -157,7 +158,7 @@ impl OperLogService {
         tenant_id: &str,
         command: RecordOperLogCommand,
     ) -> AppResult<bool> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         if event_id.is_empty() || event_id.len() > 36 {
             return Err(AppError::Validation(
                 "审计事件标识长度必须介于 1 和 36 之间".into(),

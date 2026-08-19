@@ -1,6 +1,6 @@
-use ryframe_adapters::{RefreshFamily, RefreshRotation, Repository};
+use ryframe_adapters::{RefreshFamily, RefreshRotation};
 use ryframe_auth::{jwt, password};
-use ryframe_db::{TenantRepository, entities::user};
+use ryframe_db::{Repository, TenantRepository, entities::user};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use super::{AuthService, LoginResult, UserInfo};
@@ -18,7 +18,7 @@ impl AuthService {
         username: &str,
         password: &str,
     ) -> AppResult<LoginResult> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         let tenant = TenantRepository
             .ensure_available(self.db.write(), tenant_id)
             .await?;

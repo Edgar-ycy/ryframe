@@ -1,13 +1,15 @@
 use async_trait::async_trait;
-use ryframe_adapters::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
 
-use crate::entities::{role, service_account, service_account_role, tenant};
+use crate::{
+    Repository,
+    entities::{role, service_account, service_account_role, tenant},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ServiceAccountLock {

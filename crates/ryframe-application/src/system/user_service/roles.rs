@@ -1,5 +1,4 @@
-use ryframe_adapters::Repository;
-use ryframe_db::TenantConfigTransferRepository;
+use ryframe_db::{Repository, TenantConfigTransferRepository};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,

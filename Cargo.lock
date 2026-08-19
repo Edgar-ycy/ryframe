@@ -3225,7 +3225,6 @@ dependencies = [
  "rust_xlsxwriter",
  "ryframe-config",
  "ryframe-kernel",
- "sea-orm",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3404,9 +3403,9 @@ version = "0.10.0"
 dependencies = [
  "async-trait",
  "hex",
- "ryframe-adapters",
  "ryframe-config",
  "ryframe-db",
+ "ryframe-kernel",
  "sea-orm",
  "sea-orm-migration",
  "sha2 0.11.0",

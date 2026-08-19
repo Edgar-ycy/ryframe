@@ -1,12 +1,14 @@
 use async_trait::async_trait;
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 
-use crate::entities::{dict_data, dict_type};
+use crate::{
+    Repository,
+    entities::{dict_data, dict_type},
+};
 
 pub struct DictTypeRepository;
 

@@ -294,7 +294,7 @@ fn validate_source_metadata(
     tenant_name: &str,
     app_version: &str,
 ) -> AppResult<()> {
-    if ryframe_adapters::validate_tenant_identifier(tenant_key).is_err()
+    if ryframe_kernel::TenantId::parse(tenant_key).is_err()
         || tenant_key.len() > TENANT_KEY_MAX_CHARS
         || tenant_name.trim().is_empty()
         || tenant_name.trim() != tenant_name

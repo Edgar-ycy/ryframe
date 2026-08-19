@@ -1,6 +1,5 @@
-use ryframe_adapters::Repository;
 use ryframe_db::{
-    DeptRepository, PermissionRepository, RoleRepository,
+    DeptRepository, PermissionRepository, Repository, RoleRepository,
     entities::{role, user},
 };
 use ryframe_kernel::{AppResult, DataScope, DataScopeContext};

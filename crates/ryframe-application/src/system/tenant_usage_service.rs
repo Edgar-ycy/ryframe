@@ -2,12 +2,11 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use ryframe_adapters::rate_limit::RateLimiter;
-use ryframe_adapters::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
     ControlDatabaseCluster, ReadConsistency, TenantRepository, TenantUsageAggregate,
     TenantUsagePageFilter, TenantUsageRepository, entities::tenant,
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 
 use super::tenant_service::TenantVo;
@@ -156,7 +155,7 @@ impl TenantUsageService {
         include_usage: bool,
     ) -> AppResult<TenantCapacityVo> {
         ensure_system_tenant(actor)?;
-        ryframe_adapters::validate_tenant_identifier(tenant_id)?;
+        ryframe_kernel::TenantId::parse(tenant_id)?;
         let db = self.db.select_read(ReadConsistency::Strong).connection;
         let tenant = self
             .tenant_repo
@@ -175,7 +174,7 @@ impl TenantUsageService {
 
     pub async fn usage(&self, actor: &ActorContext, tenant_id: &str) -> AppResult<TenantUsageVo> {
         ensure_system_tenant(actor)?;
-        ryframe_adapters::validate_tenant_identifier(tenant_id)?;
+        ryframe_kernel::TenantId::parse(tenant_id)?;
         let db = self.db.select_read(ReadConsistency::Strong).connection;
         let tenant = self
             .tenant_repo

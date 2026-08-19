@@ -11,7 +11,6 @@ pub mod multi_tenant;
 pub mod rate_limit;
 pub mod redis_client;
 pub mod refresh_session;
-pub mod repository;
 pub mod resilience;
 pub mod snowflake;
 pub mod storage;
@@ -26,13 +25,10 @@ pub use database_monitor::{DatabaseMonitor, DatabaseNodeHealth, DatabaseTopology
 pub use distributed_lock::{
     DistributedLock, LocalDistributedLock, LockGuard, RedisDistributedLock, create_distributed_lock,
 };
-pub use multi_tenant::{
-    TenantContext, validate_explicit_tenant, validate_tenant_identifier, with_tenant_context,
-};
+pub use multi_tenant::{TenantContext, enforce_tenant_context, with_tenant_context};
 pub use redis_client::{RedisClient, RedisNamespace};
 pub use refresh_session::{
     RefreshFamily, RefreshRotation, RefreshSessionIdentity, RefreshSessionRevocation,
     RefreshSessionStore,
 };
-pub use repository::{PageResult, Repository, ValidatedPageQuery};
 pub use token_blacklist::TokenBlacklist;

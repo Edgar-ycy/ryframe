@@ -1,7 +1,6 @@
-use ryframe_adapters::Repository;
 use ryframe_auth::jwt::Claims;
 use ryframe_db::{
-    TenantRepository,
+    Repository, TenantRepository,
     entities::{role, tenant, user},
 };
 use ryframe_kernel::{AppError, AppResult};
@@ -33,7 +32,7 @@ impl AuthService {
         user_authorization_version: i32,
         tenant_session_version: i32,
     ) -> AppResult<()> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         if user_id <= 0 || session_id.trim().is_empty() {
             return Err(AppError::Authentication("WebSocket 票据身份无效".into()));
         }
@@ -80,7 +79,7 @@ impl AuthService {
         db: &DatabaseConnection,
         claims: &Claims,
     ) -> AppResult<ValidatedIdentity> {
-        ryframe_adapters::validate_explicit_tenant(&claims.tenant_id)?;
+        crate::enforce_tenant_scope(&claims.tenant_id)?;
         let tenant = TenantRepository
             .ensure_available(db, &claims.tenant_id)
             .await?;

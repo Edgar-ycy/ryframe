@@ -477,7 +477,7 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
     """保留现有租户数据专项门禁，后续随 crate 搬迁更新定位。"""
 
     tenant_manifest = read("crates/ryframe-tenant-db/Cargo.toml")
-    for forbidden in ("ryframe-kernel", "ryframe-application", "ryframe-api"):
+    for forbidden in ("ryframe-application", "ryframe-api"):
         if re.search(rf"(?m)^\s*{re.escape(forbidden)}\s*=", tenant_manifest):
             errors.append(f"ryframe-tenant-db must not depend on {forbidden}")
 

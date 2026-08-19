@@ -21,7 +21,6 @@ image = { workspace = true }
 percent-encoding = { workspace = true }
 quick-xml = "0.41.0"
 reqwest = { workspace = true, features = ["stream"] }
-sea-orm = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 calamine = { workspace = true }
 redis = { workspace = true }

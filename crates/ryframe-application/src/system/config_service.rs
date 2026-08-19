@@ -1,14 +1,10 @@
-use ryframe_adapters::{
-    Repository,
-    auto_fill::{AutoFill, FillContext},
-    repository::{PageResult, ValidatedPageQuery},
-};
+use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository,
-    ExportCursorWindow, TenantConfigTransferRepository, entities::config,
+    ExportCursorWindow, Repository, TenantConfigTransferRepository, entities::config,
 };
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
@@ -128,7 +124,7 @@ impl ConfigService {
 
     /// 读取认证完成前所需的一项租户配置。
     pub async fn find_public_value(&self, tenant_id: &str, key: &str) -> AppResult<Option<String>> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         Ok(self
             .find_by_key_in_tenant(tenant_id, key, ReadConsistency::Strong)
             .await?

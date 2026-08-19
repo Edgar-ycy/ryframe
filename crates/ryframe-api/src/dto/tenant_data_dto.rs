@@ -32,8 +32,8 @@ pub struct DataTargetListQuery {
 impl DataTargetListQuery {
     pub fn validate_page(
         &self,
-    ) -> Result<ryframe_adapters::ValidatedPageQuery, ryframe_kernel::AppError> {
-        ryframe_adapters::ValidatedPageQuery::from_optional(
+    ) -> Result<ryframe_kernel::ValidatedPageQuery, ryframe_kernel::AppError> {
+        ryframe_kernel::ValidatedPageQuery::from_optional(
             self.page,
             self.page_size,
             &ryframe_config::PaginationConfig {

@@ -1,6 +1,6 @@
 macro_rules! insert_entity {
     ($entity:ident, $db:expr, $tenant_id:expr, $model:expr) => {{
-        ryframe_adapters::validate_explicit_tenant($tenant_id)?;
+        ryframe_kernel::TenantId::parse($tenant_id)?;
         if $model.tenant_id != $tenant_id {
             return Err(ryframe_kernel::AppError::Authorization(
                 "不能新增其他租户的数据".to_string(),
@@ -16,7 +16,7 @@ macro_rules! insert_entity {
 
 macro_rules! update_entity {
     ($entity:ident, $db:expr, $tenant_id:expr, $model:expr) => {{
-        ryframe_adapters::validate_explicit_tenant($tenant_id)?;
+        ryframe_kernel::TenantId::parse($tenant_id)?;
         if $model.tenant_id != $tenant_id {
             return Err(ryframe_kernel::AppError::Authorization(
                 "不能修改其他租户的数据".to_string(),
@@ -41,7 +41,7 @@ macro_rules! update_entity {
 
 macro_rules! soft_delete_entity {
     ($entity:ident, $db:expr, $tenant_id:expr, $id:expr) => {{
-        ryframe_adapters::validate_explicit_tenant($tenant_id)?;
+        ryframe_kernel::TenantId::parse($tenant_id)?;
         let result = $entity::Entity::update_many()
             .col_expr(
                 $entity::Column::DelFlag,

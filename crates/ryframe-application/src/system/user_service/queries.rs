@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 
-use ryframe_adapters::{Repository, repository::PageResult};
 use ryframe_db::{
-    ExportCursorWindow, ReadConsistency, TenantRepository, UserFilter,
+    ExportCursorWindow, ReadConsistency, Repository, TenantRepository, UserFilter,
     entities::{role, tenant, user},
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};

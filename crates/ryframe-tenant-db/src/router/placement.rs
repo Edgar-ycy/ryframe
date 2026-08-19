@@ -5,7 +5,7 @@ impl TenantDatabaseRouter {
         &self,
         tenant_id: &str,
     ) -> Result<TenantRuntimeSnapshot, TenantDataError> {
-        ryframe_adapters::validate_tenant_identifier(tenant_id)
+        ryframe_kernel::TenantId::parse(tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         let row = RuntimeSnapshotRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::MySql,
@@ -49,7 +49,7 @@ impl TenantDatabaseRouter {
         ))
     }
     pub async fn resolve(&self, tenant_id: &str) -> Result<TenantDataSession, TenantDataError> {
-        ryframe_adapters::validate_tenant_identifier(tenant_id)
+        ryframe_kernel::TenantId::parse(tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         let placement = self.load_placement(tenant_id).await?;
         let target_mode = self

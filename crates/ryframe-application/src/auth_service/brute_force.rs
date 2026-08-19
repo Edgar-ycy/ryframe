@@ -12,7 +12,7 @@ impl AuthService {
         username: &str,
         ip: &str,
     ) -> AppResult<()> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         let max_attempts = self.config.auth.max_login_attempts;
         let Some(redis) = self.redis.as_ref() else {
             return Ok(());

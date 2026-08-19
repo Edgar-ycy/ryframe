@@ -79,8 +79,8 @@ allowed_internal_edges = [
     "ryframe-application -> ryframe-kernel",
     "ryframe-application -> ryframe-tenant-db",
     "ryframe-tenant-db -> ryframe-config",
-    "ryframe-tenant-db -> ryframe-adapters",
     "ryframe-tenant-db -> ryframe-db",
+    "ryframe-tenant-db -> ryframe-kernel",
 ]
 
 temporary_product_tool_edges = []

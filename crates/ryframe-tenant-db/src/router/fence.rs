@@ -243,7 +243,7 @@ impl TenantDatabaseRouter {
         placement_generation: i64,
         switch_token: &str,
     ) -> Result<FenceProvision, TenantDataError> {
-        ryframe_adapters::validate_tenant_identifier(tenant_id)
+        ryframe_kernel::TenantId::parse(tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         if target_key.trim().is_empty()
             || placement_generation <= 0

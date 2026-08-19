@@ -5,14 +5,13 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ryframe_adapters::RedisClient;
-use ryframe_adapters::repository::{PageResult, ValidatedPageQuery};
 use ryframe_auth::RequestPrincipal;
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ControlDatabaseCluster,
     EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExecutionTenantScope, background_job,
     tenant_config_bundle, tenant_config_transfer,
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
 use serde::Serialize;
 use tokio::{sync::watch, task::JoinHandle};

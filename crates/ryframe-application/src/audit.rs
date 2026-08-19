@@ -75,7 +75,7 @@ impl AuditRequestContext {
     ) -> AppResult<Self> {
         validate_identifier("event_id", &event_id)?;
         validate_identifier("request_id", &request_id)?;
-        ryframe_adapters::validate_explicit_tenant(&tenant_id)?;
+        crate::enforce_tenant_scope(&tenant_id)?;
         Ok(Self {
             event_id,
             request_id,
@@ -226,7 +226,7 @@ async fn record_event_in_transaction(
 ) -> AppResult<()> {
     validate_identifier("event_id", &event.event_id)?;
     validate_identifier("request_id", &event.request_id)?;
-    ryframe_adapters::validate_explicit_tenant(&event.tenant_id)?;
+    crate::enforce_tenant_scope(&event.tenant_id)?;
     let now = OutboxEventRepository.database_utc_now(transaction).await?;
     let payload = serde_json::to_value(event)
         .map_err(|error| AppError::Internal(format!("审计事件序列化失败: {error}")))?;

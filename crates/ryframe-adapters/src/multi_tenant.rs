@@ -5,7 +5,7 @@
 
 use std::future::Future;
 
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, TenantId};
 
 tokio::task_local! {
     /// 仅用于核验显式用例输入的请求范围租户身份。
@@ -29,36 +29,16 @@ impl TenantContext {
 
 /// 存在请求本地状态时，核验显式用例租户是否与其一致。后台任务没有请求本地状态，
 /// 其显式租户输入仍是权威范围。
-pub fn validate_explicit_tenant(tenant_id: &str) -> AppResult<()> {
-    validate_tenant_identifier(tenant_id)?;
+pub fn enforce_tenant_context(tenant_id: TenantId<'_>) -> AppResult<()> {
     REQUEST_TENANT_CONTEXT
         .try_with(|context| {
-            if context.tenant_id == tenant_id {
+            if context.tenant_id == tenant_id.as_str() {
                 Ok(())
             } else {
                 Err(AppError::Authorization("请求租户与业务租户不一致".into()))
             }
         })
         .unwrap_or(Ok(()))
-}
-
-/// 标识符用于数据库分区、缓存键或 Redis 通配模式前必须先经过该校验。
-pub fn validate_tenant_identifier(tenant_id: &str) -> AppResult<()> {
-    let bytes = tenant_id.as_bytes();
-    let is_alphanumeric = |byte: u8| byte.is_ascii_alphanumeric();
-    if !(2..=64).contains(&bytes.len())
-        || !bytes.first().is_some_and(|byte| is_alphanumeric(*byte))
-        || !bytes.last().is_some_and(|byte| is_alphanumeric(*byte))
-        || !bytes
-            .iter()
-            .all(|byte| is_alphanumeric(*byte) || matches!(byte, b'-' | b'_'))
-    {
-        return Err(AppError::Validation(
-            "tenant ID must be 2-64 ASCII letters, digits, hyphens, or underscores and start/end with a letter or digit"
-                .into(),
-        ));
-    }
-    Ok(())
 }
 
 /// 在显式租户范围内运行异步任务，供认证中间件安装一致性校验上下文。

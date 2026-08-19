@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult, DataScopeContext};
+use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 
-use crate::entities::login_info;
+use crate::{Repository, entities::login_info};
 
 pub struct LoginInfoRepository;
 

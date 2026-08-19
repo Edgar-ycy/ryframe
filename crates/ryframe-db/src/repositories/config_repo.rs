@@ -1,13 +1,12 @@
 use async_trait::async_trait;
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
     sea_query::{Expr, LockType},
 };
 
-use crate::entities::config;
+use crate::{Repository, entities::config};
 
 pub struct ConfigRepository;
 

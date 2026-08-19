@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
     DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
@@ -8,7 +7,10 @@ use sea_orm::{
     sea_query::{LockType, Query},
 };
 
-use crate::entities::{role, user, user_role};
+use crate::{
+    Repository,
+    entities::{role, user, user_role},
+};
 
 pub struct RoleRepository;
 

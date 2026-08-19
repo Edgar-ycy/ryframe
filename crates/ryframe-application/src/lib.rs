@@ -37,12 +37,16 @@ pub use jobs::{
 };
 pub use principal_resolver::PrincipalResolver;
 
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, TenantId};
 use ryframe_tenant_db::TenantDataError;
 
 pub(crate) fn validated_tenant_id(actor: &ActorContext) -> AppResult<&str> {
-    ryframe_adapters::validate_explicit_tenant(&actor.tenant_id)?;
+    enforce_tenant_scope(&actor.tenant_id)?;
     Ok(&actor.tenant_id)
+}
+
+pub(crate) fn enforce_tenant_scope(tenant_id: &str) -> AppResult<()> {
+    ryframe_adapters::enforce_tenant_context(TenantId::parse(tenant_id)?)
 }
 
 /// 在应用边界把租户数据基础设施错误映射为稳定领域错误，不依赖展示字符串。

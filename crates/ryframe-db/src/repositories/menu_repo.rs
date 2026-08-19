@@ -1,15 +1,17 @@
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
     QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
 
-use crate::entities::{menu, permission};
+use crate::{
+    Repository,
+    entities::{menu, permission},
+};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MenuTreeNode {

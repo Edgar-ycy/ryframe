@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use ryframe_adapters::excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
-use ryframe_adapters::repository::{PageResult, ValidatedPageQuery};
 use ryframe_adapters::snowflake::try_next_snowflake_id;
 use ryframe_auth::password;
 use ryframe_config::UserImportConfig;
@@ -17,7 +16,9 @@ use ryframe_db::{
     UserImportRepository, UserRepository, background_job,
     entities::{dept, user, user_import_job, user_import_row_result},
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
+use ryframe_kernel::{
+    ActorContext, AppError, AppResult, DataScope, PageResult, ValidatedPageQuery,
+};
 use sea_orm::{EntityTrait, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

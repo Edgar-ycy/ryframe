@@ -1,13 +1,12 @@
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
+use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
-use ryframe_adapters::{
-    Repository,
-    auto_fill::{AutoFill, FillContext},
-};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{PermissionRepository, TenantConfigTransferRepository, entities::permission};
+use ryframe_db::{
+    PermissionRepository, Repository, TenantConfigTransferRepository, entities::permission,
+};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 

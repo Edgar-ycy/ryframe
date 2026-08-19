@@ -5,8 +5,8 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::PostListParams;
+use ryframe_kernel::ValidatedPageQuery;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 

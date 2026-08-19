@@ -150,7 +150,7 @@ impl TenantService {
         params: CreateTenantParams,
     ) -> AppResult<TenantVo> {
         ensure_platform_admin(actor)?;
-        ryframe_adapters::validate_tenant_identifier(&params.tenant_id)?;
+        ryframe_kernel::TenantId::parse(&params.tenant_id)?;
         validate_data_target_key(&params.data_target_key)?;
         validate_idempotency_key(&params.idempotency_key)?;
         ryframe_auth::password::validate_complexity(&params.admin_password)?;

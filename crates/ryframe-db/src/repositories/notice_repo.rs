@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult, DataScopeContext};
+use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
     QueryFilter, QueryOrder,
 };
 
-use crate::entities::notice;
+use crate::{Repository, entities::notice};
 
 pub struct NoticeRepository;
 

@@ -1,15 +1,12 @@
+use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
-use ryframe_adapters::{
-    auto_fill::{AutoFill, FillContext},
-    repository::{PageResult, ValidatedPageQuery},
-};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
     DictDataRepository, DictTypeFilter, DictTypeRepository, ExportCursorWindow,
     TenantConfigTransferRepository,
     entities::{dict_data, dict_type},
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };

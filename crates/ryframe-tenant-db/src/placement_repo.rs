@@ -19,7 +19,7 @@ impl PendingTenantDataPlacement {
         switch_token: impl Into<String>,
     ) -> Result<Self, TenantDataError> {
         let tenant_id = tenant_id.into();
-        ryframe_adapters::validate_tenant_identifier(&tenant_id)
+        ryframe_kernel::TenantId::parse(&tenant_id)
             .map_err(|error| TenantDataError::InvalidTenantId(error.message().into()))?;
         let current_target_key = current_target_key.into();
         let switch_token = switch_token.into();

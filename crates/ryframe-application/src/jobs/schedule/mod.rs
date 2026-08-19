@@ -3,14 +3,13 @@ use std::{str::FromStr, sync::Arc, time::Duration as StdDuration};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
-use ryframe_adapters::repository::{PageResult, ValidatedPageQuery};
 use ryframe_adapters::snowflake;
 use ryframe_config::JobConfig;
 use ryframe_db::{
     ControlDatabaseCluster, ExecutionTenantScope, JobScheduleExecutionFilter, JobScheduleFilter,
     JobScheduleRepository, job_schedule, job_schedule_execution,
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseTransaction, TransactionTrait,
 };

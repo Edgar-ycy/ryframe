@@ -3,12 +3,12 @@ use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
 };
-use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::{
     MessageAudienceKind, MessageAudienceSelector, NoticeListParams, PublishMessageParams,
 };
 use ryframe_kernel::AppError;
 use ryframe_kernel::LocalizedText;
+use ryframe_kernel::ValidatedPageQuery;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 

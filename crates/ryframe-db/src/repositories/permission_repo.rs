@@ -1,14 +1,16 @@
 use std::collections::HashSet;
 
 use async_trait::async_trait;
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,
 };
 
-use crate::entities::{menu, permission, role_permission, user_role};
+use crate::{
+    Repository,
+    entities::{menu, permission, role_permission, user_role},
+};
 
 pub struct PermissionRepository;
 

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use chrono::Duration;
-use ryframe_adapters::repository::Repository;
 use ryframe_config::JobConfig;
 use ryframe_db::{
     BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
+    Repository,
 };
 use ryframe_kernel::AppError;
 

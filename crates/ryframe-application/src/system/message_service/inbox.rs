@@ -46,7 +46,7 @@ impl MessageService {
         limit: u64,
     ) -> AppResult<MessageInbox> {
         self.ensure_enabled()?;
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         let page = self
             .repository
             .inbox(
@@ -73,7 +73,7 @@ impl MessageService {
         message_ids: &[i64],
     ) -> AppResult<u64> {
         self.ensure_enabled()?;
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        crate::enforce_tenant_scope(tenant_id)?;
         self.acknowledge_for(tenant_id, user_id, message_ids).await
     }
 

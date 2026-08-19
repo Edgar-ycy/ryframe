@@ -5,7 +5,6 @@ use std::{
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use ryframe_adapters::repository::{PageResult, ValidatedPageQuery};
 use ryframe_adapters::snowflake::try_next_snowflake_id;
 use ryframe_config::TenantConfigTransferConfig;
 use ryframe_db::{
@@ -17,7 +16,7 @@ use ryframe_db::{
         tenant_config_transfer_item, tenant_operation_lease, user, user_role,
     },
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait,
     IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,

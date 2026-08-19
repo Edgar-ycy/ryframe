@@ -3,8 +3,8 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::{CreateMenuCommand, MenuListParams, UpdateMenuCommand};
+use ryframe_kernel::ValidatedPageQuery;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 

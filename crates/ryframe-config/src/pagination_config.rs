@@ -48,3 +48,9 @@ impl Default for PaginationConfig {
         }
     }
 }
+
+impl From<&PaginationConfig> for ryframe_kernel::PaginationPolicy {
+    fn from(config: &PaginationConfig) -> Self {
+        Self::new(config.default_page_size, config.max_page_size)
+    }
+}

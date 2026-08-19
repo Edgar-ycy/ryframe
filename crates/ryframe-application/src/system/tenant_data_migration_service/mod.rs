@@ -693,9 +693,9 @@ fn ensure_platform_actor(actor: &ActorContext) -> AppResult<()> {
 
 fn validate_migration_tenant(tenant_id: &str) -> AppResult<()> {
     // 数据迁移由 system 租户的控制面操作员发起，目标租户天然不同于请求主体。
-    // 此处不能使用 validate_explicit_tenant，否则请求上下文会错误地拒绝所有
+    // 此处只校验目标标识；目标租户可能与发起请求的控制面租户不同。
     // 非 system 租户的迁移列表、预览和创建操作。
-    ryframe_adapters::validate_tenant_identifier(tenant_id)?;
+    ryframe_kernel::TenantId::parse(tenant_id)?;
     if tenant_id == "system" {
         return Err(AppError::Validation("system 租户禁止迁移业务数据".into()));
     }

@@ -1,8 +1,8 @@
 use std::{cmp::Reverse, collections::HashMap, sync::Arc};
 
 use chrono::Utc;
-use ryframe_adapters::{RedisClient, RefreshSessionStore, ValidatedPageQuery};
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_adapters::{RedisClient, RefreshSessionStore};
+use ryframe_kernel::{ActorContext, AppError, AppResult, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -89,7 +89,7 @@ impl OnlineUserService {
 
     /// 添加会话元数据。调用方只有在此操作成功后才可以向客户端发放令牌。
     pub async fn add_user(&self, session: UserSession) -> AppResult<()> {
-        ryframe_adapters::validate_tenant_identifier(&session.tenant_id)?;
+        ryframe_kernel::TenantId::parse(&session.tenant_id)?;
         let identity = self
             .refresh_sessions()
             .identity(&session.sid)
@@ -113,7 +113,7 @@ impl OnlineUserService {
 
     /// 清理展示元数据和索引。权威会话撤销必须由调用方先完成。
     pub async fn remove_user(&self, tenant_id: &str, sid: &str) -> AppResult<()> {
-        ryframe_adapters::validate_tenant_identifier(tenant_id)?;
+        ryframe_kernel::TenantId::parse(tenant_id)?;
         match self {
             Self::Redis { client, .. } => redis_backend::remove(client, tenant_id, sid).await,
             Self::InMemory { sessions, .. } => {
@@ -156,7 +156,7 @@ impl OnlineUserService {
         tenant_id: &str,
         user_id: i64,
     ) -> AppResult<Vec<UserSession>> {
-        ryframe_adapters::validate_tenant_identifier(tenant_id)?;
+        ryframe_kernel::TenantId::parse(tenant_id)?;
         let metadata = match self {
             Self::Redis { client, .. } => {
                 redis_backend::list_for_user(client, tenant_id, user_id).await?
@@ -229,7 +229,7 @@ impl OnlineUserService {
 
     /// 严格更新已经存在的设备元数据，不会根据访问令牌重新创建缺失记录。
     pub async fn touch_user_strict(&self, tenant_id: &str, sid: &str) -> AppResult<()> {
-        ryframe_adapters::validate_tenant_identifier(tenant_id)?;
+        ryframe_kernel::TenantId::parse(tenant_id)?;
         self.refresh_sessions()
             .identity(sid)
             .await?

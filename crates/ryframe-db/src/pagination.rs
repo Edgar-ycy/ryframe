@@ -1,10 +1,9 @@
-use ryframe_adapters::{PageResult, ValidatedPageQuery};
-use ryframe_kernel::AppResult;
+use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait, Select};
 /// 使用方式：
 /// ```text
 /// use ryframe_config::PaginationConfig;
-/// use ryframe_adapters::{PageResult, ValidatedPageQuery};
+/// use ryframe_kernel::{PageResult, ValidatedPageQuery};
 ///
 /// # fn main() -> ryframe_kernel::AppResult<()> {
 /// let query = ValidatedPageQuery::new(1, 10, &PaginationConfig::default())?;

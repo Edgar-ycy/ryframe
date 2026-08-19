@@ -12,7 +12,7 @@ use super::{AuthService, identity::ValidatedIdentity};
 #[async_trait]
 impl PrincipalResolver for AuthService {
     async fn resolve_principal(&self, claims: &Claims) -> AppResult<RequestPrincipal> {
-        ryframe_adapters::validate_explicit_tenant(&claims.tenant_id)?;
+        crate::enforce_tenant_scope(&claims.tenant_id)?;
         let user_id = claims
             .sub
             .parse::<i64>()

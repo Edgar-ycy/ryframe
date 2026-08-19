@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use ryframe_adapters::repository::{PageResult, ValidatedPageQuery};
 use ryframe_config::{DataRetentionConfig, TenantConfigTransferConfig};
 use ryframe_db::{
     ControlDatabaseCluster, DataRetentionRepository, EnqueueBackgroundJob, FileRepository,
@@ -10,7 +9,7 @@ use ryframe_db::{
     UserImportRepository, background_job, data_retention_run, tenant_config_bundle,
     tenant_config_transfer,
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,

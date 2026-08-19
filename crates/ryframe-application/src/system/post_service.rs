@@ -1,14 +1,11 @@
+use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
-use ryframe_adapters::{
-    Repository,
-    auto_fill::{AutoFill, FillContext},
-    repository::{PageResult, ValidatedPageQuery},
-};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
-    ExportCursorWindow, PostFilter, PostRepository, TenantConfigTransferRepository, entities::post,
+    ExportCursorWindow, PostFilter, PostRepository, Repository, TenantConfigTransferRepository,
+    entities::post,
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
@@ -194,7 +191,7 @@ impl PostService {
             .find_by_page_filtered(
                 &db,
                 tenant_id,
-                params.page.clone(),
+                params.page,
                 params.name.as_deref(),
                 params.code.as_deref(),
                 params.status.as_deref(),

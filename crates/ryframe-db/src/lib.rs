@@ -7,6 +7,7 @@ mod execution_tenant_scope;
 pub mod migration;
 pub mod pagination;
 pub mod repositories;
+mod repository;
 pub mod resource_ownership;
 pub mod sql_logger;
 pub use cluster::{
@@ -15,6 +16,7 @@ pub use cluster::{
 };
 pub use database_monitor::SeaOrmDatabaseMonitor;
 pub use execution_tenant_scope::ExecutionTenantScope;
+pub use repository::Repository;
 pub use sql_logger::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 pub mod transaction;
 

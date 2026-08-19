@@ -1,9 +1,7 @@
-use ryframe_adapters::{
-    Repository,
-    repository::{PageResult, ValidatedPageQuery},
+use ryframe_db::{ReadConsistency, Repository};
+use ryframe_kernel::{
+    ActorContext, AppResult, DataScope, DataScopeContext, PageResult, ValidatedPageQuery,
 };
-use ryframe_db::ReadConsistency;
-use ryframe_kernel::{ActorContext, AppResult, DataScope, DataScopeContext};
 use sea_orm::DatabaseConnection;
 
 use super::{CACHE_TTL_SECS, DEPT_TREE_CACHE_NAMESPACE, DeptService, DeptTreeNode, DeptVo};
@@ -100,12 +98,12 @@ impl DeptService {
         let page = match self.visible_dept_ids(&db, tenant_id, &scope).await? {
             None => {
                 self.dept_repo
-                    .find_by_page_filtered(&db, tenant_id, query.clone(), name, status)
+                    .find_by_page_filtered(&db, tenant_id, query, name, status)
                     .await?
             }
             Some(ids) => {
                 self.dept_repo
-                    .find_by_page_filtered_by_ids(&db, tenant_id, query.clone(), name, status, &ids)
+                    .find_by_page_filtered_by_ids(&db, tenant_id, query, name, status, &ids)
                     .await?
             }
         };

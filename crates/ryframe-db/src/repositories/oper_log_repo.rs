@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
-use ryframe_kernel::{AppError, AppResult, DataScopeContext};
+use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 
-use crate::entities::oper_log;
+use crate::{Repository, entities::oper_log};
 
 pub struct OperLogRepository;
 
@@ -116,7 +115,7 @@ impl OperLogRepository {
         tenant_id: &str,
         entity: oper_log::Model,
     ) -> AppResult<bool> {
-        ryframe_adapters::validate_explicit_tenant(tenant_id)?;
+        ryframe_kernel::TenantId::parse(tenant_id)?;
         if entity.tenant_id != tenant_id {
             return Err(AppError::Authorization("不能新增其他租户的操作日志".into()));
         }

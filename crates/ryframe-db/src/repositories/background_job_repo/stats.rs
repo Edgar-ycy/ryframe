@@ -1,7 +1,7 @@
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait,
     QueryFilter, QueryOrder, QueryResult, Statement, Value, sea_query::Expr,
@@ -87,8 +87,8 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         filter: BackgroundJobFilter<'_>,
-        query: &ryframe_adapters::repository::ValidatedPageQuery,
-    ) -> AppResult<ryframe_adapters::repository::PageResult<background_job::Model>> {
+        query: &ValidatedPageQuery,
+    ) -> AppResult<PageResult<background_job::Model>> {
         crate::pagination::paginate(
             db,
             Self::filtered_query(filter)
