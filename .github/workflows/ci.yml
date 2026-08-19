@@ -64,6 +64,9 @@ jobs:
       - name: Reject unreviewed prerelease dependencies
         run: python scripts/check_prerelease_dependencies.py
 
+      - name: Test repository policy scripts
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+
       - name: Check workspace architecture and production source size
         run: python scripts/check_architecture.py
 
@@ -90,6 +93,91 @@ jobs:
           cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- "$generated_mysql"
           diff --unified openapi/openapi.json "$generated_openapi"
           diff --unified sql/ryframe_config.sql "$generated_mysql"
+
+  # ============================================================
+  # 同步前端消费契约
+  # ============================================================
+  consumer-contract:
+    name: Frontend Consumer Contract
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出后端 PR 提交
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          path: backend
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 生成并分类候选契约
+        id: contract
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/candidate-openapi.json"
+          baseline="$RUNNER_TEMP/baseline-openapi.json"
+          cargo run --locked --manifest-path backend/Cargo.toml \
+            -p ryframe-api --bin export_openapi -- "$candidate"
+          cmp --silent backend/openapi/openapi.json "$candidate" || {
+            echo "::error::后端 PR 未提交最新 OpenAPI 快照"
+            exit 1
+          }
+          git -C backend show "$BASE_SHA:openapi/openapi.json" > "$baseline"
+          if cmp --silent "$baseline" "$candidate"; then
+            changed=false
+          else
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: 选择精确前端提交
+        id: frontend-ref
+        shell: bash
+        env:
+          CONTRACT_CHANGED: ${{ steps.contract.outputs.changed }}
+        run: |
+          set -euo pipefail
+          frontend_ref="$(python backend/scripts/select_frontend_commit.py \
+            --event "$GITHUB_EVENT_PATH" \
+            --contract-changed "$CONTRACT_CHANGED")"
+          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+
+      - name: 检出前端消费者
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: Edgar-ycy/ryframe-vue3
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
+
+      - name: Setup default Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: frontend/.node-version
+          package-manager-cache: false
+
+      - name: Install pnpm
+        uses: ./frontend/.github/actions/setup-pnpm
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 校验前端消费契约
+        working-directory: frontend
+        env:
+          BACKEND_COMMIT: ${{ github.event.pull_request.head.sha }}
+          CONTRACT_CHANGED: ${{ steps.contract.outputs.changed }}
+        run: >-
+          pnpm consumer:check --
+          --openapi "$RUNNER_TEMP/candidate-openapi.json"
+          --backend-commit "$BACKEND_COMMIT"
+          --backend-repository "Edgar-ycy/ryframe"
+          --require-pin "$CONTRACT_CHANGED"
 
   # ============================================================
   # 安全检查
