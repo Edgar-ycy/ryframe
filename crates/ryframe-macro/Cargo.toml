@@ -11,7 +11,6 @@ description = "ryframe 属性宏（AutoFill derive 等）"
 proc-macro = true
 
 [dependencies]
-ryframe-adapters = { path = "../ryframe-adapters" }
 syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }

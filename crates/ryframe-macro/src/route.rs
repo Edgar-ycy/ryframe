@@ -39,7 +39,7 @@ pub fn expand_route(method: HttpMethod, args: TokenStream, input: TokenStream) -
     };
     let method_router = if let Some(permission) = permission {
         quote! {
-            ::ryframe_auth::middleware::perm_route(
+            crate::__macro_support::perm_route(
                 #method_function(#function_name),
                 #permission,
             )

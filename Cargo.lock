@@ -3414,7 +3414,6 @@ version = "0.10.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "ryframe-adapters",
  "syn 3.0.3",
 ]
 

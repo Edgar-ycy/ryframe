@@ -7,8 +7,47 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use ryframe_adapters::auto_fill::{DEFAULTS, FillSource, FillStrategy};
 use syn::{Data, DeriveInput, Fields, Ident, parse_macro_input};
+
+#[derive(Clone, Copy)]
+enum FillStrategy {
+    Insert,
+    All,
+}
+
+#[derive(Clone, Copy)]
+enum FillSource {
+    Now,
+}
+
+struct DefaultRule {
+    field_name: &'static str,
+    strategy: FillStrategy,
+    source: FillSource,
+}
+
+const DEFAULTS: &[DefaultRule] = &[
+    DefaultRule {
+        field_name: "created_at",
+        strategy: FillStrategy::Insert,
+        source: FillSource::Now,
+    },
+    DefaultRule {
+        field_name: "updated_at",
+        strategy: FillStrategy::All,
+        source: FillSource::Now,
+    },
+    DefaultRule {
+        field_name: "create_time",
+        strategy: FillStrategy::Insert,
+        source: FillSource::Now,
+    },
+    DefaultRule {
+        field_name: "update_time",
+        strategy: FillStrategy::All,
+        source: FillSource::Now,
+    },
+];
 
 // ============================================================
 // AutoFillAction — 标注动作
@@ -94,18 +133,10 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
             let field = Ident::new(rule.field_name, proc_macro2::Span::call_site());
             let expr = match rule.source {
                 FillSource::Now => quote!(ctx.now),
-                FillSource::UserId => quote!(ctx.user_id),
-                FillSource::Username => quote!(ctx.username),
-                FillSource::Snowflake => {
-                    quote!(ryframe_utils::snowflake::try_next_snowflake_id()?)
-                }
             };
             match rule.strategy {
                 FillStrategy::Insert => {
                     insert_stmts.push(quote!(self.#field = #expr;));
-                }
-                FillStrategy::Update => {
-                    update_stmts.push(quote!(self.#field = #expr;));
                 }
                 FillStrategy::All => {
                     insert_stmts.push(quote!(self.#field = #expr;));
@@ -121,25 +152,25 @@ pub(crate) fn expand_auto_fill(input: TokenStream) -> TokenStream {
         if field_names.iter().any(|f| f == field_name) {
             let field = Ident::new(field_name, proc_macro2::Span::call_site());
             insert_stmts.push(quote! {
-                self.#field = ryframe_utils::snowflake::try_next_snowflake_id()?;
+                self.#field = crate::__macro_support::auto_fill::next_id()?;
             });
         }
     }
 
     // 5. 生成 impl
     let expanded = quote! {
-        impl ryframe_adapters::auto_fill::AutoFill for #name {
+        impl crate::__macro_support::auto_fill::AutoFill for #name {
             fn fill_on_insert(
                 &mut self,
-                ctx: &ryframe_adapters::auto_fill::FillContext,
-            ) -> ryframe_adapters::auto_fill::AppResult<()> {
+                ctx: &crate::__macro_support::auto_fill::FillContext,
+            ) -> crate::__macro_support::auto_fill::AppResult<()> {
                 #(#insert_stmts)*
                 Ok(())
             }
             fn fill_on_update(
                 &mut self,
-                ctx: &ryframe_adapters::auto_fill::FillContext,
-            ) -> ryframe_adapters::auto_fill::AppResult<()> {
+                ctx: &crate::__macro_support::auto_fill::FillContext,
+            ) -> crate::__macro_support::auto_fill::AppResult<()> {
                 #(#update_stmts)*
                 Ok(())
             }

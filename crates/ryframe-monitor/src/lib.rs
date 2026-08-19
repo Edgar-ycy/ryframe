@@ -2,6 +2,11 @@ mod cache_monitor;
 mod readiness;
 pub mod server_info;
 
+#[doc(hidden)]
+pub mod __macro_support {
+    pub use ryframe_auth::middleware::perm_route;
+}
+
 use std::sync::Arc;
 
 use axum::{

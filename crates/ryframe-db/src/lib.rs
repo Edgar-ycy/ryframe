@@ -16,6 +16,17 @@ pub use execution_tenant_scope::ExecutionTenantScope;
 pub use sql_logger::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 pub mod transaction;
 
+#[doc(hidden)]
+pub mod __macro_support {
+    pub mod auto_fill {
+        pub use ryframe_adapters::auto_fill::{AppResult, AutoFill, FillContext};
+
+        pub fn next_id() -> AppResult<i64> {
+            Ok(ryframe_utils::snowflake::try_next_snowflake_id()?)
+        }
+    }
+}
+
 // 便捷导出
 pub use entities::{
     background_job, cache_namespace_version, config, data_retention_run, dept, dict_data,
