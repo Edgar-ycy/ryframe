@@ -17,7 +17,7 @@ groups:
         annotations:
           summary: "RyFrame 5xx error rate is above 2%"
           description: "The 5xx ratio has exceeded 2% for 10 minutes."
-          runbook: "docs/operations-runbook.md#http-5xx-与高延迟"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#http-5xx-与高延迟"
 
       - alert: RyFrameHttpLatencyP95High
         expr: |
@@ -31,7 +31,7 @@ groups:
           service: ryframe
         annotations:
           summary: "RyFrame HTTP P95 latency is above 500 ms"
-          runbook: "docs/operations-runbook.md#http-5xx-与高延迟"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#http-5xx-与高延迟"
 
       - alert: RyFrameHttpLatencyP99High
         expr: |
@@ -45,7 +45,7 @@ groups:
           service: ryframe
         annotations:
           summary: "RyFrame HTTP P99 latency is above 1 second"
-          runbook: "docs/operations-runbook.md#http-5xx-与高延迟"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#http-5xx-与高延迟"
 
       - alert: RyFrameRedisDegraded
         expr: max by (instance, subsystem) (ryframe_redis_degraded_state) == 1
@@ -56,7 +56,7 @@ groups:
         annotations:
           summary: "RyFrame reports Redis degradation"
           description: "Redis-dependent subsystem {{ $labels.subsystem }} is degraded on {{ $labels.instance }}."
-          runbook: "docs/operations-runbook.md#redis-降级"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#redis-降级"
 
       - alert: RyFrameRedisDegradationEvents
         expr: sum by (instance, subsystem) (increase(ryframe_redis_degraded_total[10m])) > 3
@@ -67,7 +67,7 @@ groups:
         annotations:
           summary: "Repeated Redis degradation events"
           description: "Subsystem {{ $labels.subsystem }} recorded repeated degradation events."
-          runbook: "docs/operations-runbook.md#redis-降级"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#redis-降级"
 
       - alert: RyFrameRefreshTokenReplay
         expr: increase(ryframe_auth_refresh_replay_total[5m]) > 0
@@ -77,7 +77,7 @@ groups:
         annotations:
           summary: "Refresh-token replay detected"
           description: "At least one confirmed refresh-token replay was detected in the last 5 minutes."
-          runbook: "docs/operations-runbook.md#refresh-token-重放"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#refresh-token-重放"
 
       - alert: RyFrameRateLimitRejectionsHigh
         expr: sum by (instance, scope) (rate(ryframe_rate_limit_rejections_total[5m])) > 1
@@ -88,7 +88,7 @@ groups:
         annotations:
           summary: "RyFrame rate-limit rejection rate is high"
           description: "Scope {{ $labels.scope }} is rejecting more than one request per second."
-          runbook: "docs/operations-runbook.md#限流拒绝"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#限流拒绝"
 
       - alert: RyFrameDatabaseReplicaUnavailable
         expr: max by (instance, name, kind) (ryframe_db_node_up{kind="replica"}) == 0
@@ -99,7 +99,7 @@ groups:
         annotations:
           summary: "RyFrame database replica is unavailable"
           description: "Replica {{ $labels.name }} on {{ $labels.instance }} is unavailable for read routing."
-          runbook: "docs/operations-runbook.md#数据库副本与读回退"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#数据库副本与读回退"
 
       - alert: RyFrameDatabaseReadFallbackHigh
         expr: |
@@ -120,7 +120,7 @@ groups:
         annotations:
           summary: "RyFrame reads are frequently falling back to primary"
           description: "More than 5% of eventual-consistency reads are falling back to primary on {{ $labels.instance }}."
-          runbook: "docs/operations-runbook.md#数据库副本与读回退"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#数据库副本与读回退"
 
       - alert: RyFrameJobReadyBacklog
         expr: max by (instance, type) (ryframe_job_oldest_ready_age_seconds) > 300
@@ -131,7 +131,7 @@ groups:
         annotations:
           summary: "RyFrame background-job backlog is waiting too long"
           description: "The oldest ready {{ $labels.type }} job on {{ $labels.instance }} has waited over 5 minutes."
-          runbook: "docs/operations-runbook.md#后台任务"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#后台任务"
 
       - alert: RyFrameDeadBackgroundJob
         expr: max by (instance, type) (ryframe_job_queue_depth{status="dead"}) > 0
@@ -142,7 +142,7 @@ groups:
         annotations:
           summary: "RyFrame background job entered the dead-letter queue"
           description: "{{ $labels.type }} has dead-letter jobs on {{ $labels.instance }}."
-          runbook: "docs/operations-runbook.md#后台任务"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#后台任务"
 
       - alert: RyFrameJobScheduleScanErrors
         expr: sum by (instance) (increase(ryframe_job_schedule_scan_total{result="error"}[5m])) > 0
@@ -153,7 +153,7 @@ groups:
         annotations:
           summary: "RyFrame 定时调度扫描持续失败"
           description: "{{ $labels.instance }} 在过去五分钟内持续出现定时调度扫描错误。"
-          runbook: "docs/operations-runbook.md#定时调度"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#定时调度"
 
       # 调度关闭后不会产生扫描序列；十五分钟持续窗口可避免重启切换开关时误报。
       - alert: RyFrameJobScheduleScanStalled
@@ -165,7 +165,7 @@ groups:
         annotations:
           summary: "RyFrame 定时调度扫描已停滞"
           description: "{{ $labels.instance }} 的已启用定时调度超过十分钟没有完成成功扫描。"
-          runbook: "docs/operations-runbook.md#定时调度"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#定时调度"
 
       - alert: RyFrameJobScheduleLagHigh
         expr: |
@@ -180,7 +180,7 @@ groups:
         annotations:
           summary: "RyFrame 定时调度延迟 P95 超过 30 秒"
           description: "{{ $labels.instance }} 的定时计划领取延迟持续偏高。"
-          runbook: "docs/operations-runbook.md#定时调度"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#定时调度"
 
       - alert: RyFrameMessageDeliveryFailures
         expr: sum by (instance) (increase(ryframe_message_delivery_total{result=~"slow_consumer|closed"}[5m])) > 5
@@ -191,7 +191,7 @@ groups:
         annotations:
           summary: "RyFrame message WebSocket delivery is failing"
           description: "More than five message deliveries were dropped for slow or closed consumers on {{ $labels.instance }}."
-          runbook: "docs/operations-runbook.md#消息中心投递"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#消息中心投递"
 
       - alert: RyFrameMessageReplayQueryFailures
         expr: sum by (instance) (increase(ryframe_message_replay_query_total{result="error"}[5m])) > 0
@@ -202,7 +202,7 @@ groups:
         annotations:
           summary: "RyFrame shared message replay query is failing"
           description: "The shared inbox replay scheduler cannot query pending messages on {{ $labels.instance }}."
-          runbook: "docs/operations-runbook.md#消息中心投递"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#消息中心投递"
 
       - alert: RyFrameOtlpExporterDegraded
         expr: max by (instance) (ryframe_otel_exporter_degraded) == 1
@@ -213,7 +213,7 @@ groups:
         annotations:
           summary: "RyFrame OTLP exporter is degraded"
           description: "The OTLP exporter failed to initialize on {{ $labels.instance }}."
-          runbook: "docs/operations-runbook.md#opentelemetry-导出器"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#opentelemetry-导出器"
 
       - alert: RyFrameOtlpExporterRuntimeFailure
         expr: sum by (instance) (increase(ryframe_otel_exporter_runtime_failures_total[5m])) > 0
@@ -223,7 +223,7 @@ groups:
         annotations:
           summary: "RyFrame OTLP 导出器运行期失败"
           description: "{{ $labels.instance }} 在过去五分钟内发生了 OTLP 导出或关闭失败。"
-          runbook: "docs/operations-runbook.md#opentelemetry-导出器"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#opentelemetry-导出器"
 
       # 票据自然过期与重放尚无法精确区分，待原子消费语义确定后再新增告警。
 
@@ -244,7 +244,7 @@ groups:
           service: ryframe
         annotations:
           summary: "MySQL connections exceed 80% of capacity"
-          runbook: "docs/operations-runbook.md#数据库连接容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#数据库连接容量"
 
       - alert: RyFrameMySqlConnectionPoolExhausted
         expr: |
@@ -259,7 +259,7 @@ groups:
           service: ryframe
         annotations:
           summary: "MySQL connections exceed 95% of capacity"
-          runbook: "docs/operations-runbook.md#数据库连接容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#数据库连接容量"
 
       # 应用和存储节点均依赖 prometheus/node_exporter。
       - alert: RyFrameDiskSpaceLow
@@ -276,7 +276,7 @@ groups:
         annotations:
           summary: "Filesystem has less than 15% free space"
           description: "{{ $labels.instance }} mount {{ $labels.mountpoint }} is running low on space."
-          runbook: "docs/operations-runbook.md#磁盘容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#磁盘容量"
 
       - alert: RyFrameDiskSpaceCritical
         expr: |
@@ -291,7 +291,7 @@ groups:
           service: ryframe
         annotations:
           summary: "Filesystem has less than 5% free space"
-          runbook: "docs/operations-runbook.md#磁盘容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#磁盘容量"
 
       # 备份任务只能在备份校验成功后，通过 node_exporter 的文本文件采集器或
       # Pushgateway 发布此 Unix 时间戳。
@@ -303,7 +303,7 @@ groups:
           service: ryframe
         annotations:
           summary: "No validated RyFrame backup in the last 25 hours"
-          runbook: "docs/operations-runbook.md#备份失败或过期"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#备份失败或过期"
 
       - alert: RyFrameBackupMetricMissing
         expr: absent(ryframe_backup_last_success_timestamp_seconds)
@@ -313,7 +313,7 @@ groups:
           service: ryframe
         annotations:
           summary: "RyFrame backup success metric is missing"
-          runbook: "docs/operations-runbook.md#备份失败或过期"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#备份失败或过期"
 
       # 依赖 blackbox_exporter 的 probe_success 和 TLS 到期指标。
       - alert: RyFrameTlsCertificateExpiresSoon
@@ -324,7 +324,7 @@ groups:
           service: ryframe
         annotations:
           summary: "RyFrame TLS certificate expires within 14 days"
-          runbook: "docs/operations-runbook.md#tls-证书"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#tls-证书"
 
       - alert: RyFrameTlsCertificateExpiresCritical
         expr: probe_ssl_earliest_cert_expiry - time() < 3 * 24 * 60 * 60
@@ -334,4 +334,4 @@ groups:
           service: ryframe
         annotations:
           summary: "RyFrame TLS certificate expires within 3 days"
-          runbook: "docs/operations-runbook.md#tls-证书"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations-runbook.md#tls-证书"
