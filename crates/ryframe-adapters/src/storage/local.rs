@@ -602,7 +602,7 @@ impl ObjectStorage for LocalObjectStorage {
 #[cfg(test)]
 mod tests {
     use super::LocalObjectStorage;
-    use crate::ObjectStorage;
+    use crate::storage::ObjectStorage;
 
     #[tokio::test]
     async fn put_file_streams_through_private_staging() {

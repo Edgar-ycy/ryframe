@@ -24,7 +24,7 @@
 //! }
 //!
 //! // 使用 Snowflake 自动填充前，必须在进程启动边界完成一次初始化。
-//! ryframe_utils::snowflake::initialize(1).expect("初始化 Snowflake 失败");
+//! ryframe_adapters::snowflake::initialize(1).expect("初始化 Snowflake 失败");
 //!
 //! let mut user = User {
 //!     id: 0,
@@ -67,7 +67,7 @@ use syn::parse_macro_input;
 /// }
 ///
 /// // 使用 Snowflake 自动填充前，必须在进程启动边界完成一次初始化。
-/// ryframe_utils::snowflake::initialize(1).expect("初始化 Snowflake 失败");
+/// ryframe_adapters::snowflake::initialize(1).expect("初始化 Snowflake 失败");
 ///
 /// let mut user = User {
 ///     id: 0,

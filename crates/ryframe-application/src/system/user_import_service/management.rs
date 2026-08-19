@@ -16,9 +16,8 @@ impl UserImportService {
         }
     }
 
-    pub fn upload_config(&self) -> UploadConfig {
-        UploadConfig {
-            upload_dir: IMPORT_BUCKET.to_owned(),
+    pub fn upload_policy(&self) -> UploadPolicy {
+        UploadPolicy {
             max_file_size: u64::try_from(self.config.max_file_bytes).unwrap_or(u64::MAX),
             allowed_extensions: vec!["xlsx".to_owned()],
         }
@@ -32,7 +31,7 @@ impl UserImportService {
         data: Vec<u8>,
     ) -> AppResult<UploadResponse> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let config = self.upload_config();
+        let policy = self.upload_policy();
         self.file_service
             .upload_internal_unbound(
                 tenant_id,
@@ -40,7 +39,7 @@ impl UserImportService {
                 UploadCommand {
                     original_name,
                     data,
-                    config: &config,
+                    policy: &policy,
                     bucket: IMPORT_BUCKET,
                     compress: false,
                 },

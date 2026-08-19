@@ -414,7 +414,7 @@ impl TenantDataMigrationService {
             return Err(AppError::Conflict("迁移预览 plan_hash 已失效".into()));
         }
 
-        let migration_id = ryframe_utils::snowflake::try_next_snowflake_id()?;
+        let migration_id = ryframe_adapters::snowflake::try_next_snowflake_id()?;
         let now = self
             .lease_repository
             .database_utc_now(self.database.write())

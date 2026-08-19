@@ -1,3 +1,4 @@
+use ryframe_adapters::snowflake;
 use ryframe_adapters::{
     auto_fill::{AutoFill, FillContext},
     repository::{PageResult, ValidatedPageQuery},
@@ -9,7 +10,6 @@ use ryframe_db::{
     entities::{dict_data, dict_type},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };

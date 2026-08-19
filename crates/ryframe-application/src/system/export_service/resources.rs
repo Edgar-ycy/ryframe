@@ -1,10 +1,12 @@
 use std::time::{Duration as StdDuration, Instant};
 
+use ryframe_adapters::excel::{
+    ExcelArtifact, ExcelBatchProgress, IncrementalExcelWriter, XLSX_MAX_DATA_ROWS,
+};
 use ryframe_db::{
     ExportCursorWindow, ExportStartDisposition, LoginInfoFilter, OperLogFilter, UserFilter,
     entities::{background_job, export_job},
 };
-use ryframe_excel::{ExcelBatchProgress, IncrementalExcelWriter};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 
@@ -501,10 +503,10 @@ fn validate_row_and_byte_limits(
     let configured_rows =
         u64::try_from(maximum_rows).map_err(|_| AppError::Config("导出行数上限无法转换".into()))?;
     let row_limit = configured_rows.min(EXPORT_BUSINESS_MAX_ROWS as u64);
-    if rows > matched_rows || rows > row_limit || rows > ryframe_excel::XLSX_MAX_DATA_ROWS {
+    if rows > matched_rows || rows > row_limit || rows > XLSX_MAX_DATA_ROWS {
         return Err(AppError::ExportRowLimitExceeded {
             matched_rows: rows,
-            limit: row_limit.min(ryframe_excel::XLSX_MAX_DATA_ROWS),
+            limit: row_limit.min(XLSX_MAX_DATA_ROWS),
         });
     }
     if input_bytes > EXPORT_MAX_RESULT_BYTES {
@@ -517,7 +519,7 @@ fn validate_row_and_byte_limits(
 }
 
 fn validate_artifact_limits(
-    artifact: &ryframe_excel::ExcelArtifact,
+    artifact: &ExcelArtifact,
     matched_rows: u64,
     maximum_rows: usize,
 ) -> AppResult<()> {
@@ -539,7 +541,7 @@ fn validate_artifact_limits(
 async fn finish_writer_within_deadline(
     writer: IncrementalExcelWriter<'static>,
     execution: &ExportExecution<'_>,
-) -> AppResult<ryframe_excel::ExcelArtifact> {
+) -> AppResult<ExcelArtifact> {
     let limit = StdDuration::from_secs(EXPORT_MAX_RUNTIME_SECONDS as u64);
     let remaining = limit
         .checked_sub(execution.started_at.elapsed())

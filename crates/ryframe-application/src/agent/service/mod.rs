@@ -6,6 +6,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ryframe_adapters::RedisClient;
+use ryframe_adapters::snowflake;
 use ryframe_auth::rbac;
 use ryframe_config::{MultiTenancyConfig, PepperKeyring, ServiceAccountsConfig};
 use ryframe_db::{
@@ -18,7 +19,6 @@ use ryframe_db::{
     },
 };
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::TransactionTrait;
 use serde::Serialize;
 

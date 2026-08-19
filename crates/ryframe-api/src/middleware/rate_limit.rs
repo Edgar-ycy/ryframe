@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::ClientIp;
 use axum::{
     extract::{MatchedPath, State},
     http::{HeaderValue, StatusCode, header::RETRY_AFTER},
@@ -15,7 +16,6 @@ use ryframe_adapters::{
     metrics::{record_rate_limit_rejection, record_redis_degraded},
     rate_limit::RateLimiter,
 };
-use ryframe_utils::ip::ClientIp;
 
 #[derive(Clone)]
 pub struct RateLimitState {

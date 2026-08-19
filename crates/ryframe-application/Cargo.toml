@@ -10,13 +10,10 @@ description.workspace = true
 
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-utils = { path = "../ryframe-utils" }
 ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-config = { path = "../ryframe-config" }
-ryframe-excel = { path = "../ryframe-excel" }
-ryframe-storage = { path = "../ryframe-storage" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 async-trait = { workspace = true }
 futures-util = { workspace = true }

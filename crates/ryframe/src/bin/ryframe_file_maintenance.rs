@@ -6,11 +6,11 @@
 use std::{error::Error, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use ryframe_config::{AppConfig, Environment, StorageBackend};
-use ryframe_db::entities::sys_file;
-use ryframe_storage::{
+use ryframe_adapters::storage::{
     LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
 };
+use ryframe_config::{AppConfig, Environment, StorageBackend};
+use ryframe_db::entities::sys_file;
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
     FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,

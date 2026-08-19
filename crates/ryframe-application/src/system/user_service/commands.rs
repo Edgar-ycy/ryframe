@@ -1,8 +1,8 @@
 use ryframe_adapters::auto_fill::{AutoFill, FillContext};
+use ryframe_adapters::snowflake;
 use ryframe_auth::password;
 use ryframe_db::{TenantConfigTransferRepository, TenantRepository, entities::user};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{ActiveModelTrait, DatabaseTransaction, TransactionTrait};
 use uuid::Uuid;
 

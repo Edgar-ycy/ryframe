@@ -6,6 +6,7 @@ use std::{
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_adapters::repository::{PageResult, ValidatedPageQuery};
+use ryframe_adapters::snowflake::try_next_snowflake_id;
 use ryframe_config::TenantConfigTransferConfig;
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ControlDatabaseCluster,
@@ -17,7 +18,6 @@ use ryframe_db::{
     },
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::{file_upload::UploadConfig, snowflake::try_next_snowflake_id};
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait,
     IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
@@ -33,7 +33,7 @@ use super::{
     CONFIG_PACKAGE_BUCKET, CapabilityRequirement, DownloadedFile, FileService,
     ParsedTenantConfigPackage, PortableConfig, PortableDepartment, PortableDictData,
     PortableDictType, PortableMenu, PortablePermission, PortablePost, PortableRole, ProductService,
-    TenantConfigPackageLimits, TenantConfigPackageResources, UserService,
+    TenantConfigPackageLimits, TenantConfigPackageResources, UploadPolicy, UserService,
     parse_tenant_config_package,
 };
 use crate::{AuthorizationCache, JobHandler, JobQueue};
@@ -137,9 +137,8 @@ impl TenantConfigTransferService {
         }
     }
 
-    pub fn upload_config(&self) -> UploadConfig {
-        UploadConfig {
-            upload_dir: "config-packages".to_owned(),
+    pub fn upload_policy(&self) -> UploadPolicy {
+        UploadPolicy {
             max_file_size: u64::try_from(self.config.max_package_bytes).unwrap_or(u64::MAX),
             allowed_extensions: vec!["zip".to_owned()],
         }

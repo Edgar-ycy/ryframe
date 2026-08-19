@@ -11,8 +11,13 @@ use crate::{
 impl AppConfig {
     /// 校验必填配置项
     pub fn validate(&self) -> AppResult<()> {
-        ryframe_utils::snowflake::validate_worker_id(self.snowflake_worker_id)
-            .map_err(|error| AppError::Config(error.to_string()))?;
+        if ryframe_kernel::SnowflakeWorkerId::new(self.snowflake_worker_id).is_none() {
+            return Err(AppError::Config(format!(
+                "Snowflake worker ID 必须在 0~{} 之间，当前值: {}",
+                ryframe_kernel::MAX_SNOWFLAKE_WORKER_ID,
+                self.snowflake_worker_id
+            )));
+        }
         if self.app.name.is_empty() {
             return Err(AppError::Config("app.name 不能为空".into()));
         }
@@ -251,8 +256,9 @@ impl AppConfig {
         for origin in &self.cors.allow_origins {
             validate_origin(origin, self.environment.is_production())?;
         }
-        ryframe_utils::ip::TrustedProxySet::new(&self.proxy.trusted_cidrs)
-            .map_err(AppError::Config)?;
+        for cidr in &self.proxy.trusted_cidrs {
+            ryframe_kernel::IpCidr::parse(cidr).map_err(AppError::Config)?;
+        }
         if self.upload.avatar_max_bytes == 0
             || self.upload.file_max_bytes == 0
             || self.upload.avatar_max_bytes > self.upload.file_max_bytes

@@ -12,9 +12,9 @@ path = "crates/ryframe-tenant-db/src/migration/generated_catalog.rs"
 required_marker = "此文件是 ryframe-generator 的编译输入"
 reason = "由代码生成器维护的租户数据 catalog"
 
-# 当前 15 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+# 当前 12 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
-expected_package_count = 15
+expected_package_count = 12
 run_tenant_data_legacy_checks = true
 packages = [
     "ryframe",
@@ -23,14 +23,11 @@ packages = [
     "ryframe-config",
     "ryframe-adapters",
     "ryframe-db",
-    "ryframe-excel",
     "ryframe-generator",
     "ryframe-kernel",
     "ryframe-macro",
     "ryframe-application",
-    "ryframe-storage",
     "ryframe-tenant-db",
-    "ryframe-utils",
     "xtask",
 ]
 product_packages = [
@@ -40,13 +37,10 @@ product_packages = [
     "ryframe-config",
     "ryframe-adapters",
     "ryframe-db",
-    "ryframe-excel",
     "ryframe-kernel",
     "ryframe-macro",
     "ryframe-application",
-    "ryframe-storage",
     "ryframe-tenant-db",
-    "ryframe-utils",
 ]
 tool_packages = ["ryframe-generator", "xtask"]
 allowed_internal_edges = [
@@ -57,31 +51,24 @@ allowed_internal_edges = [
     "ryframe -> ryframe-db",
     "ryframe -> ryframe-kernel",
     "ryframe -> ryframe-application",
-    "ryframe -> ryframe-storage",
     "ryframe -> ryframe-tenant-db",
-    "ryframe -> ryframe-utils",
     "ryframe-api -> ryframe-auth",
     "ryframe-api -> ryframe-config",
     "ryframe-api -> ryframe-adapters",
-    "ryframe-api -> ryframe-excel",
     "ryframe-api -> ryframe-kernel",
     "ryframe-api -> ryframe-macro",
     "ryframe-api -> ryframe-application",
     "ryframe-api -> ryframe-tenant-db",
-    "ryframe-api -> ryframe-utils",
     "ryframe-auth -> ryframe-config",
     "ryframe-auth -> ryframe-adapters",
     "ryframe-auth -> ryframe-kernel",
     "ryframe-config -> ryframe-kernel",
-    "ryframe-config -> ryframe-utils",
     "ryframe-adapters -> ryframe-config",
     "ryframe-adapters -> ryframe-kernel",
     "ryframe-db -> ryframe-config",
     "ryframe-db -> ryframe-adapters",
     "ryframe-db -> ryframe-kernel",
     "ryframe-db -> ryframe-macro",
-    "ryframe-db -> ryframe-utils",
-    "ryframe-excel -> ryframe-kernel",
     "ryframe-generator -> ryframe-kernel",
     "ryframe-generator -> ryframe-tenant-db",
     "ryframe-macro -> ryframe-adapters",
@@ -89,15 +76,11 @@ allowed_internal_edges = [
     "ryframe-application -> ryframe-config",
     "ryframe-application -> ryframe-adapters",
     "ryframe-application -> ryframe-db",
-    "ryframe-application -> ryframe-excel",
     "ryframe-application -> ryframe-kernel",
-    "ryframe-application -> ryframe-storage",
     "ryframe-application -> ryframe-tenant-db",
-    "ryframe-application -> ryframe-utils",
     "ryframe-tenant-db -> ryframe-config",
     "ryframe-tenant-db -> ryframe-adapters",
     "ryframe-tenant-db -> ryframe-db",
-    "ryframe-utils -> ryframe-kernel",
 ]
 
 temporary_product_tool_edges = []
@@ -142,7 +125,6 @@ allowed_internal_edges = [
     "ryframe -> ryframe-db",
     "ryframe -> ryframe-kernel",
     "ryframe -> ryframe-tenant-db",
-    "ryframe-adapters -> ryframe-application",
     "ryframe-adapters -> ryframe-config",
     "ryframe-adapters -> ryframe-kernel",
     "ryframe-api -> ryframe-application",

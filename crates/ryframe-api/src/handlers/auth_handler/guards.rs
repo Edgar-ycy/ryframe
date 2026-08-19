@@ -104,8 +104,7 @@ pub(super) async fn enforce_login_rate_limit(
         .unwrap_or(5);
     let window = state.config.rate_limit.api_window_secs.max(1);
     let normalized_username = username.trim().to_lowercase();
-    let principal_digest =
-        ryframe_utils::key::stable_scope_digest(&[tenant_id, &normalized_username]);
+    let principal_digest = ryframe_auth::stable_scope_digest(&[tenant_id, &normalized_username]);
     for (scope, key) in [
         (
             "login_principal",

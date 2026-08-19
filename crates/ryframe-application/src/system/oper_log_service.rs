@@ -1,9 +1,9 @@
 use chrono::Utc;
+use ryframe_adapters::snowflake;
 use ryframe_adapters::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{ExportCursorWindow, OperLogFilter, OperLogRepository, entities::oper_log};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde::{Deserialize, Serialize};
 

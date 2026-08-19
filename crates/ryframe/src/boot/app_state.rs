@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use ryframe_adapters::{RedisClient, TokenBlacklist, rate_limit::RateLimiter};
+use ryframe_api::TrustedProxySet;
 use ryframe_api::{AppServices, runtime::RuntimeComponents};
 use ryframe_config::{AppConfig, RedisMode};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::Localizer;
-use ryframe_utils::ip::TrustedProxySet;
 
 /// 组装 API 状态前已经就绪的依赖。
 ///

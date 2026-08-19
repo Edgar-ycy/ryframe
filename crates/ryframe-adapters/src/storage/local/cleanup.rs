@@ -7,8 +7,8 @@ use std::{
 
 use tempfile::{Builder, NamedTempFile};
 
+use super::super::{StorageError, StorageResult};
 use super::{LocalObjectStorage, STAGING_FILE_PREFIX, STAGING_FILE_SUFFIX, STAGING_STALE_AFTER};
-use crate::{StorageError, StorageResult};
 
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
 pub(super) const MAX_SCANNED_PER_RUN: usize = 256;

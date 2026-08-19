@@ -103,6 +103,6 @@ fn redis_unavailable(error: impl std::fmt::Display) -> AppError {
 
 fn login_subject_key(tenant_id: &str, username: &str) -> String {
     let normalized_username = username.trim().to_lowercase();
-    let digest = ryframe_utils::key::stable_scope_digest(&[tenant_id, &normalized_username]);
+    let digest = ryframe_auth::stable_scope_digest(&[tenant_id, &normalized_username]);
     format!("ryframe:v0.5:login_fail:principal:{digest}")
 }

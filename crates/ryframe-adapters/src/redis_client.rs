@@ -561,31 +561,6 @@ impl RedisClient {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::RedisNamespace;
-
-    #[test]
-    fn namespace_is_idempotent_and_cannot_escape_to_another_scope() {
-        let namespace = RedisNamespace(Arc::from("ryframe:{dev-a}:"));
-        assert_eq!(namespace.key("jobs:wakeup"), "ryframe:{dev-a}:jobs:wakeup");
-        assert_eq!(
-            namespace.key("ryframe:v0.5:lock:tenant"),
-            "ryframe:{dev-a}:v0.5:lock:tenant"
-        );
-        assert_eq!(
-            namespace.key("ryframe:{dev-a}:jobs:wakeup"),
-            "ryframe:{dev-a}:jobs:wakeup"
-        );
-        assert_eq!(
-            namespace.key("ryframe:{other}:jobs:wakeup"),
-            "ryframe:{dev-a}:{other}:jobs:wakeup"
-        );
-    }
-}
-
 fn redis_timeout_error(message: &'static str) -> redis::RedisError {
     redis::RedisError::from(std::io::Error::new(std::io::ErrorKind::TimedOut, message))
 }
@@ -630,4 +605,29 @@ async fn read_pem(path: &str) -> Result<Vec<u8>, redis::RedisError> {
             format!("unable to read Redis TLS file {path}: {error}"),
         ))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::RedisNamespace;
+
+    #[test]
+    fn namespace_is_idempotent_and_cannot_escape_to_another_scope() {
+        let namespace = RedisNamespace(Arc::from("ryframe:{dev-a}:"));
+        assert_eq!(namespace.key("jobs:wakeup"), "ryframe:{dev-a}:jobs:wakeup");
+        assert_eq!(
+            namespace.key("ryframe:v0.5:lock:tenant"),
+            "ryframe:{dev-a}:v0.5:lock:tenant"
+        );
+        assert_eq!(
+            namespace.key("ryframe:{dev-a}:jobs:wakeup"),
+            "ryframe:{dev-a}:jobs:wakeup"
+        );
+        assert_eq!(
+            namespace.key("ryframe:{other}:jobs:wakeup"),
+            "ryframe:{dev-a}:{other}:jobs:wakeup"
+        );
+    }
 }

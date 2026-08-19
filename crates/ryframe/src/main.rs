@@ -26,7 +26,7 @@ async fn main() -> Result<(), AppError> {
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     ryframe_api::validate_runtime_features(&config)?;
-    ryframe_utils::snowflake::initialize(config.snowflake_worker_id)
+    ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     let localizer = Arc::new(
         LocalizerLoader::load_from_environment(config.environment.is_production())

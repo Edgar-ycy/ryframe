@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use crate::ClientIp;
 use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
@@ -10,7 +11,6 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
-use ryframe_utils::ip::ClientIp;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;

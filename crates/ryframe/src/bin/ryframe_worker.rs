@@ -12,6 +12,9 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use ryframe_adapters::storage::{
+    LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
+};
 use ryframe_adapters::{RedisClient, monitor::DependencyHealthCache};
 use ryframe_application::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
@@ -26,9 +29,6 @@ use ryframe_config::{
 };
 use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
-use ryframe_storage::{
-    LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
-};
 use tokio::sync::watch;
 
 #[path = "../boot/jobs.rs"]
@@ -61,7 +61,7 @@ async fn main() -> Result<(), AppError> {
             "ryframe-worker 仅在 jobs.mode = \"external\" 时运行；embedded 由 API 进程消费，disabled 不消费任务".into(),
         ));
     }
-    ryframe_utils::snowflake::initialize(config.snowflake_worker_id)
+    ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     let (_logger_guard, _telemetry_guard) = process_logging::init(&config)?;
     ryframe_adapters::metrics::spawn_process_metrics_updater();

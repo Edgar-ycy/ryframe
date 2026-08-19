@@ -84,11 +84,15 @@ pub(super) fn resolve_snowflake_worker_id(environment: Environment) -> AppResult
             let worker_id = value.trim().parse::<i64>().map_err(|_| {
                 AppError::Config(format!(
                     "SNOWFLAKE_WORKER_ID 必须是 0~{} 的整数，当前值: {value}",
-                    ryframe_utils::snowflake::MAX_WORKER_ID
+                    ryframe_kernel::MAX_SNOWFLAKE_WORKER_ID
                 ))
             })?;
-            ryframe_utils::snowflake::validate_worker_id(worker_id)
-                .map_err(|error| AppError::Config(error.to_string()))?;
+            if ryframe_kernel::SnowflakeWorkerId::new(worker_id).is_none() {
+                return Err(AppError::Config(format!(
+                    "SNOWFLAKE_WORKER_ID 必须在 0~{} 之间，当前值: {worker_id}",
+                    ryframe_kernel::MAX_SNOWFLAKE_WORKER_ID
+                )));
+            }
             Ok(worker_id)
         }
         Err(std::env::VarError::NotPresent) if environment.is_production() => {

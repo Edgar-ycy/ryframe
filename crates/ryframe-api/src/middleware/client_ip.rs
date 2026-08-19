@@ -2,12 +2,12 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+use crate::{ClientIp, TrustedProxySet};
 use axum::{
     extract::{ConnectInfo, Request, State},
     middleware::Next,
     response::Response,
 };
-use ryframe_utils::ip::{ClientIp, TrustedProxySet};
 
 /// 尽早解析唯一可信的客户端地址，并使其可供日志、限流、认证和审计中间件使用。
 pub async fn trusted_client_ip_middleware(

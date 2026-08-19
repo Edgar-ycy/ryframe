@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 
+use crate::ClientIp;
 use crate::http::{ApiPageResponse, ApiResponse, HttpAppError};
 use axum::{
     Router,
@@ -12,7 +13,6 @@ use chrono::Utc;
 use ryframe_application::agent::{AgentCapability, AgentRequest};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
-use ryframe_utils::ip::ClientIp;
 
 use crate::{
     dto::agent_dto::{

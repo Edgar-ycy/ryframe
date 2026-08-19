@@ -1,9 +1,11 @@
 use std::sync::{Mutex, OnceLock};
 
+use ryframe_kernel::{AppError, MAX_SNOWFLAKE_WORKER_ID};
+
 /// Snowflake ID 生成失败。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SnowflakeError {
-    #[error("工作机器 ID 必须在 0~{MAX_WORKER_ID} 之间，当前值: {worker_id}")]
+    #[error("工作机器 ID 必须在 0~{MAX_SNOWFLAKE_WORKER_ID} 之间，当前值: {worker_id}")]
     InvalidWorkerId { worker_id: i64 },
     #[error("系统时钟发生回拨（上次时间戳: {last_timestamp}，当前时间戳: {observed_timestamp}）")]
     ClockMovedBackwards {
@@ -38,7 +40,7 @@ pub enum SnowflakeError {
 /// # 使用方式
 ///
 /// ```text
-/// use ryframe_utils::snowflake::Snowflake;
+/// use ryframe_adapters::snowflake::Snowflake;
 ///
 /// let sf = Snowflake::new(1).expect("创建雪花算法实例失败");
 /// let id = sf.try_next_id().expect("生成 Snowflake ID 失败");
@@ -67,8 +69,6 @@ const WORKER_ID_BITS: i64 = 10;
 /// 序列号占用的位数。
 const SEQUENCE_BITS: i64 = 12;
 
-/// 最大工作机器 ID。
-pub const MAX_WORKER_ID: i64 = (1 << WORKER_ID_BITS) - 1;
 /// 最大序列号。
 const MAX_SEQUENCE: i64 = (1 << SEQUENCE_BITS) - 1;
 /// 41 位时间戳能够表示的最大 Unix 毫秒时间戳。
@@ -147,13 +147,13 @@ impl Snowflake {
 
     /// 从 ID 中提取工作机器 ID。
     pub fn extract_worker_id(id: i64) -> i64 {
-        (id >> WORKER_ID_LEFT_SHIFT) & MAX_WORKER_ID
+        (id >> WORKER_ID_LEFT_SHIFT) & MAX_SNOWFLAKE_WORKER_ID
     }
 }
 
 /// 校验 Snowflake worker ID 是否处于可编码范围。
 pub fn validate_worker_id(worker_id: i64) -> Result<(), SnowflakeError> {
-    if !(0..=MAX_WORKER_ID).contains(&worker_id) {
+    if !(0..=MAX_SNOWFLAKE_WORKER_ID).contains(&worker_id) {
         return Err(SnowflakeError::InvalidWorkerId { worker_id });
     }
     Ok(())
@@ -213,4 +213,11 @@ pub fn default_snowflake() -> Result<&'static Snowflake, SnowflakeError> {
 /// 便捷函数：尝试生成一个进程内唯一且单调递增的 ID。
 pub fn try_next_snowflake_id() -> Result<i64, SnowflakeError> {
     default_snowflake()?.try_next_id()
+}
+
+impl From<SnowflakeError> for AppError {
+    fn from(error: SnowflakeError) -> Self {
+        tracing::error!(%error, "Snowflake ID 生成失败");
+        Self::ServiceUnavailable("ID 生成服务暂时不可用，请稍后重试".into())
+    }
 }

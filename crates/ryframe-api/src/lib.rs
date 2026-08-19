@@ -9,6 +9,7 @@ pub mod __macro_support {
 
 pub mod auth_middleware;
 mod captcha;
+mod client_ip;
 pub mod dto;
 mod handler_utils;
 pub mod handlers;
@@ -28,8 +29,10 @@ pub mod request_locale;
 pub mod router;
 pub mod runtime;
 pub mod state;
+mod user_agent;
 pub mod versioning;
 
+pub use client_ip::{ClientIp, TrustedProxySet};
 pub use handlers::common_handler::{download_router, upload_router};
 pub use principal::RequestPrincipal;
 pub use probes::{livez, readyz};

@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
+use ryframe_adapters::snowflake;
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,

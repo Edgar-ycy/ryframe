@@ -87,8 +87,8 @@ async fn record_login_event(
             tenant_id: tenant_id.into(),
             user_name: username.into(),
             ipaddr: ip.into(),
-            browser: ryframe_utils::user_agent::parse_browser(user_agent),
-            os: ryframe_utils::user_agent::parse_os(user_agent),
+            browser: crate::user_agent::parse_browser(user_agent),
+            os: crate::user_agent::parse_os(user_agent),
             status,
             message,
         })
@@ -104,7 +104,7 @@ async fn add_online_user(
 ) -> AppResult<()> {
     use ryframe_application::system::UserSession;
 
-    let login_location = ryframe_utils::ip::get_ip_location(ip);
+    let login_location = crate::client_ip::get_ip_location(ip);
     let now = chrono::Utc::now();
 
     state
@@ -118,8 +118,8 @@ async fn add_online_user(
             dept_name: result.user_info.dept_name.clone(),
             ipaddr: ip.to_string(),
             login_location,
-            browser: ryframe_utils::user_agent::parse_browser(user_agent),
-            os: ryframe_utils::user_agent::parse_os(user_agent),
+            browser: crate::user_agent::parse_browser(user_agent),
+            os: crate::user_agent::parse_os(user_agent),
             login_time: now,
             last_access_time: now,
             absolute_exp: result.refresh_expires_at as i64,

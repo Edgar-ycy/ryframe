@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::TrustedProxySet;
 use ryframe_adapters::{RedisClient, TokenBlacklist, rate_limit::RateLimiter};
 use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
@@ -16,7 +17,6 @@ use ryframe_application::{
 use ryframe_config::AppConfig;
 use ryframe_kernel::Localizer;
 use ryframe_tenant_db::TenantDatabaseRouter;
-use ryframe_utils::ip::TrustedProxySet;
 
 use crate::{auth_middleware::AuthState, monitor::MonitorState, runtime::RuntimeComponents};
 

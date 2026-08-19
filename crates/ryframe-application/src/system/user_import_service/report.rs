@@ -31,8 +31,8 @@ impl UserImportService {
         .await
         .map_err(|error| AppError::Internal(format!("用户导入报告生成任务异常结束: {error}")))??;
         let report_sha256 = hex::encode(Sha256::digest(&bytes));
-        let mut config = self.upload_config();
-        config.max_file_size = config
+        let mut policy = self.upload_policy();
+        policy.max_file_size = policy
             .max_file_size
             .max(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
         let uploaded = self
@@ -43,7 +43,7 @@ impl UserImportService {
                 UploadCommand {
                     original_name: "user_import_report.xlsx".to_owned(),
                     data: bytes,
-                    config: &config,
+                    policy: &policy,
                     bucket: IMPORT_BUCKET,
                     compress: false,
                 },

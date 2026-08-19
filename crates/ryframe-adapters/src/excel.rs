@@ -10,7 +10,7 @@ use rust_xlsxwriter::{Color, DataValidation, Format, Workbook, Worksheet};
 use serde::{Serialize, de::DeserializeOwned};
 use tempfile::{Builder, TempPath};
 
-use crate::{AppError, AppResult};
+use ryframe_kernel::{AppError, AppResult};
 
 /// Excel 导入工具
 pub struct ExcelImporter;
@@ -597,7 +597,7 @@ mod tests {
     use serde::Serialize;
 
     use super::{IncrementalExcelWriter, XLSX_MAX_DATA_ROWS};
-    use crate::AppError;
+    use ryframe_kernel::AppError;
 
     const HEADERS: &[(&str, &str)] = &[("id", "编号"), ("name", "名称")];
 

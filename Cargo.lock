@@ -3188,9 +3188,7 @@ dependencies = [
  "ryframe-config",
  "ryframe-db",
  "ryframe-kernel",
- "ryframe-storage",
  "ryframe-tenant-db",
- "ryframe-utils",
  "sea-orm",
  "serde",
  "serde_json",
@@ -3206,28 +3204,39 @@ name = "ryframe-adapters"
 version = "0.10.0"
 dependencies = [
  "async-trait",
+ "calamine",
  "chrono",
  "dashmap",
+ "futures-util",
+ "hex",
+ "hmac",
+ "image",
  "lazy_static",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
+ "percent-encoding",
  "prometheus",
  "rand 0.10.1",
  "redis",
+ "reqwest",
+ "rust_xlsxwriter",
  "ryframe-config",
  "ryframe-kernel",
  "sea-orm",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "sysinfo",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -3253,11 +3262,9 @@ dependencies = [
  "ryframe-application",
  "ryframe-auth",
  "ryframe-config",
- "ryframe-excel",
  "ryframe-kernel",
  "ryframe-macro",
  "ryframe-tenant-db",
- "ryframe-utils",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3292,11 +3299,8 @@ dependencies = [
  "ryframe-auth",
  "ryframe-config",
  "ryframe-db",
- "ryframe-excel",
  "ryframe-kernel",
- "ryframe-storage",
  "ryframe-tenant-db",
- "ryframe-utils",
  "sea-orm",
  "serde",
  "serde_json",
@@ -3315,11 +3319,13 @@ version = "0.10.0"
 dependencies = [
  "argon2",
  "chrono",
+ "hex",
  "jsonwebtoken",
  "lazy_static",
  "rand 0.10.1",
  "ryframe-kernel",
  "serde",
+ "sha2 0.11.0",
  "uuid",
 ]
 
@@ -3330,7 +3336,6 @@ dependencies = [
  "base64 0.23.1",
  "percent-encoding",
  "ryframe-kernel",
- "ryframe-utils",
  "serde",
  "serde_json",
  "toml",
@@ -3350,7 +3355,6 @@ dependencies = [
  "ryframe-config",
  "ryframe-kernel",
  "ryframe-macro",
- "ryframe-utils",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -3358,18 +3362,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "ryframe-excel"
-version = "0.10.0"
-dependencies = [
- "calamine",
- "rust_xlsxwriter",
- "ryframe-kernel",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -3406,25 +3398,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryframe-storage"
-version = "0.10.0"
-dependencies = [
- "async-trait",
- "chrono",
- "futures-util",
- "hex",
- "hmac",
- "percent-encoding",
- "reqwest",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "ryframe-tenant-db"
 version = "0.10.0"
 dependencies = [
@@ -3439,23 +3412,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "ryframe-utils"
-version = "0.10.0"
-dependencies = [
- "axum",
- "chrono",
- "hex",
- "image",
- "ryframe-kernel",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
 ]
 
 [[package]]

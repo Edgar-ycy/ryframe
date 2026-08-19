@@ -1,48 +1,4 @@
-use std::path::PathBuf;
-
-use chrono::Utc;
-
-use crate::{AppError, AppResult};
-
-/// 文件上传配置
-#[derive(Debug, Clone)]
-pub struct UploadConfig {
-    /// 上传根目录
-    pub upload_dir: String,
-    /// 允许的最大文件大小（字节）
-    pub max_file_size: u64,
-    /// 允许的文件扩展名
-    pub allowed_extensions: Vec<String>,
-}
-
-impl Default for UploadConfig {
-    fn default() -> Self {
-        Self {
-            upload_dir: "uploads".to_string(),
-            max_file_size: 10 * 1024 * 1024, // 10 兆字节
-            allowed_extensions: vec![
-                // 图片
-                "jpg".to_string(),
-                "jpeg".to_string(),
-                "png".to_string(),
-                "gif".to_string(),
-                "bmp".to_string(),
-                "webp".to_string(),
-                // 文档
-                "pdf".to_string(),
-                "doc".to_string(),
-                "docx".to_string(),
-                "xls".to_string(),
-                "xlsx".to_string(),
-                "txt".to_string(),
-                // 压缩文件
-                "zip".to_string(),
-                "rar".to_string(),
-                "7z".to_string(),
-            ],
-        }
-    }
-}
+use ryframe_kernel::{AppError, AppResult};
 
 /// 验证文件扩展名
 pub fn validate_extension(filename: &str, allowed: &[String]) -> AppResult<()> {
@@ -102,13 +58,6 @@ pub fn generate_storage_filename(original_name: &str) -> String {
     }
 }
 
-/// 获取按日期组织的上传目录路径
-pub fn get_upload_dir(upload_dir: &str) -> PathBuf {
-    let now = Utc::now();
-    let date_str = now.format("%Y/%m/%d");
-    PathBuf::from(upload_dir).join(date_str.to_string())
-}
-
 /// 获取文件的 MIME 类型
 pub fn get_content_type(filename: &str) -> String {
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -135,19 +84,6 @@ pub fn get_content_type(filename: &str) -> String {
         "7z" => "application/x-7z-compressed".to_string(),
         // 默认
         _ => "application/octet-stream".to_string(),
-    }
-}
-
-/// 格式化文件大小
-pub fn format_file_size(size: u64) -> String {
-    if size < 1024 {
-        format!("{} B", size)
-    } else if size < 1024 * 1024 {
-        format!("{:.2} KB", size as f64 / 1024.0)
-    } else if size < 1024 * 1024 * 1024 {
-        format!("{:.2} MB", size as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.2} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }
 

@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use crate::ClientIp;
 use crate::RequestPrincipal;
 use crate::http::{ApiResponse, HttpResult};
 use axum::{
@@ -7,7 +8,6 @@ use axum::{
     extract::{ConnectInfo, Path, State},
 };
 use ryframe_macro::post;
-use ryframe_utils::ip::ClientIp;
 use validator::Validate;
 
 use crate::{

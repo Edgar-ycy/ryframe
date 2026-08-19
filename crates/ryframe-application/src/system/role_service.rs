@@ -1,3 +1,4 @@
+use ryframe_adapters::snowflake;
 use ryframe_adapters::{
     Repository,
     auto_fill::{AutoFill, FillContext},
@@ -9,7 +10,6 @@ use ryframe_db::{
     TenantConfigTransferRepository, TenantRepository, entities::role,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait, sea_query::LockType,

@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::ClientIp;
 use crate::RequestPrincipal;
 use crate::middleware::request_id::RequestId;
 use axum::{
@@ -16,7 +17,6 @@ use ryframe_application::{
     AuditOutbox, AuditRequestContext, scope_audit_request,
     system::{OperLogStatus, RecordOperLogCommand},
 };
-use ryframe_utils::ip::ClientIp;
 use uuid::Uuid;
 
 /// 写请求使用的操作审计事务策略。

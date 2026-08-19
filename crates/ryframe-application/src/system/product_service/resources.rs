@@ -1,9 +1,9 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use chrono::Utc;
+use ryframe_adapters::snowflake;
 use ryframe_db::entities::{menu, permission, role, role_permission};
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, EntityTrait,
     IntoActiveModel, QueryFilter, QueryOrder,

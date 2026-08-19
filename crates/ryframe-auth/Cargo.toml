@@ -17,6 +17,8 @@ serde = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }
 lazy_static = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [lints]
 workspace = true

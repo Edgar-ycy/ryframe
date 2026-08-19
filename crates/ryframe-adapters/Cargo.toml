@@ -14,16 +14,24 @@ ryframe-config = { path = "../ryframe-config" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 async-trait = {workspace = true}
+futures-util = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+image = { workspace = true }
+percent-encoding = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
 sea-orm = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
+calamine = { workspace = true }
 redis = { workspace = true }
 sysinfo = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time", "fs"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "fs", "io-util"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 dashmap = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
+sha2 = { workspace = true }
 toml = { workspace = true }
 prometheus = { workspace = true }
 lazy_static = { workspace = true }
@@ -32,6 +40,12 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+rust_xlsxwriter = { workspace = true, features = ["constant_memory"] }
+tempfile = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

@@ -6,10 +6,11 @@ use axum::{
     response::IntoResponse,
 };
 use ryframe_adapters::resilience::CircuitBreaker;
-use ryframe_application::system::file_service::{AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET};
+use ryframe_application::system::file_service::{
+    AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET, UploadPolicy,
+};
 use ryframe_kernel::{AppError, AppResult as KernelAppResult};
 use ryframe_macro::{get, post, route};
-use ryframe_utils::file_upload::UploadConfig;
 use serde::Deserialize;
 
 use crate::RequestPrincipal;
@@ -82,14 +83,14 @@ pub async fn upload_file(
     current_user: RequestPrincipal,
     multipart: Multipart,
 ) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
-    let config = UploadConfig {
+    let policy = UploadPolicy {
         max_file_size: state.config.upload.file_max_bytes as u64,
         ..Default::default()
     };
     process_multipart_upload(
         state,
         multipart,
-        &config,
+        &policy,
         UPLOAD_BUCKET,
         false,
         current_user,
@@ -111,7 +112,7 @@ pub async fn upload_image(
     current_user: RequestPrincipal,
     multipart: Multipart,
 ) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
-    let config = UploadConfig {
+    let policy = UploadPolicy {
         allowed_extensions: vec![
             "jpg".to_string(),
             "jpeg".to_string(),
@@ -121,9 +122,8 @@ pub async fn upload_image(
             "webp".to_string(),
         ],
         max_file_size: state.config.upload.file_max_bytes as u64,
-        ..Default::default()
     };
-    process_multipart_upload(state, multipart, &config, UPLOAD_BUCKET, true, current_user).await
+    process_multipart_upload(state, multipart, &policy, UPLOAD_BUCKET, true, current_user).await
 }
 
 /// 头像上传（固定使用 `avatar` 桶）
@@ -140,7 +140,7 @@ pub async fn upload_avatar(
     current_user: RequestPrincipal,
     multipart: Multipart,
 ) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
-    let config = UploadConfig {
+    let policy = UploadPolicy {
         allowed_extensions: vec![
             "jpg".to_string(),
             "jpeg".to_string(),
@@ -150,16 +150,15 @@ pub async fn upload_avatar(
             "webp".to_string(),
         ],
         max_file_size: state.config.upload.avatar_max_bytes as u64,
-        ..Default::default()
     };
-    process_multipart_upload(state, multipart, &config, AVATAR_BUCKET, true, current_user).await
+    process_multipart_upload(state, multipart, &policy, AVATAR_BUCKET, true, current_user).await
 }
 
 /// 解析 multipart 中的文件并逐文件委托 FileService 处理
 async fn process_multipart_upload(
     state: AppState,
     mut multipart: Multipart,
-    config: &UploadConfig,
+    policy: &UploadPolicy,
     bucket: &'static str,
     compress: bool,
     current_user: RequestPrincipal,
@@ -195,10 +194,10 @@ async fn process_multipart_upload(
             .map_err(|e| AppError::Internal(format!("读取文件数据失败: {}", e)))?;
 
         total_file_bytes = total_file_bytes.saturating_add(data.len() as u64);
-        if total_file_bytes > config.max_file_size {
+        if total_file_bytes > policy.max_file_size {
             return Err(AppError::PayloadTooLarge(format!(
                 "单次上传文件总大小超过限制（最大 {} MiB）",
-                config.max_file_size / 1024 / 1024
+                policy.max_file_size / 1024 / 1024
             ))
             .into());
         }
@@ -212,7 +211,7 @@ async fn process_multipart_upload(
                 ryframe_application::system::UploadCommand {
                     original_name: filename,
                     data: data.to_vec(),
-                    config,
+                    policy,
                     bucket,
                     compress,
                 },

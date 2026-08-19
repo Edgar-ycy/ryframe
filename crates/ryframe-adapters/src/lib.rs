@@ -2,6 +2,8 @@ pub mod auto_fill;
 pub mod cache;
 pub mod database_monitor;
 pub mod distributed_lock;
+pub mod excel;
+pub mod file_upload;
 pub mod i18n;
 pub mod metrics;
 pub mod monitor;
@@ -11,6 +13,8 @@ pub mod redis_client;
 pub mod refresh_session;
 pub mod repository;
 pub mod resilience;
+pub mod snowflake;
+pub mod storage;
 pub mod telemetry;
 pub mod token_blacklist;
 

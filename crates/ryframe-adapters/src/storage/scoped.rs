@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 
-use crate::{ObjectStorage, StorageError, StorageResult};
+use super::{ObjectStorage, StorageError, StorageResult};
 
 const OWNERSHIP_MARKER_NAME: &str = ".ryframe-owner";
 
@@ -145,7 +145,7 @@ impl ObjectStorage for ScopedObjectStorage {
 #[cfg(test)]
 mod tests {
     use super::ScopedObjectStorage;
-    use crate::LocalObjectStorage;
+    use crate::storage::LocalObjectStorage;
     use std::sync::Arc;
 
     fn storage() -> ScopedObjectStorage {

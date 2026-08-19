@@ -5,8 +5,8 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
+use ryframe_adapters::excel::ExcelImporter;
 use ryframe_application::system::{RequestUserImportCommand, UserImportData, UserImportListParams};
-use ryframe_excel::ExcelImporter;
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 use sha2::{Digest, Sha256};

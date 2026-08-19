@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
+use ryframe_adapters::snowflake;
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
     DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, Statement,

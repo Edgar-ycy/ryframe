@@ -1,3 +1,4 @@
+use ryframe_adapters::snowflake;
 use ryframe_adapters::{
     Repository,
     auto_fill::{AutoFill, FillContext},
@@ -6,7 +7,6 @@ use ryframe_adapters::{
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{NoticeFilter, NoticeRepository, entities::notice};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::TransactionTrait;
 use serde::Serialize;
 

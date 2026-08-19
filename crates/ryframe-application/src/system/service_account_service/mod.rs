@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::{DateTime, Duration, Utc};
+use ryframe_adapters::snowflake;
 use ryframe_adapters::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_config::{PepperKeyring, ServiceAccountsConfig};
 use ryframe_db::{
@@ -16,7 +17,6 @@ use ryframe_db::{
     },
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter,
     QueryOrder, QuerySelect, TransactionTrait,

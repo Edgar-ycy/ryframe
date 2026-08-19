@@ -10,7 +10,6 @@ description.workspace = true
 
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-utils = { path = "../ryframe-utils" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-macro = { path = "../ryframe-macro" }

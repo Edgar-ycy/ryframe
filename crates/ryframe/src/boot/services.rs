@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ryframe_adapters::storage::ObjectStorage;
 use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
 use ryframe_api::AppServices;
 use ryframe_application::{
@@ -17,7 +18,6 @@ use ryframe_application::{
 use ryframe_config::{AppConfig, RedisMode};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
-use ryframe_storage::ObjectStorage;
 use ryframe_tenant_db::TenantDatabaseRouter;
 
 /// 构造所有 Service 实例

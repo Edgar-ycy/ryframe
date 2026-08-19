@@ -1,3 +1,4 @@
+use ryframe_adapters::snowflake;
 use ryframe_adapters::{
     Repository,
     auto_fill::{AutoFill, FillContext},
@@ -8,7 +9,6 @@ use ryframe_db::{
     entities::{password_reset_request, user_role},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_utils::snowflake;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait,

@@ -90,7 +90,7 @@ pub fn request_log_layer_with_masking() -> TraceLayer<
                 .unwrap_or("-");
             let client_ip = request
                 .extensions()
-                .get::<ryframe_utils::ip::ClientIp>()
+                .get::<crate::ClientIp>()
                 .map(|value| value.0.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 

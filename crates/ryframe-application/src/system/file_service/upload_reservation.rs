@@ -2,9 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use ryframe_adapters::repository::Repository;
+use ryframe_adapters::storage::{ObjectStorage, StorageError};
 use ryframe_db::{ControlDatabaseCluster, FileRepository, entities::sys_file};
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_storage::{ObjectStorage, StorageError};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 

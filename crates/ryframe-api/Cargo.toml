@@ -13,8 +13,6 @@ runtime-swagger-ui = ["dep:utoipa-swagger-ui"]
 
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-utils = { path = "../ryframe-utils" }
-ryframe-excel = { path = "../ryframe-excel" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }
 ryframe-config = { path = "../ryframe-config" }

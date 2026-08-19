@@ -133,7 +133,7 @@ pub use profile_service::ProfileService;
 pub mod file_service;
 pub use file_service::{
     AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, DownloadedFile, FileService, IMPORT_BUCKET,
-    UPLOAD_BUCKET, UploadCommand, UploadResponse,
+    UPLOAD_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
 };
 pub mod online_user_service;
 pub mod overview_service;

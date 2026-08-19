@@ -15,13 +15,13 @@ pub struct ExportPurgeUseCase {
     db: ControlDatabaseCluster,
     exports: ExportJobRepository,
     files: FileRepository,
-    storage: Arc<dyn ryframe_storage::ObjectStorage>,
+    storage: Arc<dyn ryframe_adapters::storage::ObjectStorage>,
 }
 
 impl ExportPurgeUseCase {
     pub(crate) fn new(
         db: ControlDatabaseCluster,
-        storage: Arc<dyn ryframe_storage::ObjectStorage>,
+        storage: Arc<dyn ryframe_adapters::storage::ObjectStorage>,
     ) -> Self {
         Self {
             db,
@@ -172,7 +172,7 @@ async fn finish_transaction(
 }
 
 async fn delete_object_idempotently(
-    storage: &dyn ryframe_storage::ObjectStorage,
+    storage: &dyn ryframe_adapters::storage::ObjectStorage,
     file: &sys_file::Model,
 ) -> AppResult<()> {
     storage
@@ -186,7 +186,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use ryframe_storage::{ObjectStorage, StorageError, StorageResult};
+    use ryframe_adapters::storage::{ObjectStorage, StorageError, StorageResult};
 
     use super::*;
 

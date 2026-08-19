@@ -24,7 +24,7 @@ pub mod __macro_support {
         pub use ryframe_adapters::auto_fill::{AppResult, AutoFill, FillContext};
 
         pub fn next_id() -> AppResult<i64> {
-            Ok(ryframe_utils::snowflake::try_next_snowflake_id()?)
+            Ok(ryframe_adapters::snowflake::try_next_snowflake_id()?)
         }
     }
 }

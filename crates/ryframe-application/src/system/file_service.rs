@@ -1,18 +1,21 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use ryframe_adapters::file_upload::{
+    compress_image, generate_storage_filename, get_content_type, validate_extension,
+    validate_file_signature,
+};
+use ryframe_adapters::storage::{ObjectStorage, StorageError};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_storage::{ObjectStorage, StorageError};
-use ryframe_utils::file_upload::{
-    UploadConfig, compress_image, generate_storage_filename, get_content_type, validate_extension,
-    validate_file_signature,
-};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 
+mod policy;
 mod upload_reservation;
+
+pub use policy::UploadPolicy;
 
 use upload_reservation::{
     ReservationOutcome, UploadAuditBinding, UploadReservationGuard, storage_error_is_not_found,
@@ -56,7 +59,7 @@ const INTERNAL_DELETE_RETRY_SECONDS: i64 = 60;
 pub struct UploadCommand<'a> {
     pub original_name: String,
     pub data: Vec<u8>,
-    pub config: &'a UploadConfig,
+    pub policy: &'a UploadPolicy,
     pub bucket: &'a str,
     pub compress: bool,
 }
@@ -224,10 +227,9 @@ impl FileService {
         data: Vec<u8>,
         max_file_size: u64,
     ) -> AppResult<UploadResponse> {
-        let config = UploadConfig {
+        let policy = UploadPolicy {
             allowed_extensions: vec!["zip".to_owned()],
             max_file_size,
-            ..Default::default()
         };
         self.upload_internal_unbound(
             tenant_id,
@@ -235,7 +237,7 @@ impl FileService {
             UploadCommand {
                 original_name,
                 data,
-                config: &config,
+                policy: &policy,
                 bucket: CONFIG_PACKAGE_BUCKET,
                 compress: false,
             },
@@ -253,20 +255,20 @@ impl FileService {
         let UploadCommand {
             original_name,
             data,
-            config,
+            policy,
             bucket,
             compress,
         } = command;
         // 验证文件大小
-        if data.len() as u64 > config.max_file_size {
+        if data.len() as u64 > policy.max_file_size {
             return Err(AppError::PayloadTooLarge(format!(
                 "文件大小超过限制（最大 {} MB）",
-                config.max_file_size / 1024 / 1024
+                policy.max_file_size / 1024 / 1024
             )));
         }
 
         // 验证文件类型
-        validate_extension(&original_name, &config.allowed_extensions)?;
+        validate_extension(&original_name, &policy.allowed_extensions)?;
 
         let PreparedUpload {
             original_name,
@@ -281,7 +283,7 @@ impl FileService {
         let object_key = format!("{tenant_id}/{date_prefix}/{storage_name}");
         let now = Utc::now();
         let reservation_token = uuid::Uuid::new_v4().to_string();
-        let file_id = ryframe_utils::snowflake::try_next_snowflake_id()?;
+        let file_id = ryframe_adapters::snowflake::try_next_snowflake_id()?;
         let model = sys_file::Model {
             id: file_id,
             tenant_id: tenant_id.to_owned(),
@@ -659,7 +661,7 @@ impl FileService {
         data: Vec<u8>,
         max_file_size: u64,
     ) -> AppResult<UploadResponse> {
-        let config = UploadConfig {
+        let policy = UploadPolicy {
             allowed_extensions: vec![
                 "jpg".to_string(),
                 "jpeg".to_string(),
@@ -669,7 +671,6 @@ impl FileService {
                 "webp".to_string(),
             ],
             max_file_size,
-            ..Default::default()
         };
 
         let result = self
@@ -678,7 +679,7 @@ impl FileService {
                 UploadCommand {
                     original_name,
                     data,
-                    config: &config,
+                    policy: &policy,
                     bucket: AVATAR_BUCKET,
                     compress: true,
                 },
