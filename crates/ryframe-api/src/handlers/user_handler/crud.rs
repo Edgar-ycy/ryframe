@@ -1,10 +1,10 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json,
     extract::{Path, Query, State},
 };
 use ryframe_application::system::{CreateUserParams, UpdateUserParams};
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put};
 use validator::Validate;
@@ -35,7 +35,7 @@ pub(crate) async fn list(
         .user
         .find_by_page(&current_user, params)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|page| {
             Json(ApiPageResponse::page(
                 page.records.into_iter().map(UserVo::from).collect(),
@@ -65,7 +65,7 @@ pub(crate) async fn options(
         .user
         .find_options(&current_user, query.q.as_deref(), query.limit)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(OptionList::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -120,7 +120,7 @@ pub(crate) async fn create(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|user| Json(ApiResponse::success(user.into())))
 }
 
@@ -153,7 +153,7 @@ pub(crate) async fn update(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|user| Json(ApiResponse::success(user.into())))
 }
 
@@ -162,7 +162,7 @@ pub(crate) async fn update(
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/roles", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     request_body = ReplaceUserRolesDto,
-    responses((status = 200, description = "角色分配成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "角色分配成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn replace_roles(
     State(state): State<AppState>,
@@ -200,7 +200,7 @@ pub(crate) async fn replace_roles(
 #[perm("system:user:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
-    responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn remove(
     State(state): State<AppState>,
@@ -215,7 +215,7 @@ pub(crate) async fn remove(
 #[perm("system:user:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/users/batch/{ids}", tag = "用户管理",
     params(("ids" = String, Path, description = "用户ID列表，逗号分隔")),
-    responses((status = 200, description = "批量删除成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "批量删除成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn batch_remove(
     State(state): State<AppState>,
@@ -235,7 +235,7 @@ pub(crate) async fn batch_remove(
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/status", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     request_body = UpdateUserStatusDto,
-    responses((status = 200, description = "状态修改成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "状态修改成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub(crate) async fn update_status(
     State(state): State<AppState>,

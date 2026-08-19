@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::http::{API_PREFIX, ApiResponse};
 use axum::{
     Json,
     extract::{Request, State},
@@ -9,7 +10,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use ryframe_config::UploadLimitsConfig;
-use ryframe_http::{API_PREFIX, ApiResponse};
 
 pub const API_TIMEOUT_SECONDS: u64 = 30;
 pub const UPLOAD_TIMEOUT_SECONDS: u64 = 120;

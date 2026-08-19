@@ -12,6 +12,7 @@ mod captcha;
 pub mod dto;
 mod handler_utils;
 pub mod handlers;
+pub mod http;
 #[macro_use]
 pub mod macros;
 pub mod message_presenter;

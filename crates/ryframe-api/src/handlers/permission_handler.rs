@@ -1,10 +1,10 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
 use ryframe_application::system::{CreatePermissionCommand, UpdatePermissionCommand};
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
@@ -144,7 +144,7 @@ pub async fn update(
 #[delete("/{id}")]
 #[perm("system:perm:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/perms/{id}", tag = "权限管理",
-    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 pub async fn remove(
     State(state): State<AppState>,

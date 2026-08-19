@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use crate::http::HttpAppError;
 use axum::{
     extract::{Request, State},
     http::{HeaderName, HeaderValue},
@@ -18,7 +19,6 @@ use ryframe_auth::{
     jwt::{TokenSettings, decode_token},
     permission::check_permission,
 };
-use ryframe_http::HttpAppError;
 use ryframe_kernel::AppError;
 
 use crate::RequestPrincipal;

@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use crate::http::{HttpAppError, HttpResult};
 use axum::{
     extract::{
         Query, State, WebSocketUpgrade,
@@ -23,7 +24,6 @@ use ryframe_application::system::{
 };
 use ryframe_application::{AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangedEvent};
 use ryframe_config::MessagingConfig;
-use ryframe_http::{HttpAppError, HttpResult};
 use ryframe_kernel::{AppError, Locale, Localizer};
 use serde::{Deserialize, Serialize};
 use tokio::{

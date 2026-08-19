@@ -1,5 +1,5 @@
+use crate::http::{ApiResponse, HttpResult};
 use axum::{Json, extract::State};
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use validator::Validate;
 
@@ -11,7 +11,7 @@ use crate::{dto::auth_dto::CompletePasswordResetRequest, state::AppState};
     tag = "认证",
     request_body = CompletePasswordResetRequest,
     responses(
-        (status = 200, description = "密码已重置", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "密码已重置", body = crate::http::ApiEmptyResponse),
         (status = 400, description = "参数校验失败"),
         (status = 401, description = "重置令牌无效")
     )

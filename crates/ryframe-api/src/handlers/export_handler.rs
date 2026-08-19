@@ -1,11 +1,11 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
 };
 use ryframe_application::system::{ExportSelection, RequestExportCommand};
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 
@@ -55,7 +55,7 @@ async fn delete_records(
         .export
         .delete_for_requester(&current_user, request.into_ids()?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(accepted.into())),
@@ -76,7 +76,7 @@ async fn unread_notification_count(
         .export
         .unread_notification_count(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -107,7 +107,7 @@ async fn mark_notifications_read(
         .export
         .mark_notifications_read(&current_user, &ids)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -126,7 +126,7 @@ async fn list(
         .export
         .list_for_requester(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|jobs| jobs.into_iter().map(ExportJobVo::from).collect())
         .map(ApiResponse::success)
         .map(Json)
@@ -148,7 +148,7 @@ async fn detail(
         .export
         .find_for_requester(&current_user, parse_export_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(ExportJobVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -172,7 +172,7 @@ async fn cancel(
         .export
         .cancel_for_requester(&current_user, parse_export_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|job| ApiResponse::success(job.into()))
         .map(Json)
 }
@@ -193,13 +193,13 @@ async fn download(
         .export
         .download_location_for_requester(&current_user, parse_export_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     let file = state
         .services
         .file
         .download(&current_user, &location.bucket, &location.path)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     // 导出结果只允许以受控的 Excel 类型返回，不信任通用文件元数据覆盖响应类型。
     excel_response(file.data, &file.original_name)
 }
@@ -234,7 +234,7 @@ pub(crate) async fn request_export(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(export.into())),

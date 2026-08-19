@@ -203,7 +203,7 @@ pub async fn security_headers_middleware(
 
     // ========== Content-Security-Policy 响应头 ==========
     let content_security_policy =
-        if request_path.strip_prefix(ryframe_http::API_PREFIX) == Some("/swagger-ui") {
+        if request_path.strip_prefix(crate::http::API_PREFIX) == Some("/swagger-ui") {
             config.swagger_ui_content_security_policy.as_deref()
         } else {
             config.content_security_policy.as_deref()

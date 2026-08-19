@@ -136,7 +136,6 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 │   ├── ryframe-db/           # SeaORM 实体、仓储、事务、数据库拓扑和控制库迁移
 │   ├── ryframe-auth/         # 认证、授权、权限中间件
 │   ├── ryframe-kernel/       # 传输无关的领域类型、错误码与主体上下文
-│   ├── ryframe-http/         # HTTP 错误映射与统一响应信封
 │   ├── ryframe-i18n/         # 显式注入的语言协商、资源校验与文本渲染
 │   ├── ryframe-utils/        # 雪花 ID、脱敏、差异与文件处理等通用工具
 │   ├── ryframe-captcha/      # 验证码生成与图像渲染

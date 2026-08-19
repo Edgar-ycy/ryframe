@@ -122,10 +122,7 @@ fn generated_layers_follow_crate_and_transaction_boundaries() {
     }
 
     let handler = content(&files, "/device_handler.rs");
-    assert!(
-        handler
-            .contains("use crate::{ApiPageResponse, ApiResponse, HttpResult, RequestPrincipal};")
-    );
+    assert!(handler.contains("http::{ApiPageResponse, ApiResponse, HttpResult}"));
     assert!(!handler.contains("ryframe_http"));
     assert!(!handler.contains("ryframe_auth::RequestPrincipal"));
 }

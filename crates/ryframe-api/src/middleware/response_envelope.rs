@@ -1,5 +1,7 @@
 //! API 统一响应信封。
 
+use crate::http::{API_PREFIX, api_path};
+use crate::http::{QUERY_SUCCESS_MESSAGE_KEY, SUCCESS_MESSAGE_KEY};
 use axum::{
     body::{Body, to_bytes},
     extract::{Request, State},
@@ -7,8 +9,6 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use ryframe_http::{API_PREFIX, api_path};
-use ryframe_http::{QUERY_SUCCESS_MESSAGE_KEY, SUCCESS_MESSAGE_KEY};
 use ryframe_kernel::{Locale, Localizer};
 use serde_json::{Value, json};
 use std::sync::Arc;

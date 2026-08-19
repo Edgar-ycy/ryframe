@@ -1,8 +1,8 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::http::HttpResult;
 use ryframe_application::system::{MessageInbox, MessageTemplate, MessageText, PublishedMessage};
-use ryframe_http::HttpResult;
 use ryframe_kernel::{AppError, Locale, LocalizedText, Localizer};
 
 /// 面向 REST 与 WebSocket 客户端的已渲染消息。

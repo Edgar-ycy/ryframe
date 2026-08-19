@@ -1,8 +1,8 @@
+use crate::http::HttpResult;
 use chrono::{DateTime, Utc};
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::TenantUsagePageParams;
 use ryframe_config::PaginationConfig;
-use ryframe_http::HttpResult;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;

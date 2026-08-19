@@ -1,7 +1,7 @@
+use crate::http::HttpResult;
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::BackgroundJobListParams;
 use ryframe_config::PaginationConfig;
-use ryframe_http::HttpResult;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 

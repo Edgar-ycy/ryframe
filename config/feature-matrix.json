@@ -16,14 +16,6 @@
       "maximal": [
         "runtime-swagger-ui"
       ]
-    },
-    {
-      "package": "ryframe-http",
-      "minimal": [],
-      "maximal": [
-        "default",
-        "openapi"
-      ]
     }
   ]
 }

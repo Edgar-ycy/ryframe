@@ -143,7 +143,7 @@
 - API 与独立 Worker 统一使用同一日志初始化实现；日志级别、格式、输出目标和保留数量改为强类型启动配置。文件模式按日滚动并真正限制历史文件数量，生产配置与容器编排默认输出 stdout，避免只读容器创建本地日志目录。
 - API 与独立 Worker 的 `/readyz` 改为只读后台依赖探测生成的有时效内存快照，请求路径不再执行 SQL、Redis 或对象存储网络调用；快照过期时按未就绪处理，Worker 明确不以对象存储作为就绪条件。
 - 用户授权版本字段统一为 `authorization_version`，JWT 与 WebSocket 票据同步使用新名称；新增租户级 `authorization_epoch`。新安装直接使用新列，增量迁移只负责无损重命名历史列且明确禁止回滚。
-- HTTP 错误边界删除重复的 `ryframe-http::AppError/AppResult` 兼容层及双向转换；领域层统一使用 `ryframe-kernel::AppError/AppResult`，Handler 仅通过 `HttpAppError/HttpResult` 单向适配为 HTTP 响应，并由架构门禁禁止旧符号回流。
+- HTTP 错误边界删除重复的错误类型及双向转换；领域层统一使用 `ryframe-kernel::AppError/AppResult`，Handler 仅通过 `ryframe-api::http` 中的 `HttpAppError/HttpResult` 单向适配为 HTTP 响应，并由架构门禁禁止旧符号回流。
 - 消息中心新增唯一的强类型 `messaging` 配置并由组合根显式注入；票据有效期、保留期、单用户连接数、出站队列和单消息收件人数不再硬编码。发布事务改用 `INSERT … SELECT` 在 MySQL 内固化收件人，超过 `max_recipients_per_message + 1` 即回滚拒绝；关闭消息中心后 REST、票据、WebSocket 和消息任务均明确不可用。
 - 删除未产生任何日志的 `LoggedRepo`，Service 和代码生成模板直接保存具体 Repository；同时删除 `DatabaseCluster::new/with_sources/with_sources_and_replica_health` 旧构造入口，架构门禁防止这些空包装和隐式构造逻辑回流。
 - Swagger UI 改为由与 utoipa 版本匹配的 Rust crate 在编译期内嵌全部 HTML、CSS、JavaScript、字体和图标；删除 CDN、外部校验器、外部资源回退与兼容重定向，生产环境仍强制关闭 API 文档。
@@ -167,7 +167,7 @@
 - 删除 Nightly 标签与预发布工作流，只允许后端稳定版联合发布主控创建 Release；同时删除多架构容器构建、GHCR 推送、SBOM、Cosign 签名、OCI 发布清单和全部自定义附件，稳定版只保留 GitHub 自动生成的源码 ZIP/TAR。
 - 后端 CI 仅保留 Linux 静态质量门禁与依赖安全审计，删除重复编译的 Windows nextest 和定时覆盖率作业；Rust 测试、覆盖率及 OpenAPI/MySQL 快照生成统一在本地执行，CI 不再通过 `cargo run/check/build/test/nextest/llvm-cov` 重复编译。
 - 生产 secret 统一通过 `APP_*` 环境变量或外部 secret manager 注入，配置文件仅允许空占位；删除 `ENC[...]`、`CONFIG_MASTER_KEY` 和 AES 配置加解密双格式，不保留旧配置回退。
-- 公开 API 前缀统一由 `ryframe-http::API_PREFIX` 与 `api_path` 生成；OpenAPI 通过 `x-ryframe-api-prefix` 向前端发布同一前缀，部署环境只配置 API origin，不再维护版本路径。
+- 公开 API 前缀统一由 `ryframe-api::http` 中的 `API_PREFIX` 与 `api_path` 生成；OpenAPI 通过 `x-ryframe-api-prefix` 向前端发布同一前缀，部署环境只配置 API origin，不再维护版本路径。
 - API 层拥有全部公开响应 DTO 并对 Service 模型执行穷尽所有权转换；Service、Generator 和 Utils 的运行依赖图已移除 Utoipa。文件 Service 只返回存储身份，私有下载 URL 仅在 API DTO 边界构造。
 - Cargo feature 最小与最大组合统一登记在 `config/feature-matrix.json`；CI 复用 Cargo 元数据执行轻量完整性守卫，完整组合编译只通过本地 `cargo xtask feature-matrix` 显式运行。
 - 配置缓存改用数据库持久化的租户命名空间 `BIGINT` 权威版本；配置写入、版本递增与 Outbox 同事务提交，Redis 使用同槽固定 version/values 键和不经过浮点数的精确十进制版本比较。

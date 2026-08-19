@@ -1,5 +1,6 @@
 //! API 流式请求体安全大小限制。
 
+use crate::http::{API_PREFIX, ApiResponse};
 use axum::{
     Json,
     body::{Body, to_bytes},
@@ -9,7 +10,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use ryframe_config::UploadLimitsConfig;
-use ryframe_http::{API_PREFIX, ApiResponse};
 use ryframe_kernel::ErrorCode;
 
 pub const FILE_UPLOAD_LIMIT_BYTES: usize = 10 * 1024 * 1024;

@@ -6,12 +6,12 @@ pub(crate) use crud::*;
 pub(crate) use import_export::*;
 pub(crate) use password_reset::*;
 
+use crate::http::HttpResult;
 use axum::{Router, routing::post};
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::UserListParams;
 use ryframe_auth::rbac;
 use ryframe_config::PaginationConfig;
-use ryframe_http::HttpResult;
 use ryframe_kernel::AppError;
 use ryframe_macro::route;
 

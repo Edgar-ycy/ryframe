@@ -1,3 +1,4 @@
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -5,7 +6,6 @@ use axum::{
 };
 use ryframe_application::system::{CreateTenantParams, UpdateTenantParams};
 use ryframe_auth::rbac;
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
 use validator::Validate;
@@ -252,7 +252,7 @@ async fn update(
 #[perm("tenant:status")]
 #[utoipa::path(put, path = "/api/v1/platform/tenants/{tenant_id}/status", tag = "租户管理",
     params(("tenant_id" = String, Path)), request_body = UpdateTenantStatusDto,
-    responses((status = 200, description = "租户状态更新成功", body = ryframe_http::ApiEmptyResponse), (status = 409, description = "provisioning 状态必须由创建 Saga 完成，不能直接切换")),
+    responses((status = 200, description = "租户状态更新成功", body = crate::http::ApiEmptyResponse), (status = 409, description = "provisioning 状态必须由创建 Saga 完成，不能直接切换")),
     security(("bearer" = [])))]
 async fn update_status(
     State(state): State<AppState>,

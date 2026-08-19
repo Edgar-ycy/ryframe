@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use crate::http::{ApiResponse, HttpAppError, HttpResult};
 use axum::{
     Extension, Json,
     extract::{ConnectInfo, Path, State},
@@ -9,7 +10,6 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use ryframe_adapters::RefreshSessionRevocation;
 use ryframe_auth::jwt::Claims;
-use ryframe_http::{ApiResponse, HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 
 use super::{
@@ -70,7 +70,7 @@ pub async fn csrf(
     path = "/api/v1/auth/logout",
     tag = "认证",
     responses(
-        (status = 200, description = "登出成功", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "登出成功", body = crate::http::ApiEmptyResponse),
         (status = 403, description = "CSRF 挑战令牌缺失、无效或与会话不匹配"),
         (status = 503, description = "Redis 会话或撤销服务不可用"),
     ),
@@ -350,7 +350,7 @@ pub async fn list_sessions(
         ("X-CSRF-Token" = String, Header, description = "与当前访问会话绑定的 CSRF 挑战令牌")
     ),
     responses(
-        (status = 200, description = "会话已撤销", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "会话已撤销", body = crate::http::ApiEmptyResponse),
         (status = 401, description = "未认证"),
         (status = 403, description = "CSRF 挑战令牌无效"),
         (status = 404, description = "会话不存在或不属于当前用户"),

@@ -1,6 +1,7 @@
 use crate::RequestPrincipal;
 use crate::dto::oper_log_dto::OperLogPageQuery;
 use crate::dto::public_dto::{ExportJobVo, OperLogVo};
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use crate::state::AppState;
 use crate::{dto::export_dto::OperLogExportRequestDto, handlers::export_handler::request_export};
 use axum::{
@@ -8,7 +9,6 @@ use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{get, post, route};
 
 pub fn oper_log_router(state: AppState) -> Router {
@@ -37,7 +37,7 @@ async fn list(
             query.into_service_query(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::page(
                 p.records.into_iter().map(OperLogVo::from).collect(),

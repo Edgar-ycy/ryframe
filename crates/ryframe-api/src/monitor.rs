@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::State,
@@ -13,7 +14,6 @@ use ryframe_adapters::{
     DatabaseMonitor, RedisClient,
     monitor::{self as runtime_monitor, DependencyHealthCache, ServerInfo as RuntimeServerInfo},
 };
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};
 use serde::Serialize;
 use utoipa::ToSchema;

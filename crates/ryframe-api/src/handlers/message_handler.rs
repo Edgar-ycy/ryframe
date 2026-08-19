@@ -1,3 +1,4 @@
+use crate::http::{ApiEmptyResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
@@ -6,7 +7,6 @@ use ryframe_application::system::{
     MessageAudienceKind, MessageAudienceSelector, PublishMessageParams,
 };
 use ryframe_auth::permission::check_permission;
-use ryframe_http::{ApiEmptyResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
 use validator::Validate;
@@ -64,7 +64,7 @@ async fn inbox(
         .message
         .inbox(&current_user, cursor, limit, query.unread_only)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|page| render_inbox(page, &state.localizer, locale))
         .map(ApiResponse::success)
         .map(Json)
@@ -84,7 +84,7 @@ async fn unread_count(
         .message
         .unread_count(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -138,7 +138,7 @@ async fn publish(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|published| render_published(published, &state.localizer, locale))
         .map(ApiResponse::success)
         .map(Json)
@@ -167,7 +167,7 @@ async fn acknowledge(
         .message
         .acknowledge(&current_user, &ids)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .inspect(|_| ryframe_adapters::metrics::observe_message_ack_latency(started.elapsed()))
         .map(ApiResponse::success)
         .map(Json)
@@ -195,7 +195,7 @@ async fn delete_messages(
         .message
         .delete(&current_user, &ids)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -218,7 +218,7 @@ async fn mark_read(
         .message
         .mark_read(&current_user, message_id)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .inspect(|_| ryframe_adapters::metrics::observe_message_ack_latency(started.elapsed()))
         .map(|_| Json(ApiEmptyResponse::success_no_data()))
 }
@@ -238,7 +238,7 @@ async fn mark_all_read(
         .message
         .mark_all_read(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .inspect(|_| ryframe_adapters::metrics::observe_message_ack_latency(started.elapsed()))
         .map(ApiResponse::success)
         .map(Json)
@@ -291,7 +291,7 @@ fn ensure_cross_tenant_publish_authority(
         .into());
     }
     check_permission(current_user, "platform:message:publish")
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
 }
 
 fn parse_optional_id(value: Option<&str>, field: &str) -> HttpResult<Option<i64>> {

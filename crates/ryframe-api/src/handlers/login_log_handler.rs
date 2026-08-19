@@ -1,6 +1,7 @@
 use crate::RequestPrincipal;
 use crate::dto::login_log_dto::LoginLogPageQuery;
 use crate::dto::public_dto::{ExportJobVo, LoginInfoVo};
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use crate::state::AppState;
 use crate::{dto::export_dto::LoginLogExportRequestDto, handlers::export_handler::request_export};
 use axum::{
@@ -8,7 +9,6 @@ use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{get, post, route};
 
 pub fn login_log_router(state: AppState) -> Router {
@@ -37,7 +37,7 @@ async fn list(
             query.into_service_query(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::page(
                 p.records.into_iter().map(LoginInfoVo::from).collect(),

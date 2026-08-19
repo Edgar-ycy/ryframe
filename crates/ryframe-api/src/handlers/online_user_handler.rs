@@ -1,12 +1,12 @@
 use crate::RequestPrincipal;
 use crate::dto::public_dto::OnlineUserVo;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use crate::list_query;
 use crate::state::AppState;
 use axum::{
     Extension, Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, route};
 
@@ -66,7 +66,7 @@ pub async fn list_online_users_page(
 #[utoipa::path(delete, path = "/api/v1/system/online/{sid}", tag = "在线用户",
     params(("sid" = String, Path, description = "稳定的设备会话标识")),
     responses(
-        (status = 200, description = "强退成功", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "强退成功", body = crate::http::ApiEmptyResponse),
         (status = 404, description = "会话不存在或不属于当前租户"),
         (status = 503, description = "Redis 会话服务不可用")
     ),

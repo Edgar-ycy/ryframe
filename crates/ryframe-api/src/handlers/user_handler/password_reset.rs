@@ -1,11 +1,11 @@
 use std::net::SocketAddr;
 
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json,
     extract::{ConnectInfo, Path, State},
 };
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::post;
 use ryframe_utils::ip::ClientIp;
 use validator::Validate;

@@ -1,4 +1,5 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use crate::{
     dto::{
         job_dto::BackgroundJobPageQuery,
@@ -10,7 +11,6 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 
@@ -43,7 +43,7 @@ async fn list(
             query.into_service_params(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|page| {
             Json(ApiPageResponse::page(
                 page.records
@@ -73,7 +73,7 @@ async fn stats(
         .job_queue
         .stats_for_tenant(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(BackgroundJobQueueStats::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -100,7 +100,7 @@ async fn retry_dead(
         .job_queue
         .retry_dead_for_tenant(&current_user, parse_job_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|job| ApiResponse::success(job.into()))
         .map(Json)
 }

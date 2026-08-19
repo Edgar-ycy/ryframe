@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Extension, Json,
     extract::{ConnectInfo, State},
@@ -9,7 +10,6 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use ryframe_adapters::TenantContext;
 use ryframe_application::system::{LoginStatus, RecordLoginCommand};
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::{AppError, AppResult};
 use validator::Validate;
 

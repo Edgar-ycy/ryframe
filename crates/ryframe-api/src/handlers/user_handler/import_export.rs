@@ -1,10 +1,10 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json,
     extract::State,
     http::{HeaderMap, StatusCode},
 };
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, post};
 
 use crate::{
@@ -53,6 +53,6 @@ pub(crate) async fn download_import_template(
         .user_import
         .build_template(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     excel_response(bytes, "user_import_template.xlsx")
 }

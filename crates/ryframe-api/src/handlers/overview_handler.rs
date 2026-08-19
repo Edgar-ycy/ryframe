@@ -1,11 +1,11 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Query, State},
 };
 use ryframe_application::system::OverviewRange;
 use ryframe_config::RedisMode;
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};
 
 use crate::{
@@ -45,7 +45,7 @@ pub(crate) async fn overview(
         .overview
         .snapshot(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     let calculated_at = core.calculated_at;
     let topology = state.monitor.database.topology_health().await;
     let active_connections = state.monitor.database.active_connections().await;
@@ -134,7 +134,7 @@ pub(crate) async fn trends(
         .overview
         .trends(&current_user, range)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(MonitorOverviewTrendsVo::from)
         .map(ApiResponse::success)
         .map(Json)

@@ -1,4 +1,5 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Multipart, Path, Query, State},
@@ -6,7 +7,6 @@ use axum::{
 };
 use ryframe_application::system::{RequestUserImportCommand, UserImportData, UserImportListParams};
 use ryframe_excel::ExcelImporter;
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 use sha2::{Digest, Sha256};
@@ -51,7 +51,7 @@ async fn create(
         .user_import
         .find_by_idempotency(&current_user, &idempotency_hash)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?
+        .map_err(crate::http::HttpAppError::from)?
     {
         return Ok((
             StatusCode::ACCEPTED,
@@ -114,7 +114,7 @@ async fn create(
         .user_import
         .upload_source(&current_user, file_name.clone(), bytes)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     let source_file_id = uploaded
         .file_id
         .parse::<i64>()
@@ -147,7 +147,7 @@ async fn create(
                     "用户导入任务创建失败后无法安排孤儿源文件回收"
                 );
             }
-            return Err(ryframe_http::HttpAppError::from(error));
+            return Err(crate::http::HttpAppError::from(error));
         }
     };
     if !outcome.inserted
@@ -192,7 +192,7 @@ async fn list(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(ApiPageResponse::page(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
@@ -218,7 +218,7 @@ async fn detail(
         .user_import
         .get(&current_user, parse_import_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(UserImportJobVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -242,7 +242,7 @@ async fn cancel(
         .user_import
         .cancel(&current_user, parse_import_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(UserImportJobVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -269,7 +269,7 @@ async fn rows(
             query.into_page(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(ApiPageResponse::page(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
@@ -295,7 +295,7 @@ async fn report(
         .user_import
         .download_report(&current_user, parse_import_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     excel_response(file.data, &file.original_name)
 }
 

@@ -1,9 +1,9 @@
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
 use ryframe_application::system::{CreateDeptCommand, UpdateDeptCommand};
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
@@ -44,7 +44,7 @@ async fn tree(
         .dept
         .filter_dept_by_user(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|nodes| {
             Json(ApiResponse::success(
                 nodes.into_iter().map(DeptTreeNode::from).collect(),
@@ -75,7 +75,7 @@ async fn list_page(
             filter.status.as_deref(),
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::page(
                 p.records.into_iter().map(DeptVo::from).collect(),
@@ -111,7 +111,7 @@ async fn create(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -143,7 +143,7 @@ async fn update(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -172,7 +172,7 @@ async fn detail(
 #[delete("/{id}")]
 #[perm("system:dept:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/depts/{id}", tag = "部门管理",
-    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

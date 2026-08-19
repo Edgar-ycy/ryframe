@@ -1,3 +1,4 @@
+use crate::http::{ApiResponse, HttpAppError, HttpResult};
 use axum::{
     Extension, Json,
     extract::State,
@@ -5,7 +6,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use ryframe_auth::jwt::Claims;
-use ryframe_http::{ApiResponse, HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 
 use crate::{
@@ -75,7 +75,7 @@ fn websocket_ticket_unavailable_response(error: AppError, expected_unavailable: 
         // Redis optional 模式启动期降级和显式关闭消息中心都是已知状态。实际故障
         // 已在拥有依赖状态的启动或健康检查边界记录，不能让每次浏览器重试都升级
         // 成请求 ERROR。
-        ryframe_http::mark_expected_service_unavailable(&mut response);
+        crate::http::mark_expected_service_unavailable(&mut response);
     }
     response.headers_mut().insert(
         header::RETRY_AFTER,

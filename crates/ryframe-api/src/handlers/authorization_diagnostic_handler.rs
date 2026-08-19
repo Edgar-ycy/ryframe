@@ -1,9 +1,9 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, State},
 };
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_macro::{get, route};
 
 use crate::{dto::public_dto::AuthorizationDiagnosticVo, state::AppState};
@@ -32,7 +32,7 @@ pub(crate) async fn diagnose_user(
         .authorization_diagnostic
         .diagnose(&current_user, id)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(AuthorizationDiagnosticVo::from)
         .map(ApiResponse::success)
         .map(Json)

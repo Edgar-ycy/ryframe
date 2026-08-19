@@ -1,4 +1,5 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -9,7 +10,6 @@ use ryframe_application::system::{
     CreateCredentialCommand, CreateServiceAccountCommand, ServiceAccountService,
     UpdateServiceAccountCommand,
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
@@ -186,7 +186,7 @@ async fn update_account(
 #[utoipa::path(put, path = "/api/v1/system/service-accounts/{id}/status", tag = "服务账号",
     params(("id" = String, Path)), request_body = UpdateServiceAccountStatusDto,
     responses(
-        (status = 200, description = "服务账号状态已更新", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "服务账号状态已更新", body = crate::http::ApiEmptyResponse),
         (status = 400, description = "请求参数无效"),
         (status = 401, description = "未认证"),
         (status = 403, description = "没有服务账号编辑权限"),
@@ -215,7 +215,7 @@ async fn update_account_status(
 #[utoipa::path(delete, path = "/api/v1/system/service-accounts/{id}", tag = "服务账号",
     params(("id" = String, Path)),
     responses(
-        (status = 200, description = "服务账号已删除", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "服务账号已删除", body = crate::http::ApiEmptyResponse),
         (status = 400, description = "账号 ID 无效"),
         (status = 401, description = "未认证"),
         (status = 403, description = "没有服务账号删除权限"),
@@ -263,7 +263,7 @@ async fn account_roles(
 #[utoipa::path(put, path = "/api/v1/system/service-accounts/{id}/roles", tag = "服务账号",
     params(("id" = String, Path)), request_body = ReplaceServiceAccountRolesDto,
     responses(
-        (status = 200, description = "服务账号角色已替换", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "服务账号角色已替换", body = crate::http::ApiEmptyResponse),
         (status = 400, description = "账号或角色 ID 无效"),
         (status = 401, description = "未认证"),
         (status = 403, description = "没有服务账号角色权限，或选择了超级角色"),
@@ -357,7 +357,7 @@ async fn create_credential(
 #[utoipa::path(delete, path = "/api/v1/system/service-accounts/{id}/credentials/{credential_id}", tag = "服务账号",
     params(("id" = String, Path), ("credential_id" = String, Path)),
     responses(
-        (status = 200, description = "API Key 已撤销", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "API Key 已撤销", body = crate::http::ApiEmptyResponse),
         (status = 400, description = "ID 无效"),
         (status = 401, description = "未认证"),
         (status = 403, description = "没有 API Key 撤销权限"),
@@ -415,7 +415,7 @@ async fn list_delegations(
 #[utoipa::path(delete, path = "/api/v1/system/service-delegations/{id}", tag = "服务委托",
     params(("id" = String, Path)),
     responses(
-        (status = 200, description = "委托已撤销", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "委托已撤销", body = crate::http::ApiEmptyResponse),
         (status = 400, description = "委托 ID 无效"),
         (status = 401, description = "未认证"),
         (status = 403, description = "没有委托撤销权限"),

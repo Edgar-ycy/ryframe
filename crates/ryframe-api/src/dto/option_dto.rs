@@ -1,5 +1,5 @@
+use crate::http::HttpResult;
 use ryframe_config::PaginationConfig;
-use ryframe_http::HttpResult;
 use ryframe_kernel::AppError;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};

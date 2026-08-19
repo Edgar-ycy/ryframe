@@ -1,4 +1,5 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -8,7 +9,6 @@ use ryframe_application::system::{
     BackupPointListParams, CreateMigrationCommand, DataTargetListParams, MigrationActionCommand,
     MigrationPreviewRequest,
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 use validator::Validate;

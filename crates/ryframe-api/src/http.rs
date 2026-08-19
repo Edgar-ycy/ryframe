@@ -1,4 +1,4 @@
-//! HTTP 边界适配层。
+//! API crate 内部的 HTTP 边界适配层。
 //!
 //! 领域代码只依赖 `ryframe-kernel` 中的错误和上下文类型；本库负责把领域错误
 //! 映射为 Axum 响应，并提供稳定的 REST 响应结构。
@@ -77,8 +77,7 @@ pub fn api_path(relative_path: &str) -> String {
 }
 
 /// 统一 API 响应结构。
-#[derive(Debug, Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiResponse<T: Serialize> {
     /// 与 HTTP 状态码一致的业务结果码。
     pub code: u16,
@@ -98,8 +97,7 @@ pub struct ApiResponse<T: Serialize> {
 ///
 /// 保持独立类型可让 OpenAPI 正确生成空数据响应的 Schema，避免把 Rust 的
 /// 单元类型错误地暴露成不存在的组件引用。
-#[derive(Debug, Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiEmptyResponse {
     pub code: u16,
     pub message: String,
@@ -164,8 +162,7 @@ impl ApiResponse<()> {
 }
 
 /// 分页接口的业务数据。
-#[derive(Debug, Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PageData<T: Serialize> {
     pub items: Vec<T>,
     pub page: u64,
@@ -176,8 +173,7 @@ pub struct PageData<T: Serialize> {
 }
 
 /// 统一分页 API 响应结构。
-#[derive(Debug, Serialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiPageResponse<T: Serialize> {
     pub code: u16,
     pub message: String,

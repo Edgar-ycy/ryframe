@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 
+use crate::http::{ApiPageResponse, ApiResponse, HttpAppError};
 use axum::{
     Router,
     body::Body,
@@ -9,7 +10,6 @@ use axum::{
 };
 use chrono::Utc;
 use ryframe_application::agent::{AgentCapability, AgentRequest};
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpAppError};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
 use ryframe_utils::ip::ClientIp;
@@ -205,7 +205,7 @@ async fn execute(
     };
     let success_message = state
         .localizer
-        .translate(context.locale, ryframe_http::QUERY_SUCCESS_MESSAGE_KEY);
+        .translate(context.locale, crate::http::QUERY_SUCCESS_MESSAGE_KEY);
     match service
         .execute(AgentRequest {
             capability,

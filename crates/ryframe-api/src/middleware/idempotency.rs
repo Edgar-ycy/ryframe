@@ -119,8 +119,8 @@ impl IdempotencyState {
         key: &str,
         fingerprint: &str,
     ) -> Result<Reservation, String> {
-        let meta_key = meta_key(key);
-        let guard_key = guard_key(key);
+        let meta_key = redis.scoped_key(&meta_key(key));
+        let guard_key = redis.scoped_key(&guard_key(key));
         let watched = [meta_key.clone(), guard_key.clone()];
         let fingerprint = fingerprint.to_owned();
         let processing_ttl = self.processing_ttl_secs;
@@ -218,8 +218,8 @@ impl IdempotencyState {
         let Some(redis) = &self.redis else {
             return Ok(());
         };
-        let meta_key = meta_key(key);
-        let guard_key = guard_key(key);
+        let meta_key = redis.scoped_key(&meta_key(key));
+        let guard_key = redis.scoped_key(&guard_key(key));
         let watched = [meta_key.clone(), guard_key.clone()];
         let fingerprint = fingerprint.to_owned();
         let ttl = self.completed_ttl_secs;
@@ -259,9 +259,9 @@ impl IdempotencyState {
         if let Some(redis) = &self.redis {
             let serialized = serde_json::to_string(&response)
                 .map_err(|error| format!("cannot serialize idempotency response: {error}"))?;
-            let meta_key = meta_key(key);
-            let response_key = response_key(key);
-            let guard_key = guard_key(key);
+            let meta_key = redis.scoped_key(&meta_key(key));
+            let response_key = redis.scoped_key(&response_key(key));
+            let guard_key = redis.scoped_key(&guard_key(key));
             let watched = [meta_key.clone(), response_key.clone(), guard_key.clone()];
             let fingerprint = fingerprint.to_owned();
             let transaction_fingerprint = fingerprint.clone();
@@ -318,7 +318,7 @@ impl IdempotencyState {
 
     async fn mark_non_replayable(&self, key: &str, fingerprint: &str) -> Result<(), String> {
         if let Some(redis) = &self.redis {
-            let meta_key = meta_key(key);
+            let meta_key = redis.scoped_key(&meta_key(key));
             let watched = [meta_key.clone()];
             let fingerprint = fingerprint.to_owned();
             let transaction_fingerprint = fingerprint.clone();

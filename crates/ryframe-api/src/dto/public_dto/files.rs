@@ -1,5 +1,5 @@
+use crate::http::api_path;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use ryframe_http::api_path;
 use serde::Serialize;
 use utoipa::ToSchema;
 

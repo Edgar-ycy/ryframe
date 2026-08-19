@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Query, State},
@@ -7,7 +8,6 @@ use axum::{
     response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 use ryframe_utils::ip::ClientIp;

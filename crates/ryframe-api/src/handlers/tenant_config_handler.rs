@@ -1,11 +1,11 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode, header::CONTENT_LENGTH},
 };
 use ryframe_application::system::ApplyTenantConfigTransferCommand;
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 
@@ -70,7 +70,7 @@ async fn request_package_export(
         .tenant_config_transfer
         .request_package_export(&current_user, &idempotency_key_hash(&headers)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(outcome.bundle.into())),
@@ -97,7 +97,7 @@ async fn list_packages(
         .tenant_config_transfer
         .list_bundles(&current_user, query.into_page(&state.config.pagination)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(page_response(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
@@ -128,7 +128,7 @@ async fn get_package(
         .tenant_config_transfer
         .get_bundle(&current_user, parse_positive_id(&id, "配置包")?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(TenantConfigBundleVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -157,7 +157,7 @@ async fn download_package(
         .tenant_config_transfer
         .download_bundle(&current_user, parse_positive_id(&id, "配置包")?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     attachment_response(file.data, &file.original_name, CONFIG_PACKAGE_CONTENT_TYPE)
 }
 
@@ -251,7 +251,7 @@ async fn upload_transfer(
         .tenant_config_transfer
         .upload_package_and_create_transfer(&current_user, file_name, data, &idempotency_hash)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(outcome.transfer.into())),
@@ -287,7 +287,7 @@ async fn create_transfer_from_package(
             &idempotency_key_hash(&headers)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(outcome.transfer.into())),
@@ -314,7 +314,7 @@ async fn list_transfers(
         .tenant_config_transfer
         .list_transfers(&current_user, query.into_page(&state.config.pagination)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(page_response(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
@@ -345,7 +345,7 @@ async fn get_transfer(
         .tenant_config_transfer
         .get_transfer(&current_user, parse_positive_id(&id, "配置迁移")?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(TenantConfigTransferVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -377,7 +377,7 @@ async fn list_transfer_items(
             query.into_page(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(page_response(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
@@ -417,7 +417,7 @@ async fn request_preview(
             &idempotency_key_hash(&headers)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(transfer.into())),
@@ -461,7 +461,7 @@ async fn request_apply(
             },
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(transfer.into())),
@@ -498,7 +498,7 @@ async fn request_rollback(
             &idempotency_key_hash(&headers)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(transfer.into())),

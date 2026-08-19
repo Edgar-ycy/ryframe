@@ -1,10 +1,10 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
 
@@ -52,7 +52,7 @@ async fn targets(
 ) -> HttpResult<Json<ApiResponse<Vec<ScheduleTargetVo>>>> {
     schedule_service(&state)?
         .targets_for_tenant(&current_user)
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|targets| targets.into_iter().map(ScheduleTargetVo::from).collect())
         .map(ApiResponse::success)
         .map(Json)
@@ -80,7 +80,7 @@ async fn preview(
     schedule_service(&state)?
         .preview(&request.cron_expression, &request.timezone)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(JobSchedulePreview::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -139,7 +139,7 @@ async fn detail(
     schedule_service(&state)?
         .get(&current_user, parse_schedule_id(&id)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -169,7 +169,7 @@ async fn create(
     schedule_service(&state)?
         .create(&current_user, request.into())
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -200,7 +200,7 @@ async fn update(
     schedule_service(&state)?
         .update(&current_user, parse_schedule_id(&id)?, request.into())
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -235,7 +235,7 @@ async fn update_status(
             request.enabled,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -287,7 +287,7 @@ async fn run_now(
     params(("id" = String, Path, description = "定时任务 ID")),
     request_body = ScheduleVersionRequest,
     responses(
-        (status = 200, description = "定时任务已软删除", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "定时任务已软删除", body = crate::http::ApiEmptyResponse),
         (status = 409, description = "版本冲突")
     ),
     security(("bearer" = []))
@@ -353,6 +353,6 @@ fn parse_schedule_id(value: &str) -> HttpResult<i64> {
 
 fn schedule_service(state: &AppState) -> HttpResult<&ryframe_application::JobScheduleService> {
     state.services.job_schedules.as_deref().ok_or_else(|| {
-        ryframe_http::HttpAppError::from(AppError::NotFound("定时任务调度未启用".into()))
+        crate::http::HttpAppError::from(AppError::NotFound("定时任务调度未启用".into()))
     })
 }

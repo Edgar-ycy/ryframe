@@ -1,9 +1,9 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Multipart, State},
 };
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, put, route};
 use validator::Validate;
@@ -45,7 +45,7 @@ pub async fn get_profile(
 /// 更新个人信息
 #[put("/")]
 #[utoipa::path(put, path = "/api/v1/auth/profile", tag = "个人中心",
-    request_body = UpdateProfileRequest, responses((status = 200, description = "更新成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    request_body = UpdateProfileRequest, responses((status = 200, description = "更新成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 pub async fn update_profile(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -70,7 +70,7 @@ pub async fn update_profile(
 /// 修改密码
 #[put("/password")]
 #[utoipa::path(put, path = "/api/v1/auth/profile/password", tag = "个人中心",
-    request_body = ChangePasswordRequest, responses((status = 200, description = "修改成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    request_body = ChangePasswordRequest, responses((status = 200, description = "修改成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 pub async fn change_password(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

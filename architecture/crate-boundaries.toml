@@ -18,9 +18,9 @@ path = "crates/ryframe-db/src/migration/schema.rs"
 max_lines = 1188
 reason = "控制库 schema 校验待随迁移能力并入 ryframe-db 后拆分"
 
-# 当前 16 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+# 当前 15 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
-expected_package_count = 16
+expected_package_count = 15
 run_tenant_data_legacy_checks = true
 packages = [
     "ryframe",
@@ -31,7 +31,6 @@ packages = [
     "ryframe-db",
     "ryframe-excel",
     "ryframe-generator",
-    "ryframe-http",
     "ryframe-kernel",
     "ryframe-macro",
     "ryframe-application",
@@ -48,7 +47,6 @@ product_packages = [
     "ryframe-adapters",
     "ryframe-db",
     "ryframe-excel",
-    "ryframe-http",
     "ryframe-kernel",
     "ryframe-macro",
     "ryframe-application",
@@ -72,7 +70,6 @@ allowed_internal_edges = [
     "ryframe-api -> ryframe-config",
     "ryframe-api -> ryframe-adapters",
     "ryframe-api -> ryframe-excel",
-    "ryframe-api -> ryframe-http",
     "ryframe-api -> ryframe-kernel",
     "ryframe-api -> ryframe-macro",
     "ryframe-api -> ryframe-application",
@@ -80,7 +77,6 @@ allowed_internal_edges = [
     "ryframe-api -> ryframe-utils",
     "ryframe-auth -> ryframe-config",
     "ryframe-auth -> ryframe-adapters",
-    "ryframe-auth -> ryframe-http",
     "ryframe-auth -> ryframe-kernel",
     "ryframe-config -> ryframe-kernel",
     "ryframe-config -> ryframe-utils",
@@ -94,7 +90,6 @@ allowed_internal_edges = [
     "ryframe-excel -> ryframe-kernel",
     "ryframe-generator -> ryframe-kernel",
     "ryframe-generator -> ryframe-tenant-db",
-    "ryframe-http -> ryframe-kernel",
     "ryframe-macro -> ryframe-adapters",
     "ryframe-application -> ryframe-auth",
     "ryframe-application -> ryframe-config",

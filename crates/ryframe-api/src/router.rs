@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
 use crate::{
     handlers::{
         auth_handler, authorization_diagnostic_handler, captcha_handler, common_handler,
@@ -34,7 +35,6 @@ use ryframe_adapters::{
 use ryframe_application::system::OnlineUserService;
 use ryframe_auth::jwt::Claims;
 use ryframe_config::RedisMode;
-use ryframe_http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
 use serde::Serialize;

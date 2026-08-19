@@ -1,10 +1,10 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
@@ -45,7 +45,7 @@ async fn list(
             query.into_service_params(&state.config.pagination)?,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::page(
                 p.records.into_iter().map(ConfigVo::from).collect(),
@@ -98,7 +98,7 @@ async fn create(
             dto.portable,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -120,7 +120,7 @@ async fn update(
         .config
         .update_with_portability(&current_user, id, &dto.value, dto.portable)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -128,7 +128,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:config:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/{id}", tag = "参数配置",
-    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -165,7 +165,7 @@ async fn get_by_key(
 #[delete("/cache")]
 #[perm("system:config:edit")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/cache", tag = "参数配置",
-    responses((status = 200, description = "缓存刷新成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    responses((status = 200, description = "缓存刷新成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn refresh_cache(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

@@ -1,4 +1,5 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -6,7 +7,6 @@ use axum::{
 };
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::PostListParams;
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
@@ -61,7 +61,7 @@ async fn list(
         .post
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::page(
                 p.records.into_iter().map(PostVo::from).collect(),
@@ -104,7 +104,7 @@ async fn create(
         .post
         .create(&current_user, &dto.name, &dto.code, dto.sort.unwrap_or(0))
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -132,7 +132,7 @@ async fn update(
             dto.status,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -140,7 +140,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:post:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/posts/{id}", tag = "岗位管理",
-    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

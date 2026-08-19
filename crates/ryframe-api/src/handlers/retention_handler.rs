@@ -1,10 +1,10 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{get, post, route};
 
 use crate::{
@@ -40,7 +40,7 @@ async fn overview(
         .data_retention
         .overview(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(DataRetentionOverview::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -62,7 +62,7 @@ async fn preview(
         .data_retention
         .preview(&current_user)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(DataRetentionPreview::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -87,7 +87,7 @@ async fn run(
         .data_retention
         .enqueue_manual(&current_user, &hash)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(run.into()))))
 }
 
@@ -107,7 +107,7 @@ async fn runs(
         .data_retention
         .list_runs(&current_user, query.into_page(&state.config.pagination)?)
         .await
-        .map_err(ryframe_http::HttpAppError::from)?;
+        .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(ApiPageResponse::page(
         page.records.into_iter().map(Into::into).collect(),
         page.total,

@@ -1,3 +1,4 @@
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -8,7 +9,6 @@ use ryframe_application::system::{
     UpdateProductPlanCommand, UpdateProductPlanVersionCommand,
 };
 use ryframe_auth::rbac;
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};
 use validator::Validate;

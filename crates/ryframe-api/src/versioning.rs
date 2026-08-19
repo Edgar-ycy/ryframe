@@ -5,8 +5,8 @@
 
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
+use crate::http::API_PREFIX;
 use axum::Router;
-use ryframe_http::API_PREFIX;
 use serde::{Deserialize, Serialize};
 
 /// URL 中的 API 主版本（`v1`、`v2` 等）。

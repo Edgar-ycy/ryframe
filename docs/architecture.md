@@ -46,7 +46,6 @@ GET /api/v1/api-docs/openapi.json
 | `ryframe-config` | 类型化配置、环境变量覆盖和生产 secret 来源校验 |
 | `ryframe-core` | 分页、Repository 基础、缓存、Redis、租户一致性校验、数据库监控端口、锁和熔断 |
 | `ryframe-kernel` | 传输无关的主体、数据范围、错误、错误码、常量和枚举 |
-| `ryframe-http` | HTTP 错误映射、统一响应信封和 Axum 响应适配 |
 | `ryframe-i18n` | 显式注入的语言协商、资源一致性校验与本地化文本渲染 |
 | `ryframe-utils` | 雪花 ID、脱敏、数据差异、客户端信息与文件处理等通用工具 |
 | `ryframe-captcha` | 验证码题目生成与图像渲染 |
@@ -268,7 +267,7 @@ Agent 限流依赖 Redis 7 standalone 的原子乐观事务。预认证 IP 桶�
 51. 幂等由端点显式声明，不再对 `/platform` 统一套 Redis 重放层。短期重放缓存绑定主体、方法、规范化路径、查询和 body；租户创建、配置迁移、服务账号密钥与租户数据迁移另以 MySQL 请求摘要、唯一键和状态机作为权威边界，Redis 仅作加速且故障不能阻止持久 Saga。限流使用可信代理解析后的 IP，并对拒绝响应提供 `Retry-After`。
 52. 稳定发布只接受位于 `main` 的 `vMAJOR.MINOR.PATCH` annotated tag，前后端必须同标签同版本，且 annotation 与各自 CHANGELOG 完整版本章节一致；发布前再次锁定两仓 tag object ID 与完整 commit SHA。后端是唯一联合发布主控：它校验前端仓库和精确 commit、两份 OpenAPI 的 SHA-256，以及两仓精确提交均已有成功的 push CI，然后生成合并发布说明。稳定版 Release 不构建容器、不上传自定义附件，只保留 GitHub 自动生成的 zip 与 tar.gz 源码快照；交付身份直接来自 annotated tag object 及其解引用出的精确提交，两仓均禁止 Nightly 和其他预发布工作流。
 53. 未签名的 `X-Nonce` / `X-Timestamp` 防重放抽象已移除：它从未进入路由或配置，且客户端自报双头不能验证请求主体或内容。浏览器写请求继续使用 HTTPS、Bearer/权限、签名 CSRF、refresh CAS，以及主体作用域键与方法、真实规范化路径、排序查询、body SHA-256 组成的幂等指纹；机器客户端持有者证明必须另行采用可验证消息签名，不得恢复旧裸头契约。
-54. 领域类型、HTTP 响应适配、国际化、通用工具、验证码和 Excel 能力已拆分为独立 crate；废弃邮件 crate 与其依赖均已删除。业务层返回 `ryframe-kernel::AppError/AppResult`，API 边界仅通过 `ryframe-http::HttpAppError/HttpResult` 做单向 HTTP 适配，不再保留重复错误枚举或双向转换。
+54. 领域类型由 `ryframe-kernel` 持有，HTTP 响应适配收敛在 `ryframe-api::http`；业务层返回 `ryframe-kernel::AppError/AppResult`，API 边界仅通过 `HttpAppError/HttpResult` 做单向 HTTP 适配，不再保留重复错误枚举或双向转换。
 55. 旧公共兼容包已从工作区、源码和文档中完全删除；调用方必须直接依赖领域核心、HTTP、国际化或具体功能 crate，旧包路径因不再存在而无法通过编译。
 56. 语言资源由 `ryframe-i18n::Localizer` 显式注入应用状态，启动时校验 `zh-CN` 与 `en-US` 键集一致；REST 响应协商语言并返回 `Content-Language`，同时合并 `Vary: Accept-Language`，用户偏好可持久化。
 57. 控制库和业务数据目标分别使用独立迁移账本。生产先执行 `ryframe-migrate control up`，再对所有活动目标执行 `ryframe-migrate tenant-data up --all` 与 verify；API 和 Worker 只验证当前要求的 Schema，不执行 DDL。持久化后台任务使用租约、死信和空闲退避，开发可内嵌、生产可使用独立 `ryframe-worker`。MySQL 是任务与 Outbox 的唯一可靠事实来源；每个进程最多一个 Redis `ryframe:jobs:wakeup` 订阅循环，进程内/Redis 提示只提前结束等待，丢失、重复或订阅故障均由数据库轮询兜底。空闲等待从 `poll_interval_ms` 起按 2 倍和 ±20% 抖动增长至 `max_idle_poll_interval_ms`，租约恢复按独立的 `lease_recovery_interval_seconds` 周期运行。
@@ -344,7 +343,7 @@ state
 - 不用多个 `Option<T>` 模拟互斥输入；使用枚举或经过验证的 Command。
 - Service 返回 `AppResult<Output>`，不返回 Axum Response。
 - 预期业务失败使用明确的 `AppError`，不得用 `unwrap` 或静默吞错。
-- Handler 返回 `HttpResult<Output>`；直接构造领域错误时显式调用 `.into()`，不在 HTTP crate 内复制 `AppError`。
+- Handler 返回 `HttpResult<Output>`；直接构造领域错误时显式调用 `.into()`，不在 API 的 HTTP 边界模块中复制 `AppError`。
 
 ## 6. CI 与本地质量检查
 

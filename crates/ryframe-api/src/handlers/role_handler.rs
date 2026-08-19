@@ -1,3 +1,4 @@
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -6,7 +7,6 @@ use axum::{
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::RoleListParams;
 use ryframe_auth::rbac;
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
@@ -92,7 +92,7 @@ async fn options(
         .role
         .find_options(&current_user, query.q.as_deref(), query.limit)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(OptionList::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -115,7 +115,7 @@ async fn list(
         .role
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|p| {
             Json(ApiPageResponse::page(
                 p.records.into_iter().map(RoleVo::from).collect(),
@@ -162,7 +162,7 @@ async fn create(
             dto.data_scope,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -199,7 +199,7 @@ async fn update(
 #[delete("/{id}")]
 #[perm("system:role:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/{id}", tag = "角色管理",
-    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
@@ -215,7 +215,7 @@ async fn remove(
 #[perm("system:role:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/batch/{ids}", tag = "角色管理",
     params(("ids" = String, Path)),
-    responses((status = 200, description = "批量删除成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "批量删除成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn batch_remove(
     State(state): State<AppState>,
@@ -265,7 +265,7 @@ async fn request_role_export(
 #[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
     params(("id" = String, Path)), request_body = ReplaceRolePermissionsDto,
-    responses((status = 200, description = "权限分配成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "权限分配成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn replace_permissions(
     State(state): State<AppState>,
@@ -310,7 +310,7 @@ async fn get_role_perms(
 #[perm("system:role:edit")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/data-scope", tag = "角色管理",
     params(("id" = String, Path)), request_body = ReplaceRoleDataScopeDto,
-    responses((status = 200, description = "数据权限更新成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "数据权限更新成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn replace_data_scope(
     State(state): State<AppState>,

@@ -43,7 +43,6 @@ ryframe/
 │   ├── ryframe-api/         # HTTP API、OpenAPI 与消息 WebSocket
 │   ├── ryframe-auth/        # 认证授权 (JWT/RBAC/权限)
 │   ├── ryframe-kernel/      # 传输无关领域类型、错误码与主体上下文
-│   ├── ryframe-http/        # HTTP 错误映射与统一响应信封
 │   ├── ryframe-i18n/        # 语言协商、资源校验与文本渲染
 │   ├── ryframe-utils/       # 雪花 ID、脱敏、差异与文件处理工具
 │   ├── ryframe-captcha/     # 验证码生成与图像渲染

@@ -1,4 +1,5 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -6,7 +7,6 @@ use axum::{
 };
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::DictTypeListParams;
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use serde::Deserialize;
 use validator::Validate;
@@ -97,7 +97,7 @@ async fn create_type(
         .dict
         .create_type(&current_user, &dto.name, &dto.code)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -121,7 +121,7 @@ async fn update_type(
         .dict
         .update_type(&current_user, id, &dto.name, dto.status)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -130,7 +130,7 @@ async fn update_type(
 #[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
     params(("id" = String, Path)),
-    responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn delete_type(
     State(state): State<AppState>,
@@ -163,7 +163,7 @@ async fn list_data(
         .dict
         .find_data_by_type(&current_user, &query.type_code)
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|values| {
             Json(ApiResponse::success(
                 values.into_iter().map(DictDataVo::from).collect(),
@@ -220,7 +220,7 @@ async fn create_data(
             dto.sort.unwrap_or(0),
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -251,7 +251,7 @@ async fn update_data(
             dto.status,
         )
         .await
-        .map_err(ryframe_http::HttpAppError::from)
+        .map_err(crate::http::HttpAppError::from)
         .map(|value| Json(ApiResponse::success(value.into())))
 }
 
@@ -260,7 +260,7 @@ async fn update_data(
 #[perm("system:dict:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
     params(("id" = String, Path)),
-    responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)),
+    responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
 async fn delete_data(
     State(state): State<AppState>,

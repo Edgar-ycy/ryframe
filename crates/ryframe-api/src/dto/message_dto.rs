@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
+use crate::http::HttpResult;
 use chrono::{DateTime, Utc};
-use ryframe_http::HttpResult;
 use ryframe_kernel::AppError;
 use ryframe_kernel::LocalizedText;
 use serde::{Deserialize, Serialize};

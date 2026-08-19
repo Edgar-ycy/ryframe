@@ -12,7 +12,6 @@ description.workspace = true
 runtime-swagger-ui = ["dep:utoipa-swagger-ui"]
 
 [dependencies]
-ryframe-http = { path = "../ryframe-http", features = ["openapi"] }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-utils = { path = "../ryframe-utils" }
 ryframe-excel = { path = "../ryframe-excel" }

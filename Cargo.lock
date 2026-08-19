@@ -3252,7 +3252,6 @@ dependencies = [
  "ryframe-auth",
  "ryframe-config",
  "ryframe-excel",
- "ryframe-http",
  "ryframe-kernel",
  "ryframe-macro",
  "ryframe-tenant-db",
@@ -3384,20 +3383,6 @@ dependencies = [
  "syn 3.0.3",
  "tempfile",
  "tokio",
-]
-
-[[package]]
-name = "ryframe-http"
-version = "0.10.0"
-dependencies = [
- "axum",
- "http",
- "ryframe-kernel",
- "serde",
- "serde_json",
- "tracing",
- "utoipa",
- "validator",
 ]
 
 [[package]]

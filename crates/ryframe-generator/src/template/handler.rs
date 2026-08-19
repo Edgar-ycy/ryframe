@@ -25,7 +25,10 @@ use crate::dto::business::{snake}_dto::{{
     Create{struct_name}Dto, {struct_name}KeyDto, {struct_name}ListDto, Update{struct_name}Dto,
 }};
 use crate::state::AppState;
-use crate::{{ApiPageResponse, ApiResponse, HttpResult, RequestPrincipal}};
+use crate::{{
+    http::{{ApiPageResponse, ApiResponse, HttpResult}},
+    RequestPrincipal,
+}};
 
 pub fn {snake}_router(state: AppState) -> Router {{
     Router::new()

@@ -700,7 +700,7 @@ fn notice_policy_contract() -> serde_json::Value {
 fn api_prefix_contract() -> serde_json::Value {
     serde_json::json!({
         "version": 1,
-        "value": ryframe_http::API_PREFIX,
+        "value": crate::http::API_PREFIX,
     })
 }
 
@@ -731,8 +731,8 @@ fn route_contract() -> serde_json::Value {
         .map(
             |(source, handler, method, path, capability_code, permission_code)| {
                 assert!(
-                    *path == ryframe_http::API_PREFIX
-                        || path.starts_with(&format!("{}/", ryframe_http::API_PREFIX)),
+                    *path == crate::http::API_PREFIX
+                        || path.starts_with(&format!("{}/", crate::http::API_PREFIX)),
                     "route contract path must include the public API prefix: {path}"
                 );
                 assert!(
@@ -968,7 +968,7 @@ fn set_operation_id(
     };
 
     let normalized_path = path
-        .strip_prefix(ryframe_http::API_PREFIX)
+        .strip_prefix(crate::http::API_PREFIX)
         .unwrap_or(path)
         .trim_start_matches('/')
         .split('/')

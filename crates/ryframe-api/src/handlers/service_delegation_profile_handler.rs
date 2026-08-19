@@ -1,4 +1,5 @@
 use crate::RequestPrincipal;
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -8,7 +9,6 @@ use axum::{
 use ryframe_application::system::{
     CreateDelegationCommand, ServiceAccountService, ServiceDelegationTargetVo,
 };
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, route};
 use validator::Validate;
@@ -127,7 +127,7 @@ async fn create_my_delegation(
 #[utoipa::path(delete, path = "/api/v1/profile/service-delegations/{id}", tag = "个人服务委托",
     params(("id" = String, Path)),
     responses(
-        (status = 200, description = "本人委托已撤销", body = ryframe_http::ApiEmptyResponse),
+        (status = 200, description = "本人委托已撤销", body = crate::http::ApiEmptyResponse),
         (status = 400, description = "委托 ID 无效"),
         (status = 401, description = "未认证"),
         (status = 403, description = "只能撤销本人委托"),

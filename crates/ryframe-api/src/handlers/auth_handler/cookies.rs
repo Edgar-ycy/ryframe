@@ -1,8 +1,8 @@
+use crate::http::{HttpResult, api_path};
 use axum::http::HeaderMap;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use ryframe_auth::jwt::{Claims, TokenSettings};
 use ryframe_config::Environment;
-use ryframe_http::{HttpResult, api_path};
 use ryframe_kernel::AppError;
 
 pub(super) const REFRESH_COOKIE: &str = "ryframe_refresh_token";

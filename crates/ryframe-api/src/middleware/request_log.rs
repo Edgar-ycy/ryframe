@@ -5,12 +5,12 @@
 
 use std::fmt;
 
+use crate::http::ExpectedServiceUnavailableResponse;
 use axum::{
     extract::MatchedPath,
     http::{Request, Response, StatusCode},
 };
 use ryframe_adapters::telemetry::REQUEST_LOG_SPAN_TARGET;
-use ryframe_http::ExpectedServiceUnavailableResponse;
 use tower_http::{
     LatencyUnit,
     classify::{

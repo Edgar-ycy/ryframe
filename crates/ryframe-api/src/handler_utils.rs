@@ -1,10 +1,10 @@
+use crate::http::{HttpAppError, HttpResult};
 use axum::{
     body::Body,
     http::{HeaderMap, HeaderValue},
     response::Response,
 };
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use ryframe_http::{HttpAppError, HttpResult};
 use ryframe_kernel::AppError;
 use sha2::{Digest, Sha256};
 

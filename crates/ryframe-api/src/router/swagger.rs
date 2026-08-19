@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::http::{API_PREFIX, api_path};
 use axum::{
     Router,
     body::Body,
@@ -8,7 +9,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get as get_route,
 };
-use ryframe_http::{API_PREFIX, api_path};
 use utoipa_swagger_ui::{Config as SwaggerUiConfig, serve as serve_swagger_ui};
 
 const SWAGGER_UI_NO_CACHE: &str = "no-store";

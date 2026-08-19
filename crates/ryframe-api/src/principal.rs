@@ -1,8 +1,8 @@
 use std::{ops::Deref, sync::Arc};
 
+use crate::http::HttpAppError;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use ryframe_auth::RequestPrincipal as AuthPrincipal;
-use ryframe_http::HttpAppError;
 use ryframe_kernel::AppError;
 
 /// Axum 当前主体提取器。

@@ -42,7 +42,7 @@ macro_rules! list_query {
             pub fn into_parts(
                 self,
                 policy: &ryframe_config::PaginationConfig,
-            ) -> ryframe_http::HttpResult<(ryframe_adapters::ValidatedPageQuery, $filter_name)> {
+            ) -> $crate::http::HttpResult<(ryframe_adapters::ValidatedPageQuery, $filter_name)> {
                 Ok((
                     ryframe_adapters::ValidatedPageQuery::from_optional(
                         self.page,
@@ -63,7 +63,7 @@ macro_rules! list_query {
 /// 配合 #[utoipa::path] 使用：
 /// ```text
 /// use ryframe_api::detail_body;
-/// use ryframe_http::{ApiResponse, HttpResult};
+/// use ryframe_api::http::{ApiResponse, HttpResult};
 ///
 /// struct NoticeService;
 ///
@@ -97,10 +97,10 @@ macro_rules! list_query {
 macro_rules! detail_body {
     ($state:ident, $actor:ident, $id:ident, $service:ident, $vo:ty, $entity:literal) => {{
         match $state.services.$service.find_by_id(&$actor, $id).await? {
-            Some(value) => Ok(axum::Json(ryframe_http::ApiResponse::<$vo>::success(
+            Some(value) => Ok(axum::Json($crate::http::ApiResponse::<$vo>::success(
                 value.into(),
             ))),
-            None => Err(ryframe_http::HttpAppError::from(
+            None => Err($crate::http::HttpAppError::from(
                 ryframe_kernel::AppError::NotFound(format!("{}不存在", $entity)),
             )),
         }
@@ -112,7 +112,7 @@ macro_rules! detail_body {
 /// 配合 #[utoipa::path] 使用：
 /// ```text
 /// use ryframe_api::remove_body;
-/// use ryframe_http::{ApiResponse, HttpResult};
+/// use ryframe_api::http::{ApiResponse, HttpResult};
 ///
 /// struct NoticeService;
 ///
@@ -146,6 +146,6 @@ macro_rules! detail_body {
 macro_rules! remove_body {
     ($state:ident, $actor:ident, $id:ident, $service:ident) => {{
         $state.services.$service.delete(&$actor, $id).await?;
-        Ok(axum::Json(ryframe_http::ApiResponse::success_no_data()))
+        Ok(axum::Json($crate::http::ApiResponse::success_no_data()))
     }};
 }

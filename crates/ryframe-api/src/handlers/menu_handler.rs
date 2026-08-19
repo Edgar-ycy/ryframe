@@ -1,10 +1,10 @@
+use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
 use ryframe_adapters::ValidatedPageQuery;
 use ryframe_application::system::{CreateMenuCommand, MenuListParams, UpdateMenuCommand};
-use ryframe_http::{ApiPageResponse, ApiResponse, HttpResult};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
@@ -185,7 +185,7 @@ async fn detail(
 #[delete("/{id}")]
 #[perm("system:menu:remove")]
 #[utoipa::path(delete, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
-    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = ryframe_http::ApiEmptyResponse)), security(("bearer" = [])))]
+    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,

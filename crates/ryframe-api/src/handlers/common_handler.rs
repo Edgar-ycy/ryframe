@@ -1,3 +1,4 @@
+use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
     extract::{Multipart, Query, State},
@@ -6,7 +7,6 @@ use axum::{
 };
 use ryframe_adapters::resilience::CircuitBreaker;
 use ryframe_application::system::file_service::{AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET};
-use ryframe_http::{ApiResponse, HttpResult};
 use ryframe_kernel::{AppError, AppResult as KernelAppResult};
 use ryframe_macro::{get, post, route};
 use ryframe_utils::file_upload::UploadConfig;
