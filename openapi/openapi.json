@@ -40685,180 +40685,210 @@
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "home",
         "permission_code": null,
         "route_key": "home"
       },
       {
         "capability_code": null,
         "menu_type": "M",
+        "page_key": null,
         "permission_code": null,
         "route_key": "system"
       },
       {
         "capability_code": null,
         "menu_type": "M",
+        "page_key": null,
         "permission_code": null,
         "route_key": "monitor"
       },
       {
         "capability_code": null,
         "menu_type": "M",
+        "page_key": null,
         "permission_code": null,
         "route_key": "platform"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.user",
         "permission_code": "system:user:list",
         "route_key": "system.user"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.role",
         "permission_code": "system:role:list",
         "route_key": "system.role"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.menu",
         "permission_code": "system:menu:list",
         "route_key": "system.menu"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.dept",
         "permission_code": "system:dept:list",
         "route_key": "system.dept"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.post",
         "permission_code": "system:post:list",
         "route_key": "system.post"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.dict",
         "permission_code": "system:dict:list",
         "route_key": "system.dict"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.config",
         "permission_code": "system:config:list",
         "route_key": "system.config"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.config-transfer",
         "permission_code": "system:config-transfer:list",
         "route_key": "system.config-transfer"
       },
       {
         "capability_code": "system.service_accounts",
         "menu_type": "C",
+        "page_key": "system.service-accounts",
         "permission_code": "system:service-account:list",
         "route_key": "system.service-accounts"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "platform.product-plans",
         "permission_code": "platform:product-plan:list",
         "route_key": "platform.product-plans"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "platform.data-targets",
         "permission_code": "tenant:data-placement:view",
         "route_key": "platform.data-targets"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "platform.tenant",
         "permission_code": "tenant:list",
         "route_key": "platform.tenant"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.notice",
         "permission_code": "system:notice:list",
         "route_key": "system.notice"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.perm",
         "permission_code": "system:perm:list",
         "route_key": "system.perm"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.authorization-diagnostics",
         "permission_code": "system:authorization-diagnostic:list",
         "route_key": "system.authorization-diagnostics"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.operlog",
         "permission_code": "system:operlog:list",
         "route_key": "system.operlog"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "system.logininfor",
         "permission_code": "system:logininfor:list",
         "route_key": "system.logininfor"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.online",
         "permission_code": "monitor:online:list",
         "route_key": "monitor.online"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.server",
         "permission_code": "monitor:server:list",
         "route_key": "monitor.server"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.runtime",
         "permission_code": "monitor:runtime:list",
         "route_key": "monitor.runtime"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.cache",
         "permission_code": "monitor:cache:list",
         "route_key": "monitor.cache"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.db-pool",
         "permission_code": "monitor:db-pool:list",
         "route_key": "monitor.db-pool"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.jobs",
         "permission_code": "monitor:job:list",
         "route_key": "monitor.jobs"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.schedules",
         "permission_code": "monitor:schedule:list",
         "route_key": "monitor.schedules"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.retention",
         "permission_code": "monitor:retention:list",
         "route_key": "monitor.retention"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "page_key": "monitor.overview",
         "permission_code": "monitor:overview:list",
         "route_key": "monitor.overview"
       }

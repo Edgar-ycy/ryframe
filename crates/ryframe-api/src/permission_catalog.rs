@@ -112,6 +112,31 @@ mod tests {
     }
 
     #[test]
+    fn generated_menu_page_keys_are_typed_and_unique() {
+        let mut page_keys = BTreeSet::new();
+        for menu in menu_routes() {
+            match menu.menu_type {
+                "M" => assert_eq!(
+                    menu.page_key, None,
+                    "目录菜单 {} 不得声明 page_key",
+                    menu.route_key
+                ),
+                "C" => {
+                    let page_key = menu
+                        .page_key
+                        .filter(|page_key| !page_key.is_empty())
+                        .expect("页面菜单必须生成非空 page_key");
+                    assert!(
+                        page_keys.insert(page_key),
+                        "页面 page_key 必须唯一: {page_key}"
+                    );
+                }
+                menu_type => panic!("访问目录存在未知菜单类型: {menu_type}"),
+            }
+        }
+    }
+
+    #[test]
     fn route_policy_constraints_match_policy_kind() {
         assert!(SUPPORTED_HTTP_METHODS.contains(&"PATCH"));
         for route in route_policies() {
