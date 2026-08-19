@@ -14,11 +14,6 @@ reason = "由代码生成器维护的租户数据 catalog"
 
 # 仅锁住已存在的超限文件，禁止继续增长；拆分到全局上限以内后必须删除对应豁免。
 [[source_size.legacy_exceptions]]
-path = "crates/ryframe-tenant-db/src/router.rs"
-max_lines = 2472
-reason = "租户数据路由待按目标注册、路由解析和迁移协调拆分"
-
-[[source_size.legacy_exceptions]]
 path = "crates/ryframe-tenant-db-migration/src/lib.rs"
 max_lines = 1290
 reason = "租户迁移实现将在并入 ryframe-tenant-db 时拆分"
