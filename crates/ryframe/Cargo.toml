@@ -30,6 +30,8 @@ redis = { workspace = true }
 md5 = { version = "0.8", optional = true }
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
+serde = { workspace = true, optional = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
 chrono = { workspace = true }
 
 [features]
@@ -37,14 +39,17 @@ default = ["runtime-swagger-ui"]
 runtime-swagger-ui = ["ryframe-api/runtime-swagger-ui"]
 # 一次性文件维护工具必须显式启用，常规 API、Worker 和迁移命令不会携带旧 MD5 实现。
 file-maintenance = ["dep:md5", "dep:sha2", "dep:hex"]
+# 破坏性环境重建能力不进入常规二进制和生产镜像。
+destructive-reset = ["dep:sha2", "dep:hex", "dep:serde", "dep:serde_json"]
 
 [[bin]]
 name = "ryframe"
 path = "src/main.rs"
 
 [[bin]]
-name = "ryframe-db-reset"
-path = "src/bin/ryframe_db_reset.rs"
+name = "ryframe-reset"
+path = "src/bin/ryframe_reset.rs"
+required-features = ["destructive-reset"]
 
 [[bin]]
 name = "ryframe-migrate"
