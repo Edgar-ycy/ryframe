@@ -324,9 +324,7 @@ impl UserRepository {
         tenant_id: &str,
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
-        after_id: Option<i64>,
-        upper_id: i64,
-        limit: u64,
+        window: super::ExportCursorWindow,
     ) -> AppResult<Vec<user::Model>>
     where
         C: ConnectionTrait,
@@ -334,13 +332,13 @@ impl UserRepository {
         let Some(mut select) = Self::export_select(tenant_id, filter, scope_ctx) else {
             return Ok(Vec::new());
         };
-        select = select.filter(user::Column::Id.lte(upper_id));
-        if let Some(after_id) = after_id {
+        select = select.filter(user::Column::Id.lte(window.upper_id()));
+        if let Some(after_id) = window.after_id() {
             select = select.filter(user::Column::Id.gt(after_id));
         }
         select
             .order_by_asc(user::Column::Id)
-            .limit(limit)
+            .limit(window.limit())
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))

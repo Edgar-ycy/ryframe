@@ -5,7 +5,7 @@ use ryframe_adapters::{
 };
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository,
-    TenantConfigTransferRepository, entities::config,
+    ExportCursorWindow, TenantConfigTransferRepository, entities::config,
 };
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -105,7 +105,12 @@ impl ConfigService {
         loop {
             let batch = self
                 .config_repo
-                .find_for_export_after_id(&db, tenant_id, &filter, after_id, upper_id, BATCH_SIZE)
+                .find_for_export_after_id(
+                    &db,
+                    tenant_id,
+                    &filter,
+                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
+                )
                 .await?;
             if batch.is_empty() {
                 break;

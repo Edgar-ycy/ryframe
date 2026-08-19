@@ -4,7 +4,9 @@ use ryframe_adapters::{
     repository::{PageResult, ValidatedPageQuery},
 };
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{PostFilter, PostRepository, TenantConfigTransferRepository, entities::post};
+use ryframe_db::{
+    ExportCursorWindow, PostFilter, PostRepository, TenantConfigTransferRepository, entities::post,
+};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{
@@ -222,7 +224,12 @@ impl PostService {
         loop {
             let batch = self
                 .post_repo
-                .find_for_export_after_id(&db, tenant_id, &filter, after_id, upper_id, BATCH_SIZE)
+                .find_for_export_after_id(
+                    &db,
+                    tenant_id,
+                    &filter,
+                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
+                )
                 .await?;
             if batch.is_empty() {
                 break;

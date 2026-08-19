@@ -104,6 +104,40 @@ pub struct ExportQuerySnapshot {
     pub upper_id: Option<i64>,
 }
 
+/// 导出批次的主键游标窗口。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExportCursorWindow {
+    after_id: Option<i64>,
+    upper_id: i64,
+    limit: u64,
+}
+
+impl ExportCursorWindow {
+    #[must_use]
+    pub const fn new(after_id: Option<i64>, upper_id: i64, limit: u64) -> Self {
+        Self {
+            after_id,
+            upper_id,
+            limit,
+        }
+    }
+
+    #[must_use]
+    pub const fn after_id(self) -> Option<i64> {
+        self.after_id
+    }
+
+    #[must_use]
+    pub const fn upper_id(self) -> i64 {
+        self.upper_id
+    }
+
+    #[must_use]
+    pub const fn limit(self) -> u64 {
+        self.limit
+    }
+}
+
 /// 对已经应用租户、筛选和数据权限的查询计算行数与主键上界。
 pub(crate) async fn summarize_export_query<E, C>(
     select: Select<E>,
@@ -136,4 +170,19 @@ pub(crate) fn prefix_like(value: &str) -> sea_orm::sea_query::LikeExpr {
         .replace('%', "!%")
         .replace('_', "!_");
     sea_orm::sea_query::LikeExpr::new(format!("{escaped}%")).escape('!')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExportCursorWindow;
+
+    #[test]
+    fn export_cursor_window_preserves_query_bounds_and_is_copy() {
+        let window = ExportCursorWindow::new(Some(41), 99, 1_000);
+        let copied = window;
+
+        assert_eq!(window.after_id(), Some(41));
+        assert_eq!(copied.upper_id(), 99);
+        assert_eq!(copied.limit(), 1_000);
+    }
 }

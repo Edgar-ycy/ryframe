@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_db::entities::export_job;
+use ryframe_db::{LoginInfoFilter, OperLogFilter, UserFilter, entities::export_job};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 
@@ -101,10 +101,12 @@ impl ExportService {
             .users
             .find_for_export(
                 &actor,
-                filters.username(),
-                filters.phone(),
-                filters.status(),
-                filters.dept_id(),
+                UserFilter {
+                    username: filters.username(),
+                    phone: filters.phone(),
+                    status: filters.status(),
+                    dept_id: filters.dept_id(),
+                },
                 upper_id,
                 self.export_max_rows,
             )
@@ -278,10 +280,12 @@ impl ExportService {
             .oper_logs
             .find_for_export(
                 &actor,
-                filters.oper_name(),
-                filters.status(),
-                filters.begin_time(),
-                filters.end_time(),
+                OperLogFilter {
+                    oper_name: filters.oper_name(),
+                    status: filters.status(),
+                    begin_time: filters.begin_time(),
+                    end_time: filters.end_time(),
+                },
                 upper_id,
                 self.export_max_rows,
             )
@@ -314,10 +318,12 @@ impl ExportService {
             .login_infos
             .find_for_export(
                 &actor,
-                filters.user_name(),
-                filters.status(),
-                filters.begin_time(),
-                filters.end_time(),
+                LoginInfoFilter {
+                    user_name: filters.user_name(),
+                    status: filters.status(),
+                    begin_time: filters.begin_time(),
+                    end_time: filters.end_time(),
+                },
                 upper_id,
                 self.export_max_rows,
             )

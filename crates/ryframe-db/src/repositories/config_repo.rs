@@ -202,21 +202,19 @@ impl ConfigRepository {
         db: &C,
         tenant_id: &str,
         filter: &ConfigFilter<'_>,
-        after_id: Option<i64>,
-        upper_id: i64,
-        limit: u64,
+        window: super::ExportCursorWindow,
     ) -> AppResult<Vec<config::Model>>
     where
         C: ConnectionTrait,
     {
-        let mut select =
-            Self::filtered_select(tenant_id, filter).filter(config::Column::Id.lte(upper_id));
-        if let Some(id) = after_id {
+        let mut select = Self::filtered_select(tenant_id, filter)
+            .filter(config::Column::Id.lte(window.upper_id()));
+        if let Some(id) = window.after_id() {
             select = select.filter(config::Column::Id.gt(id));
         }
         select
             .order_by_asc(config::Column::Id)
-            .limit(limit)
+            .limit(window.limit())
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))

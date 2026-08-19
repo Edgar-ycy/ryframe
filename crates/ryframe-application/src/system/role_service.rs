@@ -5,8 +5,8 @@ use ryframe_adapters::{
 };
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
-    PermissionRepository, RoleFilter, RoleRepository, TenantConfigTransferRepository,
-    TenantRepository, entities::role,
+    ExportCursorWindow, PermissionRepository, RoleFilter, RoleRepository,
+    TenantConfigTransferRepository, TenantRepository, entities::role,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
@@ -216,7 +216,12 @@ impl RoleService {
         loop {
             let batch = self
                 .role_repo
-                .find_for_export_after_id(&db, tenant_id, &filter, after_id, upper_id, BATCH_SIZE)
+                .find_for_export_after_id(
+                    &db,
+                    tenant_id,
+                    &filter,
+                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
+                )
                 .await?;
             if batch.is_empty() {
                 break;

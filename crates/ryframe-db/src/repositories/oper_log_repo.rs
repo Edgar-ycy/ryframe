@@ -159,21 +159,19 @@ impl OperLogRepository {
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
         scope_ctx: &DataScopeContext,
-        after_id: Option<i64>,
-        upper_id: i64,
-        limit: u64,
+        window: super::ExportCursorWindow,
     ) -> AppResult<Vec<oper_log::Model>>
     where
         C: ConnectionTrait,
     {
         let mut select = Self::filtered_select(tenant_id, filter, scope_ctx)
-            .filter(oper_log::Column::Id.lte(upper_id));
-        if let Some(id) = after_id {
+            .filter(oper_log::Column::Id.lte(window.upper_id()));
+        if let Some(id) = window.after_id() {
             select = select.filter(oper_log::Column::Id.gt(id));
         }
         select
             .order_by_asc(oper_log::Column::Id)
-            .limit(limit)
+            .limit(window.limit())
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))

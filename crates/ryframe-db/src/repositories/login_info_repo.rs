@@ -109,21 +109,19 @@ impl LoginInfoRepository {
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
-        after_id: Option<i64>,
-        upper_id: i64,
-        limit: u64,
+        window: super::ExportCursorWindow,
     ) -> AppResult<Vec<login_info::Model>>
     where
         C: ConnectionTrait,
     {
         let mut select = Self::filtered_select(tenant_id, filter, scope_ctx)
-            .filter(login_info::Column::Id.lte(upper_id));
-        if let Some(id) = after_id {
+            .filter(login_info::Column::Id.lte(window.upper_id()));
+        if let Some(id) = window.after_id() {
             select = select.filter(login_info::Column::Id.gt(id));
         }
         select
             .order_by_asc(login_info::Column::Id)
-            .limit(limit)
+            .limit(window.limit())
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))

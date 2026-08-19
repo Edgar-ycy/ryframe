@@ -4,7 +4,8 @@ use ryframe_adapters::{
 };
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
-    DictDataRepository, DictTypeFilter, DictTypeRepository, TenantConfigTransferRepository,
+    DictDataRepository, DictTypeFilter, DictTypeRepository, ExportCursorWindow,
+    TenantConfigTransferRepository,
     entities::{dict_data, dict_type},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -141,7 +142,12 @@ impl DictService {
         loop {
             let batch = self
                 .dict_type_repo
-                .find_for_export_after_id(&db, tenant_id, &filter, after_id, upper_id, BATCH_SIZE)
+                .find_for_export_after_id(
+                    &db,
+                    tenant_id,
+                    &filter,
+                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
+                )
                 .await?;
             if batch.is_empty() {
                 break;

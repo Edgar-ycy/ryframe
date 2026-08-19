@@ -1,7 +1,7 @@
 use chrono::Utc;
 use ryframe_adapters::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{OperLogFilter, OperLogRepository, entities::oper_log};
+use ryframe_db::{ExportCursorWindow, OperLogFilter, OperLogRepository, entities::oper_log};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use ryframe_utils::snowflake;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
@@ -226,10 +226,7 @@ impl OperLogService {
     pub async fn find_for_export(
         &self,
         actor: &ActorContext,
-        oper_name: Option<&str>,
-        status: Option<&str>,
-        begin_time: Option<chrono::DateTime<Utc>>,
-        end_time: Option<chrono::DateTime<Utc>>,
+        filter: OperLogFilter<'_>,
         upper_id: i64,
         maximum_records: usize,
     ) -> AppResult<Vec<OperLogVo>> {
@@ -241,16 +238,14 @@ impl OperLogService {
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
-            let filter = OperLogFilter {
-                oper_name,
-                status,
-                begin_time,
-                end_time,
-            };
             let batch = self
                 .oper_log_repo
                 .find_for_export_after_id(
-                    &db, tenant_id, &filter, &scope_ctx, after_id, upper_id, BATCH_SIZE,
+                    &db,
+                    tenant_id,
+                    &filter,
+                    &scope_ctx,
+                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
                 )
                 .await?;
             if batch.is_empty() {

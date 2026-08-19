@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ryframe_adapters::{Repository, repository::PageResult};
 use ryframe_db::{
-    ReadConsistency, TenantRepository, UserFilter,
+    ExportCursorWindow, ReadConsistency, TenantRepository, UserFilter,
     entities::{role, tenant, user},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
@@ -28,10 +28,7 @@ impl UserService {
     pub async fn find_for_export(
         &self,
         actor: &ActorContext,
-        username: Option<&str>,
-        phone: Option<&str>,
-        status: Option<&str>,
-        dept_id: Option<i64>,
+        filter: UserFilter<'_>,
         upper_id: i64,
         maximum_records: usize,
     ) -> AppResult<Vec<UserVo>> {
@@ -40,12 +37,6 @@ impl UserService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
         let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let filter = UserFilter {
-            username,
-            phone,
-            status,
-            dept_id,
-        };
         let mut after_id = None;
         let mut records = Vec::new();
 
@@ -53,7 +44,11 @@ impl UserService {
             let batch = self
                 .user_repo
                 .find_for_export_after_id(
-                    &db, tenant_id, &filter, &scope, after_id, upper_id, BATCH_SIZE,
+                    &db,
+                    tenant_id,
+                    &filter,
+                    &scope,
+                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
                 )
                 .await?;
             if batch.is_empty() {

@@ -129,21 +129,19 @@ impl RoleRepository {
         db: &C,
         tenant_id: &str,
         filter: &RoleFilter<'_>,
-        after_id: Option<i64>,
-        upper_id: i64,
-        limit: u64,
+        window: super::ExportCursorWindow,
     ) -> AppResult<Vec<role::Model>>
     where
         C: ConnectionTrait,
     {
-        let mut select =
-            Self::filtered_select(tenant_id, filter).filter(role::Column::Id.lte(upper_id));
-        if let Some(id) = after_id {
+        let mut select = Self::filtered_select(tenant_id, filter)
+            .filter(role::Column::Id.lte(window.upper_id()));
+        if let Some(id) = window.after_id() {
             select = select.filter(role::Column::Id.gt(id));
         }
         select
             .order_by_asc(role::Column::Id)
-            .limit(limit)
+            .limit(window.limit())
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))
