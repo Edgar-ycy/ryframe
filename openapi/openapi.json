@@ -9348,6 +9348,41 @@
         ],
         "type": "string"
       },
+      "ConfigExportFilterDto": {
+        "additionalProperties": false,
+        "description": "参数配置导出的筛选条件。",
+        "properties": {
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConfigExportRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_all": {
+            "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/ConfigExportFilterDto"
+          }
+        },
+        "required": [
+          "filter",
+          "confirm_all"
+        ],
+        "type": "object"
+      },
       "ConfigVo": {
         "description": "参数配置响应。",
         "properties": {
@@ -10682,6 +10717,47 @@
         ],
         "type": "object"
       },
+      "DictTypeExportFilterDto": {
+        "additionalProperties": false,
+        "description": "字典类型导出的筛选条件。",
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "DictTypeExportRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_all": {
+            "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/DictTypeExportFilterDto"
+          }
+        },
+        "required": [
+          "filter",
+          "confirm_all"
+        ],
+        "type": "object"
+      },
       "DictTypeVo": {
         "description": "字典类型响应。",
         "properties": {
@@ -10860,9 +10936,6 @@
           "updated_at"
         ],
         "type": "object"
-      },
-      "ExportRequestDto": {
-        "description": "资源导出的筛选条件快照。\n\n各资源沿用其列表接口的筛选字段，服务端会按资源类型严格反序列化并校验。"
       },
       "FileUploadForm": {
         "properties": {
@@ -11112,6 +11185,53 @@
           "ipaddr",
           "status",
           "login_time"
+        ],
+        "type": "object"
+      },
+      "LoginLogExportFilterDto": {
+        "additionalProperties": false,
+        "description": "登录日志导出的筛选条件。",
+        "properties": {
+          "begin_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "LoginLogExportRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_all": {
+            "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/LoginLogExportFilterDto"
+          }
+        },
+        "required": [
+          "filter",
+          "confirm_all"
         ],
         "type": "object"
       },
@@ -12249,6 +12369,53 @@
           "ipaddr",
           "login_time",
           "last_access_time"
+        ],
+        "type": "object"
+      },
+      "OperLogExportFilterDto": {
+        "additionalProperties": false,
+        "description": "操作日志导出的筛选条件。",
+        "properties": {
+          "begin_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "oper_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "OperLogExportRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_all": {
+            "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/OperLogExportFilterDto"
+          }
+        },
+        "required": [
+          "filter",
+          "confirm_all"
         ],
         "type": "object"
       },
@@ -15530,6 +15697,47 @@
         ],
         "type": "object"
       },
+      "PostExportFilterDto": {
+        "additionalProperties": false,
+        "description": "岗位导出的筛选条件。",
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PostExportRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_all": {
+            "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/PostExportFilterDto"
+          }
+        },
+        "required": [
+          "filter",
+          "confirm_all"
+        ],
+        "type": "object"
+      },
       "PostVo": {
         "description": "岗位响应。",
         "properties": {
@@ -16224,6 +16432,47 @@
           "name",
           "code",
           "is_super"
+        ],
+        "type": "object"
+      },
+      "RoleExportFilterDto": {
+        "additionalProperties": false,
+        "description": "角色导出的筛选条件。",
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RoleExportRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_all": {
+            "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/RoleExportFilterDto"
+          }
+        },
+        "required": [
+          "filter",
+          "confirm_all"
         ],
         "type": "object"
       },
@@ -18586,12 +18835,12 @@
         ],
         "description": "用户详情响应。"
       },
-      "UserExportRequestDto": {
+      "UserExportFilterDto": {
         "additionalProperties": false,
-        "description": "创建异步用户导出任务的筛选条件。",
+        "description": "用户导出的筛选条件。",
         "properties": {
           "dept_id": {
-            "description": "Snowflake ID 统一使用字符串传输，避免 JavaScript 精度丢失。",
+            "description": "Snowflake ID 使用字符串传输，避免 JavaScript 精度丢失。",
             "type": [
               "string",
               "null"
@@ -18616,6 +18865,22 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "UserExportRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_all": {
+            "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/UserExportFilterDto"
+          }
+        },
+        "required": [
+          "filter",
+          "confirm_all"
+        ],
         "type": "object"
       },
       "UserImportJobVo": {
@@ -30843,7 +31108,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExportRequestDto"
+                "$ref": "#/components/schemas/ConfigExportRequestDto"
               }
             }
           },
@@ -32041,7 +32306,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExportRequestDto"
+                "$ref": "#/components/schemas/DictTypeExportRequestDto"
               }
             }
           },
@@ -32354,7 +32619,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExportRequestDto"
+                "$ref": "#/components/schemas/LoginLogExportRequestDto"
               }
             }
           },
@@ -33995,7 +34260,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExportRequestDto"
+                "$ref": "#/components/schemas/OperLogExportRequestDto"
               }
             }
           },
@@ -34590,7 +34855,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExportRequestDto"
+                "$ref": "#/components/schemas/PostExportRequestDto"
               }
             }
           },
@@ -35077,7 +35342,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExportRequestDto"
+                "$ref": "#/components/schemas/RoleExportRequestDto"
               }
             }
           },
