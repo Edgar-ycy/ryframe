@@ -119,15 +119,15 @@ async fn update_metrics(router: &TenantDatabaseRouter) {
             .entry((mode_label(placement.mode), placement.state.as_str()))
             .or_default() += placement.tenant_count;
     }
-    ryframe_middleware::metrics::reset_tenant_data_aggregates();
+    ryframe_adapters::metrics::reset_tenant_data_aggregates();
     for ((mode, health), count) in target_counts {
-        ryframe_middleware::metrics::set_tenant_data_target_count(mode, health, count);
+        ryframe_adapters::metrics::set_tenant_data_target_count(mode, health, count);
     }
     for ((mode, state), count) in placement_counts {
-        ryframe_middleware::metrics::set_tenant_data_placement_count(mode, state, count);
+        ryframe_adapters::metrics::set_tenant_data_placement_count(mode, state, count);
     }
     let pools = router.targets().pool_stats().await;
-    ryframe_middleware::metrics::set_tenant_data_pool_stats(
+    ryframe_adapters::metrics::set_tenant_data_pool_stats(
         pools.open_targets,
         pools.opening_targets,
         pools.reserved_connections,

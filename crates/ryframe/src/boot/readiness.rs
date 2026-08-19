@@ -86,14 +86,14 @@ async fn probe_once(
         );
     }
     if !mysql_ok {
-        ryframe_middleware::metrics::record_readiness_failure("mysql");
+        ryframe_adapters::metrics::record_readiness_failure("mysql");
     }
     if !redis_reachable && cache.redis_required() {
-        ryframe_middleware::metrics::record_readiness_failure("redis");
+        ryframe_adapters::metrics::record_readiness_failure("redis");
     }
-    ryframe_middleware::metrics::set_redis_degraded_state("readiness", !redis_reachable);
+    ryframe_adapters::metrics::set_redis_degraded_state("readiness", !redis_reachable);
     if !object_storage_ok && cache.object_storage_required() {
-        ryframe_middleware::metrics::record_readiness_failure("object_storage");
+        ryframe_adapters::metrics::record_readiness_failure("object_storage");
     }
 }
 

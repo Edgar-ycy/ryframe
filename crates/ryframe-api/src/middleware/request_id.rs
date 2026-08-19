@@ -1,3 +1,5 @@
+//! 请求标识生成与响应头同步。
+
 use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
 use uuid::Uuid;
 

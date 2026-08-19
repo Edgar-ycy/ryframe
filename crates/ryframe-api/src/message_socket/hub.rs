@@ -94,7 +94,7 @@ impl MessageHub {
         );
         connections.insert(id.clone());
         drop(connections);
-        ryframe_middleware::metrics::set_ws_connections(self.connection_count());
+        ryframe_adapters::metrics::set_ws_connections(self.connection_count());
         Some(id)
     }
 
@@ -114,7 +114,7 @@ impl MessageHub {
         if identity_removed {
             self.replay_degraded_identities.remove(&identity);
         }
-        ryframe_middleware::metrics::set_ws_connections(self.connection_count());
+        ryframe_adapters::metrics::set_ws_connections(self.connection_count());
     }
 
     fn report_replay_success(&self, identity: &MessageIdentity) {
@@ -235,17 +235,17 @@ impl MessageHub {
             match sender.try_send(Message::Text(payload.into())) {
                 Ok(()) => {
                     delivered += 1;
-                    ryframe_middleware::metrics::record_message_delivery("delivered");
+                    ryframe_adapters::metrics::record_message_delivery("delivered");
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     let _ = shutdown.send(true);
                     disconnected.push(connection_id.clone());
-                    ryframe_middleware::metrics::record_message_delivery("slow_consumer");
+                    ryframe_adapters::metrics::record_message_delivery("slow_consumer");
                     tracing::warn!(connection_id, "WebSocket 慢消费者已关闭");
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     disconnected.push(connection_id);
-                    ryframe_middleware::metrics::record_message_delivery("closed");
+                    ryframe_adapters::metrics::record_message_delivery("closed");
                 }
             }
         }
@@ -330,7 +330,7 @@ impl MessageHub {
         service: Arc<MessageService>,
         tenant_data: Arc<ryframe_tenant_db::TenantDatabaseRouter>,
     ) -> Option<JoinHandle<()>> {
-        ryframe_middleware::metrics::set_message_redis_listener_connected(false);
+        ryframe_adapters::metrics::set_message_redis_listener_connected(false);
         if !self.config.enabled {
             return None;
         }
@@ -348,7 +348,7 @@ impl MessageHub {
                     .await
                 {
                     Ok(subscription) => {
-                        ryframe_middleware::metrics::set_message_redis_listener_connected(true);
+                        ryframe_adapters::metrics::set_message_redis_listener_connected(true);
                         if degraded {
                             tracing::info!(
                                 channel = MESSAGE_DISPATCH_REDIS_CHANNEL,
@@ -398,7 +398,7 @@ impl MessageHub {
                                 tracing::warn!(%error, message_id, "消息在线投递失败，将由收件箱补拉恢复");
                             }
                         }
-                        ryframe_middleware::metrics::set_message_redis_listener_connected(false);
+                        ryframe_adapters::metrics::set_message_redis_listener_connected(false);
                         if !degraded {
                             tracing::warn!("消息 WebSocket Redis 订阅已中断");
                             degraded = true;
@@ -407,7 +407,7 @@ impl MessageHub {
                         }
                     }
                     Err(error) => {
-                        ryframe_middleware::metrics::set_message_redis_listener_connected(false);
+                        ryframe_adapters::metrics::set_message_redis_listener_connected(false);
                         if !degraded {
                             tracing::warn!(%error, "无法建立消息 WebSocket Redis 订阅");
                             degraded = true;
@@ -508,14 +508,14 @@ async fn replay_identities(
             .await
         {
             Ok(page) => {
-                ryframe_middleware::metrics::record_message_replay_query("success");
+                ryframe_adapters::metrics::record_message_replay_query("success");
                 hub.report_replay_success(&identity);
                 for record in page.records {
                     hub.send_to_user(&tenant_id, user_id, &record);
                 }
             }
             Err(error) => {
-                ryframe_middleware::metrics::record_message_replay_query("error");
+                ryframe_adapters::metrics::record_message_replay_query("error");
                 hub.report_replay_failure(&identity, &error);
             }
         }

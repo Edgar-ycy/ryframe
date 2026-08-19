@@ -12,7 +12,6 @@ use ryframe_application::agent::{AgentCapability, AgentRequest};
 use ryframe_http::{ApiPageResponse, ApiResponse, HttpAppError};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
-use ryframe_middleware::{PrebuiltApiEnvelope, request_id::RequestId};
 use ryframe_utils::ip::ClientIp;
 
 use crate::{
@@ -20,6 +19,7 @@ use crate::{
         AgentCapabilityResponse, AgentDepartmentResponse, AgentDictionaryResponse, AgentPageQuery,
         AgentPostResponse, AgentUserResponse,
     },
+    middleware::{request_id::RequestId, response_envelope::PrebuiltApiEnvelope},
     request_locale::RequestLocale,
     state::AppState,
 };

@@ -1,12 +1,7 @@
-//! Prometheus 的 HTTP、进程与安全指标。
+//! Prometheus 指标注册、记录与进程采样。
 
 use std::{sync::LazyLock, time::Instant};
 
-use axum::{
-    extract::{MatchedPath, Request},
-    middleware::Next,
-    response::Response,
-};
 use lazy_static::lazy_static;
 use prometheus::{
     Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
@@ -17,8 +12,6 @@ static METRICS_REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
     Registry::new_custom(Some("ryframe".to_string()), None)
         .expect("create the RyFrame metrics registry")
 });
-
-const UNMATCHED_ROUTE: &str = "/unmatched";
 
 lazy_static! {
     static ref HTTP_REQUESTS_TOTAL: IntCounterVec = IntCounterVec::new(
@@ -400,34 +393,47 @@ fn ensure_registered() {
     });
 }
 
-pub async fn metrics_middleware(request: Request, next: Next) -> Response {
-    ensure_registered();
-    let method = request.method().to_string();
-    let path = metric_route(&request).to_owned();
-    let started = Instant::now();
-
-    HTTP_REQUESTS_IN_FLIGHT.inc();
-    let response = next.run(request).await;
-    HTTP_REQUESTS_IN_FLIGHT.dec();
-
-    let elapsed = started.elapsed();
-    let status = response.status().as_u16().to_string();
-    HTTP_REQUESTS_TOTAL
-        .with_label_values(&[&method, &path, &status])
-        .inc();
-    HTTP_REQUEST_DURATION
-        .with_label_values(&[&method, &path])
-        .observe(elapsed.as_secs_f64());
-
-    response
+/// 一次 HTTP 请求的低基数指标观察。
+pub struct HttpRequestObservation {
+    method: String,
+    path: String,
+    started: Instant,
+    in_flight: bool,
 }
 
-/// 返回用于指标标签的路由模板；未匹配请求使用固定值以控制标签基数。
-fn metric_route(request: &Request) -> &str {
-    request
-        .extensions()
-        .get::<MatchedPath>()
-        .map_or(UNMATCHED_ROUTE, MatchedPath::as_str)
+impl HttpRequestObservation {
+    /// 创建观察并递增当前处理中的请求数量。
+    pub fn start(method: String, path: String) -> Self {
+        ensure_registered();
+        HTTP_REQUESTS_IN_FLIGHT.inc();
+        Self {
+            method,
+            path,
+            started: Instant::now(),
+            in_flight: true,
+        }
+    }
+
+    /// 记录终态状态码与耗时，并结束当前观察。
+    pub fn finish(mut self, status: u16) {
+        HTTP_REQUESTS_IN_FLIGHT.dec();
+        self.in_flight = false;
+        let status = status.to_string();
+        HTTP_REQUESTS_TOTAL
+            .with_label_values(&[&self.method, &self.path, &status])
+            .inc();
+        HTTP_REQUEST_DURATION
+            .with_label_values(&[&self.method, &self.path])
+            .observe(self.started.elapsed().as_secs_f64());
+    }
+}
+
+impl Drop for HttpRequestObservation {
+    fn drop(&mut self) {
+        if self.in_flight {
+            HTTP_REQUESTS_IN_FLIGHT.dec();
+        }
+    }
 }
 
 pub fn metrics_text() -> String {
@@ -717,36 +723,6 @@ pub fn record_otel_exporter_runtime_failure() {
 pub fn set_otel_exporter_degraded(degraded: bool) {
     ensure_registered();
     OTEL_EXPORTER_DEGRADED.set(i64::from(degraded));
-}
-
-pub fn normalize_path(path: &str) -> String {
-    let segments: Vec<&str> = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    if segments.is_empty() {
-        return "/".to_string();
-    }
-
-    let normalized = segments
-        .into_iter()
-        .map(|segment| {
-            if segment.len() == 36
-                && segment
-                    .chars()
-                    .filter(|character| *character == '-')
-                    .count()
-                    == 4
-            {
-                ":uuid".to_string()
-            } else if segment.chars().all(|character| character.is_ascii_digit()) {
-                ":id".to_string()
-            } else {
-                segment.to_string()
-            }
-        })
-        .collect::<Vec<_>>();
-    format!("/{}", normalized.join("/"))
 }
 
 pub fn spawn_process_metrics_updater() {

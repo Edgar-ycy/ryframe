@@ -10,6 +10,10 @@ use crate::{
         service_delegation_profile_handler, tenant_config_handler, user_handler,
         user_import_handler,
     },
+    middleware::{
+        idempotency::{IdempotencyState, idempotency_middleware},
+        rate_limit::{RateLimitState, user_rate_limit_middleware},
+    },
     oper_log_middleware::{AuditMode, OperLogMiddlewareState, oper_log_middleware},
     request_locale::request_locale_middleware,
     state::AppState,
@@ -23,17 +27,16 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete as delete_route, get as get_route, post},
 };
+use ryframe_adapters::{
+    metrics::{record_rate_limit_rejection, record_redis_degraded},
+    rate_limit::RateLimiter,
+};
 use ryframe_application::system::OnlineUserService;
 use ryframe_auth::jwt::Claims;
 use ryframe_config::RedisMode;
 use ryframe_http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
-use ryframe_middleware::{
-    idempotency::{IdempotencyState, idempotency_middleware},
-    metrics::{record_rate_limit_rejection, record_redis_degraded},
-    rate_limit::{RateLimitState, user_rate_limit_middleware},
-};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -41,7 +44,7 @@ use crate::RequestPrincipal;
 
 #[derive(Clone)]
 struct AuthenticatedTenantRateLimitState {
-    limiter: Arc<ryframe_middleware::RateLimiter>,
+    limiter: Arc<RateLimiter>,
     config: Arc<ryframe_config::RateLimitConfig>,
 }
 
@@ -78,7 +81,7 @@ async fn authenticated_tenant_rate_limit(
     if principal.tenant_request_limit_per_minute == 0 {
         return Ok(next.run(request).await);
     }
-    let key = ryframe_middleware::RateLimiter::tenant_key(&principal.tenant_id);
+    let key = RateLimiter::tenant_key(&principal.tenant_id);
     let limit = principal.tenant_request_limit_per_minute;
 
     match state.limiter.acquire(&key, 60, limit).await {

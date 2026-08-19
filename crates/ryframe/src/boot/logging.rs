@@ -1,9 +1,9 @@
 use std::path::Path;
 
+use ryframe_adapters::telemetry::{TelemetryGuard, init_tracer_provider};
 use ryframe_config::{AppConfig, LoggerFormat, LoggerOutput};
 use ryframe_db::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 use ryframe_kernel::AppError;
-use ryframe_middleware::telemetry::init_tracer_provider;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
     EnvFilter, Layer, filter::FilterFn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
@@ -22,9 +22,7 @@ pub struct LoggerGuard {
 /// - `output = "file"` → 每天滚动，并按 `retention_days` 有界保留
 /// - `format = "json"` → JSON 格式，否则 text 格式
 /// - 同时初始化 OpenTelemetry 链路追踪（通过环境变量控制）
-pub fn init(
-    config: &AppConfig,
-) -> Result<(LoggerGuard, ryframe_middleware::telemetry::TelemetryGuard), AppError> {
+pub fn init(config: &AppConfig) -> Result<(LoggerGuard, TelemetryGuard), AppError> {
     config.logger.validate().map_err(AppError::Config)?;
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(config.logger.level.as_str()));

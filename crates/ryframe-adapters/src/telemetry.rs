@@ -1,7 +1,6 @@
-//! OpenTelemetry 链路追踪
+//! OpenTelemetry 导出、采样与追踪 provider。
 //!
 //! 集成 OpenTelemetry + tracing 生态：
-//! - 自动 Span 创建（HTTP 请求/响应）
 //! - OTLP HTTP 导出（支持 Jaeger、Tempo、Datadog 等）
 //! - 采样策略配置
 //! - 优雅关闭
@@ -9,7 +8,7 @@
 //! # 使用示例
 //!
 //! ```text
-//! use ryframe_middleware::telemetry::TelemetryConfig;
+//! use ryframe_adapters::telemetry::TelemetryConfig;
 //!
 //! // 配置链路追踪
 //! let config = TelemetryConfig::default();
@@ -21,13 +20,7 @@ use std::{
     time::Duration,
 };
 
-use axum::{
-    extract::{MatchedPath, Request},
-    http::HeaderMap,
-    middleware::Next,
-    response::Response,
-};
-use opentelemetry::{KeyValue, global, propagation::Extractor, trace::TracerProvider};
+use opentelemetry::{KeyValue, global, trace::TracerProvider};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     Resource,
@@ -36,16 +29,11 @@ use opentelemetry_sdk::{
         SdkTracerProvider, SpanData, SpanExporter,
     },
 };
-use tracing::{Instrument, error, info, warn};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing::{info, warn};
 use tracing_subscriber::{Layer, filter::FilterFn};
 
-use crate::{
-    metrics::{
-        record_otel_exporter_failure, record_otel_exporter_runtime_failure,
-        set_otel_exporter_degraded,
-    },
-    request_log::REQUEST_LOG_SPAN_TARGET,
+use crate::metrics::{
+    record_otel_exporter_failure, record_otel_exporter_runtime_failure, set_otel_exporter_degraded,
 };
 
 // ============ 配置 ============
@@ -55,18 +43,8 @@ pub use ryframe_config::TelemetryConfig;
 const BUILD_COMMIT: &str = env!("RYFRAME_BUILD_COMMIT");
 const TELEMETRY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// 仅从 HTTP 请求头读取 W3C 传播字段的适配器。
-struct HeaderExtractor<'a>(&'a HeaderMap);
-
-impl Extractor for HeaderExtractor<'_> {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(key).and_then(|value| value.to_str().ok())
-    }
-
-    fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(|key| key.as_str()).collect()
-    }
-}
+/// 本地请求日志 span 不会发送到外部 OTLP 后端。
+pub const REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
 
 /// 链路追踪守卫
 ///
@@ -282,86 +260,4 @@ fn telemetry_resource(service_name: String) -> Resource {
             KeyValue::new("vcs.ref.head.revision", BUILD_COMMIT),
         ])
         .build()
-}
-
-// ============ HTTP Span 中间件 ============
-
-/// HTTP 请求 Span 中间件
-///
-/// 为每个 HTTP 请求自动创建 OpenTelemetry Span，记录：
-/// - HTTP 方法 / 路由 / 状态码（status_code）
-/// - 由 span 生命周期自动计算的请求耗时
-/// - 慢请求告警（>1s）
-/// - 客户端错误记录（4xx）和服务端错误告警（5xx）
-///
-/// **必须放在 request_id 中间件之后**，以便 Span 中包含请求上下文。
-pub async fn telemetry_middleware(request: Request, next: Next) -> Response {
-    let method = request.method().to_string();
-    let path = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(|matched| matched.as_str().to_owned())
-        .unwrap_or_else(|| "/unmatched".to_owned());
-    let parent_context = global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(request.headers()))
-    });
-
-    let span = tracing::info_span!(
-        "HTTP",
-        http.method = %method,
-        http.route = %path,
-        http.status_code = tracing::field::Empty,
-    );
-
-    // 将当前 OTel Context 设为父 Context（实现跨服务追踪链）
-    let _ = span.set_parent(parent_context);
-
-    let start = std::time::Instant::now();
-    let response = next.run(request).instrument(span.clone()).await;
-    let elapsed = start.elapsed();
-
-    // 记录响应状态
-    let status = response.status().as_u16();
-    span.record("http.status_code", status.to_string());
-
-    match classify_http_response(status) {
-        HttpResponseClass::ClientError => info!(
-            http.status_code = status,
-            http.duration_ms = elapsed.as_millis(),
-            http.route = %path,
-            "HTTP 客户端错误响应"
-        ),
-        HttpResponseClass::ServerError => error!(
-            http.status_code = status,
-            http.duration_ms = elapsed.as_millis(),
-            http.route = %path,
-            "HTTP 服务端错误响应"
-        ),
-        HttpResponseClass::Success => {}
-    }
-
-    if elapsed.as_millis() > 1000 {
-        warn!(
-            http.duration_ms = elapsed.as_millis(),
-            http.route = %path,
-            "慢请求"
-        );
-    }
-
-    response
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HttpResponseClass {
-    Success,
-    ClientError,
-    ServerError,
-}
-
-const fn classify_http_response(status: u16) -> HttpResponseClass {
-    match status {
-        500.. => HttpResponseClass::ServerError,
-        400..=499 => HttpResponseClass::ClientError,
-        _ => HttpResponseClass::Success,
-    }
 }

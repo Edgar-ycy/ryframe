@@ -35,22 +35,22 @@ pub(super) fn verify_csrf(
     expected_sid: Option<&str>,
 ) -> HttpResult<String> {
     let header_token = csrf_header(headers).ok_or_else(|| {
-        ryframe_middleware::metrics::record_csrf_rejection();
+        ryframe_adapters::metrics::record_csrf_rejection();
         AppError::Authorization("missing CSRF challenge".into())
     })?;
     let cookie_token = jar.get(CSRF_COOKIE).map(Cookie::value).ok_or_else(|| {
-        ryframe_middleware::metrics::record_csrf_rejection();
+        ryframe_adapters::metrics::record_csrf_rejection();
         AppError::Authorization("missing CSRF challenge cookie".into())
     })?;
     if header_token != cookie_token {
-        ryframe_middleware::metrics::record_csrf_rejection();
+        ryframe_adapters::metrics::record_csrf_rejection();
         return Err(AppError::Authorization("CSRF challenge mismatch".into()).into());
     }
     let claims = ryframe_auth::jwt::decode_csrf(header_token, settings).inspect_err(|_| {
-        ryframe_middleware::metrics::record_csrf_rejection();
+        ryframe_adapters::metrics::record_csrf_rejection();
     })?;
     if claims.sid.as_deref() != expected_sid {
-        ryframe_middleware::metrics::record_csrf_rejection();
+        ryframe_adapters::metrics::record_csrf_rejection();
         return Err(
             AppError::Authorization("CSRF challenge is not bound to this session".into()).into(),
         );
@@ -74,11 +74,11 @@ pub(super) fn validate_auth_origin(state: &AppState, headers: &HeaderMap) -> Htt
             Ok(())
         }
         Some(_) => {
-            ryframe_middleware::metrics::record_csrf_rejection();
+            ryframe_adapters::metrics::record_csrf_rejection();
             Err(AppError::Authorization("request origin is not allowed".into()).into())
         }
         None if state.config.environment.is_production() => {
-            ryframe_middleware::metrics::record_csrf_rejection();
+            ryframe_adapters::metrics::record_csrf_rejection();
             Err(AppError::Authorization("Origin header is required in production".into()).into())
         }
         None => Ok(()),
@@ -119,11 +119,11 @@ pub(super) async fn enforce_login_rate_limit(
             .await
             .map_err(|error| {
                 tracing::error!(%error, "login rate limiter unavailable");
-                ryframe_middleware::metrics::record_redis_degraded("login_rate_limit");
+                ryframe_adapters::metrics::record_redis_degraded("login_rate_limit");
                 AppError::ServiceUnavailable("rate limit service unavailable".into())
             })?;
         if !decision.allowed {
-            ryframe_middleware::metrics::record_rate_limit_rejection(scope);
+            ryframe_adapters::metrics::record_rate_limit_rejection(scope);
             let mut response = (
                 axum::http::StatusCode::TOO_MANY_REQUESTS,
                 Json(ApiResponse::<()>::fail(
@@ -176,7 +176,7 @@ pub(super) async fn verify_captcha_if_enabled(
         .verify(captcha_id, captcha_code)
         .await
         .inspect_err(|_| {
-            ryframe_middleware::metrics::record_redis_degraded("captcha_store");
+            ryframe_adapters::metrics::record_redis_degraded("captcha_store");
         })?;
     if !valid {
         return Err(AppError::Validation("验证码错误或已过期".into()).into());

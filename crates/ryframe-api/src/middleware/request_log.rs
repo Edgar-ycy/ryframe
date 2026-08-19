@@ -1,4 +1,4 @@
-//! 请求日志中间件
+//! API 请求日志中间件
 //!
 //! 记录每个 HTTP 请求的 method + path + status + latency，
 //! 自动对敏感查询参数和请求头进行脱敏。
@@ -9,6 +9,7 @@ use axum::{
     extract::MatchedPath,
     http::{Request, Response, StatusCode},
 };
+use ryframe_adapters::telemetry::REQUEST_LOG_SPAN_TARGET;
 use ryframe_http::ExpectedServiceUnavailableResponse;
 use tower_http::{
     LatencyUnit,
@@ -18,8 +19,6 @@ use tower_http::{
     },
     trace::{DefaultOnFailure, DefaultOnResponse, MakeSpan, TraceLayer},
 };
-
-pub(crate) const REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
 
 const UNMATCHED_ROUTE: &str = "/unmatched";
 
@@ -86,7 +85,7 @@ pub fn request_log_layer_with_masking() -> TraceLayer<
             let path = request_route(request);
             let request_id = request
                 .extensions()
-                .get::<crate::request_id::RequestId>()
+                .get::<super::request_id::RequestId>()
                 .map(|value| value.0.as_str())
                 .unwrap_or("-");
             let client_ip = request

@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use crate::RequestPrincipal;
+use crate::middleware::request_id::RequestId;
 use axum::{
     extract::{MatchedPath, Request, State},
     middleware::Next,
@@ -15,7 +16,6 @@ use ryframe_application::{
     AuditOutbox, AuditRequestContext, scope_audit_request,
     system::{OperLogStatus, RecordOperLogCommand},
 };
-use ryframe_middleware::request_id::RequestId;
 use ryframe_utils::ip::ClientIp;
 use uuid::Uuid;
 

@@ -16,11 +16,11 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     ryframe_api::auth_middleware::set_backend_failure_hook(
-        ryframe_middleware::metrics::record_redis_degraded,
+        ryframe_adapters::metrics::record_redis_degraded,
     );
-    ryframe_application::set_audit_failure_hook(ryframe_middleware::metrics::record_audit_failure);
+    ryframe_application::set_audit_failure_hook(ryframe_adapters::metrics::record_audit_failure);
     ryframe_application::set_authorization_cache_lookup_hook(
-        ryframe_middleware::metrics::record_authorization_cache_lookup,
+        ryframe_adapters::metrics::record_authorization_cache_lookup,
     );
 
     let environment = Environment::from_env()?;
@@ -37,7 +37,7 @@ async fn main() -> Result<(), AppError> {
         environment = %config.environment,
         "configuration loaded"
     );
-    ryframe_middleware::metrics::spawn_process_metrics_updater();
+    ryframe_adapters::metrics::spawn_process_metrics_updater();
 
     let database = boot::datasource::connect(&config).await?;
     install_database_metrics(&database);
@@ -319,31 +319,27 @@ async fn shutdown_signal(
 fn install_database_metrics(database: &ControlDatabaseCluster) {
     database.set_metrics_observer(Arc::new(CallbackDatabaseMetricsObserver::new(
         Arc::new(|kind, name, healthy| {
-            ryframe_middleware::metrics::set_database_node_health(
-                name,
-                kind.metric_label(),
-                healthy,
-            );
+            ryframe_adapters::metrics::set_database_node_health(name, kind.metric_label(), healthy);
         }),
         Arc::new(|target, reason| {
-            ryframe_middleware::metrics::record_database_read_selection(
+            ryframe_adapters::metrics::record_database_read_selection(
                 target.metric_label(),
                 reason.metric_label(),
             );
         }),
-        Arc::new(ryframe_middleware::metrics::record_database_read_fallback),
+        Arc::new(ryframe_adapters::metrics::record_database_read_fallback),
     )));
 }
 
 /// 在应用边界将后台任务队列事件绑定到 Prometheus 指标。
 fn install_job_metrics(queue: &JobQueue) {
     queue.set_metrics_observer(Arc::new(CallbackJobMetricsObserver::new(
-        Arc::new(ryframe_middleware::metrics::set_job_queue_depth),
-        Arc::new(ryframe_middleware::metrics::set_job_oldest_ready_age),
-        Arc::new(ryframe_middleware::metrics::observe_job_duration),
-        Arc::new(ryframe_middleware::metrics::record_job_claim_attempt),
-        Arc::new(ryframe_middleware::metrics::record_job_wakeup),
-        Arc::new(ryframe_middleware::metrics::set_job_wakeup_listener_up),
-        Arc::new(ryframe_middleware::metrics::record_job_wakeup_protocol_error),
+        Arc::new(ryframe_adapters::metrics::set_job_queue_depth),
+        Arc::new(ryframe_adapters::metrics::set_job_oldest_ready_age),
+        Arc::new(ryframe_adapters::metrics::observe_job_duration),
+        Arc::new(ryframe_adapters::metrics::record_job_claim_attempt),
+        Arc::new(ryframe_adapters::metrics::record_job_wakeup),
+        Arc::new(ryframe_adapters::metrics::set_job_wakeup_listener_up),
+        Arc::new(ryframe_adapters::metrics::record_job_wakeup_protocol_error),
     )));
 }

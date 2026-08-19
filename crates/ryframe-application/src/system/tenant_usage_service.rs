@@ -1,13 +1,13 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
+use ryframe_adapters::rate_limit::RateLimiter;
 use ryframe_adapters::{PageResult, ValidatedPageQuery};
 use ryframe_db::{
     ControlDatabaseCluster, ReadConsistency, TenantRepository, TenantUsageAggregate,
     TenantUsagePageFilter, TenantUsageRepository, entities::tenant,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_middleware::RateLimiter;
 use serde::Serialize;
 
 use super::tenant_service::TenantVo;

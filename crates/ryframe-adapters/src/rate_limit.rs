@@ -1,21 +1,15 @@
+//! Redis 与进程内固定窗口限流实现。
+
 use std::{
-    net::{IpAddr, Ipv4Addr},
+    net::IpAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use axum::{
-    extract::{MatchedPath, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header::RETRY_AFTER},
-    middleware::Next,
-    response::{IntoResponse, Response},
-};
 use dashmap::DashMap;
 use redis::AsyncCommands;
-use ryframe_adapters::RedisClient;
-use ryframe_utils::ip::{ClientIp, TrustedProxySet};
 
-use crate::metrics::{record_rate_limit_rejection, record_redis_degraded};
+use crate::RedisClient;
 
 const RATE_LIMIT_KEY_PREFIX: &str = "ryframe:v0.5:rate-limit:";
 #[derive(Debug)]
@@ -225,7 +219,7 @@ impl RateLimiter {
 
     pub fn spawn_gc(self: &Arc<Self>) {
         if let RateLimiterMode::InMemory { inner } = &self.mode {
-            let inner = inner.clone();
+            let inner = Arc::clone(inner);
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(60));
                 loop {
@@ -319,191 +313,4 @@ fn redis_snapshot_integer(value: &redis::Value) -> Result<u64, String> {
 
 fn redis_ttl_secs(ttl_secs: u64) -> i64 {
     ttl_secs.min(i64::MAX as u64) as i64
-}
-
-#[derive(Clone)]
-pub struct RateLimitState {
-    pub limiter: Arc<RateLimiter>,
-    pub config: Arc<ryframe_config::RateLimitConfig>,
-    pub trusted_proxies: TrustedProxySet,
-}
-
-impl RateLimitState {
-    pub fn client_ip(&self, headers: &HeaderMap, peer: IpAddr) -> IpAddr {
-        self.trusted_proxies.client_ip(headers, peer)
-    }
-}
-
-pub async fn rate_limit_middleware(
-    State(state): State<RateLimitState>,
-    request: axum::extract::Request,
-    next: Next,
-) -> Result<Response, Response> {
-    if !state.config.enabled || is_agent_api_path(request.uri().path()) {
-        return Ok(next.run(request).await);
-    }
-
-    let client_ip = request
-        .extensions()
-        .get::<ClientIp>()
-        .map(|value| value.0)
-        .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    let window = state.config.window_secs;
-    match state
-        .limiter
-        .acquire(
-            &format!("global:ip:{client_ip}"),
-            window,
-            state.config.capacity,
-        )
-        .await
-    {
-        Ok(decision) if decision.allowed => Ok(next.run(request).await),
-        Ok(decision) => Err(rate_limited_response(
-            "global_ip",
-            "请求过于频繁，请稍后再试",
-            decision.retry_after_secs,
-        )),
-        Err(error) => Err(rate_limit_unavailable(error)),
-    }
-}
-
-pub async fn user_rate_limit_middleware(
-    State(state): State<RateLimitState>,
-    request: axum::extract::Request,
-    next: Next,
-) -> Result<Response, Response> {
-    if !state.config.enabled
-        || !state.config.enable_user_rate_limit
-        || is_agent_api_path(request.uri().path())
-    {
-        return Ok(next.run(request).await);
-    }
-
-    let Some(claims) = request.extensions().get::<ryframe_auth::jwt::Claims>() else {
-        return Ok(next.run(request).await);
-    };
-    let key = RateLimiter::tenant_user_key(&claims.tenant_id, &claims.sub);
-    match state
-        .limiter
-        .acquire(
-            &key,
-            state.config.user_window_secs,
-            state.config.user_capacity,
-        )
-        .await
-    {
-        Ok(decision) if decision.allowed => Ok(next.run(request).await),
-        Ok(decision) => Err(rate_limited_response(
-            "tenant_user",
-            "用户请求过于频繁，请稍后再试",
-            decision.retry_after_secs,
-        )),
-        Err(error) => Err(rate_limit_unavailable(error)),
-    }
-}
-
-pub async fn api_rate_limit_middleware(
-    State(state): State<RateLimitState>,
-    request: axum::extract::Request,
-    next: Next,
-) -> Result<Response, Response> {
-    if !state.config.enabled
-        || state.config.api_limits.is_empty()
-        || is_agent_api_path(request.uri().path())
-    {
-        return Ok(next.run(request).await);
-    }
-
-    let method = request.method().as_str();
-    let concrete_path = request.uri().path();
-    let route_path = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(MatchedPath::as_str)
-        .unwrap_or(concrete_path);
-    let method_concrete_rule = format!("{method} {concrete_path}");
-    let method_route_rule = format!("{method} {route_path}");
-    let configured_rule = state
-        .config
-        .api_limits
-        .get(&method_concrete_rule)
-        .map(|limit| (method_concrete_rule.as_str(), *limit))
-        .or_else(|| {
-            state
-                .config
-                .api_limits
-                .get(&method_route_rule)
-                .map(|limit| (method_route_rule.as_str(), *limit))
-        })
-        .or_else(|| {
-            state
-                .config
-                .api_limits
-                .get(concrete_path)
-                .map(|limit| (concrete_path, *limit))
-        })
-        .or_else(|| {
-            state
-                .config
-                .api_limits
-                .get(route_path)
-                .map(|limit| (route_path, *limit))
-        })
-        .or_else(|| {
-            state
-                .config
-                .api_limits
-                .get(method)
-                .map(|limit| (method, *limit))
-        });
-    let Some((rule_scope, limit)) = configured_rule else {
-        return Ok(next.run(request).await);
-    };
-
-    let client_ip = request
-        .extensions()
-        .get::<ClientIp>()
-        .map(|value| value.0)
-        .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    // 将固定窗口限定到命中的规则。尤其是，`{param}` 路由的所有具体 ID 以及方法级规则的所有路径
-    // 必须共享同一个窗口；否则客户端可通过变换 URL 绕过限额。
-    let key = RateLimiter::api_client_key(rule_scope, client_ip);
-    match state
-        .limiter
-        .acquire(&key, state.config.api_window_secs, limit)
-        .await
-    {
-        Ok(decision) if decision.allowed => Ok(next.run(request).await),
-        Ok(decision) => Err(rate_limited_response(
-            "api_ip",
-            "接口请求过于频繁，请稍后再试",
-            decision.retry_after_secs,
-        )),
-        Err(error) => Err(rate_limit_unavailable(error)),
-    }
-}
-
-/// Agent API 使用能够覆盖身份、能力及并发维度的专用原子限流器；通用限流不得提前返回未审计的 429。
-fn is_agent_api_path(path: &str) -> bool {
-    path == "/api/v1/agent/v1" || path.starts_with("/api/v1/agent/v1/")
-}
-
-fn rate_limited_response(scope: &str, message: &str, retry_after_secs: u64) -> Response {
-    record_rate_limit_rejection(scope);
-    let mut response = (StatusCode::TOO_MANY_REQUESTS, message.to_string()).into_response();
-    if let Ok(value) = HeaderValue::from_str(&retry_after_secs.max(1).to_string()) {
-        response.headers_mut().insert(RETRY_AFTER, value);
-    }
-    response
-}
-
-fn rate_limit_unavailable(error: String) -> Response {
-    record_redis_degraded("rate_limit");
-    tracing::error!(error = %error, "rate-limit backend unavailable");
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        "限流服务暂不可用，请稍后重试",
-    )
-        .into_response()
 }

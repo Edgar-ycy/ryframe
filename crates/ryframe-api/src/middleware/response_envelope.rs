@@ -1,3 +1,5 @@
+//! API 统一响应信封。
+
 use axum::{
     body::{Body, to_bytes},
     extract::{Request, State},
@@ -11,7 +13,7 @@ use ryframe_kernel::{Locale, Localizer};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::request_id::RequestId;
+use super::request_id::RequestId;
 
 /// 统一 JSON 响应在中间件中允许缓冲的最大字节数。
 const API_JSON_RESPONSE_LIMIT_BYTES: usize = 16 * 1024 * 1024;

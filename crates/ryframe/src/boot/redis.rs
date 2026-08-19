@@ -15,7 +15,7 @@ pub async fn init(config: &Option<RedisConfig>, environment: Environment) -> App
     let client = match (mode, config.as_ref()) {
         (RedisMode::Disabled, _) | (_, None) => {
             tracing::warn!("Redis is explicitly disabled; using single-instance memory state");
-            ryframe_middleware::metrics::record_redis_degraded("startup_disabled");
+            ryframe_adapters::metrics::record_redis_degraded("startup_disabled");
             None
         }
         (RedisMode::Required | RedisMode::Optional, Some(redis_config)) => {
@@ -24,7 +24,7 @@ pub async fn init(config: &Option<RedisConfig>, environment: Environment) -> App
                 Err(error) if mode.is_required() => return Err(error),
                 Err(error) => {
                     tracing::warn!(%error, "Redis optional mode is degraded to local memory");
-                    ryframe_middleware::metrics::record_redis_degraded("startup_optional");
+                    ryframe_adapters::metrics::record_redis_degraded("startup_optional");
                     None
                 }
             }

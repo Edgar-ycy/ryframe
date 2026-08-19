@@ -35,13 +35,12 @@ GET /api/v1/api-docs/openapi.json
 | Crate | 当前职责 |
 | --- | --- |
 | `ryframe` | API、`ryframe-worker`、`ryframe-migrate` 可执行入口，负责配置加载、依赖装配和服务启动 |
-| `ryframe-api` | HTTP、OpenAPI、DTO、路由、提取器、监控端点与消息 WebSocket 组合策略 |
+| `ryframe-api` | HTTP 中间件、OpenAPI、DTO、路由、提取器、监控端点与消息 WebSocket 组合策略 |
 | `ryframe-service` | 应用用例、业务规则、输出模型和 Repository 编排 |
 | `ryframe-db` | 控制库 SeaORM Entity、Repository、数据范围查询、主库/副本、命名数据源拓扑和可重复执行迁移 |
 | `ryframe-tenant-db` | 租户业务数据目标注册、连接预算、放置解析、fence、`TenantDataSession`、独立迁移账本、Schema 指纹与 `TenantDataCatalog` |
 | `ryframe-auth` | JWT、密码、认证中间件、`RequestPrincipal` 和主体解析端口 |
-| `ryframe-middleware` | CORS、限流、请求 ID、遥测等横切 HTTP 能力 |
-| `ryframe-adapters` | Redis、缓存监控、系统采样、就绪快照等非 SQL 出站实现 |
+| `ryframe-adapters` | Redis、限流器、指标、遥测、缓存监控、系统采样与就绪快照等非 SQL 出站实现 |
 | `ryframe-generator` | Entity、Repository、Service、Handler、DTO 代码生成 |
 | `ryframe-storage` | `ObjectStorage` 端口、本地/RustFS/MinIO/S3 后端、路径校验和 SigV4 签名 |
 | `ryframe-config` | 类型化配置、环境变量覆盖和生产 secret 来源校验 |

@@ -168,7 +168,7 @@ async fn acknowledge(
         .acknowledge(&current_user, &ids)
         .await
         .map_err(ryframe_http::HttpAppError::from)
-        .inspect(|_| ryframe_middleware::metrics::observe_message_ack_latency(started.elapsed()))
+        .inspect(|_| ryframe_adapters::metrics::observe_message_ack_latency(started.elapsed()))
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -219,7 +219,7 @@ async fn mark_read(
         .mark_read(&current_user, message_id)
         .await
         .map_err(ryframe_http::HttpAppError::from)
-        .inspect(|_| ryframe_middleware::metrics::observe_message_ack_latency(started.elapsed()))
+        .inspect(|_| ryframe_adapters::metrics::observe_message_ack_latency(started.elapsed()))
         .map(|_| Json(ApiEmptyResponse::success_no_data()))
 }
 
@@ -239,7 +239,7 @@ async fn mark_all_read(
         .mark_all_read(&current_user)
         .await
         .map_err(ryframe_http::HttpAppError::from)
-        .inspect(|_| ryframe_middleware::metrics::observe_message_ack_latency(started.elapsed()))
+        .inspect(|_| ryframe_adapters::metrics::observe_message_ack_latency(started.elapsed()))
         .map(ApiResponse::success)
         .map(Json)
 }

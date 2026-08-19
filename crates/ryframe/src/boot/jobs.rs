@@ -69,12 +69,12 @@ pub fn build_job_worker(
         .with_handler(Arc::new(
             MessageDispatchJobHandler::new(dependencies.message.clone(), dependencies.redis)
                 .with_redis_wakeup_failure_observer(Arc::new(|| {
-                    ryframe_middleware::metrics::record_redis_degraded("message_dispatch_wakeup");
+                    ryframe_adapters::metrics::record_redis_degraded("message_dispatch_wakeup");
                 })),
         ))?
         .with_handler(Arc::new(
             MessageRetentionJobHandler::new(dependencies.message).with_deleted_observer(Arc::new(
-                ryframe_middleware::metrics::record_message_retention_deleted,
+                ryframe_adapters::metrics::record_message_retention_deleted,
             )),
         ))
 }
@@ -95,9 +95,9 @@ pub fn build_schedule_targets(messaging_enabled: bool) -> AppResult<ScheduledJob
 /// 构造只属于 Cron 功能边界的低基数指标观察者。
 pub fn build_schedule_metrics_observer() -> Arc<dyn ScheduleMetricsObserver> {
     Arc::new(CallbackScheduleMetricsObserver::new(
-        Arc::new(ryframe_middleware::metrics::record_job_schedule_scan),
-        Arc::new(ryframe_middleware::metrics::record_job_schedule_trigger),
-        Arc::new(ryframe_middleware::metrics::observe_job_schedule_lag),
+        Arc::new(ryframe_adapters::metrics::record_job_schedule_scan),
+        Arc::new(ryframe_adapters::metrics::record_job_schedule_trigger),
+        Arc::new(ryframe_adapters::metrics::observe_job_schedule_lag),
     ))
 }
 

@@ -1,3 +1,5 @@
+//! API 跨域策略构建。
+
 use ryframe_config::CorsConfig;
 use ryframe_kernel::{AppError, AppResult};
 use tower_http::cors::{AllowOrigin, CorsLayer};

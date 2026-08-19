@@ -17,7 +17,6 @@ ryframe-auth = { path = "../ryframe-auth" }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-excel = { path = "../ryframe-excel" }
 ryframe-storage = { path = "../ryframe-storage" }
-ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
@@ -36,7 +35,7 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
+uuid = { workspace = true, features = ["v4", "v7"] }
 validator = { workspace = true, features = ["derive"] }
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }

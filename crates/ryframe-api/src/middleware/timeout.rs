@@ -1,3 +1,5 @@
+//! API 请求超时边界。
+
 use std::time::Duration;
 
 use axum::{

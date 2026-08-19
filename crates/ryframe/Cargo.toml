@@ -19,7 +19,6 @@ ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-application = { path = "../ryframe-application" }
 ryframe-api = { path = "../ryframe-api", default-features = false }
 ryframe-auth = { path = "../ryframe-auth" }
-ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-storage = { path = "../ryframe-storage" }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "signal", "time"] }

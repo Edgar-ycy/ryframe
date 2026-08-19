@@ -1,3 +1,5 @@
+//! 可信代理边界后的客户端地址提取器。
+
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::{

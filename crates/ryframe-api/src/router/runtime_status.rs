@@ -40,7 +40,7 @@ pub(super) async fn probe_runtime_status(
     };
     let storage_connected = state.services.file.check_storage().await.is_ok();
     let storage_config = &state.config.object_storage;
-    let read_selections = ryframe_middleware::metrics::database_read_selection_totals()
+    let read_selections = ryframe_adapters::metrics::database_read_selection_totals()
         .into_iter()
         .map(|(target, reason, count)| RuntimeDatabaseReadSelection {
             target: target.into(),
@@ -59,7 +59,7 @@ pub(super) async fn probe_runtime_status(
             source_count: sources.len(),
             sources,
             read_policy: read_policy.into(),
-            read_fallback_total: ryframe_middleware::metrics::database_read_fallback_total(),
+            read_fallback_total: ryframe_adapters::metrics::database_read_fallback_total(),
             read_selections,
         },
         redis: RuntimeRedisStatus {

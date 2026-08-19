@@ -3,10 +3,13 @@ use axum::{
     middleware::{from_fn, from_fn_with_state},
     routing::get,
 };
+use ryframe_api::middleware as http_middleware;
+use ryframe_api::middleware::{
+    rate_limit::RateLimitState, security_headers::SecurityHeadersConfig,
+};
 use ryframe_api::request_locale::request_locale_middleware;
 use ryframe_config::CorsConfig;
 use ryframe_kernel::AppResult;
-use ryframe_middleware::{SecurityHeadersConfig, rate_limit::RateLimitState};
 
 /// 将公开探针与业务路由分开构建，确保存活/就绪检查绝不会经过认证、租户提取、
 /// 幂等控制或业务限流。
@@ -36,23 +39,23 @@ pub fn build_app(
         .into_router()
         .layer(from_fn_with_state(
             upload_limits.clone(),
-            ryframe_middleware::body_limit_middleware,
+            http_middleware::body_limit::body_limit_middleware,
         ))
         .layer(from_fn_with_state(
             upload_limits,
-            ryframe_middleware::timeout_middleware,
+            http_middleware::timeout::timeout_middleware,
         ))
         .layer(from_fn_with_state(
             security_headers,
-            ryframe_middleware::security_headers_middleware,
+            http_middleware::security_headers::security_headers_middleware,
         ))
         .layer(from_fn_with_state(
             rate_limit_state.clone(),
-            ryframe_middleware::api_rate_limit_middleware,
+            http_middleware::rate_limit::api_rate_limit_middleware,
         ))
         .layer(from_fn_with_state(
             rate_limit_state,
-            ryframe_middleware::rate_limit_middleware,
+            http_middleware::rate_limit::rate_limit_middleware,
         ))
         .layer(from_fn(request_locale_middleware));
 
@@ -64,12 +67,12 @@ pub fn build_app(
     let regular = Router::new()
         .merge(business)
         .merge(probes)
-        .layer(ryframe_middleware::cors_layer(cors_config)?)
+        .layer(http_middleware::cors::cors_layer(cors_config)?)
         .layer(from_fn_with_state(
             response_localizer.clone(),
-            ryframe_middleware::api_response_envelope_middleware,
+            http_middleware::response_envelope::api_response_envelope_middleware,
         ))
-        .layer(ryframe_middleware::compression_layer());
+        .layer(http_middleware::compression_layer());
 
     // Agent API 不经过会在业务审计前短路的通用请求体、超时、限流或 CORS 层。
     // 其固定 GET 路由在服务内执行配置限定的总预算、专用原子限流和 fail-closed 审计；
@@ -82,12 +85,12 @@ pub fn build_app(
             )
             .layer(from_fn_with_state(
                 agent_security_headers,
-                ryframe_middleware::security_headers_middleware,
+                http_middleware::security_headers::security_headers_middleware,
             ))
             .layer(from_fn(request_locale_middleware))
             .layer(from_fn_with_state(
                 response_localizer,
-                ryframe_middleware::api_response_envelope_middleware,
+                http_middleware::response_envelope::api_response_envelope_middleware,
             ))
     } else {
         Router::new()
@@ -96,16 +99,16 @@ pub fn build_app(
     let app = Router::new()
         .merge(regular)
         .merge(agent)
-        .layer(ryframe_middleware::request_log_layer_with_masking())
+        .layer(http_middleware::request_log::request_log_layer_with_masking())
         .layer(from_fn_with_state(
             trusted_proxies,
-            ryframe_middleware::trusted_client_ip_middleware,
+            http_middleware::client_ip::trusted_client_ip_middleware,
         ))
-        .layer(from_fn(ryframe_middleware::request_id_middleware))
-        .layer(from_fn(ryframe_middleware::metrics::metrics_middleware));
+        .layer(from_fn(http_middleware::request_id::request_id_middleware))
+        .layer(from_fn(http_middleware::metrics::metrics_middleware));
 
     if telemetry_enabled {
-        Ok(app.layer(from_fn(ryframe_middleware::telemetry::telemetry_middleware)))
+        Ok(app.layer(from_fn(http_middleware::telemetry::telemetry_middleware)))
     } else {
         Ok(app)
     }

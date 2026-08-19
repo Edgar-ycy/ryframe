@@ -9,7 +9,7 @@
 //! # 使用示例
 //!
 //! ```text
-//! use ryframe_middleware::cache_control::CacheControlConfig;
+//! use ryframe_api::middleware::cache_control::CacheControlConfig;
 //!
 //! let config = CacheControlConfig {
 //!     default_max_age: 3600,          // 默认缓存 1 小时

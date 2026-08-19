@@ -3,12 +3,15 @@ pub mod cache;
 pub mod database_monitor;
 pub mod distributed_lock;
 pub mod i18n;
+pub mod metrics;
 pub mod monitor;
 pub mod multi_tenant;
+pub mod rate_limit;
 pub mod redis_client;
 pub mod refresh_session;
 pub mod repository;
 pub mod resilience;
+pub mod telemetry;
 pub mod token_blacklist;
 
 pub use cache::{
