@@ -30,7 +30,7 @@ pub use db_config::{
 };
 pub use environment::Environment;
 pub use exposure_config::{ApiDocsConfig, MonitorConfig};
-pub use job_config::{JobConfig, JobWorkerMode};
+pub use job_config::{JobConfig, JobWorkerMode, MAX_XLSX_DATA_ROWS};
 pub use logger_config::{LoggerConfig, LoggerFormat, LoggerLevel, LoggerOutput};
 pub use messaging_config::MessagingConfig;
 pub use multi_tenancy_config::{MultiTenancyConfig, SINGLE_TENANT_ID};

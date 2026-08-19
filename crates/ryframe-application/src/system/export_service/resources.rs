@@ -42,6 +42,7 @@ impl ExportService {
         let request: StoredExportRequest = serde_json::from_value(export.request_params.clone())
             .map_err(|error| AppError::Validation(format!("导出请求快照无效: {error}")))?;
         request.validate(&export.resource)?;
+        request.validate_persisted_snapshot(&export)?;
         let (actor, authorization_fingerprint) = self
             .users
             .resolve_current_export_authorization(
@@ -54,30 +55,35 @@ impl ExportService {
             &request.authorization_fingerprint,
             &authorization_fingerprint,
         )?;
+        let upper_id = request.upper_id;
         let selection = request.selection;
         match selection {
             ExportSelection::Users(filter) => {
-                self.execute_user_export(export, actor, filter, now).await
+                self.execute_user_export(export, actor, filter, upper_id, now)
+                    .await
             }
             ExportSelection::Roles(filter) => {
-                self.execute_role_export(export, actor, filter, now).await
+                self.execute_role_export(export, actor, filter, upper_id, now)
+                    .await
             }
             ExportSelection::Posts(filter) => {
-                self.execute_post_export(export, actor, filter, now).await
+                self.execute_post_export(export, actor, filter, upper_id, now)
+                    .await
             }
             ExportSelection::Configs(filter) => {
-                self.execute_config_export(export, actor, filter, now).await
+                self.execute_config_export(export, actor, filter, upper_id, now)
+                    .await
             }
             ExportSelection::DictTypes(filter) => {
-                self.execute_dict_type_export(export, actor, filter, now)
+                self.execute_dict_type_export(export, actor, filter, upper_id, now)
                     .await
             }
             ExportSelection::OperLogs(filter) => {
-                self.execute_oper_log_export(export, actor, filter, now)
+                self.execute_oper_log_export(export, actor, filter, upper_id, now)
                     .await
             }
             ExportSelection::LoginLogs(filter) => {
-                self.execute_login_log_export(export, actor, filter, now)
+                self.execute_login_log_export(export, actor, filter, upper_id, now)
                     .await
             }
         }
@@ -88,6 +94,7 @@ impl ExportService {
         export: export_job::Model,
         actor: ActorContext,
         filters: UserExportFilter,
+        upper_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
         let users = self
@@ -98,6 +105,7 @@ impl ExportService {
                 filters.phone(),
                 filters.status(),
                 filters.dept_id(),
+                upper_id,
                 self.export_max_rows,
             )
             .await?;
@@ -129,6 +137,7 @@ impl ExportService {
         export: export_job::Model,
         actor: ActorContext,
         filters: RoleExportFilter,
+        upper_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
         let roles = self
@@ -138,6 +147,7 @@ impl ExportService {
                 filters.name(),
                 filters.code(),
                 filters.status(),
+                upper_id,
                 self.export_max_rows,
             )
             .await?;
@@ -161,6 +171,7 @@ impl ExportService {
         export: export_job::Model,
         actor: ActorContext,
         filters: PostExportFilter,
+        upper_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
         let posts = self
@@ -170,6 +181,7 @@ impl ExportService {
                 filters.name(),
                 filters.code(),
                 filters.status(),
+                upper_id,
                 self.export_max_rows,
             )
             .await?;
@@ -192,11 +204,18 @@ impl ExportService {
         export: export_job::Model,
         actor: ActorContext,
         filters: ConfigExportFilter,
+        upper_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
         let configs = self
             .configs
-            .find_for_export(&actor, filters.name(), filters.key(), self.export_max_rows)
+            .find_for_export(
+                &actor,
+                filters.name(),
+                filters.key(),
+                upper_id,
+                self.export_max_rows,
+            )
             .await?;
         let data = configs
             .into_iter()
@@ -218,6 +237,7 @@ impl ExportService {
         export: export_job::Model,
         actor: ActorContext,
         filters: DictTypeExportFilter,
+        upper_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
         let types = self
@@ -227,6 +247,7 @@ impl ExportService {
                 filters.name(),
                 filters.code(),
                 filters.status(),
+                upper_id,
                 self.export_max_rows,
             )
             .await?;
@@ -250,6 +271,7 @@ impl ExportService {
         export: export_job::Model,
         actor: ActorContext,
         filters: OperLogExportFilter,
+        upper_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
         let logs = self
@@ -260,6 +282,7 @@ impl ExportService {
                 filters.status(),
                 filters.begin_time(),
                 filters.end_time(),
+                upper_id,
                 self.export_max_rows,
             )
             .await?;
@@ -284,6 +307,7 @@ impl ExportService {
         export: export_job::Model,
         actor: ActorContext,
         filters: LoginLogExportFilter,
+        upper_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<()> {
         let logs = self
@@ -294,6 +318,7 @@ impl ExportService {
                 filters.status(),
                 filters.begin_time(),
                 filters.end_time(),
+                upper_id,
                 self.export_max_rows,
             )
             .await?;

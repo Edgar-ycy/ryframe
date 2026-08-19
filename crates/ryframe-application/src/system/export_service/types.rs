@@ -14,7 +14,7 @@ pub const EXPORT_CLEANUP_JOB_TYPE: &str = "system.export.cleanup";
 pub const EXPORT_BUCKET: &str = "exports";
 
 /// 当前 Worker 严格接受的导出请求快照版本。
-pub const EXPORT_REQUEST_VERSION: u16 = 1;
+pub const EXPORT_REQUEST_VERSION: u16 = 2;
 
 /// 后台队列中只保存可校验的导出任务定位信息。
 #[derive(Debug, Deserialize, Serialize)]
@@ -75,6 +75,8 @@ pub struct ExportJobVo {
     pub file_size: Option<i64>,
     pub expires_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,
+    pub snapshot_at: DateTime<Utc>,
+    pub matched_rows: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -99,6 +101,8 @@ impl From<export_job::Model> for ExportJobVo {
             file_size: job.file_size,
             expires_at: job.expires_at,
             error_message: job.error_message,
+            snapshot_at: job.snapshot_at,
+            matched_rows: job.matched_rows,
             created_at: job.created_at,
             updated_at: job.updated_at,
             completed_at: job.completed_at,
@@ -113,6 +117,9 @@ pub(super) struct StoredExportRequest {
     pub(super) request_version: u16,
     pub(super) selection: ExportSelection,
     pub(super) authorization_fingerprint: String,
+    pub(super) snapshot_at: DateTime<Utc>,
+    pub(super) upper_id: i64,
+    pub(super) matched_rows: u64,
 }
 
 impl StoredExportRequest {
@@ -133,6 +140,28 @@ impl StoredExportRequest {
                 "导出请求快照缺少授权指纹".into(),
             ));
         }
+        if self.upper_id <= 0 || self.matched_rows == 0 {
+            return Err(ryframe_kernel::AppError::Validation(
+                "导出请求快照缺少有效选择边界".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_persisted_snapshot(
+        &self,
+        export: &export_job::Model,
+    ) -> ryframe_kernel::AppResult<()> {
+        let matched_rows = u64::try_from(export.matched_rows)
+            .map_err(|_| ryframe_kernel::AppError::Validation("导出任务匹配行数无效".into()))?;
+        if self.snapshot_at != export.snapshot_at
+            || self.upper_id != export.upper_id
+            || self.matched_rows != matched_rows
+        {
+            return Err(ryframe_kernel::AppError::Validation(
+                "导出请求快照与任务选择边界不一致".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -150,11 +179,32 @@ mod tests {
                 "resource": "roles",
                 "filter": {"name": "ops", "code": null, "status": "0"}
             },
-            "authorization_fingerprint": "fingerprint-at-request"
+            "authorization_fingerprint": "fingerprint-at-request",
+            "snapshot_at": "2026-08-20T12:00:00Z",
+            "upper_id": 88,
+            "matched_rows": 12
         });
         let request: StoredExportRequest =
             serde_json::from_value(valid).expect("当前版本快照应可解析");
         request.validate("roles").expect("资源应匹配");
+
+        let previous_version = serde_json::json!({
+            "request_version": EXPORT_REQUEST_VERSION - 1,
+            "selection": {
+                "resource": "roles",
+                "filter": {"name": "ops", "code": null, "status": "0"}
+            },
+            "authorization_fingerprint": "fingerprint-at-request",
+            "snapshot_at": "2026-08-20T12:00:00Z",
+            "upper_id": 88,
+            "matched_rows": 12
+        });
+        let previous: StoredExportRequest =
+            serde_json::from_value(previous_version).expect("旧版本结构仍可被类型读取");
+        assert!(matches!(
+            previous.validate("roles"),
+            Err(ryframe_kernel::AppError::Validation(_))
+        ));
 
         let old_shape = serde_json::json!({"request": {"name": "ops"}});
         assert!(serde_json::from_value::<StoredExportRequest>(old_shape).is_err());
@@ -166,6 +216,9 @@ mod tests {
                 "filter": {"name": null, "code": null, "status": null}
             },
             "authorization_fingerprint": "fingerprint-at-request",
+            "snapshot_at": "2026-08-20T12:00:00Z",
+            "upper_id": 88,
+            "matched_rows": 12,
             "legacy": true
         });
         assert!(serde_json::from_value::<StoredExportRequest>(unknown).is_err());
@@ -177,6 +230,11 @@ mod tests {
             request_version: EXPORT_REQUEST_VERSION + 1,
             selection: ExportSelection::Roles(RoleExportFilter::new(None, None, None)),
             authorization_fingerprint: "fingerprint-at-request".into(),
+            snapshot_at: DateTime::parse_from_rfc3339("2026-08-20T12:00:00Z")
+                .expect("测试时间有效")
+                .with_timezone(&Utc),
+            upper_id: 88,
+            matched_rows: 12,
         };
         assert!(matches!(
             request.validate("roles"),
@@ -187,6 +245,9 @@ mod tests {
             request_version: EXPORT_REQUEST_VERSION,
             selection: request.selection,
             authorization_fingerprint: request.authorization_fingerprint,
+            snapshot_at: request.snapshot_at,
+            upper_id: request.upper_id,
+            matched_rows: request.matched_rows,
         };
         assert!(matches!(
             current.validate("users"),

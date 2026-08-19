@@ -30,6 +30,10 @@ pub enum ErrorCode {
     TenantDataTargetUnavailable,
     #[serde(rename = "EXPORT_ALL_CONFIRMATION_REQUIRED")]
     ExportAllConfirmationRequired,
+    #[serde(rename = "EXPORT_NO_MATCHING_ROWS")]
+    ExportNoMatchingRows,
+    #[serde(rename = "EXPORT_ROW_LIMIT_EXCEEDED")]
+    ExportRowLimitExceeded,
 }
 
 impl ErrorCode {
@@ -56,6 +60,8 @@ impl ErrorCode {
             Self::TenantDataMaintenance => "tenant_data_maintenance",
             Self::TenantDataTargetUnavailable => "tenant_data_target_unavailable",
             Self::ExportAllConfirmationRequired => "EXPORT_ALL_CONFIRMATION_REQUIRED",
+            Self::ExportNoMatchingRows => "EXPORT_NO_MATCHING_ROWS",
+            Self::ExportRowLimitExceeded => "EXPORT_ROW_LIMIT_EXCEEDED",
         }
     }
 }
@@ -102,6 +108,13 @@ pub enum AppError {
     TenantDataTargetUnavailable(String, u64),
     /// 规范化后的筛选为空，调用方尚未显式确认导出全部匹配数据。
     ExportAllConfirmationRequired(String),
+    /// 当前筛选与数据权限下没有可导出的记录。
+    ExportNoMatchingRows(String),
+    /// 当前筛选的匹配行数超过业务导出上限。
+    ExportRowLimitExceeded {
+        matched_rows: u64,
+        limit: u64,
+    },
 }
 
 impl fmt::Display for AppError {
@@ -128,6 +141,8 @@ impl fmt::Display for AppError {
             Self::TenantDataMaintenance(_, _) => "租户业务数据维护中",
             Self::TenantDataTargetUnavailable(_, _) => "租户业务数据库不可用",
             Self::ExportAllConfirmationRequired(_) => "导出全部数据需要确认",
+            Self::ExportNoMatchingRows(_) => "没有匹配的导出数据",
+            Self::ExportRowLimitExceeded { .. } => "导出数据超过行数上限",
         };
         write!(formatter, "{category}: {}", self.message())
     }
@@ -160,6 +175,8 @@ impl AppError {
             Self::TenantDataMaintenance(_, _) => ErrorCode::TenantDataMaintenance,
             Self::TenantDataTargetUnavailable(_, _) => ErrorCode::TenantDataTargetUnavailable,
             Self::ExportAllConfirmationRequired(_) => ErrorCode::ExportAllConfirmationRequired,
+            Self::ExportNoMatchingRows(_) => ErrorCode::ExportNoMatchingRows,
+            Self::ExportRowLimitExceeded { .. } => ErrorCode::ExportRowLimitExceeded,
         }
     }
 
@@ -184,8 +201,10 @@ impl AppError {
             | Self::StalePlacementGeneration(message)
             | Self::TenantOperationConflict(message)
             | Self::ExportAllConfirmationRequired(message)
+            | Self::ExportNoMatchingRows(message)
             | Self::TenantDataMaintenance(message, _)
             | Self::TenantDataTargetUnavailable(message, _) => message,
+            Self::ExportRowLimitExceeded { .. } => "导出匹配行数超过允许上限",
             Self::RateLimited(message, _) => message,
         }
     }

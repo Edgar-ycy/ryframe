@@ -230,13 +230,14 @@ impl OperLogService {
         status: Option<&str>,
         begin_time: Option<chrono::DateTime<Utc>>,
         end_time: Option<chrono::DateTime<Utc>>,
+        upper_id: i64,
         maximum_records: usize,
     ) -> AppResult<Vec<OperLogVo>> {
         const BATCH_SIZE: u64 = 1_000;
 
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
@@ -248,7 +249,9 @@ impl OperLogService {
             };
             let batch = self
                 .oper_log_repo
-                .find_for_export_after_id(&db, tenant_id, filter, &scope_ctx, after_id, BATCH_SIZE)
+                .find_for_export_after_id(
+                    &db, tenant_id, &filter, &scope_ctx, after_id, upper_id, BATCH_SIZE,
+                )
                 .await?;
             if batch.is_empty() {
                 break;

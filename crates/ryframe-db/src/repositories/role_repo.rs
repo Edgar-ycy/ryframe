@@ -3,7 +3,8 @@ use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    TransactionTrait,
     sea_query::{LockType, Query},
 };
 
@@ -74,6 +75,22 @@ impl Repository<role::Model, i64> for RoleRepository {
 }
 
 impl RoleRepository {
+    fn filtered_select(tenant_id: &str, filter: &RoleFilter<'_>) -> Select<role::Entity> {
+        let mut select = role::Entity::find()
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .filter(role::Column::TenantId.eq(tenant_id));
+        if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(role::Column::Name.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
+            select = select.filter(role::Column::Code.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(role::Column::Status.eq(value));
+        }
+        select
+    }
+
     /// 读取租户内可用于选择器的角色，额外一条记录由调用方判断是否还有更多结果。
     pub async fn find_options(
         &self,
@@ -107,26 +124,20 @@ impl RoleRepository {
     }
 
     /// 按主键递增游标读取角色导出批次，避免大偏移分页造成重复或遗漏。
-    pub async fn find_for_export_after_id(
+    pub async fn find_for_export_after_id<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         filter: &RoleFilter<'_>,
         after_id: Option<i64>,
+        upper_id: i64,
         limit: u64,
-    ) -> AppResult<Vec<role::Model>> {
-        let mut select = role::Entity::find()
-            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(tenant_id));
-        if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
-            select = select.filter(role::Column::Name.like(format!("%{value}%")));
-        }
-        if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
-            select = select.filter(role::Column::Code.like(format!("%{value}%")));
-        }
-        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
-            select = select.filter(role::Column::Status.eq(value));
-        }
+    ) -> AppResult<Vec<role::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        let mut select =
+            Self::filtered_select(tenant_id, filter).filter(role::Column::Id.lte(upper_id));
         if let Some(id) = after_id {
             select = select.filter(role::Column::Id.gt(id));
         }
@@ -136,6 +147,24 @@ impl RoleRepository {
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 在同一主库快照内统计导出匹配行并捕获最大主键。
+    pub async fn summarize_export<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &RoleFilter<'_>,
+    ) -> AppResult<super::ExportQuerySnapshot>
+    where
+        C: ConnectionTrait,
+    {
+        super::summarize_export_query(
+            Self::filtered_select(tenant_id, filter),
+            role::Column::Id,
+            db,
+        )
+        .await
     }
 
     /// 带搜索条件的分页查询
@@ -148,21 +177,10 @@ impl RoleRepository {
         code: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<role::Model>> {
-        let mut select = role::Entity::find()
-            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(tenant_id));
-
-        if let Some(n) = name.filter(|n| !n.is_empty()) {
-            select = select.filter(role::Column::Name.like(format!("%{}%", n)));
-        }
-        if let Some(c) = code.filter(|c| !c.is_empty()) {
-            select = select.filter(role::Column::Code.like(format!("%{}%", c)));
-        }
-        if let Some(s) = status.filter(|s| !s.is_empty()) {
-            select = select.filter(role::Column::Status.eq(s));
-        }
-
-        select = select.order_by_asc(role::Column::Sort);
+        let filter = RoleFilter { name, code, status };
+        let select = Self::filtered_select(tenant_id, &filter)
+            .order_by_asc(role::Column::Sort)
+            .order_by_asc(role::Column::Id);
         crate::pagination::paginate(db, select, &query).await
     }
 

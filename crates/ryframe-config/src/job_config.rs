@@ -2,6 +2,9 @@ use serde::Deserialize;
 
 use crate::Environment;
 
+/// XLSX 工作表扣除标题行后可承载的数据行硬上限。
+pub const MAX_XLSX_DATA_ROWS: usize = 1_048_575;
+
 /// 后台任务执行模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -118,8 +121,10 @@ impl JobConfig {
         if !(1..=100).contains(&self.default_max_attempts) {
             return Err("jobs.default_max_attempts 必须在 1 到 100 之间".into());
         }
-        if self.export_max_rows == 0 || self.export_max_rows > 5_000_000 {
-            return Err("jobs.export_max_rows 必须在 1 到 5000000 之间".into());
+        if self.export_max_rows == 0 || self.export_max_rows > MAX_XLSX_DATA_ROWS {
+            return Err(format!(
+                "jobs.export_max_rows 必须在 1 到 {MAX_XLSX_DATA_ROWS} 之间"
+            ));
         }
         if self.export_retention_hours == 0 || self.export_retention_hours > 8_760 {
             return Err("jobs.export_retention_hours 必须在 1 到 8760 之间".into());
@@ -218,4 +223,21 @@ const fn default_scheduler_batch_size() -> usize {
 
 const fn default_max_enabled_schedules_per_tenant() -> usize {
     100
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_limit_cannot_exceed_xlsx_data_rows() {
+        let mut config = JobConfig::default();
+        config.export_max_rows = MAX_XLSX_DATA_ROWS;
+        config
+            .validate(Environment::Dev)
+            .expect("XLSX 数据行上限应可用");
+
+        config.export_max_rows = MAX_XLSX_DATA_ROWS + 1;
+        assert!(config.validate(Environment::Dev).is_err());
+    }
 }

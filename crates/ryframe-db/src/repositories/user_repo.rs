@@ -179,6 +179,18 @@ impl UserRepository {
         Some(select)
     }
 
+    fn export_select(
+        tenant_id: &str,
+        filter: &UserFilter<'_>,
+        scope_ctx: &DataScopeContext,
+    ) -> Option<Select<user::Entity>> {
+        Self::apply_data_scope(
+            Self::apply_filters(Self::base_select(tenant_id), filter),
+            tenant_id,
+            scope_ctx,
+        )
+    }
+
     /// 按当前数据范围读取租户内用户选择器结果，额外一条记录由调用方判断是否还有更多。
     pub async fn find_options_with_data_scope(
         &self,
@@ -295,28 +307,34 @@ impl UserRepository {
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<user::Model>> {
-        let select = Self::apply_filters(Self::base_select(tenant_id), filter);
-        let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
+        let Some(select) = Self::export_select(tenant_id, filter, scope_ctx) else {
             return Ok(PageResult::new(vec![], 0, query));
         };
 
-        crate::pagination::paginate(db, select.order_by_desc(user::Column::CreatedAt), query).await
+        let select = select
+            .order_by_desc(user::Column::CreatedAt)
+            .order_by_desc(user::Column::Id);
+        crate::pagination::paginate(db, select, query).await
     }
 
     /// 按主键递增游标读取数据范围内的用户，用于长时间运行的导出任务。
-    pub async fn find_for_export_after_id(
+    pub async fn find_for_export_after_id<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
         after_id: Option<i64>,
+        upper_id: i64,
         limit: u64,
-    ) -> AppResult<Vec<user::Model>> {
-        let select = Self::apply_filters(Self::base_select(tenant_id), filter);
-        let Some(mut select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
+    ) -> AppResult<Vec<user::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        let Some(mut select) = Self::export_select(tenant_id, filter, scope_ctx) else {
             return Ok(Vec::new());
         };
+        select = select.filter(user::Column::Id.lte(upper_id));
         if let Some(after_id) = after_id {
             select = select.filter(user::Column::Id.gt(after_id));
         }
@@ -326,6 +344,26 @@ impl UserRepository {
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 在同一主库快照内统计导出匹配行并捕获最大主键。
+    pub async fn summarize_export<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &UserFilter<'_>,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<super::ExportQuerySnapshot>
+    where
+        C: ConnectionTrait,
+    {
+        let Some(select) = Self::export_select(tenant_id, filter, scope_ctx) else {
+            return Ok(super::ExportQuerySnapshot {
+                matched_rows: 0,
+                upper_id: None,
+            });
+        };
+        super::summarize_export_query(select, user::Column::Id, db).await
     }
 
     pub async fn find_by_page_with_data_scope(

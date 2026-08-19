@@ -32,6 +32,7 @@ impl UserService {
         phone: Option<&str>,
         status: Option<&str>,
         dept_id: Option<i64>,
+        upper_id: i64,
         maximum_records: usize,
     ) -> AppResult<Vec<UserVo>> {
         const BATCH_SIZE: u64 = 1_000;
@@ -51,7 +52,9 @@ impl UserService {
         loop {
             let batch = self
                 .user_repo
-                .find_for_export_after_id(&db, tenant_id, &filter, &scope, after_id, BATCH_SIZE)
+                .find_for_export_after_id(
+                    &db, tenant_id, &filter, &scope, after_id, upper_id, BATCH_SIZE,
+                )
                 .await?;
             if batch.is_empty() {
                 break;

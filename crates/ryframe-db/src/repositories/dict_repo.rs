@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 
 use crate::entities::{dict_data, dict_type};
@@ -73,6 +73,22 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
 }
 
 impl DictTypeRepository {
+    fn filtered_select(tenant_id: &str, filter: &DictTypeFilter<'_>) -> Select<dict_type::Entity> {
+        let mut select = dict_type::Entity::find()
+            .filter(dict_type::Column::TenantId.eq(tenant_id))
+            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL));
+        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(dict_type::Column::Name.contains(name));
+        }
+        if let Some(code) = filter.code.filter(|value| !value.is_empty()) {
+            select = select.filter(dict_type::Column::Code.contains(code));
+        }
+        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(dict_type::Column::Status.eq(status));
+        }
+        select
+    }
+
     pub async fn insert_in_transaction(
         &self,
         transaction: &DatabaseTransaction,
@@ -101,26 +117,20 @@ impl DictTypeRepository {
     }
 
     /// 按主键递增游标读取字典类型导出批次。
-    pub async fn find_for_export_after_id(
+    pub async fn find_for_export_after_id<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         filter: &DictTypeFilter<'_>,
         after_id: Option<i64>,
+        upper_id: i64,
         limit: u64,
-    ) -> AppResult<Vec<dict_type::Model>> {
-        let mut select = dict_type::Entity::find()
-            .filter(dict_type::Column::TenantId.eq(tenant_id))
-            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL));
-        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
-            select = select.filter(dict_type::Column::Name.contains(name));
-        }
-        if let Some(code) = filter.code.filter(|value| !value.is_empty()) {
-            select = select.filter(dict_type::Column::Code.contains(code));
-        }
-        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
-            select = select.filter(dict_type::Column::Status.eq(status));
-        }
+    ) -> AppResult<Vec<dict_type::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        let mut select =
+            Self::filtered_select(tenant_id, filter).filter(dict_type::Column::Id.lte(upper_id));
         if let Some(id) = after_id {
             select = select.filter(dict_type::Column::Id.gt(id));
         }
@@ -132,6 +142,24 @@ impl DictTypeRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
+    /// 在同一主库快照内统计导出匹配行并捕获最大主键。
+    pub async fn summarize_export<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &DictTypeFilter<'_>,
+    ) -> AppResult<super::ExportQuerySnapshot>
+    where
+        C: ConnectionTrait,
+    {
+        super::summarize_export_query(
+            Self::filtered_select(tenant_id, filter),
+            dict_type::Column::Id,
+            db,
+        )
+        .await
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
@@ -139,19 +167,9 @@ impl DictTypeRepository {
         query: &ValidatedPageQuery,
         filter: &DictTypeFilter<'_>,
     ) -> AppResult<PageResult<dict_type::Model>> {
-        let mut select = dict_type::Entity::find()
-            .filter(dict_type::Column::TenantId.eq(tenant_id))
-            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL));
-        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
-            select = select.filter(dict_type::Column::Name.contains(name));
-        }
-        if let Some(code) = filter.code.filter(|value| !value.is_empty()) {
-            select = select.filter(dict_type::Column::Code.contains(code));
-        }
-        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
-            select = select.filter(dict_type::Column::Status.eq(status));
-        }
-        select = select.order_by_desc(dict_type::Column::CreatedAt);
+        let select = Self::filtered_select(tenant_id, filter)
+            .order_by_desc(dict_type::Column::CreatedAt)
+            .order_by_desc(dict_type::Column::Id);
         crate::pagination::paginate(db, select, query).await
     }
 

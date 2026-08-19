@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 
 use crate::entities::oper_log;
@@ -79,6 +79,34 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
 }
 
 impl OperLogRepository {
+    fn filtered_select(
+        tenant_id: &str,
+        filter: &OperLogFilter<'_>,
+        scope_ctx: &DataScopeContext,
+    ) -> Select<oper_log::Entity> {
+        let mut select = oper_log::Entity::find().filter(oper_log::Column::TenantId.eq(tenant_id));
+        if let Some(name) = filter.oper_name.filter(|value| !value.is_empty()) {
+            select = select.filter(oper_log::Column::OperName.contains(name));
+        }
+        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(oper_log::Column::Status.eq(status));
+        }
+        if let Some(begin) = filter.begin_time {
+            select = select.filter(oper_log::Column::OperTime.gte(begin));
+        }
+        if let Some(end) = filter.end_time {
+            select = select.filter(oper_log::Column::OperTime.lte(end));
+        }
+        if let Some(condition) = crate::data_scope::owner_username_condition(
+            oper_log::Column::OperName,
+            tenant_id,
+            scope_ctx,
+        ) {
+            select = select.filter(condition);
+        }
+        select
+    }
+
     /// 在 Outbox 消费事务中按事件标识幂等写入操作日志。
     ///
     /// 返回 `true` 表示本次新增，返回 `false` 表示同一事件已经成功落库。
@@ -125,35 +153,21 @@ impl OperLogRepository {
     }
 
     /// 按主键递增游标读取操作日志导出批次，并保留数据范围约束。
-    pub async fn find_for_export_after_id(
+    pub async fn find_for_export_after_id<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
-        filter: OperLogFilter<'_>,
+        filter: &OperLogFilter<'_>,
         scope_ctx: &DataScopeContext,
         after_id: Option<i64>,
+        upper_id: i64,
         limit: u64,
-    ) -> AppResult<Vec<oper_log::Model>> {
-        let mut select = oper_log::Entity::find().filter(oper_log::Column::TenantId.eq(tenant_id));
-        if let Some(name) = filter.oper_name.filter(|value| !value.is_empty()) {
-            select = select.filter(oper_log::Column::OperName.contains(name));
-        }
-        if let Some(status) = filter.status.filter(|value| !value.is_empty()) {
-            select = select.filter(oper_log::Column::Status.eq(status));
-        }
-        if let Some(begin) = filter.begin_time {
-            select = select.filter(oper_log::Column::OperTime.gte(begin));
-        }
-        if let Some(end) = filter.end_time {
-            select = select.filter(oper_log::Column::OperTime.lte(end));
-        }
-        if let Some(condition) = crate::data_scope::owner_username_condition(
-            oper_log::Column::OperName,
-            tenant_id,
-            scope_ctx,
-        ) {
-            select = select.filter(condition);
-        }
+    ) -> AppResult<Vec<oper_log::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        let mut select = Self::filtered_select(tenant_id, filter, scope_ctx)
+            .filter(oper_log::Column::Id.lte(upper_id));
         if let Some(id) = after_id {
             select = select.filter(oper_log::Column::Id.gt(id));
         }
@@ -165,6 +179,25 @@ impl OperLogRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
+    /// 在同一主库快照内统计导出匹配行并捕获最大主键。
+    pub async fn summarize_export<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &OperLogFilter<'_>,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<super::ExportQuerySnapshot>
+    where
+        C: ConnectionTrait,
+    {
+        super::summarize_export_query(
+            Self::filtered_select(tenant_id, filter, scope_ctx),
+            oper_log::Column::Id,
+            db,
+        )
+        .await
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
@@ -173,27 +206,9 @@ impl OperLogRepository {
         filter: OperLogFilter<'_>,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<oper_log::Model>> {
-        let mut select = oper_log::Entity::find().filter(oper_log::Column::TenantId.eq(tenant_id));
-        if let Some(name) = filter.oper_name.filter(|n| !n.is_empty()) {
-            select = select.filter(oper_log::Column::OperName.contains(name));
-        }
-        if let Some(s) = filter.status.filter(|s| !s.is_empty()) {
-            select = select.filter(oper_log::Column::Status.eq(s));
-        }
-        if let Some(begin) = filter.begin_time {
-            select = select.filter(oper_log::Column::OperTime.gte(begin));
-        }
-        if let Some(end) = filter.end_time {
-            select = select.filter(oper_log::Column::OperTime.lte(end));
-        }
-        if let Some(condition) = crate::data_scope::owner_username_condition(
-            oper_log::Column::OperName,
-            tenant_id,
-            scope_ctx,
-        ) {
-            select = select.filter(condition);
-        }
-        select = select.order_by_desc(oper_log::Column::OperTime);
+        let select = Self::filtered_select(tenant_id, &filter, scope_ctx)
+            .order_by_desc(oper_log::Column::OperTime)
+            .order_by_desc(oper_log::Column::Id);
         crate::pagination::paginate(db, select, query).await
     }
 

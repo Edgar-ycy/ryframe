@@ -3,8 +3,8 @@ use chrono::{DateTime, Utc};
 use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 
 use crate::entities::login_info;
@@ -73,16 +73,11 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
 }
 
 impl LoginInfoRepository {
-    /// 按主键递增游标读取登录日志导出批次，并保留数据范围约束。
-    pub async fn find_for_export_after_id(
-        &self,
-        db: &DatabaseConnection,
+    fn filtered_select(
         tenant_id: &str,
-        filter: LoginInfoFilter<'_>,
+        filter: &LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
-        after_id: Option<i64>,
-        limit: u64,
-    ) -> AppResult<Vec<login_info::Model>> {
+    ) -> Select<login_info::Entity> {
         let mut select =
             login_info::Entity::find().filter(login_info::Column::TenantId.eq(tenant_id));
         if let Some(name) = filter.user_name.filter(|value| !value.is_empty()) {
@@ -104,6 +99,25 @@ impl LoginInfoRepository {
         ) {
             select = select.filter(condition);
         }
+        select
+    }
+
+    /// 按主键递增游标读取登录日志导出批次，并保留数据范围约束。
+    pub async fn find_for_export_after_id<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &LoginInfoFilter<'_>,
+        scope_ctx: &DataScopeContext,
+        after_id: Option<i64>,
+        upper_id: i64,
+        limit: u64,
+    ) -> AppResult<Vec<login_info::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        let mut select = Self::filtered_select(tenant_id, filter, scope_ctx)
+            .filter(login_info::Column::Id.lte(upper_id));
         if let Some(id) = after_id {
             select = select.filter(login_info::Column::Id.gt(id));
         }
@@ -115,6 +129,25 @@ impl LoginInfoRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
+    /// 在同一主库快照内统计导出匹配行并捕获最大主键。
+    pub async fn summarize_export<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &LoginInfoFilter<'_>,
+        scope_ctx: &DataScopeContext,
+    ) -> AppResult<super::ExportQuerySnapshot>
+    where
+        C: ConnectionTrait,
+    {
+        super::summarize_export_query(
+            Self::filtered_select(tenant_id, filter, scope_ctx),
+            login_info::Column::Id,
+            db,
+        )
+        .await
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
@@ -123,28 +156,9 @@ impl LoginInfoRepository {
         filter: LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
     ) -> AppResult<PageResult<login_info::Model>> {
-        let mut select =
-            login_info::Entity::find().filter(login_info::Column::TenantId.eq(tenant_id));
-        if let Some(name) = filter.user_name.filter(|n| !n.is_empty()) {
-            select = select.filter(login_info::Column::UserName.contains(name));
-        }
-        if let Some(s) = filter.status.filter(|s| !s.is_empty()) {
-            select = select.filter(login_info::Column::Status.eq(s));
-        }
-        if let Some(begin) = filter.begin_time {
-            select = select.filter(login_info::Column::LoginTime.gte(begin));
-        }
-        if let Some(end) = filter.end_time {
-            select = select.filter(login_info::Column::LoginTime.lte(end));
-        }
-        if let Some(condition) = crate::data_scope::owner_username_condition(
-            login_info::Column::UserName,
-            tenant_id,
-            scope_ctx,
-        ) {
-            select = select.filter(condition);
-        }
-        select = select.order_by_desc(login_info::Column::LoginTime);
+        let select = Self::filtered_select(tenant_id, &filter, scope_ctx)
+            .order_by_desc(login_info::Column::LoginTime)
+            .order_by_desc(login_info::Column::Id);
         crate::pagination::paginate(db, select, query).await
     }
 

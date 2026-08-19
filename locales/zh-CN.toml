@@ -32,6 +32,8 @@ tenant_operation_conflict = "该租户正在执行互斥操作"
 tenant_data_maintenance = "租户业务数据正在维护，请稍后重试"
 tenant_data_target_unavailable = "租户业务数据库暂不可用"
 export_all_confirmation_required = "导出全部匹配数据前需要再次确认"
+export_no_matching_rows = "当前筛选没有可导出的数据"
+export_row_limit_exceeded = "匹配数据超过导出行数上限"
 
 [auth]
 login_success = "登录成功"

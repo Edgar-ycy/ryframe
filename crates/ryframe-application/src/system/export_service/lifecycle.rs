@@ -14,7 +14,7 @@ impl ExportService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_request_command(&command)?;
         let resource = command.selection.resource();
-        let (_, authorization_fingerprint) = self
+        let (request_actor, authorization_fingerprint) = self
             .users
             .resolve_current_export_authorization(
                 tenant_id,
@@ -25,6 +25,9 @@ impl ExportService {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let result = async {
             let now = self.background_jobs.database_utc_now(&transaction).await?;
+            let snapshot = self
+                .summarize_request_selection(&transaction, &request_actor, &command.selection)
+                .await?;
             let trace_context = crate::trace_context::current_trace_context();
             let job =
                 self.background_jobs
@@ -62,11 +65,18 @@ impl ExportService {
                             request_version: EXPORT_REQUEST_VERSION,
                             selection: command.selection,
                             authorization_fingerprint,
+                            snapshot_at: now,
+                            upper_id: snapshot.upper_id,
+                            matched_rows: snapshot.matched_rows,
                         })
                         .map_err(|error| {
                             AppError::Internal(format!("导出请求编码失败: {error}"))
                         })?,
                         permission_code: command.permission_code,
+                        snapshot_at: now,
+                        upper_id: snapshot.upper_id,
+                        matched_rows: i64::try_from(snapshot.matched_rows)
+                            .map_err(|_| AppError::Config("导出匹配行数无法写入数据库".into()))?,
                     },
                     now,
                 )
@@ -245,6 +255,9 @@ impl ExportService {
                 .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         stored_request
             .validate(&export.resource)
+            .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
+        stored_request
+            .validate_persisted_snapshot(&export)
             .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         ensure_download_authorization_matches(
             &stored_request.authorization_fingerprint,

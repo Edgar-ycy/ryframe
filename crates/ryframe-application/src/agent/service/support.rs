@@ -9,6 +9,10 @@ pub(super) fn classify_error(error: &AppError) -> (i32, &'static str, &'static s
         AppError::ExportAllConfirmationRequired(_) => {
             (400, "EXPORT_ALL_CONFIRMATION_REQUIRED", RESULT_DENIED)
         }
+        AppError::ExportNoMatchingRows(_) => (400, "EXPORT_NO_MATCHING_ROWS", RESULT_DENIED),
+        AppError::ExportRowLimitExceeded { .. } => {
+            (413, "EXPORT_ROW_LIMIT_EXCEEDED", RESULT_DENIED)
+        }
         AppError::PayloadTooLarge(_) => (413, "response_too_large", RESULT_ERROR),
         AppError::RateLimited(_, _) => (429, "rate_limited", RESULT_DENIED),
         AppError::Conflict(_) | AppError::RetryableConflict(_, _) => {

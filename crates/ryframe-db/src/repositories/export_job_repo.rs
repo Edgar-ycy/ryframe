@@ -21,6 +21,9 @@ pub struct CreateExportJob {
     pub background_job_id: i64,
     pub request_params: Value,
     pub permission_code: String,
+    pub snapshot_at: DateTime<Utc>,
+    pub upper_id: i64,
+    pub matched_rows: i64,
 }
 
 /// 将导出任务标记为成功时写入的结果元数据。
@@ -68,6 +71,9 @@ impl ExportJobRepository {
             background_job_id: Set(command.background_job_id),
             request_params: Set(command.request_params),
             permission_code: Set(command.permission_code),
+            snapshot_at: Set(command.snapshot_at),
+            upper_id: Set(command.upper_id),
+            matched_rows: Set(command.matched_rows),
             status: Set(export_job::Model::STATUS_QUEUED.to_owned()),
             result_file_id: Set(None),
             result_file_name: Set(None),
@@ -378,6 +384,11 @@ fn validate_create_command(command: &CreateExportJob) -> AppResult<()> {
     }
     if command.requester_id <= 0 || command.background_job_id <= 0 {
         return Err(AppError::Validation("导出任务关联标识必须为正数".into()));
+    }
+    if command.upper_id <= 0 || command.matched_rows <= 0 {
+        return Err(AppError::Validation(
+            "导出任务主键上界和匹配行数必须为正数".into(),
+        ));
     }
     for (name, value, maximum) in [
         ("resource", command.resource.as_str(), 64),

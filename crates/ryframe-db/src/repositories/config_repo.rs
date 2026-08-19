@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
     sea_query::{Expr, LockType},
 };
 
@@ -95,6 +95,19 @@ impl Repository<config::Model, i64> for ConfigRepository {
 }
 
 impl ConfigRepository {
+    fn filtered_select(tenant_id: &str, filter: &ConfigFilter<'_>) -> Select<config::Entity> {
+        let mut select = config::Entity::find()
+            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
+            .filter(config::Column::TenantId.eq(tenant_id));
+        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(config::Column::Name.contains(name));
+        }
+        if let Some(key) = filter.key.filter(|value| !value.is_empty()) {
+            select = select.filter(config::Column::Key.contains(key));
+        }
+        select
+    }
+
     pub async fn find_by_id_for_update(
         &self,
         transaction: &DatabaseTransaction,
@@ -184,23 +197,20 @@ impl ConfigRepository {
     }
 
     /// 按主键递增游标读取参数配置导出批次。
-    pub async fn find_for_export_after_id(
+    pub async fn find_for_export_after_id<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         filter: &ConfigFilter<'_>,
         after_id: Option<i64>,
+        upper_id: i64,
         limit: u64,
-    ) -> AppResult<Vec<config::Model>> {
-        let mut select = config::Entity::find()
-            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
-            .filter(config::Column::TenantId.eq(tenant_id));
-        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
-            select = select.filter(config::Column::Name.contains(name));
-        }
-        if let Some(key) = filter.key.filter(|value| !value.is_empty()) {
-            select = select.filter(config::Column::Key.contains(key));
-        }
+    ) -> AppResult<Vec<config::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        let mut select =
+            Self::filtered_select(tenant_id, filter).filter(config::Column::Id.lte(upper_id));
         if let Some(id) = after_id {
             select = select.filter(config::Column::Id.gt(id));
         }
@@ -212,6 +222,24 @@ impl ConfigRepository {
             .map_err(|error| AppError::Database(error.to_string()))
     }
 
+    /// 在同一主库快照内统计导出匹配行并捕获最大主键。
+    pub async fn summarize_export<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &ConfigFilter<'_>,
+    ) -> AppResult<super::ExportQuerySnapshot>
+    where
+        C: ConnectionTrait,
+    {
+        super::summarize_export_query(
+            Self::filtered_select(tenant_id, filter),
+            config::Column::Id,
+            db,
+        )
+        .await
+    }
+
     pub async fn find_by_page_filtered(
         &self,
         db: &DatabaseConnection,
@@ -219,17 +247,10 @@ impl ConfigRepository {
         query: &ValidatedPageQuery,
         filter: &ConfigFilter<'_>,
     ) -> AppResult<PageResult<config::Model>> {
-        let mut select = config::Entity::find()
-            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
-            .filter(config::Column::TenantId.eq(tenant_id));
-        if let Some(name) = filter.name.filter(|value| !value.is_empty()) {
-            select = select.filter(config::Column::Name.contains(name));
-        }
-        if let Some(key) = filter.key.filter(|value| !value.is_empty()) {
-            select = select.filter(config::Column::Key.contains(key));
-        }
-        crate::pagination::paginate(db, select.order_by_desc(config::Column::CreatedAt), query)
-            .await
+        let select = Self::filtered_select(tenant_id, filter)
+            .order_by_desc(config::Column::CreatedAt)
+            .order_by_desc(config::Column::Id);
+        crate::pagination::paginate(db, select, query).await
     }
 
     /// 按 key 查询配置

@@ -58,6 +58,21 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(
+                        ColumnDef::new(Alias::new("snapshot_at"))
+                            .date_time()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("upper_id"))
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("matched_rows"))
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
                         ColumnDef::new(Alias::new("status"))
                             .string_len(16)
                             .not_null()

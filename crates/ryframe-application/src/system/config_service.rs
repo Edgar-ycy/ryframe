@@ -92,19 +92,20 @@ impl ConfigService {
         actor: &ActorContext,
         name: Option<&str>,
         key: Option<&str>,
+        upper_id: i64,
         maximum_records: usize,
     ) -> AppResult<Vec<ConfigVo>> {
         const BATCH_SIZE: u64 = 1_000;
 
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let filter = ConfigFilter { name, key };
         let mut after_id = None;
         let mut records = Vec::new();
         loop {
             let batch = self
                 .config_repo
-                .find_for_export_after_id(&db, tenant_id, &filter, after_id, BATCH_SIZE)
+                .find_for_export_after_id(&db, tenant_id, &filter, after_id, upper_id, BATCH_SIZE)
                 .await?;
             if batch.is_empty() {
                 break;

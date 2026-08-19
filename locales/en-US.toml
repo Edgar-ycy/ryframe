@@ -32,6 +32,8 @@ tenant_operation_conflict = "A mutually exclusive tenant operation is already ru
 tenant_data_maintenance = "Tenant business data is under maintenance; retry later"
 tenant_data_target_unavailable = "The tenant business database is unavailable"
 export_all_confirmation_required = "Confirm before exporting all matching records"
+export_no_matching_rows = "No records match the current export filters"
+export_row_limit_exceeded = "The matching records exceed the export row limit"
 
 [auth]
 login_success = "Login successful"

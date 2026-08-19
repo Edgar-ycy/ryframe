@@ -289,6 +289,8 @@ fn localized_error_message_key(error_key: Option<&str>) -> &'static str {
         Some("tenant_data_maintenance") => "error.tenant_data_maintenance",
         Some("tenant_data_target_unavailable") => "error.tenant_data_target_unavailable",
         Some("EXPORT_ALL_CONFIRMATION_REQUIRED") => "error.export_all_confirmation_required",
+        Some("EXPORT_NO_MATCHING_ROWS") => "error.export_no_matching_rows",
+        Some("EXPORT_ROW_LIMIT_EXCEEDED") => "error.export_row_limit_exceeded",
         Some("internal") | None | Some(_) => "error.internal",
     }
 }

@@ -61,6 +61,8 @@ pub const fn error_message_key(error_code: ErrorCode) -> &'static str {
         ErrorCode::TenantDataMaintenance => "error.tenant_data_maintenance",
         ErrorCode::TenantDataTargetUnavailable => "error.tenant_data_target_unavailable",
         ErrorCode::ExportAllConfirmationRequired => "error.export_all_confirmation_required",
+        ErrorCode::ExportNoMatchingRows => "error.export_no_matching_rows",
+        ErrorCode::ExportRowLimitExceeded => "error.export_row_limit_exceeded",
     }
 }
 
@@ -286,13 +288,16 @@ impl IntoResponse for HttpAppError {
                 (StatusCode::SERVICE_UNAVAILABLE, Some(*retry_after))
             }
             AppError::ExportAllConfirmationRequired(_) => (StatusCode::BAD_REQUEST, None),
+            AppError::ExportNoMatchingRows(_) => (StatusCode::BAD_REQUEST, None),
+            AppError::ExportRowLimitExceeded { .. } => (StatusCode::PAYLOAD_TOO_LARGE, None),
         };
 
-        let body = ApiResponse::<()>::fail(
+        let mut body = ApiResponse::<()>::fail(
             status.as_u16(),
             error_message_key(error_code),
             error_code.as_str(),
         );
+        body.details = public_error_details(&error);
         let json = serde_json::to_string(&body)
             .unwrap_or_else(|_| {
                 r#"{"code":500,"message":"error.internal","data":null,"request_id":"","error_key":"internal","details":null}"#.into()
@@ -317,4 +322,56 @@ impl IntoResponse for HttpAppError {
 /// 将领域错误转换为统一 HTTP 响应。
 pub fn app_error_response(error: AppError) -> Response {
     HttpAppError(error).into_response()
+}
+
+fn public_error_details(error: &AppError) -> Option<serde_json::Value> {
+    match error {
+        AppError::ExportRowLimitExceeded {
+            matched_rows,
+            limit,
+        } => Some(serde_json::json!({
+            "matched_rows": matched_rows,
+            "limit": limit,
+        })),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_limit_error_is_413_with_safe_details() {
+        let error = AppError::ExportRowLimitExceeded {
+            matched_rows: 500_001,
+            limit: 500_000,
+        };
+        assert_eq!(
+            HttpAppError(AppError::ExportRowLimitExceeded {
+                matched_rows: 500_001,
+                limit: 500_000,
+            })
+            .into_response()
+            .status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert_eq!(
+            public_error_details(&error),
+            Some(serde_json::json!({
+                "matched_rows": 500_001,
+                "limit": 500_000,
+            }))
+        );
+    }
+
+    #[test]
+    fn no_matching_rows_uses_stable_bad_request_code() {
+        let error = AppError::ExportNoMatchingRows("没有匹配记录".into());
+        assert_eq!(error.error_code().as_str(), "EXPORT_NO_MATCHING_ROWS");
+        assert_eq!(
+            HttpAppError(error).into_response().status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
 }

@@ -1,6 +1,9 @@
 #[macro_use]
 mod macros;
 
+use ryframe_kernel::{AppError, AppResult};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QuerySelect, Select};
+
 pub mod agent_query_repo;
 pub mod background_job_repo;
 pub mod cache_namespace_version_repo;
@@ -91,6 +94,38 @@ pub use user_import_repo::{
     CreateUserImportJob, UserImportArtifact, UserImportFilter, UserImportRepository,
 };
 pub use user_repo::{UserFilter, UserRepository};
+
+/// 申请导出时由主库计算的稳定选择边界。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExportQuerySnapshot {
+    pub matched_rows: u64,
+    pub upper_id: Option<i64>,
+}
+
+/// 对已经应用租户、筛选和数据权限的查询计算行数与主键上界。
+pub(crate) async fn summarize_export_query<E, C>(
+    select: Select<E>,
+    id_column: E::Column,
+    db: &C,
+) -> AppResult<ExportQuerySnapshot>
+where
+    E: EntityTrait,
+    C: ConnectionTrait,
+{
+    let (matched_rows, upper_id) = select
+        .select_only()
+        .column_as(id_column.count(), "matched_rows")
+        .column_as(id_column.max(), "upper_id")
+        .into_tuple::<(u64, Option<i64>)>()
+        .one(db)
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?
+        .ok_or_else(|| AppError::Database("导出选择聚合未返回结果".into()))?;
+    Ok(ExportQuerySnapshot {
+        matched_rows,
+        upper_id,
+    })
+}
 
 /// 构造把 `%`、`_` 和转义符视为普通字符的 SQL 前缀匹配表达式。
 pub(crate) fn prefix_like(value: &str) -> sea_orm::sea_query::LikeExpr {

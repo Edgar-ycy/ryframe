@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use ryframe_adapters::repository::{PageResult, Repository, ValidatedPageQuery};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 
 use crate::entities::post;
@@ -73,6 +73,22 @@ impl Repository<post::Model, i64> for PostRepository {
 }
 
 impl PostRepository {
+    fn filtered_select(tenant_id: &str, filter: &PostFilter<'_>) -> Select<post::Entity> {
+        let mut select = post::Entity::find()
+            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+            .filter(post::Column::TenantId.eq(tenant_id));
+        if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
+            select = select.filter(post::Column::Name.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
+            select = select.filter(post::Column::Code.like(format!("%{value}%")));
+        }
+        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
+            select = select.filter(post::Column::Status.eq(value));
+        }
+        select
+    }
+
     pub async fn insert_in_transaction(
         &self,
         transaction: &DatabaseTransaction,
@@ -101,26 +117,20 @@ impl PostRepository {
     }
 
     /// 按主键递增游标读取岗位导出批次。
-    pub async fn find_for_export_after_id(
+    pub async fn find_for_export_after_id<C>(
         &self,
-        db: &DatabaseConnection,
+        db: &C,
         tenant_id: &str,
         filter: &PostFilter<'_>,
         after_id: Option<i64>,
+        upper_id: i64,
         limit: u64,
-    ) -> AppResult<Vec<post::Model>> {
-        let mut select = post::Entity::find()
-            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
-            .filter(post::Column::TenantId.eq(tenant_id));
-        if let Some(value) = filter.name.filter(|value| !value.is_empty()) {
-            select = select.filter(post::Column::Name.like(format!("%{value}%")));
-        }
-        if let Some(value) = filter.code.filter(|value| !value.is_empty()) {
-            select = select.filter(post::Column::Code.like(format!("%{value}%")));
-        }
-        if let Some(value) = filter.status.filter(|value| !value.is_empty()) {
-            select = select.filter(post::Column::Status.eq(value));
-        }
+    ) -> AppResult<Vec<post::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        let mut select =
+            Self::filtered_select(tenant_id, filter).filter(post::Column::Id.lte(upper_id));
         if let Some(id) = after_id {
             select = select.filter(post::Column::Id.gt(id));
         }
@@ -130,6 +140,24 @@ impl PostRepository {
             .all(db)
             .await
             .map_err(|error| AppError::Database(error.to_string()))
+    }
+
+    /// 在同一主库快照内统计导出匹配行并捕获最大主键。
+    pub async fn summarize_export<C>(
+        &self,
+        db: &C,
+        tenant_id: &str,
+        filter: &PostFilter<'_>,
+    ) -> AppResult<super::ExportQuerySnapshot>
+    where
+        C: ConnectionTrait,
+    {
+        super::summarize_export_query(
+            Self::filtered_select(tenant_id, filter),
+            post::Column::Id,
+            db,
+        )
+        .await
     }
 
     /// 按岗位编码查找
@@ -158,19 +186,10 @@ impl PostRepository {
         code: Option<&str>,
         status: Option<&str>,
     ) -> AppResult<PageResult<post::Model>> {
-        let mut select = post::Entity::find()
-            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
-            .filter(post::Column::TenantId.eq(tenant_id));
-        if let Some(n) = name.filter(|n| !n.is_empty()) {
-            select = select.filter(post::Column::Name.like(format!("%{}%", n)));
-        }
-        if let Some(c) = code.filter(|c| !c.is_empty()) {
-            select = select.filter(post::Column::Code.like(format!("%{}%", c)));
-        }
-        if let Some(s) = status.filter(|s| !s.is_empty()) {
-            select = select.filter(post::Column::Status.eq(s));
-        }
-        select = select.order_by_asc(post::Column::Sort);
+        let filter = PostFilter { name, code, status };
+        let select = Self::filtered_select(tenant_id, &filter)
+            .order_by_asc(post::Column::Sort)
+            .order_by_asc(post::Column::Id);
         crate::pagination::paginate(db, select, &query).await
     }
 }
