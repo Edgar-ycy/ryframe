@@ -93,9 +93,28 @@ impl ExportService {
                 &command.permission_code,
             )
             .await?;
+        let request_fingerprint = calculate_request_fingerprint(
+            tenant_id,
+            actor.user_id,
+            &command.permission_code,
+            &command.selection,
+            &authorization_fingerprint,
+        )?;
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let result = async {
             let now = self.background_jobs.database_utc_now(&transaction).await?;
+            if let Some(existing) = self
+                .exports
+                .find_active_by_fingerprint_for_update(
+                    &transaction,
+                    tenant_id,
+                    actor.user_id,
+                    &request_fingerprint,
+                )
+                .await?
+            {
+                return Ok::<_, AppError>((existing, false));
+            }
             let snapshot = self
                 .summarize_request_selection(&transaction, &request_actor, &command.selection)
                 .await?;
@@ -108,7 +127,7 @@ impl ExportService {
                             tenant_id: Some(tenant_id.to_owned()),
                             schedule_id: None,
                             scheduled_for: Some(now),
-                            max_runtime_seconds: None,
+                            max_runtime_seconds: Some(EXPORT_MAX_RUNTIME_SECONDS),
                             job_type: EXPORT_JOB_TYPE.to_owned(),
                             payload: serde_json::to_value(ExportJobPayload::new(resource))
                                 .map_err(|error| {
@@ -124,7 +143,16 @@ impl ExportService {
                         now,
                     )
                     .await?;
-            self.exports
+            let stored_request = StoredExportRequest {
+                request_version: EXPORT_REQUEST_VERSION,
+                selection: command.selection,
+                authorization_fingerprint,
+                snapshot_at: now,
+                upper_id: snapshot.upper_id,
+                matched_rows: snapshot.matched_rows,
+            };
+            let export = self
+                .exports
                 .create_in_transaction(
                     &transaction,
                     CreateExportJob {
@@ -132,18 +160,13 @@ impl ExportService {
                         requester_id: actor.user_id,
                         resource: resource.to_owned(),
                         background_job_id: job.job.id,
-                        request_params: serde_json::to_value(StoredExportRequest {
-                            request_version: EXPORT_REQUEST_VERSION,
-                            selection: command.selection,
-                            authorization_fingerprint,
-                            snapshot_at: now,
-                            upper_id: snapshot.upper_id,
-                            matched_rows: snapshot.matched_rows,
-                        })
-                        .map_err(|error| {
+                        request_params: serde_json::to_value(&stored_request).map_err(|error| {
                             AppError::Internal(format!("导出请求编码失败: {error}"))
                         })?,
+                        request_version: i32::from(EXPORT_REQUEST_VERSION),
                         permission_code: command.permission_code,
+                        authorization_fingerprint: stored_request.authorization_fingerprint,
+                        request_fingerprint,
                         snapshot_at: now,
                         upper_id: snapshot.upper_id,
                         matched_rows: i64::try_from(snapshot.matched_rows)
@@ -151,13 +174,14 @@ impl ExportService {
                     },
                     now,
                 )
-                .await
+                .await?;
+            Ok((export, true))
         }
         .await;
         match result {
-            Ok(export) => {
+            Ok((export, inserted)) => {
                 crate::commit_current_audit(transaction).await?;
-                if let Some(job_queue) = &self.job_queue {
+                if inserted && let Some(job_queue) = &self.job_queue {
                     job_queue.notify_background_jobs().await;
                 }
                 Ok(ExportJobVo::from(export))
@@ -358,6 +382,28 @@ impl ExportService {
     }
 }
 
+fn calculate_request_fingerprint(
+    tenant_id: &str,
+    requester_id: i64,
+    permission_code: &str,
+    selection: &ExportSelection,
+    authorization_fingerprint: &str,
+) -> AppResult<String> {
+    let selection = serde_json::to_vec(selection)
+        .map_err(|error| AppError::Internal(format!("导出筛选指纹编码失败: {error}")))?;
+    let mut digest = Sha256::new();
+    digest.update(b"ryframe:export-request:v1\0");
+    digest.update(tenant_id.as_bytes());
+    digest.update([0]);
+    digest.update(requester_id.to_be_bytes());
+    digest.update(permission_code.as_bytes());
+    digest.update([0]);
+    digest.update(authorization_fingerprint.as_bytes());
+    digest.update([0]);
+    digest.update(selection);
+    Ok(hex::encode(digest.finalize()))
+}
+
 fn normalize_deletion_ids(ids: &mut Vec<i64>) -> AppResult<()> {
     ids.sort_unstable();
     ids.dedup();
@@ -404,5 +450,42 @@ mod deletion_tests {
             deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 9]),
             deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 10])
         );
+    }
+
+    #[test]
+    fn request_fingerprint_is_stable_and_authorization_sensitive() {
+        let selection = ExportSelection::Roles(RoleExportFilter::new(
+            Some(" ops ".into()),
+            None,
+            Some("0".into()),
+        ));
+        let first =
+            calculate_request_fingerprint("tenant-a", 7, "system:role:export", &selection, "a")
+                .expect("指纹应生成");
+        let same =
+            calculate_request_fingerprint("tenant-a", 7, "system:role:export", &selection, "a")
+                .expect("同一输入应生成指纹");
+        let changed =
+            calculate_request_fingerprint("tenant-a", 7, "system:role:export", &selection, "b")
+                .expect("变更授权仍应生成指纹");
+        assert_eq!(first, same);
+        assert_ne!(first, changed);
+        let other_resource =
+            ExportSelection::Configs(ConfigExportFilter::new(Some("ops".into()), None));
+        for different in [
+            calculate_request_fingerprint("tenant-b", 7, "system:role:export", &selection, "a"),
+            calculate_request_fingerprint("tenant-a", 8, "system:role:export", &selection, "a"),
+            calculate_request_fingerprint("tenant-a", 7, "system:other:export", &selection, "a"),
+            calculate_request_fingerprint(
+                "tenant-a",
+                7,
+                "system:role:export",
+                &other_resource,
+                "a",
+            ),
+        ] {
+            assert_ne!(first, different.expect("不同输入仍应生成指纹"));
+        }
+        assert_eq!(first.len(), 64);
     }
 }

@@ -4,7 +4,7 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
 use crate::migration::m20260522_000000_mysql_baseline::ddl_statements;
 
-mod export_job;
+pub(super) mod export_job;
 use export_job::EXPORT_JOB_DDL;
 
 const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_event` (

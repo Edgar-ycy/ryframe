@@ -6,4 +6,7 @@ pub use ryframe_kernel::{AppError, AppResult};
 
 mod excel;
 
-pub use excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
+pub use excel::{
+    ExcelArtifact, ExcelBatchProgress, ExcelExporter, ExcelImportRow, ExcelImporter,
+    IncrementalExcelWriter, XLSX_MAX_DATA_ROWS,
+};

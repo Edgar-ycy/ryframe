@@ -4,6 +4,8 @@ use crate::Environment;
 
 /// XLSX 工作表扣除标题行后可承载的数据行硬上限。
 pub const MAX_XLSX_DATA_ROWS: usize = 1_048_575;
+/// 面向业务导出的默认与可配置硬上限。
+pub const MAX_EXPORT_ROWS: usize = 500_000;
 
 /// 后台任务执行模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -121,9 +123,9 @@ impl JobConfig {
         if !(1..=100).contains(&self.default_max_attempts) {
             return Err("jobs.default_max_attempts 必须在 1 到 100 之间".into());
         }
-        if self.export_max_rows == 0 || self.export_max_rows > MAX_XLSX_DATA_ROWS {
+        if self.export_max_rows == 0 || self.export_max_rows > MAX_EXPORT_ROWS {
             return Err(format!(
-                "jobs.export_max_rows 必须在 1 到 {MAX_XLSX_DATA_ROWS} 之间"
+                "jobs.export_max_rows 必须在 1 到 {MAX_EXPORT_ROWS} 之间"
             ));
         }
         if self.export_retention_hours == 0 || self.export_retention_hours > 8_760 {
@@ -186,7 +188,7 @@ const fn default_max_attempts() -> i32 {
 }
 
 const fn default_export_max_rows() -> usize {
-    500_000
+    MAX_EXPORT_ROWS
 }
 
 const fn default_export_retention_hours() -> u32 {
@@ -229,15 +231,22 @@ const fn default_max_enabled_schedules_per_tenant() -> usize {
 mod tests {
     use super::*;
 
+    const _: () = assert!(MAX_EXPORT_ROWS <= MAX_XLSX_DATA_ROWS);
+
     #[test]
-    fn export_limit_cannot_exceed_xlsx_data_rows() {
-        let mut config = JobConfig::default();
-        config.export_max_rows = MAX_XLSX_DATA_ROWS;
+    fn export_limit_cannot_exceed_business_or_xlsx_bounds() {
+        let config = JobConfig {
+            export_max_rows: MAX_EXPORT_ROWS,
+            ..JobConfig::default()
+        };
         config
             .validate(Environment::Dev)
-            .expect("XLSX 数据行上限应可用");
+            .expect("业务行数上限应可用");
 
-        config.export_max_rows = MAX_XLSX_DATA_ROWS + 1;
+        let config = JobConfig {
+            export_max_rows: MAX_EXPORT_ROWS + 1,
+            ..JobConfig::default()
+        };
         assert!(config.validate(Environment::Dev).is_err());
     }
 }

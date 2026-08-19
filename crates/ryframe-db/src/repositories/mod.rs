@@ -58,7 +58,8 @@ pub use data_retention_repo::{
 pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeFilter, DictTypeRepository};
 pub use export_job_repo::{
-    CreateExportJob, ExportJobRepository, MarkExportJobSucceeded, MarkExportJobsDeletePending,
+    CreateExportJob, ExportJobRepository, ExportStartDisposition, MarkExportJobSucceeded,
+    MarkExportJobsDeletePending,
 };
 pub use file_repo::FileRepository;
 pub use job_schedule_repo::{JobScheduleExecutionFilter, JobScheduleFilter, JobScheduleRepository};

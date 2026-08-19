@@ -11,9 +11,10 @@ description = "RyFrame Excel 导入导出组件"
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
 calamine = { workspace = true }
-rust_xlsxwriter = { workspace = true }
+rust_xlsxwriter = { workspace = true, features = ["constant_memory"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

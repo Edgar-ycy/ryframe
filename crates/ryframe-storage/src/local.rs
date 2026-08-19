@@ -11,7 +11,7 @@ use super::{
     ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
     trace_storage_operation, validate_bucket,
 };
-use cleanup::{ActiveStagingRegistry, CleanupSchedule};
+use cleanup::{ActiveStagingFile, ActiveStagingRegistry, CleanupSchedule};
 
 mod cleanup;
 
@@ -380,6 +380,44 @@ impl LocalObjectStorage {
         }
         Ok(resolved)
     }
+
+    async fn create_staging<'key>(
+        &self,
+        bucket: &str,
+        key: &'key str,
+    ) -> StorageResult<(PathBuf, Vec<&'key str>, ActiveStagingFile)> {
+        let segments = self.validate_location(bucket, key)?;
+        let bucket_root = self.canonical_bucket_directory(bucket, true).await?;
+        self.prepare_write_path(&bucket_root, &segments).await?;
+        let staging_directory = self
+            .canonical_staging_directory_in(&bucket_root, true)
+            .await?;
+        self.trigger_staging_cleanup(bucket, false);
+        let staging = self.active_staging.create(&staging_directory)?;
+        Ok((bucket_root, segments, staging))
+    }
+
+    fn staging_writer(staging: &ActiveStagingFile) -> StorageResult<tokio::fs::File> {
+        let writer = staging
+            .as_file()?
+            .try_clone()
+            .map_err(|source| StorageError::Io {
+                operation: "open local object staging file",
+                source,
+            })?;
+        Ok(tokio::fs::File::from_std(writer))
+    }
+
+    async fn publish_staging(
+        &self,
+        bucket_root: &Path,
+        segments: &[&str],
+        staging: ActiveStagingFile,
+    ) -> StorageResult<()> {
+        // 最后一次异步校验完成后直接执行同文件系统原子替换，避免取消后延迟发布。
+        let publish_path = self.validate_publish_path(bucket_root, segments).await?;
+        staging.persist(&publish_path)
+    }
 }
 
 #[async_trait]
@@ -398,22 +436,8 @@ impl ObjectStorage for LocalObjectStorage {
         _content_type: &str,
     ) -> StorageResult<()> {
         trace_storage_operation("local", StorageOperation::Put, async {
-            let segments = self.validate_location(bucket, key)?;
-            let bucket_root = self.canonical_bucket_directory(bucket, true).await?;
-            self.prepare_write_path(&bucket_root, &segments).await?;
-            let staging_directory = self
-                .canonical_staging_directory_in(&bucket_root, true)
-                .await?;
-            self.trigger_staging_cleanup(bucket, false);
-            let staging = self.active_staging.create(&staging_directory)?;
-            let writer = staging
-                .as_file()?
-                .try_clone()
-                .map_err(|source| StorageError::Io {
-                    operation: "open local object staging file",
-                    source,
-                })?;
-            let mut writer = tokio::fs::File::from_std(writer);
+            let (bucket_root, segments, staging) = self.create_staging(bucket, key).await?;
+            let mut writer = Self::staging_writer(&staging)?;
             writer
                 .write_all(data)
                 .await
@@ -426,11 +450,51 @@ impl ObjectStorage for LocalObjectStorage {
                 source,
             })?;
             drop(writer);
+            self.publish_staging(&bucket_root, &segments, staging).await
+        })
+        .await
+    }
 
-            // 异步写入后再次检查规范化父目录。生产路径在此检查后不再执行 await：
-            // persist 会同步执行原子覆盖（Windows 上包括 MoveFileEx）。
-            let publish_path = self.validate_publish_path(&bucket_root, &segments).await?;
-            staging.persist(&publish_path)
+    async fn put_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        _content_type: &str,
+        _sha256_hex: Option<&str>,
+    ) -> StorageResult<()> {
+        trace_storage_operation("local", StorageOperation::Put, async {
+            let mut reader =
+                tokio::fs::File::open(path)
+                    .await
+                    .map_err(|source| StorageError::Io {
+                        operation: "open local upload source",
+                        source,
+                    })?;
+            let metadata = reader.metadata().await.map_err(|source| StorageError::Io {
+                operation: "inspect local upload source",
+                source,
+            })?;
+            if !metadata.is_file() {
+                return Err(StorageError::InvalidLocation(
+                    "upload source must be a regular file".to_owned(),
+                ));
+            }
+
+            let (bucket_root, segments, staging) = self.create_staging(bucket, key).await?;
+            let mut writer = Self::staging_writer(&staging)?;
+            tokio::io::copy(&mut reader, &mut writer)
+                .await
+                .map_err(|source| StorageError::Io {
+                    operation: "copy local upload source",
+                    source,
+                })?;
+            writer.flush().await.map_err(|source| StorageError::Io {
+                operation: "flush local object staging file",
+                source,
+            })?;
+            drop(writer);
+            self.publish_staging(&bucket_root, &segments, staging).await
         })
         .await
     }
@@ -532,5 +596,39 @@ impl ObjectStorage for LocalObjectStorage {
             Ok(())
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalObjectStorage;
+    use crate::ObjectStorage;
+
+    #[tokio::test]
+    async fn put_file_streams_through_private_staging() {
+        let directory = tempfile::tempdir().expect("创建测试目录");
+        let source = directory.path().join("source.xlsx");
+        let content = b"xlsx artifact from disk";
+        tokio::fs::write(&source, content)
+            .await
+            .expect("写入源文件");
+        let storage = LocalObjectStorage::new(directory.path().join("objects"));
+
+        storage
+            .put_file(
+                "exports",
+                "scope/jobs/result.xlsx",
+                &source,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                None,
+            )
+            .await
+            .expect("流式上传文件");
+
+        let stored = storage
+            .get("exports", "scope/jobs/result.xlsx")
+            .await
+            .expect("读取上传结果");
+        assert_eq!(stored, content);
     }
 }

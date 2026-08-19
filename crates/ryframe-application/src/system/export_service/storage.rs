@@ -1,11 +1,11 @@
-use chrono::{DateTime, Utc};
 use ryframe_db::{
     MarkExportJobSucceeded,
     entities::{export_job, sys_file},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
-use sha2::Digest;
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt;
 
 use super::*;
 
@@ -14,21 +14,41 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        bytes: Vec<u8>,
+        artifact: ryframe_excel::ExcelArtifact,
         resource: &str,
-        now: DateTime<Utc>,
     ) -> AppResult<()> {
         let (file_name, key) = export_file_location(&export.tenant_id, resource, export.id);
         let file_id = deterministic_export_file_id(export.id);
         let content_type =
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_owned();
-        let file_size = i64::try_from(bytes.len())
+        let file_size = i64::try_from(artifact.size())
             .map_err(|_| AppError::PayloadTooLarge("导出文件超过数据库大小范围".into()))?;
-        let file_sha256 = hex::encode(sha2::Sha256::digest(&bytes));
+        let file_sha256 = hash_file(artifact.path()).await?;
         self.storage
             .ensure_bucket(EXPORT_BUCKET)
             .await
             .map_err(storage_error)?;
+        if let Err(error) = self
+            .storage
+            .put_file(
+                EXPORT_BUCKET,
+                &key,
+                artifact.path(),
+                &content_type,
+                Some(&file_sha256),
+            )
+            .await
+        {
+            self.delete_uncommitted_object(&key).await;
+            return Err(storage_error(error));
+        }
+        let now = match self.background_jobs.database_utc_now(self.db.write()).await {
+            Ok(now) => now,
+            Err(error) => {
+                self.delete_uncommitted_object(&key).await;
+                return Err(error);
+            }
+        };
         let file = sys_file::Model {
             id: file_id,
             tenant_id: export.tenant_id.clone(),
@@ -48,7 +68,13 @@ impl ExportService {
             created_at: now,
             updated_at: now,
         };
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = match self.db.write().begin().await {
+            Ok(transaction) => transaction,
+            Err(error) => {
+                self.delete_uncommitted_object(&key).await;
+                return Err(database_error(error));
+            }
+        };
         let result = async {
             let current = self
                 .exports
@@ -66,10 +92,6 @@ impl ExportService {
                 return Err(AppError::Conflict("导出任务已不再允许运行".into()));
             }
 
-            self.storage
-                .put(EXPORT_BUCKET, &key, &bytes, &content_type)
-                .await
-                .map_err(storage_error)?;
             let file = self
                 .files
                 .insert_in_txn(&transaction, &export.tenant_id, file)
@@ -85,7 +107,6 @@ impl ExportService {
                         file_name,
                         content_type: file.content_type,
                         file_size: file.file_size,
-                        request_params: export.request_params,
                         expires_at: completed_at + self.export_retention,
                         completed_at,
                     },
@@ -132,4 +153,29 @@ impl ExportService {
         }
         let _ = transaction.rollback().await;
     }
+
+    async fn delete_uncommitted_object(&self, key: &str) {
+        if let Err(error) = self.storage.delete(EXPORT_BUCKET, key).await {
+            tracing::warn!(%error, "清理未提交的导出对象失败，后续相同任务重试会覆盖确定性对象键");
+        }
+    }
+}
+
+async fn hash_file(path: &std::path::Path) -> AppResult<String> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| AppError::Internal(format!("打开导出临时文件失败: {error}")))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|error| AppError::Internal(format!("读取导出临时文件失败: {error}")))?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(hex::encode(digest.finalize()))
 }

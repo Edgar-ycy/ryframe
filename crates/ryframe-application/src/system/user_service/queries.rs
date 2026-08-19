@@ -24,46 +24,23 @@ pub(crate) struct CurrentAuthorization {
 }
 
 impl UserService {
-    /// 以稳定的主键游标分批读取可导出的用户，避免大页码查询在并发写入时产生重复或遗漏。
-    pub async fn find_for_export(
+    /// 按调用方提供的稳定主键窗口读取一批可导出用户。
+    pub(crate) async fn find_export_batch(
         &self,
         actor: &ActorContext,
         filter: UserFilter<'_>,
-        upper_id: i64,
-        maximum_records: usize,
+        window: ExportCursorWindow,
     ) -> AppResult<Vec<UserVo>> {
-        const BATCH_SIZE: u64 = 1_000;
-
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();
         let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let mut after_id = None;
-        let mut records = Vec::new();
-
-        loop {
-            let batch = self
-                .user_repo
-                .find_for_export_after_id(
-                    &db,
-                    tenant_id,
-                    &filter,
-                    &scope,
-                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
-                )
-                .await?;
-            if batch.is_empty() {
-                break;
-            }
-            after_id = validate_export_cursor_batch(
-                &batch,
-                after_id,
-                records.len(),
-                maximum_records,
-                |user| user.id,
-            )?;
-            records.extend(batch.into_iter().map(UserVo::from));
-        }
-
+        let mut records = self
+            .user_repo
+            .find_for_export_after_id(&db, tenant_id, &filter, &scope, window)
+            .await?
+            .into_iter()
+            .map(UserVo::from)
+            .collect::<Vec<_>>();
         self.fill_dept_names(&db, tenant_id, &mut records).await?;
         Ok(records)
     }
@@ -390,30 +367,4 @@ fn calculate_export_authorization_fingerprint(
     let encoded = serde_json::to_vec(&payload)
         .map_err(|error| AppError::Internal(format!("导出授权指纹编码失败: {error}")))?;
     Ok(hex::encode(Sha256::digest(encoded)))
-}
-
-fn validate_export_cursor_batch<T>(
-    batch: &[T],
-    previous_id: Option<i64>,
-    accumulated: usize,
-    maximum_records: usize,
-    id: impl Fn(&T) -> i64,
-) -> AppResult<Option<i64>> {
-    if batch.is_empty() {
-        return Ok(None);
-    }
-    if accumulated.saturating_add(batch.len()) > maximum_records {
-        return Err(AppError::Validation(format!(
-            "导出记录数超过 {maximum_records} 条上限"
-        )));
-    }
-    let mut cursor = previous_id;
-    for item in batch {
-        let current = id(item);
-        if cursor.is_some_and(|previous| current <= previous) {
-            return Err(AppError::Internal("导出主键游标未严格递增".into()));
-        }
-        cursor = Some(current);
-    }
-    Ok(cursor)
 }

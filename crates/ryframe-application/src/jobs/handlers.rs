@@ -38,6 +38,7 @@ fn is_terminal_export_error(error: &AppError) -> bool {
             | AppError::NotFound(_)
             | AppError::Conflict(_)
             | AppError::PayloadTooLarge(_)
+            | AppError::ExportRowLimitExceeded { .. }
     )
 }
 
@@ -50,7 +51,7 @@ impl JobHandler for ExportJobHandler {
     async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
         let payload: ExportJobPayload = serde_json::from_value(job.payload.clone())
             .map_err(|error| AppError::Validation(format!("导出后台任务载荷无效: {error}")))?;
-        self.service.execute_background_job(job.id, &payload).await
+        self.service.execute_background_job(job, &payload).await
     }
 
     fn should_dead_letter(&self, error: &AppError) -> bool {

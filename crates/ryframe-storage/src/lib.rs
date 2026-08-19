@@ -4,7 +4,7 @@ mod local;
 mod s3;
 mod signing;
 
-use std::{future::Future, time::Duration};
+use std::{future::Future, path::Path, time::Duration};
 
 use async_trait::async_trait;
 pub use local::LocalObjectStorage;
@@ -152,6 +152,18 @@ pub trait ObjectStorage: Send + Sync {
         key: &str,
         data: &[u8],
         content_type: &str,
+    ) -> StorageResult<()>;
+
+    /// 从文件流式上传对象。`sha256_hex` 可复用调用方已计算的 SHA-256，避免 S3 再读一遍文件。
+    ///
+    /// 实现必须按块读取文件，不得把完整文件加载到内存。
+    async fn put_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        content_type: &str,
+        sha256_hex: Option<&str>,
     ) -> StorageResult<()>;
 
     async fn get(&self, bucket: &str, key: &str) -> StorageResult<Vec<u8>>;

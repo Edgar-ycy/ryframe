@@ -1,11 +1,14 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     io::Cursor,
+    path::Path,
 };
 
 use calamine::{Data, Reader, Xlsx, open_workbook_auto};
 use rust_xlsxwriter::{Color, DataValidation, Format, Workbook, Worksheet};
 use serde::{Serialize, de::DeserializeOwned};
+use tempfile::{Builder, TempPath};
 
 use crate::{AppError, AppResult};
 
@@ -238,6 +241,164 @@ impl ExcelImporter {
 /// Excel 导出工具
 pub struct ExcelExporter;
 
+/// XLSX 工作表在保留一行表头后可容纳的数据行硬上限。
+pub const XLSX_MAX_DATA_ROWS: u64 = 1_048_575;
+
+/// 一次增量写入完成后的累计进度。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExcelBatchProgress {
+    pub batch_rows: u64,
+    pub total_rows: u64,
+    pub total_input_bytes: u64,
+}
+
+/// 自动清理的 XLSX 临时产物。
+///
+/// 产物持有期间路径有效；对象上传完成或失败后只需释放该值，临时文件会自动删除。
+pub struct ExcelArtifact {
+    path: TempPath,
+    size: u64,
+    data_rows: u64,
+    input_bytes: u64,
+}
+
+impl ExcelArtifact {
+    pub fn path(&self) -> &Path {
+        self.path.as_ref()
+    }
+
+    pub const fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub const fn data_rows(&self) -> u64 {
+        self.data_rows
+    }
+
+    pub const fn input_bytes(&self) -> u64 {
+        self.input_bytes
+    }
+}
+
+/// 以常量内存模式逐批写入单个 XLSX 工作表。
+///
+/// 行必须按顺序追加。写入过程只保留当前行，工作表 XML 和最终 XLSX 都落到临时文件，
+/// 不会构造全量业务行或完整字节副本。
+pub struct IncrementalExcelWriter<'headers> {
+    workbook: Workbook,
+    headers: &'headers [(&'headers str, &'headers str)],
+    data_rows: u64,
+    input_bytes: u64,
+}
+
+impl<'headers> IncrementalExcelWriter<'headers> {
+    pub fn new(
+        sheet_name: &str,
+        headers: &'headers [(&'headers str, &'headers str)],
+    ) -> AppResult<Self> {
+        let mut workbook = Workbook::new();
+        let worksheet = workbook.add_worksheet_with_constant_memory();
+        ExcelExporter::set_sheet_name(worksheet, sheet_name)?;
+        ExcelExporter::write_headers(worksheet, headers)?;
+        ExcelExporter::auto_width(worksheet, headers.len())?;
+
+        Ok(Self {
+            workbook,
+            headers,
+            data_rows: 0,
+            input_bytes: 0,
+        })
+    }
+
+    pub const fn data_rows(&self) -> u64 {
+        self.data_rows
+    }
+
+    pub const fn input_bytes(&self) -> u64 {
+        self.input_bytes
+    }
+
+    /// 消费一批行并直接追加到工作表，不保留批次副本。
+    pub fn append_rows<I>(&mut self, rows: I) -> AppResult<ExcelBatchProgress>
+    where
+        I: IntoIterator,
+        I::Item: Serialize,
+    {
+        let mut batch_rows = 0u64;
+        for item in rows {
+            let next_row = self
+                .data_rows
+                .checked_add(1)
+                .ok_or_else(|| AppError::PayloadTooLarge("Excel 导出行数累计溢出".to_owned()))?;
+            if next_row > XLSX_MAX_DATA_ROWS {
+                return Err(AppError::ExportRowLimitExceeded {
+                    matched_rows: next_row,
+                    limit: XLSX_MAX_DATA_ROWS,
+                });
+            }
+
+            let value = serde_json::to_value(&item)
+                .map_err(|error| AppError::Internal(format!("序列化数据失败: {error}")))?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| AppError::Internal("Excel 导出行必须序列化为对象".to_owned()))?;
+            let worksheet = self
+                .workbook
+                .worksheet_from_index(0)
+                .map_err(|error| AppError::Internal(format!("读取导出工作表失败: {error}")))?;
+
+            for (column, (field, _)) in self.headers.iter().enumerate() {
+                let Some(value) = object.get(*field) else {
+                    continue;
+                };
+                let text = ExcelExporter::value_to_text(value);
+                let value_bytes = u64::try_from(text.len()).map_err(|_| {
+                    AppError::PayloadTooLarge("Excel 单元格内容长度溢出".to_owned())
+                })?;
+                self.input_bytes = self.input_bytes.checked_add(value_bytes).ok_or_else(|| {
+                    AppError::PayloadTooLarge("Excel 导出输入字节累计溢出".to_owned())
+                })?;
+                worksheet
+                    .write_string(next_row as u32, column as u16, text.as_ref())
+                    .map_err(|error| AppError::Internal(format!("写入数据失败: {error}")))?;
+            }
+
+            self.data_rows = next_row;
+            batch_rows += 1;
+        }
+
+        Ok(ExcelBatchProgress {
+            batch_rows,
+            total_rows: self.data_rows,
+            total_input_bytes: self.input_bytes,
+        })
+    }
+
+    /// 将工作簿保存为自动清理的临时 XLSX 文件。
+    pub fn finish(mut self) -> AppResult<ExcelArtifact> {
+        let output = Builder::new()
+            .prefix("ryframe-export-")
+            .suffix(".xlsx")
+            .tempfile()
+            .map_err(|error| AppError::Internal(format!("创建 Excel 临时文件失败: {error}")))?
+            .into_temp_path();
+        let output_path: &Path = output.as_ref();
+        self.workbook
+            .save(output_path)
+            .map_err(|error| AppError::Internal(format!("生成 Excel 失败: {error}")))?;
+        let size = std::fs::metadata(output_path)
+            .map_err(|error| AppError::Internal(format!("读取 Excel 文件大小失败: {error}")))?
+            .len();
+
+        Ok(ExcelArtifact {
+            path: output,
+            size,
+            data_rows: self.data_rows,
+            input_bytes: self.input_bytes,
+        })
+    }
+}
+
 impl ExcelExporter {
     /// 导出数据到 Excel 字节数组
     pub fn export_to_bytes<T: Serialize>(
@@ -403,14 +564,18 @@ impl ExcelExporter {
         Ok(())
     }
 
-    pub fn value_to_str(v: &serde_json::Value) -> String {
+    fn value_to_text(v: &serde_json::Value) -> Cow<'_, str> {
         match v {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::Bool(b) => b.to_string(),
-            serde_json::Value::Null => String::new(),
-            other => other.to_string(),
+            serde_json::Value::String(value) => Cow::Borrowed(value),
+            serde_json::Value::Number(value) => Cow::Owned(value.to_string()),
+            serde_json::Value::Bool(value) => Cow::Owned(value.to_string()),
+            serde_json::Value::Null => Cow::Borrowed(""),
+            other => Cow::Owned(other.to_string()),
         }
+    }
+
+    pub fn value_to_str(v: &serde_json::Value) -> String {
+        Self::value_to_text(v).into_owned()
     }
 }
 
@@ -424,4 +589,70 @@ macro_rules! define_excel_mapping {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use calamine::{Reader, open_workbook_auto};
+    use serde::Serialize;
+
+    use super::{IncrementalExcelWriter, XLSX_MAX_DATA_ROWS};
+    use crate::AppError;
+
+    const HEADERS: &[(&str, &str)] = &[("id", "编号"), ("name", "名称")];
+
+    #[derive(Serialize)]
+    struct Row {
+        id: u64,
+        name: &'static str,
+    }
+
+    #[test]
+    fn incremental_writer_consumes_batches_and_removes_artifact_on_drop() {
+        let mut writer = IncrementalExcelWriter::new("测试", HEADERS).expect("创建写入器");
+        let first = writer
+            .append_rows([Row { id: 1, name: "甲" }])
+            .expect("写入首批");
+        let second = writer
+            .append_rows([Row { id: 2, name: "乙" }])
+            .expect("写入次批");
+
+        assert_eq!(first.batch_rows, 1);
+        assert_eq!(second.total_rows, 2);
+        assert_eq!(second.total_input_bytes, 8);
+
+        let artifact = writer.finish().expect("完成工作簿");
+        assert_eq!(artifact.data_rows(), 2);
+        assert_eq!(artifact.input_bytes(), 8);
+        assert!(artifact.size() > 0);
+        let artifact_path = artifact.path().to_path_buf();
+        let mut workbook = open_workbook_auto(&artifact_path).expect("打开工作簿");
+        let range = workbook.worksheet_range("测试").expect("读取工作表");
+        assert_eq!(range.height(), 3);
+        assert_eq!(
+            range.get_value((2, 1)).map(ToString::to_string),
+            Some("乙".into())
+        );
+
+        drop(workbook);
+        drop(artifact);
+        assert!(!artifact_path.exists());
+    }
+
+    #[test]
+    fn incremental_writer_rejects_rows_past_xlsx_limit() {
+        let mut writer = IncrementalExcelWriter::new("测试", HEADERS).expect("创建写入器");
+        writer.data_rows = XLSX_MAX_DATA_ROWS;
+
+        let error = writer
+            .append_rows([Row { id: 1, name: "甲" }])
+            .expect_err("超过 XLSX 行上限必须失败");
+        assert!(matches!(
+            error,
+            AppError::ExportRowLimitExceeded {
+                matched_rows: 1_048_576,
+                limit: XLSX_MAX_DATA_ROWS
+            }
+        ));
+    }
 }

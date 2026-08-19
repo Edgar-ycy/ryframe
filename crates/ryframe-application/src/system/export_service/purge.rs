@@ -206,6 +206,17 @@ mod tests {
             unreachable!("测试不写对象")
         }
 
+        async fn put_file(
+            &self,
+            _bucket: &str,
+            _key: &str,
+            _path: &std::path::Path,
+            _content_type: &str,
+            _sha256_hex: Option<&str>,
+        ) -> StorageResult<()> {
+            unreachable!("测试不写对象")
+        }
+
         async fn get(&self, _bucket: &str, _key: &str) -> StorageResult<Vec<u8>> {
             unreachable!("测试不读对象")
         }

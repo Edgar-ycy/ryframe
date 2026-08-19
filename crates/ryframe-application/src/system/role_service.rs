@@ -196,45 +196,25 @@ impl RoleService {
         })
     }
 
-    /// 以稳定主键游标分批读取角色导出数据。
-    pub async fn find_for_export(
+    /// 按稳定主键窗口读取一批角色导出数据。
+    pub(crate) async fn find_export_batch(
         &self,
         actor: &ActorContext,
         name: Option<&str>,
         code: Option<&str>,
         status: Option<&str>,
-        upper_id: i64,
-        maximum_records: usize,
+        window: ExportCursorWindow,
     ) -> AppResult<Vec<RoleVo>> {
-        const BATCH_SIZE: u64 = 1_000;
-
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.select_read(ReadConsistency::Strong).connection;
         let filter = RoleFilter { name, code, status };
-        let mut after_id = None;
-        let mut records = Vec::new();
-        loop {
-            let batch = self
-                .role_repo
-                .find_for_export_after_id(
-                    &db,
-                    tenant_id,
-                    &filter,
-                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
-                )
-                .await?;
-            if batch.is_empty() {
-                break;
-            }
-            after_id = batch.last().map(|role| role.id);
-            records.extend(batch.into_iter().map(RoleVo::from));
-            if records.len() > maximum_records {
-                return Err(AppError::Validation(format!(
-                    "导出记录数超过 {maximum_records} 条上限"
-                )));
-            }
-        }
-        Ok(records)
+        Ok(self
+            .role_repo
+            .find_for_export_after_id(&db, tenant_id, &filter, window)
+            .await?
+            .into_iter()
+            .map(RoleVo::from)
+            .collect())
     }
 
     /// 批量删除角色

@@ -5,12 +5,12 @@ use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
 use serde_json::Value;
 
-use crate::entities::export_job;
+use crate::entities::{export_job, tenant};
 
 mod deletion;
 
@@ -24,10 +24,22 @@ pub struct CreateExportJob {
     pub resource: String,
     pub background_job_id: i64,
     pub request_params: Value,
+    pub request_version: i32,
     pub permission_code: String,
+    pub authorization_fingerprint: String,
+    pub request_fingerprint: String,
     pub snapshot_at: DateTime<Utc>,
     pub upper_id: i64,
     pub matched_rows: i64,
+}
+
+/// 租户并发门禁对一次启动请求的判定。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExportStartDisposition {
+    Started,
+    AlreadyRunning,
+    ConcurrencyLimited,
+    NotRunnable,
 }
 
 /// 将导出任务标记为成功时写入的结果元数据。
@@ -38,7 +50,6 @@ pub struct MarkExportJobSucceeded {
     pub file_name: String,
     pub content_type: String,
     pub file_size: i64,
-    pub request_params: Value,
     pub expires_at: DateTime<Utc>,
     pub completed_at: DateTime<Utc>,
 }
@@ -74,10 +85,15 @@ impl ExportJobRepository {
             resource: Set(command.resource),
             background_job_id: Set(command.background_job_id),
             request_params: Set(command.request_params),
+            request_version: Set(command.request_version),
             permission_code: Set(command.permission_code),
+            authorization_fingerprint: Set(command.authorization_fingerprint),
+            request_fingerprint: Set(command.request_fingerprint.clone()),
+            active_request_fingerprint: Set(Some(command.request_fingerprint)),
             snapshot_at: Set(command.snapshot_at),
             upper_id: Set(command.upper_id),
             matched_rows: Set(command.matched_rows),
+            exported_rows: Set(0),
             status: Set(export_job::Model::STATUS_QUEUED.to_owned()),
             result_file_id: Set(None),
             result_file_name: Set(None),
@@ -94,6 +110,36 @@ impl ExportJobRepository {
         .insert(transaction)
         .await
         .map_err(database_error)
+    }
+
+    /// 在租户行锁保护下复用同一规范化请求的排队或运行任务。
+    pub async fn find_active_by_fingerprint_for_update(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        requester_id: i64,
+        request_fingerprint: &str,
+    ) -> AppResult<Option<export_job::Model>> {
+        tenant::Entity::find()
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
+        export_job::Entity::find()
+            .filter(export_job::Column::TenantId.eq(tenant_id))
+            .filter(export_job::Column::RequesterId.eq(requester_id))
+            .filter(export_job::Column::ActiveRequestFingerprint.eq(request_fingerprint))
+            .filter(export_job::Column::DeletePendingAt.is_null())
+            .filter(export_job::Column::Status.is_in([
+                export_job::Model::STATUS_QUEUED,
+                export_job::Model::STATUS_RUNNING,
+            ]))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(database_error)
     }
 
     /// 读取当前申请人在当前租户可见的导出任务。
@@ -184,11 +230,47 @@ impl ExportJobRepository {
             .map_err(database_error)
     }
 
-    /// 将排队任务切换为执行中；若已取消或被其他 Worker 接管则返回 false。
-    pub async fn mark_running<C>(&self, db: &C, id: i64, now: DateTime<Utc>) -> AppResult<bool>
-    where
-        C: ConnectionTrait,
-    {
+    /// 在租户行锁下启动导出，保证同一租户同时最多运行指定数量的任务。
+    pub async fn try_mark_running_in_transaction(
+        &self,
+        transaction: &DatabaseTransaction,
+        id: i64,
+        tenant_id: &str,
+        maximum_running: u64,
+        now: DateTime<Utc>,
+    ) -> AppResult<ExportStartDisposition> {
+        tenant::Entity::find()
+            .filter(tenant::Column::TenantId.eq(tenant_id))
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
+        let current = export_job::Entity::find_by_id(id)
+            .lock(LockType::Update)
+            .one(transaction)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| AppError::NotFound("导出任务不存在".into()))?;
+        if current.tenant_id != tenant_id {
+            return Ok(ExportStartDisposition::NotRunnable);
+        }
+        let running = export_job::Entity::find()
+            .filter(export_job::Column::TenantId.eq(tenant_id))
+            .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
+            .filter(export_job::Column::DeletePendingAt.is_null())
+            .count(transaction)
+            .await
+            .map_err(database_error)?;
+        let disposition = decide_export_start(
+            &current.status,
+            current.delete_pending_at.is_some(),
+            running,
+            maximum_running,
+        );
+        if disposition != ExportStartDisposition::Started {
+            return Ok(disposition);
+        }
         let result = export_job::Entity::update_many()
             .col_expr(
                 export_job::Column::Status,
@@ -198,10 +280,38 @@ impl ExportJobRepository {
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_QUEUED))
             .filter(export_job::Column::DeletePendingAt.is_null())
-            .exec(db)
+            .exec(transaction)
             .await
             .map_err(database_error)?;
-        Ok(result.rows_affected == 1)
+        Ok(if result.rows_affected == 1 {
+            ExportStartDisposition::Started
+        } else {
+            ExportStartDisposition::NotRunnable
+        })
+    }
+
+    /// 只允许执行中的任务按单调递增方式记录已写入行数。
+    pub async fn update_exported_rows<C>(
+        &self,
+        db: &C,
+        id: i64,
+        exported_rows: i64,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+    {
+        export_job::Entity::update_many()
+            .col_expr(export_job::Column::ExportedRows, Expr::value(exported_rows))
+            .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
+            .filter(export_job::Column::Id.eq(id))
+            .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
+            .filter(export_job::Column::ExportedRows.lt(exported_rows))
+            .filter(export_job::Column::DeletePendingAt.is_null())
+            .exec(db)
+            .await
+            .map(|result| result.rows_affected == 1)
+            .map_err(database_error)
     }
 
     /// 将 Worker 成功生成的文件元数据固化为可下载结果。
@@ -229,10 +339,6 @@ impl ExportJobRepository {
             )
             .col_expr(export_job::Column::FileSize, Expr::value(command.file_size))
             .col_expr(
-                export_job::Column::RequestParams,
-                Expr::value(command.request_params),
-            )
-            .col_expr(
                 export_job::Column::ExpiresAt,
                 Expr::value(command.expires_at),
             )
@@ -243,6 +349,10 @@ impl ExportJobRepository {
             .col_expr(
                 export_job::Column::CompletedAt,
                 Expr::value(command.completed_at),
+            )
+            .col_expr(
+                export_job::Column::ActiveRequestFingerprint,
+                Expr::value(Option::<String>::None),
             )
             .filter(export_job::Column::Id.eq(command.id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
@@ -275,6 +385,10 @@ impl ExportJobRepository {
             )
             .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
             .col_expr(export_job::Column::CompletedAt, Expr::value(now))
+            .col_expr(
+                export_job::Column::ActiveRequestFingerprint,
+                Expr::value(Option::<String>::None),
+            )
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_RUNNING))
             .filter(export_job::Column::DeletePendingAt.is_null())
@@ -333,6 +447,10 @@ impl ExportJobRepository {
             )
             .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
             .col_expr(export_job::Column::CompletedAt, Expr::value(now))
+            .col_expr(
+                export_job::Column::ActiveRequestFingerprint,
+                Expr::value(Option::<String>::None),
+            )
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::TenantId.eq(tenant_id))
             .filter(export_job::Column::RequesterId.eq(requester_id))
@@ -394,6 +512,10 @@ impl ExportJobRepository {
                 export_job::Column::FileSize,
                 Expr::value(Option::<i64>::None),
             )
+            .col_expr(
+                export_job::Column::ActiveRequestFingerprint,
+                Expr::value(Option::<String>::None),
+            )
             .filter(export_job::Column::Id.eq(id))
             .filter(export_job::Column::Status.eq(export_job::Model::STATUS_SUCCEEDED))
             .filter(export_job::Column::ExpiresAt.lte(now))
@@ -412,7 +534,7 @@ fn validate_create_command(command: &CreateExportJob) -> AppResult<()> {
     if command.requester_id <= 0 || command.background_job_id <= 0 {
         return Err(AppError::Validation("导出任务关联标识必须为正数".into()));
     }
-    if command.upper_id <= 0 || command.matched_rows <= 0 {
+    if command.upper_id <= 0 || command.matched_rows <= 0 || command.request_version <= 0 {
         return Err(AppError::Validation(
             "导出任务主键上界和匹配行数必须为正数".into(),
         ));
@@ -424,6 +546,19 @@ fn validate_create_command(command: &CreateExportJob) -> AppResult<()> {
         if value.is_empty() || value.len() > maximum {
             return Err(AppError::Validation(format!(
                 "导出任务 {name} 长度必须介于 1 和 {maximum} 之间"
+            )));
+        }
+    }
+    for (name, value) in [
+        (
+            "authorization_fingerprint",
+            command.authorization_fingerprint.as_str(),
+        ),
+        ("request_fingerprint", command.request_fingerprint.as_str()),
+    ] {
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(AppError::Validation(format!(
+                "导出任务 {name} 必须是 64 位十六进制指纹"
             )));
         }
     }
@@ -456,6 +591,28 @@ fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
 }
 
+fn decide_export_start(
+    status: &str,
+    delete_pending: bool,
+    running: u64,
+    maximum_running: u64,
+) -> ExportStartDisposition {
+    if delete_pending {
+        return ExportStartDisposition::NotRunnable;
+    }
+    if status == export_job::Model::STATUS_RUNNING {
+        return ExportStartDisposition::AlreadyRunning;
+    }
+    if status != export_job::Model::STATUS_QUEUED {
+        return ExportStartDisposition::NotRunnable;
+    }
+    if running >= maximum_running {
+        ExportStartDisposition::ConcurrencyLimited
+    } else {
+        ExportStartDisposition::Started
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sea_orm::{DatabaseBackend, QueryTrait};
@@ -466,5 +623,25 @@ mod tests {
     fn requester_queries_hide_delete_tombstones() {
         let statement = visible_for_requester_query("tenant-a", 7).build(DatabaseBackend::MySql);
         assert!(statement.sql.contains("delete_pending_at` IS NULL"));
+    }
+
+    #[test]
+    fn start_gate_rejects_duplicate_worker_and_third_tenant_export() {
+        assert_eq!(
+            decide_export_start(export_job::Model::STATUS_RUNNING, false, 1, 2),
+            ExportStartDisposition::AlreadyRunning
+        );
+        assert_eq!(
+            decide_export_start(export_job::Model::STATUS_QUEUED, false, 2, 2),
+            ExportStartDisposition::ConcurrencyLimited
+        );
+        assert_eq!(
+            decide_export_start(export_job::Model::STATUS_QUEUED, false, 1, 2),
+            ExportStartDisposition::Started
+        );
+        assert_eq!(
+            decide_export_start(export_job::Model::STATUS_QUEUED, true, 0, 2),
+            ExportStartDisposition::NotRunnable
+        );
     }
 }

@@ -45,6 +45,11 @@ use types::StoredExportRequest;
 
 /// 单次清理查询的最大任务数，游标会继续排空同一时间快照下的剩余任务。
 const EXPORT_CLEANUP_BATCH_SIZE: u64 = 100;
+const EXPORT_BATCH_SIZE: u64 = 1_000;
+const EXPORT_BUSINESS_MAX_ROWS: usize = 500_000;
+const EXPORT_MAX_RUNTIME_SECONDS: i32 = 1_800;
+const EXPORT_MAX_RESULT_BYTES: u64 = 512 * 1024 * 1024;
+const EXPORT_MAX_RUNNING_PER_TENANT: u64 = 2;
 
 /// 异步导出任务服务。
 pub struct ExportService {
@@ -97,7 +102,7 @@ impl ExportService {
             users,
             storage,
             default_max_attempts: jobs.default_max_attempts,
-            export_max_rows: jobs.export_max_rows,
+            export_max_rows: jobs.export_max_rows.min(EXPORT_BUSINESS_MAX_ROWS),
             export_retention: Duration::hours(i64::from(jobs.export_retention_hours)),
             job_queue: None,
             purge,

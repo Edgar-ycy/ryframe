@@ -137,44 +137,23 @@ impl LoginInfoService {
         })
     }
 
-    /// 以稳定主键游标分批读取登录日志导出数据，并延续当前数据范围约束。
-    pub async fn find_for_export(
+    /// 按稳定主键窗口读取一批登录日志，并延续当前数据范围约束。
+    pub(crate) async fn find_export_batch(
         &self,
         actor: &ActorContext,
         filter: LoginInfoFilter<'_>,
-        upper_id: i64,
-        maximum_records: usize,
+        window: ExportCursorWindow,
     ) -> AppResult<Vec<LoginInfoVo>> {
-        const BATCH_SIZE: u64 = 1_000;
-
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope_ctx = actor.data_scope_context();
         let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let mut after_id = None;
-        let mut records = Vec::new();
-        loop {
-            let batch = self
-                .login_info_repo
-                .find_for_export_after_id(
-                    &db,
-                    tenant_id,
-                    &filter,
-                    &scope_ctx,
-                    ExportCursorWindow::new(after_id, upper_id, BATCH_SIZE),
-                )
-                .await?;
-            if batch.is_empty() {
-                break;
-            }
-            after_id = batch.last().map(|log| log.id);
-            records.extend(batch.into_iter().map(LoginInfoVo::from));
-            if records.len() > maximum_records {
-                return Err(AppError::Validation(format!(
-                    "导出记录数超过 {maximum_records} 条上限"
-                )));
-            }
-        }
-        Ok(records)
+        Ok(self
+            .login_info_repo
+            .find_for_export_after_id(&db, tenant_id, &filter, &scope_ctx, window)
+            .await?
+            .into_iter()
+            .map(LoginInfoVo::from)
+            .collect())
     }
 
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {

@@ -1,10 +1,12 @@
-use std::time::Duration;
+use std::{io::SeekFrom, path::Path, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use reqwest::{Method, RequestBuilder, Response, Url};
+use futures_util::stream;
+use reqwest::{Body, Method, RequestBuilder, Response, Url};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tracing::Instrument;
 
 use super::{
@@ -204,6 +206,57 @@ impl S3ObjectStorage {
         span.record("storage.result", s3_request_result_label(&result));
         result.map_err(StorageError::from)
     }
+
+    async fn open_upload_file(
+        path: &Path,
+        supplied_sha256: Option<&str>,
+    ) -> StorageResult<(tokio::fs::File, u64, String)> {
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .map_err(|source| StorageError::Io {
+                operation: "open S3 upload source",
+                source,
+            })?;
+        let metadata = file.metadata().await.map_err(|source| StorageError::Io {
+            operation: "inspect S3 upload source",
+            source,
+        })?;
+        if !metadata.is_file() {
+            return Err(StorageError::InvalidLocation(
+                "upload source must be a regular file".to_owned(),
+            ));
+        }
+
+        let payload_hash = match supplied_sha256 {
+            Some(value) => normalize_sha256(value)?,
+            None => {
+                let mut hasher = Sha256::new();
+                let mut buffer = vec![0u8; 64 * 1024];
+                loop {
+                    let read = file
+                        .read(&mut buffer)
+                        .await
+                        .map_err(|source| StorageError::Io {
+                            operation: "hash S3 upload source",
+                            source,
+                        })?;
+                    if read == 0 {
+                        break;
+                    }
+                    hasher.update(&buffer[..read]);
+                }
+                file.seek(SeekFrom::Start(0))
+                    .await
+                    .map_err(|source| StorageError::Io {
+                        operation: "rewind S3 upload source",
+                        source,
+                    })?;
+                hex::encode(hasher.finalize())
+            }
+        };
+
+        Ok((file, metadata.len(), payload_hash))
+    }
 }
 
 #[async_trait]
@@ -223,6 +276,41 @@ impl ObjectStorage for S3ObjectStorage {
                 self.signed_request(Method::PUT, url, &payload_hash)?
                     .header("Content-Type", content_type)
                     .body(data.to_vec()),
+            )
+            .await?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(service_error("upload S3 object", response).await)
+        }
+    }
+
+    async fn put_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        content_type: &str,
+        sha256_hex: Option<&str>,
+    ) -> StorageResult<()> {
+        let url = self.object_url(bucket, key)?;
+        let (file, content_length, payload_hash) = Self::open_upload_file(path, sha256_hex).await?;
+        let chunks = stream::try_unfold(file, |mut file| async move {
+            let mut chunk = vec![0u8; 64 * 1024];
+            let read = file.read(&mut chunk).await?;
+            if read == 0 {
+                return Ok(None);
+            }
+            chunk.truncate(read);
+            Ok::<_, std::io::Error>(Some((chunk, file)))
+        });
+        let response = self
+            .send_request(
+                StorageOperation::Put,
+                self.signed_request(Method::PUT, url, &payload_hash)?
+                    .header("Content-Type", content_type)
+                    .header("Content-Length", content_length)
+                    .body(Body::wrap_stream(chunks)),
             )
             .await?;
         if response.status().is_success() {
@@ -375,6 +463,15 @@ fn empty_payload_hash() -> String {
     hex::encode(Sha256::digest([]))
 }
 
+fn normalize_sha256(value: &str) -> StorageResult<String> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(StorageError::Signing(
+            "file SHA-256 must contain exactly 64 hexadecimal characters".to_owned(),
+        ));
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
 fn s3_request_result_label(result: &Result<Response, reqwest::Error>) -> &'static str {
     match result {
         Ok(response) if response.status().is_success() => "success",
@@ -393,5 +490,43 @@ async fn service_error(operation: &'static str, response: Response) -> StorageEr
         operation,
         status,
         message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+
+    use super::{S3ObjectStorage, normalize_sha256};
+
+    #[tokio::test]
+    async fn upload_file_hashes_and_rewinds_the_same_handle() {
+        let directory = tempfile::tempdir().expect("创建测试目录");
+        let path = directory.path().join("artifact.xlsx");
+        let content = b"streamed artifact";
+        tokio::fs::write(&path, content)
+            .await
+            .expect("写入测试文件");
+
+        let (mut file, length, hash) = S3ObjectStorage::open_upload_file(&path, None)
+            .await
+            .expect("准备上传文件");
+        let mut reread = Vec::new();
+        file.read_to_end(&mut reread).await.expect("重新读取文件");
+
+        assert_eq!(length, content.len() as u64);
+        assert_eq!(hash, hex::encode(Sha256::digest(content)));
+        assert_eq!(reread, content);
+    }
+
+    #[test]
+    fn supplied_hash_is_validated_and_normalized() {
+        let uppercase = "A".repeat(64);
+        assert_eq!(
+            normalize_sha256(&uppercase).expect("规范化哈希"),
+            "a".repeat(64)
+        );
+        assert!(normalize_sha256("not-a-hash").is_err());
     }
 }

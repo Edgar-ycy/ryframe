@@ -108,6 +108,26 @@ impl BackgroundJobRepository {
                     .col_expr(export_job::Column::UpdatedAt, Expr::value(now))
                     .filter(export_job::Column::BackgroundJobId.eq(job.id))
                     .filter(export_job::Column::Status.is_in(statuses));
+                match disposition {
+                    LinkedJobDisposition::Retried => {
+                        update =
+                            update.col_expr(export_job::Column::ExportedRows, Expr::value(0_i64));
+                    }
+                    LinkedJobDisposition::Dead => {
+                        update = update.col_expr(
+                            export_job::Column::ActiveRequestFingerprint,
+                            Expr::value(Option::<String>::None),
+                        );
+                    }
+                    LinkedJobDisposition::ManuallyRetried => {
+                        update = update
+                            .col_expr(export_job::Column::ExportedRows, Expr::value(0_i64))
+                            .col_expr(
+                                export_job::Column::ActiveRequestFingerprint,
+                                Expr::col(export_job::Column::RequestFingerprint),
+                            );
+                    }
+                }
                 if let Some(error) = error {
                     update =
                         update.col_expr(export_job::Column::ErrorMessage, Expr::value(Some(error)));
