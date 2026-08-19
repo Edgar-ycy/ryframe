@@ -18,10 +18,23 @@ COMPOSE_FILE = ROOT / "deploy" / "compose.prod.yml"
 ALERT_RULES = ROOT / "deploy" / "prometheus" / "ryframe-alerts.yml"
 FIXTURE_ENV = ROOT / "scripts" / "fixtures" / "deploy.env"
 EXPECTED_BINARIES = {"ryframe", "ryframe-migrate", "ryframe-worker"}
+EXPECTED_BASE_IMAGES = {
+    "RUST_IMAGE": (
+        "rust:1.97.1-bookworm@"
+        "sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
+    ),
+    "DEBIAN_IMAGE": (
+        "debian:12-slim@"
+        "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+    ),
+}
 REPOSITORY_BLOB_PREFIX = "https://github.com/Edgar-ycy/ryframe/blob/main/"
 ACTION_SHA = re.compile(r"^[^\s@]+@[0-9a-f]{40}$")
 CONTAINER_ACTION_DIGEST = re.compile(r"^docker://[^\s@]+@sha256:[0-9a-f]{64}$")
 IMMUTABLE_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
+IMMUTABLE_TAGGED_IMAGE = re.compile(
+    r"^[A-Za-z0-9._/-]+:[A-Za-z0-9][A-Za-z0-9._-]*@sha256:[0-9a-f]{64}$"
+)
 
 
 def read(path: Path) -> str:
@@ -95,6 +108,20 @@ def validate_runbook_url(url: str) -> str | None:
 def check_dockerfile(violations: list[str]) -> None:
     source = read(DOCKERFILE)
     normalized = re.sub(r"\\\r?\n\s*", " ", source)
+    for argument, expected in EXPECTED_BASE_IMAGES.items():
+        actual = re.findall(
+            rf"^ARG\s+{re.escape(argument)}=([^\s]+)\s*$",
+            source,
+            re.MULTILINE,
+        )
+        if actual != [expected]:
+            violations.append(
+                f"生产 Dockerfile 的 {argument} 必须精确固定为 {expected}"
+            )
+        elif not IMMUTABLE_TAGGED_IMAGE.fullmatch(actual[0]):
+            violations.append(
+                f"生产 Dockerfile 的 {argument} 必须同时保留清晰标签和完整 sha256 摘要"
+            )
     built = set(re.findall(r"--bin\s+([a-zA-Z0-9_-]+)", normalized))
     copied = set(
         re.findall(
