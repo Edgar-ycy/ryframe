@@ -4,6 +4,9 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
 use crate::m20260522_000000_mysql_baseline::ddl_statements;
 
+mod export_job;
+use export_job::EXPORT_JOB_DDL;
+
 const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
     `id` BIGINT NOT NULL,
     `tenant_id` VARCHAR(64) DEFAULT NULL,
@@ -30,36 +33,6 @@ const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_even
     KEY `idx_outbox_event_lease` (`status`, `lease_until`),
     KEY `idx_outbox_event_aggregate` (`aggregate_type`, `aggregate_id`, `created_at`),
     KEY `idx_outbox_event_retention` (`status`, `published_at`, `id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
-
-const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_export_job` (
-    `id` BIGINT NOT NULL,
-    `tenant_id` VARCHAR(64) NOT NULL,
-    `requester_id` BIGINT NOT NULL,
-    `resource` VARCHAR(64) NOT NULL,
-    `background_job_id` BIGINT NOT NULL,
-    `request_params` JSON NOT NULL,
-    `permission_code` VARCHAR(128) NOT NULL,
-    `snapshot_at` DATETIME NOT NULL,
-    `upper_id` BIGINT NOT NULL,
-    `matched_rows` BIGINT NOT NULL,
-    `status` VARCHAR(16) NOT NULL DEFAULT 'queued',
-    `result_file_id` BIGINT DEFAULT NULL,
-    `result_file_name` VARCHAR(255) DEFAULT NULL,
-    `content_type` VARCHAR(128) DEFAULT NULL,
-    `file_size` BIGINT DEFAULT NULL,
-    `expires_at` DATETIME DEFAULT NULL,
-    `error_message` TEXT DEFAULT NULL,
-    `created_at` DATETIME NOT NULL,
-    `updated_at` DATETIME NOT NULL,
-    `completed_at` DATETIME DEFAULT NULL,
-    `notification_read_at` DATETIME DEFAULT NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uq_export_job_background` (`background_job_id`),
-    KEY `idx_export_job_requester` (`tenant_id`, `requester_id`, `created_at`),
-    KEY `idx_export_job_expiry` (`status`, `expires_at`),
-    KEY `idx_export_job_history` (`status`, `completed_at`, `id`),
-    KEY `idx_export_job_notification` (`tenant_id`, `requester_id`, `notification_read_at`, `status`, `completed_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"####;
 
 #[derive(Debug, PartialEq, Eq)]
