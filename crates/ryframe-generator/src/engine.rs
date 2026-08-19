@@ -11,7 +11,7 @@ fn default_entity_dir() -> String {
     "crates/ryframe-db/src/entities".into()
 }
 fn default_repository_dir() -> String {
-    "crates/ryframe-application/src/business".into()
+    "crates/ryframe-db/src/repositories/business".into()
 }
 fn default_service_dir() -> String {
     "crates/ryframe-application/src/business".into()
@@ -100,7 +100,7 @@ pub struct WriteReport {
 }
 
 /// 验证表名合法性
-fn validate_table_name(name: &str) -> AppResult<()> {
+pub fn validate_table_name(name: &str) -> AppResult<()> {
     if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return Err(AppError::Validation(format!("表名包含非法字符: {}", name)));
     }
@@ -110,7 +110,7 @@ fn validate_table_name(name: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn normalize_relative_path(path: &str, label: &str) -> AppResult<String> {
+pub fn normalize_relative_output_path(path: &str, label: &str) -> AppResult<String> {
     let portable = path.replace('\\', "/");
     let has_drive_prefix = portable.as_bytes().get(1) == Some(&b':');
     if portable.is_empty() || portable.starts_with('/') || has_drive_prefix {
@@ -139,16 +139,17 @@ pub async fn generate(
         return Err(AppError::Validation("未指定要生成的表名".into()));
     }
 
-    let entity_base = normalize_relative_path(&opts.entity_dir, "实体输出目录")?;
-    let repository_base = normalize_relative_path(&opts.repository_dir, "Repository 输出目录")?;
-    let service_base = normalize_relative_path(&opts.service_dir, "Service 输出目录")?;
-    let handler_base = normalize_relative_path(&opts.handler_dir, "Handler 输出目录")?;
-    let dto_base = normalize_relative_path(&opts.dto_dir, "DTO 输出目录")?;
+    let entity_base = normalize_relative_output_path(&opts.entity_dir, "实体输出目录")?;
+    let repository_base =
+        normalize_relative_output_path(&opts.repository_dir, "Repository 输出目录")?;
+    let service_base = normalize_relative_output_path(&opts.service_dir, "Service 输出目录")?;
+    let handler_base = normalize_relative_output_path(&opts.handler_dir, "Handler 输出目录")?;
+    let dto_base = normalize_relative_output_path(&opts.dto_dir, "DTO 输出目录")?;
     for (label, path, required_prefix) in [
         (
             "Repository",
             repository_base.as_str(),
-            "crates/ryframe-application/src/business",
+            "crates/ryframe-db/src/repositories",
         ),
         (
             "Service",
@@ -447,7 +448,7 @@ pub async fn write_to_disk(
         .map_err(|e| AppError::Internal(format!("解析输出目录失败: {}", e)))?;
 
     for f in files {
-        let relative_path = normalize_relative_path(&f.path, "生成文件路径")?;
+        let relative_path = normalize_relative_output_path(&f.path, "生成文件路径")?;
         let full_path = canonical_workspace.join(&relative_path);
 
         if let Some(parent) = full_path.parent() {
