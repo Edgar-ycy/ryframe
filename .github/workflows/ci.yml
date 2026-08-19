@@ -162,6 +162,8 @@ jobs:
 
       - name: Install pnpm
         uses: ./frontend/.github/actions/setup-pnpm
+        with:
+          working-directory: frontend
 
       - name: Install frontend dependencies
         working-directory: frontend
