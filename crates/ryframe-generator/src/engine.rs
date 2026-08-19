@@ -253,7 +253,7 @@ pub async fn generate(
     push_generated_file(
         &mut all_files,
         &mut generated_paths,
-        "crates/ryframe-tenant-db-migration/src/generated_catalog.rs".into(),
+        "crates/ryframe-tenant-db/src/migration/generated_catalog.rs".into(),
         catalog,
     )?;
 

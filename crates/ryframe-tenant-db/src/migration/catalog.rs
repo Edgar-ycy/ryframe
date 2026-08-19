@@ -8,7 +8,7 @@ const TENANT_DATA_TARGET_SLOT_SCHEMA_CANONICAL: &str = "v4|table=biz_tenant_targ
 
 /// 应用构建所要求的稳定、小写十六进制 SHA-256 schema 指纹。
 pub const TENANT_DATA_SCHEMA_FINGERPRINT: &str =
-    crate::generated_catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT;
+    super::generated_catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT;
 
 /// 编译期业务表复制描述。表名和列名不能来自配置或请求。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,7 +42,7 @@ pub struct TenantDataCatalog {
 
 /// 当前阶段尚未迁入业务表；fence 是路由基础设施，不参与租户数据复制。
 pub const TENANT_DATA_CATALOG: TenantDataCatalog = TenantDataCatalog {
-    tables: crate::generated_catalog::GENERATED_TENANT_DATA_TABLES,
+    tables: super::generated_catalog::GENERATED_TENANT_DATA_TABLES,
 };
 
 impl TenantDataCatalog {

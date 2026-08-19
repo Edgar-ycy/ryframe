@@ -13,7 +13,7 @@ impl TenantDatabaseRouter {
             target_key,
             placement_generation,
             switch_token,
-            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+            &crate::migration::TENANT_DATA_CATALOG,
         )
         .await
     }
@@ -24,7 +24,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         let provision = self.prepare_fence_provision(
@@ -53,7 +53,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<TenantDataCleanupOwnership, TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         let provision = self.prepare_fence_provision(
@@ -96,7 +96,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        descriptor: &ryframe_tenant_db_migration::TenantDataTableDescriptor,
+        descriptor: &crate::migration::TenantDataTableDescriptor,
         batch_size: u32,
     ) -> Result<u64, TenantDataError> {
         self.delete_tenant_rows_batch_for_catalog(
@@ -108,7 +108,7 @@ impl TenantDatabaseRouter {
                 descriptor,
                 batch_size,
             },
-            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+            &crate::migration::TENANT_DATA_CATALOG,
         )
         .await
     }
@@ -116,7 +116,7 @@ impl TenantDatabaseRouter {
     pub async fn delete_tenant_rows_batch_for_catalog(
         &self,
         batch: TenantDataCleanupBatch<'_>,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<u64, TenantDataError> {
         let TenantDataCleanupBatch {
             tenant_id,
@@ -176,7 +176,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         let provision = self.prepare_fence_provision(
@@ -210,7 +210,7 @@ impl TenantDatabaseRouter {
             target_key,
             placement_generation,
             switch_token,
-            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+            &crate::migration::TENANT_DATA_CATALOG,
         )
         .await
     }
@@ -221,7 +221,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         let provision = self.prepare_fence_provision(
@@ -248,7 +248,7 @@ async fn clear_tenant_data_in_transaction(
     provision: &FenceProvision,
     target_mode: TenantDatabaseTargetMode,
     require_frozen: bool,
-    catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+    catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<(), TenantDataError> {
     let slot = if target_mode == TenantDatabaseTargetMode::Dedicated {
         Some(lock_target_slot(transaction, &provision.target_key).await?)
@@ -366,7 +366,7 @@ async fn delete_tenant_rows_batch_in_transaction(
     transaction: &DatabaseTransaction,
     provision: &FenceProvision,
     target_mode: TenantDatabaseTargetMode,
-    descriptor: &ryframe_tenant_db_migration::TenantDataTableDescriptor,
+    descriptor: &crate::migration::TenantDataTableDescriptor,
     batch_size: u32,
 ) -> Result<u64, TenantDataError> {
     let slot = if target_mode == TenantDatabaseTargetMode::Dedicated {
@@ -433,7 +433,7 @@ async fn cleanup_ownership_in_transaction(
     transaction: &DatabaseTransaction,
     provision: &FenceProvision,
     target_mode: TenantDatabaseTargetMode,
-    catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+    catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<TenantDataCleanupOwnership, TenantDataError> {
     let slot = if target_mode == TenantDatabaseTargetMode::Dedicated {
         Some(lock_target_slot(transaction, &provision.target_key).await?)
@@ -483,7 +483,7 @@ async fn finish_tenant_cleanup_in_transaction(
     transaction: &DatabaseTransaction,
     provision: &FenceProvision,
     target_mode: TenantDatabaseTargetMode,
-    catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+    catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<(), TenantDataError> {
     let slot = if target_mode == TenantDatabaseTargetMode::Dedicated {
         Some(lock_target_slot(transaction, &provision.target_key).await?)

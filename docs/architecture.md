@@ -39,8 +39,7 @@ GET /api/v1/api-docs/openapi.json
 | `ryframe-service` | 应用用例、业务规则、输出模型和 Repository 编排 |
 | `ryframe-db` | 控制库 SeaORM Entity、Repository、数据范围查询、主库/副本和命名数据源拓扑 |
 | `ryframe-db-migration` | 控制库可重复执行迁移 |
-| `ryframe-tenant-db` | 租户业务数据目标注册、连接预算、放置解析、fence 与 `TenantDataSession` |
-| `ryframe-tenant-db-migration` | 业务数据目标的独立迁移账本、Schema 指纹与 `TenantDataCatalog` |
+| `ryframe-tenant-db` | 租户业务数据目标注册、连接预算、放置解析、fence、`TenantDataSession`、独立迁移账本、Schema 指纹与 `TenantDataCatalog` |
 | `ryframe-auth` | JWT、密码、认证中间件、`RequestPrincipal` 和主体解析端口 |
 | `ryframe-middleware` | CORS、限流、请求 ID、遥测等横切 HTTP 能力 |
 | `ryframe-monitor` | 健康、指标、缓存、数据库监控端口和运行时状态 |

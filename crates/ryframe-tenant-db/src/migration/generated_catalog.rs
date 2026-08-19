@@ -1,5 +1,5 @@
 // 此文件是 ryframe-generator 的编译输入；当前没有已迁入 tenant-data catalog 的业务表。
-use crate::TenantDataTableDescriptor;
+use super::catalog::TenantDataTableDescriptor;
 
 pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[];
 

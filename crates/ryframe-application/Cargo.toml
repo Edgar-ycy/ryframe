@@ -19,7 +19,6 @@ ryframe-excel = { path = "../ryframe-excel" }
 ryframe-storage = { path = "../ryframe-storage" }
 ryframe-middleware = { path = "../ryframe-middleware" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
-ryframe-tenant-db-migration = { path = "../ryframe-tenant-db-migration" }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 redis = { workspace = true }

@@ -1,46 +1,11 @@
-//! 租户业务数据目标的独立 MySQL schema 迁移。
-//!
-//! 本 crate 只管理可放置到 shared-control 或 dedicated MySQL 的租户业务数据表，
-//! 使用独立账本 `seaql_tenant_data_migrations`。控制面 `sys_*` 表只能由
-//! `ryframe-db-migration` 管理，不能经此入口安装到 dedicated 目标。
-
 use std::fmt::Write as _;
 
-use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult,
-    Statement, TransactionTrait, TryGetable,
-};
-use sea_orm_migration::prelude::*;
+use sea_orm::{DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
+use sea_orm_migration::prelude::MigratorTrait;
 
-mod catalog;
-mod generated_catalog;
-mod m20260817_000001_tenant_fence;
-mod m20260817_000002_reconcile_shared_control_fence;
-mod m20260817_000003_target_slot;
-
-pub use catalog::{
-    TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT, TenantDataCatalog,
-    TenantDataForeignKeyDescriptor, TenantDataTableDescriptor, catalog_entry_canonical,
-    schema_fingerprint_for_catalog,
-};
-
-pub const TENANT_DATA_MIGRATION_LEDGER: &str = "seaql_tenant_data_migrations";
-const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:tenant-data-migration:";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MigrationStatus {
-    pub applied: usize,
-    pub expected: usize,
-    pub schema_fingerprint: &'static str,
-}
-
-impl MigrationStatus {
-    pub fn is_up_to_date(&self) -> bool {
-        self.applied == self.expected
-    }
-}
-
-pub struct Migrator;
+use super::catalog::{TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT, TenantDataCatalog};
+use super::normalization::normalize_check_clause;
+use super::runtime::{Migrator, TENANT_DATA_MIGRATION_LEDGER, status};
 
 #[derive(Debug, FromQueryResult)]
 struct MigrationVersionRow {
@@ -116,48 +81,6 @@ struct ServerIdentityRow {
     version_comment: String,
 }
 
-#[async_trait::async_trait]
-impl MigratorTrait for Migrator {
-    fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![
-            Box::new(m20260817_000001_tenant_fence::Migration),
-            Box::new(m20260817_000002_reconcile_shared_control_fence::Migration),
-            Box::new(m20260817_000003_target_slot::Migration),
-        ]
-    }
-
-    fn migration_table_name() -> DynIden {
-        Alias::new(TENANT_DATA_MIGRATION_LEDGER).into_iden()
-    }
-}
-
-/// 升级一个明确选择的租户数据目标。不会创建任何控制面 `sys_*` 表。
-pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
-    ensure_mysql(db)?;
-    verify_mysql_80(db).await?;
-    TENANT_DATA_CATALOG
-        .validate()
-        .map_err(|error| DbErr::Custom(format!("tenant-data catalog is invalid: {error}")))?;
-
-    let transaction = db.begin().await?;
-    if let Err(error) = acquire_migration_lock(&transaction).await {
-        let _ = transaction.rollback().await;
-        return Err(error);
-    }
-    let migration_result = Migrator::up(&transaction, None)
-        .await
-        .map_err(|error| DbErr::Custom(format!("tenant-data migration failed: {error}")));
-    let release_result = release_migration_lock(&transaction).await;
-    match migration_result.and(release_result) {
-        Ok(()) => transaction.commit().await?,
-        Err(error) => {
-            let _ = transaction.rollback().await;
-            return Err(error);
-        }
-    }
-    verify(db).await
-}
-
 /// 只读校验独立账本及当前租户数据 schema 契约。
 pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
     TENANT_DATA_CATALOG
@@ -186,34 +109,6 @@ pub async fn verify_for_catalog(
     }
     verify_migration_versions(db).await?;
     verify_fence_schema(db, catalog).await
-}
-
-/// 读取独立迁移账本，不执行 DDL。
-pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
-    ensure_mysql(db)?;
-    verify_mysql_80(db).await?;
-    let expected = Migrator::migrations().len();
-    let ledger_exists = scalar_i64(
-        db,
-        "SELECT CAST(COUNT(*) AS SIGNED) AS `table_count` FROM information_schema.tables \
-         WHERE table_schema = DATABASE() AND table_name = 'seaql_tenant_data_migrations'",
-    )
-    .await?
-        > 0;
-    let applied = if ledger_exists {
-        scalar_i64(
-            db,
-            "SELECT CAST(COUNT(*) AS SIGNED) FROM seaql_tenant_data_migrations",
-        )
-        .await? as usize
-    } else {
-        0
-    };
-    Ok(MigrationStatus {
-        applied,
-        expected,
-        schema_fingerprint: TENANT_DATA_SCHEMA_FINGERPRINT,
-    })
 }
 
 /// 统一数据面只接受 MySQL 8.0.16 或更高版本；错误契约不回显服务器原始身份。
@@ -324,7 +219,7 @@ async fn mysql_target_table_names(db: &DatabaseConnection) -> Result<Vec<String>
     Ok(tables)
 }
 
-fn ensure_mysql(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub(super) fn ensure_mysql(db: &DatabaseConnection) -> Result<(), DbErr> {
     if db.get_database_backend() != DatabaseBackend::MySql {
         return Err(DbErr::Custom(
             "RyFrame tenant-data migrations support MySQL only".into(),
@@ -968,168 +863,6 @@ async fn verify_migration_versions(db: &DatabaseConnection) -> Result<(), DbErr>
     Ok(())
 }
 
-fn normalize_check_clause(value: &str) -> String {
-    // MySQL information_schema may render literal delimiters as
-    // `_utf8mb4\'value\'`. Only normalize syntax outside literals. Literal
-    // bytes (including case, whitespace, backticks and charset-like text) are
-    // semantic and must survive the exact comparison unchanged.
-    let bytes = value.as_bytes();
-    let mut normalized = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if let Some(introducer_len) = charset_introducer_len(bytes, index) {
-            index += introducer_len;
-            continue;
-        }
-        if let Some((delimiter, consumed)) = quote_token_at(bytes, index) {
-            normalized.push(delimiter);
-            index += consumed;
-            index =
-                normalize_quoted_literal(bytes, index, delimiter, consumed == 2, &mut normalized);
-            continue;
-        }
-        let byte = bytes[index];
-        if !byte.is_ascii_whitespace() && byte != b'`' {
-            normalized.push(byte.to_ascii_lowercase());
-        }
-        index += 1;
-    }
-    strip_redundant_outer_parentheses(
-        String::from_utf8(normalized).expect("CHECK clause normalization preserves UTF-8"),
-    )
-}
-
-fn charset_introducer_len(bytes: &[u8], index: usize) -> Option<usize> {
-    [b"_utf8mb4".as_slice(), b"_ascii".as_slice()]
-        .into_iter()
-        .find(|introducer| {
-            let end = index + introducer.len();
-            bytes
-                .get(index..end)
-                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(introducer))
-                && quote_token_at(bytes, end).is_some()
-        })
-        .map(<[u8]>::len)
-}
-
-fn quote_token_at(bytes: &[u8], index: usize) -> Option<(u8, usize)> {
-    match bytes.get(index).copied() {
-        Some(delimiter @ (b'\'' | b'"')) => Some((delimiter, 1)),
-        Some(b'\\') => bytes
-            .get(index + 1)
-            .copied()
-            .filter(|byte| matches!(byte, b'\'' | b'"'))
-            .map(|delimiter| (delimiter, 2)),
-        _ => None,
-    }
-}
-
-fn normalize_quoted_literal(
-    bytes: &[u8],
-    mut index: usize,
-    delimiter: u8,
-    escaped_delimiters: bool,
-    output: &mut Vec<u8>,
-) -> usize {
-    while index < bytes.len() {
-        if escaped_delimiters && bytes.get(index) == Some(&b'\\') {
-            let slash_start = index;
-            while bytes.get(index) == Some(&b'\\') {
-                index += 1;
-            }
-            let slash_count = index - slash_start;
-            if bytes.get(index) == Some(&delimiter) {
-                if slash_count == 1 {
-                    output.push(delimiter);
-                    return index + 1;
-                }
-                if slash_count >= 3 && slash_count % 2 == 1 {
-                    // MySQL may render an apostrophe inside an escaped-delimiter
-                    // literal as three slashes plus the quote. Canonicalize it to
-                    // SQL's doubled-quote representation while preserving any
-                    // additional literal backslashes.
-                    output.extend(std::iter::repeat_n(b'\\', (slash_count - 3) / 2));
-                    output.extend_from_slice(&[delimiter, delimiter]);
-                    index += 1;
-                    continue;
-                }
-            }
-            output.extend_from_slice(&bytes[slash_start..index]);
-            continue;
-        }
-        if !escaped_delimiters
-            && bytes.get(index) == Some(&b'\\')
-            && bytes.get(index + 1) == Some(&delimiter)
-        {
-            output.extend_from_slice(&[delimiter, delimiter]);
-            index += 2;
-            continue;
-        }
-        if bytes[index] == delimiter {
-            if !escaped_delimiters && bytes.get(index + 1) == Some(&delimiter) {
-                output.extend_from_slice(&[delimiter, delimiter]);
-                index += 2;
-                continue;
-            }
-            output.push(delimiter);
-            return index + 1;
-        }
-        output.push(bytes[index]);
-        index += 1;
-    }
-    index
-}
-
-fn strip_redundant_outer_parentheses(mut value: String) -> String {
-    while is_wrapped_by_single_outer_group(&value) {
-        value = value[1..value.len() - 1].to_owned();
-    }
-    value
-}
-
-fn is_wrapped_by_single_outer_group(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() < 2 || bytes[0] != b'(' || bytes[bytes.len() - 1] != b')' {
-        return false;
-    }
-    let mut depth = 0_i32;
-    let mut quote = None;
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = (index + 2).min(bytes.len());
-                continue;
-            }
-            if byte == delimiter {
-                if bytes.get(index + 1) == Some(&delimiter) {
-                    index += 2;
-                    continue;
-                }
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(byte, b'\'' | b'"') {
-            quote = Some(byte);
-        } else if byte == b'(' {
-            depth += 1;
-        } else if byte == b')' {
-            depth -= 1;
-            if depth == 0 && index + 1 != bytes.len() {
-                return false;
-            }
-            if depth < 0 {
-                return false;
-            }
-        }
-        index += 1;
-    }
-    depth == 0 && quote.is_none()
-}
-
 fn normalize_column_default(value: Option<&str>) -> Option<&str> {
     value.map(|value| {
         if value.eq_ignore_ascii_case("current_timestamp(6)") {
@@ -1153,70 +886,6 @@ fn schema_fingerprint_mismatch(detail: &str) -> DbErr {
     DbErr::Custom(format!(
         "tenant-data schema fingerprint mismatch ({detail}): expected {TENANT_DATA_SCHEMA_FINGERPRINT}"
     ))
-}
-
-async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> Result<i64, DbErr> {
-    scalar_i64_statement(db, Statement::from_string(DbBackend::MySql, sql.to_owned())).await
-}
-
-async fn scalar_i64_statement(db: &DatabaseConnection, statement: Statement) -> Result<i64, DbErr> {
-    let row = db
-        .query_one_raw(statement)
-        .await?
-        .ok_or_else(|| DbErr::Custom("tenant-data verification query returned no result".into()))?;
-    Option::<i64>::try_get_by_index(&row, 0)?.ok_or_else(|| {
-        DbErr::Custom("tenant-data verification query returned a NULL scalar".into())
-    })
-}
-
-async fn acquire_migration_lock<C>(db: &C) -> Result<(), DbErr>
-where
-    C: ConnectionTrait + ?Sized,
-{
-    let value = scalar_i64_on(
-        db,
-        format!(
-            "SELECT GET_LOCK(SHA2(CONCAT('{MIGRATION_LOCK_SQL_PREFIX}', DATABASE()), 256), 60)"
-        ),
-    )
-    .await?;
-    if value != 1 {
-        return Err(DbErr::Custom(
-            "timed out waiting for the tenant-data migration lock".into(),
-        ));
-    }
-    Ok(())
-}
-
-async fn release_migration_lock<C>(db: &C) -> Result<(), DbErr>
-where
-    C: ConnectionTrait + ?Sized,
-{
-    let value = scalar_i64_on(
-        db,
-        format!(
-            "SELECT RELEASE_LOCK(SHA2(CONCAT('{MIGRATION_LOCK_SQL_PREFIX}', DATABASE()), 256))"
-        ),
-    )
-    .await?;
-    if value != 1 {
-        return Err(DbErr::Custom(
-            "failed to release the tenant-data migration lock".into(),
-        ));
-    }
-    Ok(())
-}
-
-async fn scalar_i64_on<C>(db: &C, sql: String) -> Result<i64, DbErr>
-where
-    C: ConnectionTrait + ?Sized,
-{
-    let row = db
-        .query_one_raw(Statement::from_string(DbBackend::MySql, sql))
-        .await?
-        .ok_or_else(|| DbErr::Custom("tenant-data migration lock returned no result".into()))?;
-    Option::<i64>::try_get_by_index(&row, 0)?
-        .ok_or_else(|| DbErr::Custom("tenant-data migration lock returned NULL".into()))
 }
 
 #[cfg(test)]

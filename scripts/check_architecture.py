@@ -481,9 +481,8 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
         if re.search(rf"(?m)^\s*{re.escape(forbidden)}\s*=", tenant_manifest):
             errors.append(f"ryframe-tenant-db must not depend on {forbidden}")
 
-    migration_manifest = read("crates/ryframe-tenant-db-migration/Cargo.toml")
-    if re.search(r"(?m)^\s*ryframe-db-migration\s*=", migration_manifest):
-        errors.append("tenant-data migrator must not depend on the control migrator")
+    if re.search(r"(?m)^\s*ryframe-db-migration\s*=", tenant_manifest):
+        errors.append("tenant-data migration module must not depend on the control migrator")
 
     service_template = read("crates/ryframe-generator/src/template/service.rs")
     repository_template = read("crates/ryframe-generator/src/template/repository.rs")
@@ -557,12 +556,12 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
             )
 
     generated_catalog = read(
-        "crates/ryframe-tenant-db-migration/src/generated_catalog.rs"
+        "crates/ryframe-tenant-db/src/migration/generated_catalog.rs"
     )
-    migration_lib = read("crates/ryframe-tenant-db-migration/src/lib.rs")
-    migration_catalog = read("crates/ryframe-tenant-db-migration/src/catalog.rs")
-    if "mod generated_catalog;" not in migration_lib:
-        errors.append("tenant-data generated catalog is not compiled into the migrator")
+    migration_module = read("crates/ryframe-tenant-db/src/migration/mod.rs")
+    migration_catalog = read("crates/ryframe-tenant-db/src/migration/catalog.rs")
+    if "mod generated_catalog;" not in migration_module:
+        errors.append("tenant-data generated catalog is not compiled into the migration module")
     for fragment in (
         "GENERATED_TENANT_DATA_TABLES",
         "GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT",

@@ -59,11 +59,9 @@ impl TenantDatabaseRouter {
     pub async fn open_target_for_catalog(
         &self,
         target_key: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<TenantDataTargetHandle, TenantDataError> {
-        if catalog.schema_fingerprint()
-            == ryframe_tenant_db_migration::TENANT_DATA_SCHEMA_FINGERPRINT
-        {
+        if catalog.schema_fingerprint() == crate::migration::TENANT_DATA_SCHEMA_FINGERPRINT {
             return self.open_target(target_key).await;
         }
         let mode = self.inner.targets.target_mode(target_key).ok_or_else(|| {
@@ -88,17 +86,14 @@ impl TenantDatabaseRouter {
     }
 
     pub async fn verify_target_now(&self, target_key: &str) -> Result<(), TenantDataError> {
-        self.verify_target_now_for_catalog(
-            target_key,
-            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
-        )
-        .await
+        self.verify_target_now_for_catalog(target_key, &crate::migration::TENANT_DATA_CATALOG)
+            .await
     }
 
     pub async fn verify_target_now_for_catalog(
         &self,
         target_key: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let mode = self.inner.targets.target_mode(target_key).ok_or_else(|| {
             TenantDataError::UnknownTarget {
@@ -133,7 +128,7 @@ impl TenantDatabaseRouter {
                         verify_schema_for_catalog(
                             control.write(),
                             target_key,
-                            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+                            &crate::migration::TENANT_DATA_CATALOG,
                         )
                         .await
                     })
@@ -165,7 +160,7 @@ impl TenantDatabaseRouter {
                 &database,
                 target_key,
                 mode,
-                &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+                &crate::migration::TENANT_DATA_CATALOG,
                 false,
             )
             .await?;
@@ -178,7 +173,7 @@ impl TenantDatabaseRouter {
         database: &SessionDatabase,
         target_key: &str,
         mode: TenantDatabaseTargetMode,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
         force: bool,
     ) -> Result<(), TenantDataError> {
         let result = match database {
@@ -288,16 +283,16 @@ impl TenantDataTargetHandle {
     }
 
     pub fn schema_fingerprint(&self) -> &'static str {
-        ryframe_tenant_db_migration::TENANT_DATA_SCHEMA_FINGERPRINT
+        crate::migration::TENANT_DATA_SCHEMA_FINGERPRINT
     }
 }
 
 async fn verify_schema_for_catalog(
     database: &DatabaseConnection,
     target_key: &str,
-    catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+    catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<(), TenantDataError> {
-    ryframe_tenant_db_migration::verify_for_catalog(database, catalog)
+    crate::migration::verify_for_catalog(database, catalog)
         .await
         .map_err(|error| {
             tracing::warn!(

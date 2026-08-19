@@ -64,7 +64,7 @@ async fn register_backup(
         config.database.sql_slow_threshold_ms,
     )?;
     router.verify_target_now(&args.target).await?;
-    if args.schema_fingerprint != ryframe_tenant_db_migration::TENANT_DATA_SCHEMA_FINGERPRINT {
+    if args.schema_fingerprint != ryframe_tenant_db::migration::TENANT_DATA_SCHEMA_FINGERPRINT {
         return Err("schema fingerprint does not match the compiled tenant-data catalog".into());
     }
 

@@ -80,7 +80,7 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
         col_infos.push(col_info);
     }
 
-    ryframe_tenant_db_migration::verify_mysql_80(db)
+    ryframe_tenant_db::migration::verify_mysql_80(db)
         .await
         .map_err(|_| AppError::Validation("代码生成要求 MySQL 8.0.16 或更高版本".into()))?;
     let table_comment = query_table_comment(db, table_name).await?;
@@ -92,7 +92,7 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
         .collect::<Vec<_>>();
     foreign_key_dependencies.sort_unstable();
     foreign_key_dependencies.dedup();
-    let schema_canonical = ryframe_tenant_db_migration::canonical_table_schema(db, table_name)
+    let schema_canonical = ryframe_tenant_db::migration::canonical_table_schema(db, table_name)
         .await
         .map_err(|error| AppError::Database(format!("规范化业务表结构失败: {error}")))?;
 

@@ -163,7 +163,7 @@ impl TenantDataMigrationService {
     async fn copy_table_in_batches(
         &self,
         migration: &tenant_data_migration::Model,
-        descriptor: &ryframe_tenant_db_migration::TenantDataTableDescriptor,
+        descriptor: &ryframe_tenant_db::migration::TenantDataTableDescriptor,
         source: &TenantDataTargetHandle,
         target: &TenantDataTargetHandle,
         mut item: tenant_data_migration_item::Model,
@@ -307,7 +307,7 @@ impl TenantDataMigrationService {
         &self,
         migration: &tenant_data_migration::Model,
         target: &TenantDataTargetHandle,
-        descriptor: &ryframe_tenant_db_migration::TenantDataTableDescriptor,
+        descriptor: &ryframe_tenant_db::migration::TenantDataTableDescriptor,
     ) -> AppResult<(i64, String)> {
         table_digest_in_batches(self, migration, target, descriptor).await
     }
@@ -317,7 +317,7 @@ const COPY_BATCH_SIZE: usize = 500;
 
 async fn write_target_batch(
     migration: &tenant_data_migration::Model,
-    descriptor: &ryframe_tenant_db_migration::TenantDataTableDescriptor,
+    descriptor: &ryframe_tenant_db::migration::TenantDataTableDescriptor,
     target: &TenantDataTargetHandle,
     rows: &[Vec<Option<String>>],
 ) -> AppResult<()> {
@@ -412,7 +412,7 @@ async fn table_digest_in_batches(
     service: &TenantDataMigrationService,
     migration: &tenant_data_migration::Model,
     target: &TenantDataTargetHandle,
-    descriptor: &ryframe_tenant_db_migration::TenantDataTableDescriptor,
+    descriptor: &ryframe_tenant_db::migration::TenantDataTableDescriptor,
 ) -> AppResult<(i64, String)> {
     let select_columns = descriptor
         .checksum_columns
@@ -505,7 +505,7 @@ fn binary_cursor_columns(columns: &[&str]) -> String {
 async fn verify_foreign_keys(
     migration: &tenant_data_migration::Model,
     target: &TenantDataTargetHandle,
-    descriptor: &ryframe_tenant_db_migration::TenantDataTableDescriptor,
+    descriptor: &ryframe_tenant_db::migration::TenantDataTableDescriptor,
 ) -> AppResult<()> {
     for foreign_key in descriptor.foreign_keys {
         let join = foreign_key

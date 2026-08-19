@@ -4,6 +4,7 @@
 //! `database.sources` 仍由控制库集群显式管理，不进入本路由器。
 
 mod error;
+pub mod migration;
 mod placement;
 mod placement_repo;
 mod registry;

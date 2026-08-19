@@ -5,17 +5,14 @@ impl TenantDatabaseRouter {
         &self,
         target_key: &str,
     ) -> Result<Option<TenantDataTargetOccupancy>, TenantDataError> {
-        self.target_occupancy_for_catalog(
-            target_key,
-            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
-        )
-        .await
+        self.target_occupancy_for_catalog(target_key, &crate::migration::TENANT_DATA_CATALOG)
+            .await
     }
 
     pub async fn target_occupancy_for_catalog(
         &self,
         target_key: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<Option<TenantDataTargetOccupancy>, TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         if handle.mode != TenantDatabaseTargetMode::Dedicated {
@@ -60,7 +57,7 @@ impl TenantDatabaseRouter {
         self.tenant_is_empty_on_target_for_catalog(
             target_key,
             tenant_id,
-            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+            &crate::migration::TENANT_DATA_CATALOG,
         )
         .await
     }
@@ -69,7 +66,7 @@ impl TenantDatabaseRouter {
         &self,
         target_key: &str,
         tenant_id: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<bool, TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         let fence = FenceRow::find_by_statement(Statement::from_sql_and_values(
@@ -124,7 +121,7 @@ impl TenantDatabaseRouter {
             target_key,
             placement_generation,
             switch_token,
-            &ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+            &crate::migration::TENANT_DATA_CATALOG,
         )
         .await
     }
@@ -137,7 +134,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         let provision = self.prepare_fence_provision(
@@ -163,7 +160,7 @@ async fn prepare_frozen_fence_in_transaction(
     transaction: &DatabaseTransaction,
     provision: &FenceProvision,
     target_mode: TenantDatabaseTargetMode,
-    catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+    catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<(), TenantDataError> {
     let slot = if target_mode == TenantDatabaseTargetMode::Dedicated {
         Some(lock_target_slot(transaction, &provision.target_key).await?)
@@ -227,7 +224,7 @@ async fn tenant_catalog_rows_exist<C>(
     connection: &C,
     tenant_id: &str,
     target_key: &str,
-    catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+    catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<bool, TenantDataError>
 where
     C: ConnectionTrait,

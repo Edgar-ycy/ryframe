@@ -178,7 +178,7 @@ impl TenantDatabasePoolLease {
             .pool
             .schema_verification
             .get_or_init(|| async {
-                ryframe_tenant_db_migration::verify_mysql_target(&self.pool.connection)
+                crate::migration::verify_mysql_target(&self.pool.connection)
                     .await
                     .map_err(|error| {
                         tracing::warn!(
@@ -215,7 +215,7 @@ impl TenantDatabasePoolLease {
     /// 不把首次 OnceCell 当作长期健康证明。
     pub async fn verify_schema_now_for_catalog(
         &self,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let _guard = self.pool.fresh_schema_verification.lock().await;
         self.verify_schema_locked(catalog).await
@@ -223,7 +223,7 @@ impl TenantDatabasePoolLease {
 
     pub async fn verify_schema_if_stale_for_catalog(
         &self,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
         max_age: Duration,
     ) -> Result<bool, TenantDataError> {
         let _guard = self.pool.fresh_schema_verification.lock().await;
@@ -245,7 +245,7 @@ impl TenantDatabasePoolLease {
 
     async fn verify_schema_locked(
         &self,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let result = async {
             ryframe_db::connection::ping(&self.pool.connection)
@@ -253,7 +253,7 @@ impl TenantDatabasePoolLease {
                 .map_err(|_| TenantDataError::TargetUnavailable {
                     target_key: self.target_key.to_string(),
                 })?;
-            ryframe_tenant_db_migration::verify_mysql_target_for_catalog(
+            crate::migration::verify_mysql_target_for_catalog(
                 &self.pool.connection,
                 catalog,
             )
@@ -489,9 +489,7 @@ impl TenantDatabaseTargetRegistry {
                     // fingerprint off the authoritative health record instead.
                     schema_fingerprint: (health.status
                         == TenantDatabaseTargetHealthStatus::Verified)
-                        .then(|| {
-                            ryframe_tenant_db_migration::TENANT_DATA_SCHEMA_FINGERPRINT.to_owned()
-                        }),
+                        .then(|| crate::migration::TENANT_DATA_SCHEMA_FINGERPRINT.to_owned()),
                     health: health.status,
                     last_verified_at: health.last_verified_at,
                 }

@@ -25,7 +25,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         self.set_fence_state_with_handle(
@@ -64,7 +64,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         self.set_fence_state_with_handle(
@@ -86,7 +86,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        catalog: &ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<(), TenantDataError> {
         let handle = self.open_target_for_catalog(target_key, catalog).await?;
         let provision = self.prepare_fence_provision(

@@ -3190,7 +3190,6 @@ dependencies = [
  "ryframe-monitor",
  "ryframe-storage",
  "ryframe-tenant-db",
- "ryframe-tenant-db-migration",
  "ryframe-utils",
  "sea-orm",
  "sha2 0.11.0",
@@ -3284,7 +3283,6 @@ dependencies = [
  "ryframe-middleware",
  "ryframe-storage",
  "ryframe-tenant-db",
- "ryframe-tenant-db-migration",
  "ryframe-utils",
  "sea-orm",
  "serde",
@@ -3374,7 +3372,7 @@ name = "ryframe-generator"
 version = "0.10.0"
 dependencies = [
  "ryframe-kernel",
- "ryframe-tenant-db-migration",
+ "ryframe-tenant-db",
  "sea-orm",
  "serde",
  "tokio",
@@ -3485,25 +3483,17 @@ dependencies = [
 name = "ryframe-tenant-db"
 version = "0.10.0"
 dependencies = [
+ "async-trait",
+ "hex",
  "ryframe-adapters",
  "ryframe-config",
  "ryframe-db",
- "ryframe-tenant-db-migration",
- "sea-orm",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ryframe-tenant-db-migration"
-version = "0.10.0"
-dependencies = [
- "async-trait",
- "hex",
  "sea-orm",
  "sea-orm-migration",
  "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

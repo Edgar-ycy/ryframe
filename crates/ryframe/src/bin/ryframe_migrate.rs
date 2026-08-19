@@ -159,27 +159,27 @@ async fn run_tenant_data_operation(
     match operation {
         Operation::Up => {
             if mysql_target {
-                ryframe_tenant_db_migration::ensure_mysql_target_boundary(database).await?;
+                ryframe_tenant_db::migration::ensure_mysql_target_boundary(database).await?;
             }
-            ryframe_tenant_db_migration::up(database).await?;
+            ryframe_tenant_db::migration::up(database).await?;
             if mysql_target {
-                ryframe_tenant_db_migration::verify_mysql_target(database).await?;
+                ryframe_tenant_db::migration::verify_mysql_target(database).await?;
             }
             println!("scope=tenant-data target={target} migration=completed schema=verified");
         }
         Operation::Verify => {
             if mysql_target {
-                ryframe_tenant_db_migration::verify_mysql_target(database).await?;
+                ryframe_tenant_db::migration::verify_mysql_target(database).await?;
             } else {
-                ryframe_tenant_db_migration::verify(database).await?;
+                ryframe_tenant_db::migration::verify(database).await?;
             }
             println!("scope=tenant-data target={target} migration_ledger=current schema=verified");
         }
         Operation::Status => {
             if mysql_target {
-                ryframe_tenant_db_migration::ensure_mysql_target_boundary(database).await?;
+                ryframe_tenant_db::migration::ensure_mysql_target_boundary(database).await?;
             }
-            let status = ryframe_tenant_db_migration::status(database).await?;
+            let status = ryframe_tenant_db::migration::status(database).await?;
             print_tenant_data_status(&format!("tenant-data/{target}"), &status);
         }
     }
@@ -195,7 +195,7 @@ fn print_control_status(scope: &str, status: &ryframe_db_migration::MigrationSta
     );
 }
 
-fn print_tenant_data_status(scope: &str, status: &ryframe_tenant_db_migration::MigrationStatus) {
+fn print_tenant_data_status(scope: &str, status: &ryframe_tenant_db::migration::MigrationStatus) {
     println!(
         "scope={scope} applied={} expected={} up_to_date={} schema_fingerprint={}",
         status.applied,

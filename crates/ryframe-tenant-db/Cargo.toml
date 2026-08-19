@@ -12,8 +12,11 @@ description.workspace = true
 ryframe-config = { path = "../ryframe-config" }
 ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-db = { path = "../ryframe-db" }
-ryframe-tenant-db-migration = { path = "../ryframe-tenant-db-migration" }
+async-trait = { workspace = true }
+hex = { workspace = true }
 sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }

@@ -44,7 +44,7 @@ pub struct TenantDataMigrationService {
     pub(super) authorization_cache: AuthorizationCache,
     pub(super) repository: TenantDataRepository,
     pub(super) lease_repository: Arc<TenantOperationLeaseRepository>,
-    pub(super) catalog: ryframe_tenant_db_migration::TenantDataCatalog,
+    pub(super) catalog: ryframe_tenant_db::migration::TenantDataCatalog,
 }
 
 impl TenantDataMigrationService {
@@ -61,7 +61,7 @@ impl TenantDataMigrationService {
             authorization_cache,
             repository: TenantDataRepository,
             lease_repository: Arc::new(TenantOperationLeaseRepository),
-            catalog: ryframe_tenant_db_migration::TENANT_DATA_CATALOG,
+            catalog: ryframe_tenant_db::migration::TENANT_DATA_CATALOG,
         }
     }
 
@@ -69,7 +69,7 @@ impl TenantDataMigrationService {
     #[doc(hidden)]
     pub fn with_catalog_for_tests(
         mut self,
-        catalog: ryframe_tenant_db_migration::TenantDataCatalog,
+        catalog: ryframe_tenant_db::migration::TenantDataCatalog,
     ) -> AppResult<Self> {
         catalog.validate_structure().map_err(AppError::Config)?;
         self.catalog = catalog;

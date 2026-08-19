@@ -64,7 +64,7 @@ pub fn render_catalog(tables: &[&TableInfo]) -> String {
                 .iter()
                 .map(|column| column.name.clone())
                 .collect::<Vec<_>>();
-            canonical_entries.push(ryframe_tenant_db_migration::catalog_entry_canonical(
+            canonical_entries.push(ryframe_tenant_db::migration::catalog_entry_canonical(
                 &table.table_name,
                 ((index + 1) * 10) as u32,
                 "tenant_id",
@@ -98,12 +98,12 @@ pub fn render_catalog(tables: &[&TableInfo]) -> String {
         .join("\n");
 
     let fingerprint =
-        ryframe_tenant_db_migration::schema_fingerprint_for_catalog(&canonical_entries);
+        ryframe_tenant_db::migration::schema_fingerprint_for_catalog(&canonical_entries);
     format!(
         r#"// 此文件由 ryframe-generator v{version} 自动生成。
-// 将该切片合并到 ryframe-tenant-db-migration 的编译期 TenantDataCatalog，
+// 将该切片合并到 ryframe-tenant-db 的编译期 TenantDataCatalog，
 // 并随 tenant-data migration 一起提交；未注册的业务表不得上线。
-use crate::TenantDataTableDescriptor;
+use super::catalog::TenantDataTableDescriptor;
 
 pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[
 {descriptors}

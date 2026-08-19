@@ -8,24 +8,19 @@ max_lines = 1000
 
 # 生成文件必须精确登记，并保留可验证的生成标记；禁止按目录名宽泛排除。
 [[source_size.generated_exclusions]]
-path = "crates/ryframe-tenant-db-migration/src/generated_catalog.rs"
+path = "crates/ryframe-tenant-db/src/migration/generated_catalog.rs"
 required_marker = "此文件是 ryframe-generator 的编译输入"
 reason = "由代码生成器维护的租户数据 catalog"
 
 # 仅锁住已存在的超限文件，禁止继续增长；拆分到全局上限以内后必须删除对应豁免。
 [[source_size.legacy_exceptions]]
-path = "crates/ryframe-tenant-db-migration/src/lib.rs"
-max_lines = 1290
-reason = "租户迁移实现将在并入 ryframe-tenant-db 时拆分"
-
-[[source_size.legacy_exceptions]]
 path = "crates/ryframe-db-migration/src/schema.rs"
 max_lines = 1188
 reason = "控制库 schema 校验待随迁移能力并入 ryframe-db 后拆分"
 
-# 当前 20 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+# 当前 19 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
-expected_package_count = 20
+expected_package_count = 19
 run_tenant_data_legacy_checks = true
 packages = [
     "ryframe",
@@ -45,7 +40,6 @@ packages = [
     "ryframe-application",
     "ryframe-storage",
     "ryframe-tenant-db",
-    "ryframe-tenant-db-migration",
     "ryframe-utils",
     "xtask",
 ]
@@ -66,7 +60,6 @@ product_packages = [
     "ryframe-application",
     "ryframe-storage",
     "ryframe-tenant-db",
-    "ryframe-tenant-db-migration",
     "ryframe-utils",
 ]
 tool_packages = ["ryframe-generator", "xtask"]
@@ -83,7 +76,6 @@ allowed_internal_edges = [
     "ryframe -> ryframe-application",
     "ryframe -> ryframe-storage",
     "ryframe -> ryframe-tenant-db",
-    "ryframe -> ryframe-tenant-db-migration",
     "ryframe -> ryframe-utils",
     "ryframe-api -> ryframe-auth",
     "ryframe-api -> ryframe-config",
@@ -113,7 +105,7 @@ allowed_internal_edges = [
     "ryframe-db-migration -> ryframe-utils",
     "ryframe-excel -> ryframe-kernel",
     "ryframe-generator -> ryframe-kernel",
-    "ryframe-generator -> ryframe-tenant-db-migration",
+    "ryframe-generator -> ryframe-tenant-db",
     "ryframe-http -> ryframe-kernel",
     "ryframe-macro -> ryframe-adapters",
     "ryframe-middleware -> ryframe-auth",
@@ -137,12 +129,10 @@ allowed_internal_edges = [
     "ryframe-application -> ryframe-middleware",
     "ryframe-application -> ryframe-storage",
     "ryframe-application -> ryframe-tenant-db",
-    "ryframe-application -> ryframe-tenant-db-migration",
     "ryframe-application -> ryframe-utils",
     "ryframe-tenant-db -> ryframe-config",
     "ryframe-tenant-db -> ryframe-adapters",
     "ryframe-tenant-db -> ryframe-db",
-    "ryframe-tenant-db -> ryframe-tenant-db-migration",
     "ryframe-utils -> ryframe-kernel",
 ]
 

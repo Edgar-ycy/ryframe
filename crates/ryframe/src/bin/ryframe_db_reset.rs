@@ -52,8 +52,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let initialize_result: Result<(), Box<dyn std::error::Error>> = async {
         ryframe_db_migration::up(&database).await?;
         // 开发重置后的 shared-control 同时承载控制面与租户数据面，两套独立账本都要安装。
-        ryframe_tenant_db_migration::up(&database).await?;
-        ryframe_tenant_db_migration::verify(&database).await?;
+        ryframe_tenant_db::migration::up(&database).await?;
+        ryframe_tenant_db::migration::verify(&database).await?;
         update_password(&database, "admin", admin_hash).await?;
         update_password(&database, "user", user_hash).await?;
         Ok(())
