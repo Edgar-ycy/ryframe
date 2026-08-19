@@ -481,9 +481,6 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
         if re.search(rf"(?m)^\s*{re.escape(forbidden)}\s*=", tenant_manifest):
             errors.append(f"ryframe-tenant-db must not depend on {forbidden}")
 
-    if re.search(r"(?m)^\s*ryframe-db-migration\s*=", tenant_manifest):
-        errors.append("tenant-data migration module must not depend on the control migrator")
-
     use_case_template = read("crates/ryframe-generator/src/template/use_case.rs")
     repository_template = read("crates/ryframe-generator/src/template/repository.rs")
     tenant_data_repository = read(

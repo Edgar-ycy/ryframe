@@ -4,6 +4,7 @@ pub mod data_scope;
 pub mod database_monitor;
 pub mod entities;
 mod execution_tenant_scope;
+pub mod migration;
 pub mod pagination;
 pub mod repositories;
 pub mod sql_logger;

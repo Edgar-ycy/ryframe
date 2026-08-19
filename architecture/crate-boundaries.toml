@@ -14,13 +14,13 @@ reason = "由代码生成器维护的租户数据 catalog"
 
 # 仅锁住已存在的超限文件，禁止继续增长；拆分到全局上限以内后必须删除对应豁免。
 [[source_size.legacy_exceptions]]
-path = "crates/ryframe-db-migration/src/schema.rs"
+path = "crates/ryframe-db/src/migration/schema.rs"
 max_lines = 1188
 reason = "控制库 schema 校验待随迁移能力并入 ryframe-db 后拆分"
 
-# 当前 19 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+# 当前 18 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
-expected_package_count = 19
+expected_package_count = 18
 run_tenant_data_legacy_checks = true
 packages = [
     "ryframe",
@@ -29,7 +29,6 @@ packages = [
     "ryframe-config",
     "ryframe-adapters",
     "ryframe-db",
-    "ryframe-db-migration",
     "ryframe-excel",
     "ryframe-generator",
     "ryframe-http",
@@ -50,7 +49,6 @@ product_packages = [
     "ryframe-config",
     "ryframe-adapters",
     "ryframe-db",
-    "ryframe-db-migration",
     "ryframe-excel",
     "ryframe-http",
     "ryframe-kernel",
@@ -69,7 +67,6 @@ allowed_internal_edges = [
     "ryframe -> ryframe-config",
     "ryframe -> ryframe-adapters",
     "ryframe -> ryframe-db",
-    "ryframe -> ryframe-db-migration",
     "ryframe -> ryframe-kernel",
     "ryframe -> ryframe-middleware",
     "ryframe -> ryframe-monitor",
@@ -102,7 +99,6 @@ allowed_internal_edges = [
     "ryframe-db -> ryframe-kernel",
     "ryframe-db -> ryframe-macro",
     "ryframe-db -> ryframe-utils",
-    "ryframe-db-migration -> ryframe-utils",
     "ryframe-excel -> ryframe-kernel",
     "ryframe-generator -> ryframe-kernel",
     "ryframe-generator -> ryframe-tenant-db",

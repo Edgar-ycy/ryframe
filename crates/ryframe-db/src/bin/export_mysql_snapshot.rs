@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&output, ryframe_db_migration::mysql_snapshot_sql())?;
+    std::fs::write(&output, ryframe_db::migration::mysql_snapshot_sql())?;
     println!("wrote {}", output.display());
     Ok(())
 }

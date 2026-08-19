@@ -87,7 +87,7 @@ jobs:
           generated_openapi="$RUNNER_TEMP/openapi.json"
           generated_mysql="$RUNNER_TEMP/ryframe_config.sql"
           cargo run --locked -p ryframe-api --bin export_openapi -- "$generated_openapi"
-          cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- "$generated_mysql"
+          cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- "$generated_mysql"
           diff --unified openapi/openapi.json "$generated_openapi"
           diff --unified sql/ryframe_config.sql "$generated_mysql"
 

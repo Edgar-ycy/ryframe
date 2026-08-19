@@ -38,7 +38,7 @@ impl MigrationTrait for Migration {
             }
         }
         if existing.len() == REQUIRED_TABLES.len() {
-            crate::schema::verify_legacy_schema(manager.get_connection()).await?;
+            crate::migration::schema::verify_legacy_schema(manager.get_connection()).await?;
             return Ok(());
         }
         if !existing.is_empty() {
@@ -53,7 +53,8 @@ impl MigrationTrait for Migration {
             )));
         }
 
-        let unrelated_tables = crate::schema::user_tables(manager.get_connection()).await?;
+        let unrelated_tables =
+            crate::migration::schema::user_tables(manager.get_connection()).await?;
         if !unrelated_tables.is_empty() {
             return Err(DbErr::Custom(format!(
                 "database is not empty and does not contain a RyFrame schema; refusing baseline migration; existing tables: {}",
@@ -891,10 +892,18 @@ pub(crate) fn ddl_statements() -> impl Iterator<Item = &'static str> {
         .iter()
         .copied()
         .filter(|statement| !is_seed_statement(statement))
-        .chain(crate::m20260811_000024_data_lifecycle::lifecycle_table_statements())
-        .chain(crate::m20260812_000025_tenant_config_transfer::tenant_config_table_statements())
-        .chain(crate::m20260817_000029_product_capabilities::product_capability_table_statements())
-        .chain(crate::m20260817_000030_tenant_data_control::tenant_data_control_table_statements())
+        .chain(
+            crate::migration::m20260811_000024_data_lifecycle::lifecycle_table_statements(),
+        )
+        .chain(
+            crate::migration::m20260812_000025_tenant_config_transfer::tenant_config_table_statements(),
+        )
+        .chain(
+            crate::migration::m20260817_000029_product_capabilities::product_capability_table_statements(),
+        )
+        .chain(
+            crate::migration::m20260817_000030_tenant_data_control::tenant_data_control_table_statements(),
+        )
 }
 
 pub(crate) fn seed_statements() -> impl Iterator<Item = &'static str> {

@@ -283,7 +283,7 @@ async fn validate_replica(
 
 /// 按当前迁移账本校验列、索引和外键，账本落后时同样拒绝路由。
 async fn verify_database_node(node: &str, db: &DatabaseConnection) -> Result<(), AppError> {
-    ryframe_db_migration::verify(db).await.map_err(|error| {
+    ryframe_db::migration::verify(db).await.map_err(|error| {
         AppError::Internal(format!(
             "database node {node} migration and schema verification failed: {error}"
         ))

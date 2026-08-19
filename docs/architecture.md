@@ -37,8 +37,7 @@ GET /api/v1/api-docs/openapi.json
 | `ryframe` | API、`ryframe-worker`、`ryframe-migrate` 可执行入口，负责配置加载、依赖装配和服务启动 |
 | `ryframe-api` | Router、Handler、传输 DTO、OpenAPI、请求语言与消息 WebSocket 组合策略 |
 | `ryframe-service` | 应用用例、业务规则、输出模型和 Repository 编排 |
-| `ryframe-db` | 控制库 SeaORM Entity、Repository、数据范围查询、主库/副本和命名数据源拓扑 |
-| `ryframe-db-migration` | 控制库可重复执行迁移 |
+| `ryframe-db` | 控制库 SeaORM Entity、Repository、数据范围查询、主库/副本、命名数据源拓扑和可重复执行迁移 |
 | `ryframe-tenant-db` | 租户业务数据目标注册、连接预算、放置解析、fence、`TenantDataSession`、独立迁移账本、Schema 指纹与 `TenantDataCatalog` |
 | `ryframe-auth` | JWT、密码、认证中间件、`RequestPrincipal` 和主体解析端口 |
 | `ryframe-middleware` | CORS、限流、请求 ID、遥测等横切 HTTP 能力 |
@@ -370,7 +369,7 @@ python scripts/check_permission_routes.py
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --lib --bins -- -D warnings
 cargo run --locked -p ryframe-api --bin export_openapi -- "$RUNNER_TEMP/openapi.json"
-cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- "$RUNNER_TEMP/ryframe_config.sql"
+cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- "$RUNNER_TEMP/ryframe_config.sql"
 diff --unified openapi/openapi.json "$RUNNER_TEMP/openapi.json"
 diff --unified sql/ryframe_config.sql "$RUNNER_TEMP/ryframe_config.sql"
 cargo audit --deny warnings
@@ -384,7 +383,7 @@ cargo deny check licenses bans sources
 
 ```bash
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
-cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
+cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql
 cargo xtask check --scope backend
 ```
 

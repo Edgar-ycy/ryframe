@@ -42,10 +42,10 @@ async fn main() -> Result<(), AppError> {
     let database = boot::datasource::connect(&config).await?;
     install_database_metrics(&database);
     match config.database.migration_mode {
-        MigrationMode::Auto => ryframe_db_migration::up(database.write())
+        MigrationMode::Auto => ryframe_db::migration::up(database.write())
             .await
             .map_err(|error| AppError::Database(format!("database migration failed: {error}")))?,
-        MigrationMode::Verify => ryframe_db_migration::verify(database.write())
+        MigrationMode::Verify => ryframe_db::migration::verify(database.write())
             .await
             .map_err(|error| {
                 AppError::Database(format!("database migration verification failed: {error}"))

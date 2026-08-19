@@ -3184,7 +3184,6 @@ dependencies = [
  "ryframe-auth",
  "ryframe-config",
  "ryframe-db",
- "ryframe-db-migration",
  "ryframe-kernel",
  "ryframe-middleware",
  "ryframe-monitor",
@@ -3339,21 +3338,12 @@ dependencies = [
  "ryframe-macro",
  "ryframe-utils",
  "sea-orm",
+ "sea-orm-migration",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "ryframe-db-migration"
-version = "0.10.0"
-dependencies = [
- "async-trait",
- "ryframe-utils",
- "sea-orm",
- "sea-orm-migration",
 ]
 
 [[package]]

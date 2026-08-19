@@ -104,7 +104,7 @@ cargo check --workspace --lib --bins
 cargo fmt --all -- --check
 cargo clippy --workspace --lib --bins -- -D warnings
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
-cargo run --locked -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
+cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql
 # 部署环境按需从稳定标签源码构建不含 Swagger UI 的 Linux API 可执行文件
 cross build --release --no-default-features --target x86_64-unknown-linux-gnu -p ryframe --bin ryframe
 ```
@@ -132,8 +132,7 @@ cargo run -p ryframe --bin ryframe-db-reset -- `
 │   ├── ryframe/              # 应用、迁移与独立 Worker 的可执行入口
 │   ├── ryframe-api/          # HTTP 路由、处理器、DTO、OpenAPI 与消息 WebSocket
 │   ├── ryframe-service/      # 业务用例、后台任务与消息中心
-│   ├── ryframe-db/           # SeaORM 实体、仓储、事务和数据库拓扑
-│   ├── ryframe-db-migration/ # 数据库迁移
+│   ├── ryframe-db/           # SeaORM 实体、仓储、事务、数据库拓扑和控制库迁移
 │   ├── ryframe-auth/         # 认证、授权、权限中间件
 │   ├── ryframe-kernel/       # 传输无关的领域类型、错误码与主体上下文
 │   ├── ryframe-http/         # HTTP 错误映射与统一响应信封

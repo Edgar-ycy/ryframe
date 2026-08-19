@@ -55,7 +55,7 @@ async fn register_backup(
     primary: sea_orm::DatabaseConnection,
     args: BackupRegisterArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ryframe_db_migration::verify(&primary).await?;
+    ryframe_db::migration::verify(&primary).await?;
     let control = ControlDatabaseCluster::single(primary.clone());
     let router = TenantDatabaseRouter::new(
         control,

@@ -9,7 +9,7 @@
 - 连接池：SeaORM/SQLx 异步连接池。
 - 应用模型：每个进程建立一个主库连接池、零到多个命名只读副本连接池，以及零到多个显式命名业务数据源连接池。
 - 租户模型：共享表通过 `tenant_id` 隔离。
-- 结构演进：`ryframe-db-migration` 是基线和增量迁移的唯一可执行事实来源；`sql/` 只保留便于审查的 MySQL 快照。
+- 结构演进：`ryframe-db::migration` 是基线和增量迁移的唯一可执行事实来源；`sql/` 只保留便于审查的 MySQL 快照。
 
 当前拓扑明确区分自动读写路由和显式业务数据源：
 
@@ -180,8 +180,7 @@ APP_DATABASE_SQL_SLOW_THRESHOLD_MS
 | `crates/ryframe-db/src/entities/` | SeaORM 实体和关系 |
 | `crates/ryframe-db/src/repositories/` | 查询、租户过滤、软删除和持久化 |
 | `crates/ryframe-db/src/cluster.rs` | 主库/副本池、命名业务数据源、读轮询和拓扑健康状态 |
-| `crates/ryframe-db/src/migration/` | 与数据库 crate 同属的数据规则辅助模块 |
-| `crates/ryframe-db-migration/src/` | 启动时执行的增量迁移 |
+| `crates/ryframe-db/src/migration/` | 控制库基线、增量迁移、账本校验和 schema 指纹 |
 | `crates/ryframe/src/boot/datasource.rs` | 连接主库和业务数据源；以受限超时持续连接、探测并校验副本结构 |
 | `sql/` | 由迁移基线对齐的只读审查快照，不作为运行时输入 |
 | `crates/ryframe-service/` | 事务边界、业务校验和 Entity 到 Output 的转换 |

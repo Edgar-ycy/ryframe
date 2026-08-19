@@ -83,15 +83,15 @@ async fn run_control(
     let result = async {
         match operation {
             Operation::Up => {
-                ryframe_db_migration::up(&database).await?;
+                ryframe_db::migration::up(&database).await?;
                 println!("scope=control migration=completed schema=verified");
             }
             Operation::Verify => {
-                ryframe_db_migration::verify(&database).await?;
+                ryframe_db::migration::verify(&database).await?;
                 println!("scope=control migration_ledger=current schema=verified");
             }
             Operation::Status => {
-                let status = ryframe_db_migration::status(&database).await?;
+                let status = ryframe_db::migration::status(&database).await?;
                 print_control_status("control", &status);
             }
         }
@@ -186,7 +186,7 @@ async fn run_tenant_data_operation(
     Ok(())
 }
 
-fn print_control_status(scope: &str, status: &ryframe_db_migration::MigrationStatus) {
+fn print_control_status(scope: &str, status: &ryframe_db::migration::MigrationStatus) {
     println!(
         "scope={scope} applied={} expected={} up_to_date={}",
         status.applied,

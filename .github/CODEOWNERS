@@ -5,5 +5,5 @@
 /config/ @Edgar-ycy
 /crates/ryframe-auth/ @Edgar-ycy
 /crates/ryframe-config/ @Edgar-ycy
-/crates/ryframe-db-migration/ @Edgar-ycy
+/crates/ryframe-db/src/migration/ @Edgar-ycy
 /.github/ @Edgar-ycy

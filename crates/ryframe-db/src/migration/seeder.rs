@@ -1,6 +1,6 @@
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
-use crate::m20260522_000000_mysql_baseline::{ddl_statements, seed_statements};
+use crate::migration::m20260522_000000_mysql_baseline::{ddl_statements, seed_statements};
 
 /// 插入规范的引导记录，而不覆盖运行中的变更。
 ///
@@ -17,14 +17,17 @@ where
         db.execute_unprepared(&idempotent_upsert(statement)?)
             .await?;
     }
-    crate::m20260726_000010_message_job_permissions::seed_permissions(db).await?;
-    crate::m20260809_000022_job_schedules::seed_schedule_management(db).await?;
-    crate::m20260811_000024_data_lifecycle::seed_lifecycle_management(db).await?;
-    crate::m20260812_000025_tenant_config_transfer::seed_tenant_config_management(db).await?;
-    crate::m20260813_000026_tenant_usage_governance::seed_tenant_usage_governance(db).await?;
-    crate::m20260813_000027_service_accounts::seed_service_account_management(db).await?;
-    crate::m20260817_000029_product_capabilities::seed_product_capabilities(db).await?;
-    crate::m20260817_000030_tenant_data_control::seed_tenant_data_placements(db).await?;
+    crate::migration::m20260726_000010_message_job_permissions::seed_permissions(db).await?;
+    crate::migration::m20260809_000022_job_schedules::seed_schedule_management(db).await?;
+    crate::migration::m20260811_000024_data_lifecycle::seed_lifecycle_management(db).await?;
+    crate::migration::m20260812_000025_tenant_config_transfer::seed_tenant_config_management(db)
+        .await?;
+    crate::migration::m20260813_000026_tenant_usage_governance::seed_tenant_usage_governance(db)
+        .await?;
+    crate::migration::m20260813_000027_service_accounts::seed_service_account_management(db)
+        .await?;
+    crate::migration::m20260817_000029_product_capabilities::seed_product_capabilities(db).await?;
+    crate::migration::m20260817_000030_tenant_data_control::seed_tenant_data_placements(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
 }
@@ -32,23 +35,27 @@ where
 pub fn mysql_snapshot_sql() -> String {
     let mut snapshot = String::from(
         "-- 自动生成文件：RyFrame v0.5 规范 MySQL 架构快照。\n\
-         -- 唯一事实来源：ryframe-db-migration Migrator 与 Seeder。\n\
+         -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。\n\
          -- 仅供审阅：部署和重置工具不得执行此文件。\n\
-         -- 重新生成命令：cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
+         -- 重新生成命令：cargo run -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
     );
     for statement in ddl_statements() {
         let statement =
-            crate::m20260806_000021_message_recipient_soft_delete::current_snapshot_statement(
+            crate::migration::m20260806_000021_message_recipient_soft_delete::current_snapshot_statement(statement);
+        let statement =
+            crate::migration::m20260813_000026_tenant_usage_governance::current_snapshot_statement(
                 statement,
             );
         let statement =
-            crate::m20260813_000026_tenant_usage_governance::current_snapshot_statement(statement);
-        let statement =
-            crate::m20260813_000027_service_accounts::current_snapshot_statement(&statement);
+            crate::migration::m20260813_000027_service_accounts::current_snapshot_statement(
+                &statement,
+            );
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }
-    for statement in crate::m20260813_000027_service_accounts::service_account_table_statements() {
+    for statement in
+        crate::migration::m20260813_000027_service_accounts::service_account_table_statements()
+    {
         snapshot.push_str(statement.trim());
         snapshot.push_str(";\n\n");
     }

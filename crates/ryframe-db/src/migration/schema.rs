@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
-use crate::m20260522_000000_mysql_baseline::ddl_statements;
+use crate::migration::m20260522_000000_mysql_baseline::ddl_statements;
 
 mod export_job;
 use export_job::EXPORT_JOB_DDL;
@@ -547,7 +547,9 @@ fn expected_schema() -> Result<ExpectedSchema, DbErr> {
     let mut schema = ExpectedSchema::default();
     for statement in ddl_statements()
         .chain([OUTBOX_EVENT_DDL, EXPORT_JOB_DDL])
-        .chain(crate::m20260813_000027_service_accounts::service_account_table_statements())
+        .chain(
+            crate::migration::m20260813_000027_service_accounts::service_account_table_statements(),
+        )
     {
         let table = extract_table_name(statement).ok_or_else(|| {
             DbErr::Custom("canonical baseline contains an invalid CREATE TABLE statement".into())

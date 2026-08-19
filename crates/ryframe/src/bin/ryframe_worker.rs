@@ -75,17 +75,17 @@ async fn main() -> Result<(), AppError> {
     install_database_metrics(&database);
 
     match config.database.migration_mode {
-        MigrationMode::Auto => ryframe_db_migration::up(database.write())
+        MigrationMode::Auto => ryframe_db::migration::up(database.write())
             .await
             .map_err(|error| AppError::Database(format!("数据库迁移失败: {error}")))?,
-        MigrationMode::Verify => ryframe_db_migration::verify(database.write())
+        MigrationMode::Verify => ryframe_db::migration::verify(database.write())
             .await
             .map_err(|error| AppError::Database(format!("数据库迁移校验失败: {error}")))?,
         MigrationMode::Off => {
             tracing::warn!("隔离环境已关闭数据库迁移校验");
         }
     }
-    ryframe_db_migration::verify_current_schema(database.write())
+    ryframe_db::migration::verify_current_schema(database.write())
         .await
         .map_err(|error| AppError::Internal(format!("数据库结构指纹校验失败: {error}")))?;
     let tenant_data = Arc::new(process_tenant_data::build_router(

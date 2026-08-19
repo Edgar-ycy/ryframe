@@ -1,7 +1,7 @@
 -- 自动生成文件：RyFrame v0.5 规范 MySQL 架构快照。
--- 唯一事实来源：ryframe-db-migration Migrator 与 Seeder。
+-- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
--- 重新生成命令：cargo run -p ryframe-db-migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
+-- 重新生成命令：cargo run -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql
 
 CREATE TABLE IF NOT EXISTS `sys_tenant` (
     `id`                     BIGINT       NOT NULL COMMENT '租户ID',
