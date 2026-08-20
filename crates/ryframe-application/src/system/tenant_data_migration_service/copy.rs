@@ -145,14 +145,10 @@ impl TenantDataMigrationService {
         }
         // 摘要与 FK 校验可能持续较久；进入不可取消边界前再做双目标实时
         // ping、MySQL 8.0.16+、ledger、完整 schema 与 mode/slot/fence 不变量复核。
-        self.router
-            .verify_target_now_for_catalog(&migration.source_target_key, &self.catalog)
-            .await
-            .map_err(crate::map_tenant_data_error)?;
-        self.router
-            .verify_target_now_for_catalog(&migration.target_key, &self.catalog)
-            .await
-            .map_err(crate::map_tenant_data_error)?;
+        self.targets
+            .verify_now(&migration.source_target_key)
+            .await?;
+        self.targets.verify_now(&migration.target_key).await?;
         self.assert_migration_frozen_fence(migration, &migration.source_target_key)
             .await?;
         self.assert_migration_frozen_fence(migration, &migration.target_key)

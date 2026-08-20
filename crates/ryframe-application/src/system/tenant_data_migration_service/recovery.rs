@@ -1,6 +1,7 @@
 use ryframe_db::{TenantRepository, tenant_data_migration_item, tenant_data_placement};
-use ryframe_tenant_db::TenantDataCleanupOwnership;
 use sea_orm::TransactionTrait;
+
+use crate::{TenantDataCleanupOwnership, TenantDataFence};
 
 use super::workflow::{migration_requires_worker, validate_recovery_intent};
 use super::*;
@@ -133,16 +134,14 @@ impl TenantDataMigrationService {
         validate_recovery_intent(&snapshot, RecoveryIntent::Cancel)?;
         // Worker 是唯一跨库副作用执行者。先恢复源 fence 和 control
         // placement 可用性，再按反向 FK 顺序分批清理目标，完成后才写 CANCELLED。
-        self.router
-            .activate_fence_for_catalog(
-                &snapshot.tenant_id,
-                &snapshot.source_target_key,
-                checked_generation(snapshot.source_generation, "源")?,
-                &snapshot.source_switch_token,
-                &self.catalog,
-            )
-            .await
-            .map_err(crate::map_tenant_data_error)?;
+        self.tenant_migration
+            .activate_fence(TenantDataFence {
+                tenant_id: &snapshot.tenant_id,
+                target_key: &snapshot.source_target_key,
+                generation: checked_generation(snapshot.source_generation, "源")?,
+                switch_token: &snapshot.source_switch_token,
+            })
+            .await?;
         let snapshot = self
             .restore_source_placement(&snapshot, RecoveryIntent::Cancel)
             .await?;
@@ -385,17 +384,16 @@ impl TenantDataMigrationService {
         switch_token: &str,
     ) -> AppResult<()> {
         let generation = checked_generation(generation, "清理")?;
+        let cleanup_fence = TenantDataFence {
+            tenant_id: &snapshot.tenant_id,
+            target_key,
+            generation,
+            switch_token,
+        };
         match self
-            .router
-            .cleanup_ownership_for_catalog(
-                &snapshot.tenant_id,
-                target_key,
-                generation,
-                switch_token,
-                &self.catalog,
-            )
-            .await
-            .map_err(crate::map_tenant_data_error)?
+            .tenant_migration
+            .cleanup_ownership(cleanup_fence)
+            .await?
         {
             TenantDataCleanupOwnership::OwnedFrozen => {}
             TenantDataCleanupOwnership::AlreadyClean => return Ok(()),
@@ -430,13 +428,14 @@ impl TenantDataMigrationService {
                 ));
             }
         }
-        for descriptor in self.catalog.tables().iter().rev() {
+        let catalog_tables = self.tenant_migration.catalog_tables();
+        for descriptor in catalog_tables.iter().rev() {
             let existing_item = self
                 .repository
                 .items(self.database.write(), snapshot.id)
                 .await?
                 .into_iter()
-                .find(|item| item.table_name == descriptor.table);
+                .find(|item| item.table_name == descriptor.name);
             let mut item = if let Some(item) = existing_item {
                 item
             } else {
@@ -450,7 +449,7 @@ impl TenantDataMigrationService {
                         tenant_data_migration_item::Model {
                             id: crate::next_id()?,
                             migration_id: snapshot.id,
-                            table_name: descriptor.table.into(),
+                            table_name: descriptor.name.into(),
                             copy_order: i32::try_from(descriptor.copy_order).map_err(|_| {
                                 AppError::Validation("catalog copy_order 超出范围".into())
                             })?,
@@ -480,20 +479,9 @@ impl TenantDataMigrationService {
             loop {
                 self.assert_recovery_can_run(snapshot, intent).await?;
                 let deleted = self
-                    .router
-                    .delete_tenant_rows_batch_for_catalog(
-                        ryframe_tenant_db::TenantDataCleanupBatch {
-                            tenant_id: &snapshot.tenant_id,
-                            target_key,
-                            placement_generation: generation,
-                            switch_token,
-                            descriptor,
-                            batch_size: 500,
-                        },
-                        &self.catalog,
-                    )
-                    .await
-                    .map_err(crate::map_tenant_data_error)?;
+                    .tenant_migration
+                    .delete_rows_batch(cleanup_fence, descriptor.name, 500)
+                    .await?;
                 let now = self
                     .lease_repository
                     .database_utc_now(self.database.write())
@@ -564,16 +552,7 @@ impl TenantDataMigrationService {
             .commit()
             .await
             .map_err(database_error)?;
-        self.router
-            .finish_tenant_cleanup_for_catalog(
-                &snapshot.tenant_id,
-                target_key,
-                generation,
-                switch_token,
-                &self.catalog,
-            )
-            .await
-            .map_err(crate::map_tenant_data_error)
+        self.tenant_migration.finish_cleanup(cleanup_fence).await
     }
 
     pub(super) async fn compensate_before_cutover(
@@ -631,16 +610,14 @@ impl TenantDataMigrationService {
 
         // 补偿由 Worker 串行：先恢复源 fence/placement，再按表分批清理
         // 目标；每批持久化进度并续租，全部收口后才写 FAILED。
-        self.router
-            .activate_fence_for_catalog(
-                &snapshot.tenant_id,
-                &snapshot.source_target_key,
-                checked_generation(snapshot.source_generation, "源")?,
-                &snapshot.source_switch_token,
-                &self.catalog,
-            )
-            .await
-            .map_err(crate::map_tenant_data_error)?;
+        self.tenant_migration
+            .activate_fence(TenantDataFence {
+                tenant_id: &snapshot.tenant_id,
+                target_key: &snapshot.source_target_key,
+                generation: checked_generation(snapshot.source_generation, "源")?,
+                switch_token: &snapshot.source_switch_token,
+            })
+            .await?;
         snapshot = self
             .restore_source_placement(&snapshot, RecoveryIntent::Failure)
             .await?;

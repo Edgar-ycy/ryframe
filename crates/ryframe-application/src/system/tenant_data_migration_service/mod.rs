@@ -19,8 +19,8 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, JobQueue, TenantDataTargetHealth, TenantDataTargetMetadata,
-    TenantDataTargetPort,
+    AuthorizationCache, JobQueue, TenantDataMigrationPort, TenantDataTargetHealth,
+    TenantDataTargetMetadata, TenantDataTargetPort,
 };
 
 pub use models::*;
@@ -41,6 +41,7 @@ pub struct TenantDataMigrationService {
     pub(super) database: ControlDatabaseCluster,
     pub(super) router: Arc<TenantDatabaseRouter>,
     targets: Arc<dyn TenantDataTargetPort>,
+    pub(super) tenant_migration: Arc<dyn TenantDataMigrationPort>,
     pub(super) queue: Arc<JobQueue>,
     pub(super) authorization_cache: AuthorizationCache,
     pub(super) repository: TenantDataRepository,
@@ -53,6 +54,7 @@ impl TenantDataMigrationService {
         database: ControlDatabaseCluster,
         router: Arc<TenantDatabaseRouter>,
         targets: Arc<dyn TenantDataTargetPort>,
+        tenant_migration: Arc<dyn TenantDataMigrationPort>,
         queue: Arc<JobQueue>,
         authorization_cache: AuthorizationCache,
     ) -> Self {
@@ -60,6 +62,7 @@ impl TenantDataMigrationService {
             database,
             router,
             targets,
+            tenant_migration,
             queue,
             authorization_cache,
             repository: TenantDataRepository,

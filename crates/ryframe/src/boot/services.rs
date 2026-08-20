@@ -301,6 +301,7 @@ pub async fn build_all(
         database.clone(),
         tenant_data.clone(),
         super::tenant_data_targets::port(tenant_data.clone()),
+        super::tenant_data_migration::port(tenant_data.clone()),
         job_queue.clone(),
         authorization_cache.clone(),
     ));

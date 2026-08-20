@@ -52,6 +52,8 @@ mod process_readiness;
 mod process_spreadsheet;
 #[path = "../boot/tenant_data.rs"]
 mod process_tenant_data;
+#[path = "../boot/tenant_data_migration.rs"]
+mod process_tenant_data_migration;
 #[path = "../boot/tenant_data_targets.rs"]
 mod process_tenant_data_targets;
 
@@ -203,6 +205,7 @@ async fn main() -> Result<(), AppError> {
         database.clone(),
         tenant_data.clone(),
         process_tenant_data_targets::port(tenant_data.clone()),
+        process_tenant_data_migration::port(tenant_data.clone()),
         queue.clone(),
         authorization_cache.clone(),
     ));

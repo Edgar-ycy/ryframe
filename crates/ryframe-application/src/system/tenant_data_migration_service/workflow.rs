@@ -10,7 +10,7 @@ use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde_json::Value as JsonValue;
 
-use crate::JobHandler;
+use crate::{JobHandler, TenantDataFence};
 
 use super::recovery::RecoveryIntent;
 use super::{
@@ -209,20 +209,15 @@ impl TenantDataMigrationService {
         if migration.state == tenant_data_migration::Model::STATE_PRECHECKING {
             self.assert_worker_can_run(&migration, tenant_data_migration::Model::STATE_PRECHECKING)
                 .await?;
-            self.router
-                .verify_target_now_for_catalog(&migration.target_key, &self.catalog)
-                .await
-                .map_err(crate::map_tenant_data_error)?;
-            self.router
-                .prepare_migration_target_for_catalog(
-                    &migration.tenant_id,
-                    &migration.target_key,
-                    checked_generation(migration.target_generation, "目标")?,
-                    &migration.switch_token,
-                    &self.catalog,
-                )
-                .await
-                .map_err(crate::map_tenant_data_error)?;
+            self.targets.verify_now(&migration.target_key).await?;
+            self.tenant_migration
+                .prepare_target(TenantDataFence {
+                    tenant_id: &migration.tenant_id,
+                    target_key: &migration.target_key,
+                    generation: checked_generation(migration.target_generation, "目标")?,
+                    switch_token: &migration.switch_token,
+                })
+                .await?;
             let transition = self
                 .set_state(
                     migration.clone(),
@@ -234,14 +229,13 @@ impl TenantDataMigrationService {
                 Ok(migration) => migration,
                 Err(error) => {
                     let _ = self
-                        .router
-                        .clear_prepared_target_for_catalog(
-                            &migration.tenant_id,
-                            &migration.target_key,
-                            checked_generation(migration.target_generation, "目标")?,
-                            &migration.switch_token,
-                            &self.catalog,
-                        )
+                        .tenant_migration
+                        .clear_prepared_target(TenantDataFence {
+                            tenant_id: &migration.tenant_id,
+                            target_key: &migration.target_key,
+                            generation: checked_generation(migration.target_generation, "目标")?,
+                            switch_token: &migration.switch_token,
+                        })
                         .await;
                     return Err(error);
                 }
@@ -253,16 +247,14 @@ impl TenantDataMigrationService {
         if migration.state == tenant_data_migration::Model::STATE_QUIESCING {
             self.assert_worker_can_run(&migration, tenant_data_migration::Model::STATE_QUIESCING)
                 .await?;
-            self.router
-                .freeze_fence_for_catalog(
-                    &migration.tenant_id,
-                    &migration.source_target_key,
-                    checked_generation(migration.source_generation, "源")?,
-                    &migration.source_switch_token,
-                    &self.catalog,
-                )
-                .await
-                .map_err(crate::map_tenant_data_error)?;
+            self.tenant_migration
+                .freeze_fence(TenantDataFence {
+                    tenant_id: &migration.tenant_id,
+                    target_key: &migration.source_target_key,
+                    generation: checked_generation(migration.source_generation, "源")?,
+                    switch_token: &migration.source_switch_token,
+                })
+                .await?;
             let transition = self
                 .set_state(
                     migration.clone(),
@@ -274,14 +266,13 @@ impl TenantDataMigrationService {
                 Ok(migration) => migration,
                 Err(error) => {
                     let _ = self
-                        .router
-                        .activate_fence_for_catalog(
-                            &migration.tenant_id,
-                            &migration.source_target_key,
-                            checked_generation(migration.source_generation, "源")?,
-                            &migration.source_switch_token,
-                            &self.catalog,
-                        )
+                        .tenant_migration
+                        .activate_fence(TenantDataFence {
+                            tenant_id: &migration.tenant_id,
+                            target_key: &migration.source_target_key,
+                            generation: checked_generation(migration.source_generation, "源")?,
+                            switch_token: &migration.source_switch_token,
+                        })
                         .await;
                     return Err(error);
                 }
@@ -326,16 +317,14 @@ impl TenantDataMigrationService {
         if migration.state == tenant_data_migration::Model::STATE_ACTIVATING {
             self.assert_worker_can_run(&migration, tenant_data_migration::Model::STATE_ACTIVATING)
                 .await?;
-            self.router
-                .activate_fence_for_catalog(
-                    &migration.tenant_id,
-                    &migration.target_key,
-                    checked_generation(migration.target_generation, "目标")?,
-                    &migration.switch_token,
-                    &self.catalog,
-                )
-                .await
-                .map_err(crate::map_tenant_data_error)?;
+            self.tenant_migration
+                .activate_fence(TenantDataFence {
+                    tenant_id: &migration.tenant_id,
+                    target_key: &migration.target_key,
+                    generation: checked_generation(migration.target_generation, "目标")?,
+                    switch_token: &migration.switch_token,
+                })
+                .await?;
             migration = self.activate_control(migration).await?;
         }
         if migration.state == tenant_data_migration::Model::STATE_SUCCEEDED {
@@ -436,14 +425,8 @@ impl TenantDataMigrationService {
         // CUTTING_OVER is durable and may be resumed after a crash. Re-establish the
         // complete cross-database safety proof immediately before changing the control
         // pointer; no control transaction is held across these target-database awaits.
-        self.router
-            .verify_target_now_for_catalog(&snapshot.source_target_key, &self.catalog)
-            .await
-            .map_err(crate::map_tenant_data_error)?;
-        self.router
-            .verify_target_now_for_catalog(&snapshot.target_key, &self.catalog)
-            .await
-            .map_err(crate::map_tenant_data_error)?;
+        self.targets.verify_now(&snapshot.source_target_key).await?;
+        self.targets.verify_now(&snapshot.target_key).await?;
         self.assert_migration_frozen_fence(&snapshot, &snapshot.source_target_key)
             .await?;
         self.assert_migration_frozen_fence(&snapshot, &snapshot.target_key)
@@ -771,16 +754,14 @@ impl TenantDataMigrationService {
                 "fence 断言目标不属于当前迁移".into(),
             ));
         };
-        self.router
-            .assert_frozen_fence_for_catalog(
-                &migration.tenant_id,
+        self.tenant_migration
+            .assert_frozen_fence(TenantDataFence {
+                tenant_id: &migration.tenant_id,
                 target_key,
-                checked_generation(generation, "fence")?,
+                generation: checked_generation(generation, "fence")?,
                 switch_token,
-                &self.catalog,
-            )
+            })
             .await
-            .map_err(crate::map_tenant_data_error)
     }
 
     async fn reacquire_execution_lease(
