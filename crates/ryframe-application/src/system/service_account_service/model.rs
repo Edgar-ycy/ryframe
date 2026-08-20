@@ -73,23 +73,6 @@ impl From<ServiceAccountRecord> for ServiceAccountVo {
     }
 }
 
-impl From<service_account::Model> for ServiceAccountVo {
-    fn from(account: service_account::Model) -> Self {
-        Self {
-            id: account.id.to_string(),
-            code: account.code,
-            name: account.name,
-            description: account.description,
-            dept_id: account.dept_id.map(|id| id.to_string()),
-            status: account.status,
-            authorization_version: account.authorization_version,
-            max_requests_per_minute: account.max_requests_per_minute,
-            created_at: account.created_at,
-            updated_at: account.updated_at,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct ServiceAccountDetailVo {
     #[serde(flatten)]
@@ -167,6 +150,24 @@ pub struct ServiceDelegationVo {
 
 impl From<ServiceDelegationRecord> for ServiceDelegationVo {
     fn from(delegation: ServiceDelegationRecord) -> Self {
+        Self {
+            id: delegation.id.to_string(),
+            account_id: delegation.account_id.to_string(),
+            user_id: delegation.user_id.to_string(),
+            status: delegation.status,
+            version: delegation.version,
+            not_before: delegation.not_before,
+            expires_at: delegation.expires_at,
+            reason: delegation.reason,
+            capability_keys: delegation.capability_keys,
+            revoked_at: delegation.revoked_at,
+            created_at: delegation.created_at,
+        }
+    }
+}
+
+impl From<ServiceDelegationWriteRecord> for ServiceDelegationVo {
+    fn from(delegation: ServiceDelegationWriteRecord) -> Self {
         Self {
             id: delegation.id.to_string(),
             account_id: delegation.account_id.to_string(),

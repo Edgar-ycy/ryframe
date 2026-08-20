@@ -79,103 +79,119 @@ impl ServiceAccountService {
             reason.as_bytes(),
         ]);
         let idempotency_hash = unkeyed_hash(IDEMPOTENCY_DOMAIN, idempotency_key.as_bytes());
-        let txn = self.db.write().begin().await.map_err(database_error)?;
-        self.account_repo
-            .lock_tenant_in_txn(&txn, tenant_id, ServiceAccountLock::Update)
-            .await?;
-        let account = self
-            .lock_account(&txn, tenant_id, command.account_id)
-            .await?;
-        if !account.is_enabled() {
-            return Err(AppError::Validation("服务账号已停用".into()));
-        }
-        let user = self
-            .user_repo
-            .find_by_id_for_update(&txn, tenant_id, actor.user_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
-        if !user.is_enabled() {
-            return Err(AppError::Authorization("当前用户已停用".into()));
-        }
-        if let Some(existing) = self
-            .delegation_repo
-            .find_idempotent(&txn, tenant_id, actor.user_id, &idempotency_hash)
-            .await?
-        {
-            ensure_same_fingerprint(&existing.request_fingerprint, &fingerprint)?;
-            let vo = self.delegation_vo(&txn, existing).await?;
-            crate::commit_current_audit(txn).await?;
-            return Ok(CreatedDelegationVo {
-                delegation: vo,
-                token: None,
+        let transaction = self.write.begin().await?;
+        let result = async {
+            transaction.lock_tenant(tenant_id).await?;
+            let mut account = transaction
+                .lock_account(tenant_id, command.account_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("服务账号不存在".into()))?;
+            if !account.is_enabled() {
+                return Err(AppError::Validation("服务账号已停用".into()));
+            }
+            let user = transaction
+                .lock_user(tenant_id, actor.user_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+            if !user.is_enabled() {
+                return Err(AppError::Authorization("当前用户已停用".into()));
+            }
+            if let Some(existing) = transaction
+                .find_idempotent_delegation(tenant_id, actor.user_id, &idempotency_hash)
+                .await?
+            {
+                ensure_same_fingerprint(&existing.request_fingerprint, &fingerprint)?;
+                return Ok((existing, None, None, Vec::new()));
+            }
+            let snapshot = transaction
+                .permission_snapshot(tenant_id, command.account_id, actor.user_id)
+                .await?;
+            let common = common_capabilities(
+                &self.capabilities,
+                &snapshot.user_permissions,
+                &snapshot.account_permissions,
+            )
+            .into_iter()
+            .map(|capability| capability.key)
+            .collect::<HashSet<_>>();
+            if capability_keys.iter().any(|key| !common.contains(key)) {
+                return Err(AppError::Authorization(
+                    "只能委托双方当前共同拥有的已注册能力".into(),
+                ));
+            }
+            let now = transaction.authorization_mirror().database_now().await?;
+            let expires_at = command.expires_at.unwrap_or_else(|| {
+                now + Duration::hours(i64::from(self.config.default_delegation_hours))
             });
+            if expires_at <= now
+                || expires_at > now + Duration::days(i64::from(self.config.max_delegation_days))
+            {
+                return Err(AppError::Validation(format!(
+                    "委托有效期不能超过 {} 天",
+                    self.config.max_delegation_days
+                )));
+            }
+            let issued = IssuedDelegationToken::issue();
+            let (pepper_version, pepper) = self.keyring.active();
+            let token_mac = issued.mac(pepper)?;
+            let delegation = ServiceDelegationWriteRecord {
+                id: crate::next_id()?,
+                tenant_id: tenant_id.to_owned(),
+                account_id: command.account_id,
+                user_id: actor.user_id,
+                token_mac,
+                pepper_version,
+                status: ServiceDelegationWriteRecord::STATUS_ACTIVE.into(),
+                version: 1,
+                not_before: now,
+                expires_at,
+                reason,
+                created_by_user_id: actor.user_id,
+                revoked_at: None,
+                revoked_by: None,
+                created_at: now,
+                updated_at: now,
+                idempotency_key_hash: idempotency_hash,
+                request_fingerprint: fingerprint,
+                capability_keys,
+            };
+            let saved = transaction
+                .insert_delegation(tenant_id, actor.user_id, delegation)
+                .await?;
+            account.authorization_version = account.authorization_version.saturating_add(1);
+            account.updated_at = now;
+            transaction.save_account(tenant_id, account).await?;
+            let versions = self
+                .authorization_cache
+                .increment_user_versions_in_transaction(
+                    transaction.authorization_mirror(),
+                    tenant_id,
+                    &[actor.user_id],
+                )
+                .await?;
+            let epoch = self
+                .bump_tenant_epoch(transaction.authorization_mirror(), tenant_id)
+                .await?;
+            Ok((saved, Some(issued.into_presented()), Some(epoch), versions))
         }
-        let common = self
-            .common_capability_keys_in_txn(&txn, tenant_id, command.account_id, actor.user_id)
-            .await?;
-        if capability_keys.iter().any(|key| !common.contains(key)) {
-            return Err(AppError::Authorization(
-                "只能委托双方当前共同拥有的已注册能力".into(),
-            ));
+        .await;
+        match result {
+            Ok((saved, token, epoch, versions)) => {
+                transaction.commit().await?;
+                if let Some(epoch) = epoch {
+                    self.sync_committed_authorization_state(tenant_id, epoch, &versions)
+                        .await;
+                }
+                Ok(CreatedDelegationVo {
+                    delegation: saved.into(),
+                    token,
+                })
+            }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(error)
+            }
         }
-        let now = database_now(&txn).await?;
-        let expires_at = command.expires_at.unwrap_or_else(|| {
-            now + Duration::hours(i64::from(self.config.default_delegation_hours))
-        });
-        if expires_at <= now
-            || expires_at > now + Duration::days(i64::from(self.config.max_delegation_days))
-        {
-            return Err(AppError::Validation(format!(
-                "委托有效期不能超过 {} 天",
-                self.config.max_delegation_days
-            )));
-        }
-        let issued = IssuedDelegationToken::issue();
-        let (pepper_version, pepper) = self.keyring.active();
-        let token_mac = issued.mac(pepper)?;
-        let model = service_delegation::Model {
-            id: crate::next_id()?,
-            tenant_id: tenant_id.to_owned(),
-            account_id: command.account_id,
-            user_id: actor.user_id,
-            token_mac,
-            pepper_version,
-            status: service_delegation::Model::STATUS_ACTIVE.into(),
-            version: 1,
-            not_before: now,
-            expires_at,
-            reason,
-            created_by_user_id: actor.user_id,
-            revoked_at: None,
-            revoked_by: None,
-            created_at: now,
-            updated_at: now,
-            idempotency_key_hash: idempotency_hash,
-            request_fingerprint: fingerprint,
-        };
-        let saved = self
-            .delegation_repo
-            .insert_in_txn(&txn, tenant_id, actor.user_id, model)
-            .await?;
-        self.delegation_repo
-            .replace_capabilities_in_txn(&txn, tenant_id, saved.id, &capability_keys)
-            .await?;
-        self.account_repo
-            .increment_authorization_version_in_txn(&txn, tenant_id, command.account_id)
-            .await?;
-        let versions = self
-            .authorization_cache
-            .increment_user_versions_in_transaction(&txn, tenant_id, &[actor.user_id])
-            .await?;
-        let epoch = self.bump_tenant_epoch(&txn, tenant_id).await?;
-        let vo = delegation_vo_with_keys(saved, capability_keys);
-        crate::commit_current_audit(txn).await?;
-        self.sync_committed_authorization_state(tenant_id, epoch, &versions)
-            .await;
-        Ok(CreatedDelegationVo {
-            delegation: vo,
-            token: Some(issued.into_presented()),
-        })
     }
 
     pub async fn list_my_delegations(
@@ -234,49 +250,66 @@ impl ServiceAccountService {
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let txn = self.db.write().begin().await.map_err(database_error)?;
-        self.account_repo
-            .lock_tenant_in_txn(&txn, tenant_id, ServiceAccountLock::Update)
-            .await?;
-        let delegation_hint = self
-            .delegation_repo
-            .find_by_id(&txn, tenant_id, delegation_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("委托不存在".into()))?;
-        self.lock_account(&txn, tenant_id, delegation_hint.account_id)
-            .await?;
-        self.user_repo
-            .find_by_id_for_update(&txn, tenant_id, delegation_hint.user_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
-        let delegation = service_delegation::Entity::find_by_id(delegation_id)
-            .filter(service_delegation::Column::TenantId.eq(tenant_id))
-            .lock(LockType::Update)
-            .one(&txn)
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::NotFound("委托不存在".into()))?;
-        if owner_only && delegation.user_id != actor.user_id {
-            return Err(AppError::Authorization("只能撤销本人创建的委托".into()));
+        let transaction = self.write.begin().await?;
+        let result = async {
+            transaction.lock_tenant(tenant_id).await?;
+            let hint = transaction
+                .delegation_identity(tenant_id, delegation_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("委托不存在".into()))?;
+            let mut account = transaction
+                .lock_account(tenant_id, hint.account_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("服务账号不存在".into()))?;
+            transaction
+                .lock_user(tenant_id, hint.user_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
+            let mut delegation = transaction
+                .lock_delegation(tenant_id, delegation_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("委托不存在".into()))?;
+            if owner_only && delegation.user_id != actor.user_id {
+                return Err(AppError::Authorization("只能撤销本人创建的委托".into()));
+            }
+            if delegation.status != ServiceDelegationWriteRecord::STATUS_ACTIVE {
+                return Err(AppError::Conflict("委托已撤销".into()));
+            }
+            let now = transaction.authorization_mirror().database_now().await?;
+            delegation.status = ServiceDelegationWriteRecord::STATUS_REVOKED.into();
+            delegation.version = delegation.version.saturating_add(1);
+            delegation.revoked_at = Some(now);
+            delegation.revoked_by = Some(actor.user_id);
+            delegation.updated_at = now;
+            let delegation = transaction.save_delegation(tenant_id, delegation).await?;
+            account.authorization_version = account.authorization_version.saturating_add(1);
+            account.updated_at = now;
+            transaction.save_account(tenant_id, account).await?;
+            let versions = self
+                .authorization_cache
+                .increment_user_versions_in_transaction(
+                    transaction.authorization_mirror(),
+                    tenant_id,
+                    &[delegation.user_id],
+                )
+                .await?;
+            let epoch = self
+                .bump_tenant_epoch(transaction.authorization_mirror(), tenant_id)
+                .await?;
+            Ok((epoch, versions))
         }
-        if !self
-            .delegation_repo
-            .revoke_in_txn(&txn, tenant_id, delegation_id, actor.user_id)
-            .await?
-        {
-            return Err(AppError::Conflict("委托已撤销".into()));
+        .await;
+        match result {
+            Ok((epoch, versions)) => {
+                transaction.commit().await?;
+                self.sync_committed_authorization_state(tenant_id, epoch, &versions)
+                    .await;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(error)
+            }
         }
-        self.account_repo
-            .increment_authorization_version_in_txn(&txn, tenant_id, delegation.account_id)
-            .await?;
-        let versions = self
-            .authorization_cache
-            .increment_user_versions_in_transaction(&txn, tenant_id, &[delegation.user_id])
-            .await?;
-        let epoch = self.bump_tenant_epoch(&txn, tenant_id).await?;
-        crate::commit_current_audit(txn).await?;
-        self.sync_committed_authorization_state(tenant_id, epoch, &versions)
-            .await;
-        Ok(())
     }
 }

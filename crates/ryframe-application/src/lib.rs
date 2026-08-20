@@ -284,7 +284,8 @@ pub use service_account_read::{
     ServiceCredentialRecord, ServiceDelegationRecord,
 };
 pub use service_account_write::{
-    ServiceAccountWritePort, ServiceAccountWriteTransaction, ServiceCredentialWriteRecord,
+    ServiceAccountUserRecord, ServiceAccountWritePort, ServiceAccountWriteTransaction,
+    ServiceCredentialWriteRecord, ServiceDelegationIdentity, ServiceDelegationWriteRecord,
 };
 pub use spreadsheet::{
     SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,

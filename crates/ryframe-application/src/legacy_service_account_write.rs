@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use ryframe_db::{
-    ControlDatabaseCluster, ServiceAccountLock, ServiceAccountRepository,
-    ServiceCredentialRepository,
-    entities::{dept, service_account, service_credential},
+    ControlDatabaseCluster, RoleRepository, ServiceAccountLock, ServiceAccountRepository,
+    ServiceCredentialRepository, ServiceDelegationRepository, UserRepository,
+    entities::{
+        dept, permission, role, role_permission, service_account, service_credential,
+        service_delegation,
+    },
 };
 use ryframe_kernel::AppError;
 use sea_orm::{
@@ -12,8 +15,10 @@ use sea_orm::{
 };
 
 use crate::{
-    AuthorizationMirrorTransaction, PersistenceFuture, ServiceAccountRecord,
-    ServiceAccountWritePort, ServiceAccountWriteTransaction, ServiceCredentialWriteRecord,
+    AuthorizationMirrorTransaction, PersistenceFuture, ServiceAccountPermissionSnapshot,
+    ServiceAccountRecord, ServiceAccountUserRecord, ServiceAccountWritePort,
+    ServiceAccountWriteTransaction, ServiceCredentialWriteRecord, ServiceDelegationIdentity,
+    ServiceDelegationWriteRecord,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ServiceAccountWritePort> {
@@ -236,6 +241,173 @@ impl ServiceAccountWriteTransaction for LegacyServiceAccountWriteTransaction {
         })
     }
 
+    fn lock_user<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+    ) -> PersistenceFuture<'a, Option<ServiceAccountUserRecord>> {
+        Box::pin(async move {
+            UserRepository
+                .find_by_id_for_update(&self.transaction, tenant_id, user_id)
+                .await
+                .map(|user| {
+                    user.map(|user| ServiceAccountUserRecord {
+                        status: user.status,
+                    })
+                })
+        })
+    }
+
+    fn permission_snapshot<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        user_id: i64,
+    ) -> PersistenceFuture<'a, ServiceAccountPermissionSnapshot> {
+        Box::pin(async move {
+            let user_role_ids = RoleRepository
+                .find_user_roles_all_status(&self.transaction, tenant_id, user_id)
+                .await?
+                .into_iter()
+                .filter(|role| role.status == role::Model::STATUS_NORMAL)
+                .map(|role| role.id)
+                .collect::<Vec<_>>();
+            let account_role_ids = ServiceAccountRepository
+                .role_ids(&self.transaction, tenant_id, account_id)
+                .await?;
+            let enabled_account_role_ids = enabled_role_ids(
+                &self.transaction,
+                tenant_id,
+                account_role_ids.iter().copied(),
+            )
+            .await?;
+            Ok(ServiceAccountPermissionSnapshot {
+                user_permissions: permission_codes(&self.transaction, tenant_id, &user_role_ids)
+                    .await?,
+                account_permissions: permission_codes(
+                    &self.transaction,
+                    tenant_id,
+                    &enabled_account_role_ids,
+                )
+                .await?,
+            })
+        })
+    }
+
+    fn find_idempotent_delegation<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+        idempotency_key_hash: &'a [u8],
+    ) -> PersistenceFuture<'a, Option<ServiceDelegationWriteRecord>> {
+        Box::pin(async move {
+            let Some(delegation) = ServiceDelegationRepository
+                .find_idempotent(&self.transaction, tenant_id, user_id, idempotency_key_hash)
+                .await?
+            else {
+                return Ok(None);
+            };
+            let capability_keys = ServiceDelegationRepository
+                .capability_keys(&self.transaction, tenant_id, delegation.id)
+                .await?;
+            Ok(Some(delegation_record(delegation, capability_keys)))
+        })
+    }
+
+    fn delegation_identity<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        delegation_id: i64,
+    ) -> PersistenceFuture<'a, Option<ServiceDelegationIdentity>> {
+        Box::pin(async move {
+            service_delegation::Entity::find_by_id(delegation_id)
+                .select_only()
+                .columns([
+                    service_delegation::Column::AccountId,
+                    service_delegation::Column::UserId,
+                ])
+                .filter(service_delegation::Column::TenantId.eq(tenant_id))
+                .into_tuple::<(i64, i64)>()
+                .one(&self.transaction)
+                .await
+                .map(|identity| {
+                    identity.map(|(account_id, user_id)| ServiceDelegationIdentity {
+                        account_id,
+                        user_id,
+                    })
+                })
+                .map_err(database_error)
+        })
+    }
+
+    fn lock_delegation<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        delegation_id: i64,
+    ) -> PersistenceFuture<'a, Option<ServiceDelegationWriteRecord>> {
+        Box::pin(async move {
+            let Some(delegation) = service_delegation::Entity::find_by_id(delegation_id)
+                .filter(service_delegation::Column::TenantId.eq(tenant_id))
+                .lock(LockType::Update)
+                .one(&self.transaction)
+                .await
+                .map_err(database_error)?
+            else {
+                return Ok(None);
+            };
+            let capability_keys = ServiceDelegationRepository
+                .capability_keys(&self.transaction, tenant_id, delegation.id)
+                .await?;
+            Ok(Some(delegation_record(delegation, capability_keys)))
+        })
+    }
+
+    fn insert_delegation<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+        mut delegation: ServiceDelegationWriteRecord,
+    ) -> PersistenceFuture<'a, ServiceDelegationWriteRecord> {
+        Box::pin(async move {
+            let capability_keys = std::mem::take(&mut delegation.capability_keys);
+            let saved = ServiceDelegationRepository
+                .insert_in_txn(
+                    &self.transaction,
+                    tenant_id,
+                    user_id,
+                    delegation_model(delegation),
+                )
+                .await?;
+            ServiceDelegationRepository
+                .replace_capabilities_in_txn(
+                    &self.transaction,
+                    tenant_id,
+                    saved.id,
+                    &capability_keys,
+                )
+                .await?;
+            Ok(delegation_record(saved, capability_keys))
+        })
+    }
+
+    fn save_delegation<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        mut delegation: ServiceDelegationWriteRecord,
+    ) -> PersistenceFuture<'a, ServiceDelegationWriteRecord> {
+        Box::pin(async move {
+            if delegation.tenant_id != tenant_id {
+                return Err(AppError::Authorization("委托租户不匹配".into()));
+            }
+            let capability_keys = std::mem::take(&mut delegation.capability_keys);
+            service_delegation::ActiveModel::from(delegation_model(delegation))
+                .update(&self.transaction)
+                .await
+                .map(|saved| delegation_record(saved, capability_keys))
+                .map_err(database_error)
+        })
+    }
+
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move { crate::commit_current_audit(self.transaction).await })
     }
@@ -330,6 +502,114 @@ fn credential_model(credential: ServiceCredentialWriteRecord) -> service_credent
     }
 }
 
+fn delegation_record(
+    delegation: service_delegation::Model,
+    capability_keys: Vec<String>,
+) -> ServiceDelegationWriteRecord {
+    ServiceDelegationWriteRecord {
+        id: delegation.id,
+        tenant_id: delegation.tenant_id,
+        account_id: delegation.account_id,
+        user_id: delegation.user_id,
+        token_mac: delegation.token_mac,
+        pepper_version: delegation.pepper_version,
+        status: delegation.status,
+        version: delegation.version,
+        not_before: delegation.not_before,
+        expires_at: delegation.expires_at,
+        reason: delegation.reason,
+        created_by_user_id: delegation.created_by_user_id,
+        revoked_at: delegation.revoked_at,
+        revoked_by: delegation.revoked_by,
+        created_at: delegation.created_at,
+        updated_at: delegation.updated_at,
+        idempotency_key_hash: delegation.idempotency_key_hash,
+        request_fingerprint: delegation.request_fingerprint,
+        capability_keys,
+    }
+}
+
+fn delegation_model(delegation: ServiceDelegationWriteRecord) -> service_delegation::Model {
+    service_delegation::Model {
+        id: delegation.id,
+        tenant_id: delegation.tenant_id,
+        account_id: delegation.account_id,
+        user_id: delegation.user_id,
+        token_mac: delegation.token_mac,
+        pepper_version: delegation.pepper_version,
+        status: delegation.status,
+        version: delegation.version,
+        not_before: delegation.not_before,
+        expires_at: delegation.expires_at,
+        reason: delegation.reason,
+        created_by_user_id: delegation.created_by_user_id,
+        revoked_at: delegation.revoked_at,
+        revoked_by: delegation.revoked_by,
+        created_at: delegation.created_at,
+        updated_at: delegation.updated_at,
+        idempotency_key_hash: delegation.idempotency_key_hash,
+        request_fingerprint: delegation.request_fingerprint,
+    }
+}
+
+async fn enabled_role_ids<I>(
+    transaction: &DatabaseTransaction,
+    tenant_id: &str,
+    role_ids: I,
+) -> Result<Vec<i64>, AppError>
+where
+    I: IntoIterator<Item = i64>,
+{
+    let role_ids = role_ids.into_iter().collect::<Vec<_>>();
+    if role_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    role::Entity::find()
+        .filter(role::Column::TenantId.eq(tenant_id))
+        .filter(role::Column::Id.is_in(role_ids))
+        .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
+        .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+        .all(transaction)
+        .await
+        .map(|roles| roles.into_iter().map(|role| role.id).collect())
+        .map_err(database_error)
+}
+
+async fn permission_codes(
+    transaction: &DatabaseTransaction,
+    tenant_id: &str,
+    role_ids: &[i64],
+) -> Result<HashSet<String>, AppError> {
+    if role_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let permission_ids = role_permission::Entity::find()
+        .filter(role_permission::Column::TenantId.eq(tenant_id))
+        .filter(role_permission::Column::RoleId.is_in(role_ids.iter().copied()))
+        .all(transaction)
+        .await
+        .map_err(database_error)?
+        .into_iter()
+        .map(|row| row.perm_id)
+        .collect::<Vec<_>>();
+    if permission_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    permission::Entity::find()
+        .filter(permission::Column::TenantId.eq(tenant_id))
+        .filter(permission::Column::Id.is_in(permission_ids))
+        .filter(permission::Column::Status.eq("1"))
+        .all(transaction)
+        .await
+        .map(|permissions| {
+            permissions
+                .into_iter()
+                .map(|permission| permission.code)
+                .collect()
+        })
+        .map_err(database_error)
+}
+
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
 }
@@ -396,5 +676,38 @@ mod tests {
         let restored = credential_model(record);
         assert_eq!(restored.pepper_version, 3);
         assert_eq!(restored.idempotency_key_hash, [5, 6]);
+    }
+
+    #[test]
+    fn delegation_mapping_preserves_capabilities_without_copying() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+        let model = service_delegation::Model {
+            id: 1,
+            tenant_id: "tenant-a".into(),
+            account_id: 2,
+            user_id: 3,
+            token_mac: vec![1, 2],
+            pepper_version: 4,
+            status: service_delegation::Model::STATUS_ACTIVE.into(),
+            version: 1,
+            not_before: now,
+            expires_at: now,
+            reason: "排障".into(),
+            created_by_user_id: 3,
+            revoked_at: None,
+            revoked_by: None,
+            created_at: now,
+            updated_at: now,
+            idempotency_key_hash: vec![5, 6],
+            request_fingerprint: vec![7, 8],
+        };
+
+        let record = delegation_record(model, vec!["system:user:list".into()]);
+        assert_eq!(record.capability_keys, ["system:user:list"]);
+        let mut record = record;
+        let capability_keys = std::mem::take(&mut record.capability_keys);
+        let restored = delegation_model(record);
+        assert_eq!(restored.token_mac, [1, 2]);
+        assert_eq!(capability_keys, ["system:user:list"]);
     }
 }

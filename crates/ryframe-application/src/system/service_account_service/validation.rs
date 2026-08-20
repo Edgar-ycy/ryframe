@@ -76,7 +76,3 @@ pub(super) fn ensure_same_fingerprint(existing: &[u8], requested: &[u8]) -> AppR
         ))
     }
 }
-
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}

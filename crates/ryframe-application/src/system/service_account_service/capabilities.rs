@@ -60,59 +60,6 @@ pub(super) async fn validate_dept(
     Ok(())
 }
 
-pub(super) async fn permission_codes_in_txn(
-    db: &sea_orm::DatabaseTransaction,
-    tenant_id: &str,
-    role_ids: &[i64],
-) -> AppResult<HashSet<String>> {
-    if role_ids.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let permission_ids = ryframe_db::entities::role_permission::Entity::find()
-        .filter(ryframe_db::entities::role_permission::Column::TenantId.eq(tenant_id))
-        .filter(
-            ryframe_db::entities::role_permission::Column::RoleId.is_in(role_ids.iter().copied()),
-        )
-        .all(db)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(|row| row.perm_id)
-        .collect::<Vec<_>>();
-    if permission_ids.is_empty() {
-        return Ok(HashSet::new());
-    }
-    Ok(ryframe_db::entities::permission::Entity::find()
-        .filter(ryframe_db::entities::permission::Column::TenantId.eq(tenant_id))
-        .filter(ryframe_db::entities::permission::Column::Id.is_in(permission_ids))
-        .filter(ryframe_db::entities::permission::Column::Status.eq("1"))
-        .all(db)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(|permission| permission.code)
-        .collect())
-}
-
-pub(super) fn delegation_vo_with_keys(
-    delegation: service_delegation::Model,
-    capability_keys: Vec<String>,
-) -> ServiceDelegationVo {
-    ServiceDelegationVo {
-        id: delegation.id.to_string(),
-        account_id: delegation.account_id.to_string(),
-        user_id: delegation.user_id.to_string(),
-        status: delegation.status,
-        version: delegation.version,
-        not_before: delegation.not_before,
-        expires_at: delegation.expires_at,
-        reason: delegation.reason,
-        capability_keys,
-        revoked_at: delegation.revoked_at,
-        created_at: delegation.created_at,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;

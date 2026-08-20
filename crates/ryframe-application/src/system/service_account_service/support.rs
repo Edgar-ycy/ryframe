@@ -1,18 +1,6 @@
 use super::*;
 
 impl ServiceAccountService {
-    pub(super) async fn lock_account(
-        &self,
-        txn: &sea_orm::DatabaseTransaction,
-        tenant_id: &str,
-        account_id: i64,
-    ) -> AppResult<service_account::Model> {
-        self.account_repo
-            .find_by_id_in_txn(txn, tenant_id, account_id, ServiceAccountLock::Update)
-            .await?
-            .ok_or_else(|| AppError::NotFound("服务账号不存在".into()))
-    }
-
     pub(super) async fn bump_tenant_epoch(
         &self,
         transaction: &dyn AuthorizationMirrorTransaction,
@@ -54,64 +42,5 @@ impl ServiceAccountService {
                 "服务账号写入已提交，租户授权镜像将由 Outbox 修复"
             );
         }
-    }
-
-    pub(super) async fn common_capability_keys_in_txn(
-        &self,
-        txn: &sea_orm::DatabaseTransaction,
-        tenant_id: &str,
-        account_id: i64,
-        user_id: i64,
-    ) -> AppResult<HashSet<String>> {
-        let user_roles = self
-            .role_repo
-            .find_user_roles_all_status(txn, tenant_id, user_id)
-            .await?
-            .into_iter()
-            .filter(|role| role.status == role::Model::STATUS_NORMAL)
-            .map(|role| role.id)
-            .collect::<Vec<_>>();
-        let account_role_ids = self
-            .account_repo
-            .role_ids(txn, tenant_id, account_id)
-            .await?;
-        let account_roles = if account_role_ids.is_empty() {
-            Vec::new()
-        } else {
-            role::Entity::find()
-                .filter(role::Column::TenantId.eq(tenant_id))
-                .filter(role::Column::Id.is_in(account_role_ids.iter().copied()))
-                .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
-                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-                .all(txn)
-                .await
-                .map_err(database_error)?
-                .into_iter()
-                .map(|role| role.id)
-                .collect()
-        };
-        let user_permissions = permission_codes_in_txn(txn, tenant_id, &user_roles).await?;
-        let account_permissions = permission_codes_in_txn(txn, tenant_id, &account_roles).await?;
-        Ok(
-            common_capabilities(&self.capabilities, &user_permissions, &account_permissions)
-                .into_iter()
-                .map(|capability| capability.key)
-                .collect(),
-        )
-    }
-
-    pub(super) async fn delegation_vo<C>(
-        &self,
-        db: &C,
-        delegation: service_delegation::Model,
-    ) -> AppResult<ServiceDelegationVo>
-    where
-        C: sea_orm::ConnectionTrait,
-    {
-        let keys = self
-            .delegation_repo
-            .capability_keys(db, &delegation.tenant_id, delegation.id)
-            .await?;
-        Ok(delegation_vo_with_keys(delegation, keys))
     }
 }
