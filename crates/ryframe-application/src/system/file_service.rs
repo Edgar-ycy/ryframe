@@ -283,7 +283,7 @@ impl FileService {
         let object_key = format!("{tenant_id}/{date_prefix}/{storage_name}");
         let now = Utc::now();
         let reservation_token = uuid::Uuid::new_v4().to_string();
-        let file_id = ryframe_adapters::snowflake::try_next_snowflake_id()?;
+        let file_id = crate::next_id()?;
         let model = sys_file::Model {
             id: file_id,
             tenant_id: tenant_id.to_owned(),

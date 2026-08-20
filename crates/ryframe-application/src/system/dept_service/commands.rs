@@ -1,4 +1,3 @@
-use ryframe_adapters::snowflake;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{
     TenantConfigTransferRepository,
@@ -42,7 +41,7 @@ impl DeptService {
             }
         };
         let mut new_dept = dept::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             name: command.name,
             parent_id: command.parent_id,

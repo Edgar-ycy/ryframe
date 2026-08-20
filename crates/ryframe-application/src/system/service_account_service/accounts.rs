@@ -79,7 +79,7 @@ impl ServiceAccountService {
         validate_dept(&txn, tenant_id, command.dept_id).await?;
         let now = database_now(&txn).await?;
         let model = service_account::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             code,
             name,

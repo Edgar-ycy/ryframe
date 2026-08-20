@@ -1,7 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use chrono::Utc;
-use ryframe_adapters::snowflake;
 use ryframe_db::entities::{menu, permission, role, role_permission};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -447,7 +446,7 @@ async fn sync_permissions(
             }
             None => None,
         };
-        let id = snowflake::try_next_snowflake_id()?;
+        let id = crate::next_id()?;
         permission::ActiveModel {
             id: Set(id),
             tenant_id: Set(tenant_id.to_owned()),
@@ -569,7 +568,7 @@ async fn sync_menus(
             }
             None => None,
         };
-        let id = snowflake::try_next_snowflake_id()?;
+        let id = crate::next_id()?;
         menu::ActiveModel {
             id: Set(id),
             tenant_id: Set(tenant_id.to_owned()),

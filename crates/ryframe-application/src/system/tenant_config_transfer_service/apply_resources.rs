@@ -87,7 +87,7 @@ pub(super) async fn apply_resources_in_transaction(
                 .map_err(database_error)?;
             department_ancestors.insert(id, ancestors);
         } else {
-            let id = try_next_snowflake_id()?;
+            let id = next_id()?;
             dept::ActiveModel::from(dept::Model {
                 id,
                 tenant_id: tenant_id.to_owned(),
@@ -151,10 +151,7 @@ async fn upsert_simple_resources(
                 normalize_stable_key(&candidate.code) == normalize_stable_key(&item.code)
             });
         let model = post::Model {
-            id: existing
-                .as_ref()
-                .map(|item| item.id)
-                .unwrap_or(try_next_snowflake_id()?),
+            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
             tenant_id: tenant_id.to_owned(),
             name: item.name.clone(),
             code: item.code.clone(),
@@ -186,10 +183,7 @@ async fn upsert_simple_resources(
                 normalize_stable_key(&candidate.code) == normalize_stable_key(&item.code)
             });
         let model = dict_type::Model {
-            id: existing
-                .as_ref()
-                .map(|item| item.id)
-                .unwrap_or(try_next_snowflake_id()?),
+            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
             tenant_id: tenant_id.to_owned(),
             name: item.name.clone(),
             code: item.code.clone(),
@@ -222,10 +216,7 @@ async fn upsert_simple_resources(
                     && normalize_stable_key(&candidate.value) == normalize_stable_key(&item.value)
             });
         let model = dict_data::Model {
-            id: existing
-                .as_ref()
-                .map(|item| item.id)
-                .unwrap_or(try_next_snowflake_id()?),
+            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
             tenant_id: tenant_id.to_owned(),
             type_code: item.type_code.clone(),
             label: item.label.clone(),
@@ -262,10 +253,7 @@ async fn upsert_simple_resources(
                 normalize_stable_key(&candidate.key) == normalize_stable_key(&item.key)
             });
         let model = config::Model {
-            id: existing
-                .as_ref()
-                .map(|item| item.id)
-                .unwrap_or(try_next_snowflake_id()?),
+            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
             tenant_id: tenant_id.to_owned(),
             name: item.name.clone(),
             key: item.key.clone(),
@@ -367,10 +355,7 @@ async fn upsert_permissions(
                 )));
             }
             let model = permission::Model {
-                id: old
-                    .as_ref()
-                    .map(|value| value.id)
-                    .unwrap_or(try_next_snowflake_id()?),
+                id: old.as_ref().map(|value| value.id).unwrap_or(next_id()?),
                 tenant_id: tenant_id.to_owned(),
                 name: item.name.clone(),
                 code: item.code.clone(),
@@ -511,10 +496,7 @@ async fn upsert_menus(
             }
             let old = by_key.get(&normalize_stable_key(&item.stable_key)).cloned();
             let model = menu::Model {
-                id: old
-                    .as_ref()
-                    .map(|value| value.id)
-                    .unwrap_or(try_next_snowflake_id()?),
+                id: old.as_ref().map(|value| value.id).unwrap_or(next_id()?),
                 tenant_id: tenant_id.to_owned(),
                 name: item.name.clone(),
                 parent_id,
@@ -590,10 +572,7 @@ async fn upsert_roles_and_relations(
         if old.as_ref().is_some_and(|value| value.is_super == 1) {
             return Err(AppError::Conflict("超级角色不能被配置包覆盖".into()));
         }
-        let role_id = old
-            .as_ref()
-            .map(|value| value.id)
-            .unwrap_or(try_next_snowflake_id()?);
+        let role_id = old.as_ref().map(|value| value.id).unwrap_or(next_id()?);
         let model = role::Model {
             id: role_id,
             tenant_id: tenant_id.to_owned(),

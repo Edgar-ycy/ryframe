@@ -1,4 +1,3 @@
-use ryframe_adapters::snowflake;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
@@ -149,7 +148,7 @@ impl DictService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
         let mut new_type = dict_type::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             code: code.to_string(),
@@ -294,7 +293,7 @@ impl DictService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
         let mut new_data = dict_data::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             type_code: type_code.to_string(),
             label: label.to_string(),

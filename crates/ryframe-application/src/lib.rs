@@ -3,6 +3,7 @@ mod audit;
 mod auth_service;
 mod authorization_cache;
 mod authorization_resolver;
+mod id_generator;
 pub mod jobs;
 mod principal_resolver;
 mod request_tenant_context;
@@ -26,6 +27,7 @@ pub use authorization_cache::{
     set_authorization_cache_lookup_hook,
 };
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
+pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 #[allow(deprecated)]
 pub use jobs::spawn_message_retention_scheduler;
 pub use jobs::{

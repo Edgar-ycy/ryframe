@@ -78,7 +78,7 @@ impl ServiceAccountService {
         let (pepper_version, pepper) = self.keyring.active();
         let secret_mac = issued.mac(pepper)?;
         let model = service_credential::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             account_id,
             key_id: issued.key_id().to_owned(),

@@ -24,7 +24,7 @@ impl AgentService {
         };
         let active_pepper = self.keyring.active().1;
         let audit = service_access_audit::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             request_id,
             tenant_id: hint.map(|item| item.credential.tenant_id.clone()),
             account_id: hint.map(|item| item.credential.account_id),
@@ -100,7 +100,7 @@ pub(super) fn success_audit(
 ) -> AppResult<service_access_audit::Model> {
     let active_pepper = keyring.active().1;
     Ok(service_access_audit::Model {
-        id: snowflake::try_next_snowflake_id()?,
+        id: crate::next_id()?,
         request_id: request.request_id.clone(),
         tenant_id: Some(context.tenant.tenant_id.clone()),
         account_id: Some(context.account.id),

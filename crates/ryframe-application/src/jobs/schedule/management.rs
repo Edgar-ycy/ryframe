@@ -147,7 +147,7 @@ impl JobScheduleService {
             .insert(
                 &transaction,
                 job_schedule::ActiveModel {
-                    id: Set(snowflake::try_next_snowflake_id()?),
+                    id: Set(crate::next_id()?),
                     tenant_id: Set(tenant_id.to_owned()),
                     name: Set(validated.name),
                     handler_key: Set(validated.handler_key),

@@ -168,7 +168,7 @@ impl ServiceAccountService {
         let (pepper_version, pepper) = self.keyring.active();
         let token_mac = issued.mac(pepper)?;
         let model = service_delegation::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             account_id: command.account_id,
             user_id: actor.user_id,

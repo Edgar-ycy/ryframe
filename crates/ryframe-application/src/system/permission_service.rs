@@ -1,7 +1,6 @@
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
-use ryframe_adapters::snowflake;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
@@ -117,7 +116,7 @@ impl PermissionService {
         ensure_tenant_permission_code_boundary(tenant_id, &command.code)?;
         let db = self.db.write();
         let mut model = permission::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             name: command.name,
             code: command.code.clone(),
@@ -339,7 +338,7 @@ impl PermissionService {
             for code in &missing {
                 let name = code.rsplit(':').next().unwrap_or(code).to_string();
                 let mut model = permission::Model {
-                    id: snowflake::try_next_snowflake_id()?,
+                    id: crate::next_id()?,
                     tenant_id: tenant_id.to_owned(),
                     name,
                     code: code.clone(),

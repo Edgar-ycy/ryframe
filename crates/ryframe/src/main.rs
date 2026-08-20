@@ -53,6 +53,9 @@ async fn main() -> Result<(), AppError> {
     ryframe_db::install_id_generator(|| {
         ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
     })?;
+    ryframe_application::install_id_generator(|| {
+        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
+    })?;
     let localizer = Arc::new(
         LocalizerLoader::load_from_environment(config.environment.is_production())
             .map_err(|error| AppError::Config(format!("国际化资源加载失败: {error}")))?,

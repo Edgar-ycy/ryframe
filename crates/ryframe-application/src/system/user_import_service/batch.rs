@@ -314,7 +314,7 @@ impl RowIssue {
         now: DateTime<Utc>,
     ) -> AppResult<user_import_row_result::Model> {
         Ok(user_import_row_result::Model {
-            id: try_next_snowflake_id()?,
+            id: next_id()?,
             tenant_id: tenant_id.to_owned(),
             import_job_id,
             row_number: self.row_number,
@@ -354,7 +354,7 @@ fn build_user_model(
     now: DateTime<Utc>,
 ) -> AppResult<user::Model> {
     Ok(user::Model {
-        id: try_next_snowflake_id()?,
+        id: next_id()?,
         tenant_id: tenant_id.to_owned(),
         username: prepared.candidate.data.username,
         password_hash: prepared.password_hash,

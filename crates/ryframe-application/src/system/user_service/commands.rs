@@ -1,4 +1,3 @@
-use ryframe_adapters::snowflake;
 use ryframe_auth::password;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{TenantConfigTransferRepository, TenantRepository, entities::user};
@@ -38,7 +37,7 @@ impl UserService {
 
         let activation_secret = format!("pending:{}", Uuid::new_v4());
         let mut user = user::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             username: username.to_owned(),
             password_hash: password::hash(&activation_secret)?,

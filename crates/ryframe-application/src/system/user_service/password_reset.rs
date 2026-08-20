@@ -1,4 +1,3 @@
-use ryframe_adapters::snowflake;
 use ryframe_auth::password;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{
@@ -37,7 +36,7 @@ impl UserService {
             .database_utc_now(self.db.write())
             .await?;
         let mut request = password_reset_request::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             target_user_id,
             requested_by: actor.user_id,

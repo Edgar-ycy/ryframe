@@ -108,7 +108,7 @@ pub(super) fn new_transfer_model(
     now: DateTime<Utc>,
 ) -> AppResult<tenant_config_transfer::Model> {
     Ok(tenant_config_transfer::Model {
-        id: try_next_snowflake_id()?,
+        id: next_id()?,
         tenant_id: tenant_id.to_owned(),
         bundle_id,
         idempotency_key_hash: idempotency_key_hash.to_owned(),

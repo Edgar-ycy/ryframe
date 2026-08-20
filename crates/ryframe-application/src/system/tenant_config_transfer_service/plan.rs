@@ -48,7 +48,7 @@ pub(super) fn build_preview_plan(
         validate_transfer_item_text(&description.display_name, 255, "配置显示名称")?;
         *counts.entry(description.action.to_owned()).or_insert(0) += 1;
         items.push(tenant_config_transfer_item::Model {
-            id: try_next_snowflake_id()?,
+            id: next_id()?,
             tenant_id: tenant_id.to_owned(),
             transfer_id,
             resource_type: description.resource_type.to_owned(),

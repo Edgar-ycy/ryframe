@@ -71,6 +71,9 @@ async fn main() -> Result<(), AppError> {
     ryframe_db::install_id_generator(|| {
         ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
     })?;
+    ryframe_application::install_id_generator(|| {
+        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
+    })?;
     let (_logger_guard, _telemetry_guard) = process_logging::init(&config)?;
     ryframe_adapters::metrics::spawn_process_metrics_updater();
 

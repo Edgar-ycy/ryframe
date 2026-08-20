@@ -183,7 +183,7 @@ impl DataRetentionService {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let result = async {
             let now = self.repository.database_utc_now(&transaction).await?;
-            let proposed_run_id = ryframe_adapters::snowflake::try_next_snowflake_id()?;
+            let proposed_run_id = crate::next_id()?;
             let trace_context = crate::trace_context::current_trace_context();
             let enqueue = self
                 .queue

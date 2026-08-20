@@ -3,9 +3,9 @@ use std::{
     sync::Arc,
 };
 
+use crate::next_id;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use ryframe_adapters::snowflake::try_next_snowflake_id;
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ControlDatabaseCluster,
     EnqueueBackgroundJob, FileRepository, TenantConfigTransferRepository,

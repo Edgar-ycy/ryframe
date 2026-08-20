@@ -1,4 +1,3 @@
-use ryframe_adapters::snowflake;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
@@ -121,7 +120,7 @@ impl MenuService {
         let db = self.db.write();
         let route_key = normalize_route_key(command.route_key);
         let mut new_menu = menu::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             name: command.name,
             parent_id: command.parent_id,

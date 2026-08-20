@@ -1,5 +1,4 @@
 use chrono::Utc;
-use ryframe_adapters::snowflake;
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
     ExportCursorWindow, OperLogFilter, OperLogRepository, Repository, entities::oper_log,
@@ -124,7 +123,7 @@ impl OperLogService {
     ) -> AppResult<()> {
         crate::enforce_tenant_scope(tenant_id)?;
         let log = oper_log::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             event_id: None,
             request_id: None,
@@ -170,7 +169,7 @@ impl OperLogService {
             ));
         }
         let log = oper_log::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             event_id: Some(event_id.to_owned()),
             request_id: Some(request_id.to_owned()),

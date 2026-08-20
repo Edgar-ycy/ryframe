@@ -229,7 +229,7 @@ impl ConfigService {
         validate_portable_key(key, portable)?;
         let db = self.db.write();
         let mut new_config = config::Model {
-            id: ryframe_adapters::snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             key: key.to_string(),

@@ -160,7 +160,7 @@ impl UserImportService {
             ));
         }
 
-        let import_id = try_next_snowflake_id()?;
+        let import_id = next_id()?;
         let now = UserImportRepository.database_utc_now(&transaction).await?;
         let source_file = FileRepository
             .find_by_id_any_status_for_update(&transaction, tenant_id, command.source_file_id)

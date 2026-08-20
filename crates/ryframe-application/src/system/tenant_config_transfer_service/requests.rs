@@ -30,7 +30,7 @@ impl TenantConfigTransferService {
             {
                 return Ok::<_, AppError>((bundle, false));
             }
-            let proposed_bundle_id = try_next_snowflake_id()?;
+            let proposed_bundle_id = next_id()?;
             let trace = crate::trace_context::current_trace_context();
             let enqueued = self
                 .queue
@@ -370,7 +370,7 @@ impl TenantConfigTransferService {
             }
             let now = self.repository.database_utc_now(&transaction).await?;
             ensure_config_package_file_ready_in_txn(&transaction, tenant_id, file_id, now).await?;
-            let bundle_id = try_next_snowflake_id()?;
+            let bundle_id = next_id()?;
             let counts = serde_json::to_value(&parsed.manifest.resource_counts)
                 .map_err(internal_json_error)?;
             let bundle = self

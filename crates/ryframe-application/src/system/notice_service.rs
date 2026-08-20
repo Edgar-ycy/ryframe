@@ -1,4 +1,3 @@
-use ryframe_adapters::snowflake;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{NoticeFilter, NoticeRepository, Repository, entities::notice};
@@ -99,7 +98,7 @@ impl NoticeService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let db = self.db.write();
         let mut new_notice = notice::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             title: title.to_string(),
             content: content_markdown.to_string(),

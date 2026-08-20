@@ -3,11 +3,11 @@ use std::{
     sync::Arc,
 };
 
+use crate::next_id;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use ryframe_adapters::excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
-use ryframe_adapters::snowflake::try_next_snowflake_id;
 use ryframe_auth::password;
 use ryframe_db::{
     ControlDatabaseCluster, CreateUserImportJob, DeptRepository, EnqueueBackgroundJob,

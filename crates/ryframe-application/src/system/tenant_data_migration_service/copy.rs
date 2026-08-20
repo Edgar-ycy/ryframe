@@ -41,7 +41,7 @@ impl TenantDataMigrationService {
                     .insert_item(
                         self.database.write(),
                         tenant_data_migration_item::Model {
-                            id: ryframe_adapters::snowflake::try_next_snowflake_id()?,
+                            id: crate::next_id()?,
                             migration_id: migration.id,
                             table_name: descriptor.table.into(),
                             copy_order: i32::try_from(descriptor.copy_order).map_err(|_| {

@@ -15,7 +15,7 @@ pub(super) async fn insert_execution(
     execution: NewExecution<'_>,
 ) -> AppResult<job_schedule_execution::Model> {
     job_schedule_execution::ActiveModel {
-        id: Set(snowflake::try_next_snowflake_id()?),
+        id: Set(crate::next_id()?),
         tenant_id: Set(schedule.tenant_id.clone()),
         schedule_id: Set(schedule.id),
         schedule_name_snapshot: Set(schedule.name.clone()),

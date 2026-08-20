@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ryframe_adapters::snowflake;
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
@@ -354,7 +353,7 @@ impl RoleService {
         let data_scope = data_scope.unwrap_or_else(|| "1".to_string());
         Self::validate_data_scope(&data_scope)?;
         let mut new_role = role::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
             name: name.to_string(),
             code: code.to_string(),

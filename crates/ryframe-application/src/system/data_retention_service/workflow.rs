@@ -25,7 +25,7 @@ impl DataRetentionService {
             .get("run_id")
             .and_then(Value::as_str)
             .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(ryframe_adapters::snowflake::try_next_snowflake_id()?);
+            .unwrap_or(crate::next_id()?);
         self.repository
             .insert_run_if_missing(
                 self.db.write(),
@@ -176,7 +176,7 @@ impl DataRetentionService {
             .get("run_id")
             .and_then(Value::as_str)
             .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(ryframe_adapters::snowflake::try_next_snowflake_id()?);
+            .unwrap_or(crate::next_id()?);
         self.repository
             .insert_run_if_missing(
                 self.db.write(),

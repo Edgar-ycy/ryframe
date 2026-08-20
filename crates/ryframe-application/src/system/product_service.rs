@@ -177,7 +177,7 @@ impl ProductService {
             return Err(AppError::Conflict("产品套餐标识已存在".into()));
         }
         let now = Utc::now();
-        let plan_id = ryframe_adapters::snowflake::try_next_snowflake_id()?;
+        let plan_id = crate::next_id()?;
         let plan = self
             .repository
             .insert_plan_in_txn(
@@ -260,7 +260,7 @@ impl ProductService {
             .next_version_in_txn(&transaction, plan.id)
             .await?;
         let now = Utc::now();
-        let id = ryframe_adapters::snowflake::try_next_snowflake_id()?;
+        let id = crate::next_id()?;
         let version = self
             .repository
             .insert_version_in_txn(
