@@ -6,8 +6,8 @@ use std::{
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
     ControlDatabaseCluster, RoleRepository, ServiceAccountLock, ServiceAccountRepository,
-    ServiceCredentialRepository, ServiceDelegationRepository, UserRepository,
-    entities::{role, service_account, service_credential, service_delegation},
+    ServiceDelegationRepository, UserRepository,
+    entities::{role, service_account, service_delegation},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -20,7 +20,7 @@ use crate::{
     AuthorizationCache, AuthorizationMirrorTransaction, PepperKeyring, ServiceAccountAuditReadPort,
     ServiceAccountAuthorizationReadPort, ServiceAccountPolicy, ServiceAccountReadPort,
     ServiceAccountRecord, ServiceAccountWritePort, ServiceAccountWriteTransaction,
-    ServiceCredentialRecord, ServiceDelegationRecord,
+    ServiceCredentialRecord, ServiceCredentialWriteRecord, ServiceDelegationRecord,
     service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
 };
 
@@ -57,7 +57,6 @@ pub struct ServiceAccountService {
     read: Arc<dyn ServiceAccountReadPort>,
     write: Arc<dyn ServiceAccountWritePort>,
     account_repo: ServiceAccountRepository,
-    credential_repo: ServiceCredentialRepository,
     delegation_repo: ServiceDelegationRepository,
     role_repo: RoleRepository,
     user_repo: UserRepository,
@@ -85,7 +84,6 @@ impl ServiceAccountService {
             read: reads.accounts,
             write,
             account_repo: ServiceAccountRepository,
-            credential_repo: ServiceCredentialRepository,
             delegation_repo: ServiceDelegationRepository,
             role_repo: RoleRepository,
             user_repo: UserRepository,

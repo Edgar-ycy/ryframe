@@ -126,8 +126,8 @@ impl From<ServiceCredentialRecord> for ServiceCredentialVo {
     }
 }
 
-impl From<service_credential::Model> for ServiceCredentialVo {
-    fn from(credential: service_credential::Model) -> Self {
+impl From<ServiceCredentialWriteRecord> for ServiceCredentialVo {
+    fn from(credential: ServiceCredentialWriteRecord) -> Self {
         Self {
             id: credential.id.to_string(),
             account_id: credential.account_id.to_string(),

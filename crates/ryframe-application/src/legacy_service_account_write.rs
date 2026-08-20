@@ -2,17 +2,18 @@ use std::sync::Arc;
 
 use ryframe_db::{
     ControlDatabaseCluster, ServiceAccountLock, ServiceAccountRepository,
-    entities::{dept, service_account},
+    ServiceCredentialRepository,
+    entities::{dept, service_account, service_credential},
 };
 use ryframe_kernel::AppError;
 use sea_orm::{
-    ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect, TransactionTrait,
-    sea_query::LockType,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect,
+    TransactionTrait, sea_query::LockType,
 };
 
 use crate::{
     AuthorizationMirrorTransaction, PersistenceFuture, ServiceAccountRecord,
-    ServiceAccountWritePort, ServiceAccountWriteTransaction,
+    ServiceAccountWritePort, ServiceAccountWriteTransaction, ServiceCredentialWriteRecord,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ServiceAccountWritePort> {
@@ -148,6 +149,93 @@ impl ServiceAccountWriteTransaction for LegacyServiceAccountWriteTransaction {
         })
     }
 
+    fn find_idempotent_credential<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        idempotency_key_hash: &'a [u8],
+    ) -> PersistenceFuture<'a, Option<ServiceCredentialWriteRecord>> {
+        Box::pin(async move {
+            ServiceCredentialRepository
+                .find_idempotent(
+                    &self.transaction,
+                    tenant_id,
+                    account_id,
+                    idempotency_key_hash,
+                )
+                .await
+                .map(|credential| credential.map(credential_record))
+        })
+    }
+
+    fn count_active_credentials_at<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'a, u64> {
+        Box::pin(async move {
+            ServiceCredentialRepository
+                .count_active_at(&self.transaction, tenant_id, account_id, now)
+                .await
+        })
+    }
+
+    fn insert_credential<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        credential: ServiceCredentialWriteRecord,
+    ) -> PersistenceFuture<'a, ServiceCredentialWriteRecord> {
+        Box::pin(async move {
+            ServiceCredentialRepository
+                .insert_in_txn(
+                    &self.transaction,
+                    tenant_id,
+                    account_id,
+                    credential_model(credential),
+                )
+                .await
+                .map(credential_record)
+        })
+    }
+
+    fn lock_credential<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        credential_id: i64,
+    ) -> PersistenceFuture<'a, Option<ServiceCredentialWriteRecord>> {
+        Box::pin(async move {
+            service_credential::Entity::find_by_id(credential_id)
+                .filter(service_credential::Column::TenantId.eq(tenant_id))
+                .filter(service_credential::Column::AccountId.eq(account_id))
+                .lock(LockType::Update)
+                .one(&self.transaction)
+                .await
+                .map(|credential| credential.map(credential_record))
+                .map_err(database_error)
+        })
+    }
+
+    fn save_credential<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        credential: ServiceCredentialWriteRecord,
+    ) -> PersistenceFuture<'a, ServiceCredentialWriteRecord> {
+        Box::pin(async move {
+            if credential.tenant_id != tenant_id || credential.account_id != account_id {
+                return Err(AppError::Authorization("凭据租户或服务账号不匹配".into()));
+            }
+            service_credential::ActiveModel::from(credential_model(credential))
+                .update(&self.transaction)
+                .await
+                .map(credential_record)
+                .map_err(database_error)
+        })
+    }
+
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move { crate::commit_current_audit(self.transaction).await })
     }
@@ -198,6 +286,50 @@ fn account_model(account: ServiceAccountRecord) -> service_account::Model {
     }
 }
 
+fn credential_record(credential: service_credential::Model) -> ServiceCredentialWriteRecord {
+    ServiceCredentialWriteRecord {
+        id: credential.id,
+        tenant_id: credential.tenant_id,
+        account_id: credential.account_id,
+        key_id: credential.key_id,
+        secret_mac: credential.secret_mac,
+        pepper_version: credential.pepper_version,
+        label: credential.label,
+        status: credential.status,
+        expires_at: credential.expires_at,
+        last_used_at: credential.last_used_at,
+        created_by: credential.created_by,
+        revoked_at: credential.revoked_at,
+        revoked_by: credential.revoked_by,
+        created_at: credential.created_at,
+        updated_at: credential.updated_at,
+        idempotency_key_hash: credential.idempotency_key_hash,
+        request_fingerprint: credential.request_fingerprint,
+    }
+}
+
+fn credential_model(credential: ServiceCredentialWriteRecord) -> service_credential::Model {
+    service_credential::Model {
+        id: credential.id,
+        tenant_id: credential.tenant_id,
+        account_id: credential.account_id,
+        key_id: credential.key_id,
+        secret_mac: credential.secret_mac,
+        pepper_version: credential.pepper_version,
+        label: credential.label,
+        status: credential.status,
+        expires_at: credential.expires_at,
+        last_used_at: credential.last_used_at,
+        created_by: credential.created_by,
+        revoked_at: credential.revoked_at,
+        revoked_by: credential.revoked_by,
+        created_at: credential.created_at,
+        updated_at: credential.updated_at,
+        idempotency_key_hash: credential.idempotency_key_hash,
+        request_fingerprint: credential.request_fingerprint,
+    }
+}
+
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
 }
@@ -233,5 +365,36 @@ mod tests {
             account_model(record).del_flag,
             service_account::Model::DEL_FLAG_DELETED
         );
+    }
+
+    #[test]
+    fn credential_mapping_preserves_secret_metadata() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+        let model = service_credential::Model {
+            id: 1,
+            tenant_id: "tenant-a".into(),
+            account_id: 2,
+            key_id: "key-a".into(),
+            secret_mac: vec![1, 2],
+            pepper_version: 3,
+            label: "自动化".into(),
+            status: service_credential::Model::STATUS_ACTIVE.into(),
+            expires_at: now,
+            last_used_at: None,
+            created_by: 4,
+            revoked_at: None,
+            revoked_by: None,
+            created_at: now,
+            updated_at: now,
+            idempotency_key_hash: vec![5, 6],
+            request_fingerprint: vec![7, 8],
+        };
+
+        let record = credential_record(model);
+        assert_eq!(record.secret_mac, [1, 2]);
+        assert_eq!(record.request_fingerprint, [7, 8]);
+        let restored = credential_model(record);
+        assert_eq!(restored.pepper_version, 3);
+        assert_eq!(restored.idempotency_key_hash, [5, 6]);
     }
 }
