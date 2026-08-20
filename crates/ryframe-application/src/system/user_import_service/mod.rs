@@ -8,11 +8,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use ryframe_auth::password;
-use ryframe_db::{ControlDatabaseCluster, FileRepository, TenantRepository, UserImportRepository};
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, DataScope, PageResult, ValidatedPageQuery,
 };
-use sea_orm::TransactionTrait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
@@ -49,7 +47,6 @@ const USER_IMPORT_REPORT_HEADERS: &[(&str, &str)] = &[
 
 #[derive(Clone)]
 pub struct UserImportService {
-    db: ControlDatabaseCluster,
     queue: Arc<JobQueue>,
     user_service: Arc<UserService>,
     file_service: Arc<FileService>,

@@ -186,7 +186,6 @@ async fn main() -> Result<(), AppError> {
         application_policies.retention,
     ));
     let user_import = Arc::new(UserImportService::new(
-        database.clone(),
         queue.clone(),
         user.clone(),
         file.clone(),

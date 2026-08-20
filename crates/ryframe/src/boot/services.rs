@@ -329,7 +329,6 @@ pub async fn build_all(
         policies.retention,
     ));
     let user_import = Arc::new(UserImportService::new(
-        database.clone(),
         job_queue.clone(),
         user.clone(),
         file.clone(),

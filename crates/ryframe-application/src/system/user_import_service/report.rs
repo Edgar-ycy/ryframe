@@ -55,42 +55,36 @@ impl UserImportService {
             .file_id
             .parse::<i64>()
             .map_err(|_| AppError::Internal("用户导入报告文件标识无效".into()))?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         // 报告文件可能因内容相同而被多个任务复用。与导入创建及历史清理统一使用
         // tenant -> file -> import 的锁序，并在写引用前重新确认对象仍可用。
-        TenantRepository
-            .lock_tenant_in_txn(&transaction, &import.tenant_id)
-            .await?;
-        let report_file = FileRepository
-            .find_by_id_any_status_for_update(&transaction, &import.tenant_id, file_id)
+        transaction.lock_tenant(&import.tenant_id).await?;
+        let report_file = transaction
+            .lock_source(&import.tenant_id, file_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入报告文件已被回收".into()))?;
         if report_file.bucket != IMPORT_BUCKET
-            || report_file.upload_status
-                != ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_READY
-            || report_file.file_sha256 != report_sha256
+            || report_file.state != UserImportSourceState::Ready
+            || report_file.sha256 != report_sha256
         {
             return Err(AppError::Conflict("用户导入报告文件状态已变化".into()));
         }
-        let mut current = UserImportRepository
-            .lock_by_id_in_txn(&transaction, import.id)
+        let mut current = transaction
+            .lock(import.id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
-        let now = UserImportRepository.database_utc_now(&transaction).await?;
+        let now = transaction.database_now().await?;
         if current.error_report_file_id.is_none() && current.is_terminal() {
             current.error_report_file_id = Some(file_id);
             current.updated_at = now;
             current.last_error = None;
-            UserImportRepository
-                .save_in_txn(&transaction, current)
-                .await?;
-            transaction.commit().await.map_err(database_error)?;
+            transaction.save(current).await?;
+            transaction.commit().await?;
         } else {
             // 并发执行已经关联报告，或人工重投已使任务离开终态时，本次上传可能成为
             // 无引用对象。只为确实没有任何引用的文件建立可恢复墓碑。
-            let marked = FileRepository
-                .mark_import_orphan_for_cleanup_in_txn(
-                    &transaction,
+            let marked = transaction
+                .mark_source_for_cleanup(
                     &import.tenant_id,
                     file_id,
                     now,
@@ -98,9 +92,9 @@ impl UserImportService {
                 )
                 .await?;
             if marked {
-                transaction.commit().await.map_err(database_error)?;
+                transaction.commit().await?;
             } else {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
             }
         }
         Ok(())

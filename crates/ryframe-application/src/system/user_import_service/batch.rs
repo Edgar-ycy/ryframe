@@ -411,7 +411,3 @@ fn truncate_utf8(value: &str, maximum_bytes: usize) -> String {
     }
     format!("{}…", &value[..end])
 }
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}

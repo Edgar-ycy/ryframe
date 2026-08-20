@@ -1,6 +1,5 @@
 impl UserImportService {
     pub fn new(
-        db: ControlDatabaseCluster,
         queue: Arc<JobQueue>,
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,
@@ -9,7 +8,6 @@ impl UserImportService {
         config: crate::UserImportPolicy,
     ) -> Self {
         Self {
-            db,
             queue,
             user_service,
             file_service,
