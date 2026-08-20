@@ -1,11 +1,24 @@
 use std::{fmt, sync::Arc};
 
-use ryframe_db::validate_cache_namespace;
 use ryframe_kernel::{AppError, AppResult};
 
 use crate::CacheAvailabilityPolicy;
 
 use super::*;
+
+fn validate_cache_namespace(namespace: &str) -> AppResult<()> {
+    if namespace.is_empty()
+        || namespace.len() > 64
+        || !namespace.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+    {
+        return Err(AppError::Validation(
+            "缓存命名空间只能包含 1 到 64 个小写字母、数字、点、下划线或连字符".into(),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Clone)]
 pub struct AuthorizationCache {
@@ -478,4 +491,18 @@ fn validate_namespace_version(version: i64) -> AppResult<()> {
         return Err(AppError::Database("缓存命名空间版本不能为负数".into()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_cache_namespace;
+
+    #[test]
+    fn cache_namespace_rejects_unsafe_key_fragments() {
+        assert!(validate_cache_namespace("config").is_ok());
+        assert!(validate_cache_namespace("tenant.cache-v1").is_ok());
+        assert!(validate_cache_namespace("").is_err());
+        assert!(validate_cache_namespace("Config").is_err());
+        assert!(validate_cache_namespace("../config").is_err());
+    }
 }
