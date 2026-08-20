@@ -25,6 +25,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "json"]}
 tracing-appender = { workspace = true }
 sea-orm = { workspace = true}
 redis = { workspace = true }
+futures-util = { workspace = true }
 md5 = { version = "0.8", optional = true }
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }

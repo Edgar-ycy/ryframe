@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::TrustedProxySet;
-use ryframe_adapters::RedisClient;
 use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService, TenantRuntimeReadPort,
     agent::AgentService,
@@ -67,7 +66,7 @@ pub struct AppState {
     pub settings: Arc<HttpRuntimeSettings>,
     pub localizer: Arc<Localizer>,
     pub services: Arc<AppServices>,
-    pub redis: Option<RedisClient>,
+    pub redis_connected: bool,
     pub idempotency_store: Option<Arc<dyn HttpIdempotencyStore>>,
     pub message_hub: Arc<crate::message_socket::MessageHub>,
     pub rate_limiter: Arc<dyn HttpRateLimiter>,
@@ -82,6 +81,6 @@ impl AppState {
     /// 是可预测的实时通道不可用状态。运行期 Redis I/O 失败仍不在此列，保留原有
     /// 可观测性。
     pub(crate) fn websocket_ticket_is_expected_unavailable(&self) -> bool {
-        !self.settings.messaging.enabled || self.redis.is_none()
+        !self.settings.messaging.enabled || !self.redis_connected
     }
 }

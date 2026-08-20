@@ -320,103 +320,27 @@ impl MessageHub {
         Ok(count)
     }
 
-    /// 在 Redis 可用时订阅跨实例唤醒信号；掉线后按指数退避重连。
-    pub fn spawn_redis_listener(
+    /// 处理一次授权变化唤醒；强一致租户快照始终由应用端口重新读取。
+    pub async fn deliver_authorization_change(
         &self,
-        redis: Option<RedisClient>,
-        service: Arc<MessageService>,
-        tenant_data: Arc<dyn TenantRuntimeReadPort>,
-    ) -> Option<JoinHandle<()>> {
-        crate::metrics::set_message_redis_listener_connected(false);
-        if !self.config.enabled {
-            return None;
-        }
-        let redis = redis?;
-        let hub = self.clone();
-        Some(tokio::spawn(async move {
-            let mut retry_seconds = 1_u64;
-            let mut degraded = false;
-            loop {
-                match redis
-                    .subscribe_many(&[
-                        MESSAGE_DISPATCH_REDIS_CHANNEL,
-                        AUTHORIZATION_CHANGED_REDIS_CHANNEL,
-                    ])
-                    .await
-                {
-                    Ok(subscription) => {
-                        crate::metrics::set_message_redis_listener_connected(true);
-                        if degraded {
-                            tracing::info!(
-                                channel = MESSAGE_DISPATCH_REDIS_CHANNEL,
-                                "消息 WebSocket Redis 订阅已恢复"
-                            );
-                        } else {
-                            tracing::info!(
-                                channel = MESSAGE_DISPATCH_REDIS_CHANNEL,
-                                "消息 WebSocket Redis 订阅已建立"
-                            );
-                        }
-                        degraded = false;
-                        retry_seconds = 1;
-                        let mut messages = subscription.into_on_message();
-                        while let Some(raw) = messages.next().await {
-                            let channel = raw.get_channel_name().to_owned();
-                            let Ok(payload) = raw.get_payload::<String>() else {
-                                tracing::warn!("收到无法解析的消息唤醒负载");
-                                continue;
-                            };
-                            if channel == AUTHORIZATION_CHANGED_REDIS_CHANNEL {
-                                match serde_json::from_str::<AuthorizationChangedEvent>(&payload) {
-                                    Ok(event)
-                                        if !event.tenant_id.trim().is_empty()
-                                            && event.authorization_epoch > 0 =>
-                                    {
-                                        match tenant_data.runtime_snapshot(&event.tenant_id).await {
-                                            Ok(snapshot) => {
-                                                hub.send_tenant_context_changed(&snapshot);
-                                            }
-                                            Err(error) => tracing::warn!(
-                                                tenant_id = %event.tenant_id,
-                                                %error,
-                                                "授权变化后读取租户强一致上下文失败"
-                                            ),
-                                        }
-                                    }
-                                    _ => tracing::warn!("收到无效的授权变化实时通知"),
-                                }
-                                continue;
-                            }
-                            let Ok(message_id) = payload.parse::<i64>() else {
-                                tracing::warn!("收到无效的消息唤醒标识");
-                                continue;
-                            };
-                            if let Err(error) = hub.deliver_message(&service, message_id).await {
-                                tracing::warn!(%error, message_id, "消息在线投递失败，将由收件箱补拉恢复");
-                            }
-                        }
-                        crate::metrics::set_message_redis_listener_connected(false);
-                        if !degraded {
-                            tracing::warn!("消息 WebSocket Redis 订阅已中断");
-                            degraded = true;
-                        } else {
-                            tracing::debug!("消息 WebSocket Redis 订阅仍不可用");
-                        }
+        tenant_data: &dyn TenantRuntimeReadPort,
+        payload: &str,
+    ) {
+        match serde_json::from_str::<AuthorizationChangedEvent>(payload) {
+            Ok(event) if !event.tenant_id.trim().is_empty() && event.authorization_epoch > 0 => {
+                match tenant_data.runtime_snapshot(&event.tenant_id).await {
+                    Ok(snapshot) => {
+                        self.send_tenant_context_changed(&snapshot);
                     }
-                    Err(error) => {
-                        crate::metrics::set_message_redis_listener_connected(false);
-                        if !degraded {
-                            tracing::warn!(%error, "无法建立消息 WebSocket Redis 订阅");
-                            degraded = true;
-                        } else {
-                            tracing::debug!(%error, "消息 WebSocket Redis 订阅仍不可用");
-                        }
-                    }
+                    Err(error) => tracing::warn!(
+                        tenant_id = %event.tenant_id,
+                        %error,
+                        "授权变化后读取租户强一致上下文失败"
+                    ),
                 }
-                tokio::time::sleep(Duration::from_secs(retry_seconds)).await;
-                retry_seconds = retry_seconds.saturating_mul(2).min(30);
             }
-        }))
+            _ => tracing::warn!("收到无效的授权变化实时通知"),
+        }
     }
 
     /// 启动本 API 实例唯一的共享补拉调度器，按租户用户去重查询后向全部连接扇出。

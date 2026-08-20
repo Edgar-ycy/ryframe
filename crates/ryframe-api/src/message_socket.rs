@@ -18,13 +18,9 @@ use axum::{
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use futures_util::{SinkExt, StreamExt};
-use ryframe_adapters::RedisClient;
-use ryframe_application::system::{
-    MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService, MessageTemplate, WebSocketTicket,
-};
+use ryframe_application::system::{MessageService, MessageTemplate, WebSocketTicket};
 use ryframe_application::{
-    AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangedEvent, TenantRuntimeReadPort,
-    TenantRuntimeSnapshot,
+    AuthorizationChangedEvent, TenantRuntimeReadPort, TenantRuntimeSnapshot,
 };
 use ryframe_kernel::{AppError, Locale, Localizer};
 use serde::{Deserialize, Serialize};

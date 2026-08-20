@@ -63,7 +63,7 @@ pub(super) async fn probe_runtime_status(
         },
         redis: RuntimeRedisStatus {
             configured: state.settings.redis_configured,
-            connected: state.redis.is_some(),
+            connected: state.redis_connected,
         },
         object_storage: RuntimeStorageStatus {
             backend: storage_config.backend.as_str().into(),

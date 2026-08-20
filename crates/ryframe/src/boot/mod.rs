@@ -16,6 +16,7 @@ pub mod idempotency;
 pub mod jobs;
 pub mod limiter;
 pub mod logging;
+pub mod message_listener;
 pub mod readiness;
 pub mod redis;
 pub mod services;

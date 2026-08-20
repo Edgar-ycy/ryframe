@@ -129,13 +129,15 @@ async fn main() -> Result<(), AppError> {
     });
     let message_hub = state.message_hub.clone();
     let readiness_database = state.monitor.database.clone();
-    let readiness_redis = state.redis.clone();
+    let readiness_redis = redis.client.clone();
     let readiness_file_service = state.services.file.clone();
     let readiness_cache = state.monitor.readiness.clone();
-    let message_listener = state.message_hub.spawn_redis_listener(
+    let message_listener = boot::message_listener::spawn(
+        &state.message_hub,
         redis.client.clone(),
         services.message.clone(),
         services.tenant_data.clone(),
+        state.settings.messaging.enabled,
     );
     let mut message_replay_scheduler = state
         .message_hub

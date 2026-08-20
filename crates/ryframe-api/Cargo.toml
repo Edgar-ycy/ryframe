@@ -15,7 +15,6 @@ runtime-swagger-ui = ["dep:utoipa-swagger-ui"]
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }
-ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-macro = { path = "../ryframe-macro" }
 axum = { workspace = true, features = ["multipart"] }
 http = { workspace = true }

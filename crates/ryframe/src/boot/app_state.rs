@@ -264,6 +264,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         }),
     };
     let idempotency_store = super::idempotency::store(redis_client.clone());
+    let redis_connected = redis_client.is_some();
 
     ryframe_api::AppState {
         auth,
@@ -271,7 +272,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         settings: settings.clone(),
         localizer: localizer.clone(),
         services: Arc::new(services),
-        redis: redis_client,
+        redis_connected,
         idempotency_store,
         message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
             localizer,
