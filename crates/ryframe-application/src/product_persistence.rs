@@ -35,6 +35,39 @@ pub struct ProductPlanRecord {
 }
 
 #[derive(Debug)]
+pub struct ProductPlanState {
+    pub id: i64,
+    pub key: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub created_by: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct ProductVersionState {
+    pub id: i64,
+    pub plan_id: i64,
+    pub version: i32,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub created_by: i64,
+    pub published_by: Option<i64>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct ProductVersionWriteResult {
+    pub version: ProductVersionState,
+    pub capabilities: Vec<ProductCapabilityRecord>,
+}
+
+#[derive(Debug)]
 pub struct ProductVersionSnapshot {
     pub plan_key: String,
     pub plan_name: String,
@@ -79,4 +112,53 @@ pub trait ProductReadPort: Send + Sync {
         &'a self,
         tenant_id: &'a str,
     ) -> PersistenceFuture<'a, Option<TenantProductSnapshot>>;
+}
+
+pub trait ProductWriteTransaction: Send + Sync {
+    fn plan_key_exists<'a>(&'a self, key: &'a str) -> PersistenceFuture<'a, bool>;
+
+    fn insert_plan(&self, plan: ProductPlanState) -> PersistenceFuture<'_, ProductPlanState>;
+
+    fn lock_plan(&self, plan_id: i64) -> PersistenceFuture<'_, ProductPlanState>;
+
+    fn save_plan(&self, plan: ProductPlanState) -> PersistenceFuture<'_, ProductPlanState>;
+
+    fn next_version(&self, plan_id: i64) -> PersistenceFuture<'_, i32>;
+
+    fn insert_version(
+        &self,
+        version: ProductVersionState,
+        capabilities: Vec<ProductCapabilityRecord>,
+        capability_time: DateTime<Utc>,
+    ) -> PersistenceFuture<'_, ProductVersionWriteResult>;
+
+    fn lock_version(
+        &self,
+        plan_id: i64,
+        version: i32,
+    ) -> PersistenceFuture<'_, ProductVersionState>;
+
+    fn capabilities(&self, version_id: i64) -> PersistenceFuture<'_, Vec<ProductCapabilityRecord>>;
+
+    fn replace_draft_version(
+        &self,
+        version: ProductVersionState,
+        capabilities: Vec<ProductCapabilityRecord>,
+        capability_time: DateTime<Utc>,
+    ) -> PersistenceFuture<'_, ProductVersionWriteResult>;
+
+    fn transition_version(
+        &self,
+        version: ProductVersionState,
+        expected_status: &str,
+        target_status: &str,
+    ) -> PersistenceFuture<'_, ProductVersionState>;
+
+    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+
+    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+}
+
+pub trait ProductWritePort: Send + Sync {
+    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ProductWriteTransaction>>;
 }

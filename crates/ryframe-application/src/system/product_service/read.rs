@@ -5,6 +5,38 @@ use crate::{ProductPlanRecord, ProductVersionRecord};
 use super::*;
 
 impl ProductService {
+    pub(super) fn plan_state_vo(
+        plan: crate::ProductPlanState,
+        versions: Vec<ProductPlanVersionVo>,
+    ) -> ProductPlanVo {
+        ProductPlanVo {
+            id: plan.id.to_string(),
+            key: plan.key,
+            name: plan.name,
+            description: plan.description,
+            status: plan.status,
+            created_by: plan.created_by.to_string(),
+            versions,
+        }
+    }
+
+    pub(super) fn version_state_vo(
+        version: crate::ProductVersionState,
+        capabilities: Vec<crate::ProductCapabilityRecord>,
+    ) -> AppResult<ProductPlanVersionVo> {
+        Self::version_record_vo(ProductVersionRecord {
+            id: version.id,
+            version: version.version,
+            name: version.name,
+            description: version.description,
+            status: version.status,
+            created_by: version.created_by,
+            published_by: version.published_by,
+            published_at: version.published_at,
+            capabilities,
+        })
+    }
+
     pub(super) fn plan_record_vo(plan: ProductPlanRecord) -> AppResult<ProductPlanVo> {
         Ok(ProductPlanVo {
             id: plan.id.to_string(),

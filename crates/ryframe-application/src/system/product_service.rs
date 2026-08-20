@@ -6,10 +6,7 @@ use std::{
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
     ControlDatabaseCluster, ProductRepository, TenantOperationLeaseRepository,
-    entities::{
-        product_plan, product_plan_capability, product_plan_version, tenant_capability_override,
-        tenant_operation_lease,
-    },
+    entities::{product_plan_capability, tenant_capability_override, tenant_operation_lease},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
@@ -17,8 +14,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    AuthorizationCache, ProductReadPort, ProductVersionSnapshot, TenantCapabilityOverrideRecord,
-    TenantProductSnapshot,
+    AuthorizationCache, ProductPlanState, ProductReadPort, ProductVersionSnapshot,
+    ProductVersionState, ProductWritePort, TenantCapabilityOverrideRecord, TenantProductSnapshot,
 };
 
 use super::product_capability_catalog::{
@@ -45,6 +42,7 @@ use support::*;
 pub struct ProductService {
     db: ControlDatabaseCluster,
     read: Arc<dyn ProductReadPort>,
+    write: Arc<dyn ProductWritePort>,
     repository: ProductRepository,
     operation_leases: TenantOperationLeaseRepository,
     authorization_cache: AuthorizationCache,
@@ -55,12 +53,14 @@ impl ProductService {
     pub fn new(
         db: ControlDatabaseCluster,
         read: Arc<dyn ProductReadPort>,
+        write: Arc<dyn ProductWritePort>,
         authorization_cache: AuthorizationCache,
         service_accounts_deployment_available: bool,
     ) -> Self {
         Self {
             db,
             read,
+            write,
             repository: ProductRepository,
             operation_leases: TenantOperationLeaseRepository,
             authorization_cache,
@@ -142,43 +142,26 @@ impl ProductService {
         ensure_platform_actor(actor)?;
         validate_plan_key(&command.key)?;
         validate_name(&command.name, "套餐名称")?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        if self
-            .repository
-            .find_plan_by_key(&transaction, &command.key)
-            .await?
-            .is_some()
-        {
+        let transaction = self.write.begin().await?;
+        if transaction.plan_key_exists(&command.key).await? {
             return Err(AppError::Conflict("产品套餐标识已存在".into()));
         }
         let now = Utc::now();
         let plan_id = crate::next_id()?;
-        let plan = self
-            .repository
-            .insert_plan_in_txn(
-                &transaction,
-                product_plan::Model {
-                    id: plan_id,
-                    plan_key: command.key,
-                    name: command.name,
-                    description: command.description,
-                    status: PLAN_STATUS_ENABLED.into(),
-                    created_by: actor.user_id,
-                    created_at: now,
-                    updated_at: now,
-                },
-            )
+        let plan = transaction
+            .insert_plan(ProductPlanState {
+                id: plan_id,
+                key: command.key,
+                name: command.name,
+                description: command.description,
+                status: PLAN_STATUS_ENABLED.into(),
+                created_by: actor.user_id,
+                created_at: now,
+                updated_at: now,
+            })
             .await?;
-        crate::commit_current_audit(transaction).await?;
-        Ok(ProductPlanVo {
-            id: plan.id.to_string(),
-            key: plan.plan_key,
-            name: plan.name,
-            description: plan.description,
-            status: plan.status,
-            created_by: plan.created_by.to_string(),
-            versions: Vec::new(),
-        })
+        transaction.commit().await?;
+        Ok(Self::plan_state_vo(plan, Vec::new()))
     }
 
     pub async fn update_plan(
@@ -190,30 +173,16 @@ impl ProductService {
         ensure_platform_actor(actor)?;
         validate_name(&command.name, "套餐名称")?;
         validate_plan_status(&command.status)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let mut plan = self
-            .repository
-            .lock_plan_by_id_in_txn(&transaction, plan_id)
-            .await?;
+        let transaction = self.write.begin().await?;
+        let mut plan = transaction.lock_plan(plan_id).await?;
         plan.name = command.name;
         plan.description = command.description;
         plan.status = command.status;
         plan.updated_at = Utc::now();
-        let plan = self
-            .repository
-            .update_plan_in_txn(&transaction, plan)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        let plan = transaction.save_plan(plan).await?;
+        transaction.commit().await?;
         let versions = self.versions(actor, plan_id).await?;
-        Ok(ProductPlanVo {
-            id: plan.id.to_string(),
-            key: plan.plan_key,
-            name: plan.name,
-            description: plan.description,
-            status: plan.status,
-            created_by: plan.created_by.to_string(),
-            versions,
-        })
+        Ok(Self::plan_state_vo(plan, versions))
     }
 
     pub async fn create_version(
@@ -225,22 +194,14 @@ impl ProductService {
         ensure_platform_actor(actor)?;
         validate_name(&command.name, "版本名称")?;
         let capabilities = normalize_capability_snapshots(command.capabilities)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let plan = self
-            .repository
-            .lock_plan_by_id_in_txn(&transaction, plan_id)
-            .await?;
-        let number = self
-            .repository
-            .next_version_in_txn(&transaction, plan.id)
-            .await?;
+        let transaction = self.write.begin().await?;
+        let plan = transaction.lock_plan(plan_id).await?;
+        let number = transaction.next_version(plan.id).await?;
         let now = Utc::now();
         let id = crate::next_id()?;
-        let version = self
-            .repository
-            .insert_version_in_txn(
-                &transaction,
-                product_plan_version::Model {
+        let result = transaction
+            .insert_version(
+                ProductVersionState {
                     id,
                     plan_id: plan.id,
                     version: number,
@@ -253,15 +214,12 @@ impl ProductService {
                     created_at: now,
                     updated_at: now,
                 },
-                capability_models(id, capabilities, now),
+                capability_records(capabilities),
+                now,
             )
             .await?;
-        crate::commit_current_audit(transaction).await?;
-        let capabilities = self
-            .repository
-            .list_capabilities(self.db.write(), id)
-            .await?;
-        self.version_vo(version, capabilities)
+        transaction.commit().await?;
+        Self::version_state_vo(result.version, result.capabilities)
     }
 
     pub async fn update_version(
@@ -274,15 +232,9 @@ impl ProductService {
         ensure_platform_actor(actor)?;
         validate_name(&command.name, "版本名称")?;
         let capabilities = normalize_capability_snapshots(command.capabilities)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let plan = self
-            .repository
-            .lock_plan_by_id_in_txn(&transaction, plan_id)
-            .await?;
-        let mut version = self
-            .repository
-            .lock_version_in_txn(&transaction, plan.id, number)
-            .await?;
+        let transaction = self.write.begin().await?;
+        let plan = transaction.lock_plan(plan_id).await?;
+        let mut version = transaction.lock_version(plan.id, number).await?;
         if version.status != VERSION_DRAFT {
             return Err(AppError::Conflict(
                 "已发布或已退役的产品套餐版本不可修改".into(),
@@ -291,21 +243,11 @@ impl ProductService {
         version.name = command.name;
         version.description = command.description;
         version.updated_at = Utc::now();
-        let id = version.id;
-        let saved = self
-            .repository
-            .replace_draft_version_in_txn(
-                &transaction,
-                version,
-                capability_models(id, capabilities, Utc::now()),
-            )
+        let result = transaction
+            .replace_draft_version(version, capability_records(capabilities), Utc::now())
             .await?;
-        crate::commit_current_audit(transaction).await?;
-        let capabilities = self
-            .repository
-            .list_capabilities(self.db.write(), id)
-            .await?;
-        self.version_vo(saved, capabilities)
+        transaction.commit().await?;
+        Self::version_state_vo(result.version, result.capabilities)
     }
 
     pub async fn publish_version(
@@ -315,38 +257,23 @@ impl ProductService {
         number: i32,
     ) -> AppResult<ProductPlanVersionVo> {
         ensure_platform_actor(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let plan = self
-            .repository
-            .lock_plan_by_id_in_txn(&transaction, plan_id)
-            .await?;
-        let mut version = self
-            .repository
-            .lock_version_in_txn(&transaction, plan.id, number)
-            .await?;
+        let transaction = self.write.begin().await?;
+        let plan = transaction.lock_plan(plan_id).await?;
+        let mut version = transaction.lock_version(plan.id, number).await?;
         if version.status != VERSION_DRAFT {
             return Err(AppError::Conflict("只有草稿版本可以发布".into()));
         }
-        let capabilities = self
-            .repository
-            .list_capabilities(&transaction, version.id)
-            .await?;
-        self.validate_publishable_capabilities(&capabilities)?;
+        let capabilities = transaction.capabilities(version.id).await?;
+        self.validate_publishable_capability_records(&capabilities)?;
         version.status = VERSION_PUBLISHED.into();
         version.published_by = Some(actor.user_id);
         version.published_at = Some(Utc::now());
         version.updated_at = Utc::now();
-        let saved = self
-            .repository
-            .transition_version_status_in_txn(
-                &transaction,
-                version,
-                VERSION_DRAFT,
-                VERSION_PUBLISHED,
-            )
+        let saved = transaction
+            .transition_version(version, VERSION_DRAFT, VERSION_PUBLISHED)
             .await?;
-        crate::commit_current_audit(transaction).await?;
-        self.version_vo(saved, capabilities)
+        transaction.commit().await?;
+        Self::version_state_vo(saved, capabilities)
     }
 
     pub async fn retire_version(
@@ -356,37 +283,22 @@ impl ProductService {
         number: i32,
     ) -> AppResult<ProductPlanVersionVo> {
         ensure_platform_actor(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let plan = self
-            .repository
-            .lock_plan_by_id_in_txn(&transaction, plan_id)
-            .await?;
-        let mut version = self
-            .repository
-            .lock_version_in_txn(&transaction, plan.id, number)
-            .await?;
+        let transaction = self.write.begin().await?;
+        let plan = transaction.lock_plan(plan_id).await?;
+        let mut version = transaction.lock_version(plan.id, number).await?;
         if version.status != VERSION_PUBLISHED {
             return Err(AppError::Conflict(
                 "只有 published 产品套餐版本可以退役".into(),
             ));
         }
-        let capabilities = self
-            .repository
-            .list_capabilities(&transaction, version.id)
-            .await?;
+        let capabilities = transaction.capabilities(version.id).await?;
         version.status = VERSION_RETIRED.into();
         version.updated_at = Utc::now();
-        let saved = self
-            .repository
-            .transition_version_status_in_txn(
-                &transaction,
-                version,
-                VERSION_PUBLISHED,
-                VERSION_RETIRED,
-            )
+        let saved = transaction
+            .transition_version(version, VERSION_PUBLISHED, VERSION_RETIRED)
             .await?;
-        crate::commit_current_audit(transaction).await?;
-        self.version_vo(saved, capabilities)
+        transaction.commit().await?;
+        Self::version_state_vo(saved, capabilities)
     }
 
     pub async fn preview_change(
@@ -608,33 +520,6 @@ impl ProductService {
 
     pub async fn validate_assignable_version(&self, version_id: i64) -> AppResult<()> {
         self.published_target(version_id).await.map(|_| ())
-    }
-
-    fn version_vo(
-        &self,
-        version: product_plan_version::Model,
-        capabilities: Vec<product_plan_capability::Model>,
-    ) -> AppResult<ProductPlanVersionVo> {
-        self.validate_capability_models(&capabilities)?;
-        Ok(ProductPlanVersionVo {
-            id: version.id.to_string(),
-            version: version.version,
-            name: version.name,
-            description: version.description,
-            status: version.status,
-            created_by: version.created_by.to_string(),
-            published_by: version.published_by.map(|value| value.to_string()),
-            published_at: version.published_at,
-            capabilities: capabilities
-                .into_iter()
-                .map(|capability| ProductCapabilityVo {
-                    capability_code: capability.capability_code,
-                    variant_code: capability.variant_code,
-                    schema_version: capability.schema_version,
-                    config: capability.config,
-                })
-                .collect(),
-        })
     }
 
     fn validate_capability_models(

@@ -66,21 +66,16 @@ pub(super) fn ensure_override_change_allowed(
     }
 }
 
-pub(super) fn capability_models(
-    version_id: i64,
+pub(super) fn capability_records(
     values: Vec<CapabilitySnapshotInput>,
-    now: DateTime<Utc>,
-) -> Vec<product_plan_capability::Model> {
+) -> Vec<crate::ProductCapabilityRecord> {
     values
         .into_iter()
-        .map(|value| product_plan_capability::Model {
-            plan_version_id: version_id,
-            capability_code: value.capability_code,
-            variant_code: value.variant_code,
+        .map(|value| crate::ProductCapabilityRecord {
+            code: value.capability_code,
+            variant: value.variant_code,
             schema_version: value.schema_version,
             config: value.config,
-            created_at: now,
-            updated_at: now,
         })
         .collect()
 }

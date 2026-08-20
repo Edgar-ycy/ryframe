@@ -1,19 +1,36 @@
 use std::sync::Arc;
 
-use ryframe_db::{ControlDatabaseCluster, ProductRepository, ReadConsistency};
+use ryframe_db::{
+    ControlDatabaseCluster, ProductRepository, ReadConsistency,
+    entities::{product_plan, product_plan_capability, product_plan_version},
+};
+use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use crate::{
-    PersistenceFuture, ProductCapabilityRecord, ProductPlanRecord, ProductReadPort,
-    ProductVersionRecord, ProductVersionSnapshot, TenantCapabilityOverrideRecord,
-    TenantProductSnapshot,
+    PersistenceFuture, ProductCapabilityRecord, ProductPlanRecord, ProductPlanState,
+    ProductReadPort, ProductVersionRecord, ProductVersionSnapshot, ProductVersionState,
+    ProductVersionWriteResult, ProductWritePort, ProductWriteTransaction,
+    TenantCapabilityOverrideRecord, TenantProductSnapshot,
 };
 
 pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn ProductReadPort> {
     Arc::new(LegacyProductRead { database })
 }
 
+pub fn write_port(database: ControlDatabaseCluster) -> Arc<dyn ProductWritePort> {
+    Arc::new(LegacyProductWrite { database })
+}
+
 struct LegacyProductRead {
     database: ControlDatabaseCluster,
+}
+
+struct LegacyProductWrite {
+    database: ControlDatabaseCluster,
+}
+
+struct LegacyProductWriteTransaction {
+    transaction: DatabaseTransaction,
 }
 
 impl ProductReadPort for LegacyProductRead {
@@ -72,6 +89,174 @@ impl ProductReadPort for LegacyProductRead {
     }
 }
 
+impl ProductWritePort for LegacyProductWrite {
+    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ProductWriteTransaction>> {
+        Box::pin(async move {
+            let transaction = self
+                .database
+                .write()
+                .begin()
+                .await
+                .map_err(database_error)?;
+            Ok(Box::new(LegacyProductWriteTransaction { transaction })
+                as Box<dyn ProductWriteTransaction>)
+        })
+    }
+}
+
+impl ProductWriteTransaction for LegacyProductWriteTransaction {
+    fn plan_key_exists<'a>(&'a self, key: &'a str) -> PersistenceFuture<'a, bool> {
+        Box::pin(async move {
+            ProductRepository
+                .find_plan_by_key(&self.transaction, key)
+                .await
+                .map(|plan| plan.is_some())
+        })
+    }
+
+    fn insert_plan(&self, plan: ProductPlanState) -> PersistenceFuture<'_, ProductPlanState> {
+        Box::pin(async move {
+            ProductRepository
+                .insert_plan_in_txn(&self.transaction, plan_model(plan))
+                .await
+                .map(plan_state)
+        })
+    }
+
+    fn lock_plan(&self, plan_id: i64) -> PersistenceFuture<'_, ProductPlanState> {
+        Box::pin(async move {
+            ProductRepository
+                .lock_plan_by_id_in_txn(&self.transaction, plan_id)
+                .await
+                .map(plan_state)
+        })
+    }
+
+    fn save_plan(&self, plan: ProductPlanState) -> PersistenceFuture<'_, ProductPlanState> {
+        Box::pin(async move {
+            ProductRepository
+                .update_plan_in_txn(&self.transaction, plan_model(plan))
+                .await
+                .map(plan_state)
+        })
+    }
+
+    fn next_version(&self, plan_id: i64) -> PersistenceFuture<'_, i32> {
+        Box::pin(async move {
+            ProductRepository
+                .next_version_in_txn(&self.transaction, plan_id)
+                .await
+        })
+    }
+
+    fn insert_version(
+        &self,
+        version: ProductVersionState,
+        capabilities: Vec<ProductCapabilityRecord>,
+        capability_time: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'_, ProductVersionWriteResult> {
+        Box::pin(async move {
+            let version_id = version.id;
+            let saved = ProductRepository
+                .insert_version_in_txn(
+                    &self.transaction,
+                    version_model(version),
+                    capability_models(version_id, capabilities, capability_time),
+                )
+                .await?;
+            let capabilities = ProductRepository
+                .list_capabilities(&self.transaction, version_id)
+                .await?
+                .into_iter()
+                .map(capability_record)
+                .collect();
+            Ok(ProductVersionWriteResult {
+                version: version_state(saved),
+                capabilities,
+            })
+        })
+    }
+
+    fn lock_version(
+        &self,
+        plan_id: i64,
+        version: i32,
+    ) -> PersistenceFuture<'_, ProductVersionState> {
+        Box::pin(async move {
+            ProductRepository
+                .lock_version_in_txn(&self.transaction, plan_id, version)
+                .await
+                .map(version_state)
+        })
+    }
+
+    fn capabilities(&self, version_id: i64) -> PersistenceFuture<'_, Vec<ProductCapabilityRecord>> {
+        Box::pin(async move {
+            ProductRepository
+                .list_capabilities(&self.transaction, version_id)
+                .await
+                .map(|items| items.into_iter().map(capability_record).collect())
+        })
+    }
+
+    fn replace_draft_version(
+        &self,
+        version: ProductVersionState,
+        capabilities: Vec<ProductCapabilityRecord>,
+        capability_time: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'_, ProductVersionWriteResult> {
+        Box::pin(async move {
+            let version_id = version.id;
+            let saved = ProductRepository
+                .replace_draft_version_in_txn(
+                    &self.transaction,
+                    version_model(version),
+                    capability_models(version_id, capabilities, capability_time),
+                )
+                .await?;
+            let capabilities = ProductRepository
+                .list_capabilities(&self.transaction, version_id)
+                .await?
+                .into_iter()
+                .map(capability_record)
+                .collect();
+            Ok(ProductVersionWriteResult {
+                version: version_state(saved),
+                capabilities,
+            })
+        })
+    }
+
+    fn transition_version(
+        &self,
+        version: ProductVersionState,
+        expected_status: &str,
+        target_status: &str,
+    ) -> PersistenceFuture<'_, ProductVersionState> {
+        let expected_status = expected_status.to_owned();
+        let target_status = target_status.to_owned();
+        Box::pin(async move {
+            ProductRepository
+                .transition_version_status_in_txn(
+                    &self.transaction,
+                    version_model(version),
+                    &expected_status,
+                    &target_status,
+                )
+                .await
+                .map(version_state)
+        })
+    }
+
+    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+        Box::pin(async move { crate::commit_current_audit(self.transaction).await })
+    }
+
+    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    }
+}
+
 async fn plan_record(
     repository: &ProductRepository,
     database: &sea_orm::DatabaseConnection,
@@ -118,6 +303,87 @@ fn capability_record(
         schema_version: capability.schema_version,
         config: capability.config,
     }
+}
+
+fn plan_state(plan: product_plan::Model) -> ProductPlanState {
+    ProductPlanState {
+        id: plan.id,
+        key: plan.plan_key,
+        name: plan.name,
+        description: plan.description,
+        status: plan.status,
+        created_by: plan.created_by,
+        created_at: plan.created_at,
+        updated_at: plan.updated_at,
+    }
+}
+
+fn plan_model(plan: ProductPlanState) -> product_plan::Model {
+    product_plan::Model {
+        id: plan.id,
+        plan_key: plan.key,
+        name: plan.name,
+        description: plan.description,
+        status: plan.status,
+        created_by: plan.created_by,
+        created_at: plan.created_at,
+        updated_at: plan.updated_at,
+    }
+}
+
+fn version_state(version: product_plan_version::Model) -> ProductVersionState {
+    ProductVersionState {
+        id: version.id,
+        plan_id: version.plan_id,
+        version: version.version,
+        name: version.name,
+        description: version.description,
+        status: version.status,
+        created_by: version.created_by,
+        published_by: version.published_by,
+        published_at: version.published_at,
+        created_at: version.created_at,
+        updated_at: version.updated_at,
+    }
+}
+
+fn version_model(version: ProductVersionState) -> product_plan_version::Model {
+    product_plan_version::Model {
+        id: version.id,
+        plan_id: version.plan_id,
+        version: version.version,
+        name: version.name,
+        description: version.description,
+        status: version.status,
+        created_by: version.created_by,
+        published_by: version.published_by,
+        published_at: version.published_at,
+        created_at: version.created_at,
+        updated_at: version.updated_at,
+    }
+}
+
+fn capability_models(
+    version_id: i64,
+    capabilities: Vec<ProductCapabilityRecord>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<product_plan_capability::Model> {
+    capabilities
+        .into_iter()
+        .map(|capability| product_plan_capability::Model {
+            plan_version_id: version_id,
+            capability_code: capability.code,
+            variant_code: capability.variant,
+            schema_version: capability.schema_version,
+            config: capability.config,
+            created_at: now,
+            updated_at: now,
+        })
+        .collect()
+}
+
+fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
+    ryframe_kernel::AppError::Database(error.to_string())
 }
 
 pub(crate) fn version_snapshot(

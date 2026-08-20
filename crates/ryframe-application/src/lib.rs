@@ -206,7 +206,9 @@ pub use legacy_permission_persistence::{
 #[doc(hidden)]
 pub use legacy_post_persistence::port as legacy_post_persistence;
 #[doc(hidden)]
-pub use legacy_product_persistence::read_port as legacy_product_read;
+pub use legacy_product_persistence::{
+    read_port as legacy_product_read, write_port as legacy_product_write,
+};
 #[doc(hidden)]
 pub use legacy_profile_persistence::port as legacy_profile_persistence;
 #[doc(hidden)]
@@ -268,8 +270,10 @@ pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};
 pub use principal_resolver::PrincipalResolver;
 pub use product_persistence::{
-    ProductCapabilityRecord, ProductPlanRecord, ProductReadPort, ProductVersionRecord,
-    ProductVersionSnapshot, TenantCapabilityOverrideRecord, TenantProductSnapshot,
+    ProductCapabilityRecord, ProductPlanRecord, ProductPlanState, ProductReadPort,
+    ProductVersionRecord, ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult,
+    ProductWritePort, ProductWriteTransaction, TenantCapabilityOverrideRecord,
+    TenantProductSnapshot,
 };
 pub use profile_persistence::{
     ProfileAvatarFile, ProfileAvatarState, ProfilePersistencePort, ProfileRecord,
