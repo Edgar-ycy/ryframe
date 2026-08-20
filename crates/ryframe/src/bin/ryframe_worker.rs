@@ -134,6 +134,7 @@ async fn main() -> Result<(), AppError> {
         JobQueue::new(database.clone())
             .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
     );
+    let outbox_persistence = ryframe_application::legacy_outbox_persistence(database.clone());
     install_job_metrics(&queue);
     let message = Arc::new(MessageService::new(
         ryframe_application::legacy_message_persistence(database.clone()),
@@ -252,6 +253,7 @@ async fn main() -> Result<(), AppError> {
         };
         let outbox_worker = OutboxWorker::new(
             queue,
+            Arc::clone(&outbox_persistence),
             &application_policies.job_worker,
             execution_tenant_scope.clone(),
         )?
@@ -291,6 +293,7 @@ async fn main() -> Result<(), AppError> {
     worker_tasks.extend(
         OutboxWorker::new(
             queue.clone(),
+            outbox_persistence,
             &application_policies.job_worker,
             execution_tenant_scope,
         )?

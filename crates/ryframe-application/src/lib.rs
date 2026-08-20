@@ -27,6 +27,7 @@ mod legacy_menu_persistence;
 mod legacy_message_persistence;
 mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
+mod legacy_outbox_persistence;
 mod legacy_overview_persistence;
 mod legacy_password_reset_persistence;
 mod legacy_permission_persistence;
@@ -45,6 +46,7 @@ mod menu_persistence;
 mod message_persistence;
 mod notice_persistence;
 mod oper_log_persistence;
+mod outbox_persistence;
 mod overview_persistence;
 mod password_reset_persistence;
 mod permission_persistence;
@@ -154,6 +156,8 @@ pub use legacy_notice_persistence::port as legacy_notice_persistence;
 #[doc(hidden)]
 pub use legacy_oper_log_persistence::port as legacy_oper_log_persistence;
 #[doc(hidden)]
+pub use legacy_outbox_persistence::port as legacy_outbox_persistence;
+#[doc(hidden)]
 pub use legacy_overview_persistence::port as legacy_overview_persistence;
 #[doc(hidden)]
 pub use legacy_password_reset_persistence::port as legacy_password_reset_persistence;
@@ -197,6 +201,7 @@ pub use notice_persistence::{
 pub use oper_log_persistence::{
     OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction,
 };
+pub use outbox_persistence::{ClaimedOutboxEvent, OutboxFailureOutcome, OutboxPersistencePort};
 pub use overview_persistence::{
     OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
 };

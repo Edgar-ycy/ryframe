@@ -1,9 +1,7 @@
 use std::{sync::Arc, time::Duration as StdDuration};
 
 use chrono::{DateTime, Duration, Utc};
-use ryframe_db::{OutboxEventRepository, OutboxFailureDisposition, outbox_event};
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::TransactionTrait;
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -15,8 +13,8 @@ use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
 use crate::system::MESSAGE_DISPATCH_JOB_TYPE;
 use crate::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent,
-    AuthorizationCache, AuthorizationMirrorUpdate, EnqueueJob, ExecutionTenantScope,
-    legacy_execution_tenant_scope::database_scope, record_audit_failure,
+    AuthorizationCache, AuthorizationMirrorUpdate, ClaimedOutboxEvent, EnqueueJob,
+    ExecutionTenantScope, OutboxFailureOutcome, OutboxPersistencePort, record_audit_failure,
 };
 
 /// 单次 Outbox 投递循环的结果。
@@ -35,7 +33,7 @@ pub enum OutboxRunResult {
 #[derive(Clone)]
 pub struct OutboxWorker {
     queue: Arc<JobQueue>,
-    repository: Arc<OutboxEventRepository>,
+    persistence: Arc<dyn OutboxPersistencePort>,
     execution_tenant_scope: ExecutionTenantScope,
     worker_prefix: Arc<str>,
     lease_duration: Duration,
@@ -50,12 +48,13 @@ impl OutboxWorker {
     /// 根据后台任务配置构建 Outbox Worker，复用相同的租约、轮询与并发策略。
     pub fn new(
         queue: Arc<JobQueue>,
+        persistence: Arc<dyn OutboxPersistencePort>,
         policy: &crate::JobWorkerPolicy,
         execution_tenant_scope: ExecutionTenantScope,
     ) -> AppResult<Self> {
         Ok(Self {
             queue,
-            repository: Arc::new(OutboxEventRepository),
+            persistence,
             execution_tenant_scope,
             worker_prefix: policy.worker_prefix("ryframe-outbox"),
             lease_duration: policy.lease_duration,
@@ -98,22 +97,20 @@ impl OutboxWorker {
 
     /// 执行一次领取和投递，供单次执行模式及自定义运行器使用。
     pub async fn run_once(&self, worker_id: &str) -> AppResult<OutboxRunResult> {
-        let now = match self.repository.database_utc_now(self.queue.primary()).await {
+        let now = match self.persistence.database_now().await {
             Ok(now) => now,
             Err(error) => {
                 self.queue.record_claim_attempt("outbox", "error");
                 return Err(error);
             }
         };
-        let tenant_scope = database_scope(&self.execution_tenant_scope);
         let event = match self
-            .repository
+            .persistence
             .claim_next(
-                self.queue.primary(),
                 worker_id,
                 self.lease_duration,
                 now,
-                &tenant_scope,
+                &self.execution_tenant_scope,
             )
             .await
         {
@@ -142,61 +139,52 @@ impl OutboxWorker {
 
     async fn run_claimed_event(
         &self,
-        event: outbox_event::Model,
+        event: ClaimedOutboxEvent,
         worker_id: &str,
     ) -> AppResult<OutboxRunResult> {
-        let now = self
-            .repository
-            .database_utc_now(self.queue.primary())
-            .await?;
-        let delivery = self.publish_event_as_job(&event, worker_id, now).await;
+        let event_id = event.id;
+        let event_type = event.event_type.clone();
+        let attempts = event.attempts;
+        let max_attempts = event.max_attempts;
+        let now = self.persistence.database_now().await?;
+        let delivery = self.publish_event_as_job(event, worker_id, now).await;
         match delivery {
             Ok(true) => Ok(OutboxRunResult::Published),
             Ok(false) => Ok(OutboxRunResult::LeaseLost),
             Err(error) => {
-                let now = self
-                    .repository
-                    .database_utc_now(self.queue.primary())
-                    .await?;
-                let retry_at = now + retry_delay(event.attempts);
+                let now = self.persistence.database_now().await?;
+                let retry_at = now + retry_delay(attempts);
                 match self
-                    .repository
-                    .fail(
-                        self.queue.primary(),
-                        event.id,
-                        worker_id,
-                        retry_at,
-                        &error.to_string(),
-                        now,
-                    )
+                    .persistence
+                    .fail(event_id, worker_id, retry_at, &error.to_string(), now)
                     .await?
                 {
-                    OutboxFailureDisposition::Retried { available_at } => {
+                    OutboxFailureOutcome::Retried { available_at } => {
                         tracing::debug!(
-                            outbox_event_id = event.id,
-                            event_type = %event.event_type,
+                            outbox_event_id = event_id,
+                            event_type = %event_type,
                             worker_id,
-                            attempts = event.attempts,
-                            max_attempts = event.max_attempts,
+                            attempts,
+                            max_attempts,
                             retry_at = %available_at,
                             error = %error,
                             "Outbox 事件投递失败，已安排重试"
                         );
                         Ok(OutboxRunResult::Retried)
                     }
-                    OutboxFailureDisposition::Dead => {
+                    OutboxFailureOutcome::Dead => {
                         tracing::error!(
-                            outbox_event_id = event.id,
-                            event_type = %event.event_type,
+                            outbox_event_id = event_id,
+                            event_type = %event_type,
                             worker_id,
-                            attempts = event.attempts,
-                            max_attempts = event.max_attempts,
+                            attempts,
+                            max_attempts,
                             error = %error,
                             "Outbox 事件重试耗尽，已进入死信状态"
                         );
                         Ok(OutboxRunResult::Dead)
                     }
-                    OutboxFailureDisposition::LeaseLost => Ok(OutboxRunResult::LeaseLost),
+                    OutboxFailureOutcome::LeaseLost => Ok(OutboxRunResult::LeaseLost),
                 }
             }
         }
@@ -204,7 +192,7 @@ impl OutboxWorker {
 
     async fn publish_event_as_job(
         &self,
-        event: &outbox_event::Model,
+        event: ClaimedOutboxEvent,
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
@@ -225,66 +213,42 @@ impl OutboxWorker {
                 )));
             }
         };
-        let transaction = self
-            .queue
-            .primary()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        let result = async {
-            self.queue
-                .enqueue_in_transaction_at(
-                    &transaction,
-                    EnqueueJob {
-                        tenant_id: event.tenant_id.clone(),
-                        schedule_id: None,
-                        scheduled_for: Some(now),
-                        max_runtime_seconds: None,
-                        job_type: job_type.to_owned(),
-                        payload: event.payload.clone(),
-                        priority: 10,
-                        available_at: now,
-                        max_attempts: event.max_attempts,
-                        dedupe_key: event.dedupe_key.clone(),
-                        traceparent: event.traceparent.clone(),
-                        tracestate: event.tracestate.clone(),
-                    },
-                    now,
-                )
-                .await?;
-            self.repository
-                .mark_published_in_transaction(&transaction, event.id, worker_id, now)
-                .await
+        let published = self
+            .persistence
+            .publish_background_job(
+                event.id,
+                worker_id,
+                EnqueueJob {
+                    tenant_id: event.tenant_id,
+                    schedule_id: None,
+                    scheduled_for: Some(now),
+                    max_runtime_seconds: None,
+                    job_type: job_type.to_owned(),
+                    payload: event.payload,
+                    priority: 10,
+                    available_at: now,
+                    max_attempts: event.max_attempts,
+                    dedupe_key: event.dedupe_key,
+                    traceparent: event.traceparent,
+                    tracestate: event.tracestate,
+                },
+                now,
+            )
+            .await?;
+        if published {
+            self.queue.notify_background_jobs().await;
         }
-        .await;
-        match result {
-            Ok(true) => {
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|error| AppError::Database(error.to_string()))?;
-                self.queue.notify_background_jobs().await;
-                Ok(true)
-            }
-            Ok(false) => {
-                let _ = transaction.rollback().await;
-                Ok(false)
-            }
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                Err(error)
-            }
-        }
+        Ok(published)
     }
 
     async fn publish_audit_event(
         &self,
-        event: &outbox_event::Model,
+        event: ClaimedOutboxEvent,
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
         let payload: AuditOperationEvent =
-            serde_json::from_value(event.payload.clone()).map_err(|error| {
+            serde_json::from_value(event.payload).map_err(|error| {
                 record_audit_failure("payload_decode");
                 AppError::Validation(format!("操作审计事件载荷无效: {error}"))
             })?;
@@ -298,54 +262,21 @@ impl OutboxWorker {
         validate_audit_identifier("event_id", &payload.event_id)?;
         validate_audit_identifier("request_id", &payload.request_id)?;
 
-        let transaction = self
-            .queue
-            .primary()
-            .begin()
+        let record = payload
+            .command
+            .into_record(Some(payload.event_id), Some(payload.request_id))?;
+        self.persistence
+            .publish_audit(event.id, worker_id, &payload.tenant_id, record, now)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        let result = async {
-            let record = payload
-                .command
-                .into_record(Some(payload.event_id), Some(payload.request_id))?;
-            crate::legacy_oper_log_persistence::insert_event_in_transaction(
-                &transaction,
-                &payload.tenant_id,
-                record,
-            )
-            .await
-            .inspect_err(|_| record_audit_failure("oper_log_write"))?;
-            self.repository
-                .mark_published_in_transaction(&transaction, event.id, worker_id, now)
-                .await
-        }
-        .await;
-        match result {
-            Ok(true) => {
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|error| AppError::Database(error.to_string()))?;
-                Ok(true)
-            }
-            Ok(false) => {
-                let _ = transaction.rollback().await;
-                Ok(false)
-            }
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                Err(error)
-            }
-        }
     }
 
     async fn repair_authorization_mirror(
         &self,
-        event: &outbox_event::Model,
+        event: ClaimedOutboxEvent,
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let update: AuthorizationMirrorUpdate = serde_json::from_value(event.payload.clone())
+        let update: AuthorizationMirrorUpdate = serde_json::from_value(event.payload)
             .map_err(|error| AppError::Validation(format!("授权镜像事件负载无效: {error}")))?;
         match update {
             AuthorizationMirrorUpdate::Tenant {
@@ -377,25 +308,9 @@ impl OutboxWorker {
         }
 
         // Redis 更新脚本是单调且幂等的；崩溃后重复执行不会覆盖更新版本。
-        let transaction = self
-            .queue
-            .primary()
-            .begin()
+        self.persistence
+            .mark_published(event.id, worker_id, now)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        let marked = self
-            .repository
-            .mark_published_in_transaction(&transaction, event.id, worker_id, now)
-            .await?;
-        if marked {
-            transaction
-                .commit()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
-        } else {
-            let _ = transaction.rollback().await;
-        }
-        Ok(marked)
     }
 
     async fn run_until_shutdown(&self, worker_id: String, mut shutdown: watch::Receiver<bool>) {
@@ -490,13 +405,9 @@ impl OutboxWorker {
                 break;
             }
             let recovery = async {
-                let now = self
-                    .repository
-                    .database_utc_now(self.queue.primary())
-                    .await?;
-                let tenant_scope = database_scope(&self.execution_tenant_scope);
-                self.repository
-                    .recover_expired_leases(self.queue.primary(), now, &tenant_scope)
+                let now = self.persistence.database_now().await?;
+                self.persistence
+                    .recover_expired_leases(now, &self.execution_tenant_scope)
                     .await
             }
             .await;

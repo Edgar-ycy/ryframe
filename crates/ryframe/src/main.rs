@@ -119,6 +119,7 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
     install_job_metrics(&services.job_queue);
+    let outbox_persistence = ryframe_application::legacy_outbox_persistence(database.clone());
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let (server_info, mut server_info_sampler) =
@@ -200,6 +201,7 @@ async fn main() -> Result<(), AppError> {
             tasks.extend(
                 OutboxWorker::new(
                     services.job_queue.clone(),
+                    outbox_persistence,
                     &application_policies.job_worker,
                     execution_tenant_scope,
                 )?
