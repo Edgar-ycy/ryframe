@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use ryframe_db::{
-    PermissionRepository, RoleRepository, TenantConfigTransferRepository, TenantRepository,
+    PermissionRepository, ProductRepository, RoleRepository, TenantConfigTransferRepository,
+    TenantRepository,
     entities::{dept, permission, role},
 };
 use sea_orm::{
@@ -193,13 +194,13 @@ impl RoleWriteTransaction for LegacyRoleWriteTransaction {
         permission_codes: &'a [String],
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
+            let snapshot = ProductRepository
+                .tenant_product(&self.transaction, tenant_id)
+                .await?
+                .map(crate::legacy_product_persistence::tenant_snapshot)
+                .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product_service
-                .ensure_permission_codes_enabled_in_txn(
-                    &self.transaction,
-                    tenant_id,
-                    permission_codes,
-                )
-                .await
+                .ensure_permission_codes_enabled(snapshot, permission_codes)
         })
     }
 

@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use ryframe_db::{
-    AgentQueryRepository, ControlDatabaseCluster, DataRetentionRepository,
+    AgentQueryRepository, ControlDatabaseCluster, DataRetentionRepository, ProductRepository,
     ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
     ServiceAuthorizationRepository, ServiceCredentialRepository, ServiceDelegationRepository,
     entities::{
@@ -135,9 +135,13 @@ impl AgentPersistenceTransaction for LegacyAgentTransaction {
         capability_code: &'a str,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
+            let snapshot = ProductRepository
+                .tenant_product(&self.transaction, tenant_id)
+                .await?
+                .map(crate::legacy_product_persistence::tenant_snapshot)
+                .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product
-                .require_capability_in_txn(&self.transaction, tenant_id, capability_code)
-                .await
+                .require_capability_snapshot(snapshot, capability_code)
                 .map(|_| ())
         })
     }

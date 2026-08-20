@@ -74,19 +74,13 @@ impl ProductService {
         ensure_available_capability(context, capability_code)
     }
 
-    /// 与 Agent 凭据校验、RBAC 和业务查询共用同一控制库事务快照。
-    pub async fn require_capability_in_txn(
+    /// 校验调用方在同一事务中读取的产品快照。
+    pub(crate) fn require_capability_snapshot(
         &self,
-        transaction: &sea_orm::DatabaseTransaction,
-        tenant_id: &str,
+        snapshot: TenantProductSnapshot,
         capability_code: &str,
     ) -> AppResult<EffectiveCapabilityVo> {
-        let bundle = self
-            .repository
-            .tenant_product(transaction, tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        ensure_available_capability(self.context_from_bundle(bundle)?, capability_code)
+        ensure_available_capability(self.context_from_snapshot(snapshot)?, capability_code)
     }
 
     pub async fn product_context(

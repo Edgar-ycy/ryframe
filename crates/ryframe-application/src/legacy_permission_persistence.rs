@@ -1,8 +1,8 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use ryframe_db::{
-    AutoFill, ControlDatabaseCluster, FillContext, PermissionRepository, ReadConsistency,
-    Repository, TenantConfigTransferRepository, entities::permission,
+    AutoFill, ControlDatabaseCluster, FillContext, PermissionRepository, ProductRepository,
+    ReadConsistency, Repository, TenantConfigTransferRepository, entities::permission,
 };
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
@@ -239,9 +239,13 @@ impl PermissionWriteTransaction for LegacyPermissionWriteTransaction {
         codes: BTreeSet<String>,
     ) -> PersistenceFuture<'a, BTreeSet<String>> {
         Box::pin(async move {
+            let snapshot = ProductRepository
+                .tenant_product(&self.transaction, tenant_id)
+                .await?
+                .map(crate::legacy_product_persistence::tenant_snapshot)
+                .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product_service
-                .filter_syncable_permission_codes_in_txn(&self.transaction, tenant_id, codes)
-                .await
+                .filter_syncable_permission_codes(snapshot, codes)
         })
     }
 

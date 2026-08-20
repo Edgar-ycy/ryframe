@@ -194,10 +194,9 @@ impl ProductService {
 
     /// 角色授权写入前的 Capability 守卫。普通角色和超级管理员都不能
     /// 绕过产品授权或部署依赖。
-    pub async fn ensure_permission_codes_enabled_in_txn(
+    pub(crate) fn ensure_permission_codes_enabled(
         &self,
-        transaction: &DatabaseTransaction,
-        tenant_id: &str,
+        snapshot: crate::TenantProductSnapshot,
         permission_codes: &[String],
     ) -> AppResult<()> {
         let requested = permission_codes
@@ -216,12 +215,7 @@ impl ProductService {
         if guarded.is_empty() {
             return Ok(());
         }
-        let bundle = self
-            .repository
-            .tenant_product(transaction, tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let context = self.context_from_bundle(bundle)?;
+        let context = self.context_from_snapshot(snapshot)?;
         for descriptor in guarded {
             let capability = context
                 .capabilities
@@ -250,18 +244,12 @@ impl ProductService {
     }
 
     /// 路由权限同步只能看到当前租户真正可用的 Capability 权限。
-    pub async fn filter_syncable_permission_codes_in_txn(
+    pub(crate) fn filter_syncable_permission_codes(
         &self,
-        transaction: &DatabaseTransaction,
-        tenant_id: &str,
+        snapshot: crate::TenantProductSnapshot,
         permission_codes: BTreeSet<String>,
     ) -> AppResult<BTreeSet<String>> {
-        let bundle = self
-            .repository
-            .tenant_product(transaction, tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let context = self.context_from_bundle(bundle)?;
+        let context = self.context_from_snapshot(snapshot)?;
         let enabled_capabilities = context
             .capabilities
             .iter()
