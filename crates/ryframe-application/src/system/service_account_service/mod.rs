@@ -9,8 +9,8 @@ use ryframe_db::{
     Repository, RoleRepository, ServiceAccountLock, ServiceAccountRepository,
     ServiceCredentialRepository, ServiceDelegationRepository, UserRepository,
     entities::{
-        role, service_access_audit, service_account, service_account_role, service_credential,
-        service_delegation, service_delegation_capability,
+        role, service_account, service_account_role, service_credential, service_delegation,
+        service_delegation_capability,
     },
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
@@ -23,7 +23,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, PepperKeyring, ServiceAccountPolicy,
+    AuthorizationCache, PepperKeyring, ServiceAccountAuditReadPort, ServiceAccountPolicy,
     service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
 };
 
@@ -55,6 +55,7 @@ pub struct ServiceAccountService {
     permission_repo: PermissionRepository,
     user_repo: UserRepository,
     authorization_cache: AuthorizationCache,
+    audit_read: Arc<dyn ServiceAccountAuditReadPort>,
 }
 
 impl ServiceAccountService {
@@ -64,6 +65,7 @@ impl ServiceAccountService {
         keyring: Arc<PepperKeyring>,
         capabilities: Vec<ServiceCapabilityDescriptor>,
         authorization_cache: AuthorizationCache,
+        audit_read: Arc<dyn ServiceAccountAuditReadPort>,
     ) -> AppResult<Self> {
         validate_capabilities(&capabilities)?;
         Ok(Self {
@@ -78,6 +80,7 @@ impl ServiceAccountService {
             permission_repo: PermissionRepository,
             user_repo: UserRepository,
             authorization_cache,
+            audit_read,
         })
     }
 

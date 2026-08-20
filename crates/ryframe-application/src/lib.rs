@@ -24,6 +24,7 @@ mod legacy_post_persistence;
 mod legacy_profile_persistence;
 mod legacy_role_read;
 mod legacy_role_write;
+mod legacy_service_account_audit_persistence;
 mod login_info_persistence;
 mod login_protection;
 mod menu_persistence;
@@ -41,6 +42,7 @@ mod request_tenant_context;
 mod role_read;
 mod role_write;
 mod runtime_policy;
+mod service_account_audit_persistence;
 mod service_identity_secret;
 mod spreadsheet;
 pub mod system;
@@ -121,6 +123,8 @@ pub use legacy_profile_persistence::port as legacy_profile_persistence;
 pub use legacy_role_read::port as legacy_role_read;
 #[doc(hidden)]
 pub use legacy_role_write::port as legacy_role_write;
+#[doc(hidden)]
+pub use legacy_service_account_audit_persistence::port as legacy_service_account_audit_persistence;
 pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
 };
@@ -163,6 +167,9 @@ pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
     ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
+};
+pub use service_account_audit_persistence::{
+    ServiceAccessAuditRecord, ServiceAccountAuditReadPort,
 };
 pub use spreadsheet::{
     SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,
