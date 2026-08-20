@@ -1,18 +1,17 @@
+use std::sync::Arc;
+
 use chrono::Utc;
-use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{LoginInfoFilter, LoginInfoRepository, Repository, entities::login_info};
-use ryframe_kernel::{
-    ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
-};
-use sea_orm::TransactionTrait;
+use ryframe_kernel::{ActorContext, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use serde::Serialize;
+
+use crate::{LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord};
 
 use super::log_time_range::parse_log_time_range;
 
-/// 登录日志视图对象
+/// 登录日志视图对象。
 #[derive(Debug, Clone, Serialize)]
 pub struct LoginInfoVo {
-    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    /// ID 使用字符串，避免 64 位值超出 JavaScript 安全整数范围。
     pub id: String,
     pub user_name: String,
     pub ipaddr: String,
@@ -24,8 +23,8 @@ pub struct LoginInfoVo {
     pub login_time: String,
 }
 
-impl From<login_info::Model> for LoginInfoVo {
-    fn from(log: login_info::Model) -> Self {
+impl From<LoginInfoRecord> for LoginInfoVo {
+    fn from(log: LoginInfoRecord) -> Self {
         Self {
             id: log.id.to_string(),
             user_name: log.user_name,
@@ -34,7 +33,7 @@ impl From<login_info::Model> for LoginInfoVo {
             browser: log.browser,
             os: log.os,
             status: log.status,
-            msg: log.msg,
+            msg: log.message,
             login_time: log.login_time.format("%Y-%m-%d %H:%M:%S").to_string(),
         }
     }
@@ -49,8 +48,8 @@ pub enum LoginStatus {
 impl LoginStatus {
     fn as_str(self) -> &'static str {
         match self {
-            Self::Success => login_info::Model::STATUS_SUCCESS,
-            Self::Failure => login_info::Model::STATUS_FAIL,
+            Self::Success => "1",
+            Self::Failure => "0",
         }
     }
 }
@@ -76,36 +75,29 @@ pub struct LoginInfoQuery {
 }
 
 pub struct LoginInfoService {
-    db: ControlDatabaseCluster,
-    login_info_repo: LoginInfoRepository,
+    persistence: Arc<dyn LoginInfoPersistencePort>,
 }
 
 impl LoginInfoService {
-    pub fn new(db: ControlDatabaseCluster) -> Self {
-        Self {
-            db,
-            login_info_repo: LoginInfoRepository,
-        }
+    pub fn new(persistence: Arc<dyn LoginInfoPersistencePort>) -> Self {
+        Self { persistence }
     }
 
     pub async fn record_login(&self, command: RecordLoginCommand) -> AppResult<()> {
         crate::enforce_tenant_scope(&command.tenant_id)?;
-        let db = self.db.write();
         let tenant_id = command.tenant_id;
-        let log = login_info::Model {
+        let record = LoginInfoRecord {
             id: crate::next_id()?,
-            tenant_id: tenant_id.clone(),
             user_name: command.user_name,
             ipaddr: command.ipaddr,
             login_location: None,
             browser: command.browser,
             os: command.os,
-            status: command.status.as_str().to_string(),
-            msg: command.message,
+            status: command.status.as_str().to_owned(),
+            message: command.message,
             login_time: Utc::now(),
         };
-        self.login_info_repo.insert(db, &tenant_id, log).await?;
-        Ok(())
+        self.persistence.insert(&tenant_id, record).await
     }
 
     pub async fn find_by_page(
@@ -114,8 +106,7 @@ impl LoginInfoService {
         query: LoginInfoQuery,
     ) -> AppResult<PageResult<LoginInfoVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let scope_ctx = actor.data_scope_context();
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let data_scope = actor.data_scope_context();
         let (begin_time, end_time) =
             parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref())?;
         let filter = LoginInfoFilter {
@@ -124,17 +115,15 @@ impl LoginInfoService {
             begin_time,
             end_time,
         };
-
         let result = self
-            .login_info_repo
-            .find_by_page_filtered(&db, tenant_id, &query.page, filter, &scope_ctx)
+            .persistence
+            .find_by_page(tenant_id, query.page, filter, &data_scope)
             .await?;
-        Ok(PageResult {
-            records: result.records.into_iter().map(LoginInfoVo::from).collect(),
-            total: result.total,
-            page: result.page,
-            page_size: result.page_size,
-        })
+        Ok(PageResult::new(
+            result.records.into_iter().map(LoginInfoVo::from).collect(),
+            result.total,
+            &query.page,
+        ))
     }
 
     /// 按稳定主键窗口读取一批登录日志，并延续当前数据范围约束。
@@ -145,11 +134,10 @@ impl LoginInfoService {
         window: ExportCursorWindow,
     ) -> AppResult<Vec<LoginInfoVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let scope_ctx = actor.data_scope_context();
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
+        let data_scope = actor.data_scope_context();
         Ok(self
-            .login_info_repo
-            .find_for_export_after_id(&db, tenant_id, &filter, &scope_ctx, window)
+            .persistence
+            .find_export_batch(tenant_id, filter, &data_scope, window)
             .await?
             .into_iter()
             .map(LoginInfoVo::from)
@@ -158,16 +146,110 @@ impl LoginInfoService {
 
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let rows_affected = self
-            .login_info_repo
-            .clean_all_in_transaction(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        let transaction = self.persistence.begin().await?;
+        let rows_affected = transaction.clean(tenant_id).await?;
+        transaction.commit().await?;
         Ok(rows_affected)
     }
 }
 
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use ryframe_kernel::DataScope;
+
+    use super::*;
+    use crate::{ControlTransaction, LoginInfoTransaction, PersistenceFuture};
+
+    struct FakePersistence {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    struct FakeTransaction {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl LoginInfoPersistencePort for FakePersistence {
+        fn insert<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _record: LoginInfoRecord,
+        ) -> PersistenceFuture<'a, ()> {
+            Box::pin(async { unreachable!("本测试不写入日志") })
+        }
+
+        fn find_by_page<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _page: ValidatedPageQuery,
+            _filter: LoginInfoFilter<'a>,
+            _data_scope: &'a ryframe_kernel::DataScopeContext,
+        ) -> PersistenceFuture<'a, PageResult<LoginInfoRecord>> {
+            Box::pin(async { unreachable!("本测试不读取列表") })
+        }
+
+        fn find_export_batch<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _filter: LoginInfoFilter<'a>,
+            _data_scope: &'a ryframe_kernel::DataScopeContext,
+            _window: ExportCursorWindow,
+        ) -> PersistenceFuture<'a, Vec<LoginInfoRecord>> {
+            Box::pin(async { unreachable!("本测试不执行导出") })
+        }
+
+        fn begin(&self) -> PersistenceFuture<'_, Box<dyn LoginInfoTransaction>> {
+            self.calls.lock().expect("调用记录锁应可用").push("begin");
+            let transaction = FakeTransaction {
+                calls: Arc::clone(&self.calls),
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn LoginInfoTransaction>) })
+        }
+    }
+
+    impl LoginInfoTransaction for FakeTransaction {
+        fn clean<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
+            self.calls.lock().expect("调用记录锁应可用").push("clean");
+            Box::pin(async { Ok(3) })
+        }
+    }
+
+    impl ControlTransaction for FakeTransaction {
+        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+            self.calls.lock().expect("调用记录锁应可用").push("commit");
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn clean_is_committed_by_application_use_case() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let service = LoginInfoService::new(Arc::new(FakePersistence {
+            calls: Arc::clone(&calls),
+        }));
+        let actor = ActorContext {
+            user_id: 1,
+            tenant_id: "tenant-a".into(),
+            username: "tester".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: DataScope::SelfOnly,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin: false,
+        };
+
+        assert_eq!(service.clean(&actor).await.expect("清理应成功"), 3);
+        assert_eq!(
+            *calls.lock().expect("调用记录锁应可用"),
+            ["begin", "clean", "commit"]
+        );
+    }
+
+    #[test]
+    fn login_status_keeps_persisted_codes() {
+        assert_eq!(LoginStatus::Success.as_str(), "1");
+        assert_eq!(LoginStatus::Failure.as_str(), "0");
+    }
 }

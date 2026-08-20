@@ -99,7 +99,7 @@ impl ExportService {
             configs: ConfigService::new(db.clone(), crate::AuthorizationCache::disabled()),
             dicts: DictService::new(db.clone(), None),
             oper_logs: OperLogService::new(db.clone()),
-            login_infos: LoginInfoService::new(db),
+            login_infos: LoginInfoService::new(crate::legacy_login_info_persistence(db)),
             users,
             storage,
             spreadsheets,
