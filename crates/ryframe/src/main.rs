@@ -4,7 +4,7 @@ mod boot;
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
 use ryframe_adapters::i18n::LocalizerLoader;
-use ryframe_application::{AuthorizationCache, CallbackJobMetricsObserver, JobQueue, OutboxWorker};
+use ryframe_application::{CallbackJobMetricsObserver, JobQueue, OutboxWorker};
 use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode};
 use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
@@ -197,7 +197,7 @@ async fn main() -> Result<(), AppError> {
                 tracing::info!("Cron 调度已关闭，内置 Worker 仅消费普通后台任务");
             }
             let authorization_cache =
-                AuthorizationCache::new(redis.client.clone(), application_policies.cache);
+                boot::authorization_cache::cache(redis.client.clone(), application_policies.cache);
             tasks.extend(
                 OutboxWorker::new(
                     services.job_queue.clone(),

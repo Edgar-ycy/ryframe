@@ -1,12 +1,3 @@
-use ryframe_kernel::{AppError, AppResult};
-
-pub(super) fn validate_namespace_version(version: i64) -> AppResult<()> {
-    if version < 0 {
-        return Err(AppError::Database("缓存命名空间版本不能为负数".into()));
-    }
-    Ok(())
-}
-
 fn tenant_hash_tag(tenant_id: &str) -> String {
     format!("{{{tenant_id}}}")
 }
@@ -48,4 +39,21 @@ pub(super) fn namespace_values_hash_key(tenant_id: &str, namespace: &str) -> Str
         "ryframe:tenant-cache:{}:{namespace}:values",
         tenant_hash_tag(tenant_id)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_keys_share_one_cluster_hash_tag() {
+        let epoch = tenant_epoch_key("tenant-a");
+        let user = user_version_key("tenant-a", 42);
+        let snapshot = snapshot_hash_key("tenant-a", 42);
+
+        assert!(epoch.contains("{tenant-a}"));
+        assert!(user.contains("{tenant-a}"));
+        assert!(snapshot.contains("{tenant-a}"));
+        assert_ne!(epoch, tenant_epoch_key("tenant-b"));
+    }
 }

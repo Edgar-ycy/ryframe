@@ -18,8 +18,7 @@ use ryframe_adapters::storage::{
 };
 use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
-    ArtifactStore, AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService,
-    OutboxWorker,
+    ArtifactStore, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
         CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportService, FileService,
         IMPORT_BUCKET, MessageService, OperLogService, ProductService, TenantConfigTransferService,
@@ -33,10 +32,14 @@ use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
 use tokio::sync::watch;
 
+#[path = "../boot/authorization_cache_keyspace.rs"]
+mod authorization_cache_keyspace;
 #[path = "../boot/application_policy.rs"]
 mod process_application_policy;
 #[path = "../boot/artifact_store.rs"]
 mod process_artifact_store;
+#[path = "../boot/authorization_cache.rs"]
+mod process_authorization_cache;
 #[path = "../boot/file_content.rs"]
 mod process_file_content;
 #[path = "../boot/jobs.rs"]
@@ -126,7 +129,8 @@ async fn main() -> Result<(), AppError> {
     }
 
     let redis = connect_redis_for_worker(&config).await?;
-    let authorization_cache = AuthorizationCache::new(redis.clone(), application_policies.cache);
+    let authorization_cache =
+        process_authorization_cache::cache(redis.clone(), application_policies.cache);
     let object_storage = connect_storage_for_worker(&config).await?;
 
     let queue = Arc::new(

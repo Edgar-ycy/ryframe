@@ -1,19 +1,16 @@
 use std::{fmt, sync::Arc};
 
-use ryframe_adapters::RedisClient;
 use ryframe_db::validate_cache_namespace;
 use ryframe_kernel::{AppError, AppResult};
 
 use crate::CacheAvailabilityPolicy;
 
-use super::keyspace::validate_namespace_version;
-use super::redis_backend::RedisAuthorizationCacheBackend;
 use super::*;
 
 #[derive(Clone)]
 pub struct AuthorizationCache {
     backend: Option<Arc<dyn AuthorizationCacheBackend>>,
-    redis: Option<RedisClient>,
+    publisher: Option<Arc<dyn AuthorizationChangePublisher>>,
     required: bool,
 }
 
@@ -28,13 +25,14 @@ impl fmt::Debug for AuthorizationCache {
 }
 
 impl AuthorizationCache {
-    pub fn new(redis: Option<RedisClient>, policy: CacheAvailabilityPolicy) -> Self {
-        let backend = redis.clone().map(|redis| {
-            Arc::new(RedisAuthorizationCacheBackend { redis }) as Arc<dyn AuthorizationCacheBackend>
-        });
+    pub fn new(
+        backend: Option<Arc<dyn AuthorizationCacheBackend>>,
+        publisher: Option<Arc<dyn AuthorizationChangePublisher>>,
+        policy: CacheAvailabilityPolicy,
+    ) -> Self {
         Self {
             backend,
-            redis,
+            publisher,
             required: policy.is_required(),
         }
     }
@@ -42,7 +40,7 @@ impl AuthorizationCache {
     pub fn disabled() -> Self {
         Self {
             backend: None,
-            redis: None,
+            publisher: None,
             required: false,
         }
     }
@@ -428,7 +426,7 @@ impl AuthorizationCache {
     /// 发布租户上下文已变化的跨实例加速信号。事件不携带权威快照，
     /// API 订阅者必须回控制库强一致读取四值后再通知浏览器。
     pub async fn publish_tenant_context_changed(&self, tenant_id: &str, authorization_epoch: i32) {
-        let Some(redis) = &self.redis else {
+        let Some(publisher) = &self.publisher else {
             return;
         };
         let event = AuthorizationChangedEvent {
@@ -442,8 +440,8 @@ impl AuthorizationCache {
                 return;
             }
         };
-        if let Err(error) = redis
-            .publish(AUTHORIZATION_CHANGED_REDIS_CHANNEL, payload)
+        if let Err(error) = publisher
+            .publish(AUTHORIZATION_CHANGED_REDIS_CHANNEL, &payload)
             .await
         {
             // 实时通知是界面加速通道；授权快照和后续响应头仍负责最终一致性。
@@ -473,4 +471,11 @@ impl AuthorizationCache {
 
 fn cache_unavailable() -> AppError {
     AppError::ServiceUnavailable("授权缓存暂不可用，已拒绝本次权限敏感操作".into())
+}
+
+fn validate_namespace_version(version: i64) -> AppResult<()> {
+    if version < 0 {
+        return Err(AppError::Database("缓存命名空间版本不能为负数".into()));
+    }
+    Ok(())
 }

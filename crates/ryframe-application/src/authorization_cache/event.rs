@@ -1,3 +1,5 @@
+use std::{future::Future, pin::Pin};
+
 use serde::{Deserialize, Serialize};
 
 /// 跨 API 实例广播租户授权纪元变化的 Redis 频道。
@@ -8,4 +10,16 @@ pub const AUTHORIZATION_CHANGED_REDIS_CHANNEL: &str = "ryframe:authorization:cha
 pub struct AuthorizationChangedEvent {
     pub tenant_id: String,
     pub authorization_epoch: i32,
+}
+
+pub type AuthorizationChangePublishFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// 授权变化实时通知发布端口。
+pub trait AuthorizationChangePublisher: Send + Sync {
+    fn publish<'a>(
+        &'a self,
+        channel: &'a str,
+        payload: &'a str,
+    ) -> AuthorizationChangePublishFuture<'a>;
 }

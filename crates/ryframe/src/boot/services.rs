@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
 use ryframe_api::AppServices;
 use ryframe_application::{
-    ArtifactStore, AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
-    TenantBusinessDataState, TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
+    ArtifactStore, AuditOutbox, AuthService, JobQueue, JobScheduleService, TenantBusinessDataState,
+    TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
     agent::{AgentService, service_capability_descriptors},
     map_tenant_data_error,
     system::{
@@ -188,7 +188,8 @@ pub async fn build_all(
     object_storage: Arc<dyn ArtifactStore>,
     rate_limiter: Arc<RateLimiter>,
 ) -> Result<AppServices, AppError> {
-    let authorization_cache = AuthorizationCache::new(redis_client.clone(), policies.cache);
+    let authorization_cache =
+        super::authorization_cache::cache(redis_client.clone(), policies.cache);
     let user = Arc::new(UserService::new(
         database.clone(),
         authorization_cache.clone(),

@@ -1,15 +1,49 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use redis::AsyncCommands;
 use ryframe_adapters::RedisClient;
+use ryframe_application::{
+    AUTHORIZATION_SNAPSHOT_TTL_SECS, AuthorizationCache, AuthorizationCacheBackend,
+    AuthorizationCacheLookup, AuthorizationChangePublishFuture, AuthorizationChangePublisher,
+    AuthorizationSnapshot, CacheAvailabilityPolicy, NamespaceCacheLookup, TenantCacheLookup,
+};
 
-use super::keyspace::{
+use super::authorization_cache_keyspace::{
     namespace_values_hash_key, namespace_version_key, snapshot_hash_key, tenant_epoch_key,
     tenant_value_hash_key, user_version_key,
 };
-use super::*;
 
-pub(super) struct RedisAuthorizationCacheBackend {
-    pub(super) redis: RedisClient,
+struct RedisAuthorizationCacheBackend {
+    redis: RedisClient,
+}
+
+impl AuthorizationChangePublisher for RedisAuthorizationCacheBackend {
+    fn publish<'a>(
+        &'a self,
+        channel: &'a str,
+        payload: &'a str,
+    ) -> AuthorizationChangePublishFuture<'a> {
+        Box::pin(async move {
+            self.redis
+                .publish(channel, payload)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+pub fn cache(redis: Option<RedisClient>, policy: CacheAvailabilityPolicy) -> AuthorizationCache {
+    let Some(redis) = redis else {
+        return AuthorizationCache::new(None, None, policy);
+    };
+    let implementation = Arc::new(RedisAuthorizationCacheBackend { redis });
+    AuthorizationCache::new(
+        Some(Arc::clone(&implementation) as Arc<dyn AuthorizationCacheBackend>),
+        Some(implementation as Arc<dyn AuthorizationChangePublisher>),
+        policy,
+    )
 }
 
 #[async_trait]
@@ -430,4 +464,35 @@ fn redis_cache_value_error(message: String) -> redis::RedisError {
         message,
     )
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_cache_versions_without_lexical_ordering() {
+        assert_eq!(version_is_newer(Some("10"), "9"), Ok(true));
+        assert_eq!(version_is_newer(Some("9"), "10"), Ok(false));
+        assert!(validate_canonical_decimal("0").is_ok());
+        assert!(validate_canonical_decimal("01").is_err());
+        assert!(validate_canonical_decimal("-1").is_err());
+    }
+
+    #[tokio::test]
+    async fn disabled_cache_respects_availability_policy() {
+        let optional = cache(None, CacheAvailabilityPolicy::Optional);
+        assert!(!optional.is_enabled());
+        assert!(
+            optional
+                .lookup_snapshot("tenant-a", 1)
+                .await
+                .expect("可选缓存应回退")
+                .snapshot
+                .is_none()
+        );
+
+        let required = cache(None, CacheAvailabilityPolicy::Required);
+        assert!(required.lookup_snapshot("tenant-a", 1).await.is_err());
+    }
 }
