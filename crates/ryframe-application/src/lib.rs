@@ -14,11 +14,13 @@ mod legacy_dict_persistence;
 mod legacy_login_info_persistence;
 mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
+mod legacy_overview_persistence;
 mod legacy_post_persistence;
 mod login_info_persistence;
 mod login_protection;
 mod notice_persistence;
 mod oper_log_persistence;
+mod overview_persistence;
 mod persistence;
 mod post_persistence;
 mod principal_resolver;
@@ -84,6 +86,8 @@ pub use legacy_notice_persistence::port as legacy_notice_persistence;
 #[doc(hidden)]
 pub use legacy_oper_log_persistence::port as legacy_oper_log_persistence;
 #[doc(hidden)]
+pub use legacy_overview_persistence::port as legacy_overview_persistence;
+#[doc(hidden)]
 pub use legacy_post_persistence::port as legacy_post_persistence;
 pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
@@ -94,6 +98,9 @@ pub use notice_persistence::{
 };
 pub use oper_log_persistence::{
     OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction,
+};
+pub use overview_persistence::{
+    OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
 };
 pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};

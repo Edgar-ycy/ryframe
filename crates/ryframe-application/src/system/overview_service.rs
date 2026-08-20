@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
-use ryframe_db::{ControlDatabaseCluster, DataRetentionRepository, OverviewRepository};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
 
-use crate::{BackgroundJobQueueStats, JobQueue};
+use crate::{BackgroundJobQueueStats, JobQueue, OverviewPersistencePort};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverviewRange {
@@ -82,9 +81,7 @@ pub struct OverviewTrends {
 }
 
 pub struct OverviewService {
-    db: ControlDatabaseCluster,
-    repository: OverviewRepository,
-    clock_repository: DataRetentionRepository,
+    persistence: Arc<dyn OverviewPersistencePort>,
     job_queue: Arc<JobQueue>,
     jobs_mode: String,
     scheduler_enabled: bool,
@@ -92,14 +89,12 @@ pub struct OverviewService {
 
 impl OverviewService {
     pub fn new(
-        db: ControlDatabaseCluster,
+        persistence: Arc<dyn OverviewPersistencePort>,
         job_queue: Arc<JobQueue>,
         policy: crate::JobRuntimePolicy,
     ) -> Self {
         Self {
-            db,
-            repository: OverviewRepository,
-            clock_repository: DataRetentionRepository,
+            persistence,
             job_queue,
             jobs_mode: policy.worker_mode.as_str().to_owned(),
             scheduler_enabled: policy.scheduler_enabled,
@@ -109,8 +104,8 @@ impl OverviewService {
     pub async fn snapshot(&self, actor: &ActorContext) -> AppResult<OverviewCoreSnapshot> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let calculated_at = self
-            .clock_repository
-            .database_utc_now(self.db.write())
+            .persistence
+            .database_utc_now()
             .await
             .map_err(main_database_unavailable)?;
         let background_jobs = self
@@ -119,8 +114,8 @@ impl OverviewService {
             .await
             .map_err(main_database_unavailable)?;
         let schedules = self
-            .repository
-            .schedule_stats(self.db.write(), tenant_id, calculated_at)
+            .persistence
+            .schedule_stats(tenant_id, calculated_at)
             .await
             .map_err(main_database_unavailable)?;
         Ok(OverviewCoreSnapshot {
@@ -140,8 +135,8 @@ impl OverviewService {
     ) -> AppResult<OverviewTrends> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let calculated_at = self
-            .clock_repository
-            .database_utc_now(self.db.write())
+            .persistence
+            .database_utc_now()
             .await
             .map_err(main_database_unavailable)?;
         let bucket_seconds = range.bucket_seconds();
@@ -156,29 +151,17 @@ impl OverviewService {
             .checked_sub_signed(Duration::seconds(total_seconds))
             .ok_or_else(|| AppError::Internal("运维趋势起始时间溢出".into()))?;
         let include_platform = tenant_id == "system";
-        let db = self.db.write();
-        let (jobs, schedules, logins, operations) = tokio::try_join!(
-            self.repository.background_job_trends(
-                db,
+        let trends = self
+            .persistence
+            .trends(
                 tenant_id,
                 include_platform,
                 start,
                 calculated_at,
                 bucket_seconds,
-            ),
-            self.repository.schedule_execution_trends(
-                db,
-                tenant_id,
-                start,
-                calculated_at,
-                bucket_seconds,
-            ),
-            self.repository
-                .login_trends(db, tenant_id, start, calculated_at, bucket_seconds,),
-            self.repository
-                .operation_trends(db, tenant_id, start, calculated_at, bucket_seconds,),
-        )
-        .map_err(main_database_unavailable)?;
+            )
+            .await
+            .map_err(main_database_unavailable)?;
 
         let mut buckets = (0..bucket_count)
             .map(|index| OverviewTrendBucket {
@@ -189,12 +172,12 @@ impl OverviewService {
                 ..Default::default()
             })
             .collect::<Vec<_>>();
-        for count in jobs {
+        for count in trends.background_jobs {
             if let Some(bucket) = buckets.get_mut(count.bucket_index) {
                 bucket.background_jobs_created = count.count;
             }
         }
-        for count in schedules {
+        for count in trends.schedules {
             let Some(bucket) = buckets.get_mut(count.bucket_index) else {
                 continue;
             };
@@ -207,7 +190,7 @@ impl OverviewService {
                 _ => {}
             }
         }
-        for count in logins {
+        for count in trends.logins {
             let Some(bucket) = buckets.get_mut(count.bucket_index) else {
                 continue;
             };
@@ -217,7 +200,7 @@ impl OverviewService {
                 _ => {}
             }
         }
-        for count in operations {
+        for count in trends.operations {
             let Some(bucket) = buckets.get_mut(count.bucket_index) else {
                 continue;
             };

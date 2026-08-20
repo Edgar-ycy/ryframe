@@ -317,7 +317,7 @@ pub async fn build_all(
         policies.messaging.enabled() && redis_client.is_some(),
     ));
     let overview = Arc::new(OverviewService::new(
-        database.clone(),
+        ryframe_application::legacy_overview_persistence(database.clone()),
         job_queue.clone(),
         policies.job_runtime,
     ));
