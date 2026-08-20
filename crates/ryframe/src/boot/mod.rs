@@ -9,6 +9,7 @@
 //! - `storage`:    对象存储（Local / RustFS / MinIO / S3）
 //! - `app_state`:  AppState 聚合
 
+pub mod agent_limiter;
 pub mod app_state;
 pub mod application_policy;
 pub mod artifact_store;

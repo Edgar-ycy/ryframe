@@ -5,7 +5,6 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use ryframe_adapters::RedisClient;
 use ryframe_auth::rbac;
 use ryframe_db::{
     AgentQueryRepository, AgentRowScope, ControlDatabaseCluster, DataRetentionRepository,
@@ -47,7 +46,7 @@ pub struct AgentService {
     config: ServiceAccountPolicy,
     multi_tenancy: MultiTenancyPolicy,
     keyring: Arc<PepperKeyring>,
-    limiter: AgentLimiter,
+    limiter: Arc<dyn AgentLimiter>,
     product_service: Arc<ProductService>,
 }
 
@@ -84,7 +83,7 @@ use support::*;
 impl AgentService {
     pub fn new(
         db: ControlDatabaseCluster,
-        redis: RedisClient,
+        limiter: Arc<dyn AgentLimiter>,
         keyring: Arc<PepperKeyring>,
         config: ServiceAccountPolicy,
         multi_tenancy: MultiTenancyPolicy,
@@ -98,7 +97,7 @@ impl AgentService {
             config,
             multi_tenancy,
             keyring,
-            limiter: AgentLimiter::new(redis),
+            limiter,
             product_service,
         })
     }

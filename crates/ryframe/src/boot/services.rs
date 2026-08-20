@@ -232,7 +232,7 @@ pub async fn build_all(
         )?);
         let agent = Arc::new(AgentService::new(
             database.clone(),
-            redis,
+            super::agent_limiter::redis_limiter(redis),
             keyring,
             policies.service_accounts,
             policies.multi_tenancy,
