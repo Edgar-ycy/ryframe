@@ -71,7 +71,11 @@ pub(super) async fn probe_runtime_status(
             endpoint: storage_config.endpoint.clone(),
         },
         upload_circuit_breaker: RuntimeCircuitBreakerStatus {
-            state: format!("{:?}", state.runtime.upload_circuit_breaker.current_state()),
+            state: state
+                .runtime
+                .upload_circuit_breaker
+                .state_label()
+                .to_owned(),
         },
         jobs: RuntimeJobsStatus {
             mode: state.settings.jobs.mode.clone(),

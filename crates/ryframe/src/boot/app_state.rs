@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
-use ryframe_adapters::{RedisClient, TokenBlacklist, rate_limit::RateLimiter};
+use ryframe_adapters::{
+    RedisClient, TokenBlacklist,
+    rate_limit::RateLimiter,
+    resilience::{CircuitBreaker, CircuitState},
+};
 use ryframe_api::{
     AppServices, HttpRuntimeSettings, TrustedProxySet,
-    runtime::RuntimeComponents,
+    runtime::{RuntimeComponents, UploadCircuitBreaker},
     settings::{
         CorsSettings, JobRuntimeSettings, MessagingSettings, MultiTenancySettings,
         RateLimitSettings, StorageRuntimeSettings, UploadSettings,
@@ -12,6 +16,32 @@ use ryframe_api::{
 use ryframe_config::{AppConfig, JobWorkerMode, RedisMode, StorageBackend};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::Localizer;
+
+struct UploadCircuitBreakerBridge {
+    breaker: CircuitBreaker,
+}
+
+impl UploadCircuitBreaker for UploadCircuitBreakerBridge {
+    fn allow_request(&self) -> bool {
+        self.breaker.allow_request()
+    }
+
+    fn record_success(&self) {
+        self.breaker.record_success();
+    }
+
+    fn record_failure(&self) {
+        self.breaker.record_failure();
+    }
+
+    fn state_label(&self) -> &'static str {
+        match self.breaker.current_state() {
+            CircuitState::Closed => "Closed",
+            CircuitState::Open => "Open",
+            CircuitState::HalfOpen => "HalfOpen",
+        }
+    }
+}
 
 /// 组装 API 状态前已经就绪的依赖。
 ///
@@ -140,7 +170,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         settings: settings.clone(),
         localizer: localizer.clone(),
         services: Arc::new(services),
-        redis: redis_client.clone(),
+        redis: redis_client,
         message_hub: Arc::new(ryframe_api::message_socket::MessageHub::new(
             localizer,
             settings.messaging.clone(),
@@ -148,6 +178,8 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         token_blacklist,
         rate_limiter: super::limiter::http_limiter(limiter),
         trusted_proxies,
-        runtime: RuntimeComponents::new(redis_client),
+        runtime: RuntimeComponents::new(Arc::new(UploadCircuitBreakerBridge {
+            breaker: CircuitBreaker::default_config(),
+        })),
     }
 }

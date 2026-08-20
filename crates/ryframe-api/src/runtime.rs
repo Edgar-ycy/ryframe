@@ -1,20 +1,21 @@
 use std::sync::Arc;
 
-use ryframe_adapters::{
-    DistributedLock, RedisClient, create_distributed_lock, resilience::CircuitBreaker,
-};
+pub trait UploadCircuitBreaker: Send + Sync {
+    fn allow_request(&self) -> bool;
+    fn record_success(&self);
+    fn record_failure(&self);
+    fn state_label(&self) -> &'static str;
+}
 
 #[derive(Clone)]
 pub struct RuntimeComponents {
-    pub distributed_lock: Arc<dyn DistributedLock>,
-    pub upload_circuit_breaker: Arc<CircuitBreaker>,
+    pub upload_circuit_breaker: Arc<dyn UploadCircuitBreaker>,
 }
 
 impl RuntimeComponents {
-    pub fn new(redis: Option<RedisClient>) -> Self {
+    pub fn new(upload_circuit_breaker: Arc<dyn UploadCircuitBreaker>) -> Self {
         Self {
-            distributed_lock: create_distributed_lock(redis.as_ref()),
-            upload_circuit_breaker: Arc::new(CircuitBreaker::default_config()),
+            upload_circuit_breaker,
         }
     }
 }

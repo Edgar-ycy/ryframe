@@ -5,7 +5,6 @@ use axum::{
     http::{HeaderMap, header},
     response::IntoResponse,
 };
-use ryframe_adapters::resilience::CircuitBreaker;
 use ryframe_application::system::file_service::{
     AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET, UploadPolicy,
 };
@@ -15,7 +14,9 @@ use serde::Deserialize;
 
 use crate::RequestPrincipal;
 use crate::dto::{multipart_dto::FileUploadForm, public_dto::UploadResponse};
-use crate::{handler_utils::attachment_content_disposition, state::AppState};
+use crate::{
+    handler_utils::attachment_content_disposition, runtime::UploadCircuitBreaker, state::AppState,
+};
 
 /// 多文件上传响应
 pub type MultiUploadResponse = Vec<UploadResponse>;
@@ -43,7 +44,10 @@ fn upload_failure_affects_circuit_breaker(error: &AppError) -> bool {
     )
 }
 
-fn record_upload_result<T>(circuit_breaker: &CircuitBreaker, result: &KernelAppResult<T>) {
+fn record_upload_result<T>(
+    circuit_breaker: &dyn UploadCircuitBreaker,
+    result: &KernelAppResult<T>,
+) {
     match result {
         Ok(_) => circuit_breaker.record_success(),
         Err(error) if upload_failure_affects_circuit_breaker(error) => {
@@ -276,4 +280,57 @@ fn downloaded_file_response(file: DownloadedFile) -> HttpResult<(HeaderMap, Vec<
     );
 
     Ok((headers, file.data))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct RecordingCircuitBreaker {
+        successes: AtomicUsize,
+        failures: AtomicUsize,
+    }
+
+    impl UploadCircuitBreaker for RecordingCircuitBreaker {
+        fn allow_request(&self) -> bool {
+            true
+        }
+
+        fn record_success(&self) {
+            self.successes.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn record_failure(&self) {
+            self.failures.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn state_label(&self) -> &'static str {
+            "Closed"
+        }
+    }
+
+    #[test]
+    fn records_only_infrastructure_failures() {
+        let breaker = RecordingCircuitBreaker::default();
+
+        record_upload_result(&breaker, &KernelAppResult::<()>::Ok(()));
+        record_upload_result(
+            &breaker,
+            &KernelAppResult::<()>::Err(AppError::Database("连接失败".into())),
+        );
+        record_upload_result(
+            &breaker,
+            &KernelAppResult::<()>::Err(AppError::ServiceUnavailable("存储不可用".into())),
+        );
+        record_upload_result(
+            &breaker,
+            &KernelAppResult::<()>::Err(AppError::Validation("文件格式错误".into())),
+        );
+
+        assert_eq!(breaker.successes.load(Ordering::Relaxed), 1);
+        assert_eq!(breaker.failures.load(Ordering::Relaxed), 2);
+    }
 }
