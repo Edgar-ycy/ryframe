@@ -8,7 +8,7 @@ use ryframe_db::{
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
 
-use super::{EXPORT_BUCKET, database_error, storage_error};
+use super::{EXPORT_BUCKET, EXPORT_STATUS_SUCCEEDED, database_error, storage_error};
 use crate::ArtifactStore;
 
 /// 导出对象、独占文件元数据与公开任务记录的统一清理用例。
@@ -97,7 +97,7 @@ impl ExportPurgeUseCase {
                 return Ok(false);
             };
             let still_expired = current.delete_pending_at.is_none()
-                && current.status == export_job::Model::STATUS_SUCCEEDED
+                && current.status == EXPORT_STATUS_SUCCEEDED
                 && current
                     .expires_at
                     .is_some_and(|expires_at| expires_at <= now)

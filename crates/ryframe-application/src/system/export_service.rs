@@ -50,6 +50,10 @@ const EXPORT_BUSINESS_MAX_ROWS: usize = 500_000;
 const EXPORT_MAX_RUNTIME_SECONDS: i32 = 1_800;
 const EXPORT_MAX_RESULT_BYTES: u64 = 512 * 1024 * 1024;
 const EXPORT_MAX_RUNNING_PER_TENANT: u64 = 2;
+const EXPORT_STATUS_RUNNING: &str = "running";
+const EXPORT_STATUS_SUCCEEDED: &str = "succeeded";
+const EXPORT_STATUS_FAILED: &str = "failed";
+const EXPORT_STATUS_CANCELLED: &str = "cancelled";
 
 /// 异步导出任务服务。
 pub struct ExportService {

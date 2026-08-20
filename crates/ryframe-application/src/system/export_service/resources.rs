@@ -51,7 +51,7 @@ impl ExportService {
                 "导出后台任务资源与公开任务资源不一致".into(),
             ));
         }
-        if export.status == export_job::Model::STATUS_CANCELLED {
+        if export.status == EXPORT_STATUS_CANCELLED {
             return Ok(());
         }
 
@@ -236,12 +236,10 @@ impl ExportService {
             .find_by_id(self.db.write(), export.id)
             .await?
             .ok_or_else(|| AppError::NotFound("导出任务不存在".into()))?;
-        if current.status == export_job::Model::STATUS_CANCELLED {
+        if current.status == EXPORT_STATUS_CANCELLED {
             return Ok(false);
         }
-        if current.status != export_job::Model::STATUS_RUNNING
-            || current.delete_pending_at.is_some()
-        {
+        if current.status != EXPORT_STATUS_RUNNING || current.delete_pending_at.is_some() {
             return Err(AppError::Conflict("导出任务已不再允许运行".into()));
         }
         Ok(true)

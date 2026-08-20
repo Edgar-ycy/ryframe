@@ -81,14 +81,14 @@ impl ExportService {
                 .find_by_id_for_update_in_transaction(&transaction, export.id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("导出任务不存在".into()))?;
-            if current.status == export_job::Model::STATUS_SUCCEEDED {
+            if current.status == EXPORT_STATUS_SUCCEEDED {
                 return if current.result_file_id == Some(file_id) {
                     Ok(false)
                 } else {
                     Err(AppError::Conflict("导出任务结果文件标识冲突".into()))
                 };
             }
-            if current.status != export_job::Model::STATUS_RUNNING {
+            if current.status != EXPORT_STATUS_RUNNING {
                 return Err(AppError::Conflict("导出任务已不再允许运行".into()));
             }
 

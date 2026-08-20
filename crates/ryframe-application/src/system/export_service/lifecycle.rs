@@ -1,4 +1,4 @@
-use ryframe_db::{CreateExportJob, ReadConsistency, entities::export_job};
+use ryframe_db::{CreateExportJob, ReadConsistency};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
@@ -262,7 +262,7 @@ impl ExportService {
             .filter(|export| {
                 matches!(
                     export.status.as_str(),
-                    export_job::Model::STATUS_SUCCEEDED | export_job::Model::STATUS_FAILED
+                    EXPORT_STATUS_SUCCEEDED | EXPORT_STATUS_FAILED
                 ) && export.notification_read_at.is_none()
                     && (authorization.actor.is_super_admin
                         || ryframe_auth::rbac::has_permission(
@@ -365,7 +365,7 @@ impl ExportService {
             .background_jobs
             .database_utc_now(self.db.write())
             .await?;
-        if export.status != export_job::Model::STATUS_SUCCEEDED
+        if export.status != EXPORT_STATUS_SUCCEEDED
             || export.expires_at.is_none_or(|expires_at| expires_at <= now)
         {
             return Err(AppError::Conflict("导出结果尚未就绪或已过期".into()));

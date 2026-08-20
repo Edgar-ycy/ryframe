@@ -1,9 +1,8 @@
 use chrono::{DateTime, Utc};
-use ryframe_db::entities::export_job;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
-use super::RequestExportCommand;
+use super::{EXPORT_STATUS_SUCCEEDED, RequestExportCommand};
 
 /// 用户导出的规范化筛选条件。
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -370,7 +369,7 @@ pub(super) fn ensure_download_authorization_matches(
 }
 
 pub(super) fn should_delete_uncommitted_object(status: &str) -> bool {
-    status != export_job::Model::STATUS_SUCCEEDED
+    status != EXPORT_STATUS_SUCCEEDED
 }
 
 #[cfg(test)]
@@ -471,5 +470,12 @@ mod tests {
             ensure_download_authorization_matches("", "fingerprint-b"),
             Err(AppError::Authorization(_))
         ));
+    }
+
+    #[test]
+    fn only_committed_success_keeps_the_uploaded_object() {
+        assert!(!should_delete_uncommitted_object(EXPORT_STATUS_SUCCEEDED));
+        assert!(should_delete_uncommitted_object("running"));
+        assert!(should_delete_uncommitted_object("failed"));
     }
 }
