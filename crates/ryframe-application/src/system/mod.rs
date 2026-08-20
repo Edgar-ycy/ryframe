@@ -90,8 +90,9 @@ pub use role_service::{RoleListParams, RoleOptionPurpose, RoleService, RoleVo};
 pub use service_account_service::{
     CreateCredentialCommand, CreateDelegationCommand, CreateServiceAccountCommand,
     CreatedCredentialVo, CreatedDelegationVo, ServiceAccessAuditVo, ServiceAccountDetailVo,
-    ServiceAccountService, ServiceAccountVo, ServiceCapabilityDescriptor, ServiceCredentialVo,
-    ServiceDelegationTargetVo, ServiceDelegationVo, UpdateServiceAccountCommand,
+    ServiceAccountReadDependencies, ServiceAccountService, ServiceAccountVo,
+    ServiceCapabilityDescriptor, ServiceCredentialVo, ServiceDelegationTargetVo,
+    ServiceDelegationVo, UpdateServiceAccountCommand,
 };
 pub use tenant_config_package::{
     GeneratedTenantConfigPackage, ParsedTenantConfigPackage, PortableConfig, PortableDepartment,

@@ -8,16 +8,12 @@ impl ServiceAccountService {
     ) -> AppResult<Vec<ServiceCredentialVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        self.account_repo
-            .find_by_id(&db, tenant_id, account_id)
+        let credentials = self
+            .read
+            .enabled_account_credentials(tenant_id, account_id)
             .await?
-            .filter(service_account::Model::is_enabled)
             .ok_or_else(|| AppError::NotFound("可用的服务账号不存在".into()))?;
-        Ok(self
-            .credential_repo
-            .list_for_account(&db, tenant_id, account_id)
-            .await?
+        Ok(credentials
             .into_iter()
             .map(ServiceCredentialVo::from)
             .collect())

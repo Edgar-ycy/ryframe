@@ -1,22 +1,17 @@
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashSet},
     sync::Arc,
 };
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    ControlDatabaseCluster, ReadConsistency, Repository, RoleRepository, ServiceAccountLock,
-    ServiceAccountRepository, ServiceCredentialRepository, ServiceDelegationRepository,
-    UserRepository,
-    entities::{
-        role, service_account, service_credential, service_delegation,
-        service_delegation_capability,
-    },
+    ControlDatabaseCluster, RoleRepository, ServiceAccountLock, ServiceAccountRepository,
+    ServiceCredentialRepository, ServiceDelegationRepository, UserRepository,
+    entities::{role, service_account, service_credential, service_delegation},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, ExprTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, TransactionTrait,
+    ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QuerySelect, TransactionTrait,
     sea_query::{Expr, LockType},
 };
 use serde::Serialize;
@@ -24,7 +19,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AuthorizationCache, PepperKeyring, ServiceAccountAuditReadPort,
-    ServiceAccountAuthorizationReadPort, ServiceAccountPolicy,
+    ServiceAccountAuthorizationReadPort, ServiceAccountPolicy, ServiceAccountReadPort,
+    ServiceAccountRecord, ServiceCredentialRecord, ServiceDelegationRecord,
     service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
 };
 
@@ -46,11 +42,19 @@ use capabilities::*;
 use legacy_helpers::database_now;
 pub use model::*;
 use validation::*;
+
+pub struct ServiceAccountReadDependencies {
+    pub accounts: Arc<dyn ServiceAccountReadPort>,
+    pub authorization: Arc<dyn ServiceAccountAuthorizationReadPort>,
+    pub audits: Arc<dyn ServiceAccountAuditReadPort>,
+}
+
 pub struct ServiceAccountService {
     db: ControlDatabaseCluster,
     config: ServiceAccountPolicy,
     keyring: Arc<PepperKeyring>,
     capabilities: Vec<ServiceCapabilityDescriptor>,
+    read: Arc<dyn ServiceAccountReadPort>,
     account_repo: ServiceAccountRepository,
     credential_repo: ServiceCredentialRepository,
     delegation_repo: ServiceDelegationRepository,
@@ -68,8 +72,7 @@ impl ServiceAccountService {
         keyring: Arc<PepperKeyring>,
         capabilities: Vec<ServiceCapabilityDescriptor>,
         authorization_cache: AuthorizationCache,
-        authorization_read: Arc<dyn ServiceAccountAuthorizationReadPort>,
-        audit_read: Arc<dyn ServiceAccountAuditReadPort>,
+        reads: ServiceAccountReadDependencies,
     ) -> AppResult<Self> {
         validate_capabilities(&capabilities)?;
         Ok(Self {
@@ -77,14 +80,15 @@ impl ServiceAccountService {
             config,
             keyring,
             capabilities,
+            read: reads.accounts,
             account_repo: ServiceAccountRepository,
             credential_repo: ServiceCredentialRepository,
             delegation_repo: ServiceDelegationRepository,
             role_repo: RoleRepository,
             user_repo: UserRepository,
             authorization_cache,
-            authorization_read,
-            audit_read,
+            authorization_read: reads.authorization,
+            audit_read: reads.audits,
         })
     }
 

@@ -8,8 +8,7 @@ impl ServiceAccountService {
     ) -> AppResult<PageResult<ServiceAccountVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
-        let result = self.account_repo.find_by_page(&db, tenant_id, page).await?;
+        let result = self.read.list_accounts(tenant_id, page).await?;
         Ok(PageResult {
             records: result
                 .records
@@ -29,21 +28,18 @@ impl ServiceAccountService {
     ) -> AppResult<ServiceAccountDetailVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let account = self
-            .account_repo
-            .find_by_id(&db, tenant_id, account_id)
+        let detail = self
+            .read
+            .account_detail(tenant_id, account_id)
             .await?
             .ok_or_else(|| AppError::NotFound("服务账号不存在".into()))?;
-        let role_ids = self
-            .account_repo
-            .role_ids(&db, tenant_id, account_id)
-            .await?
+        let role_ids = detail
+            .role_ids
             .into_iter()
             .map(|id| id.to_string())
             .collect();
         Ok(ServiceAccountDetailVo {
-            account: account.into(),
+            account: detail.account.into(),
             role_ids,
         })
     }

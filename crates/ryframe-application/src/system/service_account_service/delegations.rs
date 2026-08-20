@@ -184,12 +184,10 @@ impl ServiceAccountService {
     ) -> AppResult<Vec<ServiceDelegationVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let rows = self
-            .delegation_repo
-            .list_for_user(&db, tenant_id, actor.user_id)
-            .await?;
-        self.delegations_with_capabilities(&db, rows).await
+        self.read
+            .delegations_for_user(tenant_id, actor.user_id)
+            .await
+            .map(|rows| rows.into_iter().map(ServiceDelegationVo::from).collect())
     }
 
     pub async fn revoke_my_delegation(
@@ -207,19 +205,17 @@ impl ServiceAccountService {
     ) -> AppResult<PageResult<ServiceDelegationVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let base = service_delegation::Entity::find()
-            .filter(service_delegation::Column::TenantId.eq(tenant_id));
-        let total = base.clone().count(&db).await.map_err(database_error)?;
-        let rows = base
-            .order_by_desc(service_delegation::Column::CreatedAt)
-            .offset(page.offset())
-            .limit(page.page_size())
-            .all(&db)
-            .await
-            .map_err(database_error)?;
-        let records = self.delegations_with_capabilities(&db, rows).await?;
-        Ok(PageResult::new(records, total, &page))
+        let result = self.read.list_delegations(tenant_id, page).await?;
+        Ok(PageResult {
+            records: result
+                .records
+                .into_iter()
+                .map(ServiceDelegationVo::from)
+                .collect(),
+            total: result.total,
+            page: result.page,
+            page_size: result.page_size,
+        })
     }
 
     pub async fn revoke_managed_delegation(

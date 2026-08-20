@@ -11,10 +11,10 @@ use ryframe_application::{
         ExportService, FileService, InMemoryCaptchaStore, LoginInfoService, MenuService,
         MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
         PermissionService, PostService, ProductService, ProfileService, RoleService,
-        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
-        TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
-        TenantUsageService, UserImportService, UserService, WebSocketTicketService,
-        WebSocketTicketStore, WebSocketTicketStoreFuture,
+        ServiceAccountReadDependencies, ServiceAccountService, TenantConfigTransferService,
+        TenantDataMigrationService, TenantRateLimitReadFuture, TenantRateLimitReadPort,
+        TenantRateLimitSnapshot, TenantService, TenantUsageService, UserImportService, UserService,
+        WebSocketTicketService, WebSocketTicketStore, WebSocketTicketStoreFuture,
     },
 };
 use ryframe_config::AppConfig;
@@ -213,8 +213,16 @@ pub async fn build_all(
             Arc::clone(&keyring),
             descriptors,
             authorization_cache.clone(),
-            ryframe_application::legacy_service_account_authorization_persistence(database.clone()),
-            ryframe_application::legacy_service_account_audit_persistence(database.clone()),
+            ServiceAccountReadDependencies {
+                accounts: ryframe_application::legacy_service_account_read(database.clone()),
+                authorization:
+                    ryframe_application::legacy_service_account_authorization_persistence(
+                        database.clone(),
+                    ),
+                audits: ryframe_application::legacy_service_account_audit_persistence(
+                    database.clone(),
+                ),
+            },
         )?);
         let agent = Arc::new(AgentService::new(
             database.clone(),

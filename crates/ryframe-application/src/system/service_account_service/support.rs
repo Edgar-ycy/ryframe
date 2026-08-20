@@ -114,39 +114,4 @@ impl ServiceAccountService {
             .await?;
         Ok(delegation_vo_with_keys(delegation, keys))
     }
-
-    pub(super) async fn delegations_with_capabilities(
-        &self,
-        db: &DatabaseConnection,
-        rows: Vec<service_delegation::Model>,
-    ) -> AppResult<Vec<ServiceDelegationVo>> {
-        if rows.is_empty() {
-            return Ok(Vec::new());
-        }
-        let delegation_ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
-        let capabilities = service_delegation_capability::Entity::find()
-            .filter(service_delegation_capability::Column::TenantId.eq(&rows[0].tenant_id))
-            .filter(
-                service_delegation_capability::Column::DelegationId
-                    .is_in(delegation_ids.iter().copied()),
-            )
-            .order_by_asc(service_delegation_capability::Column::DelegationId)
-            .order_by_asc(service_delegation_capability::Column::CapabilityKey)
-            .all(db)
-            .await
-            .map_err(database_error)?;
-        let mut by_delegation: HashMap<i64, Vec<String>> = HashMap::new();
-        for capability in capabilities {
-            by_delegation
-                .entry(capability.delegation_id)
-                .or_default()
-                .push(capability.capability_key);
-        }
-        let mut result = Vec::with_capacity(rows.len());
-        for row in rows {
-            let keys = by_delegation.remove(&row.id).unwrap_or_default();
-            result.push(delegation_vo_with_keys(row, keys));
-        }
-        Ok(result)
-    }
 }

@@ -8,19 +8,12 @@ impl ServiceAccountService {
     ) -> AppResult<Vec<String>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        self.account_repo
-            .find_by_id(&db, tenant_id, account_id)
+        let role_ids = self
+            .read
+            .enabled_account_role_ids(tenant_id, account_id)
             .await?
-            .filter(service_account::Model::is_enabled)
             .ok_or_else(|| AppError::NotFound("可用的服务账号不存在".into()))?;
-        Ok(self
-            .account_repo
-            .role_ids(&db, tenant_id, account_id)
-            .await?
-            .into_iter()
-            .map(|id| id.to_string())
-            .collect())
+        Ok(role_ids.into_iter().map(|id| id.to_string()).collect())
     }
 
     pub async fn replace_account_roles(
