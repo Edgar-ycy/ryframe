@@ -43,13 +43,10 @@ pub use ryframe_config::TelemetryConfig;
 const BUILD_COMMIT: &str = env!("RYFRAME_BUILD_COMMIT");
 const TELEMETRY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// 本地请求日志 span 不会发送到外部 OTLP 后端。
-pub const REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
-
 /// 链路追踪守卫
 ///
 /// 持有 `SdkTracerProvider` 和 `SdkTracer`。
-/// 通过 `tracing_layer()` 获取可注册到 tracing subscriber 的 Layer。
+/// 通过 `tracing_layer(local_span_target)` 获取可注册到 subscriber 的 Layer。
 /// 离开作用域时自动 flush + shutdown。
 #[must_use = "必须持有此守卫，否则 Trace 数据会在程序退出前丢失"]
 pub struct TelemetryGuard {
@@ -65,7 +62,7 @@ impl TelemetryGuard {
     /// 将此 layer 注册到 tracing_subscriber 中，所有 `tracing` Span 将自动导出为 OTel Span。
     ///
     /// 返回 `None` 表示链路追踪未启用。
-    pub fn tracing_layer<S>(&self) -> Option<impl Layer<S>>
+    pub fn tracing_layer<S>(&self, local_span_target: &'static str) -> Option<impl Layer<S>>
     where
         S: tracing::Subscriber
             + for<'span> tracing_subscriber::registry::LookupSpan<'span>
@@ -74,8 +71,8 @@ impl TelemetryGuard {
         self.tracer.as_ref().map(|tracer| {
             // 只把 Span 导出到 OTLP：日志事件（尤其 sqlx 事件）可能包含未脱敏的
             // 查询文本；请求日志 Span 也保留在本地日志，避免身份字段外发。
-            let filter = FilterFn::new(|metadata| {
-                metadata.is_span() && metadata.target() != REQUEST_LOG_SPAN_TARGET
+            let filter = FilterFn::new(move |metadata| {
+                metadata.is_span() && metadata.target() != local_span_target
             });
             tracing_opentelemetry::layer()
                 .with_tracer(tracer.clone())
@@ -122,7 +119,7 @@ impl Drop for TelemetryGuard {
 /// 初始化 OpenTelemetry TracerProvider 并设为全局
 ///
 /// 返回 TelemetryGuard，必须在程序运行期间保持存活。
-/// 通过 `guard.tracing_layer()` 获取 Layer 注册到 subscriber。
+/// 通过 `guard.tracing_layer(local_span_target)` 获取 Layer 注册到 subscriber。
 pub fn init_tracer_provider(config: &TelemetryConfig) -> TelemetryGuard {
     if !config.enabled {
         set_otel_exporter_degraded(false);

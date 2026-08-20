@@ -10,7 +10,6 @@ use axum::{
     extract::MatchedPath,
     http::{Request, Response, StatusCode},
 };
-use ryframe_adapters::telemetry::REQUEST_LOG_SPAN_TARGET;
 use tower_http::{
     LatencyUnit,
     classify::{
@@ -21,6 +20,7 @@ use tower_http::{
 };
 
 const UNMATCHED_ROUTE: &str = "/unmatched";
+pub const REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
 
 /// 请求日志的失败分类器。
 ///
