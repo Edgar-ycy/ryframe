@@ -284,7 +284,11 @@ pub async fn build_all(
     ));
     let notice = Arc::new(NoticeService::new(database.clone()));
     let oper_log = Arc::new(OperLogService::new(database.clone()));
-    let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
+    let file = Arc::new(FileService::new(
+        database.clone(),
+        object_storage.clone(),
+        super::file_content::processor(),
+    ));
     file.spawn_upload_janitor();
     let job_queue =
         Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis_client.clone()));

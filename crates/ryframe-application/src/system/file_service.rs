@@ -1,17 +1,16 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use ryframe_adapters::file_upload::{
-    compress_image, generate_storage_filename, get_content_type, validate_extension,
-    validate_file_signature,
-};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 
-use crate::{ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind};
+use crate::{
+    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FileContentProcessor,
+    ProcessedFileContent,
+};
 
 mod policy;
 mod upload_reservation;
@@ -74,48 +73,17 @@ struct PreparedUpload {
 }
 
 async fn prepare_upload_data(
+    processor: &dyn FileContentProcessor,
     original_name: String,
     data: Vec<u8>,
     compress: bool,
 ) -> AppResult<PreparedUpload> {
-    run_blocking_task("file upload processing", move || {
-        prepare_upload_data_blocking(original_name, data, compress)
-    })
-    .await?
-}
-
-fn prepare_upload_data_blocking(
-    original_name: String,
-    data: Vec<u8>,
-    compress: bool,
-) -> AppResult<PreparedUpload> {
-    validate_file_signature(&original_name, &data)?;
-
-    let original_size = data.len();
-    let (final_data, final_name) = if compress {
-        match compress_image(&data, &original_name) {
-            Ok((compressed, compressed_name)) => {
-                if compressed.len() < original_size {
-                    let saved_pct = (1.0 - compressed.len() as f64 / original_size as f64) * 100.0;
-                    tracing::info!(
-                        original_size,
-                        compressed_size = compressed.len(),
-                        saved_pct,
-                        "image compressed"
-                    );
-                }
-                (compressed, compressed_name)
-            }
-            Err(error) => {
-                tracing::warn!(%error, "image compression failed; using original data");
-                (data, original_name.clone())
-            }
-        }
-    } else {
-        (data, original_name.clone())
-    };
-
-    let content_type = get_content_type(&final_name);
+    let ProcessedFileContent {
+        original_name,
+        data: final_data,
+        file_name: final_name,
+        content_type,
+    } = processor.process(original_name, data, compress).await?;
     let file_sha256 = hex::encode(Sha256::digest(&final_data));
 
     Ok(PreparedUpload {
@@ -141,11 +109,20 @@ where
 pub struct FileService {
     db: ControlDatabaseCluster,
     storage: Arc<dyn ArtifactStore>,
+    content: Arc<dyn FileContentProcessor>,
 }
 
 impl FileService {
-    pub fn new(db: ControlDatabaseCluster, storage: Arc<dyn ArtifactStore>) -> Self {
-        Self { db, storage }
+    pub fn new(
+        db: ControlDatabaseCluster,
+        storage: Arc<dyn ArtifactStore>,
+        content: Arc<dyn FileContentProcessor>,
+    ) -> Self {
+        Self {
+            db,
+            storage,
+            content,
+        }
     }
 
     /// 校验是否可使用已配置的凭据连接存储后端。
@@ -274,7 +251,7 @@ impl FileService {
             final_name,
             content_type,
             file_sha256,
-        } = prepare_upload_data(original_name, data, compress).await?;
+        } = prepare_upload_data(self.content.as_ref(), original_name, data, compress).await?;
 
         let storage_name = generate_storage_filename(&final_name);
         let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
@@ -685,6 +662,31 @@ impl FileService {
             .await?;
 
         Ok(result)
+    }
+}
+
+fn validate_extension(filename: &str, allowed: &[String]) -> AppResult<()> {
+    let extension = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    if allowed.is_empty() || allowed.contains(&extension) {
+        Ok(())
+    } else {
+        Err(AppError::Validation(format!(
+            "不支持的文件类型: .{extension}"
+        )))
+    }
+}
+
+fn generate_storage_filename(original_name: &str) -> String {
+    let extension = original_name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    let id = uuid::Uuid::new_v4();
+    if extension.is_empty() {
+        id.to_string()
+    } else {
+        format!("{id}.{extension}")
     }
 }
 

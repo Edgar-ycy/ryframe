@@ -37,6 +37,8 @@ use tokio::sync::watch;
 mod process_application_policy;
 #[path = "../boot/artifact_store.rs"]
 mod process_artifact_store;
+#[path = "../boot/file_content.rs"]
+mod process_file_content;
 #[path = "../boot/jobs.rs"]
 mod process_jobs;
 #[path = "../boot/logging.rs"]
@@ -142,7 +144,11 @@ async fn main() -> Result<(), AppError> {
         authorization_cache.clone(),
         application_policies.service_accounts.enabled() && redis.is_some(),
     ));
-    let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));
+    let file = Arc::new(FileService::new(
+        database.clone(),
+        object_storage.clone(),
+        process_file_content::processor(),
+    ));
     file.spawn_upload_janitor();
     let export = Arc::new(
         ExportService::new(

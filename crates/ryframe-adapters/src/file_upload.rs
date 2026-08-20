@@ -1,16 +1,5 @@
 use ryframe_kernel::{AppError, AppResult};
 
-/// 验证文件扩展名
-pub fn validate_extension(filename: &str, allowed: &[String]) -> AppResult<()> {
-    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
-
-    if allowed.is_empty() || allowed.contains(&ext) {
-        Ok(())
-    } else {
-        Err(AppError::Validation(format!("不支持的文件类型: .{}", ext)))
-    }
-}
-
 pub fn validate_file_signature(filename: &str, data: &[u8]) -> AppResult<()> {
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
     let valid = match ext.as_str() {
@@ -39,22 +28,6 @@ pub fn validate_file_signature(filename: &str, data: &[u8]) -> AppResult<()> {
             "文件内容与扩展名不匹配: .{}",
             ext
         )))
-    }
-}
-
-/// 生成存储文件名（UUID + 原始扩展名）
-pub fn generate_storage_filename(original_name: &str) -> String {
-    let ext = original_name
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
-
-    let uuid = uuid::Uuid::new_v4();
-    if ext.is_empty() {
-        format!("{}", uuid)
-    } else {
-        format!("{}.{}", uuid, ext)
     }
 }
 

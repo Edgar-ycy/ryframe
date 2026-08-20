@@ -42,7 +42,6 @@ opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 rust_xlsxwriter = { workspace = true, features = ["constant_memory"] }
 tempfile = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
