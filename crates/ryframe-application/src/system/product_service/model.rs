@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use sea_orm::entity::prelude::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// 配置包声明的能力运行时兼容要求。它只描述包内资源所依赖的能力，
 /// 不代表、也不能修改目标租户的套餐或覆盖配置。
@@ -40,7 +40,7 @@ pub struct ProductCapabilityVo {
     pub capability_code: String,
     pub variant_code: String,
     pub schema_version: i32,
-    pub config: Json,
+    pub config: Value,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -77,7 +77,7 @@ pub struct EffectiveCapabilityVo {
     pub source: String,
     pub variant_code: Option<String>,
     pub schema_version: Option<i32>,
-    pub config: Option<Json>,
+    pub config: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -98,7 +98,7 @@ pub struct CapabilityOverrideVo {
     pub enabled: bool,
     pub variant_code: String,
     pub schema_version: i32,
-    pub config: Json,
+    pub config: Value,
     pub reason: Option<String>,
     pub changed_by: Option<String>,
 }
@@ -108,7 +108,7 @@ pub struct SessionCapabilityVo {
     pub code: String,
     pub variant: String,
     pub schema_version: i32,
-    pub client_config: Json,
+    pub client_config: Value,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -123,7 +123,7 @@ pub struct CapabilitySnapshotInput {
     pub capability_code: String,
     pub variant_code: String,
     pub schema_version: i32,
-    pub config: Json,
+    pub config: Value,
 }
 
 #[derive(Clone, Debug)]
@@ -132,7 +132,7 @@ pub struct CapabilityOverrideInput {
     pub enabled: bool,
     pub variant_code: String,
     pub schema_version: i32,
-    pub config: Json,
+    pub config: Value,
 }
 
 #[derive(Clone, Debug)]
