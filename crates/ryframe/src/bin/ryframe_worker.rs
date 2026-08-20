@@ -191,6 +191,7 @@ async fn main() -> Result<(), AppError> {
         user.clone(),
         file.clone(),
         process_spreadsheet::document_processor(),
+        ryframe_application::legacy_user_import_department_read(database.clone()),
         application_policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(

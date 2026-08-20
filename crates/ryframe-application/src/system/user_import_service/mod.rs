@@ -9,10 +9,9 @@ use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use ryframe_auth::password;
 use ryframe_db::{
-    ControlDatabaseCluster, CreateUserImportJob, DeptRepository, FileRepository,
-    TenantConfigTransferRepository, TenantRepository, UserImportFilter, UserImportRepository,
-    UserRepository,
-    entities::{dept, user, user_import_job, user_import_row_result},
+    ControlDatabaseCluster, CreateUserImportJob, FileRepository, TenantConfigTransferRepository,
+    TenantRepository, UserImportFilter, UserImportRepository, UserRepository,
+    entities::{user, user_import_job, user_import_row_result},
 };
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, DataScope, PageResult, ValidatedPageQuery,
@@ -28,7 +27,10 @@ use super::{
     DownloadedFile, FileService, IMPORT_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
     UserService,
 };
-use crate::{ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor};
+use crate::{
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor,
+    UserImportDepartmentReadPort, UserImportDepartmentRecord,
+};
 
 /// 可恢复用户导入的稳定后台任务类型。
 pub const USER_IMPORT_JOB_TYPE: &str = "system.user.import";
@@ -56,6 +58,7 @@ pub struct UserImportService {
     config: crate::UserImportPolicy,
     hash_permits: Arc<Semaphore>,
     spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
+    departments: Arc<dyn UserImportDepartmentReadPort>,
 }
 
 include!("models.rs");

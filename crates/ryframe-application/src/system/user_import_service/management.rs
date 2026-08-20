@@ -5,6 +5,7 @@ impl UserImportService {
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,
         spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
+        departments: Arc<dyn UserImportDepartmentReadPort>,
         config: crate::UserImportPolicy,
     ) -> Self {
         Self {
@@ -14,6 +15,7 @@ impl UserImportService {
             file_service,
             hash_permits: Arc::new(Semaphore::new(config.hash_parallelism)),
             spreadsheets,
+            departments,
             config,
         }
     }

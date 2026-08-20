@@ -51,6 +51,7 @@ mod legacy_service_account_read;
 mod legacy_service_account_write;
 mod legacy_tenant_config_retention_persistence;
 mod legacy_tenant_usage_persistence;
+mod legacy_user_import_persistence;
 mod legacy_user_query_persistence;
 mod legacy_user_write_persistence;
 mod login_info_persistence;
@@ -88,6 +89,7 @@ mod tenant_provisioning;
 mod tenant_runtime;
 mod tenant_usage_persistence;
 mod trace_context;
+mod user_import_persistence;
 mod user_query_persistence;
 mod user_write_persistence;
 
@@ -224,6 +226,8 @@ pub use legacy_tenant_config_retention_persistence::port as legacy_tenant_config
 #[doc(hidden)]
 pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
 #[doc(hidden)]
+pub use legacy_user_import_persistence::department_port as legacy_user_import_department_read;
+#[doc(hidden)]
 pub use legacy_user_query_persistence::port as legacy_user_query_persistence;
 #[doc(hidden)]
 pub use legacy_user_write_persistence::port as legacy_user_write_persistence;
@@ -323,6 +327,7 @@ pub use tenant_runtime::{
 pub use tenant_usage_persistence::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
+pub use user_import_persistence::{UserImportDepartmentReadPort, UserImportDepartmentRecord};
 pub use user_query_persistence::{
     USER_QUERY_STATUS_NORMAL, UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort,
     UserQueryRecord, UserQueryRoleRecord,

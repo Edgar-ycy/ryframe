@@ -1,8 +1,6 @@
 impl UserImportService {
     async fn load_department_directory(&self, tenant_id: &str) -> AppResult<DepartmentDirectory> {
-        let departments = DeptRepository
-            .find_filtered(self.db.write(), tenant_id, None, None)
-            .await?;
+        let departments = self.departments.list(tenant_id).await?;
         Ok(DepartmentDirectory::from_departments(departments))
     }
 

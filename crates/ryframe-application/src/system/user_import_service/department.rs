@@ -28,7 +28,7 @@ struct DepartmentIssue {
 }
 
 impl DepartmentDirectory {
-    fn from_departments(departments: Vec<dept::Model>) -> Self {
+    fn from_departments(departments: Vec<UserImportDepartmentRecord>) -> Self {
         let by_id = departments
             .into_iter()
             .map(|department| (department.id, department))
@@ -130,7 +130,7 @@ impl DepartmentDirectory {
 
 fn resolve_department_path(
     id: i64,
-    by_id: &HashMap<i64, dept::Model>,
+    by_id: &HashMap<i64, UserImportDepartmentRecord>,
     cache: &mut HashMap<i64, Result<DepartmentPathState, ()>>,
     visiting: &mut HashSet<i64>,
     depth: usize,
@@ -174,4 +174,62 @@ fn resolve_department_path(
     visiting.remove(&id);
     cache.insert(id, result.clone());
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn actor() -> ActorContext {
+        ActorContext {
+            user_id: 1,
+            tenant_id: "tenant-a".into(),
+            username: "tester".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: DataScope::All,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin: true,
+        }
+    }
+
+    fn department(
+        id: i64,
+        name: &str,
+        parent_id: Option<i64>,
+        ancestors: &str,
+        status: &str,
+    ) -> UserImportDepartmentRecord {
+        UserImportDepartmentRecord {
+            id,
+            name: name.into(),
+            parent_id,
+            ancestors: ancestors.into(),
+            status: status.into(),
+        }
+    }
+
+    #[test]
+    fn department_directory_uses_application_records() {
+        let directory = DepartmentDirectory::from_departments(vec![
+            department(1, "总部", None, "0", "1"),
+            department(2, "研发部", Some(1), "0,1", "1"),
+        ]);
+
+        assert_eq!(
+            directory.available_paths(&actor()).unwrap(),
+            ["总部", "总部 / 研发部"]
+        );
+    }
+
+    #[test]
+    fn disabled_parent_hides_descendant_path() {
+        let directory = DepartmentDirectory::from_departments(vec![
+            department(1, "总部", None, "0", "0"),
+            department(2, "研发部", Some(1), "0,1", "1"),
+        ]);
+
+        assert!(directory.available_paths(&actor()).unwrap().is_empty());
+    }
 }
