@@ -95,6 +95,7 @@ impl ExportService {
                     crate::AuthorizationCache::disabled(),
                     false,
                 )),
+                crate::legacy_role_read(db.clone()),
             ),
             posts: PostService::new(crate::legacy_post_persistence(db.clone())),
             configs: ConfigService::new(

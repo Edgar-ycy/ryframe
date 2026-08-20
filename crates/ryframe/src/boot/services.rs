@@ -172,6 +172,7 @@ pub async fn build_all(
         database.clone(),
         authorization_cache.clone(),
         product.clone(),
+        ryframe_application::legacy_role_read(database.clone()),
     ));
     let tenant = Arc::new(TenantService::new(
         database.clone(),

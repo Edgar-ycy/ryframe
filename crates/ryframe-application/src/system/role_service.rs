@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{AutoFill, FillContext};
-use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
-    PermissionRepository, Repository, RoleFilter, RoleRepository, TenantConfigTransferRepository,
-    TenantRepository, entities::role,
+    PermissionRepository, RoleRepository, TenantConfigTransferRepository, TenantRepository,
+    entities::role,
 };
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
@@ -15,7 +15,7 @@ use sea_orm::{
 };
 use serde::Serialize;
 
-use crate::AuthorizationCache;
+use crate::{AuthorizationCache, RoleFilter, RoleReadPort, RoleRecord};
 
 use super::{OptionItem, OptionList, ProductService};
 
@@ -72,6 +72,23 @@ impl From<role::Model> for RoleVo {
     }
 }
 
+impl From<RoleRecord> for RoleVo {
+    fn from(role: RoleRecord) -> Self {
+        Self {
+            id: role.id.to_string(),
+            name: role.name,
+            code: role.code,
+            is_super: role.is_super,
+            data_scope: role.data_scope,
+            status: role.status,
+            sort: role.sort,
+            remark: role.remark,
+            created_at: role.created_at,
+            dept_ids: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RoleListParams {
     pub page: ValidatedPageQuery,
@@ -97,6 +114,7 @@ pub struct RoleService {
     db: ControlDatabaseCluster,
     role_repo: RoleRepository,
     perm_repo: PermissionRepository,
+    read: Arc<dyn RoleReadPort>,
     product_service: Arc<ProductService>,
     authorization_cache: AuthorizationCache,
 }
@@ -106,11 +124,13 @@ impl RoleService {
         db: ControlDatabaseCluster,
         authorization_cache: AuthorizationCache,
         product_service: Arc<ProductService>,
+        read: Arc<dyn RoleReadPort>,
     ) -> Self {
         Self {
             db,
             role_repo: RoleRepository,
             perm_repo: PermissionRepository,
+            read,
             product_service,
             authorization_cache,
         }
@@ -144,11 +164,10 @@ impl RoleService {
         Ok(())
     }
 
-    pub async fn get_role_model(&self, actor: &ActorContext, id: i64) -> AppResult<role::Model> {
+    pub async fn get_role_model(&self, actor: &ActorContext, id: i64) -> AppResult<RoleRecord> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        self.role_repo
-            .find_by_id(db, tenant_id, id)
+        self.read
+            .find_by_id(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("角色不存在".into()))
     }
@@ -160,16 +179,16 @@ impl RoleService {
         params: RoleListParams,
     ) -> AppResult<PageResult<RoleVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let page = self
-            .role_repo
-            .find_by_page_filtered(
-                &db,
+            .read
+            .find_by_page(
                 tenant_id,
                 params.page,
-                params.name.as_deref(),
-                params.code.as_deref(),
-                params.status.as_deref(),
+                RoleFilter {
+                    name: params.name.as_deref(),
+                    code: params.code.as_deref(),
+                    status: params.status.as_deref(),
+                },
             )
             .await?;
         let records = page.records.into_iter().map(RoleVo::from).collect();
@@ -188,11 +207,9 @@ impl RoleService {
         let fetch_limit = limit
             .checked_add(1)
             .ok_or_else(|| AppError::Config("角色选择器 limit 无法执行加一查询".into()))?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let mut roles = self
-            .role_repo
+            .read
             .find_options(
-                &db,
                 tenant_id,
                 query,
                 purpose.includes_super_role(actor.is_super_admin),
@@ -208,7 +225,7 @@ impl RoleService {
                     value: role.id.to_string(),
                     label: role.name,
                     description: Some(role.code),
-                    disabled: role.status != role::Model::STATUS_NORMAL,
+                    disabled: role.status != "1",
                 })
                 .collect(),
             has_more,
@@ -225,11 +242,10 @@ impl RoleService {
         window: ExportCursorWindow,
     ) -> AppResult<Vec<RoleVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let filter = RoleFilter { name, code, status };
         Ok(self
-            .role_repo
-            .find_for_export_after_id(&db, tenant_id, &filter, window)
+            .read
+            .find_export_batch(tenant_id, filter, window)
             .await?
             .into_iter()
             .map(RoleVo::from)
@@ -315,16 +331,12 @@ impl RoleService {
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<RoleVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
-        match self.role_repo.find_by_id(&db, tenant_id, id).await? {
+        match self.read.find_by_id(tenant_id, id).await? {
             Some(r) => {
                 let mut vo = RoleVo::from(r);
                 // 如果是自定义数据权限，查出关联的部门ID列表
                 if vo.data_scope == "2" {
-                    let dept_ids = self
-                        .role_repo
-                        .find_role_dept_ids(&db, tenant_id, id)
-                        .await?;
+                    let dept_ids = self.read.find_role_dept_ids(tenant_id, id).await?;
                     vo.dept_ids = Some(dept_ids.iter().map(|d| d.to_string()).collect());
                 }
                 Ok(Some(vo))
@@ -333,11 +345,10 @@ impl RoleService {
         }
     }
 
-    pub async fn get_super_role(&self, actor: &ActorContext) -> AppResult<role::Model> {
+    pub async fn get_super_role(&self, actor: &ActorContext) -> AppResult<RoleRecord> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        self.role_repo
-            .find_super_role(db, tenant_id)
+        self.read
+            .find_super_role(tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("超级管理员角色不存在".into()))
     }
@@ -577,21 +588,10 @@ impl RoleService {
         role_id: i64,
     ) -> AppResult<Vec<String>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        self.role_repo
-            .find_by_id(&db, tenant_id, role_id)
+        self.read
+            .find_permission_codes(tenant_id, role_id)
             .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
-        let mut codes: Vec<String> = self
-            .perm_repo
-            .find_role_perms(&db, tenant_id, &[role_id])
-            .await?
-            .into_iter()
-            .map(|permission| permission.code)
-            .collect();
-        codes.sort();
-        codes.dedup();
-        Ok(codes)
+            .ok_or_else(|| AppError::NotFound("角色不存在".into()))
     }
 
     /// 原子替换一个角色的数据范围模式和自定义部门。
