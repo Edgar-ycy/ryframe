@@ -9,19 +9,20 @@ use ryframe_application::{
     agent::{AgentService, service_capability_descriptors},
     map_tenant_data_error,
     system::{
-        AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
-        DeptService, DictService, ExportService, FileService, LoginInfoService, MenuService,
-        MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
-        PermissionService, PostService, ProductService, ProfileService, RoleService,
-        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
-        TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
-        TenantUsageService, UserImportService, UserService, WebSocketTicketService,
-        WebSocketTicketStore, WebSocketTicketStoreFuture,
+        AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
+        DataRetentionService, DeptService, DictService, ExportService, FileService,
+        InMemoryCaptchaStore, LoginInfoService, MenuService, MessageService, NoticeService,
+        OnlineUserService, OperLogService, OverviewService, PermissionService, PostService,
+        ProductService, ProfileService, RoleService, ServiceAccountService,
+        TenantConfigTransferService, TenantDataMigrationService, TenantRateLimitReadFuture,
+        TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService, TenantUsageService,
+        UserImportService, UserService, WebSocketTicketService, WebSocketTicketStore,
+        WebSocketTicketStoreFuture,
     },
 };
 use ryframe_config::AppConfig;
 use ryframe_db::ControlDatabaseCluster;
-use ryframe_kernel::AppError;
+use ryframe_kernel::{AppError, CAPTCHA_KEY_PREFIX};
 use ryframe_tenant_db::{TenantDataState, TenantDatabaseRouter};
 
 use super::application_policy::{ApplicationPolicies, load_pepper_keyring};
@@ -61,6 +62,40 @@ struct TenantRateLimitReader {
 
 struct RedisWebSocketTicketStore {
     client: RedisClient,
+}
+
+struct RedisCaptchaStore {
+    client: RedisClient,
+    ttl_secs: u64,
+}
+
+impl CaptchaStore for RedisCaptchaStore {
+    fn set(&self, id: String, answer: String) -> CaptchaStoreFuture<'_, ()> {
+        Box::pin(async move {
+            let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
+            self.client
+                .set_ex(key, answer, self.ttl_secs)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "Redis SET 验证码失败");
+                    AppError::ServiceUnavailable("验证码服务暂不可用".into())
+                })
+        })
+    }
+
+    fn verify<'a>(&'a self, id: &'a str, code: &'a str) -> CaptchaStoreFuture<'a, bool> {
+        Box::pin(async move {
+            let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
+            self.client
+                .get_and_del(&key)
+                .await
+                .map(|stored| stored.is_some_and(|value| value.eq_ignore_ascii_case(code)))
+                .map_err(|error| {
+                    tracing::error!(%error, "Redis GETDEL 验证码失败");
+                    AppError::ServiceUnavailable("验证码服务暂不可用".into())
+                })
+        })
+    }
 }
 
 impl WebSocketTicketStore for RedisWebSocketTicketStore {
@@ -311,12 +346,15 @@ pub async fn build_all(
     } else {
         Arc::new(OnlineUserService::new_in_memory(refresh_sessions))
     };
-    let captcha = if let Some(redis) = redis_client {
-        CaptchaStore::new_redis(redis.clone(), 300)
+    let captcha: Arc<dyn CaptchaStore> = if let Some(redis) = redis_client {
+        Arc::new(RedisCaptchaStore {
+            client: redis.clone(),
+            ttl_secs: 300,
+        })
     } else {
-        let store = CaptchaStore::new_in_memory(300);
-        store.spawn_gc(); // 内存模式需要后台 GC
-        store
+        let store = InMemoryCaptchaStore::new(300);
+        store.spawn_gc();
+        Arc::new(store)
     };
 
     Ok(AppServices {

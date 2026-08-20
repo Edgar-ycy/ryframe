@@ -56,7 +56,7 @@ pub struct AppServices {
     pub profile: Arc<ProfileService>,
     pub file: Arc<FileService>,
     pub online_user: Arc<OnlineUserService>,
-    pub captcha: CaptchaStore,
+    pub captcha: Arc<dyn CaptchaStore>,
 }
 
 #[derive(Clone)]

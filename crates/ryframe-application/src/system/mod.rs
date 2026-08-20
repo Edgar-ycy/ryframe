@@ -34,7 +34,7 @@ pub use authorization_diagnostic_service::{
     AuthorizationDiagnosticRoleVo, AuthorizationDiagnosticService, AuthorizationDiagnosticTenantVo,
     AuthorizationDiagnosticUserVo, AuthorizationDiagnosticVersionVo, AuthorizationDiagnosticVo,
 };
-pub use captcha_service::{CaptchaEntry, CaptchaStore};
+pub use captcha_service::{CaptchaStore, CaptchaStoreFuture, InMemoryCaptchaStore};
 pub use config_service::{ConfigListParams, ConfigService, ConfigVo};
 pub use data_retention_service::{
     DATA_RETENTION_JOB_TYPE, DataRetentionJobHandler, DataRetentionOverview, DataRetentionPolicy,
