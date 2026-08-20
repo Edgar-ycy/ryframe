@@ -3,8 +3,7 @@ use utoipa::ToSchema;
 
 use crate::http::HttpResult;
 use ryframe_application::system::ConfigListParams;
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 
 crate::list_query!(pub ConfigListQuery, ConfigFilterQuery {
     name: String,
@@ -12,7 +11,7 @@ crate::list_query!(pub ConfigListQuery, ConfigFilterQuery {
 });
 
 impl ConfigListQuery {
-    pub fn into_service_params(self, policy: &PaginationConfig) -> HttpResult<ConfigListParams> {
+    pub fn into_service_params(self, policy: PaginationPolicy) -> HttpResult<ConfigListParams> {
         let (page, filter) = self.into_parts(policy)?;
         Ok(filter.into_service_params(page))
     }

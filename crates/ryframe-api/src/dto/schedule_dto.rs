@@ -2,8 +2,7 @@ use crate::http::HttpResult;
 use ryframe_application::{
     CreateJobSchedule, JobScheduleExecutionListParams, JobScheduleListParams, UpdateJobSchedule,
 };
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -137,7 +136,7 @@ pub struct SchedulePageQuery {
 impl SchedulePageQuery {
     pub fn into_service_params(
         self,
-        policy: &PaginationConfig,
+        policy: PaginationPolicy,
     ) -> HttpResult<JobScheduleListParams> {
         Ok(JobScheduleListParams {
             page: ValidatedPageQuery::from_optional(self.page, self.page_size, policy)?,
@@ -164,7 +163,7 @@ pub struct ScheduleExecutionPageQuery {
 impl ScheduleExecutionPageQuery {
     pub fn into_service_params(
         self,
-        policy: &PaginationConfig,
+        policy: PaginationPolicy,
     ) -> HttpResult<JobScheduleExecutionListParams> {
         Ok(JobScheduleExecutionListParams {
             page: ValidatedPageQuery::from_optional(self.page, self.page_size, policy)?,

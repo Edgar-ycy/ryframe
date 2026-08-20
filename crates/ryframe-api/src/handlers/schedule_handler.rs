@@ -103,17 +103,14 @@ async fn list(
     Query(query): Query<SchedulePageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<JobScheduleVo>>> {
     let page = schedule_service(&state)?
-        .list(
-            &current_user,
-            query.into_service_params(&state.config.pagination)?,
-        )
+        .list(&current_user, query.into_service_params(state.pagination)?)
         .await?;
     Ok(Json(ApiPageResponse::page(
         page.records.into_iter().map(JobScheduleVo::from).collect(),
         page.total,
         page.page,
         page.page_size,
-        state.config.pagination.max_page_size,
+        state.pagination.max_page_size(),
     )))
 }
 
@@ -328,7 +325,7 @@ async fn executions(
         .executions(
             &current_user,
             parse_schedule_id(&id)?,
-            query.into_service_params(&state.config.pagination)?,
+            query.into_service_params(state.pagination)?,
         )
         .await?;
     Ok(Json(ApiPageResponse::page(
@@ -339,7 +336,7 @@ async fn executions(
         page.total,
         page.page,
         page.page_size,
-        state.config.pagination.max_page_size,
+        state.pagination.max_page_size(),
     )))
 }
 

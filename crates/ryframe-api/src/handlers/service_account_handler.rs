@@ -76,14 +76,14 @@ async fn list_accounts(
     Query(query): Query<ServiceResourcePageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<ServiceAccountVo>>> {
     let page = service(&state)?
-        .list_accounts(&actor, query.into_page(&state.config.pagination)?)
+        .list_accounts(&actor, query.into_page(state.pagination)?)
         .await?;
     Ok(Json(ApiPageResponse::page(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
         page.page,
         page.page_size,
-        state.config.pagination.max_page_size,
+        state.pagination.max_page_size(),
     )))
 }
 
@@ -398,14 +398,14 @@ async fn list_delegations(
     Query(query): Query<ServiceResourcePageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<ServiceDelegationVo>>> {
     let page = service(&state)?
-        .list_delegations(&actor, query.into_page(&state.config.pagination)?)
+        .list_delegations(&actor, query.into_page(state.pagination)?)
         .await?;
     Ok(Json(ApiPageResponse::page(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
         page.page,
         page.page_size,
-        state.config.pagination.max_page_size,
+        state.pagination.max_page_size(),
     )))
 }
 
@@ -452,14 +452,14 @@ async fn list_access_audits(
     Query(query): Query<ServiceResourcePageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<ServiceAccessAuditVo>>> {
     let page = service(&state)?
-        .list_access_audits(&actor, query.into_page(&state.config.pagination)?)
+        .list_access_audits(&actor, query.into_page(state.pagination)?)
         .await?;
     Ok(Json(ApiPageResponse::page(
         page.records.into_iter().map(Into::into).collect(),
         page.total,
         page.page,
         page.page_size,
-        state.config.pagination.max_page_size,
+        state.pagination.max_page_size(),
     )))
 }
 

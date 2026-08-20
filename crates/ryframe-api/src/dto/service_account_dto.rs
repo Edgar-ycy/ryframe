@@ -1,7 +1,6 @@
 use crate::http::HttpResult;
 use chrono::{DateTime, Utc};
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
@@ -18,7 +17,7 @@ pub struct ServiceResourcePageQuery {
 }
 
 impl ServiceResourcePageQuery {
-    pub fn into_page(self, policy: &PaginationConfig) -> HttpResult<ValidatedPageQuery> {
+    pub fn into_page(self, policy: PaginationPolicy) -> HttpResult<ValidatedPageQuery> {
         Ok(ValidatedPageQuery::from_optional(
             self.page,
             self.page_size,

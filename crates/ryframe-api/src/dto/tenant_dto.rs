@@ -1,8 +1,7 @@
 use crate::http::HttpResult;
 use chrono::{DateTime, Utc};
 use ryframe_application::system::TenantUsagePageParams;
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
@@ -110,11 +109,11 @@ impl TenantCapacityPageQuery {
     }
 
     pub fn into_service_params(self) -> HttpResult<(TenantUsagePageParams, ValidatedPageQuery)> {
-        let policy = PaginationConfig {
-            default_page_size: TENANT_CAPACITY_DEFAULT_PAGE_SIZE,
-            max_page_size: TENANT_CAPACITY_MAX_PAGE_SIZE,
-        };
-        let page = ValidatedPageQuery::from_optional(self.page, self.page_size, &policy)?;
+        let policy = PaginationPolicy::new(
+            TENANT_CAPACITY_DEFAULT_PAGE_SIZE,
+            TENANT_CAPACITY_MAX_PAGE_SIZE,
+        );
+        let page = ValidatedPageQuery::from_optional(self.page, self.page_size, policy)?;
         Ok((
             TenantUsagePageParams {
                 tenant_id: self.tenant_id,

@@ -57,10 +57,10 @@ impl ProductPlanPageQuery {
         ryframe_kernel::ValidatedPageQuery::from_optional(
             self.page,
             self.page_size,
-            &ryframe_config::PaginationConfig {
-                default_page_size: PRODUCT_PLAN_DEFAULT_PAGE_SIZE,
-                max_page_size: PRODUCT_PLAN_MAX_PAGE_SIZE,
-            },
+            ryframe_kernel::PaginationPolicy::new(
+                PRODUCT_PLAN_DEFAULT_PAGE_SIZE,
+                PRODUCT_PLAN_MAX_PAGE_SIZE,
+            ),
         )
     }
 

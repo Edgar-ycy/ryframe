@@ -41,7 +41,7 @@ macro_rules! list_query {
         impl $name {
             pub fn into_parts(
                 self,
-                policy: &ryframe_config::PaginationConfig,
+                policy: ryframe_kernel::PaginationPolicy,
             ) -> $crate::http::HttpResult<(ryframe_kernel::ValidatedPageQuery, $filter_name)> {
                 Ok((
                     ryframe_kernel::ValidatedPageQuery::from_optional(

@@ -3,7 +3,7 @@ use crate::{
     http::HttpResult,
 };
 use ryframe_application::system::RoleOptionPurpose;
-use ryframe_config::PaginationConfig;
+use ryframe_kernel::PaginationPolicy;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
@@ -46,7 +46,7 @@ pub struct ResolvedRoleOptionQuery {
 }
 
 impl RoleOptionQuery {
-    pub fn resolve(self, policy: &PaginationConfig) -> HttpResult<ResolvedRoleOptionQuery> {
+    pub fn resolve(self, policy: PaginationPolicy) -> HttpResult<ResolvedRoleOptionQuery> {
         let purpose = self.purpose.into();
         let ResolvedOptionQuery { q, limit } = OptionQuery {
             q: self.q,
@@ -106,7 +106,7 @@ fn validate_data_scope(value: &str) -> Result<(), validator::ValidationError> {
 mod tests {
     use axum::{extract::Query, http::Uri};
     use ryframe_application::system::RoleOptionPurpose;
-    use ryframe_config::PaginationConfig;
+    use ryframe_kernel::PaginationPolicy;
 
     use super::{RoleOptionPurposeDto, RoleOptionQuery};
 
@@ -120,7 +120,7 @@ mod tests {
         let user = parse_query("/?purpose=user_assignment").expect("用户分配用途应可解析");
         assert_eq!(user.purpose, RoleOptionPurposeDto::UserAssignment);
         assert_eq!(
-            user.resolve(&PaginationConfig::default())
+            user.resolve(PaginationPolicy::new(10, 100))
                 .expect("用户分配用途应可转换")
                 .purpose,
             RoleOptionPurpose::UserAssignment
@@ -134,7 +134,7 @@ mod tests {
         );
         assert_eq!(
             service
-                .resolve(&PaginationConfig::default())
+                .resolve(PaginationPolicy::new(10, 100))
                 .expect("服务账号分配用途应可转换")
                 .purpose,
             RoleOptionPurpose::ServiceAccountAssignment

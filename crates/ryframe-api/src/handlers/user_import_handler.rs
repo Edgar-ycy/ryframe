@@ -187,7 +187,7 @@ async fn list(
         .list(
             &current_user,
             UserImportListParams {
-                page: query.into_page(&state.config.pagination)?,
+                page: query.into_page(state.pagination)?,
                 status,
             },
         )
@@ -198,7 +198,7 @@ async fn list(
         page.total,
         page.page,
         page.page_size,
-        state.config.pagination.max_page_size,
+        state.pagination.max_page_size(),
     )))
 }
 
@@ -266,7 +266,7 @@ async fn rows(
         .rows(
             &current_user,
             parse_import_id(&id)?,
-            query.into_page(&state.config.pagination)?,
+            query.into_page(state.pagination)?,
         )
         .await
         .map_err(crate::http::HttpAppError::from)?;
@@ -275,7 +275,7 @@ async fn rows(
         page.total,
         page.page,
         page.page_size,
-        state.config.pagination.max_page_size,
+        state.pagination.max_page_size(),
     )))
 }
 

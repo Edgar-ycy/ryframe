@@ -18,11 +18,15 @@ impl PaginationPolicy {
         }
     }
 
-    const fn default_page_size(self) -> u64 {
+    pub const fn default_page_size(self) -> u64 {
         self.default_page_size
     }
 
-    fn validate(self) -> AppResult<()> {
+    pub const fn max_page_size(self) -> u64 {
+        self.max_page_size
+    }
+
+    pub fn validate(self) -> AppResult<()> {
         if self.default_page_size == 0 {
             return Err(AppError::Config(
                 "pagination.default_page_size must be greater than zero".into(),

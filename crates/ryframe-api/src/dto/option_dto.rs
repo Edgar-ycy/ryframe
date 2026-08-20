@@ -1,6 +1,5 @@
 use crate::http::HttpResult;
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::AppError;
+use ryframe_kernel::{AppError, PaginationPolicy};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
@@ -25,8 +24,8 @@ pub struct ResolvedOptionQuery {
 }
 
 impl OptionQuery {
-    pub fn resolve(self, policy: &PaginationConfig) -> HttpResult<ResolvedOptionQuery> {
-        policy.validate().map_err(AppError::Config)?;
+    pub fn resolve(self, policy: PaginationPolicy) -> HttpResult<ResolvedOptionQuery> {
+        policy.validate()?;
         let q = self
             .q
             .map(|value| value.trim().to_owned())
@@ -39,11 +38,11 @@ impl OptionQuery {
             ))
             .into());
         }
-        let limit = self.limit.unwrap_or(policy.default_page_size);
-        if limit == 0 || limit > policy.max_page_size {
+        let limit = self.limit.unwrap_or(policy.default_page_size());
+        if limit == 0 || limit > policy.max_page_size() {
             return Err(AppError::Validation(format!(
                 "limit 必须在 1 到 {} 之间",
-                policy.max_page_size
+                policy.max_page_size()
             ))
             .into());
         }

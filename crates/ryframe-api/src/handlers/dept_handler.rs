@@ -64,7 +64,7 @@ async fn list_page(
     current_user: RequestPrincipal,
     Query(query): Query<DeptListQuery>,
 ) -> HttpResult<Json<ApiPageResponse<DeptVo>>> {
-    let (page, filter) = query.into_parts(&state.config.pagination)?;
+    let (page, filter) = query.into_parts(state.pagination)?;
     state
         .services
         .dept
@@ -82,7 +82,7 @@ async fn list_page(
                 p.total,
                 p.page,
                 p.page_size,
-                state.config.pagination.max_page_size,
+                state.pagination.max_page_size(),
             ))
         })
 }

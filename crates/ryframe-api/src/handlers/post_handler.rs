@@ -55,7 +55,7 @@ async fn list(
     current_user: RequestPrincipal,
     Query(query): Query<PostListQuery>,
 ) -> HttpResult<Json<ApiPageResponse<PostVo>>> {
-    let (page, filter) = query.into_parts(&state.config.pagination)?;
+    let (page, filter) = query.into_parts(state.pagination)?;
     state
         .services
         .post
@@ -68,7 +68,7 @@ async fn list(
                 p.total,
                 p.page,
                 p.page_size,
-                state.config.pagination.max_page_size,
+                state.pagination.max_page_size(),
             ))
         })
 }

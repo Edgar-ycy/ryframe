@@ -1,7 +1,6 @@
 use crate::http::HttpResult;
 use ryframe_application::system::LoginInfoQuery;
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 
 crate::list_query!(pub LoginLogPageQuery, LoginLogFilterQuery {
     user_name: String,
@@ -11,7 +10,7 @@ crate::list_query!(pub LoginLogPageQuery, LoginLogFilterQuery {
 });
 
 impl LoginLogPageQuery {
-    pub fn into_service_query(self, policy: &PaginationConfig) -> HttpResult<LoginInfoQuery> {
+    pub fn into_service_query(self, policy: PaginationPolicy) -> HttpResult<LoginInfoQuery> {
         let (page, filter) = self.into_parts(policy)?;
         Ok(filter.into_service_query(page))
     }

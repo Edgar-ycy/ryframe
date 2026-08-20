@@ -36,10 +36,10 @@ impl DataTargetListQuery {
         ryframe_kernel::ValidatedPageQuery::from_optional(
             self.page,
             self.page_size,
-            &ryframe_config::PaginationConfig {
-                default_page_size: DATA_TARGET_DEFAULT_PAGE_SIZE,
-                max_page_size: DATA_TARGET_MAX_PAGE_SIZE,
-            },
+            ryframe_kernel::PaginationPolicy::new(
+                DATA_TARGET_DEFAULT_PAGE_SIZE,
+                DATA_TARGET_MAX_PAGE_SIZE,
+            ),
         )
     }
 

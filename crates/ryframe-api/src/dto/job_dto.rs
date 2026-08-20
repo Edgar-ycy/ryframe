@@ -1,7 +1,6 @@
 use crate::http::HttpResult;
 use ryframe_application::BackgroundJobListParams;
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
@@ -27,7 +26,7 @@ pub struct BackgroundJobPageQuery {
 impl BackgroundJobPageQuery {
     pub fn into_service_params(
         self,
-        policy: &PaginationConfig,
+        policy: PaginationPolicy,
     ) -> HttpResult<BackgroundJobListParams> {
         Ok(BackgroundJobListParams {
             page: ValidatedPageQuery::from_optional(self.page, self.page_size, policy)?,

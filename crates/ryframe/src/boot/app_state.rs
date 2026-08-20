@@ -37,6 +37,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         .expect("proxy CIDRs were validated during configuration loading");
     let principal_resolver = services.auth.clone();
     let messaging = config.messaging.clone();
+    let pagination = (&config.pagination).into();
     let auth = ryframe_api::auth_middleware::AuthState {
         token_settings: services.auth.token_settings(),
         allow_multiple_tenants: config.multi_tenancy.enabled,
@@ -67,6 +68,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         auth,
         monitor,
         config,
+        pagination,
         localizer: localizer.clone(),
         services: Arc::new(services),
         redis: redis_client.clone(),

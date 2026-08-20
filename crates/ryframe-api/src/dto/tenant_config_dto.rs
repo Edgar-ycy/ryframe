@@ -1,6 +1,5 @@
 use crate::http::HttpResult;
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
@@ -16,7 +15,7 @@ pub struct TenantConfigPageQuery {
 }
 
 impl TenantConfigPageQuery {
-    pub fn into_page(self, policy: &PaginationConfig) -> HttpResult<ValidatedPageQuery> {
+    pub fn into_page(self, policy: PaginationPolicy) -> HttpResult<ValidatedPageQuery> {
         Ok(ValidatedPageQuery::from_optional(
             self.page,
             self.page_size,

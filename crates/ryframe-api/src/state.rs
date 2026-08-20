@@ -15,7 +15,7 @@ use ryframe_application::{
     },
 };
 use ryframe_config::AppConfig;
-use ryframe_kernel::Localizer;
+use ryframe_kernel::{Localizer, PaginationPolicy};
 use ryframe_tenant_db::TenantDatabaseRouter;
 
 use crate::{auth_middleware::AuthState, monitor::MonitorState, runtime::RuntimeComponents};
@@ -63,6 +63,7 @@ pub struct AppState {
     pub auth: AuthState,
     pub monitor: MonitorState,
     pub config: Arc<AppConfig>,
+    pub pagination: PaginationPolicy,
     pub localizer: Arc<Localizer>,
     pub services: Arc<AppServices>,
     pub redis: Option<RedisClient>,

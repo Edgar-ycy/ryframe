@@ -10,9 +10,7 @@ use crate::http::HttpResult;
 use axum::Router;
 use ryframe_application::system::UserListParams;
 use ryframe_auth::rbac;
-use ryframe_config::PaginationConfig;
-use ryframe_kernel::AppError;
-use ryframe_kernel::ValidatedPageQuery;
+use ryframe_kernel::{AppError, PaginationPolicy, ValidatedPageQuery};
 use ryframe_macro::route;
 
 use crate::{RequestPrincipal, list_query, state::AppState};
@@ -37,7 +35,7 @@ list_query!(pub UserListQuery, UserFilterQuery {
 });
 
 impl UserListQuery {
-    fn into_service_params(self, policy: &PaginationConfig) -> HttpResult<UserListParams> {
+    fn into_service_params(self, policy: PaginationPolicy) -> HttpResult<UserListParams> {
         let (page, filter) = self.into_parts(policy)?;
         filter.into_service_params(page)
     }
