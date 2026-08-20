@@ -311,6 +311,7 @@ pub async fn build_all(
         job_queue.clone(),
         user.clone(),
         file.clone(),
+        super::spreadsheet::document_processor(),
         policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(

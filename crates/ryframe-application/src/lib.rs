@@ -56,7 +56,8 @@ pub use runtime_policy::{
     ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
 };
 pub use spreadsheet::{
-    SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetRow,
+    SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,
+    SpreadsheetDocumentFuture, SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow,
     SpreadsheetWriter, SpreadsheetWriterFactory,
 };
 pub use tenant_runtime::{

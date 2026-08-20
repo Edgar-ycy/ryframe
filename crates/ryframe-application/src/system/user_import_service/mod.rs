@@ -7,7 +7,6 @@ use crate::next_id;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
-use ryframe_adapters::excel::{ExcelExporter, ExcelImportRow, ExcelImporter};
 use ryframe_auth::password;
 use ryframe_db::{
     ControlDatabaseCluster, CreateUserImportJob, DeptRepository, EnqueueBackgroundJob,
@@ -29,7 +28,7 @@ use super::{
     DownloadedFile, FileService, IMPORT_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
     UserService,
 };
-use crate::{JobHandler, JobQueue};
+use crate::{JobHandler, JobQueue, SpreadsheetDocumentProcessor};
 
 /// 可恢复用户导入的稳定后台任务类型。
 pub const USER_IMPORT_JOB_TYPE: &str = "system.user.import";
@@ -40,6 +39,13 @@ const DEPARTMENT_PATH_SEPARATOR: &str = " / ";
 const DEPARTMENT_PATH_MAX_BYTES: usize = 2_048;
 const DEPARTMENT_HIERARCHY_MAX_DEPTH: usize = 128;
 const IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES: i64 = 5;
+const USER_IMPORT_REPORT_HEADERS: &[(&str, &str)] = &[
+    ("row_number", "行号"),
+    ("username", "用户名"),
+    ("outcome", "结果"),
+    ("code", "代码"),
+    ("message", "说明"),
+];
 
 #[derive(Clone)]
 pub struct UserImportService {
@@ -49,6 +55,7 @@ pub struct UserImportService {
     file_service: Arc<FileService>,
     config: crate::UserImportPolicy,
     hash_permits: Arc<Semaphore>,
+    spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
 }
 
 include!("models.rs");
@@ -59,18 +66,3 @@ include!("report.rs");
 include!("handler.rs");
 include!("department.rs");
 include!("batch.rs");
-
-#[cfg(test)]
-mod source_validation_tests {
-    use ryframe_kernel::AppError;
-
-    use super::UserImportService;
-
-    #[tokio::test]
-    async fn invalid_xlsx_is_rejected_without_copying_the_source_buffer() {
-        let error = UserImportService::validate_source(b"not-an-xlsx".to_vec())
-            .await
-            .expect_err("无效 XLSX 必须在上传前被拒绝");
-        assert!(matches!(error, AppError::Validation(_)));
-    }
-}

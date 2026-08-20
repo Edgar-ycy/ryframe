@@ -10,7 +10,7 @@ impl UserImportService {
         &self,
         actor: &ActorContext,
         directory: &DepartmentDirectory,
-        rows: &[ExcelImportRow<UserImportData>],
+        rows: &[ParsedImportRow<UserImportData>],
         tenant_authorization_epoch: i32,
         requester_authorization_version: i32,
     ) -> AppResult<PreparedBatch> {
@@ -324,27 +324,6 @@ impl RowIssue {
             message: self.message,
             created_at: now,
         })
-    }
-}
-
-#[derive(Serialize)]
-struct UserImportReportRow {
-    row_number: i32,
-    username: String,
-    outcome: String,
-    code: String,
-    message: String,
-}
-
-impl UserImportReportRow {
-    const fn excel_headers() -> &'static [(&'static str, &'static str)] {
-        &[
-            ("row_number", "行号"),
-            ("username", "用户名"),
-            ("outcome", "结果"),
-            ("code", "代码"),
-            ("message", "说明"),
-        ]
     }
 }
 

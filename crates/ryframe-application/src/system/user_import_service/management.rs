@@ -4,6 +4,7 @@ impl UserImportService {
         queue: Arc<JobQueue>,
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,
+        spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
         config: crate::UserImportPolicy,
     ) -> Self {
         Self {
@@ -12,6 +13,7 @@ impl UserImportService {
             user_service,
             file_service,
             hash_permits: Arc::new(Semaphore::new(config.hash_parallelism)),
+            spreadsheets,
             config,
         }
     }
@@ -24,17 +26,10 @@ impl UserImportService {
     }
 
     /// 在阻塞线程中校验导入表头，并把原始字节所有权交还给后续上传步骤。
-    pub async fn validate_source(data: Vec<u8>) -> AppResult<Vec<u8>> {
-        tokio::task::spawn_blocking(move || {
-            ExcelImporter::validate_headers_from_bytes(
-                &data,
-                None,
-                UserImportData::excel_headers(),
-            )?;
-            Ok(data)
-        })
-        .await
-        .map_err(|error| AppError::Internal(format!("XLSX 内容校验任务异常结束: {error}")))?
+    pub async fn validate_source(&self, data: Vec<u8>) -> AppResult<Vec<u8>> {
+        self.spreadsheets
+            .validate_source(data, UserImportData::excel_headers())
+            .await
     }
 
     /// 上传导入源文件，但把当前 HTTP 请求的最终操作审计留给导入任务创建事务。
@@ -70,17 +65,15 @@ impl UserImportService {
             .await?;
         let directory = self.load_department_directory(tenant_id).await?;
         let available_paths = directory.available_paths(&authorization.actor)?;
-        tokio::task::spawn_blocking(move || {
-            ExcelExporter::export_template_with_reference(
+        self.spreadsheets
+            .export_template(
                 "用户数据",
                 UserImportData::excel_headers(),
                 "可用部门",
                 "部门完整路径",
-                &available_paths,
+                available_paths,
             )
-        })
-        .await
-        .map_err(|error| AppError::Internal(format!("用户导入模板生成任务异常结束: {error}")))?
+            .await
     }
 
     pub async fn find_by_idempotency(

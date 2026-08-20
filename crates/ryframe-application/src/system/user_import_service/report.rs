@@ -13,23 +13,24 @@ impl UserImportService {
         }
         let report_rows = rows
             .into_iter()
-            .map(|row| UserImportReportRow {
-                row_number: row.row_number,
-                username: row.username_snapshot,
-                outcome: row.outcome,
-                code: row.code,
-                message: row.message,
+            .map(|row| {
+                serde_json::json!({
+                    "row_number": row.row_number,
+                    "username": row.username_snapshot,
+                    "outcome": row.outcome,
+                    "code": row.code,
+                    "message": row.message,
+                })
             })
             .collect::<Vec<_>>();
-        let bytes = tokio::task::spawn_blocking(move || {
-            ExcelExporter::export_to_bytes(
-                &report_rows,
+        let bytes = self
+            .spreadsheets
+            .export_rows(
+                report_rows,
                 "导入结果",
-                UserImportReportRow::excel_headers(),
+                USER_IMPORT_REPORT_HEADERS,
             )
-        })
-        .await
-        .map_err(|error| AppError::Internal(format!("用户导入报告生成任务异常结束: {error}")))??;
+            .await?;
         let report_sha256 = hex::encode(Sha256::digest(&bytes));
         let mut policy = self.upload_policy();
         policy.max_file_size = policy

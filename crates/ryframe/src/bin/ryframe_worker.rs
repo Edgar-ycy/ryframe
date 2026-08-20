@@ -176,6 +176,7 @@ async fn main() -> Result<(), AppError> {
         queue.clone(),
         user.clone(),
         file.clone(),
+        process_spreadsheet::document_processor(),
         application_policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(

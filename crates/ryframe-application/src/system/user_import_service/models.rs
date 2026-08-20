@@ -18,6 +18,11 @@ pub struct UserImportData {
     pub department_path: Option<String>,
 }
 
+pub(super) struct ParsedImportRow<T> {
+    pub(super) row_number: usize,
+    pub(super) value: Result<T, String>,
+}
+
 impl UserImportData {
     pub const fn excel_headers() -> &'static [(&'static str, &'static str)] {
         &[

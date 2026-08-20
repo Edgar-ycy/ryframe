@@ -23,16 +23,19 @@ impl UserImportService {
                 .await?;
             return Ok(());
         }
-        let rows = tokio::task::spawn_blocking(move || {
-            ExcelImporter::validate_headers_from_bytes(
-                &source.data,
-                None,
-                UserImportData::excel_headers(),
-            )?;
-            ExcelImporter::read_rows_from_bytes::<UserImportData>(&source.data, None)
-        })
-        .await
-        .map_err(|error| AppError::Internal(format!("用户导入解析任务异常结束: {error}")))??;
+        let rows = self
+            .spreadsheets
+            .read_rows(source.data, UserImportData::excel_headers())
+            .await?
+            .into_iter()
+            .map(|row| ParsedImportRow {
+                row_number: row.row_number,
+                value: row.value.and_then(|value| {
+                    serde_json::from_value(value)
+                        .map_err(|error| format!("解析第 {} 行失败: {error}", row.row_number))
+                }),
+            })
+            .collect::<Vec<_>>();
 
         if rows.len() > self.config.max_rows {
             self.mark_failed(
@@ -56,7 +59,7 @@ impl UserImportService {
     async fn process_rows(
         &self,
         import_id: i64,
-        rows: Vec<ExcelImportRow<UserImportData>>,
+        rows: Vec<ParsedImportRow<UserImportData>>,
     ) -> AppResult<()> {
         let mut department_directory = None;
         loop {
