@@ -1,6 +1,6 @@
 //! 系统监控的 HTTP 状态、路由、处理器与响应模型。
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use crate::http::{ApiResponse, HttpResult};
 use axum::{
@@ -11,12 +11,39 @@ use axum::{
     routing::get as axum_get,
 };
 use ryframe_adapters::{
-    DatabaseMonitor, RedisClient,
+    RedisClient,
     monitor::{self as runtime_monitor, DependencyHealthCache, ServerInfo as RuntimeServerInfo},
 };
 use ryframe_macro::{get, route};
 use serde::Serialize;
 use utoipa::ToSchema;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DatabaseNodeHealth {
+    pub name: String,
+    pub healthy: bool,
+    pub consecutive_failures: usize,
+    pub consecutive_successes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DatabaseTopologyHealth {
+    pub primary_healthy: bool,
+    pub replicas: Vec<DatabaseNodeHealth>,
+    pub sources: Vec<DatabaseNodeHealth>,
+}
+
+pub type DatabasePingFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+pub type DatabaseConnectionCountFuture<'a> = Pin<Box<dyn Future<Output = Option<i64>> + Send + 'a>>;
+pub type DatabaseTopologyFuture<'a> =
+    Pin<Box<dyn Future<Output = DatabaseTopologyHealth> + Send + 'a>>;
+
+/// HTTP 监控所需的只读数据库探针，由组合根提供具体实现。
+pub trait DatabaseMonitor: Send + Sync {
+    fn ping(&self) -> DatabasePingFuture<'_>;
+    fn active_connections(&self) -> DatabaseConnectionCountFuture<'_>;
+    fn topology_health(&self) -> DatabaseTopologyFuture<'_>;
+}
 
 /// 监控路由状态。
 #[derive(Clone)]

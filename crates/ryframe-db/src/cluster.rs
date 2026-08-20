@@ -7,11 +7,25 @@ use std::{
 };
 
 use futures_util::future::join_all;
-use ryframe_adapters::{DatabaseNodeHealth, DatabaseTopologyHealth};
 use sea_orm::DatabaseConnection;
 
 const REPLICA_FAILURE_THRESHOLD: usize = 3;
 const REPLICA_RECOVERY_THRESHOLD: usize = 2;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DatabaseNodeHealth {
+    pub name: String,
+    pub healthy: bool,
+    pub consecutive_failures: usize,
+    pub consecutive_successes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DatabaseTopologyHealth {
+    pub primary_healthy: bool,
+    pub replicas: Vec<DatabaseNodeHealth>,
+    pub sources: Vec<DatabaseNodeHealth>,
+}
 
 /// 数据库读取的一致性策略。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

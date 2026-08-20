@@ -1,5 +1,4 @@
 pub mod cache;
-pub mod database_monitor;
 pub mod distributed_lock;
 pub mod excel;
 pub mod file_upload;
@@ -19,7 +18,6 @@ pub use cache::{
     BreakdownGuard, Cache, CacheBackend, CacheStrategy, CacheWarmer, LocalMemoryCache, NoopCache,
     RedisCache,
 };
-pub use database_monitor::{DatabaseMonitor, DatabaseNodeHealth, DatabaseTopologyHealth};
 pub use distributed_lock::{
     DistributedLock, LocalDistributedLock, LockGuard, RedisDistributedLock, create_distributed_lock,
 };

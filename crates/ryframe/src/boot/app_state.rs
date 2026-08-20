@@ -116,7 +116,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         principal_resolver,
     };
     let monitor = ryframe_api::monitor::MonitorState {
-        database: Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
+        database: super::readiness::database_monitor(database),
         redis: redis_client.clone(),
         redis_configured: config
             .redis

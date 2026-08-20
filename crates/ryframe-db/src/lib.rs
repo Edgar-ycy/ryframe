@@ -14,7 +14,8 @@ pub mod sql_logger;
 pub use auto_fill::{AutoFill, FillContext};
 pub use cluster::{
     CallbackDatabaseMetricsObserver, ControlDatabaseCluster, DatabaseMetricsObserver,
-    DatabaseNodeKind, DatabaseReadSelectionReason, ReadConsistency, SelectedDatabase,
+    DatabaseNodeHealth, DatabaseNodeKind, DatabaseReadSelectionReason, DatabaseTopologyHealth,
+    ReadConsistency, SelectedDatabase,
 };
 pub use database_monitor::SeaOrmDatabaseMonitor;
 pub use execution_tenant_scope::ExecutionTenantScope;

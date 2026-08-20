@@ -1,15 +1,60 @@
 use std::{sync::Arc, time::Duration};
 
 use ryframe_adapters::{
-    DatabaseMonitor, RedisClient,
+    RedisClient,
     monitor::{DependencyHealthCache, DependencyStatus},
 };
+use ryframe_api::monitor::{
+    DatabaseConnectionCountFuture, DatabaseMonitor, DatabaseNodeHealth, DatabasePingFuture,
+    DatabaseTopologyFuture, DatabaseTopologyHealth,
+};
 use ryframe_application::system::FileService;
+use ryframe_db::{ControlDatabaseCluster, SeaOrmDatabaseMonitor};
 use tokio::{sync::watch, task::JoinHandle};
 
 pub const PROBE_INTERVAL: Duration = Duration::from_secs(5);
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 pub const CACHE_MAX_AGE: Duration = Duration::from_secs(15);
+
+struct DatabaseMonitorBridge {
+    monitor: SeaOrmDatabaseMonitor,
+}
+
+impl DatabaseMonitor for DatabaseMonitorBridge {
+    fn ping(&self) -> DatabasePingFuture<'_> {
+        Box::pin(self.monitor.ping())
+    }
+
+    fn active_connections(&self) -> DatabaseConnectionCountFuture<'_> {
+        Box::pin(self.monitor.active_connections())
+    }
+
+    fn topology_health(&self) -> DatabaseTopologyFuture<'_> {
+        Box::pin(async move {
+            let health = self.monitor.topology_health().await;
+            DatabaseTopologyHealth {
+                primary_healthy: health.primary_healthy,
+                replicas: health.replicas.into_iter().map(map_node_health).collect(),
+                sources: health.sources.into_iter().map(map_node_health).collect(),
+            }
+        })
+    }
+}
+
+fn map_node_health(health: ryframe_db::DatabaseNodeHealth) -> DatabaseNodeHealth {
+    DatabaseNodeHealth {
+        name: health.name,
+        healthy: health.healthy,
+        consecutive_failures: health.consecutive_failures,
+        consecutive_successes: health.consecutive_successes,
+    }
+}
+
+pub fn database_monitor(database: ControlDatabaseCluster) -> Arc<dyn DatabaseMonitor> {
+    Arc::new(DatabaseMonitorBridge {
+        monitor: SeaOrmDatabaseMonitor::new(database),
+    })
+}
 
 /// 启动后台依赖探测，供 HTTP 就绪端点读取内存快照。
 pub fn spawn(

@@ -324,7 +324,7 @@ async fn start_health_server(
     let readiness =
         DependencyHealthCache::new(redis_required, false, process_readiness::CACHE_MAX_AGE);
     let readiness_task = process_readiness::spawn(
-        Arc::new(ryframe_db::SeaOrmDatabaseMonitor::new(database)),
+        process_readiness::database_monitor(database),
         redis,
         None,
         readiness.clone(),

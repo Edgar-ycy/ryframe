@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use async_trait::async_trait;
-use ryframe_adapters::{DatabaseMonitor, DatabaseTopologyHealth};
 use sea_orm::{DatabaseBackend, FromQueryResult, Statement};
+
+use crate::DatabaseTopologyHealth;
 
 #[derive(Debug, FromQueryResult)]
 struct ActiveConnectionRow {
@@ -17,11 +17,8 @@ impl SeaOrmDatabaseMonitor {
     pub fn new(database: crate::ControlDatabaseCluster) -> Self {
         Self { database }
     }
-}
 
-#[async_trait]
-impl DatabaseMonitor for SeaOrmDatabaseMonitor {
-    async fn ping(&self) -> bool {
+    pub async fn ping(&self) -> bool {
         // 就绪探针只保障写路径；副本与业务数据源的状态由运行时拓扑端点读取快照。
         matches!(
             tokio::time::timeout(
@@ -33,7 +30,7 @@ impl DatabaseMonitor for SeaOrmDatabaseMonitor {
         )
     }
 
-    async fn active_connections(&self) -> Option<i64> {
+    pub async fn active_connections(&self) -> Option<i64> {
         let db = self.database.write();
         let backend = db.get_database_backend();
         if backend != DatabaseBackend::MySql {
@@ -51,7 +48,7 @@ impl DatabaseMonitor for SeaOrmDatabaseMonitor {
             .map(|row| row.value)
     }
 
-    async fn topology_health(&self) -> DatabaseTopologyHealth {
+    pub async fn topology_health(&self) -> DatabaseTopologyHealth {
         self.database.health().await
     }
 }
