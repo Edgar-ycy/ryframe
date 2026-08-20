@@ -1,18 +1,17 @@
+use std::sync::Arc;
+
 use chrono::Utc;
-use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{OperLogFilter, OperLogRepository, Repository, entities::oper_log};
-use ryframe_kernel::{
-    ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
-};
-use sea_orm::{DatabaseTransaction, TransactionTrait};
+use ryframe_kernel::{ActorContext, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
+
+use crate::{OperLogFilter, OperLogPersistencePort, OperLogRecord};
 
 use super::log_time_range::parse_log_time_range;
 
-/// 操作日志视图对象
+/// 操作日志视图对象。
 #[derive(Debug, Clone, Serialize)]
 pub struct OperLogVo {
-    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    /// ID 使用字符串，避免 64 位值超出 JavaScript 安全整数范围。
     pub id: String,
     pub title: String,
     pub business_type: String,
@@ -30,8 +29,8 @@ pub struct OperLogVo {
     pub oper_time: String,
 }
 
-impl From<oper_log::Model> for OperLogVo {
-    fn from(log: oper_log::Model) -> Self {
+impl From<OperLogRecord> for OperLogVo {
+    fn from(log: OperLogRecord) -> Self {
         Self {
             id: log.id.to_string(),
             title: log.title,
@@ -45,7 +44,7 @@ impl From<oper_log::Model> for OperLogVo {
             oper_param: log.oper_param,
             json_result: log.json_result,
             status: log.status,
-            error_msg: log.error_msg,
+            error_msg: log.error_message,
             cost_time: log.cost_time,
             oper_time: log.oper_time.format("%Y-%m-%d %H:%M:%S").to_string(),
         }
@@ -71,8 +70,8 @@ pub enum OperLogStatus {
 impl OperLogStatus {
     fn as_str(self) -> &'static str {
         match self {
-            Self::Success => oper_log::Model::STATUS_SUCCESS,
-            Self::Failure => oper_log::Model::STATUS_FAIL,
+            Self::Success => "1",
+            Self::Failure => "0",
         }
     }
 }
@@ -93,17 +92,41 @@ pub struct RecordOperLogCommand {
     pub cost_time: i64,
 }
 
+impl RecordOperLogCommand {
+    pub(crate) fn into_record(
+        self,
+        event_id: Option<String>,
+        request_id: Option<String>,
+    ) -> AppResult<OperLogRecord> {
+        Ok(OperLogRecord {
+            id: crate::next_id()?,
+            event_id,
+            request_id,
+            title: self.title,
+            business_type: self.business_type,
+            method: self.method,
+            request_method: self.request_method,
+            oper_name: self.oper_name,
+            oper_url: self.oper_url,
+            oper_ip: self.oper_ip,
+            oper_location: None,
+            oper_param: self.oper_param,
+            json_result: self.json_result,
+            status: self.status.as_str().to_owned(),
+            error_message: self.error_msg,
+            oper_time: Utc::now(),
+            cost_time: self.cost_time,
+        })
+    }
+}
+
 pub struct OperLogService {
-    db: ControlDatabaseCluster,
-    oper_log_repo: OperLogRepository,
+    persistence: Arc<dyn OperLogPersistencePort>,
 }
 
 impl OperLogService {
-    pub fn new(db: ControlDatabaseCluster) -> Self {
-        Self {
-            db,
-            oper_log_repo: OperLogRepository,
-        }
+    pub fn new(persistence: Arc<dyn OperLogPersistencePort>) -> Self {
+        Self { persistence }
     }
 
     pub async fn record(
@@ -122,74 +145,8 @@ impl OperLogService {
         command: RecordOperLogCommand,
     ) -> AppResult<()> {
         crate::enforce_tenant_scope(tenant_id)?;
-        let log = oper_log::Model {
-            id: crate::next_id()?,
-            tenant_id: tenant_id.to_owned(),
-            event_id: None,
-            request_id: None,
-            title: command.title,
-            business_type: command.business_type,
-            method: command.method,
-            request_method: command.request_method,
-            oper_name: command.oper_name,
-            oper_url: command.oper_url,
-            oper_ip: command.oper_ip,
-            oper_location: None,
-            oper_param: command.oper_param,
-            json_result: command.json_result,
-            status: command.status.as_str().to_string(),
-            error_msg: command.error_msg,
-            oper_time: Utc::now(),
-            cost_time: command.cost_time,
-        };
-        self.oper_log_repo
-            .insert(self.db.write(), tenant_id, log)
-            .await?;
-        Ok(())
-    }
-
-    /// 在 Outbox 消费事务内按审计事件标识幂等写入操作日志。
-    pub async fn record_event_in_transaction(
-        &self,
-        transaction: &DatabaseTransaction,
-        event_id: &str,
-        request_id: &str,
-        tenant_id: &str,
-        command: RecordOperLogCommand,
-    ) -> AppResult<bool> {
-        crate::enforce_tenant_scope(tenant_id)?;
-        if event_id.is_empty() || event_id.len() > 36 {
-            return Err(AppError::Validation(
-                "审计事件标识长度必须介于 1 和 36 之间".into(),
-            ));
-        }
-        if request_id.is_empty() || request_id.len() > 36 {
-            return Err(AppError::Validation(
-                "请求标识长度必须介于 1 和 36 之间".into(),
-            ));
-        }
-        let log = oper_log::Model {
-            id: crate::next_id()?,
-            tenant_id: tenant_id.to_owned(),
-            event_id: Some(event_id.to_owned()),
-            request_id: Some(request_id.to_owned()),
-            title: command.title,
-            business_type: command.business_type,
-            method: command.method,
-            request_method: command.request_method,
-            oper_name: command.oper_name,
-            oper_url: command.oper_url,
-            oper_ip: command.oper_ip,
-            oper_location: None,
-            oper_param: command.oper_param,
-            json_result: command.json_result,
-            status: command.status.as_str().to_string(),
-            error_msg: command.error_msg,
-            oper_time: Utc::now(),
-            cost_time: command.cost_time,
-        };
-        self.oper_log_repo
-            .insert_event_in_transaction(transaction, tenant_id, log)
+        self.persistence
+            .insert(tenant_id, command.into_record(None, None)?)
             .await
     }
 
@@ -199,8 +156,7 @@ impl OperLogService {
         query: OperLogQuery,
     ) -> AppResult<PageResult<OperLogVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let scope_ctx = actor.data_scope_context();
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let data_scope = actor.data_scope_context();
         let (begin_time, end_time) =
             parse_log_time_range(query.begin_time.as_deref(), query.end_time.as_deref())?;
         let filter = OperLogFilter {
@@ -209,17 +165,15 @@ impl OperLogService {
             begin_time,
             end_time,
         };
-
         let result = self
-            .oper_log_repo
-            .find_by_page_filtered(&db, tenant_id, &query.page, filter, &scope_ctx)
+            .persistence
+            .find_by_page(tenant_id, query.page, filter, &data_scope)
             .await?;
-        Ok(PageResult {
-            records: result.records.into_iter().map(OperLogVo::from).collect(),
-            total: result.total,
-            page: result.page,
-            page_size: result.page_size,
-        })
+        Ok(PageResult::new(
+            result.records.into_iter().map(OperLogVo::from).collect(),
+            result.total,
+            &query.page,
+        ))
     }
 
     /// 按稳定主键窗口读取一批操作日志，并延续当前数据范围约束。
@@ -230,11 +184,10 @@ impl OperLogService {
         window: ExportCursorWindow,
     ) -> AppResult<Vec<OperLogVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let scope_ctx = actor.data_scope_context();
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
+        let data_scope = actor.data_scope_context();
         Ok(self
-            .oper_log_repo
-            .find_for_export_after_id(&db, tenant_id, &filter, &scope_ctx, window)
+            .persistence
+            .find_export_batch(tenant_id, filter, &data_scope, window)
             .await?
             .into_iter()
             .map(OperLogVo::from)
@@ -243,16 +196,110 @@ impl OperLogService {
 
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let rows_affected = self
-            .oper_log_repo
-            .clean_all_in_transaction(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        let transaction = self.persistence.begin().await?;
+        let rows_affected = transaction.clean(tenant_id).await?;
+        transaction.commit().await?;
         Ok(rows_affected)
     }
 }
 
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use ryframe_kernel::DataScope;
+
+    use super::*;
+    use crate::{ControlTransaction, OperLogTransaction, PersistenceFuture};
+
+    struct FakePersistence {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    struct FakeTransaction {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl OperLogPersistencePort for FakePersistence {
+        fn insert<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _record: OperLogRecord,
+        ) -> PersistenceFuture<'a, ()> {
+            Box::pin(async { unreachable!("本测试不写入日志") })
+        }
+
+        fn find_by_page<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _page: ValidatedPageQuery,
+            _filter: OperLogFilter<'a>,
+            _data_scope: &'a ryframe_kernel::DataScopeContext,
+        ) -> PersistenceFuture<'a, PageResult<OperLogRecord>> {
+            Box::pin(async { unreachable!("本测试不读取列表") })
+        }
+
+        fn find_export_batch<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _filter: OperLogFilter<'a>,
+            _data_scope: &'a ryframe_kernel::DataScopeContext,
+            _window: ExportCursorWindow,
+        ) -> PersistenceFuture<'a, Vec<OperLogRecord>> {
+            Box::pin(async { unreachable!("本测试不执行导出") })
+        }
+
+        fn begin(&self) -> PersistenceFuture<'_, Box<dyn OperLogTransaction>> {
+            self.calls.lock().expect("调用记录锁应可用").push("begin");
+            let transaction = FakeTransaction {
+                calls: Arc::clone(&self.calls),
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn OperLogTransaction>) })
+        }
+    }
+
+    impl OperLogTransaction for FakeTransaction {
+        fn clean<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
+            self.calls.lock().expect("调用记录锁应可用").push("clean");
+            Box::pin(async { Ok(4) })
+        }
+    }
+
+    impl ControlTransaction for FakeTransaction {
+        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+            self.calls.lock().expect("调用记录锁应可用").push("commit");
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn clean_is_committed_by_application_use_case() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let service = OperLogService::new(Arc::new(FakePersistence {
+            calls: Arc::clone(&calls),
+        }));
+        let actor = ActorContext {
+            user_id: 1,
+            tenant_id: "tenant-a".into(),
+            username: "tester".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: DataScope::SelfOnly,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin: false,
+        };
+
+        assert_eq!(service.clean(&actor).await.expect("清理应成功"), 4);
+        assert_eq!(
+            *calls.lock().expect("调用记录锁应可用"),
+            ["begin", "clean", "commit"]
+        );
+    }
+
+    #[test]
+    fn operation_status_keeps_persisted_codes() {
+        assert_eq!(OperLogStatus::Success.as_str(), "1");
+        assert_eq!(OperLogStatus::Failure.as_str(), "0");
+    }
 }

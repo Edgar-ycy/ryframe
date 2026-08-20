@@ -98,7 +98,7 @@ impl ExportService {
             posts: PostService::new(crate::legacy_post_persistence(db.clone())),
             configs: ConfigService::new(db.clone(), crate::AuthorizationCache::disabled()),
             dicts: DictService::new(db.clone(), None),
-            oper_logs: OperLogService::new(db.clone()),
+            oper_logs: OperLogService::new(crate::legacy_oper_log_persistence(db.clone())),
             login_infos: LoginInfoService::new(crate::legacy_login_info_persistence(db)),
             users,
             storage,

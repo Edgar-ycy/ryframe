@@ -21,7 +21,7 @@ use ryframe_application::{
     ArtifactStore, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
         CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportService, FileService,
-        IMPORT_BUCKET, MessageService, OperLogService, ProductService, TenantConfigTransferService,
+        IMPORT_BUCKET, MessageService, ProductService, TenantConfigTransferService,
         TenantDataMigrationService, UserImportService, UserService,
     },
 };
@@ -135,7 +135,6 @@ async fn main() -> Result<(), AppError> {
             .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
     );
     install_job_metrics(&queue);
-    let oper_log = Arc::new(OperLogService::new(database.clone()));
     let message = Arc::new(MessageService::new(
         database.clone(),
         queue.clone(),
@@ -247,8 +246,7 @@ async fn main() -> Result<(), AppError> {
             &application_policies.job_worker,
             execution_tenant_scope.clone(),
         )?
-        .with_authorization_cache(authorization_cache.clone())
-        .with_audit_service(oper_log.clone());
+        .with_authorization_cache(authorization_cache.clone());
         let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
         let job_result = worker.run_once("ryframe-worker-once-job").await?;
         tracing::info!(
@@ -288,7 +286,6 @@ async fn main() -> Result<(), AppError> {
             execution_tenant_scope,
         )?
         .with_authorization_cache(authorization_cache)
-        .with_audit_service(oper_log)
         .spawn(shutdown_receiver),
     );
     tracing::info!(

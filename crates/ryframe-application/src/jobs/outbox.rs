@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::backoff::{jittered_delay, next_idle_wait};
 use super::worker::{infrastructure_retry_delay, retry_delay};
 use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
-use crate::system::{MESSAGE_DISPATCH_JOB_TYPE, OperLogService};
+use crate::system::MESSAGE_DISPATCH_JOB_TYPE;
 use crate::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent,
     AuthorizationCache, AuthorizationMirrorUpdate, record_audit_failure,
@@ -46,7 +46,6 @@ pub struct OutboxWorker {
     lease_recovery_interval: StdDuration,
     concurrency: usize,
     authorization_cache: AuthorizationCache,
-    audit_service: Option<Arc<OperLogService>>,
 }
 
 impl OutboxWorker {
@@ -67,19 +66,12 @@ impl OutboxWorker {
             lease_recovery_interval: policy.lease_recovery_interval,
             concurrency: policy.concurrency,
             authorization_cache: AuthorizationCache::disabled(),
-            audit_service: None,
         })
     }
 
     /// 注入授权版本镜像修复器；生产 Worker 必须与 API 使用相同 Redis 配置。
     pub fn with_authorization_cache(mut self, authorization_cache: AuthorizationCache) -> Self {
         self.authorization_cache = authorization_cache;
-        self
-    }
-
-    /// 注入操作审计落库服务。
-    pub fn with_audit_service(mut self, audit_service: Arc<OperLogService>) -> Self {
-        self.audit_service = Some(audit_service);
         self
     }
 
@@ -293,10 +285,6 @@ impl OutboxWorker {
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let service = self.audit_service.as_ref().ok_or_else(|| {
-            record_audit_failure("handler_missing");
-            AppError::Config("Outbox Worker 未配置操作审计服务".into())
-        })?;
         let payload: AuditOperationEvent =
             serde_json::from_value(event.payload.clone()).map_err(|error| {
                 record_audit_failure("payload_decode");
@@ -308,6 +296,9 @@ impl OutboxWorker {
                 "操作审计事件的租户与 Outbox 信封不一致".into(),
             ));
         }
+        crate::enforce_tenant_scope(&payload.tenant_id)?;
+        validate_audit_identifier("event_id", &payload.event_id)?;
+        validate_audit_identifier("request_id", &payload.request_id)?;
 
         let transaction = self
             .queue
@@ -316,16 +307,16 @@ impl OutboxWorker {
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let result = async {
-            service
-                .record_event_in_transaction(
-                    &transaction,
-                    &payload.event_id,
-                    &payload.request_id,
-                    &payload.tenant_id,
-                    payload.command,
-                )
-                .await
-                .inspect_err(|_| record_audit_failure("oper_log_write"))?;
+            let record = payload
+                .command
+                .into_record(Some(payload.event_id), Some(payload.request_id))?;
+            crate::legacy_oper_log_persistence::insert_event_in_transaction(
+                &transaction,
+                &payload.tenant_id,
+                record,
+            )
+            .await
+            .inspect_err(|_| record_audit_failure("oper_log_write"))?;
             self.repository
                 .mark_published_in_transaction(&transaction, event.id, worker_id, now)
                 .await
@@ -534,4 +525,13 @@ impl OutboxWorker {
             }
         }
     }
+}
+
+fn validate_audit_identifier(field: &str, value: &str) -> AppResult<()> {
+    if value.is_empty() || value.len() > 36 {
+        return Err(AppError::Validation(format!(
+            "审计字段 {field} 的长度必须介于 1 和 36 之间"
+        )));
+    }
+    Ok(())
 }

@@ -204,7 +204,6 @@ async fn main() -> Result<(), AppError> {
                     execution_tenant_scope,
                 )?
                 .with_authorization_cache(authorization_cache)
-                .with_audit_service(services.oper_log.clone())
                 .spawn(shutdown_receiver),
             );
             tasks

@@ -9,10 +9,12 @@ mod id_generator;
 pub mod jobs;
 mod legacy_login_info_persistence;
 mod legacy_notice_persistence;
+mod legacy_oper_log_persistence;
 mod legacy_post_persistence;
 mod login_info_persistence;
 mod login_protection;
 mod notice_persistence;
+mod oper_log_persistence;
 mod persistence;
 mod post_persistence;
 mod principal_resolver;
@@ -66,6 +68,8 @@ pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
 #[doc(hidden)]
 pub use legacy_notice_persistence::port as legacy_notice_persistence;
 #[doc(hidden)]
+pub use legacy_oper_log_persistence::port as legacy_oper_log_persistence;
+#[doc(hidden)]
 pub use legacy_post_persistence::port as legacy_post_persistence;
 pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
@@ -73,6 +77,9 @@ pub use login_info_persistence::{
 pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
 pub use notice_persistence::{
     NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction,
+};
+pub use oper_log_persistence::{
+    OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction,
 };
 pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};

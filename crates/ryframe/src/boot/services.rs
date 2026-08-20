@@ -259,7 +259,9 @@ pub async fn build_all(
     let notice = Arc::new(NoticeService::new(
         ryframe_application::legacy_notice_persistence(database.clone()),
     ));
-    let oper_log = Arc::new(OperLogService::new(database.clone()));
+    let oper_log = Arc::new(OperLogService::new(
+        ryframe_application::legacy_oper_log_persistence(database.clone()),
+    ));
     let file = Arc::new(FileService::new(
         database.clone(),
         object_storage.clone(),
