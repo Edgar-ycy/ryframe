@@ -307,7 +307,7 @@ pub async fn build_all(
         authorization_cache.clone(),
     ));
     let data_retention = Arc::new(DataRetentionService::new(
-        database.clone(),
+        ryframe_application::legacy_tenant_config_retention_persistence(database.clone()),
         ryframe_application::legacy_retention_cleanup_persistence(database.clone()),
         ryframe_application::legacy_retention_run_persistence(database.clone()),
         job_queue.clone(),

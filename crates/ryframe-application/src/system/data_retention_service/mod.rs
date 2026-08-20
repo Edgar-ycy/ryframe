@@ -2,25 +2,15 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use ryframe_db::{
-    ControlDatabaseCluster, DataRetentionRepository, FileRepository, TenantRepository,
-    tenant_config_bundle, tenant_config_transfer,
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
-use sea_orm::{
-    ActiveModelTrait,
-    ActiveValue::Set,
-    ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
-    TransactionTrait,
-    sea_query::{Expr, LockType, SimpleExpr},
-};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
     ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, RetentionCleanupPersistencePort,
     RetentionCleanupResult, RetentionCutoff, RetentionResource, RetentionRunPersistencePort,
-    RetentionRunRecord, system::FileService,
+    RetentionRunRecord, TENANT_CONFIG_PACKAGE_RESOURCE, TENANT_CONFIG_SNAPSHOT_RESOURCE,
+    TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort, system::FileService,
 };
 
 pub const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";
@@ -118,8 +108,7 @@ impl From<RetentionRunRecord> for DataRetentionRunVo {
 
 #[derive(Clone)]
 pub struct DataRetentionService {
-    db: ControlDatabaseCluster,
-    repository: Arc<DataRetentionRepository>,
+    config_artifacts: Arc<dyn TenantConfigRetentionPersistencePort>,
     cleanup_persistence: Arc<dyn RetentionCleanupPersistencePort>,
     run_persistence: Arc<dyn RetentionRunPersistencePort>,
     queue: Arc<JobQueue>,
@@ -129,7 +118,7 @@ pub struct DataRetentionService {
 
 impl DataRetentionService {
     pub fn new(
-        db: ControlDatabaseCluster,
+        config_artifacts: Arc<dyn TenantConfigRetentionPersistencePort>,
         cleanup_persistence: Arc<dyn RetentionCleanupPersistencePort>,
         run_persistence: Arc<dyn RetentionRunPersistencePort>,
         queue: Arc<JobQueue>,
@@ -137,8 +126,7 @@ impl DataRetentionService {
         config: DataRetentionPolicy,
     ) -> Self {
         Self {
-            db,
-            repository: Arc::new(DataRetentionRepository),
+            config_artifacts,
             cleanup_persistence,
             run_persistence,
             queue,

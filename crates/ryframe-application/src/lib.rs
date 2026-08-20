@@ -43,6 +43,7 @@ mod legacy_role_read;
 mod legacy_role_write;
 mod legacy_service_account_audit_persistence;
 mod legacy_service_account_authorization_persistence;
+mod legacy_tenant_config_retention_persistence;
 mod legacy_tenant_usage_persistence;
 mod legacy_user_query_persistence;
 mod legacy_user_write_persistence;
@@ -72,6 +73,7 @@ mod service_account_authorization_persistence;
 mod service_identity_secret;
 mod spreadsheet;
 pub mod system;
+mod tenant_config_retention_persistence;
 mod tenant_data_migration;
 mod tenant_data_targets;
 mod tenant_provisioning;
@@ -200,6 +202,8 @@ pub use legacy_service_account_audit_persistence::port as legacy_service_account
 #[doc(hidden)]
 pub use legacy_service_account_authorization_persistence::port as legacy_service_account_authorization_persistence;
 #[doc(hidden)]
+pub use legacy_tenant_config_retention_persistence::port as legacy_tenant_config_retention_persistence;
+#[doc(hidden)]
 pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
 #[doc(hidden)]
 pub use legacy_user_query_persistence::port as legacy_user_query_persistence;
@@ -271,6 +275,10 @@ pub use spreadsheet::{
     SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,
     SpreadsheetDocumentFuture, SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow,
     SpreadsheetWriter, SpreadsheetWriterFactory,
+};
+pub use tenant_config_retention_persistence::{
+    TENANT_CONFIG_PACKAGE_RESOURCE, TENANT_CONFIG_SNAPSHOT_RESOURCE, TenantConfigArtifactCounts,
+    TenantConfigRetentionPersistencePort,
 };
 pub use tenant_data_migration::{
     TenantDataCatalogTable, TenantDataCleanupOwnership, TenantDataFence, TenantDataMigrationFuture,

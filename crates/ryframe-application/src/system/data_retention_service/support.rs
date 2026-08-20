@@ -62,10 +62,6 @@ pub(super) fn safe_error_summary(error: &AppError) -> String {
     error.to_string().chars().take(500).collect()
 }
 
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 pub(super) fn json_error(error: serde_json::Error) -> AppError {
     AppError::Internal(format!("数据保留汇总编码失败: {error}"))
 }
