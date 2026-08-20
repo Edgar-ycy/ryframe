@@ -65,7 +65,7 @@ pub(super) fn validate_auth_origin(state: &AppState, headers: &HeaderMap) -> Htt
     {
         Some(origin)
             if state
-                .config
+                .settings
                 .cors
                 .allow_origins
                 .iter()
@@ -77,7 +77,7 @@ pub(super) fn validate_auth_origin(state: &AppState, headers: &HeaderMap) -> Htt
             ryframe_adapters::metrics::record_csrf_rejection();
             Err(AppError::Authorization("request origin is not allowed".into()).into())
         }
-        None if state.config.environment.is_production() => {
+        None if state.settings.production => {
             ryframe_adapters::metrics::record_csrf_rejection();
             Err(AppError::Authorization("Origin header is required in production".into()).into())
         }
@@ -91,18 +91,18 @@ pub(super) async fn enforce_login_rate_limit(
     username: &str,
     client_ip: &str,
 ) -> HttpResult<Option<Response>> {
-    if !state.config.rate_limit.enabled {
+    if !state.settings.rate_limit.enabled {
         return Ok(None);
     }
     let login_rate_limit_rule = format!("POST {}", api_path("auth/login"));
     let limit = state
-        .config
+        .settings
         .rate_limit
         .api_limits
         .get(&login_rate_limit_rule)
         .copied()
         .unwrap_or(5);
-    let window = state.config.rate_limit.api_window_secs.max(1);
+    let window = state.settings.rate_limit.api_window_secs.max(1);
     let normalized_username = username.trim().to_lowercase();
     let principal_digest = ryframe_auth::stable_scope_digest(&[tenant_id, &normalized_username]);
     for (scope, key) in [
@@ -188,13 +188,16 @@ pub(super) fn tenant_id(
     tenant_context: Option<axum::Extension<TenantContext>>,
     headers: &HeaderMap,
 ) -> HttpResult<String> {
-    if state.config.multi_tenancy.fixed_tenant_id().is_some() {
-        return crate::handler_utils::tenant_id_from_headers(headers, &state.config.multi_tenancy);
+    if state.settings.multi_tenancy.fixed_tenant_id().is_some() {
+        return crate::handler_utils::tenant_id_from_headers(
+            headers,
+            &state.settings.multi_tenancy,
+        );
     }
     tenant_context
         .map(|axum::Extension(context)| context.tenant_id)
         .map(Ok)
         .unwrap_or_else(|| {
-            crate::handler_utils::tenant_id_from_headers(headers, &state.config.multi_tenancy)
+            crate::handler_utils::tenant_id_from_headers(headers, &state.settings.multi_tenancy)
         })
 }

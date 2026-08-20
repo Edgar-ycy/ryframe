@@ -15,7 +15,6 @@ runtime-swagger-ui = ["dep:utoipa-swagger-ui"]
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }
-ryframe-config = { path = "../ryframe-config" }
 ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 ryframe-macro = { path = "../ryframe-macro" }

@@ -1,8 +1,9 @@
 //! API 跨域策略构建。
 
-use ryframe_config::CorsConfig;
 use ryframe_kernel::{AppError, AppResult};
 use tower_http::cors::{AllowOrigin, CorsLayer};
+
+use crate::settings::CorsSettings;
 
 /// 创建 CORS 层
 ///
@@ -14,7 +15,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 /// [cors]
 /// allow_origins = ["http://localhost:80", "http://localhost:3000"]
 /// ```
-pub fn cors_layer(config: &CorsConfig) -> AppResult<CorsLayer> {
+pub fn cors_layer(config: &CorsSettings) -> AppResult<CorsLayer> {
     let allow_origin = if config.allow_origins.is_empty() {
         tracing::info!("CORS: allow_origins 为空，拒绝所有跨域来源");
         None

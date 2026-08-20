@@ -1,5 +1,4 @@
 use super::*;
-use ryframe_config::{JobWorkerMode, StorageBackend};
 
 pub(super) async fn probe_runtime_status(
     State(state): State<AppState>,
@@ -39,7 +38,7 @@ pub(super) async fn probe_runtime_status(
         _ => "round_robin",
     };
     let storage_connected = state.services.file.check_storage().await.is_ok();
-    let storage_config = &state.config.object_storage;
+    let storage_config = &state.settings.object_storage;
     let read_selections = ryframe_adapters::metrics::database_read_selection_totals()
         .into_iter()
         .map(|(target, reason, count)| RuntimeDatabaseReadSelection {
@@ -63,31 +62,20 @@ pub(super) async fn probe_runtime_status(
             read_selections,
         },
         redis: RuntimeRedisStatus {
-            configured: state
-                .config
-                .redis
-                .as_ref()
-                .is_some_and(|config| config.mode != RedisMode::Disabled),
+            configured: state.settings.redis_configured,
             connected: state.redis.is_some(),
         },
         object_storage: RuntimeStorageStatus {
             backend: storage_config.backend.as_str().into(),
             connected: storage_connected,
-            endpoint: (storage_config.backend != StorageBackend::Local
-                && !storage_config.endpoint.trim().is_empty())
-            .then(|| storage_config.endpoint.clone()),
+            endpoint: storage_config.endpoint.clone(),
         },
         upload_circuit_breaker: RuntimeCircuitBreakerStatus {
             state: format!("{:?}", state.runtime.upload_circuit_breaker.current_state()),
         },
         jobs: RuntimeJobsStatus {
-            mode: match state.config.jobs.mode {
-                JobWorkerMode::Embedded => "embedded",
-                JobWorkerMode::External => "external",
-                JobWorkerMode::Disabled => "disabled",
-            }
-            .into(),
-            scheduler_enabled: state.config.jobs.scheduler_enabled,
+            mode: state.settings.jobs.mode.clone(),
+            scheduler_enabled: state.settings.jobs.scheduler_enabled,
         },
     })))
 }

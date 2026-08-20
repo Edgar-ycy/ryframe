@@ -70,7 +70,7 @@ async fn list_page(
     current_user: RequestPrincipal,
     Query(query): Query<MenuListQuery>,
 ) -> HttpResult<Json<ApiPageResponse<MenuVo>>> {
-    let (page, filter) = query.into_parts(state.pagination)?;
+    let (page, filter) = query.into_parts(state.settings.pagination)?;
     let page = state
         .services
         .menu
@@ -86,7 +86,7 @@ async fn list_page(
         page.total,
         page.page,
         page.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 

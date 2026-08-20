@@ -8,7 +8,6 @@ use ryframe_api::middleware::{
     rate_limit::RateLimitState, security_headers::SecurityHeadersConfig,
 };
 use ryframe_api::request_locale::request_locale_middleware;
-use ryframe_config::CorsConfig;
 use ryframe_kernel::AppResult;
 
 /// 将公开探针与业务路由分开构建，确保存活/就绪检查绝不会经过认证、租户提取、
@@ -16,15 +15,14 @@ use ryframe_kernel::AppResult;
 pub fn build_app(
     state: ryframe_api::AppState,
     rate_limit_state: RateLimitState,
-    cors_config: &CorsConfig,
 ) -> AppResult<Router> {
-    ryframe_api::validate_runtime_features(&state.config)?;
+    ryframe_api::validate_runtime_features(state.settings.api_docs_enabled)?;
     let trusted_proxies = state.trusted_proxies.clone();
     let response_localizer = state.localizer.clone();
-    let upload_limits = state.config.upload.clone();
-    let telemetry_enabled = state.config.telemetry.enabled;
+    let upload_limits = state.settings.upload.clone();
+    let telemetry_enabled = state.settings.telemetry_enabled;
     let rate_limit_state_for_api = rate_limit_state.clone();
-    let security_headers = if state.config.environment.is_production() {
+    let security_headers = if state.settings.production {
         SecurityHeadersConfig::strict()
     } else {
         SecurityHeadersConfig::default()
@@ -67,7 +65,7 @@ pub fn build_app(
     let regular = Router::new()
         .merge(business)
         .merge(probes)
-        .layer(http_middleware::cors::cors_layer(cors_config)?)
+        .layer(http_middleware::cors::cors_layer(&state.settings.cors)?)
         .layer(from_fn_with_state(
             response_localizer.clone(),
             http_middleware::response_envelope::api_response_envelope_middleware,

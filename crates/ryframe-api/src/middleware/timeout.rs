@@ -9,13 +9,14 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use ryframe_config::UploadLimitsConfig;
+
+use crate::settings::UploadSettings;
 
 pub const API_TIMEOUT_SECONDS: u64 = 30;
 pub const UPLOAD_TIMEOUT_SECONDS: u64 = 120;
 
 pub async fn timeout_middleware(
-    State(config): State<UploadLimitsConfig>,
+    State(config): State<UploadSettings>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -37,7 +38,7 @@ pub async fn timeout_middleware(
     }
 }
 
-pub fn request_timeout_seconds(config: &UploadLimitsConfig, path: &str) -> u64 {
+pub fn request_timeout_seconds(config: &UploadSettings, path: &str) -> u64 {
     let api_path = path.strip_prefix(API_PREFIX);
     if api_path.is_some_and(|path| path.starts_with("/common/upload"))
         || matches!(

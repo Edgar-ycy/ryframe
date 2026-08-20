@@ -10,7 +10,7 @@ pub(super) fn monitor_router(
         .merge(overview_handler::overview_router(state.clone()))
         .merge(job_handler::job_router(state.clone()))
         .merge(retention_handler::retention_router(state.clone()));
-    if state.config.jobs.scheduler_enabled {
+    if state.settings.jobs.scheduler_enabled {
         protected = protected.merge(schedule_handler::schedule_router(state.clone()));
     }
     protected = protected.layer(from_fn_with_state(

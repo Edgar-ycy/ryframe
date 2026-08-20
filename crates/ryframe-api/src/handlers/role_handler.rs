@@ -86,7 +86,7 @@ async fn options(
     current_user: RequestPrincipal,
     Query(query): Query<RoleOptionQuery>,
 ) -> HttpResult<Json<ApiResponse<OptionList>>> {
-    let query = query.resolve(state.pagination)?;
+    let query = query.resolve(state.settings.pagination)?;
     state
         .services
         .role
@@ -114,7 +114,7 @@ async fn list(
     current_user: RequestPrincipal,
     Query(query): Query<RoleListQuery>,
 ) -> HttpResult<Json<ApiPageResponse<RoleVo>>> {
-    let (page, filter) = query.into_parts(state.pagination)?;
+    let (page, filter) = query.into_parts(state.settings.pagination)?;
     state
         .services
         .role
@@ -127,7 +127,7 @@ async fn list(
                 p.total,
                 p.page,
                 p.page_size,
-                state.pagination.max_page_size(),
+                state.settings.pagination.max_page_size(),
             ))
         })
 }

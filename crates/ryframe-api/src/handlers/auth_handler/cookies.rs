@@ -2,7 +2,6 @@ use crate::http::{HttpResult, api_path};
 use axum::http::HeaderMap;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use ryframe_auth::jwt::{Claims, TokenSettings};
-use ryframe_config::Environment;
 use ryframe_kernel::AppError;
 
 pub(super) const REFRESH_COOKIE: &str = "ryframe_refresh_token";
@@ -14,27 +13,23 @@ fn auth_cookie(
     name: &'static str,
     value: String,
     max_age_seconds: i64,
-    environment: Environment,
+    secure: bool,
 ) -> Cookie<'static> {
     let max_age = cookie::time::Duration::seconds(max_age_seconds);
     Cookie::build((name, value))
         .path(api_path("auth"))
         .http_only(true)
-        .secure(environment.is_production())
+        .secure(secure)
         .same_site(SameSite::Lax)
         .max_age(max_age)
         .expires(cookie::time::OffsetDateTime::now_utc().saturating_add(max_age))
         .build()
 }
 
-pub(super) fn refresh_cookie(
-    token: &str,
-    absolute_exp: usize,
-    environment: Environment,
-) -> Cookie<'static> {
+pub(super) fn refresh_cookie(token: &str, absolute_exp: usize, secure: bool) -> Cookie<'static> {
     let now = chrono::Utc::now().timestamp().max(0) as usize;
     let max_age = absolute_exp.saturating_sub(now).min(7 * 24 * 60 * 60) as i64;
-    let mut cookie = auth_cookie(REFRESH_COOKIE, token.to_owned(), max_age, environment);
+    let mut cookie = auth_cookie(REFRESH_COOKIE, token.to_owned(), max_age, secure);
     if let Ok(timestamp) = i64::try_from(absolute_exp)
         && let Ok(expires) = cookie::time::OffsetDateTime::from_unix_timestamp(timestamp)
     {
@@ -43,28 +38,28 @@ pub(super) fn refresh_cookie(
     cookie
 }
 
-pub(super) fn csrf_cookie(token: &str, environment: Environment) -> Cookie<'static> {
+pub(super) fn csrf_cookie(token: &str, secure: bool) -> Cookie<'static> {
     auth_cookie(
         CSRF_COOKIE,
         token.to_owned(),
         CSRF_TTL_SECONDS as i64,
-        environment,
+        secure,
     )
 }
 
-fn removal_cookie(name: &'static str, environment: Environment) -> Cookie<'static> {
+fn removal_cookie(name: &'static str, secure: bool) -> Cookie<'static> {
     Cookie::build((name, ""))
         .path(api_path("auth"))
         .http_only(true)
-        .secure(environment.is_production())
+        .secure(secure)
         .same_site(SameSite::Lax)
         .removal()
         .build()
 }
 
-pub(super) fn clear_auth_cookies(jar: CookieJar, environment: Environment) -> CookieJar {
-    jar.add(removal_cookie(REFRESH_COOKIE, environment))
-        .add(removal_cookie(CSRF_COOKIE, environment))
+pub(super) fn clear_auth_cookies(jar: CookieJar, secure: bool) -> CookieJar {
+    jar.add(removal_cookie(REFRESH_COOKIE, secure))
+        .add(removal_cookie(CSRF_COOKIE, secure))
 }
 
 pub(super) fn decode_refresh_cookie(

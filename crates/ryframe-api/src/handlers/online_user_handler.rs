@@ -37,7 +37,7 @@ pub async fn list_online_users_page(
     current_user: RequestPrincipal,
     Query(query): Query<OnlineUserQuery>,
 ) -> HttpResult<Json<ApiPageResponse<OnlineUserVo>>> {
-    let (page, filter) = query.into_parts(state.pagination)?;
+    let (page, filter) = query.into_parts(state.settings.pagination)?;
     let response_page = page.page();
     let response_page_size = page.page_size();
     let (rows, total) = state
@@ -55,7 +55,7 @@ pub async fn list_online_users_page(
         total,
         response_page,
         response_page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 

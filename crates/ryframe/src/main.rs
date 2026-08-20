@@ -26,7 +26,7 @@ async fn main() -> Result<(), AppError> {
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     let application_policies = boot::application_policy::ApplicationPolicies::from_config(&config)?;
-    ryframe_api::validate_runtime_features(&config)?;
+    ryframe_api::validate_runtime_features(config.api_docs.enabled)?;
     ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     let localizer = Arc::new(
@@ -119,7 +119,7 @@ async fn main() -> Result<(), AppError> {
     let mut message_replay_scheduler = state
         .message_hub
         .spawn_replay_scheduler(services.message.clone(), shutdown_receiver.clone());
-    let router = app::build_app(state, limit.rate_limit_state, &config.cors)?;
+    let router = app::build_app(state, limit.rate_limit_state)?;
 
     let addr = format!("{}:{}", config.app.host, config.app.port);
     let listener = tokio::net::TcpListener::bind(&addr)

@@ -32,7 +32,10 @@ async fn list(
     state
         .services
         .oper_log
-        .find_by_page(&current_user, query.into_service_query(state.pagination)?)
+        .find_by_page(
+            &current_user,
+            query.into_service_query(state.settings.pagination)?,
+        )
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(|p| {
@@ -41,7 +44,7 @@ async fn list(
                 p.total,
                 p.page,
                 p.page_size,
-                state.pagination.max_page_size(),
+                state.settings.pagination.max_page_size(),
             ))
         })
 }

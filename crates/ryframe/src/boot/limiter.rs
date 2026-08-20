@@ -30,7 +30,7 @@ pub fn init(config: &AppConfig, redis_client: &Option<RedisClient>) -> AppResult
 
     let rate_limit_state = RateLimitState {
         limiter: limiter.clone(),
-        config: Arc::new(config.rate_limit.clone()),
+        config: Arc::new(super::app_state::rate_limit_settings(config)),
     };
 
     Ok(LimiterState {

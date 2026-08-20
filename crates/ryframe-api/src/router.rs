@@ -34,7 +34,6 @@ use ryframe_adapters::{
 };
 use ryframe_application::system::OnlineUserService;
 use ryframe_auth::jwt::Claims;
-use ryframe_config::RedisMode;
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
 use serde::Serialize;
@@ -45,7 +44,7 @@ use crate::RequestPrincipal;
 #[derive(Clone)]
 struct AuthenticatedTenantRateLimitState {
     limiter: Arc<RateLimiter>,
-    config: Arc<ryframe_config::RateLimitConfig>,
+    config: Arc<crate::settings::RateLimitSettings>,
 }
 
 #[derive(Clone)]
@@ -116,7 +115,7 @@ where
         .layer(from_fn_with_state(
             AuthenticatedTenantRateLimitState {
                 limiter: state.rate_limiter.clone(),
-                config: Arc::new(state.config.rate_limit.clone()),
+                config: Arc::new(state.settings.rate_limit.clone()),
             },
             authenticated_tenant_rate_limit,
         ))
@@ -358,7 +357,7 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         source_commit: env!("RYFRAME_BUILD_COMMIT").to_owned(),
         api_prefix: API_PREFIX.to_owned(),
-        multi_tenancy_enabled: state.config.multi_tenancy.enabled,
+        multi_tenancy_enabled: state.settings.multi_tenancy.enabled,
         endpoints: ApiVersionEndpoints {
             auth: api_path("auth"),
             system: api_path("system"),
@@ -398,7 +397,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         .nest("/common", common_router(state.clone(), idempotency_state));
 
-    if state.config.multi_tenancy.enabled {
+    if state.settings.multi_tenancy.enabled {
         let platform = protect(
             Router::new()
                 .nest(
@@ -436,7 +435,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         &state,
     );
     router = router.nest("/profile/service-delegations", profile_delegations);
-    if state.config.api_docs.enabled {
+    if state.settings.api_docs_enabled {
         router = router.route(
             "/api-docs/openapi.json",
             get_route(crate::openapi::openapi_json),

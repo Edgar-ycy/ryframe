@@ -84,7 +84,7 @@ pub async fn upload_file(
     multipart: Multipart,
 ) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     let policy = UploadPolicy {
-        max_file_size: state.config.upload.file_max_bytes as u64,
+        max_file_size: state.settings.upload.file_max_bytes as u64,
         ..Default::default()
     };
     process_multipart_upload(
@@ -121,7 +121,7 @@ pub async fn upload_image(
             "bmp".to_string(),
             "webp".to_string(),
         ],
-        max_file_size: state.config.upload.file_max_bytes as u64,
+        max_file_size: state.settings.upload.file_max_bytes as u64,
     };
     process_multipart_upload(state, multipart, &policy, UPLOAD_BUCKET, true, current_user).await
 }
@@ -149,7 +149,7 @@ pub async fn upload_avatar(
             "bmp".to_string(),
             "webp".to_string(),
         ],
-        max_file_size: state.config.upload.avatar_max_bytes as u64,
+        max_file_size: state.settings.upload.avatar_max_bytes as u64,
     };
     process_multipart_upload(state, multipart, &policy, AVATAR_BUCKET, true, current_user).await
 }

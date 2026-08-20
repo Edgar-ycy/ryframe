@@ -23,7 +23,6 @@ use ryframe_application::system::{
     MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService, MessageTemplate, WebSocketTicket,
 };
 use ryframe_application::{AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangedEvent};
-use ryframe_config::MessagingConfig;
 use ryframe_kernel::{AppError, Locale, Localizer};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -34,6 +33,7 @@ use utoipa::ToSchema;
 
 use crate::{
     message_presenter::{MessageVo, render_message},
+    settings::MessagingSettings,
     state::AppState,
 };
 

@@ -105,7 +105,7 @@ async fn runs(
     let page = state
         .services
         .data_retention
-        .list_runs(&current_user, query.into_page(state.pagination)?)
+        .list_runs(&current_user, query.into_page(state.settings.pagination)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(ApiPageResponse::page(
@@ -113,6 +113,6 @@ async fn runs(
         page.total,
         page.page,
         page.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }

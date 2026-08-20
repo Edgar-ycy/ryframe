@@ -161,7 +161,7 @@ pub async fn get_captcha_config_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> HttpResult<Json<ApiResponse<CaptchaConfigResponse>>> {
-    let tenant_id = tenant_id_from_headers(&headers, &state.config.multi_tenancy)?;
+    let tenant_id = tenant_id_from_headers(&headers, &state.settings.multi_tenancy)?;
     let enabled = state
         .services
         .config
@@ -230,7 +230,7 @@ async fn issue_captcha(
 }
 
 async fn enforce_captcha_limit(state: &AppState, key: &str, limit: u32) -> HttpResult<()> {
-    if !state.config.rate_limit.enabled {
+    if !state.settings.rate_limit.enabled {
         return Ok(());
     }
     let decision = state

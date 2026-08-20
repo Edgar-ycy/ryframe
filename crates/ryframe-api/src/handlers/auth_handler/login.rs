@@ -237,7 +237,7 @@ pub async fn login(
                 jar.add(refresh_cookie(
                     &result.refresh_token,
                     result.refresh_expires_at,
-                    state.config.environment,
+                    state.settings.production,
                 )),
                 Json(ApiResponse::success(LoginResponse::new(
                     result,

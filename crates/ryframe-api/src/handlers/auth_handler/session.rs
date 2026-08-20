@@ -52,7 +52,7 @@ pub async fn csrf(
         CSRF_TTL_SECONDS,
     )?;
     let mut response = (
-        jar.add(csrf_cookie(&token, state.config.environment)),
+        jar.add(csrf_cookie(&token, state.settings.production)),
         Json(ApiResponse::success(CsrfResponse {
             csrf_token: token,
             expires_in: CSRF_TTL_SECONDS,
@@ -101,7 +101,7 @@ pub async fn logout(
         Ok(claims) => Some(claims),
         Err(HttpAppError(AppError::Authentication(_))) if !has_refresh_cookie => None,
         Err(error) => {
-            return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
+            return Ok((clear_auth_cookies(jar, state.settings.production), error).into_response());
         }
     };
     if let Some(value) = headers
@@ -145,7 +145,7 @@ pub async fn logout(
         }
     }
     Ok((
-        clear_auth_cookies(jar, state.config.environment),
+        clear_auth_cookies(jar, state.settings.production),
         Json(ApiResponse::<()>::success_no_data()),
     )
         .into_response())
@@ -178,14 +178,18 @@ pub async fn refresh(
     let claims = match decode_refresh_cookie(&jar, &state.auth.token_settings) {
         Ok(claims) => claims,
         Err(error) => {
-            return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
+            return Ok((clear_auth_cookies(jar, state.settings.production), error).into_response());
         }
     };
-    if !state.config.multi_tenancy.allows_tenant(&claims.tenant_id) {
+    if !state
+        .settings
+        .multi_tenancy
+        .allows_tenant(&claims.tenant_id)
+    {
         let error = HttpAppError::from(AppError::Authentication(
             "刷新会话租户不适用于当前运行模式，请重新登录".into(),
         ));
-        return Ok((clear_auth_cookies(jar, state.config.environment), error).into_response());
+        return Ok((clear_auth_cookies(jar, state.settings.production), error).into_response());
     }
     let rotation_attempt_id = verify_csrf(
         &jar,
@@ -242,7 +246,7 @@ pub async fn refresh(
                 jar.add(refresh_cookie(
                     &result.refresh_token,
                     result.refresh_expires_at,
-                    state.config.environment,
+                    state.settings.production,
                 )),
                 Json(ApiResponse::success(LoginResponse::new(
                     result,
@@ -272,7 +276,7 @@ pub async fn refresh(
             }
             let error = HttpAppError::from(error);
             let mut response = if clear_cookie {
-                (clear_auth_cookies(jar, state.config.environment), error).into_response()
+                (clear_auth_cookies(jar, state.settings.production), error).into_response()
             } else {
                 error.into_response()
             };
@@ -398,7 +402,7 @@ pub async fn revoke_session(
 
     let response = Json(ApiResponse::<()>::success_no_data());
     if sid == claims.sid {
-        Ok((clear_auth_cookies(jar, state.config.environment), response).into_response())
+        Ok((clear_auth_cookies(jar, state.settings.production), response).into_response())
     } else {
         Ok((jar, response).into_response())
     }

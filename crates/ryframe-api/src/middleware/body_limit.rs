@@ -9,8 +9,9 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use ryframe_config::UploadLimitsConfig;
 use ryframe_kernel::ErrorCode;
+
+use crate::settings::UploadSettings;
 
 pub const FILE_UPLOAD_LIMIT_BYTES: usize = 10 * 1024 * 1024;
 pub const AVATAR_UPLOAD_LIMIT_BYTES: usize = 5 * 1024 * 1024;
@@ -19,7 +20,7 @@ pub const AVATAR_UPLOAD_LIMIT_BYTES: usize = 5 * 1024 * 1024;
 /// `to_bytes` 会在消费请求体时强制该限制，因此分块请求也无法绕过与 Content-Length
 /// 相同的 413 边界。
 pub async fn body_limit_middleware(
-    State(config): State<UploadLimitsConfig>,
+    State(config): State<UploadSettings>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -45,7 +46,7 @@ pub async fn body_limit_middleware(
         .await
 }
 
-pub fn request_body_limit(config: &UploadLimitsConfig, path: &str) -> usize {
+pub fn request_body_limit(config: &UploadSettings, path: &str) -> usize {
     if is_avatar_upload(path) {
         config.avatar_max_bytes + config.multipart_envelope_bytes
     } else {

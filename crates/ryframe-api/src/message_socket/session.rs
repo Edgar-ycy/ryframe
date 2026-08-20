@@ -38,7 +38,11 @@ pub async fn upgrade(
             return Err(error.into());
         }
     };
-    if !state.config.multi_tenancy.allows_tenant(&ticket.tenant_id) {
+    if !state
+        .settings
+        .multi_tenancy
+        .allows_tenant(&ticket.tenant_id)
+    {
         return Err(
             AppError::Authentication("WebSocket 票据租户不适用于当前运行模式".into()).into(),
         );
@@ -157,7 +161,7 @@ fn validate_websocket_origin(state: &AppState, headers: &HeaderMap) -> HttpResul
     {
         Some(origin)
             if state
-                .config
+                .settings
                 .cors
                 .allow_origins
                 .iter()
@@ -166,7 +170,7 @@ fn validate_websocket_origin(state: &AppState, headers: &HeaderMap) -> HttpResul
             Ok(())
         }
         Some(_) => Err(AppError::Authorization("WebSocket Origin 未获允许".into()).into()),
-        None if state.config.environment.is_production() => {
+        None if state.settings.production => {
             Err(AppError::Authorization("生产环境的 WebSocket 请求必须携带 Origin".into()).into())
         }
         None => Ok(()),

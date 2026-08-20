@@ -3262,7 +3262,6 @@ dependencies = [
  "ryframe-adapters",
  "ryframe-application",
  "ryframe-auth",
- "ryframe-config",
  "ryframe-kernel",
  "ryframe-macro",
  "ryframe-tenant-db",

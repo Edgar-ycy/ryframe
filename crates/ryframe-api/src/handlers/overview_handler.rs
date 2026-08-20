@@ -5,7 +5,6 @@ use axum::{
     extract::{Query, State},
 };
 use ryframe_application::system::OverviewRange;
-use ryframe_config::RedisMode;
 use ryframe_macro::{get, route};
 
 use crate::{
@@ -51,11 +50,7 @@ pub(crate) async fn overview(
     let active_connections = state.monitor.database.active_connections().await;
     let readiness = state.monitor.readiness.snapshot();
     let storage_available = state.services.file.check_storage().await.is_ok();
-    let redis_configured = state
-        .config
-        .redis
-        .as_ref()
-        .is_some_and(|config| config.mode != RedisMode::Disabled);
+    let redis_configured = state.settings.redis_configured;
     let database_status = if topology.primary_healthy {
         if topology.replicas.iter().all(|node| node.healthy)
             && topology.sources.iter().all(|node| node.healthy)
@@ -72,7 +67,7 @@ pub(crate) async fn overview(
     } else {
         "disabled"
     };
-    let messaging_status = if !state.config.messaging.enabled {
+    let messaging_status = if !state.settings.messaging.enabled {
         "disabled"
     } else if redis_configured && redis_status != "up" {
         "degraded"
@@ -96,11 +91,11 @@ pub(crate) async fn overview(
             object_storage: MonitorOverviewDependencyVo {
                 status: if storage_available { "up" } else { "down" }.to_owned(),
                 configured: true,
-                detail: Some(state.config.object_storage.backend.as_str().to_owned()),
+                detail: Some(state.settings.object_storage.backend.clone()),
             },
             messaging: MonitorOverviewDependencyVo {
                 status: messaging_status.to_owned(),
-                configured: state.config.messaging.enabled,
+                configured: state.settings.messaging.enabled,
                 detail: None,
             },
         },

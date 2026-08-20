@@ -87,10 +87,10 @@ async fn create(
         if bytes.is_empty() {
             return Err(AppError::Validation("用户导入文件不能为空".into()).into());
         }
-        if bytes.len() > state.config.user_import.max_file_bytes {
+        if bytes.len() > state.settings.user_import_max_file_bytes {
             return Err(AppError::PayloadTooLarge(format!(
                 "用户导入文件超过 {} 字节上限",
-                state.config.user_import.max_file_bytes
+                state.settings.user_import_max_file_bytes
             ))
             .into());
         }
@@ -187,7 +187,7 @@ async fn list(
         .list(
             &current_user,
             UserImportListParams {
-                page: query.into_page(state.pagination)?,
+                page: query.into_page(state.settings.pagination)?,
                 status,
             },
         )
@@ -198,7 +198,7 @@ async fn list(
         page.total,
         page.page,
         page.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 
@@ -266,7 +266,7 @@ async fn rows(
         .rows(
             &current_user,
             parse_import_id(&id)?,
-            query.into_page(state.pagination)?,
+            query.into_page(state.settings.pagination)?,
         )
         .await
         .map_err(crate::http::HttpAppError::from)?;
@@ -275,7 +275,7 @@ async fn rows(
         page.total,
         page.page,
         page.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 

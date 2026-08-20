@@ -29,7 +29,7 @@ pub(crate) async fn list(
     current_user: RequestPrincipal,
     Query(query): Query<UserListQuery>,
 ) -> HttpResult<Json<ApiPageResponse<UserVo>>> {
-    let params = query.into_service_params(state.pagination)?;
+    let params = query.into_service_params(state.settings.pagination)?;
     state
         .services
         .user
@@ -42,7 +42,7 @@ pub(crate) async fn list(
                 page.total,
                 page.page,
                 page.page_size,
-                state.pagination.max_page_size(),
+                state.settings.pagination.max_page_size(),
             ))
         })
 }
@@ -59,7 +59,7 @@ pub(crate) async fn options(
     current_user: RequestPrincipal,
     Query(query): Query<OptionQuery>,
 ) -> HttpResult<Json<ApiResponse<OptionList>>> {
-    let query = query.resolve(state.pagination)?;
+    let query = query.resolve(state.settings.pagination)?;
     state
         .services
         .user

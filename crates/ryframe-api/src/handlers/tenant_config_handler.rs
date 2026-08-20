@@ -95,7 +95,7 @@ async fn list_packages(
     let page = state
         .services
         .tenant_config_transfer
-        .list_bundles(&current_user, query.into_page(state.pagination)?)
+        .list_bundles(&current_user, query.into_page(state.settings.pagination)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(page_response(
@@ -103,7 +103,7 @@ async fn list_packages(
         page.total,
         page.page,
         page.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 
@@ -213,7 +213,7 @@ async fn upload_transfer(
                 AppError::Validation("配置包文件名必须以 .ryframe-config.zip 结尾".into()).into(),
             );
         }
-        let max_package_bytes = state.config.tenant_config_transfer.max_package_bytes;
+        let max_package_bytes = state.settings.tenant_config_max_package_bytes;
         let declared_length = field
             .headers()
             .get(CONTENT_LENGTH)
@@ -312,7 +312,7 @@ async fn list_transfers(
     let page = state
         .services
         .tenant_config_transfer
-        .list_transfers(&current_user, query.into_page(state.pagination)?)
+        .list_transfers(&current_user, query.into_page(state.settings.pagination)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(page_response(
@@ -320,7 +320,7 @@ async fn list_transfers(
         page.total,
         page.page,
         page.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 
@@ -374,7 +374,7 @@ async fn list_transfer_items(
         .list_transfer_items(
             &current_user,
             parse_positive_id(&id, "配置迁移")?,
-            query.into_page(state.pagination)?,
+            query.into_page(state.settings.pagination)?,
         )
         .await
         .map_err(crate::http::HttpAppError::from)?;
@@ -383,7 +383,7 @@ async fn list_transfer_items(
         page.total,
         page.page,
         page.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 

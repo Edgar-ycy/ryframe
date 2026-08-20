@@ -17,10 +17,12 @@ use ryframe_adapters::{
     rate_limit::RateLimiter,
 };
 
+use crate::settings::RateLimitSettings;
+
 #[derive(Clone)]
 pub struct RateLimitState {
     pub limiter: Arc<RateLimiter>,
-    pub config: Arc<ryframe_config::RateLimitConfig>,
+    pub config: Arc<RateLimitSettings>,
 }
 
 pub async fn rate_limit_middleware(

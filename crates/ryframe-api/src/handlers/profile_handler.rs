@@ -131,7 +131,7 @@ pub async fn update_avatar(
                     &current_user,
                     filename,
                     data.to_vec(),
-                    state.config.upload.avatar_max_bytes as u64,
+                    state.settings.upload.avatar_max_bytes as u64,
                 )
                 .await?,
         );

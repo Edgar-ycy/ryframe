@@ -22,7 +22,7 @@ pub(crate) fn attachment_content_disposition(filename: &str) -> HttpResult<Heade
 
 pub(crate) fn tenant_id_from_headers(
     headers: &HeaderMap,
-    config: &ryframe_config::MultiTenancyConfig,
+    config: &crate::settings::MultiTenancySettings,
 ) -> HttpResult<String> {
     if let Some(tenant_id) = config.fixed_tenant_id() {
         if let Some(requested) = headers.get("X-Tenant-Id") {

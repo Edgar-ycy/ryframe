@@ -62,7 +62,7 @@ async fn list_types(
     current_user: RequestPrincipal,
     Query(query): Query<DictTypeListQuery>,
 ) -> HttpResult<Json<ApiPageResponse<DictTypeVo>>> {
-    let (page, filter) = query.into_parts(state.pagination)?;
+    let (page, filter) = query.into_parts(state.settings.pagination)?;
     let page_result = state
         .services
         .dict
@@ -77,7 +77,7 @@ async fn list_types(
         page_result.total,
         page_result.page,
         page_result.page_size,
-        state.pagination.max_page_size(),
+        state.settings.pagination.max_page_size(),
     )))
 }
 

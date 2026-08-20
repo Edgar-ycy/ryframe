@@ -25,7 +25,7 @@ pub async fn complete_password_reset(
         .request_id
         .parse::<i64>()
         .map_err(|_| AppError::Validation("无效的重置请求ID".into()))?;
-    let tenant_id = match state.config.multi_tenancy.fixed_tenant_id() {
+    let tenant_id = match state.settings.multi_tenancy.fixed_tenant_id() {
         Some(fixed_tenant_id) => match req.tenant_id.as_deref() {
             None => fixed_tenant_id,
             Some(requested_tenant_id) if requested_tenant_id == fixed_tenant_id => fixed_tenant_id,

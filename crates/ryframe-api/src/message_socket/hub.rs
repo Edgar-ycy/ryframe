@@ -15,7 +15,7 @@ pub struct MessageHub {
     replay_trigger: mpsc::Sender<MessageIdentity>,
     replay_receiver: Arc<Mutex<Option<mpsc::Receiver<MessageIdentity>>>>,
     pub(super) localizer: Arc<Localizer>,
-    pub(super) config: MessagingConfig,
+    pub(super) config: MessagingSettings,
 }
 
 struct HubConnection {
@@ -29,7 +29,7 @@ struct HubConnection {
 
 impl MessageHub {
     /// 创建空的本实例连接中心。
-    pub fn new(localizer: Arc<Localizer>, config: MessagingConfig) -> Self {
+    pub fn new(localizer: Arc<Localizer>, config: MessagingSettings) -> Self {
         let (replay_trigger, replay_receiver) = mpsc::channel(config.outbound_buffer);
         Self {
             connections: Arc::new(DashMap::new()),
