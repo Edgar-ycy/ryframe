@@ -16,6 +16,7 @@ mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
 mod legacy_overview_persistence;
 mod legacy_post_persistence;
+mod legacy_profile_persistence;
 mod legacy_role_read;
 mod legacy_role_write;
 mod login_info_persistence;
@@ -26,6 +27,7 @@ mod overview_persistence;
 mod persistence;
 mod post_persistence;
 mod principal_resolver;
+mod profile_persistence;
 mod refresh_session;
 mod request_tenant_context;
 mod role_read;
@@ -93,6 +95,8 @@ pub use legacy_overview_persistence::port as legacy_overview_persistence;
 #[doc(hidden)]
 pub use legacy_post_persistence::port as legacy_post_persistence;
 #[doc(hidden)]
+pub use legacy_profile_persistence::port as legacy_profile_persistence;
+#[doc(hidden)]
 pub use legacy_role_read::port as legacy_role_read;
 #[doc(hidden)]
 pub use legacy_role_write::port as legacy_role_write;
@@ -112,6 +116,10 @@ pub use overview_persistence::{
 pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};
 pub use principal_resolver::PrincipalResolver;
+pub use profile_persistence::{
+    ProfileAvatarFile, ProfileAvatarState, ProfilePersistencePort, ProfileRecord,
+    ProfileTransaction, ProfileUserState,
+};
 pub use refresh_session::{
     RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,
     RefreshSessionRevocation, RefreshSessionRotation,

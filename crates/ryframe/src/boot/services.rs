@@ -361,7 +361,13 @@ pub async fn build_all(
         ryframe_application::legacy_login_info_persistence(database.clone()),
     ));
 
-    let profile = Arc::new(ProfileService::new(database.clone(), authorization_cache));
+    let profile = Arc::new(ProfileService::new(
+        ryframe_application::legacy_profile_persistence(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
+        authorization_cache,
+    ));
     let export = Arc::new(
         ExportService::new(
             database.clone(),
