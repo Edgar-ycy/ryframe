@@ -240,7 +240,8 @@ pub async fn build_all(
         authorization_cache.clone(),
     ));
     let menu = Arc::new(MenuService::new(
-        database.clone(),
+        ryframe_application::legacy_menu_read(database.clone()),
+        ryframe_application::legacy_menu_write(database.clone(), authorization_cache.clone()),
         authorization_cache.clone(),
     ));
 

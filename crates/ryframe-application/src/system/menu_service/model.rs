@@ -1,5 +1,6 @@
-use ryframe_db::{entities::menu, repositories::menu_repo::MenuTreeNode as RepoMenuTreeNode};
 use serde::{Deserialize, Serialize};
+
+use crate::{MenuRecord, MenuTreeRecord};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuType {
@@ -14,9 +15,9 @@ pub enum MenuType {
 impl MenuType {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Directory => menu::Model::MENU_TYPE_DIR,
-            Self::Page => menu::Model::MENU_TYPE_MENU,
-            Self::Action => menu::Model::MENU_TYPE_BUTTON,
+            Self::Directory => "M",
+            Self::Page => "C",
+            Self::Action => "F",
         }
     }
 }
@@ -37,8 +38,8 @@ pub struct MenuVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<menu::Model> for MenuVo {
-    fn from(menu: menu::Model) -> Self {
+impl From<MenuRecord> for MenuVo {
+    fn from(menu: MenuRecord) -> Self {
         Self {
             id: menu.id.to_string(),
             name: menu.name,
@@ -72,14 +73,14 @@ pub struct MenuTreeNode {
     pub children: Vec<MenuTreeNode>,
 }
 
-impl From<RepoMenuTreeNode> for MenuTreeNode {
-    fn from(node: RepoMenuTreeNode) -> Self {
+impl From<MenuTreeRecord> for MenuTreeNode {
+    fn from(node: MenuTreeRecord) -> Self {
         Self {
-            id: node.id,
+            id: node.id.to_string(),
             name: node.name,
-            parent_id: node.parent_id,
+            parent_id: node.parent_id.map(|id| id.to_string()),
             menu_type: node.menu_type,
-            perm_id: node.perm_id,
+            perm_id: node.perm_id.map(|id| id.to_string()),
             perm_code: node.perm_code,
             route_key: node.route_key,
             icon: node.icon,

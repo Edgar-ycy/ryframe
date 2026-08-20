@@ -14,6 +14,7 @@ mod legacy_config_persistence;
 mod legacy_dept_persistence;
 mod legacy_dict_persistence;
 mod legacy_login_info_persistence;
+mod legacy_menu_persistence;
 mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
 mod legacy_overview_persistence;
@@ -24,6 +25,7 @@ mod legacy_role_read;
 mod legacy_role_write;
 mod login_info_persistence;
 mod login_protection;
+mod menu_persistence;
 mod notice_persistence;
 mod oper_log_persistence;
 mod overview_persistence;
@@ -96,6 +98,8 @@ pub use legacy_dict_persistence::port as legacy_dict_persistence;
 #[doc(hidden)]
 pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
 #[doc(hidden)]
+pub use legacy_menu_persistence::{read_port as legacy_menu_read, write_port as legacy_menu_write};
+#[doc(hidden)]
 pub use legacy_notice_persistence::port as legacy_notice_persistence;
 #[doc(hidden)]
 pub use legacy_oper_log_persistence::port as legacy_oper_log_persistence;
@@ -117,6 +121,9 @@ pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
 };
 pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
+pub use menu_persistence::{
+    MenuFilter, MenuReadPort, MenuRecord, MenuTreeRecord, MenuWritePort, MenuWriteTransaction,
+};
 pub use notice_persistence::{
     NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction,
 };
