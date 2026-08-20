@@ -188,7 +188,7 @@ mod tests {
     use ryframe_kernel::DataScope;
 
     use super::*;
-    use crate::{PostPersistenceFuture, PostTransaction};
+    use crate::{ControlTransaction, PersistenceFuture, PostTransaction};
 
     struct FakePersistence {
         calls: Arc<Mutex<Vec<&'static str>>>,
@@ -205,7 +205,7 @@ mod tests {
             &'a self,
             _tenant_id: &'a str,
             _id: i64,
-        ) -> PostPersistenceFuture<'a, Option<PostRecord>> {
+        ) -> PersistenceFuture<'a, Option<PostRecord>> {
             Box::pin(async { unreachable!("本测试不读取详情") })
         }
 
@@ -214,7 +214,7 @@ mod tests {
             _tenant_id: &'a str,
             _page: ValidatedPageQuery,
             _filter: PostFilter<'a>,
-        ) -> PostPersistenceFuture<'a, PageResult<PostRecord>> {
+        ) -> PersistenceFuture<'a, PageResult<PostRecord>> {
             Box::pin(async { unreachable!("本测试不读取列表") })
         }
 
@@ -223,11 +223,11 @@ mod tests {
             _tenant_id: &'a str,
             _filter: PostFilter<'a>,
             _window: ExportCursorWindow,
-        ) -> PostPersistenceFuture<'a, Vec<PostRecord>> {
+        ) -> PersistenceFuture<'a, Vec<PostRecord>> {
             Box::pin(async { unreachable!("本测试不执行导出") })
         }
 
-        fn begin(&self) -> PostPersistenceFuture<'_, Box<dyn PostTransaction>> {
+        fn begin(&self) -> PersistenceFuture<'_, Box<dyn PostTransaction>> {
             self.calls.lock().expect("调用记录锁应可用").push("begin");
             let transaction = FakeTransaction {
                 calls: Arc::clone(&self.calls),
@@ -238,7 +238,7 @@ mod tests {
     }
 
     impl PostTransaction for FakeTransaction {
-        fn lock_configuration<'a>(&'a self, _tenant_id: &'a str) -> PostPersistenceFuture<'a, ()> {
+        fn lock_configuration<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
             self.calls.lock().expect("调用记录锁应可用").push("lock");
             Box::pin(async { Ok(()) })
         }
@@ -247,7 +247,7 @@ mod tests {
             &'a self,
             _tenant_id: &'a str,
             _code: &'a str,
-        ) -> PostPersistenceFuture<'a, Option<PostRecord>> {
+        ) -> PersistenceFuture<'a, Option<PostRecord>> {
             Box::pin(async { Ok(None) })
         }
 
@@ -255,7 +255,7 @@ mod tests {
             &'a self,
             _tenant_id: &'a str,
             _id: i64,
-        ) -> PostPersistenceFuture<'a, Option<PostRecord>> {
+        ) -> PersistenceFuture<'a, Option<PostRecord>> {
             self.calls.lock().expect("调用记录锁应可用").push("find");
             let record = self.record.clone();
             Box::pin(async move { Ok(Some(record)) })
@@ -265,7 +265,7 @@ mod tests {
             &'a self,
             _tenant_id: &'a str,
             record: PostRecord,
-        ) -> PostPersistenceFuture<'a, PostRecord> {
+        ) -> PersistenceFuture<'a, PostRecord> {
             Box::pin(async move { Ok(record) })
         }
 
@@ -273,24 +273,26 @@ mod tests {
             &'a self,
             _tenant_id: &'a str,
             record: PostRecord,
-        ) -> PostPersistenceFuture<'a, PostRecord> {
+        ) -> PersistenceFuture<'a, PostRecord> {
             self.calls.lock().expect("调用记录锁应可用").push("update");
             Box::pin(async move { Ok(record) })
         }
 
-        fn delete<'a>(&'a self, _tenant_id: &'a str, _id: i64) -> PostPersistenceFuture<'a, ()> {
+        fn delete<'a>(&'a self, _tenant_id: &'a str, _id: i64) -> PersistenceFuture<'a, ()> {
             Box::pin(async { Ok(()) })
         }
 
         fn increment_configuration_version<'a>(
             &'a self,
             _tenant_id: &'a str,
-        ) -> PostPersistenceFuture<'a, ()> {
+        ) -> PersistenceFuture<'a, ()> {
             self.calls.lock().expect("调用记录锁应可用").push("version");
             Box::pin(async { Ok(()) })
         }
+    }
 
-        fn commit(self: Box<Self>) -> PostPersistenceFuture<'static, ()> {
+    impl ControlTransaction for FakeTransaction {
+        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
             self.calls.lock().expect("调用记录锁应可用").push("commit");
             Box::pin(async { Ok(()) })
         }

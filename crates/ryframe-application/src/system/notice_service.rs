@@ -1,13 +1,14 @@
-use ryframe_db::{AutoFill, FillContext};
-use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{NoticeFilter, NoticeRepository, Repository, entities::notice};
+use std::sync::Arc;
+
+use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
-use sea_orm::TransactionTrait;
 use serde::Serialize;
+
+use crate::{NoticeFilter, NoticePersistencePort, NoticeRecord};
 
 #[derive(Debug, Serialize)]
 pub struct NoticeVo {
-    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    /// ID 使用字符串，避免 64 位值超出 JavaScript 安全整数范围。
     pub id: String,
     pub title: String,
     pub content_markdown: String,
@@ -17,16 +18,16 @@ pub struct NoticeVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<notice::Model> for NoticeVo {
-    fn from(n: notice::Model) -> Self {
+impl From<NoticeRecord> for NoticeVo {
+    fn from(notice: NoticeRecord) -> Self {
         Self {
-            id: n.id.to_string(),
-            title: n.title,
-            content_markdown: n.content,
-            notice_type: n.r#type,
-            status: n.status,
-            created_by: n.created_by.map(|id| id.to_string()),
-            created_at: n.created_at,
+            id: notice.id.to_string(),
+            title: notice.title,
+            content_markdown: notice.content,
+            notice_type: notice.notice_type,
+            status: notice.status,
+            created_by: notice.created_by.map(|id| id.to_string()),
+            created_at: notice.created_at,
         }
     }
 }
@@ -40,16 +41,12 @@ pub struct NoticeListParams {
 }
 
 pub struct NoticeService {
-    db: ControlDatabaseCluster,
-    notice_repo: NoticeRepository,
+    persistence: Arc<dyn NoticePersistencePort>,
 }
 
 impl NoticeService {
-    pub fn new(db: ControlDatabaseCluster) -> Self {
-        Self {
-            db,
-            notice_repo: NoticeRepository,
-        }
+    pub fn new(persistence: Arc<dyn NoticePersistencePort>) -> Self {
+        Self { persistence }
     }
 
     pub async fn find_by_page(
@@ -58,32 +55,29 @@ impl NoticeService {
         params: NoticeListParams,
     ) -> AppResult<PageResult<NoticeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let scope_ctx = actor.data_scope_context();
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
+        let data_scope = actor.data_scope_context();
+        let filter = NoticeFilter {
+            title: params.title.as_deref(),
+            notice_type: params.notice_type.as_deref(),
+            status: params.status.as_deref(),
+            data_scope: &data_scope,
+        };
         let page = self
-            .notice_repo
-            .find_by_page_filtered(
-                &db,
-                tenant_id,
-                &params.page,
-                &NoticeFilter {
-                    title: params.title.as_deref(),
-                    notice_type: params.notice_type.as_deref(),
-                    status: params.status.as_deref(),
-                    data_scope: &scope_ctx,
-                },
-            )
+            .persistence
+            .find_by_page(tenant_id, params.page, filter)
             .await?;
-        let records = page.records.into_iter().map(NoticeVo::from).collect();
-        Ok(PageResult::new(records, page.total, &params.page))
+        Ok(PageResult::new(
+            page.records.into_iter().map(NoticeVo::from).collect(),
+            page.total,
+            &params.page,
+        ))
     }
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<NoticeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         Ok(self
-            .notice_repo
-            .find_by_id(&db, tenant_id, id)
+            .persistence
+            .find_by_id(tenant_id, id)
             .await?
             .map(NoticeVo::from))
     }
@@ -96,26 +90,20 @@ impl NoticeService {
         notice_type: Option<&str>,
     ) -> AppResult<NoticeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let mut new_notice = notice::Model {
+        let now = Utc::now();
+        let record = NoticeRecord {
             id: crate::next_id()?,
-            tenant_id: tenant_id.to_owned(),
-            title: title.to_string(),
-            content: content_markdown.to_string(),
-            r#type: notice_type.map(|s| s.to_string()),
-            status: notice::Model::STATUS_PUBLISHED.to_string(),
+            title: title.to_owned(),
+            content: content_markdown.to_owned(),
+            notice_type: notice_type.map(str::to_owned),
+            status: "1".into(),
             created_by: Some(actor.user_id),
-            del_flag: notice::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: Default::default(),
-            updated_at: Default::default(),
+            created_at: now,
+            updated_at: now,
         };
-        new_notice.fill_on_insert(&FillContext::new())?;
-        let transaction = db.begin().await.map_err(database_error)?;
-        let saved = self
-            .notice_repo
-            .insert_in_transaction(&transaction, tenant_id, new_notice)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        let transaction = self.persistence.begin().await?;
+        let saved = transaction.insert(tenant_id, record).await?;
+        transaction.commit().await?;
         Ok(NoticeVo::from(saved))
     }
 
@@ -129,41 +117,165 @@ impl NoticeService {
         status: String,
     ) -> AppResult<NoticeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let mut n = self
-            .notice_repo
-            .find_by_id(db, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        let mut notice = transaction
+            .find_by_id_for_update(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
-        n.title = title.to_string();
-        n.content = content_markdown.to_string();
-        n.r#type = notice_type.map(|s| s.to_string());
-        n.status = status;
-        n.fill_on_update(&FillContext::new())?;
-        let transaction = db.begin().await.map_err(database_error)?;
-        let saved = self
-            .notice_repo
-            .update_in_transaction(&transaction, tenant_id, n)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        notice.title = title.to_owned();
+        notice.content = content_markdown.to_owned();
+        notice.notice_type = notice_type.map(str::to_owned);
+        notice.status = status;
+        notice.updated_at = Utc::now();
+        let saved = transaction.update(tenant_id, notice).await?;
+        transaction.commit().await?;
         Ok(NoticeVo::from(saved))
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        self.notice_repo
-            .find_by_id(db, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        transaction
+            .find_by_id_for_update(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
-        let transaction = db.begin().await.map_err(database_error)?;
-        self.notice_repo
-            .delete_in_transaction(&transaction, tenant_id, id)
-            .await?;
-        crate::commit_current_audit(transaction).await
+        transaction.delete(tenant_id, id).await?;
+        transaction.commit().await
     }
 }
 
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use chrono::TimeZone;
+    use ryframe_kernel::DataScope;
+
+    use super::*;
+    use crate::{ControlTransaction, NoticeTransaction, PersistenceFuture};
+
+    struct FakePersistence {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+        record: NoticeRecord,
+    }
+
+    struct FakeTransaction {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+        record: NoticeRecord,
+    }
+
+    impl NoticePersistencePort for FakePersistence {
+        fn find_by_id<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _id: i64,
+        ) -> PersistenceFuture<'a, Option<NoticeRecord>> {
+            Box::pin(async { unreachable!("本测试不读取详情") })
+        }
+
+        fn find_by_page<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _page: ValidatedPageQuery,
+            _filter: NoticeFilter<'a>,
+        ) -> PersistenceFuture<'a, PageResult<NoticeRecord>> {
+            Box::pin(async { unreachable!("本测试不读取列表") })
+        }
+
+        fn begin(&self) -> PersistenceFuture<'_, Box<dyn NoticeTransaction>> {
+            self.calls.lock().expect("调用记录锁应可用").push("begin");
+            let transaction = FakeTransaction {
+                calls: Arc::clone(&self.calls),
+                record: self.record.clone(),
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn NoticeTransaction>) })
+        }
+    }
+
+    impl NoticeTransaction for FakeTransaction {
+        fn find_by_id_for_update<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _id: i64,
+        ) -> PersistenceFuture<'a, Option<NoticeRecord>> {
+            self.calls.lock().expect("调用记录锁应可用").push("find");
+            let record = self.record.clone();
+            Box::pin(async move { Ok(Some(record)) })
+        }
+
+        fn insert<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            record: NoticeRecord,
+        ) -> PersistenceFuture<'a, NoticeRecord> {
+            Box::pin(async move { Ok(record) })
+        }
+
+        fn update<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            record: NoticeRecord,
+        ) -> PersistenceFuture<'a, NoticeRecord> {
+            self.calls.lock().expect("调用记录锁应可用").push("update");
+            Box::pin(async move { Ok(record) })
+        }
+
+        fn delete<'a>(&'a self, _tenant_id: &'a str, _id: i64) -> PersistenceFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl ControlTransaction for FakeTransaction {
+        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+            self.calls.lock().expect("调用记录锁应可用").push("commit");
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn update_locks_row_inside_application_owned_transaction() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let timestamp = Utc
+            .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
+            .single()
+            .expect("测试时间应有效");
+        let persistence = Arc::new(FakePersistence {
+            calls: Arc::clone(&calls),
+            record: NoticeRecord {
+                id: 8,
+                title: "旧通知".into(),
+                content: "旧内容".into(),
+                notice_type: Some("1".into()),
+                status: "1".into(),
+                created_by: Some(1),
+                created_at: timestamp,
+                updated_at: timestamp,
+            },
+        });
+        let service = NoticeService::new(persistence);
+        let actor = ActorContext {
+            user_id: 1,
+            tenant_id: "tenant-a".into(),
+            username: "tester".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: DataScope::SelfOnly,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin: false,
+        };
+
+        let updated = service
+            .update(&actor, 8, "新通知", "新内容", Some("2"), "0".into())
+            .await
+            .expect("通知更新应成功");
+
+        assert_eq!(updated.title, "新通知");
+        assert_eq!(updated.content_markdown, "新内容");
+        assert_eq!(updated.notice_type.as_deref(), Some("2"));
+        assert_eq!(
+            *calls.lock().expect("调用记录锁应可用"),
+            ["begin", "find", "update", "commit"]
+        );
+    }
 }

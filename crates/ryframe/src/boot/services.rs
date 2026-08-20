@@ -256,7 +256,9 @@ pub async fn build_all(
             }) as Arc<dyn DictCacheStore>
         }),
     ));
-    let notice = Arc::new(NoticeService::new(database.clone()));
+    let notice = Arc::new(NoticeService::new(
+        ryframe_application::legacy_notice_persistence(database.clone()),
+    ));
     let oper_log = Arc::new(OperLogService::new(database.clone()));
     let file = Arc::new(FileService::new(
         database.clone(),

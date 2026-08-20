@@ -7,8 +7,11 @@ mod authorization_resolver;
 mod file_content;
 mod id_generator;
 pub mod jobs;
+mod legacy_notice_persistence;
 mod legacy_post_persistence;
 mod login_protection;
+mod notice_persistence;
+mod persistence;
 mod post_persistence;
 mod principal_resolver;
 mod refresh_session;
@@ -57,11 +60,15 @@ pub use jobs::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 #[doc(hidden)]
+pub use legacy_notice_persistence::port as legacy_notice_persistence;
+#[doc(hidden)]
 pub use legacy_post_persistence::port as legacy_post_persistence;
 pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
-pub use post_persistence::{
-    PostFilter, PostPersistenceFuture, PostPersistencePort, PostRecord, PostTransaction,
+pub use notice_persistence::{
+    NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction,
 };
+pub use persistence::{ControlTransaction, PersistenceFuture};
+pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};
 pub use principal_resolver::PrincipalResolver;
 pub use refresh_session::{
     RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,

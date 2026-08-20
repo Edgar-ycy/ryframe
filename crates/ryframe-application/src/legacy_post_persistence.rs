@@ -9,7 +9,10 @@ use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
 
-use crate::{PostFilter, PostPersistenceFuture, PostPersistencePort, PostRecord, PostTransaction};
+use crate::{
+    ControlTransaction, PersistenceFuture, PostFilter, PostPersistencePort, PostRecord,
+    PostTransaction,
+};
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn PostPersistencePort> {
     Arc::new(LegacyPostPersistence { database })
@@ -28,7 +31,7 @@ impl PostPersistencePort for LegacyPostPersistence {
         &'a self,
         tenant_id: &'a str,
         id: i64,
-    ) -> PostPersistenceFuture<'a, Option<PostRecord>> {
+    ) -> PersistenceFuture<'a, Option<PostRecord>> {
         Box::pin(async move {
             let database = self
                 .database
@@ -46,7 +49,7 @@ impl PostPersistencePort for LegacyPostPersistence {
         tenant_id: &'a str,
         page: ValidatedPageQuery,
         filter: PostFilter<'a>,
-    ) -> PostPersistenceFuture<'a, PageResult<PostRecord>> {
+    ) -> PersistenceFuture<'a, PageResult<PostRecord>> {
         Box::pin(async move {
             let database = self
                 .database
@@ -75,7 +78,7 @@ impl PostPersistencePort for LegacyPostPersistence {
         tenant_id: &'a str,
         filter: PostFilter<'a>,
         window: ExportCursorWindow,
-    ) -> PostPersistenceFuture<'a, Vec<PostRecord>> {
+    ) -> PersistenceFuture<'a, Vec<PostRecord>> {
         Box::pin(async move {
             let database = self
                 .database
@@ -95,7 +98,7 @@ impl PostPersistencePort for LegacyPostPersistence {
         })
     }
 
-    fn begin(&self) -> PostPersistenceFuture<'_, Box<dyn PostTransaction>> {
+    fn begin(&self) -> PersistenceFuture<'_, Box<dyn PostTransaction>> {
         Box::pin(async move {
             let transaction = self
                 .database
@@ -109,7 +112,7 @@ impl PostPersistencePort for LegacyPostPersistence {
 }
 
 impl PostTransaction for LegacyPostTransaction {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PostPersistenceFuture<'a, ()> {
+    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
             TenantConfigTransferRepository
                 .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)
@@ -122,7 +125,7 @@ impl PostTransaction for LegacyPostTransaction {
         &'a self,
         tenant_id: &'a str,
         code: &'a str,
-    ) -> PostPersistenceFuture<'a, Option<PostRecord>> {
+    ) -> PersistenceFuture<'a, Option<PostRecord>> {
         Box::pin(async move {
             Ok(post::Entity::find()
                 .filter(post::Column::TenantId.eq(tenant_id))
@@ -140,7 +143,7 @@ impl PostTransaction for LegacyPostTransaction {
         &'a self,
         tenant_id: &'a str,
         id: i64,
-    ) -> PostPersistenceFuture<'a, Option<PostRecord>> {
+    ) -> PersistenceFuture<'a, Option<PostRecord>> {
         Box::pin(async move {
             Ok(post::Entity::find_by_id(id)
                 .filter(post::Column::TenantId.eq(tenant_id))
@@ -157,7 +160,7 @@ impl PostTransaction for LegacyPostTransaction {
         &'a self,
         tenant_id: &'a str,
         record: PostRecord,
-    ) -> PostPersistenceFuture<'a, PostRecord> {
+    ) -> PersistenceFuture<'a, PostRecord> {
         Box::pin(async move {
             PostRepository
                 .insert_in_transaction(&self.transaction, tenant_id, to_entity(tenant_id, record))
@@ -170,7 +173,7 @@ impl PostTransaction for LegacyPostTransaction {
         &'a self,
         tenant_id: &'a str,
         record: PostRecord,
-    ) -> PostPersistenceFuture<'a, PostRecord> {
+    ) -> PersistenceFuture<'a, PostRecord> {
         Box::pin(async move {
             PostRepository
                 .update_in_transaction(&self.transaction, tenant_id, to_entity(tenant_id, record))
@@ -179,7 +182,7 @@ impl PostTransaction for LegacyPostTransaction {
         })
     }
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PostPersistenceFuture<'a, ()> {
+    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
             PostRepository
                 .delete_in_transaction(&self.transaction, tenant_id, id)
@@ -190,7 +193,7 @@ impl PostTransaction for LegacyPostTransaction {
     fn increment_configuration_version<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PostPersistenceFuture<'a, ()> {
+    ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
             TenantConfigTransferRepository
                 .increment_configuration_version_in_txn(&self.transaction, tenant_id)
@@ -198,8 +201,10 @@ impl PostTransaction for LegacyPostTransaction {
                 .map(|_| ())
         })
     }
+}
 
-    fn commit(self: Box<Self>) -> PostPersistenceFuture<'static, ()> {
+impl ControlTransaction for LegacyPostTransaction {
+    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move { crate::commit_current_audit(self.transaction).await })
     }
 }
