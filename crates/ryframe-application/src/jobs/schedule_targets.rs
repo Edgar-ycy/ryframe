@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use ryframe_db::EnqueueBackgroundJob;
 use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
 
+use crate::EnqueueJob;
 use crate::system::{DATA_RETENTION_JOB_TYPE, EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
 
 /// 调度目标允许的租户范围。
@@ -35,7 +35,7 @@ pub trait ScheduledJobTarget: Send + Sync {
     fn available(&self) -> bool;
     fn priority(&self) -> i32;
     fn max_attempts(&self) -> i32;
-    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueBackgroundJob>;
+    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueJob>;
 }
 
 /// 调度目标公开描述，供管理端选择白名单项。
@@ -143,7 +143,7 @@ impl ScheduledJobTarget for DataRetentionTarget {
         20
     }
 
-    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueBackgroundJob> {
+    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueJob> {
         build_system_cleanup_job(self, context)
     }
 }
@@ -179,7 +179,7 @@ impl ScheduledJobTarget for ExportCleanupTarget {
         20
     }
 
-    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueBackgroundJob> {
+    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueJob> {
         build_system_cleanup_job(self, context)
     }
 }
@@ -217,7 +217,7 @@ impl ScheduledJobTarget for MessageRetentionTarget {
         20
     }
 
-    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueBackgroundJob> {
+    fn build_job(&self, context: &ScheduledJobContext<'_>) -> AppResult<EnqueueJob> {
         build_system_cleanup_job(self, context)
     }
 }
@@ -225,7 +225,7 @@ impl ScheduledJobTarget for MessageRetentionTarget {
 fn build_system_cleanup_job(
     target: &dyn ScheduledJobTarget,
     context: &ScheduledJobContext<'_>,
-) -> AppResult<EnqueueBackgroundJob> {
+) -> AppResult<EnqueueJob> {
     if context.tenant_id != "system" || target.scope() != ScheduledJobTargetScope::System {
         return Err(AppError::Authorization(
             "当前租户不能运行平台维护调度目标".into(),
@@ -237,7 +237,7 @@ fn build_system_cleanup_job(
         ));
     }
     let trace_context = crate::trace_context::current_trace_context();
-    Ok(EnqueueBackgroundJob {
+    Ok(EnqueueJob {
         tenant_id: None,
         schedule_id: Some(context.schedule_id),
         scheduled_for: Some(context.scheduled_for),

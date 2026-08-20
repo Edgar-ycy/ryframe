@@ -15,7 +15,11 @@ pub use handlers::{
 };
 pub use metrics::{CallbackJobMetricsObserver, JobMetricsObserver};
 pub use outbox::{OutboxRunResult, OutboxWorker};
-pub use queue::{BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, JobQueue};
+pub(crate) use queue::database_enqueue;
+pub use queue::{
+    BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, EnqueueJob,
+    EnqueueJobResult, JobQueue,
+};
 pub use schedule::{
     CreateJobSchedule, JobScheduleExecutionListParams, JobScheduleExecutionVo,
     JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview, JobScheduleService,

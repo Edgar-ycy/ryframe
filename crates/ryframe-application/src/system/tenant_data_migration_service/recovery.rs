@@ -96,7 +96,7 @@ impl TenantDataMigrationService {
             .queue
             .enqueue_in_transaction(
                 &transaction,
-                EnqueueBackgroundJob {
+                EnqueueJob {
                     tenant_id: Some(migration.tenant_id.clone()),
                     schedule_id: None,
                     scheduled_for: None,
@@ -116,7 +116,7 @@ impl TenantDataMigrationService {
                 },
             )
             .await?;
-        migration.background_job_id = Some(queued.job.id);
+        migration.background_job_id = Some(queued.job_id);
         migration.updated_at = now;
         self.repository
             .save_migration_in_txn(&transaction, migration)

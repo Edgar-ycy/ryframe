@@ -36,7 +36,7 @@ impl TenantConfigTransferService {
                 .queue
                 .enqueue_in_transaction(
                     &transaction,
-                    EnqueueBackgroundJob {
+                    EnqueueJob {
                         tenant_id: Some(tenant_id.to_owned()),
                         schedule_id: None,
                         scheduled_for: Some(now),
@@ -72,7 +72,7 @@ impl TenantConfigTransferService {
                             resource_counts: json!({}),
                             item_count: 0,
                             status: tenant_config_bundle::Model::STATUS_PENDING.to_owned(),
-                            background_job_id: Some(enqueued.job.id),
+                            background_job_id: Some(enqueued.job_id),
                             idempotency_key_hash: Some(idempotency_key_hash.to_owned()),
                             created_by: actor.user_id,
                             error_summary: None,
@@ -87,7 +87,7 @@ impl TenantConfigTransferService {
             } else {
                 tenant_config_bundle::Entity::find()
                     .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
-                    .filter(tenant_config_bundle::Column::BackgroundJobId.eq(enqueued.job.id))
+                    .filter(tenant_config_bundle::Column::BackgroundJobId.eq(enqueued.job_id))
                     .one(&transaction)
                     .await
                     .map_err(database_error)?
@@ -467,7 +467,7 @@ impl TenantConfigTransferService {
                 .queue
                 .enqueue_in_transaction(
                     &transaction,
-                    EnqueueBackgroundJob {
+                    EnqueueJob {
                         tenant_id: Some(tenant_id.to_owned()),
                         schedule_id: None,
                         scheduled_for: Some(now),
@@ -487,7 +487,7 @@ impl TenantConfigTransferService {
                 )
                 .await?;
             if !enqueued.inserted {
-                if operation_job_id(&transfer, &operation) == Some(enqueued.job.id) {
+                if operation_job_id(&transfer, &operation) == Some(enqueued.job_id) {
                     validate_operation_replay_identity(&transfer, &operation)?;
                     let bundle = self
                         .repository
@@ -505,11 +505,11 @@ impl TenantConfigTransferService {
                     if enqueued.inserted {
                         transfer.status =
                             tenant_config_transfer::Model::STATUS_PREVIEW_PENDING.to_owned();
-                        transfer.preview_background_job_id = Some(enqueued.job.id);
+                        transfer.preview_background_job_id = Some(enqueued.job_id);
                         transfer.preview_calculated_at = None;
                         transfer.plan_hash = None;
                         transfer.error_summary = None;
-                    } else if transfer.preview_background_job_id != Some(enqueued.job.id) {
+                    } else if transfer.preview_background_job_id != Some(enqueued.job_id) {
                         return Err(AppError::Conflict("预览幂等键已被其他预览请求使用".into()));
                     }
                 }
@@ -524,9 +524,9 @@ impl TenantConfigTransferService {
                     if enqueued.inserted {
                         transfer.status =
                             tenant_config_transfer::Model::STATUS_APPLY_PENDING.to_owned();
-                        transfer.apply_background_job_id = Some(enqueued.job.id);
+                        transfer.apply_background_job_id = Some(enqueued.job_id);
                         transfer.error_summary = None;
-                    } else if transfer.apply_background_job_id != Some(enqueued.job.id) {
+                    } else if transfer.apply_background_job_id != Some(enqueued.job_id) {
                         return Err(AppError::Conflict("应用幂等键已被其他请求使用".into()));
                     }
                 }
@@ -534,9 +534,9 @@ impl TenantConfigTransferService {
                     if enqueued.inserted {
                         transfer.status =
                             tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING.to_owned();
-                        transfer.rollback_background_job_id = Some(enqueued.job.id);
+                        transfer.rollback_background_job_id = Some(enqueued.job_id);
                         transfer.error_summary = None;
-                    } else if transfer.rollback_background_job_id != Some(enqueued.job.id) {
+                    } else if transfer.rollback_background_job_id != Some(enqueued.job_id) {
                         return Err(AppError::Conflict("回滚幂等键已被其他请求使用".into()));
                     }
                 }

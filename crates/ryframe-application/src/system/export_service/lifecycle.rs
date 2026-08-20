@@ -1,7 +1,10 @@
-use ryframe_db::{CreateExportJob, EnqueueBackgroundJob, ReadConsistency, entities::export_job};
+use ryframe_db::{CreateExportJob, ReadConsistency, entities::export_job};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
+
+use crate::EnqueueJob;
+use crate::jobs::database_enqueue;
 
 use super::*;
 
@@ -31,7 +34,7 @@ impl ExportService {
             self.background_jobs
                 .enqueue_in_transaction(
                     &transaction,
-                    EnqueueBackgroundJob {
+                    database_enqueue(EnqueueJob {
                         tenant_id: None,
                         schedule_id: None,
                         scheduled_for: Some(now),
@@ -48,7 +51,7 @@ impl ExportService {
                         )),
                         traceparent: trace_context.traceparent,
                         tracestate: trace_context.tracestate,
-                    },
+                    }),
                     now,
                 )
                 .await?;
@@ -123,7 +126,7 @@ impl ExportService {
                 self.background_jobs
                     .enqueue_in_transaction(
                         &transaction,
-                        EnqueueBackgroundJob {
+                        database_enqueue(EnqueueJob {
                             tenant_id: Some(tenant_id.to_owned()),
                             schedule_id: None,
                             scheduled_for: Some(now),
@@ -139,7 +142,7 @@ impl ExportService {
                             dedupe_key: None,
                             traceparent: trace_context.traceparent,
                             tracestate: trace_context.tracestate,
-                        },
+                        }),
                         now,
                     )
                     .await?;

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use chrono::Duration;
 use ryframe_db::{
-    ControlDatabaseCluster, CreateTenantDataMigration, EnqueueBackgroundJob, TenantDataRepository,
+    ControlDatabaseCluster, CreateTenantDataMigration, TenantDataRepository,
     TenantOperationLeaseRepository, tenant_data_backup_point, tenant_data_migration,
     tenant_data_migration_item, tenant_operation_lease,
 };
@@ -18,7 +18,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, JobQueue, TenantDataMigrationPort, TenantDataTargetHealth,
+    AuthorizationCache, EnqueueJob, JobQueue, TenantDataMigrationPort, TenantDataTargetHealth,
     TenantDataTargetMetadata, TenantDataTargetPort,
 };
 
@@ -510,7 +510,7 @@ impl TenantDataMigrationService {
             .queue
             .enqueue_in_transaction(
                 &transaction,
-                EnqueueBackgroundJob {
+                EnqueueJob {
                     tenant_id: Some(tenant_id.to_owned()),
                     schedule_id: None,
                     scheduled_for: None,
@@ -533,7 +533,7 @@ impl TenantDataMigrationService {
                 return Err(error);
             }
         };
-        migration.background_job_id = Some(queued.job.id);
+        migration.background_job_id = Some(queued.job_id);
         migration.updated_at = now;
         migration = self
             .repository

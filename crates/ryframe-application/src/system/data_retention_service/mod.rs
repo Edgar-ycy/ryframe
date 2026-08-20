@@ -3,9 +3,9 @@ use std::{collections::BTreeMap, sync::Arc};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    ControlDatabaseCluster, DataRetentionRepository, EnqueueBackgroundJob, FileRepository,
-    RetentionCleanupResult, RetentionCutoff, RetentionResource, TenantRepository,
-    UserImportRepository, data_retention_run, tenant_config_bundle, tenant_config_transfer,
+    ControlDatabaseCluster, DataRetentionRepository, FileRepository, RetentionCleanupResult,
+    RetentionCutoff, RetentionResource, TenantRepository, UserImportRepository, data_retention_run,
+    tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -18,7 +18,7 @@ use sea_orm::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{ClaimedBackgroundJob, JobHandler, JobQueue, system::FileService};
+use crate::{ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, system::FileService};
 
 pub const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";
 
@@ -188,7 +188,7 @@ impl DataRetentionService {
                 .queue
                 .enqueue_in_transaction(
                     &transaction,
-                    EnqueueBackgroundJob {
+                    EnqueueJob {
                         tenant_id: None,
                         schedule_id: None,
                         scheduled_for: Some(now),
@@ -210,7 +210,7 @@ impl DataRetentionService {
                 .await?;
             let existing = self
                 .repository
-                .find_run_by_background_job(&transaction, enqueue.job.id)
+                .find_run_by_background_job(&transaction, enqueue.job_id)
                 .await?;
             let run = if let Some(existing) = existing {
                 existing
@@ -220,7 +220,7 @@ impl DataRetentionService {
                         &transaction,
                         new_run_model(
                             proposed_run_id,
-                            enqueue.job.id,
+                            enqueue.job_id,
                             data_retention_run::Model::TRIGGER_MANUAL,
                             Some(actor.user_id),
                             now,

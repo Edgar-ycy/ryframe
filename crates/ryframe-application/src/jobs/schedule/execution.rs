@@ -188,7 +188,7 @@ impl JobScheduleService {
             .queue
             .enqueue_in_transaction(transaction, target.build_job(&context)?)
             .await?;
-        attach_background_job(transaction, execution, job.job.id).await?;
+        attach_background_job(transaction, execution, job.job_id).await?;
         advance_schedule(transaction, schedule, next_run_at, due, now).await?;
         Ok(DueScheduleResult {
             enqueued: true,

@@ -99,15 +99,15 @@ pub use identity_authorization::{
 #[allow(deprecated)]
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
-    CallbackScheduleMetricsObserver, ClaimedBackgroundJob, CreateJobSchedule,
-    ExportCleanupJobHandler, ExportJobHandler, JobHandler, JobMetricsObserver, JobQueue,
-    JobRunResult, JobScheduleExecutionListParams, JobScheduleExecutionVo, JobScheduleListParams,
-    JobScheduleOccurrence, JobSchedulePreview, JobScheduleService, JobScheduleVo, JobWakeupFuture,
-    JobWakeupStream, JobWakeupTransport, JobWorker, MessageDispatchJobHandler,
-    MessageRetentionJobHandler, MessageWakeupFuture, MessageWakeupPublisher, OutboxRunResult,
-    OutboxWorker, ScheduleMetricsObserver, ScheduledJobContext, ScheduledJobTarget,
-    ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
-    UpdateJobSchedule,
+    CallbackScheduleMetricsObserver, ClaimedBackgroundJob, CreateJobSchedule, EnqueueJob,
+    EnqueueJobResult, ExportCleanupJobHandler, ExportJobHandler, JobHandler, JobMetricsObserver,
+    JobQueue, JobRunResult, JobScheduleExecutionListParams, JobScheduleExecutionVo,
+    JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview, JobScheduleService,
+    JobScheduleVo, JobWakeupFuture, JobWakeupStream, JobWakeupTransport, JobWorker,
+    MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
+    MessageWakeupPublisher, OutboxRunResult, OutboxWorker, ScheduleMetricsObserver,
+    ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
+    ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 #[doc(hidden)]
 pub use legacy_authorization_diagnostic_persistence::port as legacy_authorization_diagnostic_persistence;

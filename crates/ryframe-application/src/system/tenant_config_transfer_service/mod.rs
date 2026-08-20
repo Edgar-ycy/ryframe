@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ControlDatabaseCluster,
-    EnqueueBackgroundJob, FileRepository, TenantConfigTransferRepository,
+    FileRepository, TenantConfigTransferRepository,
     entities::{
         background_job, config, dept, dict_data, dict_type, menu, permission, post, role,
         role_dept, role_permission, tenant, tenant_config_bundle, tenant_config_transfer,
@@ -34,7 +34,7 @@ use super::{
     TenantConfigPackageLimits, TenantConfigPackageResources, UploadPolicy, UserService,
     parse_tenant_config_package,
 };
-use crate::{AuthorizationCache, ClaimedBackgroundJob, JobHandler, JobQueue};
+use crate::{AuthorizationCache, ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue};
 
 mod apply_resources;
 mod apply_workflow;

@@ -2,8 +2,7 @@ use std::{sync::Arc, time::Duration as StdDuration};
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    EnqueueBackgroundJob, ExecutionTenantScope, OutboxEventRepository, OutboxFailureDisposition,
-    outbox_event,
+    ExecutionTenantScope, OutboxEventRepository, OutboxFailureDisposition, outbox_event,
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
@@ -18,7 +17,7 @@ use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
 use crate::system::MESSAGE_DISPATCH_JOB_TYPE;
 use crate::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent,
-    AuthorizationCache, AuthorizationMirrorUpdate, record_audit_failure,
+    AuthorizationCache, AuthorizationMirrorUpdate, EnqueueJob, record_audit_failure,
 };
 
 /// 单次 Outbox 投递循环的结果。
@@ -234,10 +233,9 @@ impl OutboxWorker {
             .map_err(|error| AppError::Database(error.to_string()))?;
         let result = async {
             self.queue
-                .repository()
-                .enqueue_in_transaction(
+                .enqueue_in_transaction_at(
                     &transaction,
-                    EnqueueBackgroundJob {
+                    EnqueueJob {
                         tenant_id: event.tenant_id.clone(),
                         schedule_id: None,
                         scheduled_for: Some(now),

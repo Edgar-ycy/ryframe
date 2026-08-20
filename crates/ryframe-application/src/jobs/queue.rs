@@ -7,8 +7,7 @@ use chrono::{DateTime, Utc};
 use ryframe_auth::RequestPrincipal;
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ControlDatabaseCluster,
-    EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExecutionTenantScope, background_job,
-    tenant_config_bundle, tenant_config_transfer,
+    ExecutionTenantScope, background_job, tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
@@ -19,6 +18,53 @@ use super::{
     metrics::JobMetricsObserver,
     wakeup::{JobWakeupTransport, QueueWakeup, WakeupQueue},
 };
+
+#[derive(Clone, Debug)]
+pub struct EnqueueJob {
+    pub tenant_id: Option<String>,
+    pub schedule_id: Option<i64>,
+    pub scheduled_for: Option<DateTime<Utc>>,
+    pub max_runtime_seconds: Option<i32>,
+    pub job_type: String,
+    pub payload: serde_json::Value,
+    pub priority: i32,
+    pub available_at: DateTime<Utc>,
+    pub max_attempts: i32,
+    pub dedupe_key: Option<String>,
+    pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EnqueueJobResult {
+    pub job_id: i64,
+    pub inserted: bool,
+}
+
+pub(crate) fn database_enqueue(command: EnqueueJob) -> ryframe_db::EnqueueBackgroundJob {
+    ryframe_db::EnqueueBackgroundJob {
+        tenant_id: command.tenant_id,
+        schedule_id: command.schedule_id,
+        scheduled_for: command.scheduled_for,
+        max_runtime_seconds: command.max_runtime_seconds,
+        job_type: command.job_type,
+        payload: command.payload,
+        priority: command.priority,
+        available_at: command.available_at,
+        max_attempts: command.max_attempts,
+        dedupe_key: command.dedupe_key,
+        traceparent: command.traceparent,
+        tracestate: command.tracestate,
+    }
+}
+
+fn enqueue_result(result: ryframe_db::EnqueueBackgroundJobResult) -> EnqueueJobResult {
+    EnqueueJobResult {
+        job_id: result.job.id,
+        inserted: result.inserted,
+    }
+}
+
 /// 后台任务分页列表的业务查询参数。
 #[derive(Clone, Debug)]
 pub struct BackgroundJobListParams {
@@ -215,17 +261,14 @@ impl JobQueue {
     }
 
     /// 写入一条任务。调用方不需要自行提供时间戳，时间统一由数据库确定。
-    pub async fn enqueue(
-        &self,
-        command: EnqueueBackgroundJob,
-    ) -> AppResult<EnqueueBackgroundJobResult> {
+    pub async fn enqueue(&self, command: EnqueueJob) -> AppResult<EnqueueJobResult> {
         let now = self.database_now().await?;
         let result = self
             .repository
-            .enqueue(self.database.write(), command, now)
+            .enqueue(self.database.write(), database_enqueue(command), now)
             .await?;
         self.notify_background_jobs().await;
-        Ok(result)
+        Ok(enqueue_result(result))
     }
 
     /// 在既有业务事务中写入任务，保证业务数据和任务记录一起提交或回滚。
@@ -235,12 +278,23 @@ impl JobQueue {
     pub async fn enqueue_in_transaction(
         &self,
         transaction: &DatabaseTransaction,
-        command: EnqueueBackgroundJob,
-    ) -> AppResult<EnqueueBackgroundJobResult> {
+        command: EnqueueJob,
+    ) -> AppResult<EnqueueJobResult> {
         let now = self.repository.database_utc_now(transaction).await?;
-        self.repository
-            .enqueue_in_transaction(transaction, command, now)
+        self.enqueue_in_transaction_at(transaction, command, now)
             .await
+    }
+
+    pub(super) async fn enqueue_in_transaction_at(
+        &self,
+        transaction: &DatabaseTransaction,
+        command: EnqueueJob,
+        now: DateTime<Utc>,
+    ) -> AppResult<EnqueueJobResult> {
+        self.repository
+            .enqueue_in_transaction(transaction, database_enqueue(command), now)
+            .await
+            .map(enqueue_result)
     }
 
     /// 仅供持有 control 业务资源的 watchdog 核对权威关联任务。
@@ -570,4 +624,43 @@ fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String
         ));
     }
     Ok(Some(value.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::{EnqueueJob, database_enqueue};
+
+    #[test]
+    fn enqueue_command_maps_every_field_without_loss() {
+        let available_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+        let command = database_enqueue(EnqueueJob {
+            tenant_id: Some("tenant-a".to_owned()),
+            schedule_id: Some(8),
+            scheduled_for: Some(available_at),
+            max_runtime_seconds: Some(30),
+            job_type: "test.job".to_owned(),
+            payload: serde_json::json!({"id": "9"}),
+            priority: 4,
+            available_at,
+            max_attempts: 5,
+            dedupe_key: Some("dedupe".to_owned()),
+            traceparent: Some("traceparent".to_owned()),
+            tracestate: Some("tracestate".to_owned()),
+        });
+
+        assert_eq!(command.tenant_id.as_deref(), Some("tenant-a"));
+        assert_eq!(command.schedule_id, Some(8));
+        assert_eq!(command.scheduled_for, Some(available_at));
+        assert_eq!(command.max_runtime_seconds, Some(30));
+        assert_eq!(command.job_type, "test.job");
+        assert_eq!(command.payload, serde_json::json!({"id": "9"}));
+        assert_eq!(command.priority, 4);
+        assert_eq!(command.available_at, available_at);
+        assert_eq!(command.max_attempts, 5);
+        assert_eq!(command.dedupe_key.as_deref(), Some("dedupe"));
+        assert_eq!(command.traceparent.as_deref(), Some("traceparent"));
+        assert_eq!(command.tracestate.as_deref(), Some("tracestate"));
+    }
 }

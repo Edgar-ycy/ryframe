@@ -191,7 +191,7 @@ impl UserImportService {
             .queue
             .enqueue_in_transaction(
                 &transaction,
-                EnqueueBackgroundJob {
+                EnqueueJob {
                     tenant_id: Some(tenant_id.to_owned()),
                     schedule_id: None,
                     scheduled_for: Some(now),
@@ -214,7 +214,7 @@ impl UserImportService {
                     id: import_id,
                     tenant_id: tenant_id.to_owned(),
                     requester_user_id: actor.user_id,
-                    background_job_id: queued.job.id,
+                    background_job_id: queued.job_id,
                     idempotency_key_hash: command.idempotency_key_hash,
                     source_file_id: command.source_file_id,
                     source_name_snapshot: command.source_name,

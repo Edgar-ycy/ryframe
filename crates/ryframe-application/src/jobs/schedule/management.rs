@@ -386,7 +386,7 @@ impl JobScheduleService {
             .queue
             .enqueue_in_transaction(&transaction, target.build_job(&context)?)
             .await?;
-        let execution = attach_background_job(&transaction, execution, result.job.id).await?;
+        let execution = attach_background_job(&transaction, execution, result.job_id).await?;
         let mut active: job_schedule::ActiveModel = schedule.into();
         active.last_run_at = Set(Some(now));
         active.updated_at = Set(now);
