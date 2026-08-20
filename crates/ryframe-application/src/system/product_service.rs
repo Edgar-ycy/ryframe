@@ -1,8 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    ControlDatabaseCluster, ProductPlanVersionBundle, ProductRepository, ReadConsistency,
+    ControlDatabaseCluster, ProductPlanVersionBundle, ProductRepository,
     TenantOperationLeaseRepository,
     entities::{
         product_plan, product_plan_capability, product_plan_version, tenant_capability_override,
@@ -14,7 +17,7 @@ use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::AuthorizationCache;
+use crate::{AuthorizationCache, ProductReadPort};
 
 use super::product_capability_catalog::{
     CAPABILITY_CATALOG, SERVICE_ACCOUNTS_CAPABILITY, project_client_config,
@@ -30,6 +33,7 @@ const PRODUCT_CHANGE_LEASE_SECONDS: i64 = 30;
 
 mod context;
 mod model;
+mod read;
 mod resources;
 mod support;
 
@@ -38,6 +42,7 @@ use support::*;
 
 pub struct ProductService {
     db: ControlDatabaseCluster,
+    read: Arc<dyn ProductReadPort>,
     repository: ProductRepository,
     operation_leases: TenantOperationLeaseRepository,
     authorization_cache: AuthorizationCache,
@@ -47,11 +52,13 @@ pub struct ProductService {
 impl ProductService {
     pub fn new(
         db: ControlDatabaseCluster,
+        read: Arc<dyn ProductReadPort>,
         authorization_cache: AuthorizationCache,
         service_accounts_deployment_available: bool,
     ) -> Self {
         Self {
             db,
+            read,
             repository: ProductRepository,
             operation_leases: TenantOperationLeaseRepository,
             authorization_cache,
@@ -90,27 +97,12 @@ impl ProductService {
 
     pub async fn list_plans(&self, actor: &ActorContext) -> AppResult<Vec<ProductPlanVo>> {
         ensure_platform_actor(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let plans = self.repository.list_plans(&db).await?;
-        let mut output = Vec::with_capacity(plans.len());
-        for plan in plans {
-            let versions = self.repository.list_versions(&db, plan.id).await?;
-            let mut version_output = Vec::with_capacity(versions.len());
-            for version in versions {
-                let capabilities = self.repository.list_capabilities(&db, version.id).await?;
-                version_output.push(self.version_vo(version, capabilities)?);
-            }
-            output.push(ProductPlanVo {
-                id: plan.id.to_string(),
-                key: plan.plan_key,
-                name: plan.name,
-                description: plan.description,
-                status: plan.status,
-                created_by: plan.created_by.to_string(),
-                versions: version_output,
-            });
-        }
-        Ok(output)
+        self.read
+            .list_plans()
+            .await?
+            .into_iter()
+            .map(Self::plan_record_vo)
+            .collect()
     }
 
     pub async fn versions(
@@ -119,44 +111,25 @@ impl ProductService {
         plan_id: i64,
     ) -> AppResult<Vec<ProductPlanVersionVo>> {
         ensure_platform_actor(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let plan = self
-            .repository
-            .find_plan_by_id(&db, plan_id)
+            .read
+            .find_plan(plan_id)
             .await?
             .ok_or_else(|| AppError::NotFound("产品套餐不存在".into()))?;
-        let versions = self.repository.list_versions(&db, plan.id).await?;
-        let mut output = Vec::with_capacity(versions.len());
-        for version in versions {
-            let capabilities = self.repository.list_capabilities(&db, version.id).await?;
-            output.push(self.version_vo(version, capabilities)?);
-        }
-        Ok(output)
+        plan.versions
+            .into_iter()
+            .map(Self::version_record_vo)
+            .collect()
     }
 
     pub async fn plan(&self, actor: &ActorContext, plan_id: i64) -> AppResult<ProductPlanVo> {
         ensure_platform_actor(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let plan = self
-            .repository
-            .find_plan_by_id(&db, plan_id)
+            .read
+            .find_plan(plan_id)
             .await?
             .ok_or_else(|| AppError::NotFound("产品套餐不存在".into()))?;
-        let versions = self.repository.list_versions(&db, plan.id).await?;
-        let mut version_output = Vec::with_capacity(versions.len());
-        for version in versions {
-            let capabilities = self.repository.list_capabilities(&db, version.id).await?;
-            version_output.push(self.version_vo(version, capabilities)?);
-        }
-        Ok(ProductPlanVo {
-            id: plan.id.to_string(),
-            key: plan.plan_key,
-            name: plan.name,
-            description: plan.description,
-            status: plan.status,
-            created_by: plan.created_by.to_string(),
-            versions: version_output,
-        })
+        Self::plan_record_vo(plan)
     }
 
     pub async fn create_plan(

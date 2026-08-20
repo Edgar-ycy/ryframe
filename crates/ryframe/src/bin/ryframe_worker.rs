@@ -158,6 +158,7 @@ async fn main() -> Result<(), AppError> {
     ));
     let product = Arc::new(ProductService::new(
         database.clone(),
+        ryframe_application::legacy_product_read(database.clone()),
         authorization_cache.clone(),
         application_policies.service_accounts.enabled() && redis.is_some(),
     ));

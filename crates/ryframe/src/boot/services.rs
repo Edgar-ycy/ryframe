@@ -175,6 +175,7 @@ pub async fn build_all(
     ));
     let product = Arc::new(ProductService::new(
         database.clone(),
+        ryframe_application::legacy_product_read(database.clone()),
         authorization_cache.clone(),
         policies.service_accounts.enabled() && redis_client.is_some(),
     ));

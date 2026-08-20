@@ -40,6 +40,7 @@ mod legacy_overview_persistence;
 mod legacy_password_reset_persistence;
 mod legacy_permission_persistence;
 mod legacy_post_persistence;
+mod legacy_product_persistence;
 mod legacy_profile_persistence;
 mod legacy_retention_cleanup_persistence;
 mod legacy_retention_run_persistence;
@@ -67,6 +68,7 @@ mod permission_persistence;
 mod persistence;
 mod post_persistence;
 mod principal_resolver;
+mod product_persistence;
 mod profile_persistence;
 mod refresh_session;
 mod request_tenant_context;
@@ -204,6 +206,8 @@ pub use legacy_permission_persistence::{
 #[doc(hidden)]
 pub use legacy_post_persistence::port as legacy_post_persistence;
 #[doc(hidden)]
+pub use legacy_product_persistence::read_port as legacy_product_read;
+#[doc(hidden)]
 pub use legacy_profile_persistence::port as legacy_profile_persistence;
 #[doc(hidden)]
 pub use legacy_retention_cleanup_persistence::port as legacy_retention_cleanup_persistence;
@@ -263,6 +267,9 @@ pub use permission_persistence::{
 pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};
 pub use principal_resolver::PrincipalResolver;
+pub use product_persistence::{
+    ProductCapabilityRecord, ProductPlanRecord, ProductReadPort, ProductVersionRecord,
+};
 pub use profile_persistence::{
     ProfileAvatarFile, ProfileAvatarState, ProfilePersistencePort, ProfileRecord,
     ProfileTransaction, ProfileUserState,
