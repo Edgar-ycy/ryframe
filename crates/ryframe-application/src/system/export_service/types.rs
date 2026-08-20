@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use ryframe_db::entities::export_job;
 use serde::{Deserialize, Serialize};
 
 use super::ExportSelection;
@@ -98,27 +97,6 @@ pub struct ExportDeletionResult {
     pub removed_unread_count: u64,
 }
 
-impl From<export_job::Model> for ExportJobVo {
-    fn from(job: export_job::Model) -> Self {
-        Self {
-            id: job.id.to_string(),
-            resource: job.resource,
-            status: job.status,
-            result_file_name: job.result_file_name,
-            content_type: job.content_type,
-            file_size: job.file_size,
-            expires_at: job.expires_at,
-            error_message: job.error_message,
-            snapshot_at: job.snapshot_at,
-            matched_rows: job.matched_rows,
-            created_at: job.created_at,
-            updated_at: job.updated_at,
-            completed_at: job.completed_at,
-            notification_read_at: job.notification_read_at,
-        }
-    }
-}
-
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct StoredExportRequest {
@@ -128,6 +106,14 @@ pub(super) struct StoredExportRequest {
     pub(super) snapshot_at: DateTime<Utc>,
     pub(super) upper_id: i64,
     pub(super) matched_rows: u64,
+}
+
+pub(super) struct PersistedExportSnapshot<'a> {
+    pub(super) request_version: i32,
+    pub(super) authorization_fingerprint: &'a str,
+    pub(super) snapshot_at: &'a DateTime<Utc>,
+    pub(super) upper_id: i64,
+    pub(super) matched_rows: i64,
 }
 
 impl StoredExportRequest {
@@ -158,13 +144,13 @@ impl StoredExportRequest {
 
     pub(super) fn validate_persisted_snapshot(
         &self,
-        export: &export_job::Model,
+        export: PersistedExportSnapshot<'_>,
     ) -> ryframe_kernel::AppResult<()> {
         let matched_rows = u64::try_from(export.matched_rows)
             .map_err(|_| ryframe_kernel::AppError::Validation("导出任务匹配行数无效".into()))?;
         if i32::from(self.request_version) != export.request_version
             || self.authorization_fingerprint != export.authorization_fingerprint
-            || self.snapshot_at != export.snapshot_at
+            || &self.snapshot_at != export.snapshot_at
             || self.upper_id != export.upper_id
             || self.matched_rows != matched_rows
         {

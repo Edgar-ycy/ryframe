@@ -355,7 +355,7 @@ impl ExportService {
             .validate(&export.resource)
             .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         stored_request
-            .validate_persisted_snapshot(&export)
+            .validate_persisted_snapshot(PersistedExportSnapshot::from(&export))
             .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         ensure_download_authorization_matches(
             &stored_request.authorization_fingerprint,

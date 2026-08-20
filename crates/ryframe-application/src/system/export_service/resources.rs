@@ -86,7 +86,7 @@ impl ExportService {
             serde_json::from_value(std::mem::take(&mut export.request_params))
                 .map_err(|error| AppError::Validation(format!("导出请求快照无效: {error}")))?;
         request.validate(&export.resource)?;
-        request.validate_persisted_snapshot(&export)?;
+        request.validate_persisted_snapshot(PersistedExportSnapshot::from(&export))?;
         let (actor, authorization_fingerprint) = self
             .users
             .resolve_current_export_authorization(

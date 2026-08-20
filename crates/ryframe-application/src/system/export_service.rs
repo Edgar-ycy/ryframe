@@ -16,6 +16,7 @@ use super::{
 
 mod cleanup;
 mod filters;
+mod legacy_mapping;
 mod lifecycle;
 mod preflight;
 mod purge;
@@ -40,7 +41,7 @@ use filters::{
     ensure_download_authorization_matches, export_file_location, should_delete_uncommitted_object,
     validate_job_id, validate_request_command,
 };
-use types::StoredExportRequest;
+use types::{PersistedExportSnapshot, StoredExportRequest};
 
 /// 单次清理查询的最大任务数，游标会继续排空同一时间快照下的剩余任务。
 const EXPORT_CLEANUP_BATCH_SIZE: u64 = 100;
