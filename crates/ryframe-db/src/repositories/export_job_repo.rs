@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use ryframe_adapters::snowflake;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -79,7 +78,7 @@ impl ExportJobRepository {
     ) -> AppResult<export_job::Model> {
         validate_create_command(&command)?;
         export_job::ActiveModel {
-            id: Set(snowflake::try_next_snowflake_id()?),
+            id: Set(crate::next_id()?),
             tenant_id: Set(command.tenant_id),
             requester_id: Set(command.requester_id),
             resource: Set(command.resource),

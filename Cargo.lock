@@ -3348,7 +3348,6 @@ dependencies = [
  "log",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
- "ryframe-adapters",
  "ryframe-config",
  "ryframe-kernel",
  "ryframe-macro",

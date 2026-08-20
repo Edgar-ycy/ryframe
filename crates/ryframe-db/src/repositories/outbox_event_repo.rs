@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration, Utc};
-use ryframe_adapters::snowflake;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -79,7 +78,7 @@ impl OutboxEventRepository {
         }
 
         let active = outbox_event::ActiveModel {
-            id: Set(snowflake::try_next_snowflake_id()?),
+            id: Set(crate::next_id()?),
             tenant_id: Set(event.tenant_id),
             event_type: Set(event.event_type),
             aggregate_type: Set(event.aggregate_type),

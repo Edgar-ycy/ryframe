@@ -36,6 +36,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)?;
+    ryframe_db::install_id_generator(|| {
+        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(ryframe_kernel::AppError::from)
+    })?;
 
     let primary = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
@@ -130,7 +133,7 @@ async fn register_backup(
         .insert_backup(
             &primary,
             RegisterTenantDataBackupPoint {
-                id: ryframe_adapters::snowflake::try_next_snowflake_id()?,
+                id: ryframe_db::next_id()?,
                 scope,
                 tenant_id,
                 target_key: args.target,

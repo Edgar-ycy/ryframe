@@ -63,7 +63,6 @@ allowed_internal_edges = [
     "ryframe-adapters -> ryframe-config",
     "ryframe-adapters -> ryframe-kernel",
     "ryframe-db -> ryframe-config",
-    "ryframe-db -> ryframe-adapters",
     "ryframe-db -> ryframe-kernel",
     "ryframe-db -> ryframe-macro",
     "ryframe-generator -> ryframe-kernel",

@@ -38,6 +38,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)?;
+    ryframe_db::install_id_generator(|| {
+        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(ryframe_kernel::AppError::from)
+    })?;
     match command.scope {
         MigrationScope::Control => run_control(command.operation, &config).await?,
         MigrationScope::TenantData(selection) => {

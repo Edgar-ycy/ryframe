@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
-use ryframe_adapters::snowflake;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
@@ -212,7 +211,7 @@ impl TenantProvisioningRepository {
 
         let tenant_id = command.tenant_id;
         let tenant = tenant::ActiveModel {
-            id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+            id: ActiveValue::Set(crate::next_id()?),
             tenant_id: ActiveValue::Set(tenant_id.clone()),
             name: ActiveValue::Set(command.name),
             domain: ActiveValue::Set(command.domain),
@@ -248,9 +247,9 @@ impl TenantProvisioningRepository {
             .insert_initial_in_transaction(transaction, &tenant_id, CONFIG_CACHE_NAMESPACE, now)
             .await?;
 
-        let admin_role_id = snowflake::try_next_snowflake_id()?;
-        let user_role_id = snowflake::try_next_snowflake_id()?;
-        let user_id = snowflake::try_next_snowflake_id()?;
+        let admin_role_id = crate::next_id()?;
+        let user_role_id = crate::next_id()?;
+        let user_id = crate::next_id()?;
 
         role::ActiveModel {
             id: ActiveValue::Set(admin_role_id),
@@ -323,7 +322,7 @@ impl TenantProvisioningRepository {
         let mut permission_ids = HashMap::new();
         let mut role_permissions = Vec::new();
         for source in system_permissions {
-            let id = snowflake::try_next_snowflake_id()?;
+            let id = crate::next_id()?;
             let managed_capability_permission =
                 managed_capability_permissions.contains(&source.code);
             let auto_assign = !source.code.starts_with("monitor:job:")
@@ -387,7 +386,7 @@ impl TenantProvisioningRepository {
 
         let mut menu_ids = HashMap::new();
         for source in system_menus {
-            let id = snowflake::try_next_snowflake_id()?;
+            let id = crate::next_id()?;
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| menu_ids.get(&parent_id).copied());
@@ -421,7 +420,7 @@ impl TenantProvisioningRepository {
             .into_iter()
             .map(|source| -> AppResult<_> {
                 Ok(post::ActiveModel {
-                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    id: ActiveValue::Set(crate::next_id()?),
                     tenant_id: ActiveValue::Set(tenant_id.clone()),
                     name: ActiveValue::Set(source.name),
                     code: ActiveValue::Set(source.code),
@@ -445,7 +444,7 @@ impl TenantProvisioningRepository {
             .into_iter()
             .map(|source| -> AppResult<_> {
                 Ok(config::ActiveModel {
-                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    id: ActiveValue::Set(crate::next_id()?),
                     tenant_id: ActiveValue::Set(tenant_id.clone()),
                     name: ActiveValue::Set(source.name),
                     key: ActiveValue::Set(source.key),
@@ -469,7 +468,7 @@ impl TenantProvisioningRepository {
             .into_iter()
             .map(|source| -> AppResult<_> {
                 Ok(dict_type::ActiveModel {
-                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    id: ActiveValue::Set(crate::next_id()?),
                     tenant_id: ActiveValue::Set(tenant_id.clone()),
                     name: ActiveValue::Set(source.name),
                     code: ActiveValue::Set(source.code),
@@ -492,7 +491,7 @@ impl TenantProvisioningRepository {
             .into_iter()
             .map(|source| -> AppResult<_> {
                 Ok(dict_data::ActiveModel {
-                    id: ActiveValue::Set(snowflake::try_next_snowflake_id()?),
+                    id: ActiveValue::Set(crate::next_id()?),
                     tenant_id: ActiveValue::Set(tenant_id.clone()),
                     type_code: ActiveValue::Set(source.type_code),
                     label: ActiveValue::Set(source.label),
@@ -516,7 +515,7 @@ impl TenantProvisioningRepository {
 
         let mut dept_ids: HashMap<i64, i64> = HashMap::new();
         for source in system_depts {
-            let id = snowflake::try_next_snowflake_id()?;
+            let id = crate::next_id()?;
             let parent_id = source
                 .parent_id
                 .and_then(|parent_id| dept_ids.get(&parent_id).copied());

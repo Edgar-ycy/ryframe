@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
-use ryframe_adapters::snowflake;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::sea_query::{Expr, Order, Query};
 use sea_orm::{
@@ -32,7 +31,7 @@ impl MessageRepository {
         }
         let audiences = command.audiences.iter().cloned().collect::<BTreeSet<_>>();
         let model = message::Model {
-            id: snowflake::try_next_snowflake_id()?,
+            id: crate::next_id()?,
             tenant_id: command.tenant_id.clone(),
             topic: command.topic.clone(),
             title_text: command.title_text.clone(),

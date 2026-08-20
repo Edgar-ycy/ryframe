@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use ryframe_adapters::snowflake;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
@@ -73,7 +72,7 @@ impl BackgroundJobRepository {
         }
 
         let active = background_job::ActiveModel {
-            id: Set(snowflake::try_next_snowflake_id()?),
+            id: Set(crate::next_id()?),
             tenant_id: Set(command.tenant_id),
             schedule_id: Set(command.schedule_id),
             scheduled_for: Set(command.scheduled_for),
