@@ -340,8 +340,7 @@ pub async fn build_all(
         let schedule_targets = super::jobs::build_schedule_targets(policies.messaging.enabled())?;
         Some(Arc::new(
             JobScheduleService::new(
-                database.clone(),
-                ryframe_application::legacy_job_schedule_read(database.clone()),
+                ryframe_application::legacy_job_schedule_persistence(database.clone()),
                 job_queue.clone(),
                 super::jobs::execution_tenant_scope(policies.multi_tenancy),
                 schedule_targets,

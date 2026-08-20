@@ -104,8 +104,9 @@ pub use identity_authorization::{
     IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
 };
 pub use job_schedule_persistence::{
-    JobScheduleExecutionReadFilter, JobScheduleExecutionRecord, JobScheduleReadFilter,
-    JobScheduleReadPort, JobScheduleRecord,
+    JobScheduleExecutionReadFilter, JobScheduleExecutionRecord, JobSchedulePersistencePort,
+    JobScheduleReadFilter, JobScheduleReadPort, JobScheduleRecord, JobScheduleTransaction,
+    NewJobScheduleExecution,
 };
 #[allow(deprecated)]
 pub use jobs::{
@@ -131,7 +132,7 @@ pub use legacy_dict_persistence::port as legacy_dict_persistence;
 #[doc(hidden)]
 pub use legacy_identity_authorization::port as legacy_identity_authorization;
 #[doc(hidden)]
-pub use legacy_job_schedule_persistence::read_port as legacy_job_schedule_read;
+pub use legacy_job_schedule_persistence::port as legacy_job_schedule_persistence;
 #[doc(hidden)]
 pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
 #[doc(hidden)]

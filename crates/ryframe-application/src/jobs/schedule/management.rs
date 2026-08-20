@@ -2,17 +2,14 @@ use super::*;
 
 impl JobScheduleService {
     pub fn new(
-        database: ControlDatabaseCluster,
-        read: Arc<dyn JobScheduleReadPort>,
+        persistence: Arc<dyn JobSchedulePersistencePort>,
         queue: Arc<JobQueue>,
         execution_tenant_scope: ExecutionTenantScope,
         targets: ScheduledJobTargetRegistry,
         policy: crate::JobSchedulePolicy,
     ) -> Self {
         Self {
-            database,
-            repository: Arc::new(JobScheduleRepository),
-            read,
+            persistence,
             queue,
             execution_tenant_scope,
             targets,
@@ -66,7 +63,7 @@ impl JobScheduleService {
         timezone: &str,
     ) -> AppResult<JobSchedulePreview> {
         let parsed = ParsedSchedule::parse(cron_expression, timezone)?;
-        let now = self.queue.database_now().await?;
+        let now = self.persistence.database_now().await?;
         let occurrences = parsed
             .future_occurrences(now, 5)?
             .into_iter()
@@ -91,7 +88,7 @@ impl JobScheduleService {
         let name = normalize_optional(&params.name, MAX_NAME_BYTES, "计划名称")?;
         let handler_key = normalize_optional(&params.handler_key, 96, "处理器标识")?;
         let page = self
-            .read
+            .persistence
             .page(
                 tenant_id,
                 JobScheduleReadFilter {
@@ -113,7 +110,7 @@ impl JobScheduleService {
     pub async fn get(&self, actor: &ActorContext, id: i64) -> AppResult<JobScheduleVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_id(id)?;
-        self.read
+        self.persistence
             .find(tenant_id, id)
             .await?
             .map(JobScheduleVo::from)
@@ -127,48 +124,40 @@ impl JobScheduleService {
     ) -> AppResult<JobScheduleVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let validated = self.validate_command(tenant_id, command)?;
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
-        lock_tenant(&transaction, tenant_id).await?;
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_tenant(tenant_id).await?;
         if validated.enabled {
-            self.ensure_enabled_limit(&transaction, tenant_id).await?;
+            self.ensure_enabled_limit(transaction.as_ref(), tenant_id)
+                .await?;
         }
-        let now = self.repository_clock(&transaction).await?;
+        let now = transaction.database_now().await?;
         let next_run_at = if validated.enabled {
             Some(validated.parsed.next_after(now)?)
         } else {
             None
         };
-        let schedule = self
-            .repository
-            .insert(
-                &transaction,
-                job_schedule::ActiveModel {
-                    id: Set(crate::next_id()?),
-                    tenant_id: Set(tenant_id.to_owned()),
-                    name: Set(validated.name),
-                    handler_key: Set(validated.handler_key),
-                    cron_expression: Set(validated.cron_expression),
-                    timezone: Set(validated.timezone),
-                    enabled: Set(validated.enabled),
-                    misfire_policy: Set(validated.misfire_policy),
-                    concurrency_policy: Set(validated.concurrency_policy),
-                    max_runtime_seconds: Set(validated.max_runtime_seconds),
-                    next_run_at: Set(next_run_at),
-                    last_run_at: Set(None),
-                    version: Set(1),
-                    del_flag: Set(job_schedule::Model::DEL_FLAG_NORMAL.to_owned()),
-                    created_at: Set(now),
-                    updated_at: Set(now),
-                },
-            )
+        let schedule = transaction
+            .insert_schedule(JobScheduleRecord {
+                id: crate::next_id()?,
+                tenant_id: tenant_id.to_owned(),
+                name: validated.name,
+                handler_key: validated.handler_key,
+                cron_expression: validated.cron_expression,
+                timezone: validated.timezone,
+                enabled: validated.enabled,
+                misfire_policy: validated.misfire_policy,
+                concurrency_policy: validated.concurrency_policy,
+                max_runtime_seconds: validated.max_runtime_seconds,
+                next_run_at,
+                last_run_at: None,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+                deleted: false,
+            })
             .await?;
-        transaction.commit().await.map_err(database_error)?;
-        Ok(schedule_into_vo(schedule))
+        transaction.commit().await?;
+        Ok(schedule.into())
     }
 
     pub async fn update(
@@ -193,16 +182,10 @@ impl JobScheduleService {
                 max_runtime_seconds: command.max_runtime_seconds,
             },
         )?;
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
-        lock_tenant(&transaction, tenant_id).await?;
-        let current = self
-            .repository
-            .lock_for_tenant(&transaction, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_tenant(tenant_id).await?;
+        let mut current = transaction
+            .lock_schedule(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("定时任务不存在".into()))?;
         if current.version != command.version {
@@ -213,29 +196,29 @@ impl JobScheduleService {
             .await;
         }
         if validated.enabled && !current.enabled {
-            self.ensure_enabled_limit(&transaction, tenant_id).await?;
+            self.ensure_enabled_limit(transaction.as_ref(), tenant_id)
+                .await?;
         }
-        let now = self.repository_clock(&transaction).await?;
+        let now = transaction.database_now().await?;
         let next_run_at = if validated.enabled {
             Some(validated.parsed.next_after(now)?)
         } else {
             None
         };
-        let mut active: job_schedule::ActiveModel = current.into();
-        active.name = Set(validated.name);
-        active.handler_key = Set(validated.handler_key);
-        active.cron_expression = Set(validated.cron_expression);
-        active.timezone = Set(validated.timezone);
-        active.enabled = Set(validated.enabled);
-        active.misfire_policy = Set(validated.misfire_policy);
-        active.concurrency_policy = Set(validated.concurrency_policy);
-        active.max_runtime_seconds = Set(validated.max_runtime_seconds);
-        active.next_run_at = Set(next_run_at);
-        active.version = Set(command.version + 1);
-        active.updated_at = Set(now);
-        let updated = active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
-        Ok(schedule_into_vo(updated))
+        current.name = validated.name;
+        current.handler_key = validated.handler_key;
+        current.cron_expression = validated.cron_expression;
+        current.timezone = validated.timezone;
+        current.enabled = validated.enabled;
+        current.misfire_policy = validated.misfire_policy;
+        current.concurrency_policy = validated.concurrency_policy;
+        current.max_runtime_seconds = validated.max_runtime_seconds;
+        current.next_run_at = next_run_at;
+        current.version = command.version + 1;
+        current.updated_at = now;
+        let updated = transaction.save_schedule(current).await?;
+        transaction.commit().await?;
+        Ok(updated.into())
     }
 
     pub async fn set_enabled(
@@ -248,16 +231,10 @@ impl JobScheduleService {
         validate_id(id)?;
         validate_version(version)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
-        lock_tenant(&transaction, tenant_id).await?;
-        let current = self
-            .repository
-            .lock_for_tenant(&transaction, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_tenant(tenant_id).await?;
+        let mut current = transaction
+            .lock_schedule(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("定时任务不存在".into()))?;
         if current.version != version {
@@ -268,9 +245,10 @@ impl JobScheduleService {
             .await;
         }
         if enabled && !current.enabled {
-            self.ensure_enabled_limit(&transaction, tenant_id).await?;
+            self.ensure_enabled_limit(transaction.as_ref(), tenant_id)
+                .await?;
         }
-        let now = self.repository_clock(&transaction).await?;
+        let now = transaction.database_now().await?;
         let next_run_at = if enabled {
             Some(
                 ParsedSchedule::parse(&current.cron_expression, &current.timezone)?
@@ -279,29 +257,22 @@ impl JobScheduleService {
         } else {
             None
         };
-        let mut active: job_schedule::ActiveModel = current.into();
-        active.enabled = Set(enabled);
-        active.next_run_at = Set(next_run_at);
-        active.version = Set(version + 1);
-        active.updated_at = Set(now);
-        let updated = active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
-        Ok(schedule_into_vo(updated))
+        current.enabled = enabled;
+        current.next_run_at = next_run_at;
+        current.version = version + 1;
+        current.updated_at = now;
+        let updated = transaction.save_schedule(current).await?;
+        transaction.commit().await?;
+        Ok(updated.into())
     }
 
     pub async fn remove(&self, actor: &ActorContext, id: i64, version: i64) -> AppResult<()> {
         validate_id(id)?;
         validate_version(version)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
-        let current = self
-            .repository
-            .lock_for_tenant(&transaction, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        let mut current = transaction
+            .lock_schedule(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("定时任务不存在".into()))?;
         if current.version != version {
@@ -311,15 +282,14 @@ impl JobScheduleService {
             )
             .await;
         }
-        let now = self.repository_clock(&transaction).await?;
-        let mut active: job_schedule::ActiveModel = current.into();
-        active.enabled = Set(false);
-        active.next_run_at = Set(None);
-        active.del_flag = Set(job_schedule::Model::DEL_FLAG_DELETED.to_owned());
-        active.version = Set(version + 1);
-        active.updated_at = Set(now);
-        active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)
+        let now = transaction.database_now().await?;
+        current.enabled = false;
+        current.next_run_at = None;
+        current.deleted = true;
+        current.version = version + 1;
+        current.updated_at = now;
+        transaction.save_schedule(current).await?;
+        transaction.commit().await
     }
 
     pub async fn run_now(
@@ -332,28 +302,21 @@ impl JobScheduleService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let idempotency_key = normalize_idempotency_key(idempotency_key)?;
         let fire_key = manual_fire_key(idempotency_key);
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
-        let schedule = self
-            .repository
-            .lock_for_tenant(&transaction, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        let mut schedule = transaction
+            .lock_schedule(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("定时任务不存在".into()))?;
-        if let Some(existing) = self
-            .repository
-            .find_execution_by_fire_key(&transaction, id, &fire_key)
+        if let Some(existing) = transaction
+            .find_execution_by_fire_key(id, &fire_key)
             .await?
         {
-            transaction.commit().await.map_err(database_error)?;
-            return self.execution_vo(existing).await;
+            transaction.commit().await?;
+            return Ok(existing.into());
         }
         let target = self.resolve_target(tenant_id, &schedule.handler_key, true)?;
         if schedule.concurrency_policy == CONCURRENCY_FORBID
-            && self.repository.has_active_job(&transaction, id).await?
+            && transaction.has_active_job(id).await?
         {
             return rollback_with(
                 transaction,
@@ -361,20 +324,7 @@ impl JobScheduleService {
             )
             .await;
         }
-        let now = self.repository_clock(&transaction).await?;
-        let execution = insert_execution(
-            &transaction,
-            &schedule,
-            NewExecution {
-                fire_key: &fire_key,
-                trigger_kind: TRIGGER_MANUAL,
-                scheduled_for: now,
-                outcome: OUTCOME_ENQUEUED,
-                detail: None,
-                created_at: now,
-            },
-        )
-        .await?;
+        let now = transaction.database_now().await?;
         let context = ScheduledJobContext {
             tenant_id,
             schedule_id: schedule.id,
@@ -383,19 +333,32 @@ impl JobScheduleService {
             max_runtime_seconds: schedule.max_runtime_seconds,
             fire_key: &fire_key,
         };
-        let result = self
-            .queue
-            .enqueue_in_transaction(&transaction, target.build_job(&context)?)
+        let job = target.build_job(&context)?;
+        let execution = transaction
+            .insert_execution(
+                &schedule,
+                NewJobScheduleExecution {
+                    id: crate::next_id()?,
+                    fire_key,
+                    trigger_kind: TRIGGER_MANUAL.to_owned(),
+                    scheduled_for: now,
+                    outcome: OUTCOME_ENQUEUED.to_owned(),
+                    detail: None,
+                    created_at: now,
+                },
+            )
             .await?;
-        let execution = attach_background_job(&transaction, execution, result.job_id).await?;
-        let mut active: job_schedule::ActiveModel = schedule.into();
-        active.last_run_at = Set(Some(now));
-        active.updated_at = Set(now);
-        active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
+        let result = transaction.enqueue(job).await?;
+        let execution = transaction
+            .attach_background_job(execution, result.job_id)
+            .await?;
+        schedule.last_run_at = Some(now);
+        schedule.updated_at = now;
+        transaction.save_schedule(schedule).await?;
+        transaction.commit().await?;
         self.record_trigger(OUTCOME_ENQUEUED);
         self.queue.notify_background_jobs().await;
-        self.execution_vo(execution).await
+        Ok(execution.into())
     }
 
     pub async fn executions(
@@ -406,7 +369,7 @@ impl JobScheduleService {
     ) -> AppResult<PageResult<JobScheduleExecutionVo>> {
         validate_id(schedule_id)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.read
+        self.persistence
             .find(tenant_id, schedule_id)
             .await?
             .ok_or_else(|| AppError::NotFound("定时任务不存在".into()))?;
@@ -414,7 +377,7 @@ impl JobScheduleService {
         let outcome = normalize_outcome(params.outcome)?;
         let background_status = normalize_background_status(params.background_job_status)?;
         let page = self
-            .read
+            .persistence
             .execution_page(
                 tenant_id,
                 schedule_id,
@@ -505,11 +468,12 @@ impl JobScheduleService {
         Ok(target)
     }
 
-    async fn ensure_enabled_limit<C>(&self, db: &C, tenant_id: &str) -> AppResult<()>
-    where
-        C: ConnectionTrait,
-    {
-        let current = self.repository.count_enabled(db, tenant_id).await?;
+    async fn ensure_enabled_limit(
+        &self,
+        transaction: &dyn JobScheduleTransaction,
+        tenant_id: &str,
+    ) -> AppResult<()> {
+        let current = transaction.count_enabled(tenant_id).await?;
         if current >= self.max_enabled_per_tenant as u64 {
             return Err(AppError::Conflict(format!(
                 "当前租户最多启用 {} 个定时任务",
@@ -517,27 +481,5 @@ impl JobScheduleService {
             )));
         }
         Ok(())
-    }
-
-    pub(super) async fn repository_clock<C>(&self, db: &C) -> AppResult<DateTime<Utc>>
-    where
-        C: ConnectionTrait,
-    {
-        self.queue.repository().database_utc_now(db).await
-    }
-
-    async fn execution_vo(
-        &self,
-        execution: job_schedule_execution::Model,
-    ) -> AppResult<JobScheduleExecutionVo> {
-        let ids = execution.background_job_id.into_iter().collect::<Vec<_>>();
-        let statuses = self
-            .repository
-            .background_job_statuses(self.database.write(), &ids)
-            .await?;
-        let status = execution
-            .background_job_id
-            .and_then(|id| statuses.get(&id).cloned());
-        Ok(execution_into_vo(execution, status))
     }
 }

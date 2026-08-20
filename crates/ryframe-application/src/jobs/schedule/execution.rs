@@ -5,37 +5,30 @@ impl JobScheduleService {
     pub async fn scan_due_once(&self) -> AppResult<usize> {
         let mut triggered = 0;
         for _ in 0..self.batch_size {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            let now = self.repository_clock(&transaction).await?;
-            let tenant_scope =
-                crate::legacy_execution_tenant_scope::database_scope(&self.execution_tenant_scope);
-            let Some(schedule) = self
-                .repository
-                .lock_next_due(&transaction, now, &tenant_scope)
+            let transaction = self.persistence.begin().await?;
+            let now = transaction.database_now().await?;
+            let Some(schedule) = transaction
+                .lock_next_due(now, &self.execution_tenant_scope)
                 .await?
             else {
-                transaction.commit().await.map_err(database_error)?;
+                transaction.commit().await?;
                 break;
             };
             let result = match self.validate_persisted_schedule(&schedule, now) {
                 Ok(parsed) => {
-                    self.process_due_schedule(&transaction, schedule, now, parsed)
+                    self.process_due_schedule(transaction.as_ref(), schedule, now, parsed)
                         .await?
                 }
                 Err(detail) => {
-                    quarantine_invalid_schedule(&transaction, schedule, now, &detail).await?;
+                    quarantine_invalid_schedule(transaction.as_ref(), schedule, now, &detail)
+                        .await?;
                     DueScheduleResult {
                         enqueued: false,
                         outcome: OUTCOME_INVALID_CONFIGURATION,
                     }
                 }
             };
-            transaction.commit().await.map_err(database_error)?;
+            transaction.commit().await?;
             self.record_trigger(result.outcome);
             if result.enqueued {
                 triggered += 1;
@@ -67,8 +60,8 @@ impl JobScheduleService {
 
     async fn process_due_schedule(
         &self,
-        transaction: &DatabaseTransaction,
-        schedule: job_schedule::Model,
+        transaction: &dyn JobScheduleTransaction,
+        schedule: JobScheduleRecord,
         now: DateTime<Utc>,
         parsed: ParsedSchedule,
     ) -> AppResult<DueScheduleResult> {
@@ -140,10 +133,7 @@ impl JobScheduleService {
         };
 
         if schedule.concurrency_policy == CONCURRENCY_FORBID
-            && self
-                .repository
-                .has_active_job(transaction, schedule.id)
-                .await?
+            && transaction.has_active_job(schedule.id).await?
         {
             self.record_non_enqueued_due_execution(
                 transaction,
@@ -165,6 +155,15 @@ impl JobScheduleService {
             });
         }
 
+        let context = ScheduledJobContext {
+            tenant_id: &schedule.tenant_id,
+            schedule_id: schedule.id,
+            trigger_kind,
+            scheduled_for: due,
+            max_runtime_seconds: schedule.max_runtime_seconds,
+            fire_key: &fire_key,
+        };
+        let job = target.build_job(&context)?;
         let execution = insert_execution(
             transaction,
             &schedule,
@@ -178,18 +177,7 @@ impl JobScheduleService {
             },
         )
         .await?;
-        let context = ScheduledJobContext {
-            tenant_id: &schedule.tenant_id,
-            schedule_id: schedule.id,
-            trigger_kind,
-            scheduled_for: due,
-            max_runtime_seconds: schedule.max_runtime_seconds,
-            fire_key: &fire_key,
-        };
-        let job = self
-            .queue
-            .enqueue_in_transaction(transaction, target.build_job(&context)?)
-            .await?;
+        let job = transaction.enqueue(job).await?;
         attach_background_job(transaction, execution, job.job_id).await?;
         advance_schedule(transaction, schedule, next_run_at, due, now).await?;
         Ok(DueScheduleResult {
@@ -200,7 +188,7 @@ impl JobScheduleService {
 
     async fn record_non_enqueued_due_execution(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn JobScheduleTransaction,
         execution: NonEnqueuedDueExecution<'_>,
     ) -> AppResult<()> {
         let NonEnqueuedDueExecution {
@@ -231,7 +219,7 @@ impl JobScheduleService {
 
     fn validate_persisted_schedule(
         &self,
-        schedule: &job_schedule::Model,
+        schedule: &JobScheduleRecord,
         now: DateTime<Utc>,
     ) -> Result<ParsedSchedule, String> {
         let target = self
@@ -256,7 +244,7 @@ impl JobScheduleService {
 }
 
 struct NonEnqueuedDueExecution<'a> {
-    schedule: job_schedule::Model,
+    schedule: JobScheduleRecord,
     fire_key: &'a str,
     trigger_kind: &'a str,
     scheduled_for: DateTime<Utc>,

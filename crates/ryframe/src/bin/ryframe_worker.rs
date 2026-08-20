@@ -225,8 +225,7 @@ async fn main() -> Result<(), AppError> {
         process_jobs::validate_schedule_targets(&worker, &schedule_targets)?;
         Some(Arc::new(
             JobScheduleService::new(
-                database.clone(),
-                ryframe_application::legacy_job_schedule_read(database.clone()),
+                ryframe_application::legacy_job_schedule_persistence(database.clone()),
                 queue.clone(),
                 execution_tenant_scope.clone(),
                 schedule_targets,

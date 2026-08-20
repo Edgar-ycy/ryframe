@@ -3,13 +3,7 @@ use std::{str::FromStr, sync::Arc, time::Duration as StdDuration};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
-use ryframe_db::{
-    ControlDatabaseCluster, JobScheduleRepository, job_schedule, job_schedule_execution,
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseTransaction, TransactionTrait,
-};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::{sync::watch, task::JoinHandle, time};
@@ -20,7 +14,8 @@ use super::{
 };
 use crate::{
     ExecutionTenantScope, JobScheduleExecutionReadFilter, JobScheduleExecutionRecord,
-    JobScheduleReadFilter, JobScheduleReadPort, JobScheduleRecord,
+    JobSchedulePersistencePort, JobScheduleReadFilter, JobScheduleRecord, JobScheduleTransaction,
+    NewJobScheduleExecution,
 };
 
 const SYSTEM_TENANT_ID: &str = "system";
@@ -169,9 +164,7 @@ pub struct JobSchedulePreview {
 /// 数据库驱动的租户调度服务。
 #[derive(Clone)]
 pub struct JobScheduleService {
-    database: ControlDatabaseCluster,
-    repository: Arc<JobScheduleRepository>,
-    read: Arc<dyn JobScheduleReadPort>,
+    persistence: Arc<dyn JobSchedulePersistencePort>,
     queue: Arc<JobQueue>,
     execution_tenant_scope: ExecutionTenantScope,
     targets: ScheduledJobTargetRegistry,
@@ -203,6 +196,7 @@ mod tests {
         let last_run_at = Utc.with_ymd_and_hms(2026, 8, 20, 0, 0, 0).unwrap();
         let schedule = JobScheduleVo::from(JobScheduleRecord {
             id: 7,
+            tenant_id: "tenant-a".to_owned(),
             name: "日报".to_owned(),
             handler_key: "report.daily".to_owned(),
             cron_expression: "0 0 0 * * *".to_owned(),
@@ -216,6 +210,7 @@ mod tests {
             version: 9,
             created_at,
             updated_at,
+            deleted: false,
         });
 
         assert_eq!(schedule.id, "7");

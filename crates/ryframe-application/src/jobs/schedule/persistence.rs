@@ -10,57 +10,53 @@ pub(super) struct NewExecution<'a> {
 }
 
 pub(super) async fn insert_execution(
-    transaction: &DatabaseTransaction,
-    schedule: &job_schedule::Model,
+    transaction: &dyn JobScheduleTransaction,
+    schedule: &JobScheduleRecord,
     execution: NewExecution<'_>,
-) -> AppResult<job_schedule_execution::Model> {
-    job_schedule_execution::ActiveModel {
-        id: Set(crate::next_id()?),
-        tenant_id: Set(schedule.tenant_id.clone()),
-        schedule_id: Set(schedule.id),
-        schedule_name_snapshot: Set(schedule.name.clone()),
-        handler_key_snapshot: Set(schedule.handler_key.clone()),
-        fire_key: Set(execution.fire_key.to_owned()),
-        trigger_kind: Set(execution.trigger_kind.to_owned()),
-        scheduled_for: Set(execution.scheduled_for),
-        outcome: Set(execution.outcome.to_owned()),
-        background_job_id: Set(None),
-        detail: Set(execution.detail.map(|value| truncate_detail(&value))),
-        created_at: Set(execution.created_at),
-    }
-    .insert(transaction)
-    .await
-    .map_err(database_error)
+) -> AppResult<JobScheduleExecutionRecord> {
+    transaction
+        .insert_execution(
+            schedule,
+            NewJobScheduleExecution {
+                id: crate::next_id()?,
+                fire_key: execution.fire_key.to_owned(),
+                trigger_kind: execution.trigger_kind.to_owned(),
+                scheduled_for: execution.scheduled_for,
+                outcome: execution.outcome.to_owned(),
+                detail: execution.detail.map(|value| truncate_detail(&value)),
+                created_at: execution.created_at,
+            },
+        )
+        .await
 }
 
 pub(super) async fn attach_background_job(
-    transaction: &DatabaseTransaction,
-    execution: job_schedule_execution::Model,
+    transaction: &dyn JobScheduleTransaction,
+    execution: JobScheduleExecutionRecord,
     background_job_id: i64,
-) -> AppResult<job_schedule_execution::Model> {
-    let mut active: job_schedule_execution::ActiveModel = execution.into();
-    active.background_job_id = Set(Some(background_job_id));
-    active.update(transaction).await.map_err(database_error)
+) -> AppResult<JobScheduleExecutionRecord> {
+    transaction
+        .attach_background_job(execution, background_job_id)
+        .await
 }
 
 pub(super) async fn advance_schedule(
-    transaction: &DatabaseTransaction,
-    schedule: job_schedule::Model,
+    transaction: &dyn JobScheduleTransaction,
+    mut schedule: JobScheduleRecord,
     next_run_at: DateTime<Utc>,
     last_run_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
-    let mut active: job_schedule::ActiveModel = schedule.into();
-    active.next_run_at = Set(Some(next_run_at));
-    active.last_run_at = Set(Some(last_run_at));
-    active.updated_at = Set(now);
-    active.update(transaction).await.map_err(database_error)?;
+    schedule.next_run_at = Some(next_run_at);
+    schedule.last_run_at = Some(last_run_at);
+    schedule.updated_at = now;
+    transaction.save_schedule(schedule).await?;
     Ok(())
 }
 
 pub(super) async fn quarantine_invalid_schedule(
-    transaction: &DatabaseTransaction,
-    schedule: job_schedule::Model,
+    transaction: &dyn JobScheduleTransaction,
+    mut schedule: JobScheduleRecord,
     now: DateTime<Utc>,
     detail: &str,
 ) -> AppResult<()> {
@@ -84,70 +80,12 @@ pub(super) async fn quarantine_invalid_schedule(
     )
     .await?;
 
-    let next_version = schedule.version.saturating_add(1);
-    let mut active: job_schedule::ActiveModel = schedule.into();
-    active.enabled = Set(false);
-    active.next_run_at = Set(None);
-    active.version = Set(next_version);
-    active.updated_at = Set(now);
-    active.update(transaction).await.map_err(database_error)?;
+    schedule.enabled = false;
+    schedule.next_run_at = None;
+    schedule.version = schedule.version.saturating_add(1);
+    schedule.updated_at = now;
+    transaction.save_schedule(schedule).await?;
     Ok(())
-}
-
-pub(super) async fn lock_tenant(
-    transaction: &DatabaseTransaction,
-    tenant_id: &str,
-) -> AppResult<()> {
-    let row = transaction
-        .query_one_raw(sea_orm::Statement::from_sql_and_values(
-            sea_orm::DbBackend::MySql,
-            "SELECT tenant_id FROM sys_tenant WHERE tenant_id = ? FOR UPDATE",
-            [tenant_id.into()],
-        ))
-        .await
-        .map_err(database_error)?;
-    if row.is_none() {
-        return Err(AppError::NotFound("当前租户不存在".into()));
-    }
-    Ok(())
-}
-
-pub(super) fn execution_into_vo(
-    execution: job_schedule_execution::Model,
-    background_job_status: Option<String>,
-) -> JobScheduleExecutionVo {
-    JobScheduleExecutionVo {
-        id: execution.id.to_string(),
-        schedule_id: execution.schedule_id.to_string(),
-        schedule_name: execution.schedule_name_snapshot,
-        handler_key: execution.handler_key_snapshot,
-        trigger_kind: execution.trigger_kind,
-        scheduled_for: execution.scheduled_for,
-        outcome: execution.outcome,
-        background_job_id: execution.background_job_id.map(|id| id.to_string()),
-        background_job_status,
-        detail: execution.detail,
-        created_at: execution.created_at,
-    }
-}
-
-pub(super) fn schedule_into_vo(schedule: job_schedule::Model) -> JobScheduleVo {
-    JobScheduleVo {
-        id: schedule.id.to_string(),
-        name: schedule.name,
-        handler_key: schedule.handler_key,
-        cron_expression: schedule.cron_expression,
-        timezone: schedule.timezone,
-        enabled: schedule.enabled,
-        misfire_policy: schedule.misfire_policy,
-        concurrency_policy: schedule.concurrency_policy,
-        max_runtime_seconds: schedule.max_runtime_seconds,
-        next_run_at: schedule.next_run_at,
-        last_run_at: schedule.last_run_at,
-        version: schedule.version,
-        created_at: schedule.created_at,
-        updated_at: schedule.updated_at,
-    }
 }
 
 pub(super) fn normalize_required(value: &str, max_bytes: usize, label: &str) -> AppResult<String> {
@@ -263,12 +201,8 @@ pub(super) fn truncate_detail(value: &str) -> String {
     format!("{}…", &value[..end])
 }
 
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 pub(super) async fn rollback_with<T>(
-    transaction: DatabaseTransaction,
+    transaction: Box<dyn JobScheduleTransaction>,
     error: AppError,
 ) -> AppResult<T> {
     if let Err(rollback_error) = transaction.rollback().await {
