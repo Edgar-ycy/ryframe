@@ -3,6 +3,7 @@ mod artifact_store;
 mod audit;
 mod auth_service;
 mod authorization_cache;
+mod authorization_diagnostic_persistence;
 mod authorization_resolver;
 mod config_persistence;
 mod dept_persistence;
@@ -11,6 +12,7 @@ mod file_content;
 mod id_generator;
 mod identity_authorization;
 pub mod jobs;
+mod legacy_authorization_diagnostic_persistence;
 mod legacy_config_persistence;
 mod legacy_dept_persistence;
 mod legacy_dict_persistence;
@@ -73,6 +75,10 @@ pub use authorization_cache::{
     AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,
     set_authorization_cache_lookup_hook,
 };
+pub use authorization_diagnostic_persistence::{
+    AuthorizationDiagnosticReadPort, DiagnosticDepartmentRecord, DiagnosticMenuRecord,
+    DiagnosticPermissionRecord, DiagnosticRoleRecord,
+};
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
 pub use config_persistence::{
     ConfigFilter, ConfigPersistencePort, ConfigRecord, ConfigTransaction,
@@ -101,6 +107,8 @@ pub use jobs::{
     ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
     UpdateJobSchedule,
 };
+#[doc(hidden)]
+pub use legacy_authorization_diagnostic_persistence::port as legacy_authorization_diagnostic_persistence;
 #[doc(hidden)]
 pub use legacy_config_persistence::port as legacy_config_persistence;
 #[doc(hidden)]

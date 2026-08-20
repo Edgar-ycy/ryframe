@@ -2,15 +2,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use ryframe_db::{
-    ControlDatabaseCluster, DataRetentionRepository, DeptRepository, MenuRepository,
-    PermissionRepository, RoleRepository, UserRepository,
-    entities::{menu, permission},
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 use serde::Serialize;
 
-use crate::{AuthorizationCache, IdentityRoleRecord};
+use crate::{
+    AuthorizationCache, AuthorizationDiagnosticReadPort, DiagnosticMenuRecord,
+    DiagnosticPermissionRecord, IdentityRoleRecord,
+};
 
 use super::UserService;
 
@@ -122,39 +120,27 @@ pub struct AuthorizationDiagnosticRefreshVo {
 
 #[derive(Default)]
 struct PermissionSource {
-    permission: Option<permission::Model>,
+    permission: Option<DiagnosticPermissionRecord>,
     roles: BTreeSet<String>,
 }
 
 pub struct AuthorizationDiagnosticService {
-    db: ControlDatabaseCluster,
+    persistence: Arc<dyn AuthorizationDiagnosticReadPort>,
     user_service: Arc<UserService>,
-    user_repo: UserRepository,
-    role_repo: RoleRepository,
-    permission_repo: PermissionRepository,
-    menu_repo: MenuRepository,
-    dept_repo: DeptRepository,
-    clock_repo: DataRetentionRepository,
     authorization_cache: AuthorizationCache,
     websocket_notification_available: bool,
 }
 
 impl AuthorizationDiagnosticService {
     pub fn new(
-        db: ControlDatabaseCluster,
+        persistence: Arc<dyn AuthorizationDiagnosticReadPort>,
         user_service: Arc<UserService>,
         authorization_cache: AuthorizationCache,
         websocket_notification_available: bool,
     ) -> Self {
         Self {
-            db,
+            persistence,
             user_service,
-            user_repo: UserRepository,
-            role_repo: RoleRepository,
-            permission_repo: PermissionRepository,
-            menu_repo: MenuRepository,
-            dept_repo: DeptRepository,
-            clock_repo: DataRetentionRepository,
             authorization_cache,
             websocket_notification_available,
         }
@@ -169,10 +155,9 @@ impl AuthorizationDiagnosticService {
         if user_id <= 0 {
             return Err(AppError::Validation("用户ID必须大于零".into()));
         }
-        let db = self.db.write();
         let target_tenant = self
-            .user_repo
-            .find_tenant_id_by_id(db, user_id)
+            .persistence
+            .user_tenant_id(user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         if target_tenant != tenant_id {
@@ -191,7 +176,7 @@ impl AuthorizationDiagnosticService {
             .user_service
             .calculate_current_authorization(tenant_id, user_id)
             .await?;
-        let calculated_at = self.clock_repo.database_utc_now(db).await?;
+        let calculated_at = self.persistence.database_now().await?;
         let tenant_available = authorization.tenant.is_available(calculated_at);
         let user_enabled = authorization.user.is_enabled();
         let final_access_enabled = tenant_available && user_enabled;
@@ -200,26 +185,23 @@ impl AuthorizationDiagnosticService {
             .iter()
             .map(|role| role.id)
             .collect::<HashSet<_>>();
-        let mut assigned_roles = self
-            .role_repo
-            .find_user_roles_all_status(db, tenant_id, user_id)
-            .await?;
+        let mut assigned_roles = self.persistence.assigned_roles(tenant_id, user_id).await?;
         assigned_roles.sort_unstable_by_key(|role| role.id);
 
         let roles = assigned_roles
-            .iter()
+            .into_iter()
             .map(|role| AuthorizationDiagnosticRoleVo {
                 id: role.id.to_string(),
-                name: role.name.clone(),
-                code: role.code.clone(),
-                status: role.status.clone(),
+                name: role.name,
+                code: role.code,
+                status: role.status,
                 data_scope: data_scope_key(&DataScope::from_db_value(&role.data_scope)).to_owned(),
-                is_super: role.is_super == 1,
+                is_super: role.is_super,
                 participates: final_access_enabled && enabled_role_ids.contains(&role.id),
             })
             .collect::<Vec<_>>();
 
-        let all_permissions = self.permission_repo.find_all(db, tenant_id).await?;
+        let all_permissions = self.persistence.permissions(tenant_id).await?;
         let permission_by_id = all_permissions
             .iter()
             .map(|permission| (permission.id, permission))
@@ -230,7 +212,7 @@ impl AuthorizationDiagnosticService {
             .cloned()
             .collect::<Vec<_>>();
         let permission_sources = self
-            .permission_sources(db, tenant_id, &authorization.roles, &active_permissions)
+            .permission_sources(tenant_id, &authorization.roles, &active_permissions)
             .await?;
         let permissions = permission_sources
             .into_values()
@@ -247,16 +229,12 @@ impl AuthorizationDiagnosticService {
             })
             .collect::<Vec<_>>();
 
-        let all_menus = self
-            .menu_repo
-            .find_all_for_diagnostics(db, tenant_id)
-            .await?;
+        let all_menus = self.persistence.menus(tenant_id).await?;
         let accessible_ids = if final_access_enabled {
-            self.menu_repo
-                .find_by_permission_codes(db, tenant_id, &authorization.permission_codes)
+            self.persistence
+                .accessible_menu_ids(tenant_id, &authorization.permission_codes)
                 .await?
                 .into_iter()
-                .map(|menu| menu.id)
                 .collect::<HashSet<_>>()
         } else {
             HashSet::new()
@@ -273,37 +251,37 @@ impl AuthorizationDiagnosticService {
                     invalid_menu_permission = true;
                 }
                 let accessible = accessible_ids.contains(&menu.id);
+                let inaccessible_reason = menu_inaccessible_reason(
+                    &menu,
+                    permission,
+                    tenant_available,
+                    user_enabled,
+                    accessible,
+                );
                 AuthorizationDiagnosticMenuVo {
                     id: menu.id.to_string(),
                     parent_id: menu.parent_id.map(|id| id.to_string()),
-                    name: menu.name.clone(),
-                    route_key: menu.route_key.clone(),
+                    name: menu.name,
+                    route_key: menu.route_key,
                     permission_code: permission.map(|permission| permission.code.clone()),
-                    status: menu.status.clone(),
+                    status: menu.status,
                     configured_visible: menu.visible,
                     accessible,
                     visible_in_navigation: accessible && menu.visible,
-                    inaccessible_reason: menu_inaccessible_reason(
-                        &menu,
-                        permission,
-                        tenant_available,
-                        user_enabled,
-                        accessible,
-                    ),
+                    inaccessible_reason,
                 }
             })
             .collect::<Vec<_>>();
 
         let department_path = self
             .department_path(
-                db,
                 tenant_id,
                 authorization.actor.dept_path.as_deref(),
                 authorization.actor.dept_id,
             )
             .await?;
         let custom_departments = self
-            .departments(db, tenant_id, &authorization.actor.custom_dept_ids)
+            .departments(tenant_id, &authorization.actor.custom_dept_ids)
             .await?;
         let data_scope_sources = authorization
             .roles
@@ -387,10 +365,9 @@ impl AuthorizationDiagnosticService {
 
     async fn permission_sources(
         &self,
-        db: &sea_orm::DatabaseConnection,
         tenant_id: &str,
         roles: &[IdentityRoleRecord],
-        active_permissions: &[permission::Model],
+        active_permissions: &[DiagnosticPermissionRecord],
     ) -> AppResult<BTreeMap<String, PermissionSource>> {
         let mut sources = BTreeMap::<String, PermissionSource>::new();
         let super_roles = roles
@@ -413,8 +390,8 @@ impl AuthorizationDiagnosticService {
 
         for role in roles {
             for permission in self
-                .permission_repo
-                .find_role_perms(db, tenant_id, &[role.id])
+                .persistence
+                .role_permissions(tenant_id, role.id)
                 .await?
             {
                 let source = sources.entry(permission.code.clone()).or_default();
@@ -427,7 +404,6 @@ impl AuthorizationDiagnosticService {
 
     async fn department_path(
         &self,
-        db: &sea_orm::DatabaseConnection,
         tenant_id: &str,
         ancestors: Option<&str>,
         dept_id: Option<i64>,
@@ -441,9 +417,9 @@ impl AuthorizationDiagnosticService {
         if let Some(dept_id) = dept_id {
             ids.push(dept_id);
         }
-        let departments = self
-            .dept_repo
-            .find_filtered_by_ids(db, tenant_id, None, None, &ids)
+        let mut departments = self
+            .persistence
+            .departments(tenant_id, &ids)
             .await?
             .into_iter()
             .map(|dept| (dept.id, dept.name))
@@ -452,10 +428,10 @@ impl AuthorizationDiagnosticService {
             .into_iter()
             .filter_map(|id| {
                 departments
-                    .get(&id)
+                    .remove(&id)
                     .map(|name| AuthorizationDiagnosticDepartmentVo {
                         id: id.to_string(),
-                        name: name.clone(),
+                        name,
                     })
             })
             .collect())
@@ -463,12 +439,11 @@ impl AuthorizationDiagnosticService {
 
     async fn departments(
         &self,
-        db: &sea_orm::DatabaseConnection,
         tenant_id: &str,
         ids: &[i64],
     ) -> AppResult<Vec<AuthorizationDiagnosticDepartmentVo>> {
-        self.dept_repo
-            .find_filtered_by_ids(db, tenant_id, None, None, ids)
+        self.persistence
+            .departments(tenant_id, ids)
             .await
             .map(|departments| {
                 departments
@@ -540,8 +515,8 @@ fn data_scope_key(scope: &DataScope) -> &'static str {
 }
 
 fn menu_inaccessible_reason(
-    menu: &menu::Model,
-    permission: Option<&permission::Model>,
+    menu: &DiagnosticMenuRecord,
+    permission: Option<&DiagnosticPermissionRecord>,
     tenant_available: bool,
     user_enabled: bool,
     accessible: bool,
@@ -567,4 +542,56 @@ fn menu_inaccessible_reason(
         "permission_not_granted"
     };
     Some(reason.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DiagnosticMenuRecord, menu_inaccessible_reason};
+
+    fn menu(status: &str, menu_type: &str, perm_id: Option<i64>) -> DiagnosticMenuRecord {
+        DiagnosticMenuRecord {
+            id: 1,
+            parent_id: None,
+            name: "测试菜单".to_owned(),
+            route_key: Some("test".to_owned()),
+            perm_id,
+            menu_type: menu_type.to_owned(),
+            status: status.to_owned(),
+            visible: true,
+        }
+    }
+
+    #[test]
+    fn inaccessible_reason_prefers_account_state_before_menu_configuration() {
+        let disabled_menu = menu("0", "C", None);
+
+        assert_eq!(
+            menu_inaccessible_reason(&disabled_menu, None, false, false, false).as_deref(),
+            Some("tenant_unavailable")
+        );
+        assert_eq!(
+            menu_inaccessible_reason(&disabled_menu, None, true, false, false).as_deref(),
+            Some("user_disabled")
+        );
+        assert_eq!(
+            menu_inaccessible_reason(&disabled_menu, None, true, true, false).as_deref(),
+            Some("menu_disabled")
+        );
+    }
+
+    #[test]
+    fn inaccessible_reason_distinguishes_directory_and_permission_configuration() {
+        assert_eq!(
+            menu_inaccessible_reason(&menu("1", "M", None), None, true, true, false).as_deref(),
+            Some("no_accessible_child")
+        );
+        assert_eq!(
+            menu_inaccessible_reason(&menu("1", "C", None), None, true, true, false).as_deref(),
+            Some("permission_missing")
+        );
+        assert_eq!(
+            menu_inaccessible_reason(&menu("1", "C", Some(9)), None, true, true, false).as_deref(),
+            Some("invalid_permission_reference")
+        );
+    }
 }

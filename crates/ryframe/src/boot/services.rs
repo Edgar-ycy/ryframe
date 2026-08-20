@@ -324,7 +324,7 @@ pub async fn build_all(
         },
     ));
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
-        database.clone(),
+        ryframe_application::legacy_authorization_diagnostic_persistence(database.clone()),
         user.clone(),
         authorization_cache.clone(),
         policies.messaging.enabled() && redis_client.is_some(),
