@@ -1,16 +1,20 @@
 use std::sync::Arc;
 
 use ryframe_db::{
-    ControlDatabaseCluster, ProductRepository, ReadConsistency,
-    entities::{product_plan, product_plan_capability, product_plan_version},
+    ControlDatabaseCluster, ProductRepository, ReadConsistency, TenantOperationLeaseRepository,
+    entities::{
+        product_plan, product_plan_capability, product_plan_version, tenant_capability_override,
+        tenant_operation_lease,
+    },
 };
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use crate::{
-    PersistenceFuture, ProductCapabilityRecord, ProductPlanRecord, ProductPlanState,
-    ProductReadPort, ProductVersionRecord, ProductVersionSnapshot, ProductVersionState,
-    ProductVersionWriteResult, ProductWritePort, ProductWriteTransaction,
-    TenantCapabilityOverrideRecord, TenantProductSnapshot,
+    PersistenceFuture, ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState,
+    ProductPlanRecord, ProductPlanState, ProductReadPort, ProductVersionRecord,
+    ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult, ProductWritePort,
+    ProductWriteTransaction, ProvisioningCapabilityResources, TenantCapabilityOverrideRecord,
+    TenantProductSnapshot,
 };
 
 pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn ProductReadPort> {
@@ -105,6 +109,170 @@ impl ProductWritePort for LegacyProductWrite {
 }
 
 impl ProductWriteTransaction for LegacyProductWriteTransaction {
+    fn lock_change_tenant<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> PersistenceFuture<'a, ProductChangeTenantState> {
+        Box::pin(async move {
+            let repository = TenantOperationLeaseRepository;
+            let tenant = repository
+                .lock_tenant_and_validate_in_txn(&self.transaction, tenant_id, None)
+                .await?;
+            let database_now = repository.database_utc_now(&self.transaction).await?;
+            Ok(ProductChangeTenantState {
+                status: tenant.status,
+                authorization_epoch: tenant.authorization_epoch,
+                runtime_epoch: tenant.runtime_epoch,
+                database_now,
+            })
+        })
+    }
+
+    fn acquire_change_lease<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        owner_token: &'a str,
+        version_id: i64,
+        acquired_at: chrono::DateTime<chrono::Utc>,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            TenantOperationLeaseRepository
+                .acquire_in_txn(
+                    &self.transaction,
+                    tenant_operation_lease::Model {
+                        tenant_id: tenant_id.to_owned(),
+                        owner_token: owner_token.to_owned(),
+                        operation: "product.change".into(),
+                        resource_type: "product_plan_version".into(),
+                        resource_id: version_id.to_string(),
+                        expires_at,
+                        created_at: acquired_at,
+                        updated_at: acquired_at,
+                    },
+                )
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn lock_assignable_version(
+        &self,
+        version_id: i64,
+    ) -> PersistenceFuture<'_, ProductVersionSnapshot> {
+        Box::pin(async move {
+            let repository = ProductRepository;
+            let observed = repository
+                .find_version_by_id(&self.transaction, version_id)
+                .await?
+                .ok_or_else(|| {
+                    ryframe_kernel::AppError::NotFound("目标产品套餐版本不存在".into())
+                })?;
+            let plan = repository
+                .lock_plan_by_id_in_txn(&self.transaction, observed.plan.id)
+                .await?;
+            let version = repository
+                .lock_version_by_id_in_txn(&self.transaction, version_id)
+                .await?;
+            if version.plan_id != plan.id {
+                return Err(ryframe_kernel::AppError::Conflict(
+                    "目标产品套餐版本所属套餐已变化，请重新预览".into(),
+                ));
+            }
+            repository
+                .find_version_by_id(&self.transaction, version_id)
+                .await?
+                .map(version_snapshot)
+                .ok_or_else(|| ryframe_kernel::AppError::NotFound("目标产品套餐版本不存在".into()))
+        })
+    }
+
+    fn current_tenant_product<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> PersistenceFuture<'a, TenantProductSnapshot> {
+        Box::pin(async move {
+            ProductRepository
+                .tenant_product(&self.transaction, tenant_id)
+                .await?
+                .map(tenant_snapshot)
+                .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))
+        })
+    }
+
+    fn sync_capability_resources<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        resources: &'a ProvisioningCapabilityResources,
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            crate::system::product_service::resources::sync_persisted_capability_resources(
+                &self.transaction,
+                tenant_id,
+                resources,
+            )
+            .await
+        })
+    }
+
+    fn replace_assignment(&self, change: ProductAssignmentChange) -> PersistenceFuture<'_, ()> {
+        Box::pin(async move {
+            let ProductAssignmentChange {
+                tenant_id,
+                version_id,
+                changed_by,
+                reason,
+                overrides,
+                changed_at,
+            } = change;
+            let repository = ProductRepository;
+            let mut assignment = repository
+                .lock_assignment_in_txn(&self.transaction, &tenant_id)
+                .await?;
+            assignment.plan_version_id = version_id;
+            assignment.changed_by = Some(changed_by);
+            assignment.change_reason = reason;
+            assignment.updated_at = changed_at;
+            repository
+                .replace_assignment_and_overrides_in_txn(
+                    &self.transaction,
+                    assignment,
+                    override_models(&tenant_id, changed_at, overrides),
+                )
+                .await
+        })
+    }
+
+    fn increment_runtime_epoch<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        expected_epoch: i64,
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            ProductRepository
+                .increment_runtime_epoch_in_txn(&self.transaction, tenant_id, expected_epoch)
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn authorization_mirror(&self) -> &dyn crate::AuthorizationMirrorTransaction {
+        &self.transaction
+    }
+
+    fn release_change_lease<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        owner_token: &'a str,
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            TenantOperationLeaseRepository
+                .release_in_txn(&self.transaction, tenant_id, owner_token)
+                .await
+                .map(|_| ())
+        })
+    }
+
     fn plan_key_exists<'a>(&'a self, key: &'a str) -> PersistenceFuture<'a, bool> {
         Box::pin(async move {
             ProductRepository
@@ -378,6 +546,28 @@ fn capability_models(
             config: capability.config,
             created_at: now,
             updated_at: now,
+        })
+        .collect()
+}
+
+fn override_models(
+    tenant_id: &str,
+    changed_at: chrono::DateTime<chrono::Utc>,
+    overrides: Vec<TenantCapabilityOverrideRecord>,
+) -> Vec<tenant_capability_override::Model> {
+    overrides
+        .into_iter()
+        .map(|value| tenant_capability_override::Model {
+            tenant_id: tenant_id.to_owned(),
+            capability_code: value.code,
+            enabled: value.enabled,
+            variant_code: value.variant,
+            schema_version: value.schema_version,
+            config: value.config,
+            reason: value.reason,
+            changed_by: value.changed_by,
+            created_at: changed_at,
+            updated_at: changed_at,
         })
         .collect()
 }

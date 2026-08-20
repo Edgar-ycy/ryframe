@@ -189,60 +189,7 @@ impl ProductService {
         let resources = self
             .provisioning_resources_in_txn(transaction, version_id)
             .await?;
-        let permission_ids = sync_permissions(transaction, tenant_id, &resources).await?;
-        sync_menus(transaction, tenant_id, &resources, &permission_ids).await?;
-        assign_default_admin_permissions(
-            transaction,
-            tenant_id,
-            &resources.default_admin_permissions,
-            &permission_ids,
-        )
-        .await
-    }
-
-    /// 产品变更与租户初始化共享的 Capability 资源同步。
-    ///
-    /// 禁用时仅休眠权限/菜单，不删除角色关系；重新启用可恢复历史授权。
-    /// 首次启用时从 system 租户的受控模板补齐资源，并仅向 tenant_admin
-    /// 追加 descriptor 声明的默认权限。
-    pub(super) async fn sync_capability_resources_in_txn(
-        &self,
-        transaction: &DatabaseTransaction,
-        tenant_id: &str,
-        current: &ProductContextVo,
-        target: &ProductContextVo,
-    ) -> AppResult<()> {
-        let enabled_codes = target
-            .capabilities
-            .iter()
-            .filter(|capability| capability.entitled)
-            .map(|capability| capability.capability_code.as_str())
-            .collect::<BTreeSet<_>>();
-        let mut resources = resources_for_enabled_codes(&enabled_codes);
-        let previously_enabled = current
-            .capabilities
-            .iter()
-            .filter(|capability| capability.entitled)
-            .map(|capability| capability.capability_code.as_str())
-            .collect::<BTreeSet<_>>();
-        resources.default_admin_permissions = CAPABILITY_CATALOG
-            .iter()
-            .filter(|descriptor| {
-                enabled_codes.contains(descriptor.code)
-                    && !previously_enabled.contains(descriptor.code)
-            })
-            .flat_map(|descriptor| descriptor.default_admin_permissions)
-            .map(|value| (*value).to_owned())
-            .collect();
-        let permission_ids = sync_permissions(transaction, tenant_id, &resources).await?;
-        sync_menus(transaction, tenant_id, &resources, &permission_ids).await?;
-        assign_default_admin_permissions(
-            transaction,
-            tenant_id,
-            &resources.default_admin_permissions,
-            &permission_ids,
-        )
-        .await
+        sync_persisted_capability_resources(transaction, tenant_id, &resources).await
     }
 
     /// 角色授权写入前的 Capability 守卫。普通角色和超级管理员都不能
@@ -367,6 +314,50 @@ fn resources_for_enabled_codes(enabled_codes: &BTreeSet<&str>) -> ProvisioningCa
             .map(|value| (*value).to_owned())
             .collect(),
     }
+}
+
+pub(super) fn resources_for_change(
+    current: &ProductContextVo,
+    target: &ProductContextVo,
+) -> ProvisioningCapabilityResources {
+    let enabled_codes = target
+        .capabilities
+        .iter()
+        .filter(|capability| capability.entitled)
+        .map(|capability| capability.capability_code.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut resources = resources_for_enabled_codes(&enabled_codes);
+    let previously_enabled = current
+        .capabilities
+        .iter()
+        .filter(|capability| capability.entitled)
+        .map(|capability| capability.capability_code.as_str())
+        .collect::<BTreeSet<_>>();
+    resources.default_admin_permissions = CAPABILITY_CATALOG
+        .iter()
+        .filter(|descriptor| {
+            enabled_codes.contains(descriptor.code) && !previously_enabled.contains(descriptor.code)
+        })
+        .flat_map(|descriptor| descriptor.default_admin_permissions)
+        .map(|value| (*value).to_owned())
+        .collect();
+    resources
+}
+
+pub(crate) async fn sync_persisted_capability_resources(
+    transaction: &DatabaseTransaction,
+    tenant_id: &str,
+    resources: &ProvisioningCapabilityResources,
+) -> AppResult<()> {
+    let permission_ids = sync_permissions(transaction, tenant_id, resources).await?;
+    sync_menus(transaction, tenant_id, resources, &permission_ids).await?;
+    assign_default_admin_permissions(
+        transaction,
+        tenant_id,
+        &resources.default_admin_permissions,
+        &permission_ids,
+    )
+    .await
 }
 
 async fn sync_permissions(

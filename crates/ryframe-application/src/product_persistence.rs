@@ -98,6 +98,33 @@ pub struct TenantProductSnapshot {
     pub overrides: Vec<TenantCapabilityOverrideRecord>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ProvisioningCapabilityResources {
+    pub enabled_route_keys: Vec<String>,
+    pub enabled_permission_codes: Vec<String>,
+    pub managed_route_keys: Vec<String>,
+    pub managed_permission_codes: Vec<String>,
+    pub default_admin_permissions: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct ProductChangeTenantState {
+    pub status: String,
+    pub authorization_epoch: i32,
+    pub runtime_epoch: i64,
+    pub database_now: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct ProductAssignmentChange {
+    pub tenant_id: String,
+    pub version_id: i64,
+    pub changed_by: i64,
+    pub reason: Option<String>,
+    pub overrides: Vec<TenantCapabilityOverrideRecord>,
+    pub changed_at: DateTime<Utc>,
+}
+
 pub trait ProductReadPort: Send + Sync {
     fn list_plans(&self) -> PersistenceFuture<'_, Vec<ProductPlanRecord>>;
 
@@ -115,6 +142,52 @@ pub trait ProductReadPort: Send + Sync {
 }
 
 pub trait ProductWriteTransaction: Send + Sync {
+    fn lock_change_tenant<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> PersistenceFuture<'a, ProductChangeTenantState>;
+
+    fn acquire_change_lease<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        owner_token: &'a str,
+        version_id: i64,
+        acquired_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> PersistenceFuture<'a, ()>;
+
+    fn lock_assignable_version(
+        &self,
+        version_id: i64,
+    ) -> PersistenceFuture<'_, ProductVersionSnapshot>;
+
+    fn current_tenant_product<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> PersistenceFuture<'a, TenantProductSnapshot>;
+
+    fn sync_capability_resources<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        resources: &'a ProvisioningCapabilityResources,
+    ) -> PersistenceFuture<'a, ()>;
+
+    fn replace_assignment(&self, change: ProductAssignmentChange) -> PersistenceFuture<'_, ()>;
+
+    fn increment_runtime_epoch<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        expected_epoch: i64,
+    ) -> PersistenceFuture<'a, ()>;
+
+    fn authorization_mirror(&self) -> &dyn crate::AuthorizationMirrorTransaction;
+
+    fn release_change_lease<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        owner_token: &'a str,
+    ) -> PersistenceFuture<'a, ()>;
+
     fn plan_key_exists<'a>(&'a self, key: &'a str) -> PersistenceFuture<'a, bool>;
 
     fn insert_plan(&self, plan: ProductPlanState) -> PersistenceFuture<'_, ProductPlanState>;

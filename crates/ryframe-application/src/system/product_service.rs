@@ -3,19 +3,16 @@ use std::{
     sync::Arc,
 };
 
-use chrono::{DateTime, Duration, Utc};
-use ryframe_db::{
-    ControlDatabaseCluster, ProductRepository, TenantOperationLeaseRepository,
-    entities::{product_plan_capability, tenant_capability_override, tenant_operation_lease},
-};
+use chrono::{Duration, Utc};
+use ryframe_db::{ProductRepository, entities::product_plan_capability};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    AuthorizationCache, ProductPlanState, ProductReadPort, ProductVersionSnapshot,
-    ProductVersionState, ProductWritePort, TenantCapabilityOverrideRecord, TenantProductSnapshot,
+    AuthorizationCache, ProductAssignmentChange, ProductPlanState, ProductReadPort,
+    ProductVersionSnapshot, ProductVersionState, ProductWritePort, TenantCapabilityOverrideRecord,
+    TenantProductSnapshot,
 };
 
 use super::product_capability_catalog::{
@@ -28,41 +25,38 @@ const PLAN_STATUS_ENABLED: &str = "1";
 const VERSION_DRAFT: &str = "draft";
 const VERSION_PUBLISHED: &str = "published";
 const VERSION_RETIRED: &str = "retired";
+const TENANT_STATUS_ENABLED: &str = "enabled";
 const PRODUCT_CHANGE_LEASE_SECONDS: i64 = 30;
 
 mod context;
 mod model;
 mod read;
-mod resources;
+pub(crate) mod resources;
 mod support;
 
+pub use crate::ProvisioningCapabilityResources;
 pub use model::*;
 use support::*;
 
 pub struct ProductService {
-    db: ControlDatabaseCluster,
     read: Arc<dyn ProductReadPort>,
     write: Arc<dyn ProductWritePort>,
     repository: ProductRepository,
-    operation_leases: TenantOperationLeaseRepository,
     authorization_cache: AuthorizationCache,
     service_accounts_deployment_available: bool,
 }
 
 impl ProductService {
     pub fn new(
-        db: ControlDatabaseCluster,
         read: Arc<dyn ProductReadPort>,
         write: Arc<dyn ProductWritePort>,
         authorization_cache: AuthorizationCache,
         service_accounts_deployment_available: bool,
     ) -> Self {
         Self {
-            db,
             read,
             write,
             repository: ProductRepository,
-            operation_leases: TenantOperationLeaseRepository,
             authorization_cache,
             service_accounts_deployment_available,
         }
@@ -381,12 +375,9 @@ impl ProductService {
         }
         self.published_target(target.plan_version_id).await?;
         let owner_token = Uuid::new_v4().to_string();
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let locked_tenant = self
-            .operation_leases
-            .lock_tenant_and_validate_in_txn(&transaction, tenant_id, None)
-            .await?;
-        if locked_tenant.status != ryframe_db::entities::tenant::Model::STATUS_ENABLED {
+        let transaction = self.write.begin().await?;
+        let locked_tenant = transaction.lock_change_tenant(tenant_id).await?;
+        if locked_tenant.status != TENANT_STATUS_ENABLED {
             return Err(AppError::TenantOperationConflict(
                 "只有 enabled 租户可以提交产品变更；provisioning 必须由创建 Saga 独占完成".into(),
             ));
@@ -397,77 +388,37 @@ impl ProductService {
             ));
         }
         let current_authorization_epoch = locked_tenant.authorization_epoch;
-        let now = self.operation_leases.database_utc_now(&transaction).await?;
-        self.operation_leases
-            .acquire_in_txn(
-                &transaction,
-                tenant_operation_lease::Model {
-                    tenant_id: tenant_id.to_owned(),
-                    owner_token: owner_token.clone(),
-                    operation: "product.change".into(),
-                    resource_type: "product_plan_version".into(),
-                    resource_id: target.plan_version_id.to_string(),
-                    expires_at: now + Duration::seconds(PRODUCT_CHANGE_LEASE_SECONDS),
-                    created_at: now,
-                    updated_at: now,
-                },
+        let now = locked_tenant.database_now;
+        transaction
+            .acquire_change_lease(
+                tenant_id,
+                &owner_token,
+                target.plan_version_id,
+                now,
+                now + Duration::seconds(PRODUCT_CHANGE_LEASE_SECONDS),
             )
             .await?;
-        // 先做一次非锁定读取取得不可变的 plan_id，再统一按 plan -> version 加锁。
-        // 这既避免与套餐停用并发错配，也与发布、退役和租户创建保持同一锁序。
-        let observed_target = self
-            .repository
-            .find_version_by_id(&transaction, target.plan_version_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))?;
-        let locked_plan = self
-            .repository
-            .lock_plan_by_id_in_txn(&transaction, observed_target.plan.id)
+        let target_snapshot = transaction
+            .lock_assignable_version(target.plan_version_id)
             .await?;
-        let locked_version = self
-            .repository
-            .lock_version_by_id_in_txn(&transaction, target.plan_version_id)
-            .await?;
-        if locked_version.plan_id != locked_plan.id {
-            return Err(AppError::Conflict(
-                "目标产品套餐版本所属套餐已变化，请重新预览".into(),
-            ));
-        }
-        if locked_plan.status != PLAN_STATUS_ENABLED {
+        if target_snapshot.plan_status != PLAN_STATUS_ENABLED {
             return Err(AppError::Conflict("目标产品套餐已停用".into()));
         }
-        if locked_version.status != VERSION_PUBLISHED {
+        if target_snapshot.version_status != VERSION_PUBLISHED {
             return Err(AppError::Conflict(
                 "目标产品套餐版本已不再是 published，请重新预览".into(),
             ));
         }
-        // 在 plan/version 行锁之后重新读取能力快照，不能使用加锁前的 bundle。
-        let target_bundle = self
-            .repository
-            .find_version_by_id(&transaction, target.plan_version_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))?;
-        let mut assignment = self
-            .repository
-            .lock_assignment_in_txn(&transaction, tenant_id)
-            .await?;
-        let current_bundle = self
-            .repository
-            .tenant_product(&transaction, tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let current = self.context_from_bundle(current_bundle)?;
+        self.validate_publishable_capability_records(&target_snapshot.capabilities)?;
+        let current =
+            self.context_from_snapshot(transaction.current_tenant_product(tenant_id).await?)?;
         ensure_override_change_allowed(
             &current.overrides,
             &normalized,
             capability_override_allowed,
         )?;
-        let target_context = self.target_context(
-            tenant_id,
-            &epoch_text,
-            crate::legacy_product_persistence::version_snapshot(target_bundle),
-            &normalized,
-        )?;
+        let target_context =
+            self.target_context(tenant_id, &epoch_text, target_snapshot, &normalized)?;
         let authorization_changed =
             capability_changes(&current, &target_context)
                 .iter()
@@ -477,35 +428,39 @@ impl ProductService {
                             && descriptor.affects_authorization
                     })
                 });
-        self.sync_capability_resources_in_txn(&transaction, tenant_id, &current, &target_context)
+        let resources = resources::resources_for_change(&current, &target_context);
+        transaction
+            .sync_capability_resources(tenant_id, &resources)
             .await?;
-        assignment.plan_version_id = target.plan_version_id;
-        assignment.changed_by = Some(actor.user_id);
-        assignment.change_reason = reason;
-        assignment.updated_at = now;
-        self.repository
-            .replace_assignment_and_overrides_in_txn(
-                &transaction,
-                assignment,
-                override_models(tenant_id, actor.user_id, normalized, now),
-            )
+        transaction
+            .replace_assignment(ProductAssignmentChange {
+                tenant_id: tenant_id.to_owned(),
+                version_id: target.plan_version_id,
+                changed_by: actor.user_id,
+                reason,
+                overrides: override_records(actor.user_id, normalized),
+                changed_at: now,
+            })
             .await?;
-        self.repository
-            .increment_runtime_epoch_in_txn(&transaction, tenant_id, preview_runtime_epoch)
+        transaction
+            .increment_runtime_epoch(tenant_id, preview_runtime_epoch)
             .await?;
         let authorization_epoch = if authorization_changed {
             Some(
                 self.authorization_cache
-                    .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                    .increment_tenant_epoch_in_transaction(
+                        transaction.authorization_mirror(),
+                        tenant_id,
+                    )
                     .await?,
             )
         } else {
             None
         };
-        self.operation_leases
-            .release_in_txn(&transaction, tenant_id, &owner_token)
+        transaction
+            .release_change_lease(tenant_id, &owner_token)
             .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         if let Some(authorization_epoch) = authorization_epoch {
             self.authorization_cache
                 .sync_tenant_epoch(tenant_id, authorization_epoch)

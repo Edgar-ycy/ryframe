@@ -80,25 +80,20 @@ pub(super) fn capability_records(
         .collect()
 }
 
-pub(super) fn override_models(
-    tenant_id: &str,
+pub(super) fn override_records(
     actor_id: i64,
     values: Vec<CapabilityOverrideInput>,
-    now: DateTime<Utc>,
-) -> Vec<tenant_capability_override::Model> {
+) -> Vec<crate::TenantCapabilityOverrideRecord> {
     values
         .into_iter()
-        .map(|value| tenant_capability_override::Model {
-            tenant_id: tenant_id.to_owned(),
-            capability_code: value.capability_code,
+        .map(|value| crate::TenantCapabilityOverrideRecord {
+            code: value.capability_code,
             enabled: value.enabled,
-            variant_code: value.variant_code,
+            variant: value.variant_code,
             schema_version: value.schema_version,
             config: value.config,
             reason: Some("platform_override".into()),
             changed_by: Some(actor_id),
-            created_at: now,
-            updated_at: now,
         })
         .collect()
 }
@@ -276,10 +271,6 @@ pub(super) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
             difference | (left ^ right)
         })
         == 0
-}
-
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 pub(super) fn string_slice(values: &[&str]) -> Vec<String> {

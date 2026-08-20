@@ -174,7 +174,6 @@ pub async fn build_all(
         ),
     ));
     let product = Arc::new(ProductService::new(
-        database.clone(),
         ryframe_application::legacy_product_read(database.clone()),
         ryframe_application::legacy_product_write(database.clone()),
         authorization_cache.clone(),

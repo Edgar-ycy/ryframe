@@ -89,7 +89,6 @@ impl ExportService {
         let config_cache = crate::AuthorizationCache::disabled();
         let role_cache = crate::AuthorizationCache::disabled();
         let role_product = Arc::new(ProductService::new(
-            db.clone(),
             crate::legacy_product_read(db.clone()),
             crate::legacy_product_write(db.clone()),
             crate::AuthorizationCache::disabled(),

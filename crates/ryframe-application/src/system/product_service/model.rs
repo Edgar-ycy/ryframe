@@ -178,15 +178,6 @@ pub struct ApplyProductChangeCommand {
     pub capability_override_allowed: bool,
 }
 
-#[derive(Clone, Debug)]
-pub struct ProvisioningCapabilityResources {
-    pub enabled_route_keys: Vec<String>,
-    pub enabled_permission_codes: Vec<String>,
-    pub managed_route_keys: Vec<String>,
-    pub managed_permission_codes: Vec<String>,
-    pub default_admin_permissions: Vec<String>,
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct ProductCapabilityChangeVo {
     pub capability_code: String,
