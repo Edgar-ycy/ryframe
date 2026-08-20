@@ -80,7 +80,21 @@ pub struct UserImportReadFilter<'a> {
     pub status: Option<&'a str>,
 }
 
-pub trait UserImportReadPort: Send + Sync {
+pub trait UserImportTransaction: Send + Sync {
+    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+
+    fn lock(&self, import_id: i64) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
+
+    fn save(&self, record: UserImportJobRecord) -> PersistenceFuture<'_, UserImportJobRecord>;
+
+    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+
+    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+}
+
+pub trait UserImportPersistencePort: Send + Sync {
+    fn begin(&self) -> PersistenceFuture<'_, Box<dyn UserImportTransaction>>;
+
     fn list_departments<'a>(
         &'a self,
         tenant_id: &'a str,
@@ -99,12 +113,25 @@ pub trait UserImportReadPort: Send + Sync {
         import_id: i64,
     ) -> PersistenceFuture<'a, Option<UserImportJobRecord>>;
 
+    fn find_global(&self, import_id: i64) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
+
+    fn find_by_background_job(
+        &self,
+        background_job_id: i64,
+    ) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
+
     fn rows<'a>(
         &'a self,
         tenant_id: &'a str,
         import_id: i64,
         page: ValidatedPageQuery,
     ) -> PersistenceFuture<'a, PageResult<UserImportRowRecord>>;
+
+    fn all_rows<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        import_id: i64,
+    ) -> PersistenceFuture<'a, Vec<UserImportRowRecord>>;
 
     fn requester_usernames<'a>(
         &'a self,

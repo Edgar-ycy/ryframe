@@ -1,12 +1,13 @@
 impl UserImportService {
-    async fn ensure_error_report(&self, import: &user_import_job::Model) -> AppResult<()> {
+    async fn ensure_error_report(&self, import: &UserImportJobRecord) -> AppResult<()> {
         if import.error_report_file_id.is_some()
             || import.failure_count.saturating_add(import.skipped_count) == 0
         {
             return Ok(());
         }
-        let rows = UserImportRepository
-            .all_row_results(self.db.write(), &import.tenant_id, import.id)
+        let rows = self
+            .persistence
+            .all_rows(&import.tenant_id, import.id)
             .await?;
         if rows.is_empty() {
             return Ok(());
@@ -16,7 +17,7 @@ impl UserImportService {
             .map(|row| {
                 serde_json::json!({
                     "row_number": row.row_number,
-                    "username": row.username_snapshot,
+                    "username": row.username,
                     "outcome": row.outcome,
                     "code": row.code,
                     "message": row.message,
@@ -108,7 +109,7 @@ impl UserImportService {
     /// 生成异常报告，并只在明确的报告阶段记录错误，避免把租约或队列错误写入已完成导入。
     async fn ensure_error_report_with_status(
         &self,
-        import: &user_import_job::Model,
+        import: &UserImportJobRecord,
     ) -> AppResult<()> {
         match self.ensure_error_report(import).await {
             Ok(()) => Ok(()),
@@ -129,24 +130,20 @@ impl UserImportService {
     }
 
     async fn record_error_report_failure(&self, import_id: i64, error: &str) -> AppResult<()> {
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let Some(mut import) = UserImportRepository
-            .lock_by_id_in_txn(&transaction, import_id)
-            .await?
+        let transaction = self.persistence.begin().await?;
+        let Some(mut import) = transaction.lock(import_id).await?
         else {
-            transaction.rollback().await.map_err(database_error)?;
+            transaction.rollback().await?;
             return Ok(());
         };
-        if import.status != user_import_job::Model::STATUS_PARTIAL {
-            transaction.rollback().await.map_err(database_error)?;
+        if import.status != UserImportJobRecord::STATUS_PARTIAL {
+            transaction.rollback().await?;
             return Ok(());
         }
-        let now = UserImportRepository.database_utc_now(&transaction).await?;
+        let now = transaction.database_now().await?;
         import.last_error = Some(truncate_error(error));
         import.updated_at = now;
-        UserImportRepository
-            .save_in_txn(&transaction, import)
-            .await?;
-        transaction.commit().await.map_err(database_error)
+        transaction.save(import).await?;
+        transaction.commit().await
     }
 }

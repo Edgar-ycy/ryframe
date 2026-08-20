@@ -29,8 +29,8 @@ use super::{
 };
 use crate::{
     ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor,
-    UserImportDepartmentRecord, UserImportJobRecord, UserImportReadFilter, UserImportReadPort,
-    UserImportRowRecord,
+    UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
+    UserImportReadFilter, UserImportRowRecord,
 };
 
 /// 可恢复用户导入的稳定后台任务类型。
@@ -59,7 +59,7 @@ pub struct UserImportService {
     config: crate::UserImportPolicy,
     hash_permits: Arc<Semaphore>,
     spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
-    persistence: Arc<dyn UserImportReadPort>,
+    persistence: Arc<dyn UserImportPersistencePort>,
 }
 
 include!("models.rs");

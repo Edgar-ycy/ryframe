@@ -334,7 +334,7 @@ pub async fn build_all(
         user.clone(),
         file.clone(),
         super::spreadsheet::document_processor(),
-        ryframe_application::legacy_user_import_read(database.clone()),
+        ryframe_application::legacy_user_import_persistence(database.clone()),
         policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(

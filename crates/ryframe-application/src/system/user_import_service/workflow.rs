@@ -1,8 +1,9 @@
 impl UserImportService {
     /// 执行后台导入；已提交批次通过持久化游标恢复，不会重复创建用户。
     pub async fn execute_background_job(&self, background_job_id: i64) -> AppResult<()> {
-        let mut import = UserImportRepository
-            .find_by_background_job(self.db.write(), background_job_id)
+        let mut import = self
+            .persistence
+            .find_by_background_job(background_job_id)
             .await?
             .ok_or_else(|| AppError::NotFound("后台任务没有关联用户导入记录".into()))?;
         if import.is_terminal() {
@@ -10,7 +11,7 @@ impl UserImportService {
         }
 
         import = self.mark_running(import.id).await?;
-        if import.status == user_import_job::Model::STATUS_CANCELLED {
+        if import.status == UserImportJobRecord::STATUS_CANCELLED {
             return Ok(());
         }
         let source = self
@@ -63,10 +64,10 @@ impl UserImportService {
     ) -> AppResult<()> {
         let mut department_directory = None;
         loop {
-            let current = user_import_job::Entity::find_by_id(import_id)
-                .one(self.db.write())
-                .await
-                .map_err(database_error)?
+            let current = self
+                .persistence
+                .find_global(import_id)
+                .await?
                 .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
             if current.cancel_requested {
                 self.mark_cancelled(import_id).await?;

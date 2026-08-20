@@ -5,7 +5,7 @@ impl UserImportService {
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,
         spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
-        persistence: Arc<dyn UserImportReadPort>,
+        persistence: Arc<dyn UserImportPersistencePort>,
         config: crate::UserImportPolicy,
     ) -> Self {
         Self {
