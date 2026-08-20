@@ -179,6 +179,15 @@ pub trait ObjectStorage: Send + Sync {
         content_type: &str,
     ) -> StorageResult<()>;
 
+    /// 写入小型控制对象，且不得触发桶级维护或清理其他对象。
+    async fn put_control(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        content_type: &str,
+    ) -> StorageResult<()>;
+
     /// 从文件流式上传对象。`sha256_hex` 可复用调用方已计算的 SHA-256，避免 S3 再读一遍文件。
     ///
     /// 实现必须按块读取文件，不得把完整文件加载到内存。
@@ -192,6 +201,16 @@ pub trait ObjectStorage: Send + Sync {
     ) -> StorageResult<()>;
 
     async fn get(&self, bucket: &str, key: &str) -> StorageResult<Vec<u8>>;
+
+    /// 读取小型控制对象，并在分配完整响应前拒绝超过上限的内容。
+    ///
+    /// 所有权 marker 等安全控制面数据必须使用此接口，避免异常大对象耗尽内存。
+    async fn get_bounded(
+        &self,
+        bucket: &str,
+        key: &str,
+        max_bytes: usize,
+    ) -> StorageResult<Vec<u8>>;
 
     async fn delete(&self, bucket: &str, key: &str) -> StorageResult<()>;
 

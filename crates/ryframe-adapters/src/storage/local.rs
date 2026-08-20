@@ -6,21 +6,18 @@ use std::{
 };
 
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::{
     ObjectListPage, ObjectStorage, StorageError, StorageOperation, StorageResult, key_segments,
     trace_storage_operation, validate_bucket, validate_list_request,
 };
 use cleanup::{ActiveStagingFile, ActiveStagingRegistry, CleanupSchedule};
-
 mod cleanup;
-
 const STAGING_FILE_PREFIX: &str = ".ryframe-staging-";
 const STAGING_FILE_SUFFIX: &str = ".part";
 const STAGING_DIRECTORY_NAME: &str = ".ryframe-staging";
-// 本地内存中的上传不应接近该存活时间。保留整整一天既可避免与缓慢写入竞争，
-// 又能限制崩溃或被终止后遗留的临时文件。
+// 保留一天可避免与缓慢写入竞争，并限制异常终止后的临时文件。
 const STAGING_STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 fn is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
@@ -386,6 +383,7 @@ impl LocalObjectStorage {
         &self,
         bucket: &str,
         key: &'key str,
+        run_cleanup: bool,
     ) -> StorageResult<(PathBuf, Vec<&'key str>, ActiveStagingFile)> {
         let segments = self.validate_location(bucket, key)?;
         let bucket_root = self.canonical_bucket_directory(bucket, true).await?;
@@ -393,9 +391,36 @@ impl LocalObjectStorage {
         let staging_directory = self
             .canonical_staging_directory_in(&bucket_root, true)
             .await?;
-        self.trigger_staging_cleanup(bucket, false);
+        if run_cleanup {
+            self.trigger_staging_cleanup(bucket, false);
+        }
         let staging = self.active_staging.create(&staging_directory)?;
         Ok((bucket_root, segments, staging))
+    }
+
+    async fn write_bytes(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        run_cleanup: bool,
+    ) -> StorageResult<()> {
+        let (bucket_root, segments, staging) =
+            self.create_staging(bucket, key, run_cleanup).await?;
+        let mut writer = Self::staging_writer(&staging)?;
+        writer
+            .write_all(data)
+            .await
+            .map_err(|source| StorageError::Io {
+                operation: "write local object staging file",
+                source,
+            })?;
+        writer.flush().await.map_err(|source| StorageError::Io {
+            operation: "flush local object staging file",
+            source,
+        })?;
+        drop(writer);
+        self.publish_staging(&bucket_root, &segments, staging).await
     }
 
     fn staging_writer(staging: &ActiveStagingFile) -> StorageResult<tokio::fs::File> {
@@ -588,21 +613,20 @@ impl ObjectStorage for LocalObjectStorage {
         _content_type: &str,
     ) -> StorageResult<()> {
         trace_storage_operation("local", StorageOperation::Put, async {
-            let (bucket_root, segments, staging) = self.create_staging(bucket, key).await?;
-            let mut writer = Self::staging_writer(&staging)?;
-            writer
-                .write_all(data)
-                .await
-                .map_err(|source| StorageError::Io {
-                    operation: "write local object staging file",
-                    source,
-                })?;
-            writer.flush().await.map_err(|source| StorageError::Io {
-                operation: "flush local object staging file",
-                source,
-            })?;
-            drop(writer);
-            self.publish_staging(&bucket_root, &segments, staging).await
+            self.write_bytes(bucket, key, data, true).await
+        })
+        .await
+    }
+
+    async fn put_control(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        _content_type: &str,
+    ) -> StorageResult<()> {
+        trace_storage_operation("local", StorageOperation::Put, async {
+            self.write_bytes(bucket, key, data, false).await
         })
         .await
     }
@@ -633,7 +657,7 @@ impl ObjectStorage for LocalObjectStorage {
                 ));
             }
 
-            let (bucket_root, segments, staging) = self.create_staging(bucket, key).await?;
+            let (bucket_root, segments, staging) = self.create_staging(bucket, key, true).await?;
             let mut writer = Self::staging_writer(&staging)?;
             tokio::io::copy(&mut reader, &mut writer)
                 .await
@@ -662,6 +686,55 @@ impl ObjectStorage for LocalObjectStorage {
                     operation: "read local object",
                     source,
                 })
+        })
+        .await
+    }
+
+    async fn get_bounded(
+        &self,
+        bucket: &str,
+        key: &str,
+        max_bytes: usize,
+    ) -> StorageResult<Vec<u8>> {
+        trace_storage_operation("local", StorageOperation::Get, async {
+            if max_bytes == 0 {
+                return Err(StorageError::InvalidLocation(
+                    "bounded object read limit must be greater than zero".to_owned(),
+                ));
+            }
+            let segments = self.validate_location(bucket, key)?;
+            let bucket_root = self.canonical_bucket_directory(bucket, false).await?;
+            let resolved = self.resolve_existing_path(&bucket_root, &segments).await?;
+            let mut reader =
+                tokio::fs::File::open(resolved)
+                    .await
+                    .map_err(|source| StorageError::Io {
+                        operation: "open bounded local object",
+                        source,
+                    })?;
+            let metadata = reader.metadata().await.map_err(|source| StorageError::Io {
+                operation: "inspect bounded local object",
+                source,
+            })?;
+            if metadata.len() > max_bytes as u64 {
+                return Err(StorageError::InvalidResponse(
+                    "object exceeds bounded read limit".to_owned(),
+                ));
+            }
+            let mut data = Vec::with_capacity(metadata.len() as usize);
+            reader
+                .read_to_end(&mut data)
+                .await
+                .map_err(|source| StorageError::Io {
+                    operation: "read bounded local object",
+                    source,
+                })?;
+            if data.len() > max_bytes {
+                return Err(StorageError::InvalidResponse(
+                    "object changed beyond bounded read limit".to_owned(),
+                ));
+            }
+            Ok(data)
         })
         .await
     }
@@ -803,6 +876,36 @@ mod tests {
             .await
             .expect("读取上传结果");
         assert_eq!(stored, content);
+    }
+
+    #[tokio::test]
+    async fn bounded_read_rejects_oversized_control_object() {
+        let directory = tempfile::tempdir().expect("创建测试目录");
+        let storage = LocalObjectStorage::new(directory.path().join("objects"));
+        storage
+            .put("exports", "scope/.ryframe-owner", b"owner", "text/plain")
+            .await
+            .expect("写入控制对象");
+
+        assert_eq!(
+            storage
+                .get_bounded("exports", "scope/.ryframe-owner", 5)
+                .await
+                .expect("上限内读取成功"),
+            b"owner"
+        );
+        assert!(
+            storage
+                .get_bounded("exports", "scope/.ryframe-owner", 4)
+                .await
+                .is_err()
+        );
+        assert!(
+            storage
+                .get_bounded("exports", "scope/.ryframe-owner", 0)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

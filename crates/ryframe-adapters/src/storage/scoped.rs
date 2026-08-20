@@ -121,6 +121,18 @@ impl ObjectStorage for ScopedObjectStorage {
             .await
     }
 
+    async fn put_control(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        content_type: &str,
+    ) -> StorageResult<()> {
+        self.inner
+            .put_control(bucket, &self.physical_key(key)?, data, content_type)
+            .await
+    }
+
     async fn put_file(
         &self,
         bucket: &str,
@@ -142,6 +154,17 @@ impl ObjectStorage for ScopedObjectStorage {
 
     async fn get(&self, bucket: &str, key: &str) -> StorageResult<Vec<u8>> {
         self.inner.get(bucket, &self.physical_key(key)?).await
+    }
+
+    async fn get_bounded(
+        &self,
+        bucket: &str,
+        key: &str,
+        max_bytes: usize,
+    ) -> StorageResult<Vec<u8>> {
+        self.inner
+            .get_bounded(bucket, &self.physical_key(key)?, max_bytes)
+            .await
     }
 
     async fn delete(&self, bucket: &str, key: &str) -> StorageResult<()> {

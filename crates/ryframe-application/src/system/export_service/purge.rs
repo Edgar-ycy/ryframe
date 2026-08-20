@@ -206,6 +206,16 @@ mod tests {
             unreachable!("测试不写对象")
         }
 
+        async fn put_control(
+            &self,
+            _bucket: &str,
+            _key: &str,
+            _data: &[u8],
+            _content_type: &str,
+        ) -> StorageResult<()> {
+            unreachable!("测试不写控制对象")
+        }
+
         async fn put_file(
             &self,
             _bucket: &str,

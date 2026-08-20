@@ -336,6 +336,16 @@ impl ObjectStorage for S3ObjectStorage {
         }
     }
 
+    async fn put_control(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        content_type: &str,
+    ) -> StorageResult<()> {
+        self.put(bucket, key, data, content_type).await
+    }
+
     async fn put_file(
         &self,
         bucket: &str,
@@ -387,6 +397,53 @@ impl ObjectStorage for S3ObjectStorage {
             .await
             .map(|bytes| bytes.to_vec())
             .map_err(StorageError::from)
+    }
+
+    async fn get_bounded(
+        &self,
+        bucket: &str,
+        key: &str,
+        max_bytes: usize,
+    ) -> StorageResult<Vec<u8>> {
+        if max_bytes == 0 {
+            return Err(StorageError::InvalidLocation(
+                "bounded object read limit must be greater than zero".to_owned(),
+            ));
+        }
+        let url = self.object_url(bucket, key)?;
+        let mut response = self
+            .send_request(
+                StorageOperation::Get,
+                self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?
+                    .header("Range", format!("bytes=0-{max_bytes}")),
+            )
+            .await?;
+        if !response.status().is_success() {
+            return Err(service_error("download bounded S3 object", response).await);
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > max_bytes as u64)
+        {
+            return Err(StorageError::InvalidResponse(
+                "object exceeds bounded read limit".to_owned(),
+            ));
+        }
+        let mut data = Vec::with_capacity(
+            response
+                .content_length()
+                .unwrap_or_default()
+                .min(max_bytes as u64) as usize,
+        );
+        while let Some(chunk) = response.chunk().await.map_err(StorageError::from)? {
+            if data.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(StorageError::InvalidResponse(
+                    "object exceeds bounded read limit".to_owned(),
+                ));
+            }
+            data.extend_from_slice(&chunk);
+        }
+        Ok(data)
     }
 
     async fn delete(&self, bucket: &str, key: &str) -> StorageResult<()> {
