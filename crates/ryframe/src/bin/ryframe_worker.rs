@@ -52,6 +52,8 @@ mod process_readiness;
 mod process_spreadsheet;
 #[path = "../boot/tenant_data.rs"]
 mod process_tenant_data;
+#[path = "../boot/tenant_data_targets.rs"]
+mod process_tenant_data_targets;
 
 /// Worker 进程在收到关闭信号后的全部后台任务总宽限时间。
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
@@ -200,6 +202,7 @@ async fn main() -> Result<(), AppError> {
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         database.clone(),
         tenant_data.clone(),
+        process_tenant_data_targets::port(tenant_data.clone()),
         queue.clone(),
         authorization_cache.clone(),
     ));

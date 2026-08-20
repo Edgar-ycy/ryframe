@@ -6,21 +6,22 @@ mod workflow;
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use ryframe_db::{
     ControlDatabaseCluster, CreateTenantDataMigration, EnqueueBackgroundJob, TenantDataRepository,
     TenantOperationLeaseRepository, tenant_data_backup_point, tenant_data_migration,
     tenant_data_migration_item, tenant_operation_lease,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_tenant_db::{
-    TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, TenantDatabaseTargetMetadata,
-};
+use ryframe_tenant_db::TenantDatabaseRouter;
 use sea_orm::TransactionTrait;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::{AuthorizationCache, JobQueue};
+use crate::{
+    AuthorizationCache, JobQueue, TenantDataTargetHealth, TenantDataTargetMetadata,
+    TenantDataTargetPort,
+};
 
 pub use models::*;
 pub use workflow::TenantDataMigrationJobHandler;
@@ -39,6 +40,7 @@ pub(super) fn checked_generation(value: i64, field: &str) -> AppResult<i64> {
 pub struct TenantDataMigrationService {
     pub(super) database: ControlDatabaseCluster,
     pub(super) router: Arc<TenantDatabaseRouter>,
+    targets: Arc<dyn TenantDataTargetPort>,
     pub(super) queue: Arc<JobQueue>,
     pub(super) authorization_cache: AuthorizationCache,
     pub(super) repository: TenantDataRepository,
@@ -50,12 +52,14 @@ impl TenantDataMigrationService {
     pub fn new(
         database: ControlDatabaseCluster,
         router: Arc<TenantDatabaseRouter>,
+        targets: Arc<dyn TenantDataTargetPort>,
         queue: Arc<JobQueue>,
         authorization_cache: AuthorizationCache,
     ) -> Self {
         Self {
             database,
             router,
+            targets,
             queue,
             authorization_cache,
             repository: TenantDataRepository,
@@ -78,10 +82,9 @@ impl TenantDataMigrationService {
     pub async fn list_targets(&self, actor: &ActorContext) -> AppResult<Vec<DataTargetSummary>> {
         ensure_platform_actor(actor)?;
         Ok(self
-            .router
-            .targets()
+            .targets
             .metadata()
-            .await
+            .await?
             .into_iter()
             .map(target_summary)
             .collect())
@@ -150,7 +153,7 @@ impl TenantDataMigrationService {
                     target.eligible = false;
                     target.reasons.push("source_equals_target".into());
                 }
-                if self.router.targets().target_is_dedicated(&target.key) == Some(true)
+                if self.targets.is_dedicated(&target.key) == Some(true)
                     && occupied.contains(&target.key)
                 {
                     target.eligible = false;
@@ -163,7 +166,7 @@ impl TenantDataMigrationService {
         }
 
         for target in &mut targets {
-            if self.router.targets().target_is_dedicated(&target.key) == Some(true)
+            if self.targets.is_dedicated(&target.key) == Some(true)
                 && occupied.contains(&target.key)
             {
                 target.eligible = false;
@@ -179,22 +182,21 @@ impl TenantDataMigrationService {
         target_key: &str,
     ) -> AppResult<DataTargetDetail> {
         ensure_platform_actor(actor)?;
-        if !self.router.targets().contains(target_key) {
+        if !self.targets.contains(target_key) {
             return Err(AppError::NotFound("数据目标不存在".into()));
         }
         // 详情页允许显式探测；列表始终只读缓存，避免 N 个目标同步放大。
-        let _ = self.router.verify_target_now(target_key).await;
+        let _ = self.targets.verify_now(target_key).await;
         let metadata = self
-            .router
-            .targets()
+            .targets
             .metadata()
-            .await
+            .await?
             .into_iter()
             .find(|target| target.key == target_key)
             .ok_or_else(|| AppError::NotFound("数据目标不存在".into()))?;
-        let last_verified_at = metadata.last_verified_at.map(DateTime::<Utc>::from);
+        let last_verified_at = metadata.last_verified_at;
         let target = target_summary(metadata);
-        let pool = self.router.targets().pool_stats().await;
+        let pool = self.targets.pool_stats().await?;
         Ok(DataTargetDetail {
             target,
             last_verified_at,
@@ -212,7 +214,7 @@ impl TenantDataMigrationService {
         params: BackupPointListParams,
     ) -> AppResult<Vec<BackupPointView>> {
         ensure_platform_actor(actor)?;
-        if !self.router.targets().contains(target_key) {
+        if !self.targets.contains(target_key) {
             return Err(AppError::NotFound("数据目标不存在".into()));
         }
         self.repository
@@ -272,7 +274,7 @@ impl TenantDataMigrationService {
         if placement.current_target_key == request.target_key {
             blockers.push("source_equals_target".to_owned());
         }
-        if !self.router.targets().contains(&request.target_key) {
+        if !self.targets.contains(&request.target_key) {
             blockers.push("target_not_registered".to_owned());
         }
         if self
@@ -284,45 +286,29 @@ impl TenantDataMigrationService {
             blockers.push("tenant_operation_in_progress".to_owned());
         }
 
-        if !self
-            .router
-            .targets()
-            .contains(&placement.current_target_key)
-        {
+        if !self.targets.contains(&placement.current_target_key) {
             blockers.push("source_target_not_registered".to_owned());
         } else if self
-            .router
-            .open_target_for_catalog(&placement.current_target_key, &self.catalog)
+            .targets
+            .validate_catalog(&placement.current_target_key)
             .await
             .is_err()
         {
             blockers.push("source_target_unavailable".to_owned());
         }
-        if self.router.targets().contains(&request.target_key) {
-            match self
-                .router
-                .open_target_for_catalog(&request.target_key, &self.catalog)
-                .await
-            {
+        if self.targets.contains(&request.target_key) {
+            match self.targets.validate_catalog(&request.target_key).await {
                 Ok(target) => {
-                    if target.is_dedicated() {
-                        match self
-                            .router
-                            .target_occupancy_for_catalog(&request.target_key, &self.catalog)
-                            .await
-                        {
-                            Ok(Some(_)) => blockers.push("dedicated_target_occupied".to_owned()),
-                            Ok(None) => {}
+                    if target.dedicated {
+                        match self.targets.is_occupied(&request.target_key).await {
+                            Ok(true) => blockers.push("dedicated_target_occupied".to_owned()),
+                            Ok(false) => {}
                             Err(_) => blockers.push("target_occupancy_unavailable".to_owned()),
                         }
                     }
                     match self
-                        .router
-                        .tenant_is_empty_on_target_for_catalog(
-                            &request.target_key,
-                            tenant_id,
-                            &self.catalog,
-                        )
+                        .targets
+                        .tenant_is_empty(&request.target_key, tenant_id)
                         .await
                     {
                         Ok(true) => {}
@@ -342,17 +328,11 @@ impl TenantDataMigrationService {
             target_key: &request.target_key,
             source_generation: request.expected_placement_generation,
             target_generation,
-            source_mode: self
-                .router
-                .targets()
-                .target_mode_code(&placement.current_target_key),
-            source_kind: self
-                .router
-                .targets()
-                .target_kind_code(&placement.current_target_key),
-            target_mode: self.router.targets().target_mode_code(&request.target_key),
-            target_kind: self.router.targets().target_kind_code(&request.target_key),
-            schema_fingerprint: &self.catalog.schema_fingerprint(),
+            source_mode: self.targets.mode_code(&placement.current_target_key),
+            source_kind: self.targets.kind_code(&placement.current_target_key),
+            target_mode: self.targets.mode_code(&request.target_key),
+            target_kind: self.targets.kind_code(&request.target_key),
+            schema_fingerprint: &self.targets.catalog_fingerprint(),
         });
         Ok(MigrationPreview {
             tenant_id: tenant_id.to_owned(),
@@ -366,7 +346,7 @@ impl TenantDataMigrationService {
             warnings,
             impact: MigrationImpact {
                 stop_write: true,
-                catalog_table_count: self.catalog.tables().len(),
+                catalog_table_count: self.targets.catalog_table_count(),
                 retention_hours: RETENTION_HOURS,
                 rollback_boundary: "before_cutting_over".into(),
             },
@@ -754,29 +734,25 @@ fn create_blocker_error(blockers: &[String]) -> AppError {
     AppError::Validation(format!("租户数据迁移不可执行: {}", blockers.join(",")))
 }
 
-fn target_summary(metadata: TenantDatabaseTargetMetadata) -> DataTargetSummary {
-    let mode = metadata.mode_code().to_owned();
-    let kind = metadata.kind_code().to_owned();
+fn target_summary(metadata: TenantDataTargetMetadata) -> DataTargetSummary {
     let health = match metadata.health {
-        TenantDatabaseTargetHealthStatus::Unknown => "unknown",
-        TenantDatabaseTargetHealthStatus::Verified => "verified",
-        TenantDatabaseTargetHealthStatus::Unavailable => "unavailable",
+        TenantDataTargetHealth::Unknown => "unknown",
+        TenantDataTargetHealth::Verified => "verified",
+        TenantDataTargetHealth::Unavailable => "unavailable",
     };
     let mut reasons = Vec::new();
-    if metadata.health != TenantDatabaseTargetHealthStatus::Verified {
-        reasons.push(
-            if metadata.health == TenantDatabaseTargetHealthStatus::Unavailable {
-                "target_unavailable".into()
-            } else {
-                "target_not_verified".into()
-            },
-        );
+    if metadata.health != TenantDataTargetHealth::Verified {
+        reasons.push(if metadata.health == TenantDataTargetHealth::Unavailable {
+            "target_unavailable".into()
+        } else {
+            "target_not_verified".into()
+        });
     }
     DataTargetSummary {
         key: metadata.key,
         display_name: metadata.display_name,
-        mode,
-        kind,
+        mode: metadata.mode,
+        kind: metadata.kind,
         region: metadata.region,
         health: health.into(),
         schema_fingerprint: metadata.schema_fingerprint,

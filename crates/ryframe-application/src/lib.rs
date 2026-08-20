@@ -15,6 +15,7 @@ mod runtime_policy;
 mod service_identity_secret;
 mod spreadsheet;
 pub mod system;
+mod tenant_data_targets;
 mod tenant_provisioning;
 mod tenant_runtime;
 mod trace_context;
@@ -68,6 +69,10 @@ pub use spreadsheet::{
     SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,
     SpreadsheetDocumentFuture, SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow,
     SpreadsheetWriter, SpreadsheetWriterFactory,
+};
+pub use tenant_data_targets::{
+    TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetFuture, TenantDataTargetHealth,
+    TenantDataTargetMetadata, TenantDataTargetPort,
 };
 pub use tenant_provisioning::{
     TenantProvisioningFuture, TenantProvisioningPlacement, TenantProvisioningPort,
