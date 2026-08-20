@@ -179,6 +179,7 @@ async fn main() -> Result<(), AppError> {
     );
     let data_retention = Arc::new(DataRetentionService::new(
         database.clone(),
+        ryframe_application::legacy_retention_run_persistence(database.clone()),
         queue.clone(),
         file.clone(),
         application_policies.retention,

@@ -1,17 +1,17 @@
 use super::*;
 
-pub(super) fn new_run_model(
+pub(super) fn new_run_record(
     id: i64,
     background_job_id: i64,
     trigger_kind: &str,
     requested_by: Option<i64>,
     now: DateTime<Utc>,
-) -> data_retention_run::Model {
-    data_retention_run::Model {
+) -> RetentionRunRecord {
+    RetentionRunRecord {
         id,
         background_job_id,
         trigger_kind: trigger_kind.to_owned(),
-        status: data_retention_run::Model::STATUS_PENDING.to_owned(),
+        status: RetentionRunRecord::STATUS_PENDING.to_owned(),
         policy_snapshot: json!({}),
         eligible_counts: json!({}),
         deleted_counts: json!({}),

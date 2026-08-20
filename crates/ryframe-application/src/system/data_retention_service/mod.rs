@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
     ControlDatabaseCluster, DataRetentionRepository, FileRepository, RetentionCleanupResult,
-    RetentionCutoff, RetentionResource, TenantRepository, UserImportRepository, data_retention_run,
+    RetentionCutoff, RetentionResource, TenantRepository, UserImportRepository,
     tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
@@ -18,7 +18,10 @@ use sea_orm::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, system::FileService};
+use crate::{
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, RetentionRunPersistencePort,
+    RetentionRunRecord, system::FileService,
+};
 
 pub const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";
 
@@ -92,8 +95,8 @@ pub struct DataRetentionRunVo {
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<data_retention_run::Model> for DataRetentionRunVo {
-    fn from(model: data_retention_run::Model) -> Self {
+impl From<RetentionRunRecord> for DataRetentionRunVo {
+    fn from(model: RetentionRunRecord) -> Self {
         Self {
             id: model.id.to_string(),
             background_job_id: model.background_job_id.to_string(),
@@ -117,6 +120,7 @@ impl From<data_retention_run::Model> for DataRetentionRunVo {
 pub struct DataRetentionService {
     db: ControlDatabaseCluster,
     repository: Arc<DataRetentionRepository>,
+    run_persistence: Arc<dyn RetentionRunPersistencePort>,
     queue: Arc<JobQueue>,
     file_service: Arc<FileService>,
     config: DataRetentionPolicy,
@@ -125,6 +129,7 @@ pub struct DataRetentionService {
 impl DataRetentionService {
     pub fn new(
         db: ControlDatabaseCluster,
+        run_persistence: Arc<dyn RetentionRunPersistencePort>,
         queue: Arc<JobQueue>,
         file_service: Arc<FileService>,
         config: DataRetentionPolicy,
@@ -132,6 +137,7 @@ impl DataRetentionService {
         Self {
             db,
             repository: Arc::new(DataRetentionRepository),
+            run_persistence,
             queue,
             file_service,
             config,
@@ -140,13 +146,13 @@ impl DataRetentionService {
 
     pub async fn overview(&self, actor: &ActorContext) -> AppResult<DataRetentionOverview> {
         ensure_system_tenant(actor)?;
-        let calculated_at = self.repository.database_utc_now(self.db.write()).await?;
+        let calculated_at = self.run_persistence.database_now().await?;
         Ok(self.overview_at(calculated_at))
     }
 
     pub async fn preview(&self, actor: &ActorContext) -> AppResult<DataRetentionPreview> {
         ensure_system_tenant(actor)?;
-        let calculated_at = self.repository.database_utc_now(self.db.write()).await?;
+        let calculated_at = self.run_persistence.database_now().await?;
         let cutoffs = self.cutoffs(calculated_at);
         let mut eligible_counts = self
             .repository
@@ -179,15 +185,15 @@ impl DataRetentionService {
         if idempotency_key_hash.len() != 64 {
             return Err(AppError::Validation("Idempotency-Key 摘要无效".into()));
         }
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.run_persistence.begin().await?;
         let result = async {
-            let now = self.repository.database_utc_now(&transaction).await?;
+            let now = transaction.database_now().await?;
             let proposed_run_id = crate::next_id()?;
             let trace_context = crate::trace_context::current_trace_context();
             let enqueue = self
                 .queue
                 .enqueue_in_transaction(
-                    &transaction,
+                    transaction.background_jobs(),
                     EnqueueJob {
                         tenant_id: None,
                         schedule_id: None,
@@ -196,7 +202,7 @@ impl DataRetentionService {
                         job_type: DATA_RETENTION_JOB_TYPE.to_owned(),
                         payload: json!({
                             "run_id": proposed_run_id.to_string(),
-                            "trigger_kind": data_retention_run::Model::TRIGGER_MANUAL,
+                            "trigger_kind": RetentionRunRecord::TRIGGER_MANUAL,
                             "requested_by": actor.user_id.to_string(),
                         }),
                         priority: -20,
@@ -208,24 +214,18 @@ impl DataRetentionService {
                     },
                 )
                 .await?;
-            let existing = self
-                .repository
-                .find_run_by_background_job(&transaction, enqueue.job_id)
-                .await?;
+            let existing = transaction.find_by_background_job(enqueue.job_id).await?;
             let run = if let Some(existing) = existing {
                 existing
             } else {
-                self.repository
-                    .insert_run_if_missing(
-                        &transaction,
-                        new_run_model(
-                            proposed_run_id,
-                            enqueue.job_id,
-                            data_retention_run::Model::TRIGGER_MANUAL,
-                            Some(actor.user_id),
-                            now,
-                        ),
-                    )
+                transaction
+                    .insert_if_missing(new_run_record(
+                        proposed_run_id,
+                        enqueue.job_id,
+                        RetentionRunRecord::TRIGGER_MANUAL,
+                        Some(actor.user_id),
+                        now,
+                    ))
                     .await?
             };
             Ok::<_, AppError>(run)
@@ -233,7 +233,7 @@ impl DataRetentionService {
         .await;
         match result {
             Ok(run) => {
-                crate::commit_current_audit(transaction).await?;
+                transaction.commit().await?;
                 self.queue.notify_background_jobs().await;
                 Ok(run.into())
             }
@@ -250,7 +250,7 @@ impl DataRetentionService {
         page: ValidatedPageQuery,
     ) -> AppResult<PageResult<DataRetentionRunVo>> {
         ensure_system_tenant(actor)?;
-        let result = self.repository.list_runs(self.db.write(), &page).await?;
+        let result = self.run_persistence.list(page).await?;
         Ok(PageResult {
             records: result
                 .records
