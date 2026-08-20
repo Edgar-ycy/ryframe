@@ -1,3 +1,5 @@
+use std::{future::Future, pin::Pin, sync::Arc};
+
 use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
@@ -15,6 +17,16 @@ use serde::{Deserialize, Serialize};
 const DICT_CACHE_KEY_PREFIX: &str = "sys_dict:data:";
 /// 缓存过期时间（1 小时）
 const CACHE_TTL_SECS: u64 = 3600;
+
+pub type DictCacheStoreFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
+
+pub trait DictCacheStore: Send + Sync {
+    fn get<'a>(&'a self, key: &'a str) -> DictCacheStoreFuture<'a, Option<String>>;
+
+    fn put(&self, key: String, value: String, ttl_secs: u64) -> DictCacheStoreFuture<'_, ()>;
+
+    fn remove(&self, key: String) -> DictCacheStoreFuture<'_, ()>;
+}
 
 fn dict_cache_key(tenant_id: &str, type_code: &str) -> String {
     format!("{DICT_CACHE_KEY_PREFIX}{tenant_id}:{type_code}")
@@ -82,16 +94,16 @@ pub struct DictService {
     db: ControlDatabaseCluster,
     dict_type_repo: DictTypeRepository,
     dict_data_repo: DictDataRepository,
-    redis: Option<ryframe_adapters::RedisClient>,
+    cache: Option<Arc<dyn DictCacheStore>>,
 }
 
 impl DictService {
-    pub fn new(db: ControlDatabaseCluster, redis: Option<ryframe_adapters::RedisClient>) -> Self {
+    pub fn new(db: ControlDatabaseCluster, cache: Option<Arc<dyn DictCacheStore>>) -> Self {
         Self {
             db,
             dict_type_repo: DictTypeRepository,
             dict_data_repo: DictDataRepository,
-            redis,
+            cache,
         }
     }
 
@@ -253,9 +265,8 @@ impl DictService {
         type_code: &str,
     ) -> AppResult<Vec<DictDataVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        // 尝试从 Redis 缓存读取
-        if let Some(ref redis) = self.redis
-            && let Ok(Some(json)) = redis.get(&dict_cache_key(tenant_id, type_code)).await
+        if let Some(cache) = &self.cache
+            && let Ok(Some(json)) = cache.get(&dict_cache_key(tenant_id, type_code)).await
             && let Ok(cached) = serde_json::from_str::<Vec<DictDataVo>>(&json)
         {
             return Ok(cached);
@@ -269,11 +280,10 @@ impl DictService {
             .await?;
         let vos: Vec<DictDataVo> = data.into_iter().map(DictDataVo::from).collect();
 
-        // 写入缓存
-        if let Some(ref redis) = self.redis {
+        if let Some(cache) = &self.cache {
             let cache_key = dict_cache_key(tenant_id, type_code);
             if let Ok(json) = serde_json::to_string(&vos)
-                && let Err(error) = redis.set_ex(&cache_key, &json, CACHE_TTL_SECS).await
+                && let Err(error) = cache.put(cache_key, json, CACHE_TTL_SECS).await
             {
                 tracing::warn!(tenant_id, type_code, %error, "failed to cache dictionary data");
             }
@@ -413,8 +423,8 @@ impl DictService {
 
     /// 清除字典类型缓存
     async fn invalidate_dict_cache(&self, tenant_id: &str, type_code: &str) {
-        if let Some(redis) = &self.redis
-            && let Err(error) = redis.del(dict_cache_key(tenant_id, type_code)).await
+        if let Some(cache) = &self.cache
+            && let Err(error) = cache.remove(dict_cache_key(tenant_id, type_code)).await
         {
             tracing::warn!(tenant_id, type_code, %error, "failed to invalidate dictionary cache");
         }
@@ -423,4 +433,21 @@ impl DictService {
 
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dictionary_cache_key_is_tenant_scoped() {
+        assert_eq!(
+            dict_cache_key("tenant-a", "sys.status"),
+            "sys_dict:data:tenant-a:sys.status"
+        );
+        assert_ne!(
+            dict_cache_key("tenant-a", "sys.status"),
+            dict_cache_key("tenant-b", "sys.status")
+        );
+    }
 }

@@ -10,14 +10,14 @@ use ryframe_application::{
     map_tenant_data_error,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
-        DataRetentionService, DeptService, DictService, ExportService, FileService,
-        InMemoryCaptchaStore, LoginInfoService, MenuService, MessageService, NoticeService,
-        OnlineUserService, OperLogService, OverviewService, PermissionService, PostService,
-        ProductService, ProfileService, RoleService, ServiceAccountService,
-        TenantConfigTransferService, TenantDataMigrationService, TenantRateLimitReadFuture,
-        TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService, TenantUsageService,
-        UserImportService, UserService, WebSocketTicketService, WebSocketTicketStore,
-        WebSocketTicketStoreFuture,
+        DataRetentionService, DeptService, DictCacheStore, DictCacheStoreFuture, DictService,
+        ExportService, FileService, InMemoryCaptchaStore, LoginInfoService, MenuService,
+        MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
+        PermissionService, PostService, ProductService, ProfileService, RoleService,
+        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
+        TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
+        TenantUsageService, UserImportService, UserService, WebSocketTicketService,
+        WebSocketTicketStore, WebSocketTicketStoreFuture,
     },
 };
 use ryframe_config::AppConfig;
@@ -67,6 +67,40 @@ struct RedisWebSocketTicketStore {
 struct RedisCaptchaStore {
     client: RedisClient,
     ttl_secs: u64,
+}
+
+struct RedisDictCacheStore {
+    client: RedisClient,
+}
+
+impl DictCacheStore for RedisDictCacheStore {
+    fn get<'a>(&'a self, key: &'a str) -> DictCacheStoreFuture<'a, Option<String>> {
+        Box::pin(async move {
+            self.client
+                .get(key)
+                .await
+                .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
+        })
+    }
+
+    fn put(&self, key: String, value: String, ttl_secs: u64) -> DictCacheStoreFuture<'_, ()> {
+        Box::pin(async move {
+            self.client
+                .set_ex(key, value, ttl_secs)
+                .await
+                .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
+        })
+    }
+
+    fn remove(&self, key: String) -> DictCacheStoreFuture<'_, ()> {
+        Box::pin(async move {
+            self.client
+                .del(key)
+                .await
+                .map(|_| ())
+                .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
+        })
+    }
 }
 
 impl CaptchaStore for RedisCaptchaStore {
@@ -241,7 +275,14 @@ pub async fn build_all(
         authorization_cache.clone(),
     ));
 
-    let dict = Arc::new(DictService::new(database.clone(), redis_client.clone()));
+    let dict = Arc::new(DictService::new(
+        database.clone(),
+        redis_client.as_ref().map(|client| {
+            Arc::new(RedisDictCacheStore {
+                client: client.clone(),
+            }) as Arc<dyn DictCacheStore>
+        }),
+    ));
     let notice = Arc::new(NoticeService::new(database.clone()));
     let oper_log = Arc::new(OperLogService::new(database.clone()));
     let file = Arc::new(FileService::new(database.clone(), object_storage.clone()));

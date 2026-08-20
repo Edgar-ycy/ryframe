@@ -41,7 +41,9 @@ pub use data_retention_service::{
     DataRetentionPreview, DataRetentionRunVo, DataRetentionService,
 };
 pub use dept_service::{CreateDeptCommand, DeptService, DeptTreeNode, DeptVo, UpdateDeptCommand};
-pub use dict_service::{DictDataVo, DictService, DictTypeListParams, DictTypeVo};
+pub use dict_service::{
+    DictCacheStore, DictCacheStoreFuture, DictDataVo, DictService, DictTypeListParams, DictTypeVo,
+};
 pub use export_service::{
     ConfigExportFilter, DictTypeExportFilter, EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE,
     EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION, ExportDeletionResult, ExportDownloadLocation,
