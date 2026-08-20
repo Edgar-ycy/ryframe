@@ -32,6 +32,3 @@ pub mod session_security;
 pub mod spreadsheet;
 pub mod storage;
 pub mod tenant_data;
-pub mod tenant_data_migration;
-pub mod tenant_data_targets;
-pub mod tenant_provisioning;

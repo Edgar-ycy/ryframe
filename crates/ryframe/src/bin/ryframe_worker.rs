@@ -50,10 +50,6 @@ mod process_logging;
 mod process_readiness;
 #[path = "../boot/spreadsheet.rs"]
 mod process_spreadsheet;
-#[path = "../boot/tenant_data_migration.rs"]
-mod process_tenant_data_migration;
-#[path = "../boot/tenant_data_targets.rs"]
-mod process_tenant_data_targets;
 #[path = "../boot/tenant_data.rs"]
 mod tenant_data;
 
@@ -200,8 +196,8 @@ async fn main() -> Result<(), AppError> {
     ));
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         database.clone(),
-        process_tenant_data_targets::port(tenant_data.clone()),
-        process_tenant_data_migration::port(tenant_data.clone()),
+        Arc::<ryframe_tenant_db::TenantDatabaseRouter>::clone(&tenant_data),
+        Arc::<ryframe_tenant_db::TenantDatabaseRouter>::clone(&tenant_data),
         queue.clone(),
         authorization_cache.clone(),
     ));

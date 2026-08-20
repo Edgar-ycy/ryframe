@@ -1,20 +1,15 @@
-use std::sync::Arc;
-
 use ryframe_application::{
     TenantProvisioningFuture, TenantProvisioningPlacement, TenantProvisioningPort,
 };
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_tenant_db::{
+use sea_orm::DatabaseTransaction;
+
+use crate::{
     PendingTenantDataPlacement, TenantDataError, TenantDataPlacementRepository,
     TenantDatabaseRouter,
 };
-use sea_orm::DatabaseTransaction;
 
-struct TenantProvisioningBridge {
-    router: Arc<TenantDatabaseRouter>,
-}
-
-impl TenantProvisioningPort for TenantProvisioningBridge {
+impl TenantProvisioningPort for TenantDatabaseRouter {
     fn prepare(
         &self,
         tenant_id: String,
@@ -22,8 +17,7 @@ impl TenantProvisioningPort for TenantProvisioningBridge {
         generation: i64,
         switch_token: String,
     ) -> AppResult<TenantProvisioningPlacement> {
-        self.router
-            .prepare_provisioning(tenant_id, target_key, generation, switch_token)
+        self.prepare_provisioning(tenant_id, target_key, generation, switch_token)
             .map(to_application_placement)
             .map_err(map_error)
     }
@@ -59,8 +53,7 @@ impl TenantProvisioningPort for TenantProvisioningBridge {
         placement: &'a TenantProvisioningPlacement,
     ) -> TenantProvisioningFuture<'a> {
         Box::pin(async move {
-            self.router
-                .provision_pending_fence(&to_infrastructure_placement(placement))
+            self.provision_pending_fence(&to_infrastructure_placement(placement))
                 .await
                 .map_err(map_error)
         })
@@ -91,10 +84,6 @@ impl TenantProvisioningPort for TenantProvisioningBridge {
                 .map_err(map_error)
         })
     }
-}
-
-pub fn port(router: Arc<TenantDatabaseRouter>) -> Arc<dyn TenantProvisioningPort> {
-    Arc::new(TenantProvisioningBridge { router })
 }
 
 fn to_application_placement(placement: PendingTenantDataPlacement) -> TenantProvisioningPlacement {

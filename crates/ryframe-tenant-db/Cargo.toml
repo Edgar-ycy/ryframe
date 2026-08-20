@@ -12,6 +12,7 @@ description.workspace = true
 ryframe-config = { path = "../ryframe-config" }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-db = { path = "../ryframe-db" }
+ryframe-application = { path = "../ryframe-application" }
 async-trait = { workspace = true }
 hex = { workspace = true }
 sea-orm = { workspace = true }

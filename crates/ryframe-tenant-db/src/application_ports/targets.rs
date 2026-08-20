@@ -1,35 +1,29 @@
-use std::sync::Arc;
-
-use chrono::{DateTime, Utc};
 use ryframe_application::{
     TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetFuture, TenantDataTargetHealth,
     TenantDataTargetMetadata, TenantDataTargetPort,
 };
-use ryframe_tenant_db::{
+
+use crate::{
     TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, migration::TENANT_DATA_CATALOG,
 };
 
-use super::tenant_data::map_error as map_tenant_data_error;
+use super::map_error;
 
-struct TenantDataTargetBridge {
-    router: Arc<TenantDatabaseRouter>,
-}
-
-impl TenantDataTargetPort for TenantDataTargetBridge {
+impl TenantDataTargetPort for TenantDatabaseRouter {
     fn contains(&self, target_key: &str) -> bool {
-        self.router.targets().contains(target_key)
+        self.targets().contains(target_key)
     }
 
     fn is_dedicated(&self, target_key: &str) -> Option<bool> {
-        self.router.targets().target_is_dedicated(target_key)
+        self.targets().target_is_dedicated(target_key)
     }
 
     fn mode_code(&self, target_key: &str) -> Option<&'static str> {
-        self.router.targets().target_mode_code(target_key)
+        self.targets().target_mode_code(target_key)
     }
 
     fn kind_code(&self, target_key: &str) -> Option<&'static str> {
-        self.router.targets().target_kind_code(target_key)
+        self.targets().target_kind_code(target_key)
     }
 
     fn catalog_fingerprint(&self) -> String {
@@ -43,7 +37,6 @@ impl TenantDataTargetPort for TenantDataTargetBridge {
     fn metadata(&self) -> TenantDataTargetFuture<'_, Vec<TenantDataTargetMetadata>> {
         Box::pin(async move {
             Ok(self
-                .router
                 .targets()
                 .metadata()
                 .await
@@ -51,7 +44,6 @@ impl TenantDataTargetPort for TenantDataTargetBridge {
                 .map(|metadata| {
                     let mode = metadata.mode_code().into();
                     let kind = metadata.kind_code().into();
-                    let health = map_health(metadata.health);
                     TenantDataTargetMetadata {
                         key: metadata.key,
                         display_name: metadata.display_name,
@@ -62,8 +54,8 @@ impl TenantDataTargetPort for TenantDataTargetBridge {
                         pool_max_connections: metadata.pool_max_connections,
                         active_leases: metadata.active_leases,
                         schema_fingerprint: metadata.schema_fingerprint,
-                        health,
-                        last_verified_at: metadata.last_verified_at.map(DateTime::<Utc>::from),
+                        health: map_health(metadata.health),
+                        last_verified_at: metadata.last_verified_at.map(Into::into),
                     }
                 })
                 .collect())
@@ -72,7 +64,7 @@ impl TenantDataTargetPort for TenantDataTargetBridge {
 
     fn pool_stats(&self) -> TenantDataTargetFuture<'_, TenantDataPoolStats> {
         Box::pin(async move {
-            let stats = self.router.targets().pool_stats().await;
+            let stats = self.targets().pool_stats().await;
             Ok(TenantDataPoolStats {
                 reserved_connections: stats.reserved_connections,
                 max_total_connections: stats.max_total_connections,
@@ -84,10 +76,9 @@ impl TenantDataTargetPort for TenantDataTargetBridge {
 
     fn verify_now<'a>(&'a self, target_key: &'a str) -> TenantDataTargetFuture<'a, ()> {
         Box::pin(async move {
-            self.router
-                .verify_target_now_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            self.verify_target_now_for_catalog(target_key, &TENANT_DATA_CATALOG)
                 .await
-                .map_err(map_tenant_data_error)
+                .map_err(map_error)
         })
     }
 
@@ -96,23 +87,21 @@ impl TenantDataTargetPort for TenantDataTargetBridge {
         target_key: &'a str,
     ) -> TenantDataTargetFuture<'a, TenantDataTargetAccess> {
         Box::pin(async move {
-            self.router
-                .open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            self.open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
                 .await
                 .map(|target| TenantDataTargetAccess {
                     dedicated: target.is_dedicated(),
                 })
-                .map_err(map_tenant_data_error)
+                .map_err(map_error)
         })
     }
 
     fn is_occupied<'a>(&'a self, target_key: &'a str) -> TenantDataTargetFuture<'a, bool> {
         Box::pin(async move {
-            self.router
-                .target_occupancy_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            self.target_occupancy_for_catalog(target_key, &TENANT_DATA_CATALOG)
                 .await
                 .map(|occupancy| occupancy.is_some())
-                .map_err(map_tenant_data_error)
+                .map_err(map_error)
         })
     }
 
@@ -122,16 +111,11 @@ impl TenantDataTargetPort for TenantDataTargetBridge {
         tenant_id: &'a str,
     ) -> TenantDataTargetFuture<'a, bool> {
         Box::pin(async move {
-            self.router
-                .tenant_is_empty_on_target_for_catalog(target_key, tenant_id, &TENANT_DATA_CATALOG)
+            self.tenant_is_empty_on_target_for_catalog(target_key, tenant_id, &TENANT_DATA_CATALOG)
                 .await
-                .map_err(map_tenant_data_error)
+                .map_err(map_error)
         })
     }
-}
-
-pub fn port(router: Arc<TenantDatabaseRouter>) -> Arc<dyn TenantDataTargetPort> {
-    Arc::new(TenantDataTargetBridge { router })
 }
 
 const fn map_health(health: TenantDatabaseTargetHealthStatus) -> TenantDataTargetHealth {

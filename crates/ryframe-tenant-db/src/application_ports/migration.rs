@@ -1,24 +1,18 @@
-use std::sync::Arc;
-
+use crate::{
+    TenantDataCleanupBatch, TenantDataCleanupOwnership, TenantDatabaseRouter,
+    migration::{TENANT_DATA_CATALOG, TenantDataTableDescriptor},
+};
 use ryframe_application::{
     TenantDataCatalogTable, TenantDataCleanupOwnership as ApplicationCleanupOwnership,
     TenantDataFence, TenantDataMigrationFuture, TenantDataMigrationPort, TenantDataRow,
     TenantDataRowBatch,
 };
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_tenant_db::{
-    TenantDataCleanupBatch, TenantDataCleanupOwnership, TenantDatabaseRouter,
-    migration::{TENANT_DATA_CATALOG, TenantDataTableDescriptor},
-};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 
-use super::tenant_data::map_error as map_tenant_data_error;
+use super::map_error as map_tenant_data_error;
 
-struct TenantDataMigrationBridge {
-    router: Arc<TenantDatabaseRouter>,
-}
-
-impl TenantDataMigrationPort for TenantDataMigrationBridge {
+impl TenantDataMigrationPort for TenantDatabaseRouter {
     fn catalog_tables(&self) -> Vec<TenantDataCatalogTable> {
         TENANT_DATA_CATALOG
             .tables()
@@ -32,16 +26,15 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
 
     fn prepare_target<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a> {
         Box::pin(async move {
-            self.router
-                .prepare_migration_target_for_catalog(
-                    fence.tenant_id,
-                    fence.target_key,
-                    fence.generation,
-                    fence.switch_token,
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map_err(map_tenant_data_error)
+            self.prepare_migration_target_for_catalog(
+                fence.tenant_id,
+                fence.target_key,
+                fence.generation,
+                fence.switch_token,
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map_err(map_tenant_data_error)
         })
     }
 
@@ -50,46 +43,43 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
         fence: TenantDataFence<'a>,
     ) -> TenantDataMigrationFuture<'a> {
         Box::pin(async move {
-            self.router
-                .clear_prepared_target_for_catalog(
-                    fence.tenant_id,
-                    fence.target_key,
-                    fence.generation,
-                    fence.switch_token,
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map_err(map_tenant_data_error)
+            self.clear_prepared_target_for_catalog(
+                fence.tenant_id,
+                fence.target_key,
+                fence.generation,
+                fence.switch_token,
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map_err(map_tenant_data_error)
         })
     }
 
     fn freeze_fence<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a> {
         Box::pin(async move {
-            self.router
-                .freeze_fence_for_catalog(
-                    fence.tenant_id,
-                    fence.target_key,
-                    fence.generation,
-                    fence.switch_token,
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map_err(map_tenant_data_error)
+            self.freeze_fence_for_catalog(
+                fence.tenant_id,
+                fence.target_key,
+                fence.generation,
+                fence.switch_token,
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map_err(map_tenant_data_error)
         })
     }
 
     fn activate_fence<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a> {
         Box::pin(async move {
-            self.router
-                .activate_fence_for_catalog(
-                    fence.tenant_id,
-                    fence.target_key,
-                    fence.generation,
-                    fence.switch_token,
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map_err(map_tenant_data_error)
+            self.activate_fence_for_catalog(
+                fence.tenant_id,
+                fence.target_key,
+                fence.generation,
+                fence.switch_token,
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map_err(map_tenant_data_error)
         })
     }
 
@@ -98,16 +88,15 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
         fence: TenantDataFence<'a>,
     ) -> TenantDataMigrationFuture<'a> {
         Box::pin(async move {
-            self.router
-                .assert_frozen_fence_for_catalog(
-                    fence.tenant_id,
-                    fence.target_key,
-                    fence.generation,
-                    fence.switch_token,
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map_err(map_tenant_data_error)
+            self.assert_frozen_fence_for_catalog(
+                fence.tenant_id,
+                fence.target_key,
+                fence.generation,
+                fence.switch_token,
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map_err(map_tenant_data_error)
         })
     }
 
@@ -116,17 +105,16 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
         fence: TenantDataFence<'a>,
     ) -> TenantDataMigrationFuture<'a, ApplicationCleanupOwnership> {
         Box::pin(async move {
-            self.router
-                .cleanup_ownership_for_catalog(
-                    fence.tenant_id,
-                    fence.target_key,
-                    fence.generation,
-                    fence.switch_token,
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map(map_cleanup_ownership)
-                .map_err(map_tenant_data_error)
+            self.cleanup_ownership_for_catalog(
+                fence.tenant_id,
+                fence.target_key,
+                fence.generation,
+                fence.switch_token,
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map(map_cleanup_ownership)
+            .map_err(map_tenant_data_error)
         })
     }
 
@@ -138,35 +126,33 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
     ) -> TenantDataMigrationFuture<'a, u64> {
         Box::pin(async move {
             let descriptor = catalog_table(table)?;
-            self.router
-                .delete_tenant_rows_batch_for_catalog(
-                    TenantDataCleanupBatch {
-                        tenant_id: fence.tenant_id,
-                        target_key: fence.target_key,
-                        placement_generation: fence.generation,
-                        switch_token: fence.switch_token,
-                        descriptor,
-                        batch_size,
-                    },
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map_err(map_tenant_data_error)
+            self.delete_tenant_rows_batch_for_catalog(
+                TenantDataCleanupBatch {
+                    tenant_id: fence.tenant_id,
+                    target_key: fence.target_key,
+                    placement_generation: fence.generation,
+                    switch_token: fence.switch_token,
+                    descriptor,
+                    batch_size,
+                },
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map_err(map_tenant_data_error)
         })
     }
 
     fn finish_cleanup<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a> {
         Box::pin(async move {
-            self.router
-                .finish_tenant_cleanup_for_catalog(
-                    fence.tenant_id,
-                    fence.target_key,
-                    fence.generation,
-                    fence.switch_token,
-                    &TENANT_DATA_CATALOG,
-                )
-                .await
-                .map_err(map_tenant_data_error)
+            self.finish_tenant_cleanup_for_catalog(
+                fence.tenant_id,
+                fence.target_key,
+                fence.generation,
+                fence.switch_token,
+                &TENANT_DATA_CATALOG,
+            )
+            .await
+            .map_err(map_tenant_data_error)
         })
     }
 
@@ -182,7 +168,6 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
             validate_batch_size(batch_size)?;
             let descriptor = catalog_table(table)?;
             let target = self
-                .router
                 .open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
                 .await
                 .map_err(map_tenant_data_error)?;
@@ -246,7 +231,6 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
         Box::pin(async move {
             let descriptor = catalog_table(table)?;
             let target = self
-                .router
                 .open_target_for_catalog(fence.target_key, &TENANT_DATA_CATALOG)
                 .await
                 .map_err(map_tenant_data_error)?;
@@ -291,7 +275,6 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
         Box::pin(async move {
             let descriptor = catalog_table(table)?;
             let target = self
-                .router
                 .open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
                 .await
                 .map_err(map_tenant_data_error)?;
@@ -342,10 +325,6 @@ impl TenantDataMigrationPort for TenantDataMigrationBridge {
             Ok(())
         })
     }
-}
-
-pub fn port(router: Arc<TenantDatabaseRouter>) -> Arc<dyn TenantDataMigrationPort> {
-    Arc::new(TenantDataMigrationBridge { router })
 }
 
 fn catalog_table(table: &str) -> AppResult<&'static TenantDataTableDescriptor> {
