@@ -19,5 +19,6 @@ pub mod logging;
 pub mod readiness;
 pub mod redis;
 pub mod services;
+pub mod session_security;
 pub mod storage;
 pub mod tenant_data;

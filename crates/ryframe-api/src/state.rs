@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::TrustedProxySet;
-use ryframe_adapters::{RedisClient, TokenBlacklist};
+use ryframe_adapters::RedisClient;
 use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService, TenantRuntimeReadPort,
     agent::AgentService,
@@ -70,7 +70,6 @@ pub struct AppState {
     pub redis: Option<RedisClient>,
     pub idempotency_store: Option<Arc<dyn HttpIdempotencyStore>>,
     pub message_hub: Arc<crate::message_socket::MessageHub>,
-    pub token_blacklist: TokenBlacklist,
     pub rate_limiter: Arc<dyn HttpRateLimiter>,
     pub trusted_proxies: TrustedProxySet,
     pub runtime: RuntimeComponents,

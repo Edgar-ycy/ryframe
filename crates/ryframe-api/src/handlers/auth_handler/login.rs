@@ -191,9 +191,8 @@ pub async fn login(
             {
                 crate::metrics::record_redis_degraded("login_protection");
                 if let Err(revoke_error) = state
-                    .services
                     .auth
-                    .refresh_sessions()
+                    .refresh_sessions
                     .revoke_for_user(&tenant_id, result.user_id, &result.sid)
                     .await
                 {
@@ -206,9 +205,8 @@ pub async fn login(
                 Ok(context) => context,
                 Err(error) => {
                     if let Err(revoke_error) = state
-                        .services
                         .auth
-                        .refresh_sessions()
+                        .refresh_sessions
                         .revoke_for_user(&tenant_id, result.user_id, &result.sid)
                         .await
                     {
@@ -221,9 +219,8 @@ pub async fn login(
             {
                 crate::metrics::record_redis_degraded("login_session_metadata");
                 if let Err(revoke_error) = state
-                    .services
                     .auth
-                    .refresh_sessions()
+                    .refresh_sessions
                     .revoke_for_user(&tenant_id, result.user_id, &result.sid)
                     .await
                 {

@@ -12,7 +12,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::MethodRouter,
 };
-use ryframe_adapters::{RefreshSessionStore, TokenBlacklist};
 use ryframe_application::{PrincipalResolver, TenantContext, with_tenant_context};
 use ryframe_auth::{
     RequestPrincipal as AuthPrincipal,
@@ -22,6 +21,7 @@ use ryframe_auth::{
 use ryframe_kernel::AppError;
 
 use crate::RequestPrincipal;
+use crate::session_security::{AccessRevocationStore, RefreshSessionControl};
 
 static BACKEND_FAILURE_HOOK: OnceLock<fn(&str)> = OnceLock::new();
 
@@ -41,9 +41,9 @@ fn record_backend_failure(subsystem: &str) {
 pub struct AuthState {
     pub token_settings: Arc<TokenSettings>,
     pub allow_multiple_tenants: bool,
-    pub blacklist: TokenBlacklist,
+    pub access_revocations: Arc<dyn AccessRevocationStore>,
     pub principal_resolver: Arc<dyn PrincipalResolver>,
-    pub refresh_sessions: RefreshSessionStore,
+    pub refresh_sessions: Arc<dyn RefreshSessionControl>,
 }
 
 pub async fn auth_middleware(
@@ -71,8 +71,8 @@ pub async fn auth_middleware(
     }
 
     if auth_state
-        .blacklist
-        .try_is_blacklisted(&claims.jti)
+        .access_revocations
+        .is_revoked(&claims.jti)
         .await
         .map_err(|error| {
             record_backend_failure("access_revocation");

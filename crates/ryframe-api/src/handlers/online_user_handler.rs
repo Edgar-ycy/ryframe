@@ -79,9 +79,8 @@ pub async fn force_logout(
     // 刷新令牌族是权威状态。先撤销它，同时原子校验 tenant + sid。若 Redis
     // 失败则返回 503 而不删除展示索引，同一请求可以安全重试。
     let revoked = state
-        .services
         .auth
-        .refresh_sessions()
+        .refresh_sessions
         .revoke_for_tenant(&current_user.tenant_id, &sid)
         .await
         .inspect_err(|error| {

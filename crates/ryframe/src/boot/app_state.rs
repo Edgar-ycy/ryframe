@@ -230,11 +230,14 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         .expect("proxy CIDRs were validated during configuration loading");
     let principal_resolver = services.auth.clone();
     let settings = Arc::new(http_runtime_settings(&config));
+    let access_revocations = super::session_security::access_revocations(token_blacklist);
+    let refresh_sessions =
+        super::session_security::refresh_sessions(services.auth.refresh_sessions());
     let auth = ryframe_api::auth_middleware::AuthState {
         token_settings: services.auth.token_settings(),
         allow_multiple_tenants: config.multi_tenancy.enabled,
-        blacklist: token_blacklist.clone(),
-        refresh_sessions: services.auth.refresh_sessions(),
+        access_revocations,
+        refresh_sessions,
         principal_resolver,
     };
     let redis_configured = config
@@ -274,7 +277,6 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
             localizer,
             settings.messaging.clone(),
         )),
-        token_blacklist,
         rate_limiter: super::limiter::http_limiter(limiter),
         trusted_proxies,
         runtime: RuntimeComponents::new(Arc::new(UploadCircuitBreakerBridge {

@@ -29,6 +29,7 @@ pub mod rate_limit;
 pub mod request_locale;
 pub mod router;
 pub mod runtime;
+pub mod session_security;
 pub mod settings;
 pub mod state;
 mod user_agent;

@@ -8,7 +8,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::CookieJar;
-use ryframe_adapters::RefreshSessionRevocation;
 use ryframe_auth::jwt::Claims;
 use ryframe_kernel::AppError;
 
@@ -27,6 +26,7 @@ use crate::{
         auth_dto::{AuthSessionResponse, CsrfResponse, LoginResponse, RevokeOtherSessionsResponse},
         empty_dto::EmptyRequestDto,
     },
+    session_security::SessionRevocation,
     state::AppState,
 };
 
@@ -115,8 +115,9 @@ pub async fn logout(
         let remaining = claims.exp.saturating_sub(now) as u64;
         if remaining > 0 {
             state
-                .token_blacklist
-                .try_blacklist(&claims.jti, remaining)
+                .auth
+                .access_revocations
+                .revoke(&claims.jti, remaining)
                 .await
                 .inspect_err(|_| {
                     crate::metrics::record_redis_degraded("logout_revocation");
@@ -126,9 +127,8 @@ pub async fn logout(
 
     if let Some(claims) = refresh_claims {
         state
-            .services
             .auth
-            .refresh_sessions()
+            .refresh_sessions
             .revoke(&claims.sid)
             .await
             .inspect_err(|_| {
@@ -215,9 +215,8 @@ pub async fn refresh(
                 Ok(context) => context,
                 Err(error) => {
                     if let Err(revoke_error) = state
-                        .services
                         .auth
-                        .refresh_sessions()
+                        .refresh_sessions
                         .revoke_for_user(&result.user_info.tenant_id, result.user_id, &result.sid)
                         .await
                     {
@@ -379,15 +378,14 @@ pub async fn revoke_session(
         Some(&claims.sid),
     )?;
     let result = state
-        .services
         .auth
-        .refresh_sessions()
+        .refresh_sessions
         .revoke_for_user(&current_user.tenant_id, current_user.user_id, &sid)
         .await
         .inspect_err(|_| {
             crate::metrics::record_redis_degraded("profile_session_revoke");
         })?;
-    if matches!(result, RefreshSessionRevocation::NotFoundOrForeign) {
+    if matches!(result, SessionRevocation::NotFoundOrForeign) {
         return Err(AppError::NotFound("登录设备不存在".into()).into());
     }
     if let Err(error) = state
@@ -445,18 +443,16 @@ pub async fn revoke_other_sessions(
         .list_user_sessions(&current_user.tenant_id, current_user.user_id)
         .await?;
     let mut candidate_sids = state
-        .services
         .auth
-        .refresh_sessions()
+        .refresh_sessions
         .session_sids_for_user(&current_user.tenant_id, current_user.user_id)
         .await?;
     candidate_sids.extend(sessions.into_iter().map(|session| session.sid));
     candidate_sids.sort_unstable();
     candidate_sids.dedup();
     let revoked_count = state
-        .services
         .auth
-        .refresh_sessions()
+        .refresh_sessions
         .revoke_other_sessions_for_user(
             &current_user.tenant_id,
             current_user.user_id,
