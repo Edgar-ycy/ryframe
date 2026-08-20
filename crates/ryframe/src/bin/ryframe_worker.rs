@@ -141,10 +141,13 @@ async fn main() -> Result<(), AppError> {
         application_policies.messaging,
     ));
     let user = Arc::new(UserService::new(
-        database.clone(),
         authorization_cache.clone(),
         ryframe_application::legacy_identity_authorization(database.clone()),
         ryframe_application::legacy_user_query_persistence(database.clone()),
+        ryframe_application::legacy_user_write_persistence(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
         ryframe_application::legacy_password_reset_persistence(
             database.clone(),
             authorization_cache.clone(),

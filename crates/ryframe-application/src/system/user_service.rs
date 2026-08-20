@@ -5,24 +5,20 @@ mod roles;
 
 use std::sync::Arc;
 
-use ryframe_db::{
-    ControlDatabaseCluster, DeptRepository, RoleRepository, UserRepository,
-    entities::{role, user},
-};
-use ryframe_kernel::{AppResult, ValidatedPageQuery};
-use sea_orm::DatabaseTransaction;
+use ryframe_kernel::ValidatedPageQuery;
 use serde::Serialize;
 
 use crate::{
     AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort,
     PasswordResetPersistencePort, UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord,
+    UserWritePersistencePort, UserWriteRecord,
 };
 
+pub use crate::{
+    USER_STATUS_DISABLED, USER_STATUS_MUST_RESET_PASSWORD, USER_STATUS_NORMAL,
+    USER_STATUS_PENDING_ACTIVATION,
+};
 pub(crate) use queries::CurrentAuthorization;
-
-pub const USER_STATUS_NORMAL: &str = user::Model::STATUS_NORMAL;
-pub const USER_STATUS_PENDING_ACTIVATION: &str = user::Model::STATUS_PENDING_ACTIVATION;
-pub const USER_STATUS_MUST_RESET_PASSWORD: &str = user::Model::STATUS_MUST_RESET_PASSWORD;
 
 #[derive(Debug, Serialize)]
 pub struct UserVo {
@@ -39,8 +35,8 @@ pub struct UserVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<user::Model> for UserVo {
-    fn from(user: user::Model) -> Self {
+impl From<UserWriteRecord> for UserVo {
+    fn from(user: UserWriteRecord) -> Self {
         Self {
             id: user.id.to_string(),
             username: user.username,
@@ -96,17 +92,6 @@ pub struct RoleBriefVo {
     pub is_super: i8,
 }
 
-impl From<role::Model> for RoleBriefVo {
-    fn from(role: role::Model) -> Self {
-        Self {
-            id: role.id.to_string(),
-            name: role.name,
-            code: role.code,
-            is_super: role.is_super,
-        }
-    }
-}
-
 impl From<UserQueryRoleRecord> for RoleBriefVo {
     fn from(role: UserQueryRoleRecord) -> Self {
         Self {
@@ -119,13 +104,10 @@ impl From<UserQueryRoleRecord> for RoleBriefVo {
 }
 
 pub struct UserService {
-    db: ControlDatabaseCluster,
-    user_repo: UserRepository,
-    role_repo: RoleRepository,
-    dept_repo: DeptRepository,
     authorization_resolver: AuthorizationResolver,
     authorization_cache: AuthorizationCache,
     queries: Arc<dyn UserQueryReadPort>,
+    writes: Arc<dyn UserWritePersistencePort>,
     password_resets: Arc<dyn PasswordResetPersistencePort>,
 }
 
@@ -169,32 +151,18 @@ impl UserListParams {
 
 impl UserService {
     pub fn new(
-        db: ControlDatabaseCluster,
         authorization_cache: AuthorizationCache,
         identity_read: Arc<dyn IdentityAuthorizationReadPort>,
         queries: Arc<dyn UserQueryReadPort>,
+        writes: Arc<dyn UserWritePersistencePort>,
         password_resets: Arc<dyn PasswordResetPersistencePort>,
     ) -> Self {
         Self {
-            db,
-            user_repo: UserRepository,
-            role_repo: RoleRepository,
-            dept_repo: DeptRepository,
             authorization_resolver: AuthorizationResolver::new(identity_read),
             authorization_cache,
             queries,
+            writes,
             password_resets,
         }
-    }
-
-    pub(super) async fn invalidate_sessions_for_tenant_in_txn(
-        &self,
-        txn: &DatabaseTransaction,
-        tenant_id: &str,
-        user_ids: &[i64],
-    ) -> AppResult<Vec<(i64, i32)>> {
-        self.authorization_cache
-            .increment_user_versions_in_transaction(txn, tenant_id, user_ids)
-            .await
     }
 }

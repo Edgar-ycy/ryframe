@@ -161,10 +161,13 @@ pub async fn build_all(
         super::authorization_cache::cache(redis_client.clone(), policies.cache);
     let identity_read = ryframe_application::legacy_identity_authorization(database.clone());
     let user = Arc::new(UserService::new(
-        database.clone(),
         authorization_cache.clone(),
         Arc::clone(&identity_read),
         ryframe_application::legacy_user_query_persistence(database.clone()),
+        ryframe_application::legacy_user_write_persistence(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
         ryframe_application::legacy_password_reset_persistence(
             database.clone(),
             authorization_cache.clone(),
