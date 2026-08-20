@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use chrono::Duration;
 use ryframe_db::{ExecutionTenantScope, FailBackgroundJob, JobFailureDisposition, background_job};
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_tenant_db::TenantDatabaseRouter;
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -108,7 +107,6 @@ pub struct JobWorker {
     queue: Arc<JobQueue>,
     execution_tenant_scope: ExecutionTenantScope,
     handlers: Arc<BTreeMap<String, Arc<dyn JobHandler>>>,
-    tenant_data: Option<Arc<TenantDatabaseRouter>>,
     worker_prefix: Arc<str>,
     lease_duration: Duration,
     heartbeat_interval: StdDuration,
@@ -129,7 +127,6 @@ impl JobWorker {
             queue,
             execution_tenant_scope,
             handlers: Arc::new(BTreeMap::new()),
-            tenant_data: None,
             worker_prefix: policy.worker_prefix("ryframe-worker"),
             lease_duration: policy.lease_duration,
             heartbeat_interval: policy.heartbeat_interval,
@@ -138,12 +135,6 @@ impl JobWorker {
             lease_recovery_interval: policy.lease_recovery_interval,
             concurrency: policy.concurrency,
         })
-    }
-
-    /// 保持 Worker 与组合根使用同一个路由实例，供租户数据任务处理器共享。
-    pub fn with_tenant_data(mut self, tenant_data: Arc<TenantDatabaseRouter>) -> Self {
-        self.tenant_data = Some(tenant_data);
-        self
     }
 
     /// 注册处理器；重复类型属于启动配置错误。

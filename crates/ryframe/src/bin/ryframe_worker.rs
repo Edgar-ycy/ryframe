@@ -216,7 +216,6 @@ async fn main() -> Result<(), AppError> {
             user_import,
             tenant_config_transfer,
             tenant_data_migration,
-            tenant_data,
             redis: redis.clone(),
             messaging_enabled: application_policies.messaging.enabled(),
         },

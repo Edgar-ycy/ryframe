@@ -17,7 +17,6 @@ use ryframe_application::{
 };
 use ryframe_db::ExecutionTenantScope;
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_tenant_db::TenantDatabaseRouter;
 
 struct RedisMessageWakeupPublisher {
     client: RedisClient,
@@ -86,7 +85,6 @@ pub struct JobWorkerDependencies {
     pub user_import: Arc<UserImportService>,
     pub tenant_config_transfer: Arc<TenantConfigTransferService>,
     pub tenant_data_migration: Arc<TenantDataMigrationService>,
-    pub tenant_data: Arc<TenantDatabaseRouter>,
     pub redis: Option<RedisClient>,
     pub messaging_enabled: bool,
 }
@@ -99,7 +97,6 @@ pub fn build_job_worker(
     dependencies: JobWorkerDependencies,
 ) -> AppResult<JobWorker> {
     let worker = JobWorker::new(queue, policy, execution_tenant_scope)?
-        .with_tenant_data(dependencies.tenant_data)
         .with_handler(Arc::new(ExportJobHandler::new(dependencies.export.clone())))?
         .with_handler(Arc::new(ExportCleanupJobHandler::new(dependencies.export)))?
         .with_handler(Arc::new(DataRetentionJobHandler::new(
