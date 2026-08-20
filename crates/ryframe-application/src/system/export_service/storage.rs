@@ -1,13 +1,10 @@
+use super::*;
 use ryframe_db::{
     MarkExportJobSucceeded,
     entities::{export_job, sys_file},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
-use sha2::{Digest, Sha256};
-use tokio::io::AsyncReadExt;
-
-use super::*;
 
 impl ExportService {
     pub(super) async fn persist_export_file(
@@ -23,7 +20,7 @@ impl ExportService {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_owned();
         let file_size = i64::try_from(artifact.size())
             .map_err(|_| AppError::PayloadTooLarge("导出文件超过数据库大小范围".into()))?;
-        let file_sha256 = hash_file(artifact.path()).await?;
+        let file_sha256 = artifact.sha256().to_owned();
         self.storage
             .ensure_bucket(EXPORT_BUCKET)
             .await
@@ -159,23 +156,4 @@ impl ExportService {
             tracing::warn!(%error, "清理未提交的导出对象失败，后续相同任务重试会覆盖确定性对象键");
         }
     }
-}
-
-async fn hash_file(path: &std::path::Path) -> AppResult<String> {
-    let mut file = tokio::fs::File::open(path)
-        .await
-        .map_err(|error| AppError::Internal(format!("打开导出临时文件失败: {error}")))?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .await
-            .map_err(|error| AppError::Internal(format!("读取导出临时文件失败: {error}")))?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    Ok(hex::encode(digest.finalize()))
 }

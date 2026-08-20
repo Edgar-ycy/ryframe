@@ -35,6 +35,7 @@ pub trait SpreadsheetWriter: Send {
 pub trait SpreadsheetArtifact: Send {
     fn path(&self) -> &Path;
     fn size(&self) -> u64;
+    fn sha256(&self) -> &str;
     fn data_rows(&self) -> u64;
     fn input_bytes(&self) -> u64;
 }

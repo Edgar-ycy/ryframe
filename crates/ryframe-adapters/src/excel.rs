@@ -1,13 +1,14 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    io::Cursor,
+    io::{Cursor, Read},
     path::Path,
 };
 
 use calamine::{Data, Reader, Xlsx, open_workbook_auto};
 use rust_xlsxwriter::{Color, DataValidation, Format, Workbook, Worksheet};
 use serde::{Serialize, de::DeserializeOwned};
+use sha2::{Digest, Sha256};
 use tempfile::{Builder, TempPath};
 
 use ryframe_kernel::{AppError, AppResult};
@@ -258,6 +259,7 @@ pub struct ExcelBatchProgress {
 pub struct ExcelArtifact {
     path: TempPath,
     size: u64,
+    sha256: String,
     data_rows: u64,
     input_bytes: u64,
 }
@@ -269,6 +271,10 @@ impl ExcelArtifact {
 
     pub const fn size(&self) -> u64 {
         self.size
+    }
+
+    pub fn sha256(&self) -> &str {
+        &self.sha256
     }
 
     pub const fn data_rows(&self) -> u64 {
@@ -389,14 +395,33 @@ impl<'headers> IncrementalExcelWriter<'headers> {
         let size = std::fs::metadata(output_path)
             .map_err(|error| AppError::Internal(format!("读取 Excel 文件大小失败: {error}")))?
             .len();
+        let sha256 = hash_file(output_path)?;
 
         Ok(ExcelArtifact {
             path: output,
             size,
+            sha256,
             data_rows: self.data_rows,
             input_bytes: self.input_bytes,
         })
     }
+}
+
+fn hash_file(path: &Path) -> AppResult<String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| AppError::Internal(format!("打开 Excel 临时文件失败: {error}")))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| AppError::Internal(format!("读取 Excel 临时文件失败: {error}")))?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(hex::encode(digest.finalize()))
 }
 
 impl ExcelExporter {
@@ -595,6 +620,7 @@ macro_rules! define_excel_mapping {
 mod tests {
     use calamine::{Reader, open_workbook_auto};
     use serde::Serialize;
+    use sha2::{Digest, Sha256};
 
     use super::{IncrementalExcelWriter, XLSX_MAX_DATA_ROWS};
     use ryframe_kernel::AppError;
@@ -626,6 +652,10 @@ mod tests {
         assert_eq!(artifact.input_bytes(), 8);
         assert!(artifact.size() > 0);
         let artifact_path = artifact.path().to_path_buf();
+        let expected_sha256 = hex::encode(Sha256::digest(
+            std::fs::read(&artifact_path).expect("读取表格产物"),
+        ));
+        assert_eq!(artifact.sha256(), expected_sha256);
         let mut workbook = open_workbook_auto(&artifact_path).expect("打开工作簿");
         let range = workbook.worksheet_range("测试").expect("读取工作表");
         assert_eq!(range.height(), 3);

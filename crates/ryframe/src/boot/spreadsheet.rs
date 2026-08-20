@@ -155,6 +155,10 @@ impl SpreadsheetArtifact for SpreadsheetArtifactBridge {
         self.artifact.size()
     }
 
+    fn sha256(&self) -> &str {
+        self.artifact.sha256()
+    }
+
     fn data_rows(&self) -> u64 {
         self.artifact.data_rows()
     }
@@ -190,6 +194,7 @@ mod tests {
         let artifact = writer.finish().expect("应生成表格制品");
         assert!(artifact.path().is_file());
         assert!(artifact.size() > 0);
+        assert_eq!(artifact.sha256().len(), 64);
         assert_eq!(artifact.data_rows(), 0);
     }
 
