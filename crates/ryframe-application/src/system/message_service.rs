@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use ryframe_db::{ControlDatabaseCluster, MessageRepository, OutboxEventRepository};
 use ryframe_kernel::{AppError, AppResult};
 
-use crate::JobQueue;
+use crate::{JobQueue, MessagePersistencePort};
 
 mod inbox;
 mod publish;
@@ -21,9 +20,7 @@ pub const MESSAGE_RETENTION_JOB_TYPE: &str = "system.message.retention";
 
 /// MySQL 持久化消息中心服务。
 pub struct MessageService {
-    db: ControlDatabaseCluster,
-    repository: MessageRepository,
-    outbox: OutboxEventRepository,
+    persistence: Arc<dyn MessagePersistencePort>,
     queue: Arc<JobQueue>,
     config: crate::MessagingPolicy,
 }
@@ -31,14 +28,12 @@ pub struct MessageService {
 impl MessageService {
     /// 使用主库和持久化任务队列构造服务。
     pub fn new(
-        db: ControlDatabaseCluster,
+        persistence: Arc<dyn MessagePersistencePort>,
         queue: Arc<JobQueue>,
         config: crate::MessagingPolicy,
     ) -> Self {
         Self {
-            db,
-            repository: MessageRepository,
-            outbox: OutboxEventRepository,
+            persistence,
             queue,
             config,
         }
@@ -51,8 +46,4 @@ impl MessageService {
             Err(AppError::ServiceUnavailable("消息中心已关闭".into()))
         }
     }
-}
-
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

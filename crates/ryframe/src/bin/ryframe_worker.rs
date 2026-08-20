@@ -136,7 +136,7 @@ async fn main() -> Result<(), AppError> {
     );
     install_job_metrics(&queue);
     let message = Arc::new(MessageService::new(
-        database.clone(),
+        ryframe_application::legacy_message_persistence(database.clone()),
         queue.clone(),
         application_policies.messaging,
     ));

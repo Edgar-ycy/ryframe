@@ -1,7 +1,6 @@
 use ryframe_kernel::AppResult;
-use sea_orm::TransactionTrait;
 
-use super::{MessageService, database_error};
+use super::MessageService;
 
 const RETENTION_BATCH_SIZE: u64 = 500;
 
@@ -12,12 +11,11 @@ impl MessageService {
         let now = self.queue.database_now().await?;
         let mut deleted = 0_u64;
         loop {
-            let transaction = self.db.write().begin().await.map_err(database_error)?;
-            let batch = self
-                .repository
-                .delete_expired_batch(&transaction, now, RETENTION_BATCH_SIZE)
+            let transaction = self.persistence.begin().await?;
+            let batch = transaction
+                .delete_expired_batch(now, RETENTION_BATCH_SIZE)
                 .await?;
-            crate::commit_current_audit(transaction).await?;
+            transaction.commit().await?;
             deleted = deleted.saturating_add(batch);
             if batch < RETENTION_BATCH_SIZE {
                 return Ok(deleted);

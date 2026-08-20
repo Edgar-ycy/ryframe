@@ -1,16 +1,18 @@
 use chrono::Duration;
-use ryframe_db::{PublishMessageCommand, RecordOutboxEvent};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
 use serde_json::Value;
+
+use crate::{
+    MessageAudienceRecord, MessageAudienceRecordKind, MessageOutboxRecord, PublishMessageRecord,
+};
 
 use super::{
     MessageAudienceKind, MessageService, MessageTemplate, MessageText, PublishMessageParams,
-    PublishedMessage, database_error,
+    PublishedMessage,
 };
 
 impl MessageService {
-    /// 在单个事务中发布消息、固化收件人并写入投递任务。
+    /// 在单个事务中发布消息、固化收件人并写入投递事件。
     pub async fn publish(
         &self,
         actor: &ActorContext,
@@ -30,10 +32,10 @@ impl MessageService {
             expires_at,
         } = params;
         let actor_tenant_id = crate::validated_tenant_id(actor)?;
-        let tenant_id = match requested_tenant_id.as_deref() {
+        let tenant_id = match requested_tenant_id {
             Some(tenant_id) => {
-                crate::enforce_tenant_scope(tenant_id)?;
-                tenant_id.to_owned()
+                crate::enforce_tenant_scope(&tenant_id)?;
+                tenant_id
             }
             None => actor_tenant_id.to_owned(),
         };
@@ -46,26 +48,24 @@ impl MessageService {
                 self.config.retention_days
             )));
         }
-        let content = self.prepare_content(&title, &content)?;
+        let content = prepare_content(title, content)?;
         let audiences = audiences
             .into_iter()
-            .map(|selector| ryframe_db::MessageAudienceSelector {
+            .map(|selector| MessageAudienceRecord {
                 kind: match selector.kind {
-                    MessageAudienceKind::Tenant => ryframe_db::MessageAudienceKind::Tenant,
-                    MessageAudienceKind::Role => ryframe_db::MessageAudienceKind::Role,
-                    MessageAudienceKind::User => ryframe_db::MessageAudienceKind::User,
+                    MessageAudienceKind::Tenant => MessageAudienceRecordKind::Tenant,
+                    MessageAudienceKind::Role => MessageAudienceRecordKind::Role,
+                    MessageAudienceKind::User => MessageAudienceRecordKind::User,
                 },
                 target_id: selector.target_id,
             })
             .collect();
 
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let published = self
-            .repository
-            .publish_in_transaction(
-                &transaction,
-                PublishMessageCommand {
-                    tenant_id: tenant_id.clone(),
+        let transaction = self.persistence.begin().await?;
+        let published = transaction
+            .publish(
+                PublishMessageRecord {
+                    tenant_id,
                     topic,
                     title_text: content.title_text,
                     body_text: content.body_text,
@@ -85,93 +85,114 @@ impl MessageService {
             )
             .await?;
         if published.inserted {
-            let payload = serde_json::json!({ "message_id": published.message.id.to_string() });
+            let aggregate_id = published.message.id.to_string();
             let trace_context = crate::trace_context::current_trace_context();
-            self.outbox
-                .record_in_transaction(
-                    &transaction,
-                    RecordOutboxEvent {
-                        tenant_id: Some(tenant_id.clone()),
-                        event_type: "system.message.published".into(),
-                        aggregate_type: "message".into(),
-                        aggregate_id: published.message.id.to_string(),
-                        payload: payload.clone(),
-                        available_at: now,
-                        max_attempts: 20,
-                        dedupe_key: Some(format!("message:{}", published.message.id)),
-                        traceparent: trace_context.traceparent,
-                        tracestate: trace_context.tracestate,
-                    },
-                    now,
-                )
+            transaction
+                .record_outbox(MessageOutboxRecord {
+                    tenant_id: published.tenant_id,
+                    event_type: crate::jobs::MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE.into(),
+                    aggregate_id,
+                    payload: serde_json::json!({
+                        "message_id": published.message.id.to_string()
+                    }),
+                    available_at: now,
+                    traceparent: trace_context.traceparent,
+                    tracestate: trace_context.tracestate,
+                })
                 .await?;
         }
-        crate::commit_current_audit(transaction).await?;
-        if published.inserted {
+        let inserted = published.inserted;
+        let recipient_count = published.recipient_count;
+        let message = MessageTemplate::from_record(published.message, None, None);
+        transaction.commit().await?;
+        if inserted {
             self.queue.notify_outbox().await;
         }
-
         Ok(PublishedMessage {
-            message: MessageTemplate::from_published(&published.message),
-            recipient_count: published.recipient_count,
-            inserted: published.inserted,
+            message,
+            recipient_count,
+            inserted,
         })
-    }
-
-    fn prepare_content(
-        &self,
-        title: &MessageText,
-        content: &MessageText,
-    ) -> AppResult<PreparedMessageContent> {
-        match (title, content) {
-            (MessageText::Literal { value: title }, MessageText::Literal { value: content }) => {
-                Ok(PreparedMessageContent {
-                    title_text: Some(title.clone()),
-                    body_text: Some(content.clone()),
-                    title_key: None,
-                    body_key: None,
-                    args_json: None,
-                })
-            }
-            (
-                MessageText::Key {
-                    key: title_key,
-                    args: title_args,
-                },
-                MessageText::Key {
-                    key: body_key,
-                    args: body_args,
-                },
-            ) => {
-                if title_args != body_args {
-                    return Err(AppError::Validation(
-                        "消息标题和正文的本地化参数必须一致".into(),
-                    ));
-                }
-                Ok(PreparedMessageContent {
-                    title_text: None,
-                    body_text: None,
-                    title_key: Some(title_key.clone()),
-                    body_key: Some(body_key.clone()),
-                    args_json: (!title_args.is_empty())
-                        .then(|| serde_json::to_value(title_args))
-                        .transpose()
-                        .map_err(|error| {
-                            AppError::Validation(format!("消息本地化参数无效: {error}"))
-                        })?,
-                })
-            }
-            _ => Err(AppError::Validation(
-                "消息标题和正文必须同时使用纯文本或本地化键".into(),
-            )),
-        }
     }
 }
 
-pub(super) struct PreparedMessageContent {
+fn prepare_content(title: MessageText, content: MessageText) -> AppResult<PreparedMessageContent> {
+    match (title, content) {
+        (MessageText::Literal { value: title }, MessageText::Literal { value: content }) => {
+            Ok(PreparedMessageContent {
+                title_text: Some(title),
+                body_text: Some(content),
+                title_key: None,
+                body_key: None,
+                args_json: None,
+            })
+        }
+        (
+            MessageText::Key {
+                key: title_key,
+                args: title_args,
+            },
+            MessageText::Key {
+                key: body_key,
+                args: body_args,
+            },
+        ) => {
+            if title_args != body_args {
+                return Err(AppError::Validation(
+                    "消息标题和正文的本地化参数必须一致".into(),
+                ));
+            }
+            Ok(PreparedMessageContent {
+                title_text: None,
+                body_text: None,
+                title_key: Some(title_key),
+                body_key: Some(body_key),
+                args_json: (!title_args.is_empty())
+                    .then(|| serde_json::to_value(title_args))
+                    .transpose()
+                    .map_err(|error| {
+                        AppError::Validation(format!("消息本地化参数无效: {error}"))
+                    })?,
+            })
+        }
+        _ => Err(AppError::Validation(
+            "消息标题和正文必须同时使用纯文本或本地化键".into(),
+        )),
+    }
+}
+
+struct PreparedMessageContent {
     title_text: Option<String>,
     body_text: Option<String>,
     title_key: Option<String>,
     body_key: Option<String>,
     args_json: Option<Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{MessageText, prepare_content};
+
+    #[test]
+    fn localized_message_requires_identical_arguments() {
+        let mut title_args = BTreeMap::new();
+        title_args.insert("name".into(), "A".into());
+        let mut body_args = BTreeMap::new();
+        body_args.insert("name".into(), "B".into());
+        assert!(
+            prepare_content(
+                MessageText::Key {
+                    key: "title".into(),
+                    args: title_args,
+                },
+                MessageText::Key {
+                    key: "body".into(),
+                    args: body_args,
+                },
+            )
+            .is_err()
+        );
+    }
 }

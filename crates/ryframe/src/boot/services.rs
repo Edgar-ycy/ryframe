@@ -351,7 +351,7 @@ pub async fn build_all(
             .with_job_queue(job_queue.clone()),
     );
     let message = Arc::new(MessageService::new(
-        database.clone(),
+        ryframe_application::legacy_message_persistence(database.clone()),
         job_queue.clone(),
         policies.messaging,
     ));

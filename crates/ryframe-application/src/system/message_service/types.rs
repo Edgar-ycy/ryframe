@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use ryframe_db::RecipientMessage;
 use serde_json::Value;
+
+use crate::{MessagePage, MessageRecipientRecord, MessageRecord};
 
 /// 创建消息的业务参数。
 #[derive(Debug)]
@@ -92,39 +93,24 @@ pub struct MessageDelivery {
 }
 
 impl MessageTemplate {
-    pub(super) fn from_published(message: &ryframe_db::message::Model) -> Self {
-        Self::from_parts(message, None, None)
-    }
-
-    pub(super) fn from_recipient(record: &RecipientMessage) -> Self {
-        Self::from_parts(
-            &record.message,
-            record.recipient.acked_at,
-            record.recipient.read_at,
-        )
-    }
-
-    fn from_parts(
-        message: &ryframe_db::message::Model,
+    pub(super) fn from_record(
+        message: MessageRecord,
         acked_at: Option<DateTime<Utc>>,
         read_at: Option<DateTime<Utc>>,
     ) -> Self {
         Self {
             id: message.id.to_string(),
-            topic: message.topic.clone(),
-            title_text: message.title_text.clone(),
-            body_text: message.body_text.clone(),
-            title_key: message.title_key.clone(),
-            body_key: message.body_key.clone(),
+            topic: message.topic,
+            title_text: message.title_text,
+            body_text: message.body_text,
+            title_key: message.title_key,
+            body_key: message.body_key,
             args: message
                 .args_json
-                .as_ref()
-                .and_then(|value| {
-                    serde_json::from_value::<BTreeMap<String, String>>(value.clone()).ok()
-                })
+                .and_then(|value| serde_json::from_value::<BTreeMap<String, String>>(value).ok())
                 .unwrap_or_default(),
-            severity: message.severity.clone(),
-            payload: message.payload_json.clone(),
+            severity: message.severity,
+            payload: message.payload_json,
             published_at: message.published_at,
             expires_at: message.expires_at,
             acked_at,
@@ -134,12 +120,14 @@ impl MessageTemplate {
 }
 
 impl MessageInbox {
-    pub(super) fn from_page(page: ryframe_db::RecipientMessagePage) -> Self {
+    pub(super) fn from_page(page: MessagePage) -> Self {
         Self {
             records: page
                 .records
-                .iter()
-                .map(MessageTemplate::from_recipient)
+                .into_iter()
+                .map(|record| {
+                    MessageTemplate::from_record(record.message, record.acked_at, record.read_at)
+                })
                 .collect(),
             next_cursor: page.next_cursor.map(|cursor| cursor.to_string()),
         }
@@ -147,11 +135,11 @@ impl MessageInbox {
 }
 
 impl MessageDelivery {
-    pub(super) fn from_recipient(record: &RecipientMessage) -> Self {
+    pub(super) fn from_recipient(record: MessageRecipientRecord) -> Self {
         Self {
-            tenant_id: record.recipient.tenant_id.clone(),
-            user_id: record.recipient.user_id,
-            message: MessageTemplate::from_recipient(record),
+            tenant_id: record.tenant_id,
+            user_id: record.user_id,
+            message: MessageTemplate::from_record(record.message, record.acked_at, record.read_at),
         }
     }
 }
