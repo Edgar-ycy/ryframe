@@ -14,7 +14,8 @@ use ryframe_application::{
         MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
         PermissionService, PostService, ProductService, ProfileService, RoleService,
         ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
-        TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
+        TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
+        TenantUsageService, UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_config::AppConfig;
@@ -49,6 +50,34 @@ impl TenantRuntimeReadPort for TenantRuntimeReader {
                 snapshot.placement_generation(),
                 state,
             ))
+        })
+    }
+}
+
+struct TenantRateLimitReader {
+    limiter: Arc<RateLimiter>,
+}
+
+impl TenantRateLimitReadPort for TenantRateLimitReader {
+    fn snapshot_many<'a>(&'a self, tenant_ids: &'a [String]) -> TenantRateLimitReadFuture<'a> {
+        Box::pin(async move {
+            let keys = tenant_ids
+                .iter()
+                .map(|tenant_id| RateLimiter::tenant_key(tenant_id))
+                .collect::<Vec<_>>();
+            self.limiter
+                .snapshot_many(&keys, 1)
+                .await
+                .map_err(AppError::ServiceUnavailable)
+                .map(|snapshots| {
+                    snapshots
+                        .into_iter()
+                        .map(|snapshot| TenantRateLimitSnapshot {
+                            current: snapshot.current,
+                            remaining_secs: snapshot.remaining_secs,
+                        })
+                        .collect()
+                })
         })
     }
 }
@@ -88,7 +117,9 @@ pub async fn build_all(
     ));
     let tenant_usage = Arc::new(TenantUsageService::new(
         database.clone(),
-        rate_limiter,
+        Arc::new(TenantRateLimitReader {
+            limiter: rate_limiter,
+        }),
         config.rate_limit.enabled,
         policies.job_schedule.enabled,
     ));

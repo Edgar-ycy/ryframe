@@ -1,7 +1,6 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use ryframe_adapters::rate_limit::RateLimiter;
 use ryframe_db::{
     ControlDatabaseCluster, ReadConsistency, TenantRepository, TenantUsageAggregate,
     TenantUsagePageFilter, TenantUsageRepository, entities::tenant,
@@ -13,6 +12,19 @@ use super::tenant_service::TenantVo;
 
 const SYSTEM_TENANT_ID: &str = "system";
 const TENANT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TenantRateLimitSnapshot {
+    pub current: u64,
+    pub remaining_secs: u64,
+}
+
+pub type TenantRateLimitReadFuture<'a> =
+    Pin<Box<dyn Future<Output = AppResult<Vec<TenantRateLimitSnapshot>>> + Send + 'a>>;
+
+pub trait TenantRateLimitReadPort: Send + Sync {
+    fn snapshot_many<'a>(&'a self, tenant_ids: &'a [String]) -> TenantRateLimitReadFuture<'a>;
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct TenantUsagePageParams {
@@ -78,7 +90,7 @@ pub struct TenantUsageService {
     db: ControlDatabaseCluster,
     tenant_repo: TenantRepository,
     usage_repo: TenantUsageRepository,
-    rate_limiter: Arc<RateLimiter>,
+    rate_limit_reader: Arc<dyn TenantRateLimitReadPort>,
     rate_limit_enabled: bool,
     scheduler_enabled: bool,
 }
@@ -86,7 +98,7 @@ pub struct TenantUsageService {
 impl TenantUsageService {
     pub fn new(
         db: ControlDatabaseCluster,
-        rate_limiter: Arc<RateLimiter>,
+        rate_limit_reader: Arc<dyn TenantRateLimitReadPort>,
         rate_limit_enabled: bool,
         scheduler_enabled: bool,
     ) -> Self {
@@ -94,7 +106,7 @@ impl TenantUsageService {
             db,
             tenant_repo: TenantRepository,
             usage_repo: TenantUsageRepository,
-            rate_limiter,
+            rate_limit_reader,
             rate_limit_enabled,
             scheduler_enabled,
         }
@@ -258,12 +270,12 @@ impl TenantUsageService {
         if limited.is_empty() {
             return windows;
         }
-        let keys = limited
+        let tenant_ids = limited
             .iter()
-            .map(|tenant| RateLimiter::tenant_key(&tenant.tenant_id))
+            .map(|tenant| tenant.tenant_id.clone())
             .collect::<Vec<_>>();
-        // 每个租户额度可能不同，快照中的 limit 只承载默认值，响应使用租户表中的真实额度。
-        match self.rate_limiter.snapshot_many(&keys, 1).await {
+        // 端口只返回当前窗口计数；响应额度始终取主库中的租户配置。
+        match self.rate_limit_reader.snapshot_many(&tenant_ids).await {
             Ok(snapshots) => {
                 for (tenant, snapshot) in limited.into_iter().zip(snapshots) {
                     let limit = u64::try_from(tenant.max_requests_per_min).unwrap_or_default();

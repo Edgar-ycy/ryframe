@@ -115,8 +115,9 @@ pub use tenant_data_migration_service::{
 };
 pub use tenant_service::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
 pub use tenant_usage_service::{
-    QuotaUsage, RequestWindowUsage, TenantAuxiliaryUsage, TenantCapacityVo, TenantUsagePageParams,
-    TenantUsageService, TenantUsageVo,
+    QuotaUsage, RequestWindowUsage, TenantAuxiliaryUsage, TenantCapacityVo,
+    TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot,
+    TenantUsagePageParams, TenantUsageService, TenantUsageVo,
 };
 pub use user_import_service::{
     RequestUserImportCommand, RequestUserImportOutcome, USER_IMPORT_JOB_TYPE, UserImportData,
