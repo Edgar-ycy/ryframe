@@ -23,6 +23,20 @@ impl UserImportService {
         }
     }
 
+    /// 在阻塞线程中校验导入表头，并把原始字节所有权交还给后续上传步骤。
+    pub async fn validate_source(data: Vec<u8>) -> AppResult<Vec<u8>> {
+        tokio::task::spawn_blocking(move || {
+            ExcelImporter::validate_headers_from_bytes(
+                &data,
+                None,
+                UserImportData::excel_headers(),
+            )?;
+            Ok(data)
+        })
+        .await
+        .map_err(|error| AppError::Internal(format!("XLSX 内容校验任务异常结束: {error}")))?
+    }
+
     /// 上传导入源文件，但把当前 HTTP 请求的最终操作审计留给导入任务创建事务。
     pub async fn upload_source(
         &self,

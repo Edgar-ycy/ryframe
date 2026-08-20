@@ -5,8 +5,9 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_adapters::excel::ExcelImporter;
-use ryframe_application::system::{RequestUserImportCommand, UserImportData, UserImportListParams};
+use ryframe_application::system::{
+    RequestUserImportCommand, UserImportListParams, UserImportService,
+};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 use sha2::{Digest, Sha256};
@@ -94,16 +95,7 @@ async fn create(
             ))
             .into());
         }
-        let validation_bytes = bytes.clone();
-        tokio::task::spawn_blocking(move || {
-            ExcelImporter::validate_headers_from_bytes(
-                &validation_bytes,
-                None,
-                UserImportData::excel_headers(),
-            )
-        })
-        .await
-        .map_err(|error| AppError::Internal(format!("XLSX 内容校验任务异常结束: {error}")))??;
+        let bytes = UserImportService::validate_source(bytes).await?;
         source = Some((file_name, bytes));
     }
     let (file_name, bytes) =

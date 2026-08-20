@@ -59,3 +59,18 @@ include!("report.rs");
 include!("handler.rs");
 include!("department.rs");
 include!("batch.rs");
+
+#[cfg(test)]
+mod source_validation_tests {
+    use ryframe_kernel::AppError;
+
+    use super::UserImportService;
+
+    #[tokio::test]
+    async fn invalid_xlsx_is_rejected_without_copying_the_source_buffer() {
+        let error = UserImportService::validate_source(b"not-an-xlsx".to_vec())
+            .await
+            .expect_err("无效 XLSX 必须在上传前被拒绝");
+        assert!(matches!(error, AppError::Validation(_)));
+    }
+}
