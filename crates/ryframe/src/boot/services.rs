@@ -209,6 +209,7 @@ pub async fn build_all(
         let descriptors = service_capability_descriptors();
         let management = Arc::new(ServiceAccountService::new(
             database.clone(),
+            ryframe_application::legacy_service_account_write(database.clone()),
             policies.service_accounts,
             Arc::clone(&keyring),
             descriptors,

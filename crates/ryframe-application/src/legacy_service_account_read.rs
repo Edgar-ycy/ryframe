@@ -207,6 +207,7 @@ async fn delegations_with_capabilities(
 fn account_record(account: service_account::Model) -> ServiceAccountRecord {
     ServiceAccountRecord {
         id: account.id,
+        tenant_id: account.tenant_id,
         code: account.code,
         name: account.name,
         description: account.description,
@@ -214,6 +215,8 @@ fn account_record(account: service_account::Model) -> ServiceAccountRecord {
         status: account.status,
         authorization_version: account.authorization_version,
         max_requests_per_minute: account.max_requests_per_minute,
+        created_by: account.created_by,
+        deleted: account.del_flag == service_account::Model::DEL_FLAG_DELETED,
         created_at: account.created_at,
         updated_at: account.updated_at,
     }

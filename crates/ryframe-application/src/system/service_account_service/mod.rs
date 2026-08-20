@@ -11,16 +11,16 @@ use ryframe_db::{
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
-    ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QuerySelect, TransactionTrait,
-    sea_query::{Expr, LockType},
+    ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, PepperKeyring, ServiceAccountAuditReadPort,
+    AuthorizationCache, AuthorizationMirrorTransaction, PepperKeyring, ServiceAccountAuditReadPort,
     ServiceAccountAuthorizationReadPort, ServiceAccountPolicy, ServiceAccountReadPort,
-    ServiceAccountRecord, ServiceCredentialRecord, ServiceDelegationRecord,
+    ServiceAccountRecord, ServiceAccountWritePort, ServiceAccountWriteTransaction,
+    ServiceCredentialRecord, ServiceDelegationRecord,
     service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
 };
 
@@ -55,6 +55,7 @@ pub struct ServiceAccountService {
     keyring: Arc<PepperKeyring>,
     capabilities: Vec<ServiceCapabilityDescriptor>,
     read: Arc<dyn ServiceAccountReadPort>,
+    write: Arc<dyn ServiceAccountWritePort>,
     account_repo: ServiceAccountRepository,
     credential_repo: ServiceCredentialRepository,
     delegation_repo: ServiceDelegationRepository,
@@ -68,6 +69,7 @@ pub struct ServiceAccountService {
 impl ServiceAccountService {
     pub fn new(
         db: ControlDatabaseCluster,
+        write: Arc<dyn ServiceAccountWritePort>,
         config: ServiceAccountPolicy,
         keyring: Arc<PepperKeyring>,
         capabilities: Vec<ServiceCapabilityDescriptor>,
@@ -81,6 +83,7 @@ impl ServiceAccountService {
             keyring,
             capabilities,
             read: reads.accounts,
+            write,
             account_repo: ServiceAccountRepository,
             credential_repo: ServiceCredentialRepository,
             delegation_repo: ServiceDelegationRepository,

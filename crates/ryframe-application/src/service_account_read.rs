@@ -6,6 +6,7 @@ use crate::PersistenceFuture;
 #[derive(Debug)]
 pub struct ServiceAccountRecord {
     pub id: i64,
+    pub tenant_id: String,
     pub code: String,
     pub name: String,
     pub description: Option<String>,
@@ -13,12 +14,15 @@ pub struct ServiceAccountRecord {
     pub status: String,
     pub authorization_version: i32,
     pub max_requests_per_minute: i32,
+    pub created_by: i64,
+    pub deleted: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl ServiceAccountRecord {
     pub const STATUS_NORMAL: &'static str = "1";
+    pub const STATUS_DISABLED: &'static str = "0";
 
     pub fn is_enabled(&self) -> bool {
         self.status == Self::STATUS_NORMAL
@@ -108,6 +112,7 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
         let mut account = ServiceAccountRecord {
             id: 1,
+            tenant_id: "tenant-a".into(),
             code: "billing".into(),
             name: "结算服务".into(),
             description: None,
@@ -115,6 +120,8 @@ mod tests {
             status: ServiceAccountRecord::STATUS_NORMAL.into(),
             authorization_version: 1,
             max_requests_per_minute: 60,
+            created_by: 2,
+            deleted: false,
             created_at: now,
             updated_at: now,
         };

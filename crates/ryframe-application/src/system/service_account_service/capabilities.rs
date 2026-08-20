@@ -47,25 +47,14 @@ fn has_permission(permissions: &HashSet<String>, required: &str) -> bool {
 }
 
 pub(super) async fn validate_dept(
-    db: &sea_orm::DatabaseTransaction,
+    transaction: &dyn ServiceAccountWriteTransaction,
     tenant_id: &str,
     dept_id: Option<i64>,
 ) -> AppResult<()> {
     let Some(dept_id) = dept_id else {
         return Ok(());
     };
-    if ryframe_db::entities::dept::Entity::find_by_id(dept_id)
-        .filter(ryframe_db::entities::dept::Column::TenantId.eq(tenant_id))
-        .filter(
-            ryframe_db::entities::dept::Column::DelFlag
-                .eq(ryframe_db::entities::dept::Model::DEL_FLAG_NORMAL),
-        )
-        .lock(LockType::Share)
-        .one(db)
-        .await
-        .map_err(database_error)?
-        .is_none()
-    {
+    if !transaction.department_exists(tenant_id, dept_id).await? {
         return Err(AppError::Validation("部门不存在或不属于当前租户".into()));
     }
     Ok(())

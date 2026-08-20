@@ -15,11 +15,11 @@ impl ServiceAccountService {
 
     pub(super) async fn bump_tenant_epoch(
         &self,
-        txn: &sea_orm::DatabaseTransaction,
+        transaction: &dyn AuthorizationMirrorTransaction,
         tenant_id: &str,
     ) -> AppResult<i32> {
         self.authorization_cache
-            .increment_tenant_epoch_in_transaction(txn, tenant_id)
+            .increment_tenant_epoch_in_transaction(transaction, tenant_id)
             .await
     }
 
