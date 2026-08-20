@@ -12,9 +12,11 @@ impl JobScheduleService {
                 .await
                 .map_err(database_error)?;
             let now = self.repository_clock(&transaction).await?;
+            let tenant_scope =
+                crate::legacy_execution_tenant_scope::database_scope(&self.execution_tenant_scope);
             let Some(schedule) = self
                 .repository
-                .lock_next_due(&transaction, now, &self.execution_tenant_scope)
+                .lock_next_due(&transaction, now, &tenant_scope)
                 .await?
             else {
                 transaction.commit().await.map_err(database_error)?;

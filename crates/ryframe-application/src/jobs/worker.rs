@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as St
 
 use async_trait::async_trait;
 use chrono::Duration;
-use ryframe_db::{ExecutionTenantScope, FailBackgroundJob, JobFailureDisposition, background_job};
+use ryframe_db::{FailBackgroundJob, JobFailureDisposition, background_job};
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
@@ -13,6 +13,7 @@ use super::{
     backoff::{jittered_delay, next_idle_wait},
     queue::JobQueue,
 };
+use crate::{ExecutionTenantScope, legacy_execution_tenant_scope::database_scope};
 
 /// 任务处理器。实现必须具备幂等性，因为 Worker 提供至少一次投递语义。
 ///
@@ -274,6 +275,7 @@ impl JobWorker {
                 return Err(error);
             }
         };
+        let tenant_scope = database_scope(&self.execution_tenant_scope);
         let claimed = match self
             .queue
             .repository()
@@ -282,7 +284,7 @@ impl JobWorker {
                 worker_id,
                 self.lease_duration,
                 now,
-                &self.execution_tenant_scope,
+                &tenant_scope,
             )
             .await
         {

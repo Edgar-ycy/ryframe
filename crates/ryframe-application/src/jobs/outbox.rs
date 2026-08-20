@@ -1,9 +1,7 @@
 use std::{sync::Arc, time::Duration as StdDuration};
 
 use chrono::{DateTime, Duration, Utc};
-use ryframe_db::{
-    ExecutionTenantScope, OutboxEventRepository, OutboxFailureDisposition, outbox_event,
-};
+use ryframe_db::{OutboxEventRepository, OutboxFailureDisposition, outbox_event};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
 use tokio::{sync::watch, task::JoinHandle, time};
@@ -17,7 +15,8 @@ use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
 use crate::system::MESSAGE_DISPATCH_JOB_TYPE;
 use crate::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent,
-    AuthorizationCache, AuthorizationMirrorUpdate, EnqueueJob, record_audit_failure,
+    AuthorizationCache, AuthorizationMirrorUpdate, EnqueueJob, ExecutionTenantScope,
+    legacy_execution_tenant_scope::database_scope, record_audit_failure,
 };
 
 /// 单次 Outbox 投递循环的结果。
@@ -106,6 +105,7 @@ impl OutboxWorker {
                 return Err(error);
             }
         };
+        let tenant_scope = database_scope(&self.execution_tenant_scope);
         let event = match self
             .repository
             .claim_next(
@@ -113,7 +113,7 @@ impl OutboxWorker {
                 worker_id,
                 self.lease_duration,
                 now,
-                &self.execution_tenant_scope,
+                &tenant_scope,
             )
             .await
         {
@@ -494,8 +494,9 @@ impl OutboxWorker {
                     .repository
                     .database_utc_now(self.queue.primary())
                     .await?;
+                let tenant_scope = database_scope(&self.execution_tenant_scope);
                 self.repository
-                    .recover_expired_leases(self.queue.primary(), now, &self.execution_tenant_scope)
+                    .recover_expired_leases(self.queue.primary(), now, &tenant_scope)
                     .await
             }
             .await;

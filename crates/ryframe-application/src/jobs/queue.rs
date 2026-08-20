@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use ryframe_auth::RequestPrincipal;
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ControlDatabaseCluster,
-    ExecutionTenantScope, background_job, tenant_config_bundle, tenant_config_transfer,
+    background_job, tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
@@ -18,6 +18,7 @@ use super::{
     metrics::JobMetricsObserver,
     wakeup::{JobWakeupTransport, QueueWakeup, WakeupQueue},
 };
+use crate::{ExecutionTenantScope, legacy_execution_tenant_scope::database_scope};
 
 #[derive(Clone, Debug)]
 pub struct EnqueueJob {
@@ -220,9 +221,10 @@ impl JobQueue {
         let Some(observer) = self.metrics_observer() else {
             return Ok(());
         };
+        let tenant_scope = database_scope(tenant_scope);
         for stats in self
             .repository
-            .stats_for_types(self.primary(), job_types, tenant_scope)
+            .stats_for_types(self.primary(), job_types, &tenant_scope)
             .await?
         {
             observer.set_queue_depth(&stats.job_type, "pending", stats.pending);
@@ -247,11 +249,12 @@ impl JobQueue {
         &self,
         tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<()> {
+        let tenant_scope = database_scope(tenant_scope);
         loop {
             let now = self.database_now().await?;
             let recovered = self
                 .repository
-                .recover_expired_leases(self.primary(), now, tenant_scope)
+                .recover_expired_leases(self.primary(), now, &tenant_scope)
                 .await?;
             if recovered.requeued.saturating_add(recovered.dead) < 500 {
                 break;

@@ -8,6 +8,7 @@ mod authorization_resolver;
 mod config_persistence;
 mod dept_persistence;
 mod dict_persistence;
+mod execution_tenant_scope;
 mod file_content;
 mod id_generator;
 mod identity_authorization;
@@ -17,6 +18,7 @@ mod legacy_authorization_diagnostic_persistence;
 mod legacy_config_persistence;
 mod legacy_dept_persistence;
 mod legacy_dict_persistence;
+mod legacy_execution_tenant_scope;
 mod legacy_identity_authorization;
 mod legacy_job_schedule_persistence;
 mod legacy_login_info_persistence;
@@ -95,6 +97,7 @@ pub use dept_persistence::{
 pub use dict_persistence::{
     DictDataRecord, DictPersistencePort, DictTransaction, DictTypeFilter, DictTypeRecord,
 };
+pub use execution_tenant_scope::ExecutionTenantScope;
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 pub use identity_authorization::{

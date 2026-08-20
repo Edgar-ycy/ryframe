@@ -3,9 +3,9 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use ryframe_adapters::RedisClient;
 use ryframe_application::{
-    CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
-    JobWakeupFuture, JobWakeupStream, JobWakeupTransport, JobWorker, JobWorkerPolicy,
-    MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
+    CallbackScheduleMetricsObserver, ExecutionTenantScope, ExportCleanupJobHandler,
+    ExportJobHandler, JobQueue, JobWakeupFuture, JobWakeupStream, JobWakeupTransport, JobWorker,
+    JobWorkerPolicy, MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
     MessageWakeupPublisher, MultiTenancyPolicy, ScheduleMetricsObserver,
     ScheduledJobTargetRegistry,
     system::{
@@ -15,7 +15,6 @@ use ryframe_application::{
         TenantDataMigrationService, UserImportJobHandler, UserImportService,
     },
 };
-use ryframe_db::ExecutionTenantScope;
 use ryframe_kernel::{AppError, AppResult};
 
 struct RedisMessageWakeupPublisher {
