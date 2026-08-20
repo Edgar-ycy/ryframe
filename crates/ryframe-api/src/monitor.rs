@@ -2,6 +2,10 @@
 
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
+mod readiness;
+
+pub use readiness::{DependencyHealthCache, DependencyHealthSnapshot, DependencyStatus};
+
 use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
@@ -9,10 +13,6 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
     routing::get as axum_get,
-};
-use ryframe_adapters::{
-    RedisClient,
-    monitor::{self as runtime_monitor, DependencyHealthCache, ServerInfo as RuntimeServerInfo},
 };
 use ryframe_macro::{get, route};
 use serde::Serialize;
@@ -45,16 +45,28 @@ pub trait DatabaseMonitor: Send + Sync {
     fn topology_health(&self) -> DatabaseTopologyFuture<'_>;
 }
 
+pub type CacheInfoFuture<'a> = Pin<Box<dyn Future<Output = CacheInfo> + Send + 'a>>;
+pub type CacheCommandStatsFuture<'a> = Pin<Box<dyn Future<Output = CacheCommandStats> + Send + 'a>>;
+
+/// HTTP 缓存监控所需的只读端口。
+pub trait CacheMonitor: Send + Sync {
+    fn info(&self) -> CacheInfoFuture<'_>;
+    fn command_stats(&self) -> CacheCommandStatsFuture<'_>;
+}
+
+/// HTTP 系统监控所需的最近一次采样读取端口。
+pub trait ServerInfoMonitor: Send + Sync {
+    fn latest(&self) -> ServerInfo;
+}
+
 /// 监控路由状态。
 #[derive(Clone)]
 pub struct MonitorState {
     pub database: Arc<dyn DatabaseMonitor>,
-    pub redis: Option<RedisClient>,
-    /// Redis 是否已在配置中启用，用于区分未配置和运行时故障。
-    pub redis_configured: bool,
+    pub cache: Arc<dyn CacheMonitor>,
     pub readiness: DependencyHealthCache,
     pub metrics_bearer_token: Arc<str>,
-    pub server_info: runtime_monitor::ServerInfoSampler,
+    pub server_info: Arc<dyn ServerInfoMonitor>,
 }
 
 /// 公开指标路由。进程和依赖探针位于根应用路由的 `/livez` 与 `/readyz`。
@@ -96,22 +108,6 @@ pub struct ServerInfo {
     pub uptime: u64,
 }
 
-impl From<RuntimeServerInfo> for ServerInfo {
-    fn from(value: RuntimeServerInfo) -> Self {
-        Self {
-            os: value.os.to_string(),
-            hostname: value.hostname.to_string(),
-            cpu_cores: value.cpu_cores,
-            cpu_usage: value.cpu_usage,
-            total_memory: value.total_memory,
-            used_memory: value.used_memory,
-            memory_usage: value.memory_usage,
-            pid: value.pid,
-            uptime: value.uptime,
-        }
-    }
-}
-
 /// 缓存信息响应
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CacheInfo {
@@ -127,18 +123,6 @@ pub struct CacheInfo {
     pub memory: Option<RedisMemoryInfo>,
 }
 
-impl From<runtime_monitor::CacheInfo> for CacheInfo {
-    fn from(value: runtime_monitor::CacheInfo) -> Self {
-        Self {
-            available: value.available,
-            mode: value.mode,
-            server: value.server.map(Into::into),
-            keys: value.keys.into(),
-            memory: value.memory.map(Into::into),
-        }
-    }
-}
-
 /// Redis 服务器基本信息
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RedisServerInfo {
@@ -152,18 +136,6 @@ pub struct RedisServerInfo {
     pub uptime_days: u64,
     /// 连接数
     pub connected_clients: u64,
-}
-
-impl From<runtime_monitor::RedisServerInfo> for RedisServerInfo {
-    fn from(value: runtime_monitor::RedisServerInfo) -> Self {
-        Self {
-            version: value.version,
-            mode: value.mode,
-            os: value.os,
-            uptime_days: value.uptime_days,
-            connected_clients: value.connected_clients,
-        }
-    }
 }
 
 /// 缓存键统计
@@ -183,19 +155,6 @@ pub struct CacheKeysInfo {
     pub config_cache: u64,
 }
 
-impl From<runtime_monitor::CacheKeysInfo> for CacheKeysInfo {
-    fn from(value: runtime_monitor::CacheKeysInfo) -> Self {
-        Self {
-            total_keys: value.total_keys,
-            online_users: value.online_users,
-            captchas: value.captchas,
-            rate_limits: value.rate_limits,
-            dict_cache: value.dict_cache,
-            config_cache: value.config_cache,
-        }
-    }
-}
-
 /// Redis 内存信息
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RedisMemoryInfo {
@@ -207,17 +166,6 @@ pub struct RedisMemoryInfo {
     pub mem_fragmentation_ratio: f64,
     /// 已用内存（字节）
     pub used_memory: u64,
-}
-
-impl From<runtime_monitor::RedisMemoryInfo> for RedisMemoryInfo {
-    fn from(value: runtime_monitor::RedisMemoryInfo) -> Self {
-        Self {
-            used_memory_human: value.used_memory_human,
-            used_memory_peak_human: value.used_memory_peak_human,
-            mem_fragmentation_ratio: value.mem_fragmentation_ratio,
-            used_memory: value.used_memory,
-        }
-    }
 }
 
 /// Redis 命令统计查询状态。
@@ -233,30 +181,11 @@ pub enum CacheCommandStatsStatus {
     Unavailable,
 }
 
-impl From<runtime_monitor::CacheCommandStatsStatus> for CacheCommandStatsStatus {
-    fn from(value: runtime_monitor::CacheCommandStatsStatus) -> Self {
-        match value {
-            runtime_monitor::CacheCommandStatsStatus::Available => Self::Available,
-            runtime_monitor::CacheCommandStatsStatus::NotConfigured => Self::NotConfigured,
-            runtime_monitor::CacheCommandStatsStatus::Unavailable => Self::Unavailable,
-        }
-    }
-}
-
 /// Redis 命令统计响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CacheCommandStats {
     pub status: CacheCommandStatsStatus,
     pub commands: BTreeMap<String, String>,
-}
-
-impl From<runtime_monitor::CacheCommandStats> for CacheCommandStats {
-    fn from(value: runtime_monitor::CacheCommandStats) -> Self {
-        Self {
-            status: value.status.into(),
-            commands: value.commands,
-        }
-    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -274,9 +203,7 @@ pub struct DbPoolInfo {
 pub(crate) async fn server_info_handler(
     State(state): State<MonitorState>,
 ) -> HttpResult<Json<ApiResponse<ServerInfo>>> {
-    Ok(Json(ApiResponse::success(
-        state.server_info.latest().into(),
-    )))
+    Ok(Json(ApiResponse::success(state.server_info.latest())))
 }
 
 #[get("/cache")]
@@ -287,8 +214,7 @@ pub(crate) async fn server_info_handler(
 pub(crate) async fn cache_info_handler(
     State(state): State<MonitorState>,
 ) -> HttpResult<Json<ApiResponse<CacheInfo>>> {
-    let info = runtime_monitor::get_cache_info(state.redis.as_ref()).await;
-    Ok(Json(ApiResponse::success(info.into())))
+    Ok(Json(ApiResponse::success(state.cache.info().await)))
 }
 
 #[get("/cache/commands")]
@@ -299,12 +225,9 @@ pub(crate) async fn cache_info_handler(
 pub(crate) async fn cache_commands_handler(
     State(state): State<MonitorState>,
 ) -> HttpResult<Json<ApiResponse<CacheCommandStats>>> {
-    let stats = match state.redis.as_ref() {
-        Some(redis) => runtime_monitor::get_cache_command_stats(redis).await,
-        None if state.redis_configured => runtime_monitor::CacheCommandStats::unavailable(),
-        None => runtime_monitor::CacheCommandStats::not_configured(),
-    };
-    Ok(Json(ApiResponse::success(stats.into())))
+    Ok(Json(ApiResponse::success(
+        state.cache.command_stats().await,
+    )))
 }
 
 #[utoipa::path(get, path = "/api/v1/monitor/metrics", tag = "服务器监控",

@@ -12,10 +12,11 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use ryframe_adapters::RedisClient;
 use ryframe_adapters::storage::{
     LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
 };
-use ryframe_adapters::{RedisClient, monitor::DependencyHealthCache};
+use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{

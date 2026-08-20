@@ -1,5 +1,3 @@
-//! 进程依赖就绪状态的共享读取快照。
-
 use std::{
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -112,7 +110,7 @@ impl DependencyHealthCache {
         self.object_storage_required
     }
 
-    /// 返回最近一次未过期结果；探测任务失联时按未知状态 fail-closed。
+    /// 返回最近一次未过期结果；探测任务失联时按未知状态拒绝就绪。
     pub fn snapshot(&self) -> DependencyHealthSnapshot {
         let observation = match self.inner.read() {
             Ok(current) => *current,

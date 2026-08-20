@@ -2,11 +2,17 @@ use std::sync::Arc;
 
 use ryframe_adapters::{
     RedisClient, TokenBlacklist,
+    monitor::{self as runtime_monitor, ServerInfoSampler},
     rate_limit::RateLimiter,
     resilience::{CircuitBreaker, CircuitState},
 };
 use ryframe_api::{
     AppServices, HttpRuntimeSettings, TrustedProxySet,
+    monitor::{
+        CacheCommandStats, CacheCommandStatsFuture, CacheCommandStatsStatus, CacheInfo,
+        CacheInfoFuture, CacheKeysInfo, CacheMonitor, DependencyHealthCache, RedisMemoryInfo,
+        RedisServerInfo, ServerInfo, ServerInfoMonitor,
+    },
     runtime::{RuntimeComponents, UploadCircuitBreaker},
     settings::{
         CorsSettings, JobRuntimeSettings, MessagingSettings, MultiTenancySettings,
@@ -43,6 +49,92 @@ impl UploadCircuitBreaker for UploadCircuitBreakerBridge {
     }
 }
 
+struct CacheMonitorBridge {
+    redis: Option<RedisClient>,
+    redis_configured: bool,
+}
+
+impl CacheMonitor for CacheMonitorBridge {
+    fn info(&self) -> CacheInfoFuture<'_> {
+        Box::pin(async move {
+            map_cache_info(runtime_monitor::get_cache_info(self.redis.as_ref()).await)
+        })
+    }
+
+    fn command_stats(&self) -> CacheCommandStatsFuture<'_> {
+        Box::pin(async move {
+            let stats = match self.redis.as_ref() {
+                Some(redis) => runtime_monitor::get_cache_command_stats(redis).await,
+                None if self.redis_configured => runtime_monitor::CacheCommandStats::unavailable(),
+                None => runtime_monitor::CacheCommandStats::not_configured(),
+            };
+            CacheCommandStats {
+                status: match stats.status {
+                    runtime_monitor::CacheCommandStatsStatus::Available => {
+                        CacheCommandStatsStatus::Available
+                    }
+                    runtime_monitor::CacheCommandStatsStatus::NotConfigured => {
+                        CacheCommandStatsStatus::NotConfigured
+                    }
+                    runtime_monitor::CacheCommandStatsStatus::Unavailable => {
+                        CacheCommandStatsStatus::Unavailable
+                    }
+                },
+                commands: stats.commands,
+            }
+        })
+    }
+}
+
+fn map_cache_info(value: runtime_monitor::CacheInfo) -> CacheInfo {
+    CacheInfo {
+        available: value.available,
+        mode: value.mode,
+        server: value.server.map(|server| RedisServerInfo {
+            version: server.version,
+            mode: server.mode,
+            os: server.os,
+            uptime_days: server.uptime_days,
+            connected_clients: server.connected_clients,
+        }),
+        keys: CacheKeysInfo {
+            total_keys: value.keys.total_keys,
+            online_users: value.keys.online_users,
+            captchas: value.keys.captchas,
+            rate_limits: value.keys.rate_limits,
+            dict_cache: value.keys.dict_cache,
+            config_cache: value.keys.config_cache,
+        },
+        memory: value.memory.map(|memory| RedisMemoryInfo {
+            used_memory_human: memory.used_memory_human,
+            used_memory_peak_human: memory.used_memory_peak_human,
+            mem_fragmentation_ratio: memory.mem_fragmentation_ratio,
+            used_memory: memory.used_memory,
+        }),
+    }
+}
+
+struct ServerInfoMonitorBridge {
+    sampler: ServerInfoSampler,
+}
+
+impl ServerInfoMonitor for ServerInfoMonitorBridge {
+    fn latest(&self) -> ServerInfo {
+        let value = self.sampler.latest();
+        ServerInfo {
+            os: value.os.to_string(),
+            hostname: value.hostname.to_string(),
+            cpu_cores: value.cpu_cores,
+            cpu_usage: value.cpu_usage,
+            total_memory: value.total_memory,
+            used_memory: value.used_memory,
+            memory_usage: value.memory_usage,
+            pid: value.pid,
+            uptime: value.uptime,
+        }
+    }
+}
+
 /// 组装 API 状态前已经就绪的依赖。
 ///
 /// 使用单个输入结构保持组合根的依赖关系显式，避免随着基础设施增加让函数参数失控。
@@ -54,7 +146,7 @@ pub struct AppStateAssembly {
     pub token_blacklist: TokenBlacklist,
     pub services: AppServices,
     pub limiter: Arc<RateLimiter>,
-    pub server_info: ryframe_adapters::monitor::ServerInfoSampler,
+    pub server_info: ServerInfoSampler,
 }
 
 fn http_runtime_settings(config: &AppConfig) -> HttpRuntimeSettings {
@@ -145,14 +237,17 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         refresh_sessions: services.auth.refresh_sessions(),
         principal_resolver,
     };
+    let redis_configured = config
+        .redis
+        .as_ref()
+        .is_some_and(|redis| redis.mode != RedisMode::Disabled);
     let monitor = ryframe_api::monitor::MonitorState {
         database: super::readiness::database_monitor(database),
-        redis: redis_client.clone(),
-        redis_configured: config
-            .redis
-            .as_ref()
-            .is_some_and(|redis| redis.mode != RedisMode::Disabled),
-        readiness: ryframe_adapters::monitor::DependencyHealthCache::new(
+        cache: Arc::new(CacheMonitorBridge {
+            redis: redis_client.clone(),
+            redis_configured,
+        }),
+        readiness: DependencyHealthCache::new(
             config
                 .redis
                 .as_ref()
@@ -161,7 +256,9 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
             super::readiness::CACHE_MAX_AGE,
         ),
         metrics_bearer_token: Arc::from(config.monitor.metrics_bearer_token.as_str()),
-        server_info,
+        server_info: Arc::new(ServerInfoMonitorBridge {
+            sampler: server_info,
+        }),
     };
 
     ryframe_api::AppState {

@@ -129,7 +129,7 @@ async fn main() -> Result<(), AppError> {
     });
     let message_hub = state.message_hub.clone();
     let readiness_database = state.monitor.database.clone();
-    let readiness_redis = state.monitor.redis.clone();
+    let readiness_redis = state.redis.clone();
     let readiness_file_service = state.services.file.clone();
     let readiness_cache = state.monitor.readiness.clone();
     let message_listener = state.message_hub.spawn_redis_listener(
