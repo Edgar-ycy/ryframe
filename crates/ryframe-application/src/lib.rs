@@ -30,6 +30,7 @@ mod legacy_role_read;
 mod legacy_role_write;
 mod legacy_service_account_audit_persistence;
 mod legacy_tenant_usage_persistence;
+mod legacy_user_query_persistence;
 mod login_info_persistence;
 mod login_protection;
 mod menu_persistence;
@@ -57,6 +58,7 @@ mod tenant_provisioning;
 mod tenant_runtime;
 mod tenant_usage_persistence;
 mod trace_context;
+mod user_query_persistence;
 
 pub use artifact_store::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
@@ -145,6 +147,8 @@ pub use legacy_role_write::port as legacy_role_write;
 pub use legacy_service_account_audit_persistence::port as legacy_service_account_audit_persistence;
 #[doc(hidden)]
 pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
+#[doc(hidden)]
+pub use legacy_user_query_persistence::port as legacy_user_query_persistence;
 pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
 };
@@ -212,6 +216,10 @@ pub use tenant_runtime::{
 };
 pub use tenant_usage_persistence::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
+};
+pub use user_query_persistence::{
+    USER_QUERY_STATUS_NORMAL, UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort,
+    UserQueryRecord, UserQueryRoleRecord,
 };
 
 use ryframe_kernel::{ActorContext, AppResult, TenantId};

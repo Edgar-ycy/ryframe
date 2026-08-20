@@ -164,6 +164,7 @@ pub async fn build_all(
         database.clone(),
         authorization_cache.clone(),
         Arc::clone(&identity_read),
+        ryframe_application::legacy_user_query_persistence(database.clone()),
     ));
     let product = Arc::new(ProductService::new(
         database.clone(),

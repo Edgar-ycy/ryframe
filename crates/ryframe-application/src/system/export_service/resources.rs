@@ -2,10 +2,10 @@ use std::time::{Duration as StdDuration, Instant};
 
 use crate::{
     ClaimedBackgroundJob, LoginInfoFilter, OperLogFilter, SPREADSHEET_MAX_DATA_ROWS,
-    SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter,
+    SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter, UserQueryFilter,
 };
 use ryframe_db::{
-    ExportStartDisposition, UserFilter,
+    ExportStartDisposition,
     entities::{background_job, export_job},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, ExportCursorWindow};
@@ -260,7 +260,7 @@ impl ExportService {
                     .users
                     .find_export_batch(
                         actor,
-                        UserFilter {
+                        UserQueryFilter {
                             username: filters.username(),
                             phone: filters.phone(),
                             status: filters.status(),

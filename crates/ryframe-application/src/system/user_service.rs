@@ -14,7 +14,10 @@ use ryframe_kernel::{AppResult, ValidatedPageQuery};
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 
-use crate::{AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort};
+use crate::{
+    AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort, UserQueryReadPort,
+    UserQueryRecord, UserQueryRoleRecord,
+};
 
 pub(crate) use queries::CurrentAuthorization;
 
@@ -53,6 +56,24 @@ impl From<user::Model> for UserVo {
     }
 }
 
+impl From<UserQueryRecord> for UserVo {
+    fn from(user: UserQueryRecord) -> Self {
+        Self {
+            id: user.id.to_string(),
+            username: user.username,
+            nickname: user.nickname,
+            email: user.email,
+            phone: user.phone,
+            avatar: user.avatar,
+            status: user.status,
+            dept_id: user.dept_id.map(|id| id.to_string()),
+            dept_name: user.dept_name,
+            remark: user.remark,
+            created_at: user.created_at,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct PasswordResetRequestOutcome {
     pub request: password_reset_request::Model,
@@ -85,6 +106,17 @@ impl From<role::Model> for RoleBriefVo {
     }
 }
 
+impl From<UserQueryRoleRecord> for RoleBriefVo {
+    fn from(role: UserQueryRoleRecord) -> Self {
+        Self {
+            id: role.id.to_string(),
+            name: role.name,
+            code: role.code,
+            is_super: role.is_super,
+        }
+    }
+}
+
 pub struct UserService {
     db: ControlDatabaseCluster,
     user_repo: UserRepository,
@@ -92,6 +124,7 @@ pub struct UserService {
     dept_repo: DeptRepository,
     authorization_resolver: AuthorizationResolver,
     authorization_cache: AuthorizationCache,
+    queries: Arc<dyn UserQueryReadPort>,
 }
 
 pub struct CreateUserParams<'a> {
@@ -137,6 +170,7 @@ impl UserService {
         db: ControlDatabaseCluster,
         authorization_cache: AuthorizationCache,
         identity_read: Arc<dyn IdentityAuthorizationReadPort>,
+        queries: Arc<dyn UserQueryReadPort>,
     ) -> Self {
         Self {
             db,
@@ -145,6 +179,7 @@ impl UserService {
             dept_repo: DeptRepository,
             authorization_resolver: AuthorizationResolver::new(identity_read),
             authorization_cache,
+            queries,
         }
     }
 
