@@ -60,6 +60,54 @@ impl ProductService {
                 .collect(),
         })
     }
+
+    pub(super) fn validate_capability_record_relationships(
+        &self,
+        capabilities: &[crate::ProductCapabilityRecord],
+    ) -> AppResult<()> {
+        let mut enabled = BTreeSet::new();
+        for capability in capabilities {
+            if !enabled.insert(capability.code.as_str()) {
+                return Err(AppError::Config(format!(
+                    "产品套餐版本重复定义能力 {}",
+                    capability.code
+                )));
+            }
+            validate_capability_snapshot(
+                &capability.code,
+                &capability.variant,
+                capability.schema_version,
+                &capability.config,
+            )?;
+        }
+        for capability in capabilities {
+            let descriptor = CAPABILITY_CATALOG
+                .iter()
+                .find(|descriptor| descriptor.code == capability.code)
+                .expect("capabilities were validated above");
+            if let Some(dependency) = descriptor
+                .dependencies
+                .iter()
+                .find(|dependency| !enabled.contains(**dependency))
+            {
+                return Err(AppError::Validation(format!(
+                    "能力 {} 缺少依赖 {}",
+                    descriptor.code, dependency
+                )));
+            }
+            if let Some(conflict) = descriptor
+                .conflicts
+                .iter()
+                .find(|conflict| enabled.contains(**conflict))
+            {
+                return Err(AppError::Validation(format!(
+                    "能力 {} 与 {} 冲突",
+                    descriptor.code, conflict
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

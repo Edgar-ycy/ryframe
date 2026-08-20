@@ -4,7 +4,8 @@ use ryframe_db::{ControlDatabaseCluster, ProductRepository, ReadConsistency};
 
 use crate::{
     PersistenceFuture, ProductCapabilityRecord, ProductPlanRecord, ProductReadPort,
-    ProductVersionRecord,
+    ProductVersionRecord, ProductVersionSnapshot, TenantCapabilityOverrideRecord,
+    TenantProductSnapshot,
 };
 
 pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn ProductReadPort> {
@@ -45,6 +46,18 @@ impl ProductReadPort for LegacyProductRead {
             plan_record(&repository, &database, plan).await.map(Some)
         })
     }
+
+    fn tenant_product<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> PersistenceFuture<'a, Option<TenantProductSnapshot>> {
+        Box::pin(async move {
+            ProductRepository
+                .tenant_product(self.database.write(), tenant_id)
+                .await
+                .map(|bundle| bundle.map(tenant_snapshot))
+        })
+    }
 }
 
 async fn plan_record(
@@ -59,12 +72,7 @@ async fn plan_record(
             .list_capabilities(database, version.id)
             .await?
             .into_iter()
-            .map(|capability| ProductCapabilityRecord {
-                code: capability.capability_code,
-                variant: capability.variant_code,
-                schema_version: capability.schema_version,
-                config: capability.config,
-            })
+            .map(capability_record)
             .collect();
         version_records.push(ProductVersionRecord {
             id: version.id,
@@ -87,4 +95,59 @@ async fn plan_record(
         created_by: plan.created_by,
         versions: version_records,
     })
+}
+
+fn capability_record(
+    capability: ryframe_db::entities::product_plan_capability::Model,
+) -> ProductCapabilityRecord {
+    ProductCapabilityRecord {
+        code: capability.capability_code,
+        variant: capability.variant_code,
+        schema_version: capability.schema_version,
+        config: capability.config,
+    }
+}
+
+pub(crate) fn version_snapshot(
+    bundle: ryframe_db::ProductPlanVersionBundle,
+) -> ProductVersionSnapshot {
+    ProductVersionSnapshot {
+        plan_key: bundle.plan.plan_key,
+        plan_name: bundle.plan.name,
+        plan_status: bundle.plan.status,
+        version_id: bundle.version.id,
+        version: bundle.version.version,
+        version_status: bundle.version.status,
+        capabilities: bundle
+            .capabilities
+            .into_iter()
+            .map(capability_record)
+            .collect(),
+    }
+}
+
+pub(crate) fn tenant_snapshot(bundle: ryframe_db::TenantProductBundle) -> TenantProductSnapshot {
+    TenantProductSnapshot {
+        tenant_id: bundle.tenant.tenant_id,
+        authorization_epoch: bundle.tenant.authorization_epoch,
+        runtime_epoch: bundle.tenant.runtime_epoch,
+        version: version_snapshot(ryframe_db::ProductPlanVersionBundle {
+            plan: bundle.plan,
+            version: bundle.version,
+            capabilities: bundle.capabilities,
+        }),
+        overrides: bundle
+            .overrides
+            .into_iter()
+            .map(|value| TenantCapabilityOverrideRecord {
+                code: value.capability_code,
+                enabled: value.enabled,
+                variant: value.variant_code,
+                schema_version: value.schema_version,
+                config: value.config,
+                reason: value.reason,
+                changed_by: value.changed_by,
+            })
+            .collect(),
+    }
 }

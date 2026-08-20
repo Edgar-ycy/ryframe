@@ -17,7 +17,10 @@ use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{AuthorizationCache, ProductReadPort};
+use crate::{
+    AuthorizationCache, ProductReadPort, ProductVersionSnapshot, TenantCapabilityOverrideRecord,
+    TenantProductSnapshot,
+};
 
 use super::product_capability_catalog::{
     CAPABILITY_CATALOG, SERVICE_ACCOUNTS_CAPABILITY, project_client_config,
@@ -406,7 +409,7 @@ impl ProductService {
         let target_context = self.target_context(
             tenant_id,
             &current.runtime_epoch,
-            &target_bundle,
+            target_bundle,
             &normalized,
         )?;
         let plan_hash = product_change_hash(
@@ -549,7 +552,7 @@ impl ProductService {
             capability_override_allowed,
         )?;
         let target_context =
-            self.target_context(tenant_id, &epoch_text, &target_bundle, &normalized)?;
+            self.target_context(tenant_id, &epoch_text, target_bundle, &normalized)?;
         let authorization_changed =
             capability_changes(&current, &target_context)
                 .iter()
@@ -716,20 +719,23 @@ impl ProductService {
         &self,
         bundle: ryframe_db::TenantProductBundle,
     ) -> AppResult<ProductContextVo> {
-        if bundle.version.status == VERSION_DRAFT {
+        self.context_from_snapshot(crate::legacy_product_persistence::tenant_snapshot(bundle))
+    }
+
+    fn context_from_snapshot(
+        &self,
+        snapshot: TenantProductSnapshot,
+    ) -> AppResult<ProductContextVo> {
+        if snapshot.version.version_status == VERSION_DRAFT {
             return Err(AppError::Config(
                 "租户不能绑定尚未发布的产品套餐版本".into(),
             ));
         }
         self.context(
-            &bundle.tenant.tenant_id,
-            bundle.tenant.runtime_epoch,
-            &ProductPlanVersionBundle {
-                plan: bundle.plan,
-                version: bundle.version,
-                capabilities: bundle.capabilities,
-            },
-            &bundle.overrides,
+            &snapshot.tenant_id,
+            snapshot.runtime_epoch,
+            &snapshot.version,
+            &snapshot.overrides,
         )
     }
 
@@ -737,28 +743,26 @@ impl ProductService {
         &self,
         tenant_id: &str,
         runtime_epoch: &str,
-        target: &ProductPlanVersionBundle,
+        target: ProductPlanVersionBundle,
         overrides: &[CapabilityOverrideInput],
     ) -> AppResult<ProductContextVo> {
-        let override_models = overrides
+        let override_records = overrides
             .iter()
-            .map(|value| tenant_capability_override::Model {
-                tenant_id: tenant_id.to_owned(),
-                capability_code: value.capability_code.clone(),
+            .map(|value| TenantCapabilityOverrideRecord {
+                code: value.capability_code.clone(),
                 enabled: value.enabled,
-                variant_code: value.variant_code.clone(),
+                variant: value.variant_code.clone(),
                 schema_version: value.schema_version,
                 config: value.config.clone(),
                 reason: None,
                 changed_by: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
             })
             .collect::<Vec<_>>();
         let epoch = runtime_epoch
             .parse::<i64>()
             .map_err(|_| AppError::Internal("内部 runtime_epoch 无效".into()))?;
-        let context = self.context(tenant_id, epoch, target, &override_models)?;
+        let target = crate::legacy_product_persistence::version_snapshot(target);
+        let context = self.context(tenant_id, epoch, &target, &override_records)?;
         self.validate_target_context(&context)?;
         Ok(context)
     }
@@ -767,31 +771,28 @@ impl ProductService {
         &self,
         tenant_id: &str,
         runtime_epoch: i64,
-        target: &ProductPlanVersionBundle,
-        overrides: &[tenant_capability_override::Model],
+        target: &ProductVersionSnapshot,
+        overrides: &[TenantCapabilityOverrideRecord],
     ) -> AppResult<ProductContextVo> {
-        self.validate_capability_relationships(&target.capabilities)?;
+        self.validate_capability_record_relationships(&target.capabilities)?;
         let plan_capabilities = target
             .capabilities
             .iter()
-            .map(|capability| (capability.capability_code.as_str(), capability))
+            .map(|capability| (capability.code.as_str(), capability))
             .collect::<BTreeMap<_, _>>();
         let mut override_capabilities = BTreeMap::new();
         for value in overrides {
             validate_capability_snapshot(
-                &value.capability_code,
-                &value.variant_code,
+                &value.code,
+                &value.variant,
                 value.schema_version,
                 &value.config,
             )?;
             if override_capabilities
-                .insert(value.capability_code.as_str(), value)
+                .insert(value.code.as_str(), value)
                 .is_some()
             {
-                return Err(AppError::Config(format!(
-                    "租户重复覆盖能力 {}",
-                    value.capability_code
-                )));
+                return Err(AppError::Config(format!("租户重复覆盖能力 {}", value.code)));
             }
         }
         let mut capabilities = Vec::with_capacity(CAPABILITY_CATALOG.len());
@@ -803,7 +804,7 @@ impl ProductService {
                     (
                         value.enabled,
                         "override",
-                        Some(value.variant_code.clone()),
+                        Some(value.variant.clone()),
                         Some(value.schema_version),
                         Some(project_client_config(descriptor, &value.config)),
                     )
@@ -811,7 +812,7 @@ impl ProductService {
                     (
                         true,
                         "plan",
-                        Some(value.variant_code.clone()),
+                        Some(value.variant.clone()),
                         Some(value.schema_version),
                         Some(project_client_config(descriptor, &value.config)),
                     )
@@ -834,17 +835,17 @@ impl ProductService {
         Ok(ProductContextVo {
             tenant_id: tenant_id.to_owned(),
             runtime_epoch: runtime_epoch.to_string(),
-            plan_key: target.plan.plan_key.clone(),
-            plan_name: target.plan.name.clone(),
-            plan_version_id: target.version.id.to_string(),
-            plan_version: target.version.version,
+            plan_key: target.plan_key.clone(),
+            plan_name: target.plan_name.clone(),
+            plan_version_id: target.version_id.to_string(),
+            plan_version: target.version,
             capabilities,
             overrides: overrides
                 .iter()
                 .map(|value| CapabilityOverrideVo {
-                    capability_code: value.capability_code.clone(),
+                    capability_code: value.code.clone(),
                     enabled: value.enabled,
-                    variant_code: value.variant_code.clone(),
+                    variant_code: value.variant.clone(),
                     schema_version: value.schema_version,
                     config: value.config.clone(),
                     reason: value.reason.clone(),

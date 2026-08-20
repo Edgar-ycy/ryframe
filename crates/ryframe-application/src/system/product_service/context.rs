@@ -4,30 +4,30 @@ impl ProductService {
     /// 强一致读取当前租户的已验证有效产品上下文，供认证上下文和安全门禁复用。
     pub async fn effective_context(&self, tenant_id: &str) -> AppResult<ProductContextVo> {
         let bundle = self
-            .repository
-            .tenant_product(self.db.write(), tenant_id)
+            .read
+            .tenant_product(tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        self.context_from_bundle(bundle)
+        self.context_from_snapshot(bundle)
     }
 
     /// 强一致读取运行时纪元；不得从旧授权快照推导。
     pub async fn runtime_epoch(&self, tenant_id: &str) -> AppResult<i64> {
-        self.repository
-            .tenant_product(self.db.write(), tenant_id)
+        self.read
+            .tenant_product(tenant_id)
             .await?
-            .map(|bundle| bundle.tenant.runtime_epoch)
+            .map(|bundle| bundle.runtime_epoch)
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 
     pub async fn session_context(&self, tenant_id: &str) -> AppResult<SessionProductContextVo> {
         let bundle = self
-            .repository
-            .tenant_product(self.db.write(), tenant_id)
+            .read
+            .tenant_product(tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let authorization_epoch = bundle.tenant.authorization_epoch;
-        let context = self.context_from_bundle(bundle)?;
+        let authorization_epoch = bundle.authorization_epoch;
+        let context = self.context_from_snapshot(bundle)?;
         Ok(SessionProductContextVo {
             authorization_epoch,
             runtime_epoch: context.runtime_epoch,
