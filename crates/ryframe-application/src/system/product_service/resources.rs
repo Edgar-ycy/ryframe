@@ -28,7 +28,8 @@ impl ProductService {
             .tenant_product(transaction, tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let context = self.context_from_bundle(bundle)?;
+        let context =
+            self.context_from_snapshot(crate::legacy_product_persistence::tenant_snapshot(bundle))?;
         let mut requirements = context
             .capabilities
             .into_iter()
@@ -65,7 +66,8 @@ impl ProductService {
             .tenant_product(transaction, tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let context = self.context_from_bundle(bundle)?;
+        let context =
+            self.context_from_snapshot(crate::legacy_product_persistence::tenant_snapshot(bundle))?;
         let mut seen = BTreeSet::new();
         for requirement in requirements {
             if !seen.insert(requirement.code.as_str()) {
@@ -167,11 +169,14 @@ impl ProductService {
         let capabilities = self
             .repository
             .list_capabilities(transaction, version_id)
-            .await?;
-        self.validate_publishable_capabilities(&capabilities)?;
+            .await?
+            .into_iter()
+            .map(crate::legacy_product_persistence::capability_record)
+            .collect::<Vec<_>>();
+        self.validate_publishable_capability_records(&capabilities)?;
         let enabled_codes = capabilities
             .iter()
-            .map(|capability| capability.capability_code.as_str())
+            .map(|capability| capability.code.as_str())
             .collect::<BTreeSet<_>>();
         Ok(resources_for_enabled_codes(&enabled_codes))
     }

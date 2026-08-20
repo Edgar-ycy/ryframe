@@ -462,7 +462,7 @@ async fn plan_record(
     })
 }
 
-fn capability_record(
+pub(crate) fn capability_record(
     capability: ryframe_db::entities::product_plan_capability::Model,
 ) -> ProductCapabilityRecord {
     ProductCapabilityRecord {

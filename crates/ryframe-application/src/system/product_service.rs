@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::{Duration, Utc};
-use ryframe_db::{ProductRepository, entities::product_plan_capability};
+use ryframe_db::ProductRepository;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -475,94 +475,6 @@ impl ProductService {
 
     pub async fn validate_assignable_version(&self, version_id: i64) -> AppResult<()> {
         self.published_target(version_id).await.map(|_| ())
-    }
-
-    fn validate_capability_models(
-        &self,
-        capabilities: &[product_plan_capability::Model],
-    ) -> AppResult<()> {
-        let mut seen = BTreeSet::new();
-        for capability in capabilities {
-            if !seen.insert(&capability.capability_code) {
-                return Err(AppError::Config(format!(
-                    "产品套餐版本重复定义能力 {}",
-                    capability.capability_code
-                )));
-            }
-            validate_capability_snapshot(
-                &capability.capability_code,
-                &capability.variant_code,
-                capability.schema_version,
-                &capability.config,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn validate_publishable_capabilities(
-        &self,
-        capabilities: &[product_plan_capability::Model],
-    ) -> AppResult<()> {
-        self.validate_capability_relationships(capabilities)?;
-        for capability in capabilities {
-            let descriptor = CAPABILITY_CATALOG
-                .iter()
-                .find(|descriptor| descriptor.code == capability.capability_code)
-                .expect("capabilities were validated above");
-            if !self.deployment_enabled(descriptor.code) {
-                return Err(AppError::CapabilityUnavailable(format!(
-                    "当前部署不满足能力 {} 的依赖: {}",
-                    descriptor.code,
-                    descriptor.deployment_dependencies.join(", ")
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_capability_relationships(
-        &self,
-        capabilities: &[product_plan_capability::Model],
-    ) -> AppResult<()> {
-        self.validate_capability_models(capabilities)?;
-        let enabled = capabilities
-            .iter()
-            .map(|value| value.capability_code.as_str())
-            .collect::<BTreeSet<_>>();
-        for capability in capabilities {
-            let descriptor = CAPABILITY_CATALOG
-                .iter()
-                .find(|descriptor| descriptor.code == capability.capability_code)
-                .expect("capabilities were validated above");
-            if let Some(dependency) = descriptor
-                .dependencies
-                .iter()
-                .find(|dependency| !enabled.contains(**dependency))
-            {
-                return Err(AppError::Validation(format!(
-                    "能力 {} 缺少依赖 {}",
-                    descriptor.code, dependency
-                )));
-            }
-            if let Some(conflict) = descriptor
-                .conflicts
-                .iter()
-                .find(|conflict| enabled.contains(**conflict))
-            {
-                return Err(AppError::Validation(format!(
-                    "能力 {} 与 {} 冲突",
-                    descriptor.code, conflict
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    fn context_from_bundle(
-        &self,
-        bundle: ryframe_db::TenantProductBundle,
-    ) -> AppResult<ProductContextVo> {
-        self.context_from_snapshot(crate::legacy_product_persistence::tenant_snapshot(bundle))
     }
 
     fn context_from_snapshot(
