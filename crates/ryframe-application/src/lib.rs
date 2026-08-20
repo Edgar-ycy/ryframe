@@ -14,6 +14,7 @@ mod id_generator;
 mod identity_authorization;
 mod job_schedule_persistence;
 pub mod jobs;
+mod legacy_audit_persistence;
 mod legacy_authorization_diagnostic_persistence;
 mod legacy_config_persistence;
 mod legacy_dept_persistence;
@@ -74,9 +75,9 @@ pub use artifact_store::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
 };
 pub use audit::{
-    AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AuditOperationEvent, AuditOutbox, AuditRequestContext,
-    AuditTransactionBinding, commit_current_audit, record_audit_failure,
-    record_current_audit_in_transaction, scope_audit_request, set_audit_failure_hook,
+    AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AuditOperationEvent, AuditOutbox,
+    AuditOutboxPersistencePort, AuditRequestContext, AuditTransactionBinding, record_audit_failure,
+    scope_audit_request, set_audit_failure_hook,
 };
 pub use auth_service::{AuthService, LoginResult, UserInfo};
 pub use authorization_cache::{
@@ -124,6 +125,11 @@ pub use jobs::{
     MessageWakeupPublisher, OutboxRunResult, OutboxWorker, ScheduleMetricsObserver,
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
+};
+#[doc(hidden)]
+pub use legacy_audit_persistence::{
+    commit_current_audit, outbox_port as legacy_audit_outbox_persistence,
+    record_current_audit_in_transaction,
 };
 #[doc(hidden)]
 pub use legacy_authorization_diagnostic_persistence::port as legacy_authorization_diagnostic_persistence;

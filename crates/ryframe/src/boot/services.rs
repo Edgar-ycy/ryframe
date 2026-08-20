@@ -359,8 +359,11 @@ pub async fn build_all(
         None
     };
     let audit_outbox = Arc::new(
-        AuditOutbox::new(database.clone(), config.jobs.default_max_attempts)
-            .with_job_queue(job_queue.clone()),
+        AuditOutbox::new(
+            ryframe_application::legacy_audit_outbox_persistence(database.clone()),
+            config.jobs.default_max_attempts,
+        )
+        .with_job_queue(job_queue.clone()),
     );
     let message = Arc::new(MessageService::new(
         ryframe_application::legacy_message_persistence(database.clone()),

@@ -7,19 +7,18 @@ use std::{
     time::Instant,
 };
 
-use ryframe_db::{ControlDatabaseCluster, OutboxEventRepository, RecordOutboxEvent};
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
+use crate::PersistenceFuture;
 use crate::jobs::JobQueue;
 use crate::system::{OperLogStatus, RecordOperLogCommand};
 
 /// 操作审计事件在事务 Outbox 中使用的稳定类型标识。
 pub const AUDIT_OPERATION_OUTBOX_EVENT_TYPE: &str = "audit.operation";
 
-const AUDIT_AGGREGATE_TYPE: &str = "operation_audit";
-const OUTBOX_MAX_ATTEMPTS: i32 = 20;
+pub(crate) const AUDIT_AGGREGATE_TYPE: &str = "operation_audit";
+pub(crate) const OUTBOX_MAX_ATTEMPTS: i32 = 20;
 
 static AUDIT_FAILURE_HOOK: OnceLock<fn(&'static str)> = OnceLock::new();
 
@@ -141,48 +140,39 @@ impl AuditTransactionBinding {
     }
 }
 
-/// 把当前请求的成功审计事件写入调用方业务事务。
-///
-/// 非 HTTP 调用链返回 `None`。HTTP 写请求返回绑定句柄，调用方需在事务提交成功后标记。
-pub async fn record_current_audit_in_transaction(
-    transaction: &DatabaseTransaction,
-) -> AppResult<Option<AuditTransactionBinding>> {
-    let Some(context) = CURRENT_AUDIT_REQUEST.try_with(Clone::clone).ok() else {
-        return Ok(None);
-    };
+pub(crate) fn bind_current_audit() -> Option<(AuditOperationEvent, AuditTransactionBinding)> {
+    let context = CURRENT_AUDIT_REQUEST.try_with(Clone::clone).ok()?;
     context
         .state
         .transaction_bound
         .store(true, Ordering::Release);
     let event = context.event(OperLogStatus::Success, None);
-    record_event_in_transaction(transaction, &event, OUTBOX_MAX_ATTEMPTS).await?;
-    Ok(Some(AuditTransactionBinding { context }))
+    Some((event, AuditTransactionBinding { context }))
 }
 
-/// 在提交调用方事务前自动写入当前请求审计事件，并在提交成功后完成绑定标记。
-///
-/// 业务服务可以用该函数直接替换裸 `transaction.commit()`，避免遗漏 `mark_committed`。
-pub async fn commit_current_audit(transaction: DatabaseTransaction) -> AppResult<()> {
-    let binding = record_current_audit_in_transaction(&transaction).await?;
-    transaction.commit().await.map_err(database_error)?;
-    if let Some(binding) = binding {
-        binding.mark_committed();
-    }
-    Ok(())
+pub trait AuditOutboxPersistencePort: Send + Sync {
+    fn record<'a>(
+        &'a self,
+        event: &'a AuditOperationEvent,
+        max_attempts: i32,
+    ) -> PersistenceFuture<'a, ()>;
 }
 
 /// 由 HTTP 边界使用的独立短事务 Outbox 写入器。
 #[derive(Clone)]
 pub struct AuditOutbox {
-    database: ControlDatabaseCluster,
+    persistence: Arc<dyn AuditOutboxPersistencePort>,
     max_attempts: i32,
     job_queue: Option<Arc<JobQueue>>,
 }
 
 impl AuditOutbox {
-    pub fn new(database: ControlDatabaseCluster, default_max_attempts: i32) -> Self {
+    pub fn new(
+        persistence: Arc<dyn AuditOutboxPersistencePort>,
+        default_max_attempts: i32,
+    ) -> Self {
         Self {
-            database,
+            persistence,
             max_attempts: default_max_attempts.clamp(1, OUTBOX_MAX_ATTEMPTS),
             job_queue: None,
         }
@@ -196,60 +186,19 @@ impl AuditOutbox {
 
     /// 使用独立短事务持久化审计事件，响应成功与否均不会依赖内存任务。
     pub async fn record(&self, event: &AuditOperationEvent) -> AppResult<()> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
-        let result = record_event_in_transaction(&transaction, event, self.max_attempts).await;
-        match result {
-            Ok(()) => {
-                transaction.commit().await.map_err(database_error)?;
-                if let Some(job_queue) = &self.job_queue {
-                    job_queue.notify_outbox().await;
-                }
-                Ok(())
-            }
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                Err(error)
-            }
+        validate_audit_event(event)?;
+        self.persistence.record(event, self.max_attempts).await?;
+        if let Some(job_queue) = &self.job_queue {
+            job_queue.notify_outbox().await;
         }
+        Ok(())
     }
 }
 
-async fn record_event_in_transaction(
-    transaction: &DatabaseTransaction,
-    event: &AuditOperationEvent,
-    max_attempts: i32,
-) -> AppResult<()> {
+pub(crate) fn validate_audit_event(event: &AuditOperationEvent) -> AppResult<()> {
     validate_identifier("event_id", &event.event_id)?;
     validate_identifier("request_id", &event.request_id)?;
-    crate::enforce_tenant_scope(&event.tenant_id)?;
-    let now = OutboxEventRepository.database_utc_now(transaction).await?;
-    let payload = serde_json::to_value(event)
-        .map_err(|error| AppError::Internal(format!("审计事件序列化失败: {error}")))?;
-    let trace_context = crate::trace_context::current_trace_context();
-    OutboxEventRepository
-        .record_in_transaction(
-            transaction,
-            RecordOutboxEvent {
-                tenant_id: Some(event.tenant_id.clone()),
-                event_type: AUDIT_OPERATION_OUTBOX_EVENT_TYPE.to_owned(),
-                aggregate_type: AUDIT_AGGREGATE_TYPE.to_owned(),
-                aggregate_id: event.event_id.clone(),
-                payload,
-                available_at: now,
-                max_attempts,
-                dedupe_key: Some(event.event_id.clone()),
-                traceparent: trace_context.traceparent,
-                tracestate: trace_context.tracestate,
-            },
-            now,
-        )
-        .await?;
-    Ok(())
+    crate::enforce_tenant_scope(&event.tenant_id)
 }
 
 fn validate_identifier(name: &str, value: &str) -> AppResult<()> {
@@ -265,6 +214,51 @@ fn elapsed_millis(started_at: Instant) -> i64 {
     i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX)
 }
 
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command() -> RecordOperLogCommand {
+        RecordOperLogCommand {
+            title: "更新用户".to_owned(),
+            business_type: "update".to_owned(),
+            method: "handler".to_owned(),
+            request_method: "PUT".to_owned(),
+            oper_name: "admin".to_owned(),
+            oper_url: "/users/1".to_owned(),
+            oper_ip: "127.0.0.1".to_owned(),
+            oper_param: None,
+            json_result: None,
+            status: OperLogStatus::Failure,
+            error_msg: Some("尚未完成".to_owned()),
+            cost_time: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn transaction_binding_marks_attempt_and_commit_separately() {
+        let context = AuditRequestContext {
+            event_id: "event-1".to_owned(),
+            request_id: "request-1".to_owned(),
+            tenant_id: "tenant-a".to_owned(),
+            base_command: command(),
+            started_at: Instant::now(),
+            state: Arc::new(AuditRequestState {
+                transaction_bound: AtomicBool::new(false),
+                transaction_committed: AtomicBool::new(false),
+            }),
+        };
+        let observed = Arc::clone(&context.state);
+
+        scope_audit_request(context, async {
+            let (event, binding) = bind_current_audit().expect("审计上下文应存在");
+            assert_eq!(event.event_id, "event-1");
+            assert!(observed.transaction_bound.load(Ordering::Acquire));
+            assert!(!observed.transaction_committed.load(Ordering::Acquire));
+            binding.mark_committed();
+        })
+        .await;
+
+        assert!(observed.transaction_committed.load(Ordering::Acquire));
+    }
 }
