@@ -1,4 +1,5 @@
 pub mod agent;
+mod artifact_store;
 mod audit;
 mod auth_service;
 mod authorization_cache;
@@ -13,6 +14,9 @@ pub mod system;
 mod tenant_runtime;
 mod trace_context;
 
+pub use artifact_store::{
+    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
+};
 pub use audit::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AuditOperationEvent, AuditOutbox, AuditRequestContext,
     AuditTransactionBinding, commit_current_audit, record_audit_failure,

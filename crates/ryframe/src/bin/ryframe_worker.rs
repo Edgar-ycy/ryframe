@@ -18,7 +18,8 @@ use ryframe_adapters::storage::{
 };
 use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
-    AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
+    ArtifactStore, AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService,
+    OutboxWorker,
     system::{
         CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportService, FileService,
         IMPORT_BUCKET, MessageService, OperLogService, ProductService, TenantConfigTransferService,
@@ -34,6 +35,8 @@ use tokio::sync::watch;
 
 #[path = "../boot/application_policy.rs"]
 mod process_application_policy;
+#[path = "../boot/artifact_store.rs"]
+mod process_artifact_store;
 #[path = "../boot/jobs.rs"]
 mod process_jobs;
 #[path = "../boot/logging.rs"]
@@ -417,7 +420,7 @@ fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
 /// 初始化 worker 的 Redis 连接；可选 Redis 故障只降级为收件箱补拉。
 async fn connect_storage_for_worker(
     config: &AppConfig,
-) -> Result<Arc<dyn ObjectStorage>, AppError> {
+) -> Result<Arc<dyn ArtifactStore>, AppError> {
     let raw_storage: Arc<dyn ObjectStorage> = match config.object_storage.backend {
         StorageBackend::Local => Arc::new(LocalObjectStorage::new(
             &config.object_storage.local_base_dir,
@@ -442,7 +445,7 @@ async fn connect_storage_for_worker(
             AppError::ServiceUnavailable(format!("Worker 对象存储不可用: {error}"))
         })?;
     }
-    Ok(storage)
+    Ok(process_artifact_store::application_store(storage))
 }
 
 async fn connect_redis_for_worker(config: &AppConfig) -> Result<Option<RedisClient>, AppError> {

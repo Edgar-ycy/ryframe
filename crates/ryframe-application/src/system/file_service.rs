@@ -5,12 +5,13 @@ use ryframe_adapters::file_upload::{
     compress_image, generate_storage_filename, get_content_type, validate_extension,
     validate_file_signature,
 };
-use ryframe_adapters::storage::{ObjectStorage, StorageError};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
+
+use crate::{ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind};
 
 mod policy;
 mod upload_reservation;
@@ -139,11 +140,11 @@ where
 
 pub struct FileService {
     db: ControlDatabaseCluster,
-    storage: Arc<dyn ObjectStorage>,
+    storage: Arc<dyn ArtifactStore>,
 }
 
 impl FileService {
-    pub fn new(db: ControlDatabaseCluster, storage: Arc<dyn ObjectStorage>) -> Self {
+    pub fn new(db: ControlDatabaseCluster, storage: Arc<dyn ArtifactStore>) -> Self {
         Self { db, storage }
     }
 
@@ -155,14 +156,11 @@ impl FileService {
             IMPORT_BUCKET,
             CONFIG_PACKAGE_BUCKET,
         ] {
-            self.storage
-                .readiness_check(bucket)
-                .await
-                .map_err(|error| {
-                    AppError::ServiceUnavailable(format!(
-                        "object storage readiness check failed: {error}"
-                    ))
-                })?;
+            self.storage.readiness(bucket).await.map_err(|error| {
+                AppError::ServiceUnavailable(format!(
+                    "object storage readiness check failed: {error}"
+                ))
+            })?;
         }
         Ok(())
     }
@@ -690,43 +688,30 @@ impl FileService {
     }
 }
 
-fn map_storage_write_error(error: StorageError) -> AppError {
-    match error {
-        StorageError::InvalidLocation(_) => AppError::Validation("非法的对象存储路径".into()),
-        StorageError::Configuration(_)
-        | StorageError::Signing(_)
-        | StorageError::Unsupported(_) => AppError::Internal("对象存储配置错误".into()),
-        StorageError::Service { status, .. } if status == 429 || status >= 500 => {
-            AppError::ServiceUnavailable("对象存储暂不可用".into())
+fn map_storage_write_error(error: ArtifactStoreError) -> AppError {
+    match error.kind() {
+        ArtifactStoreErrorKind::InvalidLocation => {
+            AppError::Validation("非法的对象存储路径".into())
         }
-        StorageError::Service { .. } => AppError::Internal("对象存储拒绝写入请求".into()),
-        StorageError::Transport(_)
-        | StorageError::Io { .. }
-        | StorageError::Readiness(_)
-        | StorageError::InvalidResponse(_) => {
+        ArtifactStoreErrorKind::Misconfigured => AppError::Internal("对象存储配置错误".into()),
+        ArtifactStoreErrorKind::Rejected | ArtifactStoreErrorKind::NotFound => {
+            AppError::Internal("对象存储拒绝写入请求".into())
+        }
+        ArtifactStoreErrorKind::Unavailable => {
             AppError::ServiceUnavailable("对象存储暂不可用".into())
         }
     }
 }
 
-fn map_storage_read_error(error: StorageError) -> AppError {
-    match error {
-        StorageError::Service { status: 404, .. } => AppError::NotFound("文件不存在".into()),
-        StorageError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
-            AppError::NotFound("文件不存在".into())
+fn map_storage_read_error(error: ArtifactStoreError) -> AppError {
+    match error.kind() {
+        ArtifactStoreErrorKind::NotFound => AppError::NotFound("文件不存在".into()),
+        ArtifactStoreErrorKind::InvalidLocation => {
+            AppError::Validation("非法的对象存储路径".into())
         }
-        StorageError::InvalidLocation(_) => AppError::Validation("非法的对象存储路径".into()),
-        StorageError::Configuration(_)
-        | StorageError::Signing(_)
-        | StorageError::Unsupported(_) => AppError::Internal("对象存储配置错误".into()),
-        StorageError::Service { status, .. } if status == 429 || status >= 500 => {
-            AppError::ServiceUnavailable("对象存储暂不可用".into())
-        }
-        StorageError::Service { .. } => AppError::Internal("对象存储拒绝读取请求".into()),
-        StorageError::Transport(_)
-        | StorageError::Io { .. }
-        | StorageError::Readiness(_)
-        | StorageError::InvalidResponse(_) => {
+        ArtifactStoreErrorKind::Misconfigured => AppError::Internal("对象存储配置错误".into()),
+        ArtifactStoreErrorKind::Rejected => AppError::Internal("对象存储拒绝读取请求".into()),
+        ArtifactStoreErrorKind::Unavailable => {
             AppError::ServiceUnavailable("对象存储暂不可用".into())
         }
     }
@@ -735,17 +720,23 @@ fn map_storage_read_error(error: StorageError) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::{map_storage_read_error, map_storage_write_error};
-    use ryframe_adapters::storage::StorageError;
+    use crate::{ArtifactStoreError, ArtifactStoreErrorKind};
     use ryframe_kernel::AppError;
 
     #[test]
     fn maps_unsupported_storage_operation_to_internal_error() {
         assert!(matches!(
-            map_storage_write_error(StorageError::Unsupported("list".into())),
+            map_storage_write_error(ArtifactStoreError::new(
+                ArtifactStoreErrorKind::Misconfigured,
+                "list",
+            )),
             AppError::Internal(_)
         ));
         assert!(matches!(
-            map_storage_read_error(StorageError::Unsupported("list".into())),
+            map_storage_read_error(ArtifactStoreError::new(
+                ArtifactStoreErrorKind::Misconfigured,
+                "list",
+            )),
             AppError::Internal(_)
         ));
     }
@@ -753,11 +744,17 @@ mod tests {
     #[test]
     fn maps_invalid_storage_response_to_service_unavailable() {
         assert!(matches!(
-            map_storage_write_error(StorageError::InvalidResponse("truncated".into())),
+            map_storage_write_error(ArtifactStoreError::new(
+                ArtifactStoreErrorKind::Unavailable,
+                "truncated",
+            )),
             AppError::ServiceUnavailable(_)
         ));
         assert!(matches!(
-            map_storage_read_error(StorageError::InvalidResponse("truncated".into())),
+            map_storage_read_error(ArtifactStoreError::new(
+                ArtifactStoreErrorKind::Unavailable,
+                "truncated",
+            )),
             AppError::ServiceUnavailable(_)
         ));
     }

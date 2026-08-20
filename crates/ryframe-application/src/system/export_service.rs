@@ -7,7 +7,7 @@ use ryframe_db::{
 };
 use ryframe_kernel::AppError;
 
-use crate::JobQueue;
+use crate::{ArtifactStore, ArtifactStoreError, JobQueue};
 
 use super::{
     ConfigService, DictService, LoginInfoService, OperLogService, PostService, ProductService,
@@ -63,7 +63,7 @@ pub struct ExportService {
     dicts: DictService,
     oper_logs: OperLogService,
     login_infos: LoginInfoService,
-    storage: Arc<dyn ryframe_adapters::storage::ObjectStorage>,
+    storage: Arc<dyn ArtifactStore>,
     default_max_attempts: i32,
     export_max_rows: usize,
     export_retention: Duration,
@@ -75,7 +75,7 @@ impl ExportService {
     pub fn new(
         db: ControlDatabaseCluster,
         users: Arc<UserService>,
-        storage: Arc<dyn ryframe_adapters::storage::ObjectStorage>,
+        storage: Arc<dyn ArtifactStore>,
         policy: crate::ExportPolicy,
     ) -> Self {
         let purge = ExportPurgeUseCase::new(db.clone(), Arc::clone(&storage));
@@ -119,6 +119,6 @@ fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
 }
 
-fn storage_error(error: ryframe_adapters::storage::StorageError) -> AppError {
+fn storage_error(error: ArtifactStoreError) -> AppError {
     AppError::ServiceUnavailable(format!("导出对象存储操作失败: {error}"))
 }

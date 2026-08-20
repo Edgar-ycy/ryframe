@@ -11,6 +11,7 @@
 
 pub mod app_state;
 pub mod application_policy;
+pub mod artifact_store;
 pub mod datasource;
 pub mod idempotency;
 pub mod jobs;

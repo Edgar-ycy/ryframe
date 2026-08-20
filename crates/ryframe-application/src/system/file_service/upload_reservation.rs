@@ -1,11 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
-use ryframe_adapters::storage::{ObjectStorage, StorageError};
 use ryframe_db::{ControlDatabaseCluster, FileRepository, Repository, entities::sys_file};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
+
+use crate::{ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind};
 
 use super::{
     FileService, UploadResponse, map_storage_read_error, map_storage_write_error, run_blocking_task,
@@ -29,7 +30,7 @@ pub(super) fn reservation_expires_at(now: DateTime<Utc>) -> DateTime<Utc> {
     now + chrono::Duration::minutes(RESERVATION_TTL_MINUTES)
 }
 
-fn cleanup_grace(storage: &dyn ObjectStorage) -> chrono::Duration {
+fn cleanup_grace(storage: &dyn ArtifactStore) -> chrono::Duration {
     cleanup_grace_for_bound(storage.late_put_completion_bound())
 }
 
@@ -108,14 +109,14 @@ enum ReservationTransactionOutcome {
 /// 也会协调处理这些记录。
 pub(super) struct UploadReservationGuard {
     db: ControlDatabaseCluster,
-    storage: Arc<dyn ObjectStorage>,
+    storage: Arc<dyn ArtifactStore>,
     reservation: Option<sys_file::Model>,
 }
 
 impl UploadReservationGuard {
     pub(super) fn new(
         db: ControlDatabaseCluster,
-        storage: Arc<dyn ObjectStorage>,
+        storage: Arc<dyn ArtifactStore>,
         reservation: sys_file::Model,
     ) -> Self {
         Self {
@@ -785,7 +786,7 @@ async fn commit_upload_state(
 
 async fn compensate_upload_reservation(
     db: ControlDatabaseCluster,
-    storage: Arc<dyn ObjectStorage>,
+    storage: Arc<dyn ArtifactStore>,
     reservation: sys_file::Model,
 ) {
     let Some(reservation_token) = reservation.reservation_token.as_deref() else {
@@ -852,10 +853,6 @@ async fn compensate_upload_reservation(
     }
 }
 
-pub(super) fn storage_error_is_not_found(error: &StorageError) -> bool {
-    match error {
-        StorageError::Service { status: 404, .. } => true,
-        StorageError::Io { source, .. } => source.kind() == std::io::ErrorKind::NotFound,
-        _ => false,
-    }
+pub(super) fn storage_error_is_not_found(error: &ArtifactStoreError) -> bool {
+    error.kind() == ArtifactStoreErrorKind::NotFound
 }

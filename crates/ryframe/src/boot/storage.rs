@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ryframe_adapters::storage::{
     LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
 };
+use ryframe_application::ArtifactStore;
 use ryframe_application::system::{
     AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, EXPORT_BUCKET, IMPORT_BUCKET, UPLOAD_BUCKET,
 };
@@ -10,7 +11,7 @@ use ryframe_config::{AppConfig, StorageBackend};
 use ryframe_kernel::{AppError, AppResult};
 
 /// 初始化对象存储，并在启动阶段验证连接、凭据和业务桶。
-pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
+pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ArtifactStore>> {
     let storage_config = &config.object_storage;
     let raw_storage: Arc<dyn ObjectStorage> = match storage_config.backend {
         StorageBackend::Local => Arc::new(LocalObjectStorage::new(&storage_config.local_base_dir)),
@@ -52,5 +53,5 @@ pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ObjectStorage>> {
         "对象存储连接与业务桶检查通过"
     );
 
-    Ok(storage)
+    Ok(super::artifact_store::application_store(storage))
 }

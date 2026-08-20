@@ -9,20 +9,18 @@ use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
 
 use super::{EXPORT_BUCKET, database_error, storage_error};
+use crate::ArtifactStore;
 
 /// 导出对象、独占文件元数据与公开任务记录的统一清理用例。
 pub struct ExportPurgeUseCase {
     db: ControlDatabaseCluster,
     exports: ExportJobRepository,
     files: FileRepository,
-    storage: Arc<dyn ryframe_adapters::storage::ObjectStorage>,
+    storage: Arc<dyn ArtifactStore>,
 }
 
 impl ExportPurgeUseCase {
-    pub(crate) fn new(
-        db: ControlDatabaseCluster,
-        storage: Arc<dyn ryframe_adapters::storage::ObjectStorage>,
-    ) -> Self {
+    pub(crate) fn new(db: ControlDatabaseCluster, storage: Arc<dyn ArtifactStore>) -> Self {
         Self {
             db,
             exports: ExportJobRepository,
@@ -172,7 +170,7 @@ async fn finish_transaction(
 }
 
 async fn delete_object_idempotently(
-    storage: &dyn ryframe_adapters::storage::ObjectStorage,
+    storage: &dyn ArtifactStore,
     file: &sys_file::Model,
 ) -> AppResult<()> {
     storage
@@ -185,8 +183,7 @@ async fn delete_object_idempotently(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use async_trait::async_trait;
-    use ryframe_adapters::storage::{ObjectStorage, StorageError, StorageResult};
+    use crate::{ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture};
 
     use super::*;
 
@@ -194,62 +191,51 @@ mod tests {
         attempts: AtomicUsize,
     }
 
-    #[async_trait]
-    impl ObjectStorage for RetryStorage {
-        async fn put(
-            &self,
-            _bucket: &str,
-            _key: &str,
-            _data: &[u8],
-            _content_type: &str,
-        ) -> StorageResult<()> {
+    impl ArtifactStore for RetryStorage {
+        fn readiness<'a>(&'a self, _bucket: &'a str) -> ArtifactStoreFuture<'a, ()> {
+            unreachable!("测试不检查存储")
+        }
+
+        fn ensure_bucket<'a>(&'a self, _bucket: &'a str) -> ArtifactStoreFuture<'a, ()> {
+            unreachable!("测试不创建桶")
+        }
+
+        fn put<'a>(
+            &'a self,
+            _bucket: &'a str,
+            _key: &'a str,
+            _data: &'a [u8],
+            _content_type: &'a str,
+        ) -> ArtifactStoreFuture<'a, ()> {
             unreachable!("测试不写对象")
         }
 
-        async fn put_control(
-            &self,
-            _bucket: &str,
-            _key: &str,
-            _data: &[u8],
-            _content_type: &str,
-        ) -> StorageResult<()> {
-            unreachable!("测试不写控制对象")
-        }
-
-        async fn put_file(
-            &self,
-            _bucket: &str,
-            _key: &str,
-            _path: &std::path::Path,
-            _content_type: &str,
-            _sha256_hex: Option<&str>,
-        ) -> StorageResult<()> {
+        fn put_file<'a>(
+            &'a self,
+            _bucket: &'a str,
+            _key: &'a str,
+            _path: &'a std::path::Path,
+            _content_type: &'a str,
+            _sha256_hex: Option<&'a str>,
+        ) -> ArtifactStoreFuture<'a, ()> {
             unreachable!("测试不写对象")
         }
 
-        async fn get(&self, _bucket: &str, _key: &str) -> StorageResult<Vec<u8>> {
+        fn get<'a>(&'a self, _bucket: &'a str, _key: &'a str) -> ArtifactStoreFuture<'a, Vec<u8>> {
             unreachable!("测试不读对象")
         }
 
-        async fn get_bounded(
-            &self,
-            _bucket: &str,
-            _key: &str,
-            _max_bytes: usize,
-        ) -> StorageResult<Vec<u8>> {
-            unreachable!("测试不读对象")
-        }
-
-        async fn delete(&self, _bucket: &str, _key: &str) -> StorageResult<()> {
-            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-                Err(StorageError::Readiness("临时不可用".into()))
-            } else {
-                Ok(())
-            }
-        }
-
-        async fn exists(&self, _bucket: &str, _key: &str) -> StorageResult<bool> {
-            Ok(false)
+        fn delete<'a>(&'a self, _bucket: &'a str, _key: &'a str) -> ArtifactStoreFuture<'a, ()> {
+            Box::pin(async move {
+                if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err(ArtifactStoreError::new(
+                        ArtifactStoreErrorKind::Unavailable,
+                        "临时不可用",
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
         }
     }
 
