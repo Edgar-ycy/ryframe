@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as St
 
 use async_trait::async_trait;
 use chrono::Duration;
-use ryframe_db::{FailBackgroundJob, JobFailureDisposition, background_job};
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
@@ -11,9 +10,9 @@ use uuid::Uuid;
 
 use super::{
     backoff::{jittered_delay, next_idle_wait},
-    queue::JobQueue,
+    queue::{ClaimedJobRecord, FailJobCommand, JobFailureOutcome, JobQueue},
 };
-use crate::{ExecutionTenantScope, legacy_execution_tenant_scope::database_scope};
+use crate::ExecutionTenantScope;
 
 /// 任务处理器。实现必须具备幂等性，因为 Worker 提供至少一次投递语义。
 ///
@@ -275,16 +274,13 @@ impl JobWorker {
                 return Err(error);
             }
         };
-        let tenant_scope = database_scope(&self.execution_tenant_scope);
         let claimed = match self
             .queue
-            .repository()
             .claim_next(
-                self.queue.primary(),
                 worker_id,
                 self.lease_duration,
                 now,
-                &tenant_scope,
+                &self.execution_tenant_scope,
             )
             .await
         {
@@ -321,7 +317,7 @@ impl JobWorker {
     /// 处理已完成租约领取的任务，并保留原有状态转换语义。
     async fn run_claimed_job(
         &self,
-        mut job: background_job::Model,
+        mut job: ClaimedJobRecord,
         worker_id: &str,
     ) -> AppResult<JobRunResult> {
         let Some(handler) = self.handlers.get(&job.job_type).cloned() else {
@@ -329,14 +325,7 @@ impl JobWorker {
             let failure_reason = format!("未注册任务处理器: {}", job.job_type);
             let completed = self
                 .queue
-                .repository()
-                .dead_letter(
-                    self.queue.primary(),
-                    job.id,
-                    worker_id,
-                    &failure_reason,
-                    now,
-                )
+                .dead_letter(job.id, worker_id, &failure_reason, now)
                 .await?;
             return Ok(if completed {
                 tracing::error!(
@@ -398,14 +387,7 @@ impl JobWorker {
                     async move {
                         let now = queue.database_now().await?;
                         queue
-                            .repository()
-                            .renew_lease(
-                                queue.primary(),
-                                heartbeat_job_id,
-                                &worker_id,
-                                lease_duration,
-                                now,
-                            )
+                            .renew_lease(heartbeat_job_id, &worker_id, lease_duration, now)
                             .await
                     }
                 })
@@ -434,11 +416,7 @@ impl JobWorker {
             match handler_result {
                 Ok(()) => {
                     let now = self.queue.database_now().await?;
-                    let completed = self
-                        .queue
-                        .repository()
-                        .complete(self.queue.primary(), job.id, worker_id, now)
-                        .await?;
+                    let completed = self.queue.complete(job.id, worker_id, now).await?;
                     Ok(if completed {
                         JobRunResult::Succeeded
                     } else {
@@ -455,15 +433,7 @@ impl JobWorker {
                             );
                         let deferred = self
                             .queue
-                            .repository()
-                            .defer_retryable_conflict(
-                                self.queue.primary(),
-                                job.id,
-                                worker_id,
-                                available_at,
-                                message,
-                                now,
-                            )
+                            .defer_retryable_conflict(job.id, worker_id, available_at, message, now)
                             .await?;
                         return Ok(if deferred {
                             tracing::debug!(
@@ -484,21 +454,17 @@ impl JobWorker {
                     let log_error = job_log_error(&job.job_type, &error);
                     match self
                         .queue
-                        .repository()
-                        .fail(
-                            self.queue.primary(),
-                            FailBackgroundJob {
-                                job_id: job.id,
-                                worker_id,
-                                retry_at,
-                                error_message: &error_message,
-                                force_dead,
-                                now,
-                            },
-                        )
+                        .fail(FailJobCommand {
+                            job_id: job.id,
+                            worker_id,
+                            retry_at,
+                            error_message: &error_message,
+                            force_dead,
+                            now,
+                        })
                         .await?
                     {
-                        JobFailureDisposition::Retried { available_at } => {
+                        JobFailureOutcome::Retried { available_at } => {
                             tracing::debug!(
                                 job_id = job.id,
                                 job_type = %job.job_type,
@@ -511,7 +477,7 @@ impl JobWorker {
                             );
                             Ok(JobRunResult::Retried)
                         }
-                        JobFailureDisposition::Dead => {
+                        JobFailureOutcome::Dead => {
                             tracing::error!(
                                 job_id = job.id,
                                 job_type = %job.job_type,
@@ -523,7 +489,7 @@ impl JobWorker {
                             );
                             Ok(JobRunResult::Dead)
                         }
-                        JobFailureDisposition::LeaseLost => Ok(JobRunResult::LeaseLost),
+                        JobFailureOutcome::LeaseLost => Ok(JobRunResult::LeaseLost),
                     }
                 }
             }

@@ -7,7 +7,8 @@ use chrono::{DateTime, Utc};
 use ryframe_auth::RequestPrincipal;
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ControlDatabaseCluster,
-    background_job, tenant_config_bundle, tenant_config_transfer,
+    FailBackgroundJob, JobFailureDisposition as DatabaseJobFailureDisposition, background_job,
+    tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
@@ -40,6 +41,36 @@ pub struct EnqueueJob {
 pub struct EnqueueJobResult {
     pub job_id: i64,
     pub inserted: bool,
+}
+
+#[derive(Debug)]
+pub(super) struct ClaimedJobRecord {
+    pub id: i64,
+    pub tenant_id: Option<String>,
+    pub job_type: String,
+    pub payload: serde_json::Value,
+    pub lease_owner: Option<String>,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub max_runtime_seconds: Option<i32>,
+    pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
+}
+
+pub(super) struct FailJobCommand<'a> {
+    pub job_id: i64,
+    pub worker_id: &'a str,
+    pub retry_at: DateTime<Utc>,
+    pub error_message: &'a str,
+    pub force_dead: bool,
+    pub now: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum JobFailureOutcome {
+    Retried { available_at: DateTime<Utc> },
+    Dead,
+    LeaseLost,
 }
 
 pub(crate) fn database_enqueue(command: EnqueueJob) -> ryframe_db::EnqueueBackgroundJob {
@@ -173,6 +204,111 @@ impl JobQueue {
     pub fn with_wakeup_transport(mut self, transport: Option<Arc<dyn JobWakeupTransport>>) -> Self {
         self.wakeup = Arc::new(QueueWakeup::new(transport, self.metrics_observer.clone()));
         self
+    }
+
+    pub(super) async fn claim_next(
+        &self,
+        worker_id: &str,
+        lease_duration: chrono::Duration,
+        now: DateTime<Utc>,
+        tenant_scope: &ExecutionTenantScope,
+    ) -> AppResult<Option<ClaimedJobRecord>> {
+        let tenant_scope = database_scope(tenant_scope);
+        self.repository
+            .claim_next(
+                self.database.write(),
+                worker_id,
+                lease_duration,
+                now,
+                &tenant_scope,
+            )
+            .await
+            .map(|job| job.map(claimed_job_record))
+    }
+
+    pub(super) async fn dead_letter(
+        &self,
+        job_id: i64,
+        worker_id: &str,
+        error_message: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        self.repository
+            .dead_letter(self.database.write(), job_id, worker_id, error_message, now)
+            .await
+    }
+
+    pub(super) async fn renew_lease(
+        &self,
+        job_id: i64,
+        worker_id: &str,
+        lease_duration: chrono::Duration,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        self.repository
+            .renew_lease(
+                self.database.write(),
+                job_id,
+                worker_id,
+                lease_duration,
+                now,
+            )
+            .await
+    }
+
+    pub(super) async fn complete(
+        &self,
+        job_id: i64,
+        worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        self.repository
+            .complete(self.database.write(), job_id, worker_id, now)
+            .await
+    }
+
+    pub(super) async fn defer_retryable_conflict(
+        &self,
+        job_id: i64,
+        worker_id: &str,
+        available_at: DateTime<Utc>,
+        error_message: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        self.repository
+            .defer_retryable_conflict(
+                self.database.write(),
+                job_id,
+                worker_id,
+                available_at,
+                error_message,
+                now,
+            )
+            .await
+    }
+
+    pub(super) async fn fail(&self, command: FailJobCommand<'_>) -> AppResult<JobFailureOutcome> {
+        let disposition = self
+            .repository
+            .fail(
+                self.database.write(),
+                FailBackgroundJob {
+                    job_id: command.job_id,
+                    worker_id: command.worker_id,
+                    retry_at: command.retry_at,
+                    error_message: command.error_message,
+                    force_dead: command.force_dead,
+                    now: command.now,
+                },
+            )
+            .await?;
+        Ok(match disposition {
+            DatabaseJobFailureDisposition::Retried { available_at } => {
+                JobFailureOutcome::Retried { available_at }
+            }
+            DatabaseJobFailureDisposition::Dead => JobFailureOutcome::Dead,
+            DatabaseJobFailureDisposition::LeaseLost => JobFailureOutcome::LeaseLost,
+        })
     }
 
     /// 在业务 control 事务内原地复活已关联任务，不创建并发副本。
@@ -465,10 +601,6 @@ impl JobQueue {
         Ok(())
     }
 
-    pub(super) fn repository(&self) -> &BackgroundJobRepository {
-        &self.repository
-    }
-
     pub(super) fn has_metrics_observer(&self) -> bool {
         self.metrics_observer().is_some()
     }
@@ -545,6 +677,21 @@ fn public_job_error(job_type: &str, error: Option<String>) -> Option<String> {
         "system.tenant_config.rollback" => "配置回滚失败，请稍后重试或联系管理员".to_owned(),
         _ => error,
     })
+}
+
+fn claimed_job_record(job: background_job::Model) -> ClaimedJobRecord {
+    ClaimedJobRecord {
+        id: job.id,
+        tenant_id: job.tenant_id,
+        job_type: job.job_type,
+        payload: job.payload,
+        lease_owner: job.lease_owner,
+        attempts: job.attempts,
+        max_attempts: job.max_attempts,
+        max_runtime_seconds: job.max_runtime_seconds,
+        traceparent: job.traceparent,
+        tracestate: job.tracestate,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -633,7 +780,7 @@ fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String
 mod tests {
     use chrono::{TimeZone, Utc};
 
-    use super::{EnqueueJob, database_enqueue};
+    use super::{EnqueueJob, claimed_job_record, database_enqueue};
 
     #[test]
     fn enqueue_command_maps_every_field_without_loss() {
@@ -665,5 +812,42 @@ mod tests {
         assert_eq!(command.dedupe_key.as_deref(), Some("dedupe"));
         assert_eq!(command.traceparent.as_deref(), Some("traceparent"));
         assert_eq!(command.tracestate.as_deref(), Some("tracestate"));
+    }
+
+    #[test]
+    fn claimed_job_mapping_keeps_worker_fields() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+        let claimed = claimed_job_record(ryframe_db::background_job::Model {
+            id: 9,
+            tenant_id: Some("tenant-a".to_owned()),
+            schedule_id: None,
+            scheduled_for: None,
+            max_runtime_seconds: Some(30),
+            job_type: "job.test".to_owned(),
+            payload: serde_json::json!({"key": "value"}),
+            status: ryframe_db::background_job::Model::STATUS_RUNNING.to_owned(),
+            priority: 0,
+            available_at: now,
+            attempts: 2,
+            max_attempts: 5,
+            lease_owner: Some("worker-a".to_owned()),
+            lease_until: Some(now),
+            dedupe_key: None,
+            traceparent: Some("trace".to_owned()),
+            tracestate: Some("state".to_owned()),
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        });
+
+        assert_eq!(claimed.id, 9);
+        assert_eq!(claimed.tenant_id.as_deref(), Some("tenant-a"));
+        assert_eq!(claimed.job_type, "job.test");
+        assert_eq!(claimed.attempts, 2);
+        assert_eq!(claimed.max_attempts, 5);
+        assert_eq!(claimed.max_runtime_seconds, Some(30));
+        assert_eq!(claimed.traceparent.as_deref(), Some("trace"));
+        assert_eq!(claimed.tracestate.as_deref(), Some("state"));
     }
 }
