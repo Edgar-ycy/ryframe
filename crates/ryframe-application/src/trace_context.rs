@@ -1,61 +1,53 @@
-//! 后台任务的 W3C Trace Context 传递辅助。
+//! 后台任务的 W3C Trace Context 应用端口。
 
-use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
 
-use opentelemetry::{
-    Context, global,
-    propagation::{Extractor, Injector},
-};
+use ryframe_kernel::{AppError, AppResult};
 
 /// 可跨进程持久化的完整 W3C Trace Context。
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct PersistedTraceContext {
+pub struct PersistedTraceContext {
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
 }
 
-/// 从 tracing-opentelemetry 激活的当前上下文取出可持久化的 W3C Trace Context。
-pub(crate) fn current_trace_context() -> PersistedTraceContext {
-    let context = Context::current();
-    let mut carrier = HeaderCarrier::default();
-    global::get_text_map_propagator(|propagator| propagator.inject_context(&context, &mut carrier));
-    PersistedTraceContext {
-        traceparent: carrier.0.remove("traceparent"),
-        tracestate: carrier.0.remove("tracestate"),
-    }
+/// 读取当前追踪上下文，并为消费端 Span 恢复远端父上下文。
+pub trait TraceContextPort: Send + Sync {
+    fn current(&self) -> PersistedTraceContext;
+
+    fn set_parent(&self, span: &tracing::Span, traceparent: Option<&str>, tracestate: Option<&str>);
 }
 
-/// 将任务中保存的 W3C Trace Context 解析为远端父上下文。
-pub(crate) fn extract_parent_context(
+static TRACE_CONTEXT: OnceLock<Arc<dyn TraceContextPort>> = OnceLock::new();
+
+pub fn install_trace_context_port(port: Arc<dyn TraceContextPort>) -> AppResult<()> {
+    TRACE_CONTEXT
+        .set(port)
+        .map_err(|_| AppError::Config("链路追踪上下文端口不能重复安装".into()))
+}
+
+pub(crate) fn current_trace_context() -> PersistedTraceContext {
+    TRACE_CONTEXT
+        .get()
+        .map_or_else(PersistedTraceContext::default, |port| port.current())
+}
+
+pub(crate) fn set_parent(
+    span: &tracing::Span,
     traceparent: Option<&str>,
     tracestate: Option<&str>,
-) -> Context {
-    let mut values = BTreeMap::new();
-    if let Some(traceparent) = traceparent.filter(|value| !value.trim().is_empty()) {
-        values.insert("traceparent".to_owned(), traceparent.to_owned());
-    }
-    if let Some(tracestate) = tracestate.filter(|value| !value.trim().is_empty()) {
-        values.insert("tracestate".to_owned(), tracestate.to_owned());
-    }
-    let carrier = HeaderCarrier(values);
-    global::get_text_map_propagator(|propagator| propagator.extract(&carrier))
-}
-
-#[derive(Default)]
-struct HeaderCarrier(BTreeMap<String, String>);
-
-impl Injector for HeaderCarrier {
-    fn set(&mut self, key: &str, value: String) {
-        self.0.insert(key.to_ascii_lowercase(), value);
+) {
+    if let Some(port) = TRACE_CONTEXT.get() {
+        port.set_parent(span, traceparent, tracestate);
     }
 }
 
-impl Extractor for HeaderCarrier {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(&key.to_ascii_lowercase()).map(String::as_str)
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(String::as_str).collect()
+    #[test]
+    fn missing_adapter_fails_closed_to_empty_context() {
+        assert_eq!(current_trace_context(), PersistedTraceContext::default());
     }
 }

@@ -340,6 +340,7 @@ pub use tenant_runtime::{
 pub use tenant_usage_persistence::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
+pub use trace_context::{PersistedTraceContext, TraceContextPort, install_trace_context_port};
 pub use user_import_persistence::{
     NewImportedUser, NewUserImportJob, NewUserImportRow, UserImportAuthorizationSnapshot,
     UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,

@@ -3182,6 +3182,7 @@ dependencies = [
  "futures-util",
  "hex",
  "md5",
+ "opentelemetry",
  "redis",
  "ryframe-adapters",
  "ryframe-api",
@@ -3198,6 +3199,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-appender",
+ "tracing-opentelemetry",
  "tracing-subscriber",
 ]
 
@@ -3289,7 +3291,6 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
- "opentelemetry",
  "rand 0.10.1",
  "ryframe-auth",
  "ryframe-db",
@@ -3300,7 +3301,6 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "tracing",
- "tracing-opentelemetry",
  "uuid",
  "validator",
  "zip 8.6.0",

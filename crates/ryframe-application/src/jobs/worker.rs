@@ -5,7 +5,6 @@ use chrono::Duration;
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use super::{
@@ -344,10 +343,11 @@ impl JobWorker {
         };
 
         let span = tracing::info_span!("background_job", job_type = %job.job_type);
-        let _ = span.set_parent(crate::trace_context::extract_parent_context(
+        crate::trace_context::set_parent(
+            &span,
             job.traceparent.as_deref(),
             job.tracestate.as_deref(),
-        ));
+        );
         let claimed_job = ClaimedBackgroundJob {
             id: job.id,
             tenant_id: job.tenant_id.take(),

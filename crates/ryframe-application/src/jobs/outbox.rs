@@ -4,7 +4,6 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use super::backoff::{jittered_delay, next_idle_wait};
@@ -128,10 +127,11 @@ impl OutboxWorker {
             }
         };
         let span = tracing::info_span!("outbox_event", event_type = %event.event_type);
-        let _ = span.set_parent(crate::trace_context::extract_parent_context(
+        crate::trace_context::set_parent(
+            &span,
             event.traceparent.as_deref(),
             event.tracestate.as_deref(),
-        ));
+        );
         self.run_claimed_event(event, worker_id)
             .instrument(span)
             .await

@@ -1,10 +1,15 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
+use opentelemetry::{
+    Context, global,
+    propagation::{Extractor, Injector},
+};
 use ryframe_adapters::telemetry::{TelemetryGuard, init_tracer_provider};
 use ryframe_config::{AppConfig, LoggerFormat, LoggerOutput};
 use ryframe_db::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
 use ryframe_kernel::AppError;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{
     EnvFilter, Layer, filter::FilterFn, fmt, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -14,6 +19,59 @@ pub struct LoggerGuard {
     // 字段按声明顺序销毁，SQL 线程会先排空，再关闭共享的非阻塞 writer。
     _sql_log_worker: SqlLogGuard,
     _worker: Option<tracing_appender::non_blocking::WorkerGuard>,
+}
+
+struct OpenTelemetryTraceContext;
+
+impl ryframe_application::TraceContextPort for OpenTelemetryTraceContext {
+    fn current(&self) -> ryframe_application::PersistedTraceContext {
+        let context = Context::current();
+        let mut carrier = HeaderCarrier::default();
+        global::get_text_map_propagator(|propagator| {
+            propagator.inject_context(&context, &mut carrier);
+        });
+        ryframe_application::PersistedTraceContext {
+            traceparent: carrier.0.remove("traceparent"),
+            tracestate: carrier.0.remove("tracestate"),
+        }
+    }
+
+    fn set_parent(
+        &self,
+        span: &tracing::Span,
+        traceparent: Option<&str>,
+        tracestate: Option<&str>,
+    ) {
+        let mut values = BTreeMap::new();
+        if let Some(traceparent) = traceparent.filter(|value| !value.trim().is_empty()) {
+            values.insert("traceparent".to_owned(), traceparent.to_owned());
+        }
+        if let Some(tracestate) = tracestate.filter(|value| !value.trim().is_empty()) {
+            values.insert("tracestate".to_owned(), tracestate.to_owned());
+        }
+        let carrier = HeaderCarrier(values);
+        let parent = global::get_text_map_propagator(|propagator| propagator.extract(&carrier));
+        let _ = span.set_parent(parent);
+    }
+}
+
+#[derive(Default)]
+struct HeaderCarrier(BTreeMap<String, String>);
+
+impl Injector for HeaderCarrier {
+    fn set(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_ascii_lowercase(), value);
+    }
+}
+
+impl Extractor for HeaderCarrier {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(&key.to_ascii_lowercase()).map(String::as_str)
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(String::as_str).collect()
+    }
 }
 
 /// 初始化日志系统
@@ -38,6 +96,7 @@ pub fn init(config: &AppConfig) -> Result<(LoggerGuard, TelemetryGuard), AppErro
 
     // 初始化链路追踪（在 subscriber 构建之前）
     let telemetry_guard = init_tracer_provider(&config.telemetry);
+    ryframe_application::install_trace_context_port(Arc::new(OpenTelemetryTraceContext))?;
     let otel_layer = telemetry_guard
         .tracing_layer(ryframe_api::middleware::request_log::REQUEST_LOG_SPAN_TARGET);
 

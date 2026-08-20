@@ -21,6 +21,8 @@ ryframe-auth = { path = "../ryframe-auth" }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tracing = { workspace = true }
+opentelemetry = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"]}
 tracing-appender = { workspace = true }
 sea-orm = { workspace = true}
