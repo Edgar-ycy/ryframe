@@ -1,6 +1,7 @@
 mod audit_persistence;
 mod identity;
 mod limiter;
+mod persistence;
 mod registry;
 mod scope;
 mod service;
@@ -13,8 +14,14 @@ pub use identity::{
 pub use limiter::{
     AgentConcurrencyLease, AgentLeaseReleaseFuture, AgentLimitFuture, AgentLimitInput, AgentLimiter,
 };
+pub use persistence::{
+    AgentAccountRecord, AgentCredentialRecord, AgentDelegationRecord, AgentDepartmentRecord,
+    AgentDictionaryItemRecord, AgentDictionaryPageRecord, AgentPersistencePort,
+    AgentPersistenceTransaction, AgentPostRecord, AgentQueryPage, AgentTenantRecord,
+    AgentUserRecord,
+};
 pub use registry::{AgentCapability, AgentCapabilityDescriptor, service_capability_descriptors};
-pub(crate) use scope::{
+pub use scope::{
     AgentAuthorizationSnapshot, AgentDepartmentSnapshot, AgentPermissionSnapshot,
     AgentRoleDepartmentSnapshot, AgentRolePermissionSnapshot, AgentRoleSnapshot, AgentRowScope,
     AgentUserSnapshot,

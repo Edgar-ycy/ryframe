@@ -3,7 +3,7 @@ use super::*;
 impl AgentService {
     pub(super) async fn query(
         &self,
-        transaction: &sea_orm::DatabaseTransaction,
+        transaction: &dyn AgentPersistenceTransaction,
         request: &AgentRequest,
         context: &AuthorizedContext,
     ) -> AppResult<QueryResult> {
@@ -39,14 +39,8 @@ impl AgentService {
                     user_dept,
                 );
                 let scope_empty = matches!(&scope, AgentRowScope::Empty);
-                let result = AgentQueryRepository
-                    .users_page(
-                        transaction,
-                        &context.tenant.tenant_id,
-                        &crate::legacy_agent_snapshot::row_scope(scope),
-                        offset,
-                        page_size,
-                    )
+                let result = transaction
+                    .users_page(&context.tenant.tenant_id, scope, offset, page_size)
                     .await?;
                 let department_names = context
                     .snapshot
@@ -83,14 +77,8 @@ impl AgentService {
                     user_dept,
                 );
                 let scope_empty = matches!(&scope, AgentRowScope::Empty);
-                let result = AgentQueryRepository
-                    .departments_page(
-                        transaction,
-                        &context.tenant.tenant_id,
-                        &crate::legacy_agent_snapshot::row_scope(scope),
-                        offset,
-                        page_size,
-                    )
+                let result = transaction
+                    .departments_page(&context.tenant.tenant_id, scope, offset, page_size)
                     .await?;
                 let items = result
                     .records
@@ -115,8 +103,8 @@ impl AgentService {
                 if !both_all(context) {
                     return QueryResult::empty_page(page, page_size, self.config.max_page_size);
                 }
-                let result = AgentQueryRepository
-                    .posts_page(transaction, &context.tenant.tenant_id, offset, page_size)
+                let result = transaction
+                    .posts_page(&context.tenant.tenant_id, offset, page_size)
                     .await?;
                 let items = result
                     .records
@@ -148,14 +136,8 @@ impl AgentService {
                     );
                 }
                 let type_code = validate_type_code(request.type_code.as_deref())?;
-                let result = AgentQueryRepository
-                    .dictionary_by_type_code_page(
-                        transaction,
-                        &context.tenant.tenant_id,
-                        type_code,
-                        offset,
-                        page_size,
-                    )
+                let result = transaction
+                    .dictionary_page(&context.tenant.tenant_id, type_code, offset, page_size)
                     .await?;
                 let Some(result) = result else {
                     return Err(AppError::NotFound("字典类型不存在".into()));
@@ -171,7 +153,7 @@ impl AgentService {
                     .collect::<Vec<_>>();
                 let row_count = items.len();
                 let data = AgentDictionaryVo {
-                    type_code: result.dict_type.code,
+                    type_code: result.type_code,
                     items,
                     page,
                     page_size,

@@ -6,22 +6,16 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ryframe_auth::rbac;
-use ryframe_db::{
-    AgentQueryRepository, ControlDatabaseCluster, DataRetentionRepository,
-    ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
-    ServiceAuthorizationRepository, ServiceCredentialRepository, ServiceDelegationRepository,
-    entities::{service_account, service_credential, service_delegation},
-};
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::TransactionTrait;
 use serde::Serialize;
 
 use super::{
-    AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAccessMode, AgentAuditWritePort,
-    AgentAuthorizationSnapshot, AgentCapability, AgentCapabilityVo, AgentCredentialHint,
-    AgentDelegationHint, AgentDepartmentVo, AgentDictionaryItemVo, AgentDictionaryVo,
-    AgentIdentityReadPort, AgentLimitHints, AgentPage, AgentPostVo, AgentPrincipal, AgentRequest,
-    AgentRowScope, AgentSuccess, AgentUserVo,
+    AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAccessMode, AgentAccountRecord,
+    AgentAuditWritePort, AgentAuthorizationSnapshot, AgentCapability, AgentCapabilityVo,
+    AgentCredentialHint, AgentCredentialRecord, AgentDelegationHint, AgentDelegationRecord,
+    AgentDepartmentVo, AgentDictionaryItemVo, AgentDictionaryVo, AgentIdentityReadPort,
+    AgentLimitHints, AgentPage, AgentPersistencePort, AgentPersistenceTransaction, AgentPostVo,
+    AgentPrincipal, AgentRequest, AgentRowScope, AgentSuccess, AgentTenantRecord, AgentUserVo,
     limiter::{AgentLimitInput, AgentLimiter},
     registry::AgentCapabilityDescriptor,
     scope::{
@@ -32,7 +26,7 @@ use crate::service_identity_secret::{
     IP_DIGEST_DOMAIN, ParsedApiKey, ParsedDelegation, USER_AGENT_DIGEST_DOMAIN, invalid_credential,
     keyed_hash, parse_authorization, parse_delegation,
 };
-use crate::system::{ProductService, SERVICE_ACCOUNTS_CAPABILITY};
+use crate::system::SERVICE_ACCOUNTS_CAPABILITY;
 use crate::{MultiTenancyPolicy, PepperKeyring, ServiceAccountPolicy};
 
 const ACCESS_MODE_UNKNOWN: &str = "unknown";
@@ -42,18 +36,18 @@ const RESULT_ERROR: &str = "error";
 pub struct AgentServiceDependencies {
     pub identity: Arc<dyn AgentIdentityReadPort>,
     pub audit: Arc<dyn AgentAuditWritePort>,
+    pub persistence: Arc<dyn AgentPersistencePort>,
 }
 
 #[derive(Clone)]
 pub struct AgentService {
-    db: ControlDatabaseCluster,
     config: ServiceAccountPolicy,
     multi_tenancy: MultiTenancyPolicy,
     keyring: Arc<PepperKeyring>,
     limiter: Arc<dyn AgentLimiter>,
     identity: Arc<dyn AgentIdentityReadPort>,
     audit: Arc<dyn AgentAuditWritePort>,
-    product_service: Arc<ProductService>,
+    persistence: Arc<dyn AgentPersistencePort>,
 }
 
 pub(super) struct IdentityHint {
@@ -62,12 +56,11 @@ pub(super) struct IdentityHint {
 }
 
 pub(super) struct AuthorizedContext {
-    pub(super) tenant: ryframe_db::tenant::Model,
-    pub(super) account: service_account::Model,
-    pub(super) credential: service_credential::Model,
-    delegation: Option<service_delegation::Model>,
+    pub(super) tenant: AgentTenantRecord,
+    pub(super) account: AgentAccountRecord,
+    pub(super) credential: AgentCredentialRecord,
+    delegation: Option<AgentDelegationRecord>,
     pub(super) snapshot: AgentAuthorizationSnapshot,
-    pub(super) delegation_capabilities: BTreeSet<String>,
     pub(super) account_permissions: Vec<String>,
     pub(super) user_permissions: Vec<String>,
     pub(super) account_scope: SubjectScope,
@@ -88,26 +81,23 @@ use support::*;
 
 impl AgentService {
     pub fn new(
-        db: ControlDatabaseCluster,
         limiter: Arc<dyn AgentLimiter>,
         keyring: Arc<PepperKeyring>,
         config: ServiceAccountPolicy,
         multi_tenancy: MultiTenancyPolicy,
-        product_service: Arc<ProductService>,
         dependencies: AgentServiceDependencies,
     ) -> AppResult<Self> {
         if !config.enabled() {
             return Err(AppError::Config("服务账号功能未启用".into()));
         }
         Ok(Self {
-            db,
             config,
             multi_tenancy,
             keyring,
             limiter,
             identity: dependencies.identity,
             audit: dependencies.audit,
-            product_service,
+            persistence: dependencies.persistence,
         })
     }
 

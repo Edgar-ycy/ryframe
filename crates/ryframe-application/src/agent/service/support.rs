@@ -60,10 +60,6 @@ pub(super) fn mask_missing_identity(error: AppError) -> AppError {
     }
 }
 
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 pub(super) async fn before_deadline<T>(
     deadline: tokio::time::Instant,
     future: impl Future<Output = AppResult<T>>,

@@ -9,39 +9,23 @@ impl AgentService {
         parsed_delegation: Option<&ParsedDelegation>,
         hint: &IdentityHint,
     ) -> AppResult<AgentSuccess> {
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         let result = async {
-            let tenant = ServiceAccountRepository
-                .lock_tenant_in_txn(
-                    &transaction,
-                    &hint.credential.tenant_id,
-                    ServiceAccountLock::Share,
-                )
+            let tenant = transaction
+                .lock_tenant(&hint.credential.tenant_id)
                 .await
                 .map_err(mask_missing_identity)?;
-            let now = DataRetentionRepository
-                .database_utc_now(&transaction)
-                .await?;
+            let now = transaction.database_now().await?;
             if !tenant.is_available(now) {
                 return Err(invalid_credential());
             }
-            let account = ServiceAccountRepository
-                .find_by_id_in_txn(
-                    &transaction,
-                    &tenant.tenant_id,
-                    hint.credential.account_id,
-                    ServiceAccountLock::Share,
-                )
+            let account = transaction
+                .lock_account(&tenant.tenant_id, hint.credential.account_id)
                 .await?
-                .filter(service_account::Model::is_enabled)
+                .filter(AgentAccountRecord::is_enabled)
                 .ok_or_else(invalid_credential)?;
-            let credential = ServiceCredentialRepository
-                .find_by_key_id_for_share(
-                    &transaction,
-                    &tenant.tenant_id,
-                    account.id,
-                    &parsed_key.key_id,
-                )
+            let credential = transaction
+                .lock_credential(&tenant.tenant_id, account.id, &parsed_key.key_id)
                 .await?
                 .filter(|item| item.id == hint.credential.id && item.is_usable_at(now))
                 .ok_or_else(invalid_credential)?;
@@ -52,14 +36,14 @@ impl AgentService {
             if !parsed_key.verify(pepper, &credential.secret_mac)? {
                 return Err(invalid_credential());
             }
-            let (delegation, delegation_capabilities) = match parsed_delegation {
+            let delegation = match parsed_delegation {
                 Some(parsed) => {
                     let hinted = hint.delegation.as_ref().ok_or_else(invalid_credential)?;
                     if hinted.tenant_id != tenant.tenant_id || hinted.account_id != account.id {
                         return Err(invalid_credential());
                     }
-                    let delegation = ServiceDelegationRepository
-                        .find_by_id_for_share(&transaction, &tenant.tenant_id, hinted.id)
+                    let delegation = transaction
+                        .lock_delegation(&tenant.tenant_id, hinted.id)
                         .await?
                         .filter(|item| item.is_usable_at(now))
                         .ok_or_else(invalid_credential)?;
@@ -70,32 +54,20 @@ impl AgentService {
                     if !parsed.verify(delegation_pepper, &delegation.token_mac)? {
                         return Err(invalid_credential());
                     }
-                    let capabilities = ServiceDelegationRepository
-                        .capability_keys_for_share(&transaction, &tenant.tenant_id, delegation.id)
-                        .await?
-                        .into_iter()
-                        .collect();
-                    (Some(delegation), capabilities)
+                    Some(delegation)
                 }
-                None => (None, BTreeSet::new()),
+                None => None,
             };
-            self.product_service
-                .require_capability_in_txn(
-                    &transaction,
+            transaction
+                .require_capability(&tenant.tenant_id, SERVICE_ACCOUNTS_CAPABILITY)
+                .await?;
+            let snapshot = transaction
+                .authorization_snapshot(
                     &tenant.tenant_id,
-                    SERVICE_ACCOUNTS_CAPABILITY,
+                    account.id,
+                    delegation.as_ref().map(|item| item.user_id),
                 )
                 .await?;
-            let snapshot = crate::legacy_agent_snapshot::authorization_snapshot(
-                ServiceAuthorizationRepository
-                    .lock_snapshot_in_txn(
-                        &transaction,
-                        &tenant.tenant_id,
-                        account.id,
-                        delegation.as_ref().map(|item| item.user_id),
-                    )
-                    .await?,
-            );
             validate_subjects(&snapshot, delegation.is_some())?;
             let account_permissions = subject_permissions(&snapshot, &snapshot.account_role_ids);
             let user_permissions = subject_permissions(&snapshot, &snapshot.user_role_ids);
@@ -107,32 +79,28 @@ impl AgentService {
                 credential,
                 delegation,
                 snapshot,
-                delegation_capabilities,
                 account_permissions,
                 user_permissions,
                 account_scope,
                 user_scope,
             };
             self.ensure_capability_authorized(descriptor, &authorized)?;
-            let query = self.query(&transaction, request, &authorized).await?;
-            let body = encode_success(request, &query.data, self.config.max_response_bytes)?;
-            let completed_at = DataRetentionRepository
-                .database_utc_now(&transaction)
+            let query = self
+                .query(transaction.as_ref(), request, &authorized)
                 .await?;
-            ServiceAccessAuditRepository
-                .insert(
-                    &transaction,
-                    crate::legacy_agent_audit::model(success_audit(
-                        request,
-                        descriptor,
-                        &authorized,
-                        query.reason_code,
-                        query.row_count,
-                        body.len(),
-                        completed_at,
-                        &self.keyring,
-                    )?),
-                )
+            let body = encode_success(request, &query.data, self.config.max_response_bytes)?;
+            let completed_at = transaction.database_now().await?;
+            transaction
+                .insert_audit(success_audit(
+                    request,
+                    descriptor,
+                    &authorized,
+                    query.reason_code,
+                    query.row_count,
+                    body.len(),
+                    completed_at,
+                    &self.keyring,
+                )?)
                 .await?;
             let principal = AgentPrincipal {
                 tenant_id: authorized.tenant.tenant_id,
@@ -151,7 +119,7 @@ impl AgentService {
         .await;
         match result {
             Ok((body, principal)) => {
-                transaction.commit().await.map_err(database_error)?;
+                transaction.commit().await?;
                 Ok(AgentSuccess { body, principal })
             }
             Err(error) => {
@@ -177,8 +145,11 @@ impl AgentService {
             rbac::has_permission(&context.account_permissions, descriptor.required_permission);
         let user_allowed = !delegated
             || rbac::has_permission(&context.user_permissions, descriptor.required_permission);
-        let delegated_allowed =
-            !delegated || context.delegation_capabilities.contains(descriptor.key);
+        let delegated_allowed = !delegated
+            || context
+                .delegation
+                .as_ref()
+                .is_some_and(|delegation| delegation.capability_keys.contains(descriptor.key));
         if account_allowed && user_allowed && delegated_allowed {
             Ok(())
         } else {

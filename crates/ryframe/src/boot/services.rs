@@ -225,15 +225,17 @@ pub async fn build_all(
             },
         )?);
         let agent = Arc::new(AgentService::new(
-            database.clone(),
             super::agent_limiter::redis_limiter(redis),
             keyring,
             policies.service_accounts,
             policies.multi_tenancy,
-            product.clone(),
             AgentServiceDependencies {
                 identity: ryframe_application::legacy_agent_identity_read(database.clone()),
                 audit: ryframe_application::legacy_agent_audit_write(database.clone()),
+                persistence: ryframe_application::legacy_agent_persistence(
+                    database.clone(),
+                    Arc::clone(&product),
+                ),
             },
         )?);
         (Some(management), Some(agent))

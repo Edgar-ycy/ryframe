@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum AgentRowScope {
+pub enum AgentRowScope {
     All,
     Departments(Vec<i64>),
     DepartmentsAndUser {
@@ -13,7 +13,7 @@ pub(crate) enum AgentRowScope {
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentUserSnapshot {
+pub struct AgentUserSnapshot {
     pub id: i64,
     pub dept_id: Option<i64>,
     pub status: String,
@@ -30,7 +30,7 @@ impl AgentUserSnapshot {
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentRoleSnapshot {
+pub struct AgentRoleSnapshot {
     pub id: i64,
     pub is_super: bool,
     pub data_scope: String,
@@ -52,13 +52,13 @@ impl AgentRoleSnapshot {
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentRolePermissionSnapshot {
+pub struct AgentRolePermissionSnapshot {
     pub role_id: i64,
     pub permission_id: i64,
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentPermissionSnapshot {
+pub struct AgentPermissionSnapshot {
     pub id: i64,
     pub code: String,
     pub status: String,
@@ -73,20 +73,20 @@ impl AgentPermissionSnapshot {
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentRoleDepartmentSnapshot {
+pub struct AgentRoleDepartmentSnapshot {
     pub role_id: i64,
     pub department_id: i64,
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentDepartmentSnapshot {
+pub struct AgentDepartmentSnapshot {
     pub id: i64,
     pub name: String,
     pub ancestors: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct AgentAuthorizationSnapshot {
+pub struct AgentAuthorizationSnapshot {
     pub user: Option<AgentUserSnapshot>,
     pub account_role_ids: Vec<i64>,
     pub user_role_ids: Vec<i64>,
