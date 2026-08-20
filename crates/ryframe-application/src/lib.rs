@@ -4,9 +4,11 @@ mod audit;
 mod auth_service;
 mod authorization_cache;
 mod authorization_resolver;
+mod config_persistence;
 mod file_content;
 mod id_generator;
 pub mod jobs;
+mod legacy_config_persistence;
 mod legacy_login_info_persistence;
 mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
@@ -48,6 +50,9 @@ pub use authorization_cache::{
     set_authorization_cache_lookup_hook,
 };
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
+pub use config_persistence::{
+    ConfigFilter, ConfigPersistencePort, ConfigRecord, ConfigTransaction,
+};
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 #[allow(deprecated)]
@@ -63,6 +68,8 @@ pub use jobs::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
+#[doc(hidden)]
+pub use legacy_config_persistence::port as legacy_config_persistence;
 #[doc(hidden)]
 pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
 #[doc(hidden)]

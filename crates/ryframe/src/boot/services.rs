@@ -244,7 +244,10 @@ pub async fn build_all(
         ryframe_application::legacy_post_persistence(database.clone()),
     ));
     let config_service = Arc::new(ConfigService::new(
-        database.clone(),
+        ryframe_application::legacy_config_persistence(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
         authorization_cache.clone(),
     ));
 

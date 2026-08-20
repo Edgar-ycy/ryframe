@@ -81,6 +81,7 @@ impl ExportService {
         policy: crate::ExportPolicy,
     ) -> Self {
         let purge = ExportPurgeUseCase::new(db.clone(), Arc::clone(&storage));
+        let config_cache = crate::AuthorizationCache::disabled();
         Self {
             db: db.clone(),
             background_jobs: BackgroundJobRepository,
@@ -96,7 +97,10 @@ impl ExportService {
                 )),
             ),
             posts: PostService::new(crate::legacy_post_persistence(db.clone())),
-            configs: ConfigService::new(db.clone(), crate::AuthorizationCache::disabled()),
+            configs: ConfigService::new(
+                crate::legacy_config_persistence(db.clone(), config_cache.clone()),
+                config_cache,
+            ),
             dicts: DictService::new(db.clone(), None),
             oper_logs: OperLogService::new(crate::legacy_oper_log_persistence(db.clone())),
             login_infos: LoginInfoService::new(crate::legacy_login_info_persistence(db)),

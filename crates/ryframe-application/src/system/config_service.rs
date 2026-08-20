@@ -1,23 +1,21 @@
-use ryframe_db::{AutoFill, FillContext};
-use ryframe_db::{
-    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository,
-    Repository, TenantConfigTransferRepository, entities::config,
-};
-use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
+use std::sync::Arc;
+
+use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 use serde::{Deserialize, Serialize};
 
-use crate::{AuthorizationCache, NamespaceCacheLookup};
+use crate::{
+    AuthorizationCache, ConfigFilter, ConfigPersistencePort, ConfigRecord, NamespaceCacheLookup,
+};
 
-/// 缓存过期时间（1 小时）
 const CACHE_TTL_SECS: u64 = 3600;
+const CONFIG_CACHE_NAMESPACE: &str = "config";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigVo {
-    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    /// ID 使用字符串，避免 64 位值超出 JavaScript 安全整数范围。
     pub id: String,
     pub name: String,
     pub key: String,
@@ -27,16 +25,16 @@ pub struct ConfigVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<config::Model> for ConfigVo {
-    fn from(c: config::Model) -> Self {
+impl From<ConfigRecord> for ConfigVo {
+    fn from(config: ConfigRecord) -> Self {
         Self {
-            id: c.id.to_string(),
-            name: c.name,
-            key: c.key,
-            value: c.value,
-            portable: c.portable,
-            remark: c.remark,
-            created_at: c.created_at,
+            id: config.id.to_string(),
+            name: config.name,
+            key: config.key,
+            value: config.value,
+            portable: config.portable,
+            remark: config.remark,
+            created_at: config.created_at,
         }
     }
 }
@@ -49,18 +47,17 @@ pub struct ConfigListParams {
 }
 
 pub struct ConfigService {
-    db: ControlDatabaseCluster,
-    config_repo: ConfigRepository,
-    cache_namespace_repo: CacheNamespaceVersionRepository,
+    persistence: Arc<dyn ConfigPersistencePort>,
     authorization_cache: AuthorizationCache,
 }
 
 impl ConfigService {
-    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(
+        persistence: Arc<dyn ConfigPersistencePort>,
+        authorization_cache: AuthorizationCache,
+    ) -> Self {
         Self {
-            db,
-            config_repo: ConfigRepository,
-            cache_namespace_repo: CacheNamespaceVersionRepository,
+            persistence,
             authorization_cache,
         }
     }
@@ -71,17 +68,19 @@ impl ConfigService {
         params: ConfigListParams,
     ) -> AppResult<PageResult<ConfigVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let filter = ConfigFilter {
             name: params.name.as_deref(),
             key: params.key.as_deref(),
         };
         let page = self
-            .config_repo
-            .find_by_page_filtered(&db, tenant_id, &params.page, &filter)
+            .persistence
+            .find_by_page(tenant_id, params.page, filter)
             .await?;
-        let records = page.records.into_iter().map(ConfigVo::from).collect();
-        Ok(PageResult::new(records, page.total, &params.page))
+        Ok(PageResult::new(
+            page.records.into_iter().map(ConfigVo::from).collect(),
+            page.total,
+            &params.page,
+        ))
     }
 
     /// 按稳定主键窗口读取一批参数配置导出数据。
@@ -93,11 +92,9 @@ impl ConfigService {
         window: ExportCursorWindow,
     ) -> AppResult<Vec<ConfigVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let filter = ConfigFilter { name, key };
         Ok(self
-            .config_repo
-            .find_for_export_after_id(&db, tenant_id, &filter, window)
+            .persistence
+            .find_export_batch(tenant_id, ConfigFilter { name, key }, window)
             .await?
             .into_iter()
             .map(ConfigVo::from)
@@ -106,10 +103,9 @@ impl ConfigService {
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<ConfigVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         Ok(self
-            .config_repo
-            .find_by_id(&db, tenant_id, id)
+            .persistence
+            .find_by_id(tenant_id, id)
             .await?
             .map(ConfigVo::from))
     }
@@ -120,15 +116,14 @@ impl ConfigService {
         key: &str,
     ) -> AppResult<Option<ConfigVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.find_by_key_in_tenant(tenant_id, key, ReadConsistency::Eventual)
-            .await
+        self.find_by_key_in_tenant(tenant_id, key, true).await
     }
 
     /// 读取认证完成前所需的一项租户配置。
     pub async fn find_public_value(&self, tenant_id: &str, key: &str) -> AppResult<Option<String>> {
         crate::enforce_tenant_scope(tenant_id)?;
         Ok(self
-            .find_by_key_in_tenant(tenant_id, key, ReadConsistency::Strong)
+            .find_by_key_in_tenant(tenant_id, key, false)
             .await?
             .map(|config| config.value))
     }
@@ -137,39 +132,36 @@ impl ConfigService {
         &self,
         tenant_id: &str,
         key: &str,
-        consistency: ReadConsistency,
+        allow_cache: bool,
     ) -> AppResult<Option<ConfigVo>> {
-        // 强一致性读取绕过缓存，避免认证前决策使用失效配置。普通读取先查 Redis；
-        // version key 丢失时从主库恢复权威版本，绝不在 Redis 中猜测初始值。
-        let cache_lookup =
-            if consistency == ReadConsistency::Eventual && self.authorization_cache.is_enabled() {
-                match self
-                    .authorization_cache
-                    .read_namespace_value(tenant_id, CONFIG_CACHE_NAMESPACE, key)
-                    .await?
-                {
-                    Some(lookup) => Some(lookup),
-                    None => {
-                        let namespace_version = self
-                            .cache_namespace_repo
-                            .find_version(self.db.write(), tenant_id, CONFIG_CACHE_NAMESPACE)
-                            .await?;
-                        self.authorization_cache
-                            .sync_namespace_version(
-                                tenant_id,
-                                CONFIG_CACHE_NAMESPACE,
-                                namespace_version,
-                            )
-                            .await?;
-                        Some(NamespaceCacheLookup {
+        let cache_lookup = if allow_cache && self.authorization_cache.is_enabled() {
+            match self
+                .authorization_cache
+                .read_namespace_value(tenant_id, CONFIG_CACHE_NAMESPACE, key)
+                .await?
+            {
+                Some(lookup) => Some(lookup),
+                None => {
+                    let namespace_version = self
+                        .persistence
+                        .find_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE)
+                        .await?;
+                    self.authorization_cache
+                        .sync_namespace_version(
+                            tenant_id,
+                            CONFIG_CACHE_NAMESPACE,
                             namespace_version,
-                            value: None,
-                        })
-                    }
+                        )
+                        .await?;
+                    Some(NamespaceCacheLookup {
+                        namespace_version,
+                        value: None,
+                    })
                 }
-            } else {
-                None
-            };
+            }
+        } else {
+            None
+        };
         if let Some(json) = cache_lookup
             .as_ref()
             .and_then(|lookup| lookup.value.as_deref())
@@ -178,17 +170,13 @@ impl ConfigService {
             return Ok(Some(cached));
         }
 
-        // 所有缓存未命中都回源主库；副本延迟不能把旧配置重新写回新命名空间。
-        // 热命中在到达此处前已经返回，因此不会产生 SQL。
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let result = self
-            .config_repo
-            .find_by_key(&db, tenant_id, key)
+            .persistence
+            .find_by_key(tenant_id, key)
             .await?
             .map(ConfigVo::from);
-
-        if let (Some(cache_lookup), Some(vo)) = (cache_lookup, result.as_ref()) {
-            let json = serde_json::to_string(vo)
+        if let (Some(cache_lookup), Some(config)) = (cache_lookup, result.as_ref()) {
+            let json = serde_json::to_string(config)
                 .map_err(|error| AppError::Internal(format!("序列化参数配置缓存失败: {error}")))?;
             self.authorization_cache
                 .store_namespace_value(
@@ -201,7 +189,6 @@ impl ConfigService {
                 )
                 .await?;
         }
-
         Ok(result)
     }
 
@@ -229,56 +216,34 @@ impl ConfigService {
     ) -> AppResult<ConfigVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_portable_key(key, portable)?;
-        let db = self.db.write();
-        let mut new_config = config::Model {
+        let now = Utc::now();
+        let record = ConfigRecord {
             id: crate::next_id()?,
-            tenant_id: tenant_id.to_owned(),
-            name: name.to_string(),
-            key: key.to_string(),
-            value: value.to_string(),
+            name: name.to_owned(),
+            key: key.to_owned(),
+            value: value.to_owned(),
             portable,
-            remark: remark.map(|s| s.to_string()),
-            del_flag: config::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: Default::default(),
-            updated_at: Default::default(),
+            remark: remark.map(str::to_owned),
+            created_at: now,
+            updated_at: now,
         };
-        new_config.fill_on_insert(&FillContext::new())?;
-
-        let transaction = db
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        if config::Entity::find()
-            .filter(config::Column::TenantId.eq(tenant_id))
-            .filter(config::Column::Key.eq(key))
-            .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
-            .lock(sea_orm::sea_query::LockType::Update)
-            .one(&transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        if transaction
+            .find_by_key_for_update(tenant_id, key)
+            .await?
             .is_some()
         {
             return Err(AppError::Validation(format!("参数键名 '{key}' 已存在")));
         }
-        let saved = self
-            .config_repo
-            .insert_in_transaction(&transaction, tenant_id, new_config)
+        let saved = transaction.insert(tenant_id, record).await?;
+        let namespace_version = transaction
+            .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
             .await?;
-        let namespace_version = self
-            .authorization_cache
-            .record_namespace_version_in_transaction(
-                &transaction,
-                tenant_id,
-                CONFIG_CACHE_NAMESPACE,
-            )
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await?;
@@ -298,41 +263,25 @@ impl ConfigService {
         portable: Option<bool>,
     ) -> AppResult<ConfigVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let transaction = db
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        let mut cfg = self
-            .config_repo
-            .find_by_id_for_update(&transaction, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        let mut config = transaction
+            .find_by_id_for_update(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
-        let portable = portable.unwrap_or(cfg.portable);
-        validate_portable_key(&cfg.key, portable)?;
-        cfg.value = value.to_string();
-        cfg.portable = portable;
-        cfg.fill_on_update(&FillContext::new())?;
-
-        let saved = self
-            .config_repo
-            .update_in_transaction(&transaction, tenant_id, cfg)
+        let portable = portable.unwrap_or(config.portable);
+        validate_portable_key(&config.key, portable)?;
+        config.value = value.to_owned();
+        config.portable = portable;
+        config.updated_at = Utc::now();
+        let saved = transaction.update(tenant_id, config).await?;
+        let namespace_version = transaction
+            .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
             .await?;
-        let namespace_version = self
-            .authorization_cache
-            .record_namespace_version_in_transaction(
-                &transaction,
-                tenant_id,
-                CONFIG_CACHE_NAMESPACE,
-            )
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await?;
@@ -341,57 +290,33 @@ impl ConfigService {
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let transaction = db
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        self.config_repo
-            .find_by_id_for_update(&transaction, tenant_id, id)
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        transaction
+            .find_by_id_for_update(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
-        self.config_repo
-            .delete_in_transaction(&transaction, tenant_id, id)
+        transaction.delete(tenant_id, id).await?;
+        let namespace_version = transaction
+            .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
             .await?;
-        let namespace_version = self
-            .authorization_cache
-            .record_namespace_version_in_transaction(
-                &transaction,
-                tenant_id,
-                CONFIG_CACHE_NAMESPACE,
-            )
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
-            .await?;
-        Ok(())
+            .await
     }
 
     /// 递增独立配置命名空间版本，废弃当前租户的全部参数配置缓存。
     pub async fn clear_cache(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        let namespace_version = self
-            .authorization_cache
-            .record_namespace_version_in_transaction(
-                &transaction,
-                tenant_id,
-                CONFIG_CACHE_NAMESPACE,
-            )
+        let transaction = self.persistence.begin().await?;
+        let namespace_version = transaction
+            .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
             .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await?;
@@ -407,4 +332,170 @@ fn validate_portable_key(key: &str, portable: bool) -> AppResult<()> {
         return Err(AppError::Validation("敏感参数禁止加入租户配置包".into()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use ryframe_kernel::DataScope;
+
+    use super::*;
+    use crate::{ConfigTransaction, ControlTransaction, PersistenceFuture};
+
+    struct FakePersistence {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    struct FakeTransaction {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl ConfigPersistencePort for FakePersistence {
+        fn find_by_page<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _page: ValidatedPageQuery,
+            _filter: ConfigFilter<'a>,
+        ) -> PersistenceFuture<'a, PageResult<ConfigRecord>> {
+            Box::pin(async { unreachable!("本测试不读取列表") })
+        }
+
+        fn find_export_batch<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _filter: ConfigFilter<'a>,
+            _window: ExportCursorWindow,
+        ) -> PersistenceFuture<'a, Vec<ConfigRecord>> {
+            Box::pin(async { unreachable!("本测试不执行导出") })
+        }
+
+        fn find_by_id<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _id: i64,
+        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
+            Box::pin(async { unreachable!("本测试不读取详情") })
+        }
+
+        fn find_by_key<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _key: &'a str,
+        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
+            Box::pin(async { unreachable!("本测试不读取键值") })
+        }
+
+        fn find_namespace_version<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _namespace: &'a str,
+        ) -> PersistenceFuture<'a, i64> {
+            Box::pin(async { unreachable!("本测试不读取缓存版本") })
+        }
+
+        fn begin(&self) -> PersistenceFuture<'_, Box<dyn ConfigTransaction>> {
+            self.calls.lock().expect("调用记录锁应可用").push("begin");
+            let transaction = FakeTransaction {
+                calls: Arc::clone(&self.calls),
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ConfigTransaction>) })
+        }
+    }
+
+    impl ConfigTransaction for FakeTransaction {
+        fn lock_configuration<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
+            Box::pin(async { unreachable!("本测试不锁定配置") })
+        }
+
+        fn find_by_key_for_update<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _key: &'a str,
+        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
+            Box::pin(async { unreachable!("本测试不读取键值") })
+        }
+
+        fn find_by_id_for_update<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _id: i64,
+        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
+            Box::pin(async { unreachable!("本测试不读取详情") })
+        }
+
+        fn insert<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _record: ConfigRecord,
+        ) -> PersistenceFuture<'a, ConfigRecord> {
+            Box::pin(async { unreachable!("本测试不新增配置") })
+        }
+
+        fn update<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _record: ConfigRecord,
+        ) -> PersistenceFuture<'a, ConfigRecord> {
+            Box::pin(async { unreachable!("本测试不更新配置") })
+        }
+
+        fn delete<'a>(&'a self, _tenant_id: &'a str, _id: i64) -> PersistenceFuture<'a, ()> {
+            Box::pin(async { unreachable!("本测试不删除配置") })
+        }
+
+        fn record_namespace_change<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _namespace: &'a str,
+        ) -> PersistenceFuture<'a, i64> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push("namespace");
+            Box::pin(async { Ok(8) })
+        }
+
+        fn increment_configuration_version<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+        ) -> PersistenceFuture<'a, ()> {
+            Box::pin(async { unreachable!("本测试不递增配置版本") })
+        }
+    }
+
+    impl ControlTransaction for FakeTransaction {
+        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+            self.calls.lock().expect("调用记录锁应可用").push("commit");
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_clear_commits_authoritative_version_first() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let service = ConfigService::new(
+            Arc::new(FakePersistence {
+                calls: Arc::clone(&calls),
+            }),
+            AuthorizationCache::disabled(),
+        );
+        let actor = ActorContext {
+            user_id: 1,
+            tenant_id: "tenant-a".into(),
+            username: "tester".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: DataScope::SelfOnly,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin: false,
+        };
+
+        assert_eq!(service.clear_cache(&actor).await.expect("清理应成功"), 1);
+        assert_eq!(
+            *calls.lock().expect("调用记录锁应可用"),
+            ["begin", "namespace", "commit"]
+        );
+    }
 }
