@@ -7,7 +7,7 @@ use ryframe_db::{
 };
 use ryframe_kernel::AppError;
 
-use crate::{ArtifactStore, ArtifactStoreError, JobQueue};
+use crate::{ArtifactStore, ArtifactStoreError, JobQueue, SpreadsheetWriterFactory};
 
 use super::{
     ConfigService, DictService, LoginInfoService, OperLogService, PostService, ProductService,
@@ -36,7 +36,7 @@ pub use types::{
 
 use filters::{
     CONFIG_HEADERS, DICT_TYPE_HEADERS, LOGIN_LOG_HEADERS, OPER_LOG_HEADERS, POST_HEADERS,
-    ROLE_HEADERS, UserExportRow, deterministic_export_file_id,
+    ROLE_HEADERS, USER_HEADERS, deterministic_export_file_id,
     ensure_download_authorization_matches, export_file_location, should_delete_uncommitted_object,
     validate_job_id, validate_request_command,
 };
@@ -64,6 +64,7 @@ pub struct ExportService {
     oper_logs: OperLogService,
     login_infos: LoginInfoService,
     storage: Arc<dyn ArtifactStore>,
+    spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
     default_max_attempts: i32,
     export_max_rows: usize,
     export_retention: Duration,
@@ -76,6 +77,7 @@ impl ExportService {
         db: ControlDatabaseCluster,
         users: Arc<UserService>,
         storage: Arc<dyn ArtifactStore>,
+        spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
         policy: crate::ExportPolicy,
     ) -> Self {
         let purge = ExportPurgeUseCase::new(db.clone(), Arc::clone(&storage));
@@ -100,6 +102,7 @@ impl ExportService {
             login_infos: LoginInfoService::new(db),
             users,
             storage,
+            spreadsheets,
             default_max_attempts: policy.default_max_attempts,
             export_max_rows: policy.max_rows.min(EXPORT_BUSINESS_MAX_ROWS),
             export_retention: policy.retention,

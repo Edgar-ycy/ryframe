@@ -14,7 +14,7 @@ impl ExportService {
         &self,
         export: export_job::Model,
         actor: ActorContext,
-        artifact: ryframe_adapters::excel::ExcelArtifact,
+        artifact: Box<dyn crate::SpreadsheetArtifact>,
         resource: &str,
     ) -> AppResult<()> {
         let (file_name, key) = export_file_location(&export.tenant_id, resource, export.id);

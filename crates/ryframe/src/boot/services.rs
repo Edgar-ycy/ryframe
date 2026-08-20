@@ -378,6 +378,7 @@ pub async fn build_all(
             database.clone(),
             user.clone(),
             object_storage,
+            super::spreadsheet::writer_factory(),
             policies.export,
         )
         .with_job_queue(job_queue.clone()),

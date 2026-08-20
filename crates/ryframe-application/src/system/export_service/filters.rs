@@ -308,34 +308,17 @@ pub(super) const LOGIN_LOG_HEADERS: &[(&str, &str)] = &[
     ("login_time", "登录时间"),
 ];
 
-#[derive(Serialize)]
-pub(super) struct UserExportRow {
-    pub(super) user_id: String,
-    pub(super) username: String,
-    pub(super) nickname: String,
-    pub(super) email: String,
-    pub(super) phone: String,
-    pub(super) dept_name: Option<String>,
-    pub(super) status: String,
-    pub(super) remark: Option<String>,
-    pub(super) created_at: String,
-}
-
-impl UserExportRow {
-    pub(super) const fn headers() -> &'static [(&'static str, &'static str)] {
-        &[
-            ("user_id", "用户 ID"),
-            ("username", "用户名"),
-            ("nickname", "昵称"),
-            ("email", "邮箱"),
-            ("phone", "手机号"),
-            ("dept_name", "部门"),
-            ("status", "状态"),
-            ("remark", "备注"),
-            ("created_at", "创建时间"),
-        ]
-    }
-}
+pub(super) const USER_HEADERS: &[(&str, &str)] = &[
+    ("user_id", "用户 ID"),
+    ("username", "用户名"),
+    ("nickname", "昵称"),
+    ("email", "邮箱"),
+    ("phone", "手机号"),
+    ("dept_name", "部门"),
+    ("status", "状态"),
+    ("remark", "备注"),
+    ("created_at", "创建时间"),
+];
 
 pub(super) fn validate_request_command(command: &RequestExportCommand) -> AppResult<()> {
     let permission_code = command.permission_code.as_str();

@@ -45,6 +45,8 @@ mod process_jobs;
 mod process_logging;
 #[path = "../boot/readiness.rs"]
 mod process_readiness;
+#[path = "../boot/spreadsheet.rs"]
+mod process_spreadsheet;
 #[path = "../boot/tenant_data.rs"]
 mod process_tenant_data;
 
@@ -158,6 +160,7 @@ async fn main() -> Result<(), AppError> {
             database.clone(),
             user.clone(),
             object_storage,
+            process_spreadsheet::writer_factory(),
             application_policies.export,
         )
         .with_job_queue(queue.clone()),

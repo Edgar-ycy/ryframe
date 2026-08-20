@@ -1,7 +1,7 @@
 use std::time::{Duration as StdDuration, Instant};
 
-use ryframe_adapters::excel::{
-    ExcelArtifact, ExcelBatchProgress, IncrementalExcelWriter, XLSX_MAX_DATA_ROWS,
+use crate::{
+    SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter,
 };
 use ryframe_db::{
     ExportCursorWindow, ExportStartDisposition, LoginInfoFilter, OperLogFilter, UserFilter,
@@ -21,7 +21,7 @@ struct ExportExecution<'a> {
 
 struct AppendedBatch {
     last_id: i64,
-    progress: ExcelBatchProgress,
+    progress: SpreadsheetBatchProgress,
 }
 
 impl ExportService {
@@ -123,7 +123,7 @@ impl ExportService {
         execution: &ExportExecution<'_>,
     ) -> AppResult<()> {
         let (sheet_name, headers) = export_layout(selection);
-        let mut writer = IncrementalExcelWriter::new(sheet_name, headers)?;
+        let mut writer = self.spreadsheets.create(sheet_name, headers)?;
         let mut after_id = None;
 
         loop {
@@ -140,7 +140,7 @@ impl ExportService {
             }
             let window = ExportCursorWindow::new(after_id, upper_id, EXPORT_BATCH_SIZE);
             let Some(batch) = self
-                .append_export_batch(&mut writer, &actor, selection, window)
+                .append_export_batch(writer.as_mut(), &actor, selection, window)
                 .await?
             else {
                 break;
@@ -183,7 +183,11 @@ impl ExportService {
             return Ok(());
         }
         let artifact = finish_writer_within_deadline(writer, execution).await?;
-        validate_artifact_limits(&artifact, execution.matched_rows, self.export_max_rows)?;
+        validate_artifact_limits(
+            artifact.as_ref(),
+            execution.matched_rows,
+            self.export_max_rows,
+        )?;
         if !self
             .ensure_execution_active(
                 &export,
@@ -244,7 +248,7 @@ impl ExportService {
 
     async fn append_export_batch(
         &self,
-        writer: &mut IncrementalExcelWriter<'_>,
+        writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         selection: &ExportSelection,
         window: ExportCursorWindow,
@@ -267,17 +271,22 @@ impl ExportService {
                 let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
                     return Ok(None);
                 };
-                let progress = writer.append_rows(batch.into_iter().map(|user| UserExportRow {
-                    user_id: user.id,
-                    username: user.username,
-                    nickname: user.nickname,
-                    email: user.email,
-                    phone: user.phone,
-                    dept_name: user.dept_name,
-                    status: user.status,
-                    remark: user.remark,
-                    created_at: user.created_at.to_rfc3339(),
-                }))?;
+                let progress = append_rows(
+                    writer,
+                    batch.into_iter().map(|user| {
+                        serde_json::json!({
+                            "user_id": user.id,
+                            "username": user.username,
+                            "nickname": user.nickname,
+                            "email": user.email,
+                            "phone": user.phone,
+                            "dept_name": user.dept_name,
+                            "status": user.status,
+                            "remark": user.remark,
+                            "created_at": user.created_at.to_rfc3339(),
+                        })
+                    }),
+                )?;
                 Ok(Some(AppendedBatch { last_id, progress }))
             }
             ExportSelection::Roles(filters) => {
@@ -294,13 +303,16 @@ impl ExportService {
                 let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
                     return Ok(None);
                 };
-                let progress = writer.append_rows(batch.into_iter().map(|item| {
-                    serde_json::json!({
-                        "role_id": item.id, "role_name": item.name, "role_code": item.code,
-                        "data_scope": item.data_scope, "status": item.status, "sort": item.sort,
-                        "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
-                    })
-                }))?;
+                let progress = append_rows(
+                    writer,
+                    batch.into_iter().map(|item| {
+                        serde_json::json!({
+                            "role_id": item.id, "role_name": item.name, "role_code": item.code,
+                            "data_scope": item.data_scope, "status": item.status, "sort": item.sort,
+                            "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
+                        })
+                    }),
+                )?;
                 Ok(Some(AppendedBatch { last_id, progress }))
             }
             ExportSelection::Posts(filters) => {
@@ -317,13 +329,16 @@ impl ExportService {
                 let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
                     return Ok(None);
                 };
-                let progress = writer.append_rows(batch.into_iter().map(|item| {
-                    serde_json::json!({
-                        "post_id": item.id, "name": item.name, "code": item.code,
-                        "sort": item.sort, "status": item.status, "remark": item.remark,
-                        "created_at": item.created_at.to_rfc3339(),
-                    })
-                }))?;
+                let progress = append_rows(
+                    writer,
+                    batch.into_iter().map(|item| {
+                        serde_json::json!({
+                            "post_id": item.id, "name": item.name, "code": item.code,
+                            "sort": item.sort, "status": item.status, "remark": item.remark,
+                            "created_at": item.created_at.to_rfc3339(),
+                        })
+                    }),
+                )?;
                 Ok(Some(AppendedBatch { last_id, progress }))
             }
             ExportSelection::Configs(filters) => {
@@ -334,12 +349,15 @@ impl ExportService {
                 let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
                     return Ok(None);
                 };
-                let progress = writer.append_rows(batch.into_iter().map(|item| {
-                    serde_json::json!({
-                        "name": item.name, "key": item.key, "value": item.value,
-                        "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
-                    })
-                }))?;
+                let progress = append_rows(
+                    writer,
+                    batch.into_iter().map(|item| {
+                        serde_json::json!({
+                            "name": item.name, "key": item.key, "value": item.value,
+                            "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
+                        })
+                    }),
+                )?;
                 Ok(Some(AppendedBatch { last_id, progress }))
             }
             ExportSelection::DictTypes(filters) => {
@@ -356,12 +374,15 @@ impl ExportService {
                 let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
                     return Ok(None);
                 };
-                let progress = writer.append_rows(batch.into_iter().map(|item| {
-                    serde_json::json!({
-                        "name": item.name, "code": item.code, "status": item.status,
-                        "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
-                    })
-                }))?;
+                let progress = append_rows(
+                    writer,
+                    batch.into_iter().map(|item| {
+                        serde_json::json!({
+                            "name": item.name, "code": item.code, "status": item.status,
+                            "remark": item.remark, "created_at": item.created_at.to_rfc3339(),
+                        })
+                    }),
+                )?;
                 Ok(Some(AppendedBatch { last_id, progress }))
             }
             ExportSelection::OperLogs(filters) => {
@@ -381,14 +402,17 @@ impl ExportService {
                 let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
                     return Ok(None);
                 };
-                let progress = writer.append_rows(batch.into_iter().map(|item| {
-                    serde_json::json!({
-                        "title": item.title, "business_type": item.business_type,
-                        "oper_name": item.oper_name, "oper_url": item.oper_url,
-                        "oper_ip": item.oper_ip, "status": item.status,
-                        "cost_time": item.cost_time, "oper_time": item.oper_time,
-                    })
-                }))?;
+                let progress = append_rows(
+                    writer,
+                    batch.into_iter().map(|item| {
+                        serde_json::json!({
+                            "title": item.title, "business_type": item.business_type,
+                            "oper_name": item.oper_name, "oper_url": item.oper_url,
+                            "oper_ip": item.oper_ip, "status": item.status,
+                            "cost_time": item.cost_time, "oper_time": item.oper_time,
+                        })
+                    }),
+                )?;
                 Ok(Some(AppendedBatch { last_id, progress }))
             }
             ExportSelection::LoginLogs(filters) => {
@@ -408,25 +432,36 @@ impl ExportService {
                 let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
                     return Ok(None);
                 };
-                let progress = writer.append_rows(batch.into_iter().map(|item| {
-                    serde_json::json!({
-                        "user_name": item.user_name, "ipaddr": item.ipaddr,
-                        "login_location": item.login_location, "browser": item.browser,
-                        "os": item.os, "status": item.status, "msg": item.msg,
-                        "login_time": item.login_time,
-                    })
-                }))?;
+                let progress = append_rows(
+                    writer,
+                    batch.into_iter().map(|item| {
+                        serde_json::json!({
+                            "user_name": item.user_name, "ipaddr": item.ipaddr,
+                            "login_location": item.login_location, "browser": item.browser,
+                            "os": item.os, "status": item.status, "msg": item.msg,
+                            "login_time": item.login_time,
+                        })
+                    }),
+                )?;
                 Ok(Some(AppendedBatch { last_id, progress }))
             }
         }
     }
 }
 
+fn append_rows(
+    writer: &mut dyn SpreadsheetWriter,
+    rows: impl Iterator<Item = serde_json::Value>,
+) -> AppResult<SpreadsheetBatchProgress> {
+    let mut rows = rows;
+    writer.append_rows(&mut rows)
+}
+
 fn export_layout(
     selection: &ExportSelection,
 ) -> (&'static str, &'static [(&'static str, &'static str)]) {
     match selection {
-        ExportSelection::Users(_) => ("用户数据", UserExportRow::headers()),
+        ExportSelection::Users(_) => ("用户数据", USER_HEADERS),
         ExportSelection::Roles(_) => ("角色数据", ROLE_HEADERS),
         ExportSelection::Posts(_) => ("岗位数据", POST_HEADERS),
         ExportSelection::Configs(_) => ("参数配置", CONFIG_HEADERS),
@@ -503,10 +538,10 @@ fn validate_row_and_byte_limits(
     let configured_rows =
         u64::try_from(maximum_rows).map_err(|_| AppError::Config("导出行数上限无法转换".into()))?;
     let row_limit = configured_rows.min(EXPORT_BUSINESS_MAX_ROWS as u64);
-    if rows > matched_rows || rows > row_limit || rows > XLSX_MAX_DATA_ROWS {
+    if rows > matched_rows || rows > row_limit || rows > SPREADSHEET_MAX_DATA_ROWS {
         return Err(AppError::ExportRowLimitExceeded {
             matched_rows: rows,
-            limit: row_limit.min(XLSX_MAX_DATA_ROWS),
+            limit: row_limit.min(SPREADSHEET_MAX_DATA_ROWS),
         });
     }
     if input_bytes > EXPORT_MAX_RESULT_BYTES {
@@ -519,7 +554,7 @@ fn validate_row_and_byte_limits(
 }
 
 fn validate_artifact_limits(
-    artifact: &ExcelArtifact,
+    artifact: &dyn SpreadsheetArtifact,
     matched_rows: u64,
     maximum_rows: usize,
 ) -> AppResult<()> {
@@ -539,9 +574,9 @@ fn validate_artifact_limits(
 }
 
 async fn finish_writer_within_deadline(
-    writer: IncrementalExcelWriter<'static>,
+    writer: Box<dyn SpreadsheetWriter>,
     execution: &ExportExecution<'_>,
-) -> AppResult<ExcelArtifact> {
+) -> AppResult<Box<dyn SpreadsheetArtifact>> {
     let limit = StdDuration::from_secs(EXPORT_MAX_RUNTIME_SECONDS as u64);
     let remaining = limit
         .checked_sub(execution.started_at.elapsed())
