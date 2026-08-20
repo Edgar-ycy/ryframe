@@ -31,7 +31,7 @@ const PRODUCT_CHANGE_LEASE_SECONDS: i64 = 30;
 mod context;
 mod model;
 mod read;
-pub(crate) mod resources;
+mod resources;
 mod support;
 
 pub use crate::ProvisioningCapabilityResources;
