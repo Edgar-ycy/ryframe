@@ -3,7 +3,7 @@ use serde::Deserialize;
 use crate::{
     ApiDocsConfig, AuthConfig, CorsConfig, DataRetentionConfig, DatabaseConfig, Environment,
     JobConfig, LoggerConfig, MessagingConfig, MonitorConfig, MultiTenancyConfig,
-    ObjectStorageConfig, PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig,
+    ObjectStorageConfig, PaginationConfig, ProxyConfig, RateLimitConfig, RedisConfig, ResetConfig,
     ResourceScopeId, ServiceAccountsConfig, TelemetryConfig, TenantConfigTransferConfig,
     TenantDataConfig, UploadLimitsConfig, UserImportConfig,
 };
@@ -38,6 +38,9 @@ pub struct AppConfig {
     pub snowflake_worker_id: i64,
     /// 共享 MySQL、Redis 和对象存储资源的强制环境作用域。
     pub scope_id: ResourceScopeId,
+    /// 仅供 feature-gated 非生产重建命令读取的安全声明。
+    #[serde(default)]
+    pub reset: ResetConfig,
     pub app: AppSettings,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,

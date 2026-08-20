@@ -14,6 +14,9 @@ impl AppConfig {
     /// 校验必填配置项
     pub fn validate(&self) -> AppResult<()> {
         validate_resource_scope(&self.scope_id, self.environment.is_production())?;
+        self.reset
+            .validate(self.environment.is_production())
+            .map_err(AppError::Config)?;
         if ryframe_kernel::SnowflakeWorkerId::new(self.snowflake_worker_id).is_none() {
             return Err(AppError::Config(format!(
                 "Snowflake worker ID 必须在 0~{} 之间，当前值: {}",

@@ -74,6 +74,26 @@ pub(super) enum EnvValueType {
 
 pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     EnvOverride::string("APP_SCOPE_ID", &["scope_id"]),
+    EnvOverride::boolean(
+        "APP_RESET_LEGACY_MYSQL_EXCLUSIVE",
+        &["reset", "legacy_mysql_exclusive"],
+    ),
+    EnvOverride::boolean(
+        "APP_RESET_LEGACY_REDIS_EXCLUSIVE",
+        &["reset", "legacy_redis_exclusive"],
+    ),
+    EnvOverride::boolean(
+        "APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE",
+        &["reset", "legacy_object_storage_exclusive"],
+    ),
+    EnvOverride::string(
+        "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY",
+        &["reset", "redis_outside_sentinel_key"],
+    ),
+    EnvOverride::string(
+        "APP_RESET_CREDENTIAL_VERSION",
+        &["reset", "credential_version"],
+    ),
     EnvOverride::string("APP_APP_NAME", &["app", "name"]),
     EnvOverride::string("APP_APP_HOST", &["app", "host"]),
     EnvOverride::integer("APP_APP_PORT", &["app", "port"]),
