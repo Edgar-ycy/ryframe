@@ -31,10 +31,13 @@ use super::{
     CONFIG_PACKAGE_BUCKET, CapabilityRequirement, DownloadedFile, FileService,
     ParsedTenantConfigPackage, PortableConfig, PortableDepartment, PortableDictData,
     PortableDictType, PortableMenu, PortablePermission, PortablePost, PortableRole, ProductService,
-    TenantConfigPackageLimits, TenantConfigPackageResources, UploadPolicy, UserService,
-    parse_tenant_config_package,
+    TenantConfigPackageLimits, TenantConfigPackageResources, TenantConfigPackageSource,
+    UploadPolicy, UserService, parse_tenant_config_package,
 };
-use crate::{AuthorizationCache, ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue};
+use crate::{
+    AuthorizationCache, ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
+    TenantConfigArchivePort,
+};
 
 mod apply_resources;
 mod apply_workflow;
@@ -87,6 +90,7 @@ pub struct TenantConfigTransferService {
     authorization_cache: AuthorizationCache,
     target_catalog: TenantConfigTargetCatalog,
     config: crate::TenantConfigTransferPolicy,
+    archive: Arc<dyn TenantConfigArchivePort>,
 }
 
 #[derive(Clone)]
@@ -97,6 +101,7 @@ pub struct TenantConfigTransferDependencies {
     pub file_service: Arc<FileService>,
     pub product_service: Arc<ProductService>,
     pub authorization_cache: AuthorizationCache,
+    pub archive: Arc<dyn TenantConfigArchivePort>,
 }
 
 #[derive(Clone)]
@@ -117,6 +122,7 @@ impl TenantConfigTransferService {
             file_service,
             product_service,
             authorization_cache,
+            archive,
         } = dependencies;
         let TenantConfigTransferSettings {
             target_catalog,
@@ -132,6 +138,7 @@ impl TenantConfigTransferService {
             authorization_cache,
             target_catalog,
             config,
+            archive,
         }
     }
 

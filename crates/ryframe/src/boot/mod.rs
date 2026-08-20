@@ -31,4 +31,5 @@ pub mod services;
 pub mod session_security;
 pub mod spreadsheet;
 pub mod storage;
+pub mod tenant_config_archive;
 pub mod tenant_data;

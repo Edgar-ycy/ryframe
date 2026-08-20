@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
@@ -628,24 +628,29 @@ pub struct ParsedTenantConfigPackage {
     pub package_sha256: String,
 }
 
+/// 生成租户配置包时写入清单的来源信息。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TenantConfigPackageSource {
+    pub tenant_key: String,
+    pub tenant_name: String,
+    pub app_version: String,
+    pub generated_at: DateTime<Utc>,
+}
+
 /// 在阻塞线程中构造只含两个受控文件的配置包。
 pub async fn build_tenant_config_package(
+    archive: Arc<dyn crate::TenantConfigArchivePort>,
     resources: TenantConfigPackageResources,
     required_capabilities: Vec<CapabilityRequirement>,
-    source_tenant_key: String,
-    source_tenant_name: String,
-    source_app_version: String,
-    generated_at: DateTime<Utc>,
+    source: TenantConfigPackageSource,
     limits: TenantConfigPackageLimits,
 ) -> AppResult<GeneratedTenantConfigPackage> {
     tokio::task::spawn_blocking(move || {
         format::build_package_blocking(
+            archive.as_ref(),
             resources,
             required_capabilities,
-            source_tenant_key,
-            source_tenant_name,
-            source_app_version,
-            generated_at,
+            source,
             limits,
         )
     })
@@ -658,15 +663,28 @@ pub async fn build_tenant_config_package(
 
 /// 在阻塞线程中解析并校验受控配置包。
 pub async fn parse_tenant_config_package(
+    archive: Arc<dyn crate::TenantConfigArchivePort>,
     data: Vec<u8>,
     limits: TenantConfigPackageLimits,
 ) -> AppResult<ParsedTenantConfigPackage> {
-    tokio::task::spawn_blocking(move || format::parse_package_blocking(data, limits))
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "租户配置包解析阻塞任务失败");
-            AppError::Internal("租户配置包解析任务失败".into())
-        })?
+    let (parsed, _) = parse_tenant_config_package_with_source(archive, data, limits).await?;
+    Ok(parsed)
+}
+
+pub(super) async fn parse_tenant_config_package_with_source(
+    archive: Arc<dyn crate::TenantConfigArchivePort>,
+    data: Vec<u8>,
+    limits: TenantConfigPackageLimits,
+) -> AppResult<(ParsedTenantConfigPackage, Vec<u8>)> {
+    tokio::task::spawn_blocking(move || {
+        let parsed = format::parse_package_blocking(archive.as_ref(), &data, limits)?;
+        Ok((parsed, data))
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "租户配置包解析阻塞任务失败");
+        AppError::Internal("租户配置包解析任务失败".into())
+    })?
 }
 
 fn sha256_hex(data: &[u8]) -> String {

@@ -17,7 +17,6 @@ futures-util = { workspace = true }
 base64 = { workspace = true }
 hmac = { workspace = true }
 rand = { workspace = true }
-zip = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 chrono-tz = { workspace = true }
 cron = { workspace = true }

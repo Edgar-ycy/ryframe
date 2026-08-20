@@ -345,6 +345,7 @@ pub async fn build_all(
             file_service: file.clone(),
             product_service: product.clone(),
             authorization_cache: authorization_cache.clone(),
+            archive: super::tenant_config_archive::codec(),
         },
         ryframe_application::system::TenantConfigTransferSettings {
             target_catalog: ryframe_api::tenant_config_target_catalog()?,

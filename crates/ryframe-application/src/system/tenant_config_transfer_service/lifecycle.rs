@@ -138,7 +138,12 @@ impl TenantConfigTransferService {
                     .ok_or_else(|| AppError::Conflict("配置包文件不存在".into()))?,
             )
             .await?;
-        let parsed = parse_tenant_config_package(file.data, self.package_limits()).await?;
+        let parsed = parse_tenant_config_package(
+            Arc::clone(&self.archive),
+            file.data,
+            self.package_limits(),
+        )
+        .await?;
         if bundle.sha256.as_deref() != Some(parsed.package_sha256.as_str()) {
             return Err(AppError::Conflict("配置包文件完整性校验失败".into()));
         }

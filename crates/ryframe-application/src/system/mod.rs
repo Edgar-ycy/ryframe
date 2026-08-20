@@ -98,8 +98,8 @@ pub use tenant_config_package::{
     GeneratedTenantConfigPackage, ParsedTenantConfigPackage, PortableConfig, PortableDepartment,
     PortableDictData, PortableDictType, PortableMenu, PortablePermission, PortablePost,
     PortableRole, TenantConfigCatalogSummary, TenantConfigPackageLimits,
-    TenantConfigPackageManifest, TenantConfigPackageResources, TenantConfigResourceCounts,
-    build_tenant_config_package, parse_tenant_config_package,
+    TenantConfigPackageManifest, TenantConfigPackageResources, TenantConfigPackageSource,
+    TenantConfigResourceCounts, build_tenant_config_package, parse_tenant_config_package,
 };
 pub use tenant_config_transfer_service::{
     ApplyTenantConfigTransferCommand, RequestTenantConfigBundleOutcome,

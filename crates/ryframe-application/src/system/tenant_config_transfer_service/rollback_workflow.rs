@@ -38,8 +38,12 @@ impl TenantConfigTransferService {
             .file_service
             .download_config_package_internal(tenant_id, snapshot_file_id)
             .await?;
-        let snapshot =
-            parse_tenant_config_package(snapshot_file.data, self.package_limits()).await?;
+        let snapshot = parse_tenant_config_package(
+            Arc::clone(&self.archive),
+            snapshot_file.data,
+            self.package_limits(),
+        )
+        .await?;
         let mut lease = self
             .acquire_operation_lease(
                 tenant_id,

@@ -84,6 +84,7 @@ mod service_account_write;
 mod service_identity_secret;
 mod spreadsheet;
 pub mod system;
+mod tenant_config_archive;
 mod tenant_config_retention_persistence;
 mod tenant_data_migration;
 mod tenant_data_targets;
@@ -319,6 +320,7 @@ pub use spreadsheet::{
     SpreadsheetDocumentFuture, SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow,
     SpreadsheetWriter, SpreadsheetWriterFactory,
 };
+pub use tenant_config_archive::{TenantConfigArchiveContents, TenantConfigArchivePort};
 pub use tenant_config_retention_persistence::{
     TENANT_CONFIG_PACKAGE_RESOURCE, TENANT_CONFIG_SNAPSHOT_RESOURCE, TenantConfigArtifactCounts,
     TenantConfigRetentionPersistencePort,

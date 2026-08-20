@@ -87,12 +87,15 @@ impl TenantConfigTransferService {
                 }
             };
         let generated = crate::system::build_tenant_config_package(
+            Arc::clone(&self.archive),
             source_resources,
             required_capabilities,
-            tenant_id.to_owned(),
-            source_tenant_name,
-            env!("CARGO_PKG_VERSION").to_owned(),
-            generated_at,
+            TenantConfigPackageSource {
+                tenant_key: tenant_id.to_owned(),
+                tenant_name: source_tenant_name,
+                app_version: env!("CARGO_PKG_VERSION").to_owned(),
+                generated_at,
+            },
             self.package_limits(),
         )
         .await?;

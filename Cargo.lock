@@ -3201,6 +3201,7 @@ dependencies = [
  "tracing-appender",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -3303,7 +3304,6 @@ dependencies = [
  "tracing",
  "uuid",
  "validator",
- "zip 8.6.0",
 ]
 
 [[package]]

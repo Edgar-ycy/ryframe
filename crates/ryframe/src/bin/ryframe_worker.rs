@@ -50,6 +50,8 @@ mod process_logging;
 mod process_readiness;
 #[path = "../boot/spreadsheet.rs"]
 mod process_spreadsheet;
+#[path = "../boot/tenant_config_archive.rs"]
+mod process_tenant_config_archive;
 #[path = "../boot/tenant_data.rs"]
 mod tenant_data;
 
@@ -202,6 +204,7 @@ async fn main() -> Result<(), AppError> {
             file_service: file,
             product_service: product,
             authorization_cache: authorization_cache.clone(),
+            archive: process_tenant_config_archive::codec(),
         },
         ryframe_application::system::TenantConfigTransferSettings {
             target_catalog: ryframe_api::tenant_config_target_catalog()?,

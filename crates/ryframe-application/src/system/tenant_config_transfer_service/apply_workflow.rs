@@ -132,12 +132,15 @@ impl TenantConfigTransferService {
                 }
             };
         let snapshot = match crate::system::build_tenant_config_package(
+            Arc::clone(&self.archive),
             snapshot_resources,
             snapshot_capabilities,
-            tenant_id.to_owned(),
-            snapshot_tenant_name,
-            env!("CARGO_PKG_VERSION").to_owned(),
-            snapshot_time,
+            TenantConfigPackageSource {
+                tenant_key: tenant_id.to_owned(),
+                tenant_name: snapshot_tenant_name,
+                app_version: env!("CARGO_PKG_VERSION").to_owned(),
+                generated_at: snapshot_time,
+            },
             self.package_limits(),
         )
         .await

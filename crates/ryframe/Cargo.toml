@@ -35,6 +35,7 @@ serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 async-trait = { workspace = true }
+zip = { workspace = true }
 
 [features]
 default = ["runtime-swagger-ui"]

@@ -121,7 +121,13 @@ impl TenantConfigTransferService {
     ) -> AppResult<RequestTenantConfigTransferOutcome> {
         validate_sha256(idempotency_key_hash)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let parsed = parse_tenant_config_package(data.clone(), self.package_limits()).await?;
+        let (parsed, data) =
+            crate::system::tenant_config_package::parse_tenant_config_package_with_source(
+                Arc::clone(&self.archive),
+                data,
+                self.package_limits(),
+            )
+            .await?;
         if let Some((existing, bundle)) = self
             .find_uploaded_transfer_by_idempotency_and_bind_audit(
                 tenant_id,
