@@ -128,7 +128,10 @@ pub use user_service::{
     CreateUserParams, RoleBriefVo, USER_STATUS_NORMAL, UpdateUserParams, UserDetailVo,
     UserListParams, UserService, UserVo,
 };
-pub use websocket_ticket_service::{WebSocketTicket, WebSocketTicketGrant, WebSocketTicketService};
+pub use websocket_ticket_service::{
+    WebSocketTicket, WebSocketTicketGrant, WebSocketTicketService, WebSocketTicketStore,
+    WebSocketTicketStoreFuture,
+};
 pub mod profile_service;
 pub use profile_service::ProfileService;
 pub mod file_service;

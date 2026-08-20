@@ -1,5 +1,6 @@
+use std::{future::Future, pin::Pin, sync::Arc};
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use ryframe_adapters::RedisClient;
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -25,16 +26,28 @@ pub struct WebSocketTicketGrant {
     pub expires_in: u64,
 }
 
+pub type WebSocketTicketStoreFuture<'a, T> =
+    Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
+
+pub trait WebSocketTicketStore: Send + Sync {
+    fn put(&self, key: String, value: String, ttl_secs: u64) -> WebSocketTicketStoreFuture<'_, ()>;
+
+    fn take<'a>(&'a self, key: &'a str) -> WebSocketTicketStoreFuture<'a, Option<String>>;
+}
+
 /// WebSocket 一次性票据的签发与原子消费服务。
 #[derive(Clone)]
 pub struct WebSocketTicketService {
-    redis: Option<RedisClient>,
+    store: Option<Arc<dyn WebSocketTicketStore>>,
     config: crate::MessagingPolicy,
 }
 
 impl WebSocketTicketService {
-    pub fn new(redis: Option<RedisClient>, config: crate::MessagingPolicy) -> Self {
-        Self { redis, config }
+    pub fn new(
+        store: Option<Arc<dyn WebSocketTicketStore>>,
+        config: crate::MessagingPolicy,
+    ) -> Self {
+        Self { store, config }
     }
 
     /// 按配置有效期签发只能消费一次的 WebSocket 票据。
@@ -58,7 +71,7 @@ impl WebSocketTicketService {
             return Err(AppError::Authentication("访问令牌缺少登录会话标识".into()));
         }
 
-        let redis = self.redis.as_ref().ok_or_else(|| {
+        let store = self.store.as_ref().ok_or_else(|| {
             AppError::ServiceUnavailable("WebSocket 票据服务依赖 Redis，当前不可用".into())
         })?;
         let ticket = new_ticket();
@@ -72,12 +85,9 @@ impl WebSocketTicketService {
         };
         let encoded = serde_json::to_string(&payload)
             .map_err(|error| AppError::Internal(format!("WebSocket 票据序列化失败: {error}")))?;
-        redis
-            .set_ex(ticket_key(&ticket), encoded, self.config.ticket_ttl_seconds)
-            .await
-            .map_err(|error| {
-                AppError::ServiceUnavailable(format!("WebSocket 票据写入失败: {error}"))
-            })?;
+        store
+            .put(ticket_key(&ticket), encoded, self.config.ticket_ttl_seconds)
+            .await?;
 
         Ok(WebSocketTicketGrant {
             ticket,
@@ -91,16 +101,11 @@ impl WebSocketTicketService {
         if ticket.len() != 43 || !ticket.bytes().all(is_base64url_byte) {
             return Err(invalid_ticket_error());
         }
-        let redis = self.redis.as_ref().ok_or_else(|| {
+        let store = self.store.as_ref().ok_or_else(|| {
             AppError::ServiceUnavailable("WebSocket 票据服务依赖 Redis，当前不可用".into())
         })?;
-        let value = redis
-            .get_and_del(ticket_key(ticket))
-            .await
-            .map_err(|error| {
-                AppError::ServiceUnavailable(format!("WebSocket 票据校验失败: {error}"))
-            })?
-            .ok_or_else(invalid_ticket_error)?;
+        let key = ticket_key(ticket);
+        let value = store.take(&key).await?.ok_or_else(invalid_ticket_error)?;
         serde_json::from_str(&value).map_err(|_| invalid_ticket_error())
     }
 
@@ -140,5 +145,90 @@ fn normalize_locale(locale: &str) -> String {
         "en-US".into()
     } else {
         "zh-CN".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use ryframe_kernel::{ActorContext, DataScope};
+    use tokio::sync::Mutex;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct MemoryTicketStore {
+        values: Mutex<HashMap<String, String>>,
+    }
+
+    impl WebSocketTicketStore for MemoryTicketStore {
+        fn put(
+            &self,
+            key: String,
+            value: String,
+            _ttl_secs: u64,
+        ) -> WebSocketTicketStoreFuture<'_, ()> {
+            Box::pin(async move {
+                self.values.lock().await.insert(key, value);
+                Ok(())
+            })
+        }
+
+        fn take<'a>(&'a self, key: &'a str) -> WebSocketTicketStoreFuture<'a, Option<String>> {
+            Box::pin(async move { Ok(self.values.lock().await.remove(key)) })
+        }
+    }
+
+    #[tokio::test]
+    async fn issued_ticket_can_only_be_consumed_once() {
+        let store = Arc::new(MemoryTicketStore::default());
+        let service = WebSocketTicketService::new(
+            Some(store),
+            crate::MessagingPolicy::new(true, 60, 7, 100).expect("策略应有效"),
+        );
+        let principal = RequestPrincipal {
+            actor: ActorContext {
+                user_id: 42,
+                tenant_id: "tenant-a".into(),
+                username: "tester".into(),
+                dept_id: None,
+                dept_path: None,
+                data_scope: DataScope::SelfOnly,
+                custom_dept_ids: Vec::new(),
+                include_self: true,
+                is_super_admin: false,
+            },
+            tenant_authorization_epoch: 0,
+            preferred_locale: None,
+            roles: Vec::new(),
+            role_ids: Vec::new(),
+            permissions: Vec::new(),
+            tenant_request_limit_per_minute: 0,
+        };
+        let claims = Claims {
+            sub: "42".into(),
+            tenant_id: "tenant-a".into(),
+            tenant_session_version: 3,
+            user_authorization_version: 4,
+            username: "tester".into(),
+            token_type: "access".into(),
+            sid: "session-a".into(),
+            jti: "token-a".into(),
+            iat: 1,
+            exp: 2,
+        };
+
+        let grant = service
+            .issue(&principal, &claims, "en-GB")
+            .await
+            .expect("票据应签发成功");
+        let consumed = service
+            .consume(&grant.ticket)
+            .await
+            .expect("首次消费应成功");
+        assert_eq!(consumed.user_id, 42);
+        assert_eq!(consumed.locale, "en-US");
+        assert!(service.consume(&grant.ticket).await.is_err());
     }
 }

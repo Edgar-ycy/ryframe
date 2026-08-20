@@ -16,6 +16,7 @@ use ryframe_application::{
         ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
         TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
         TenantUsageService, UserImportService, UserService, WebSocketTicketService,
+        WebSocketTicketStore, WebSocketTicketStoreFuture,
     },
 };
 use ryframe_config::AppConfig;
@@ -56,6 +57,31 @@ impl TenantRuntimeReadPort for TenantRuntimeReader {
 
 struct TenantRateLimitReader {
     limiter: Arc<RateLimiter>,
+}
+
+struct RedisWebSocketTicketStore {
+    client: RedisClient,
+}
+
+impl WebSocketTicketStore for RedisWebSocketTicketStore {
+    fn put(&self, key: String, value: String, ttl_secs: u64) -> WebSocketTicketStoreFuture<'_, ()> {
+        Box::pin(async move {
+            self.client
+                .set_ex(key, value, ttl_secs)
+                .await
+                .map_err(|error| {
+                    AppError::ServiceUnavailable(format!("WebSocket 票据写入失败: {error}"))
+                })
+        })
+    }
+
+    fn take<'a>(&'a self, key: &'a str) -> WebSocketTicketStoreFuture<'a, Option<String>> {
+        Box::pin(async move {
+            self.client.get_and_del(key).await.map_err(|error| {
+                AppError::ServiceUnavailable(format!("WebSocket 票据校验失败: {error}"))
+            })
+        })
+    }
 }
 
 impl TenantRateLimitReadPort for TenantRateLimitReader {
@@ -256,7 +282,11 @@ pub async fn build_all(
         policies.messaging,
     ));
     let websocket_ticket = Arc::new(WebSocketTicketService::new(
-        redis_client.clone(),
+        redis_client.as_ref().map(|client| {
+            Arc::new(RedisWebSocketTicketStore {
+                client: client.clone(),
+            }) as Arc<dyn WebSocketTicketStore>
+        }),
         policies.messaging,
     ));
     let login_info = Arc::new(LoginInfoService::new(database.clone()));
