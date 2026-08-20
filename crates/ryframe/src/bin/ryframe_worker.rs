@@ -226,6 +226,7 @@ async fn main() -> Result<(), AppError> {
         Some(Arc::new(
             JobScheduleService::new(
                 database.clone(),
+                ryframe_application::legacy_job_schedule_read(database.clone()),
                 queue.clone(),
                 execution_tenant_scope.clone(),
                 schedule_targets,

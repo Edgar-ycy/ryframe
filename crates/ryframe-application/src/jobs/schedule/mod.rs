@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
 use ryframe_db::{
-    ControlDatabaseCluster, ExecutionTenantScope, JobScheduleExecutionFilter, JobScheduleFilter,
-    JobScheduleRepository, job_schedule, job_schedule_execution,
+    ControlDatabaseCluster, ExecutionTenantScope, JobScheduleRepository, job_schedule,
+    job_schedule_execution,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -18,6 +18,10 @@ use tokio::{sync::watch, task::JoinHandle, time};
 use super::{
     JobQueue, ScheduleMetricsObserver, ScheduledJobContext, ScheduledJobTarget,
     ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
+};
+use crate::{
+    JobScheduleExecutionReadFilter, JobScheduleExecutionRecord, JobScheduleReadFilter,
+    JobScheduleReadPort, JobScheduleRecord,
 };
 
 const SYSTEM_TENANT_ID: &str = "system";
@@ -84,8 +88,8 @@ pub struct JobScheduleVo {
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<job_schedule::Model> for JobScheduleVo {
-    fn from(schedule: job_schedule::Model) -> Self {
+impl From<JobScheduleRecord> for JobScheduleVo {
+    fn from(schedule: JobScheduleRecord) -> Self {
         Self {
             id: schedule.id.to_string(),
             name: schedule.name,
@@ -120,6 +124,24 @@ pub struct JobScheduleExecutionVo {
     pub created_at: DateTime<Utc>,
 }
 
+impl From<JobScheduleExecutionRecord> for JobScheduleExecutionVo {
+    fn from(execution: JobScheduleExecutionRecord) -> Self {
+        Self {
+            id: execution.id.to_string(),
+            schedule_id: execution.schedule_id.to_string(),
+            schedule_name: execution.schedule_name,
+            handler_key: execution.handler_key,
+            trigger_kind: execution.trigger_kind,
+            scheduled_for: execution.scheduled_for,
+            outcome: execution.outcome,
+            background_job_id: execution.background_job_id.map(|id| id.to_string()),
+            background_job_status: execution.background_job_status,
+            detail: execution.detail,
+            created_at: execution.created_at,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct JobScheduleOccurrence {
     pub utc: DateTime<Utc>,
@@ -138,6 +160,7 @@ pub struct JobSchedulePreview {
 pub struct JobScheduleService {
     database: ControlDatabaseCluster,
     repository: Arc<JobScheduleRepository>,
+    read: Arc<dyn JobScheduleReadPort>,
     queue: Arc<JobQueue>,
     execution_tenant_scope: ExecutionTenantScope,
     targets: ScheduledJobTargetRegistry,
@@ -154,3 +177,49 @@ mod persistence;
 
 use expression::*;
 use persistence::*;
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::{JobScheduleRecord, JobScheduleVo};
+
+    #[test]
+    fn read_record_maps_every_schedule_field() {
+        let created_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+        let updated_at = Utc.with_ymd_and_hms(2026, 8, 21, 2, 3, 4).unwrap();
+        let next_run_at = Utc.with_ymd_and_hms(2026, 8, 22, 0, 0, 0).unwrap();
+        let last_run_at = Utc.with_ymd_and_hms(2026, 8, 20, 0, 0, 0).unwrap();
+        let schedule = JobScheduleVo::from(JobScheduleRecord {
+            id: 7,
+            name: "日报".to_owned(),
+            handler_key: "report.daily".to_owned(),
+            cron_expression: "0 0 0 * * *".to_owned(),
+            timezone: "Asia/Shanghai".to_owned(),
+            enabled: true,
+            misfire_policy: "fire_once".to_owned(),
+            concurrency_policy: "forbid".to_owned(),
+            max_runtime_seconds: 300,
+            next_run_at: Some(next_run_at),
+            last_run_at: Some(last_run_at),
+            version: 9,
+            created_at,
+            updated_at,
+        });
+
+        assert_eq!(schedule.id, "7");
+        assert_eq!(schedule.name, "日报");
+        assert_eq!(schedule.handler_key, "report.daily");
+        assert_eq!(schedule.cron_expression, "0 0 0 * * *");
+        assert_eq!(schedule.timezone, "Asia/Shanghai");
+        assert!(schedule.enabled);
+        assert_eq!(schedule.misfire_policy, "fire_once");
+        assert_eq!(schedule.concurrency_policy, "forbid");
+        assert_eq!(schedule.max_runtime_seconds, 300);
+        assert_eq!(schedule.next_run_at, Some(next_run_at));
+        assert_eq!(schedule.last_run_at, Some(last_run_at));
+        assert_eq!(schedule.version, 9);
+        assert_eq!(schedule.created_at, created_at);
+        assert_eq!(schedule.updated_at, updated_at);
+    }
+}

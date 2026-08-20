@@ -3,6 +3,7 @@ use super::*;
 impl JobScheduleService {
     pub fn new(
         database: ControlDatabaseCluster,
+        read: Arc<dyn JobScheduleReadPort>,
         queue: Arc<JobQueue>,
         execution_tenant_scope: ExecutionTenantScope,
         targets: ScheduledJobTargetRegistry,
@@ -11,6 +12,7 @@ impl JobScheduleService {
         Self {
             database,
             repository: Arc::new(JobScheduleRepository),
+            read,
             queue,
             execution_tenant_scope,
             targets,
@@ -89,16 +91,15 @@ impl JobScheduleService {
         let name = normalize_optional(&params.name, MAX_NAME_BYTES, "计划名称")?;
         let handler_key = normalize_optional(&params.handler_key, 96, "处理器标识")?;
         let page = self
-            .repository
-            .list(
-                self.database.write(),
+            .read
+            .page(
                 tenant_id,
-                JobScheduleFilter {
+                JobScheduleReadFilter {
                     name: name.as_deref(),
                     handler_key: handler_key.as_deref(),
                     enabled: params.enabled,
                 },
-                &params.page,
+                params.page,
             )
             .await?;
         Ok(PageResult {
@@ -112,8 +113,8 @@ impl JobScheduleService {
     pub async fn get(&self, actor: &ActorContext, id: i64) -> AppResult<JobScheduleVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_id(id)?;
-        self.repository
-            .find_for_tenant(self.database.write(), tenant_id, id)
+        self.read
+            .find(tenant_id, id)
             .await?
             .map(JobScheduleVo::from)
             .ok_or_else(|| AppError::NotFound("定时任务不存在".into()))
@@ -167,7 +168,7 @@ impl JobScheduleService {
             )
             .await?;
         transaction.commit().await.map_err(database_error)?;
-        Ok(schedule.into())
+        Ok(schedule_into_vo(schedule))
     }
 
     pub async fn update(
@@ -234,7 +235,7 @@ impl JobScheduleService {
         active.updated_at = Set(now);
         let updated = active.update(&transaction).await.map_err(database_error)?;
         transaction.commit().await.map_err(database_error)?;
-        Ok(updated.into())
+        Ok(schedule_into_vo(updated))
     }
 
     pub async fn set_enabled(
@@ -285,7 +286,7 @@ impl JobScheduleService {
         active.updated_at = Set(now);
         let updated = active.update(&transaction).await.map_err(database_error)?;
         transaction.commit().await.map_err(database_error)?;
-        Ok(updated.into())
+        Ok(schedule_into_vo(updated))
     }
 
     pub async fn remove(&self, actor: &ActorContext, id: i64, version: i64) -> AppResult<()> {
@@ -405,48 +406,28 @@ impl JobScheduleService {
     ) -> AppResult<PageResult<JobScheduleExecutionVo>> {
         validate_id(schedule_id)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        self.repository
-            .find_for_tenant(self.database.write(), tenant_id, schedule_id)
+        self.read
+            .find(tenant_id, schedule_id)
             .await?
             .ok_or_else(|| AppError::NotFound("定时任务不存在".into()))?;
         let trigger_kind = normalize_trigger_kind(params.trigger_kind)?;
         let outcome = normalize_outcome(params.outcome)?;
         let background_status = normalize_background_status(params.background_job_status)?;
         let page = self
-            .repository
-            .list_executions(
-                self.database.write(),
+            .read
+            .execution_page(
                 tenant_id,
                 schedule_id,
-                JobScheduleExecutionFilter {
+                JobScheduleExecutionReadFilter {
                     trigger_kind: trigger_kind.as_deref(),
                     outcome: outcome.as_deref(),
                     background_job_status: background_status.as_deref(),
                 },
-                &params.page,
+                params.page,
             )
             .await?;
-        let ids = page
-            .records
-            .iter()
-            .filter_map(|execution| execution.background_job_id)
-            .collect::<Vec<_>>();
-        let statuses = self
-            .repository
-            .background_job_statuses(self.database.write(), &ids)
-            .await?;
-        let records = page
-            .records
-            .into_iter()
-            .map(|execution| {
-                let status = execution
-                    .background_job_id
-                    .and_then(|id| statuses.get(&id).cloned());
-                execution_into_vo(execution, status)
-            })
-            .collect::<Vec<_>>();
         Ok(PageResult {
-            records,
+            records: page.records.into_iter().map(Into::into).collect(),
             total: page.total,
             page: page.page,
             page_size: page.page_size,

@@ -11,12 +11,14 @@ mod dict_persistence;
 mod file_content;
 mod id_generator;
 mod identity_authorization;
+mod job_schedule_persistence;
 pub mod jobs;
 mod legacy_authorization_diagnostic_persistence;
 mod legacy_config_persistence;
 mod legacy_dept_persistence;
 mod legacy_dict_persistence;
 mod legacy_identity_authorization;
+mod legacy_job_schedule_persistence;
 mod legacy_login_info_persistence;
 mod legacy_menu_persistence;
 mod legacy_message_persistence;
@@ -98,6 +100,10 @@ pub use id_generator::{BusinessIdGenerator, install as install_id_generator, nex
 pub use identity_authorization::{
     IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
 };
+pub use job_schedule_persistence::{
+    JobScheduleExecutionReadFilter, JobScheduleExecutionRecord, JobScheduleReadFilter,
+    JobScheduleReadPort, JobScheduleRecord,
+};
 #[allow(deprecated)]
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
@@ -121,6 +127,8 @@ pub use legacy_dept_persistence::{read_port as legacy_dept_read, write_port as l
 pub use legacy_dict_persistence::port as legacy_dict_persistence;
 #[doc(hidden)]
 pub use legacy_identity_authorization::port as legacy_identity_authorization;
+#[doc(hidden)]
+pub use legacy_job_schedule_persistence::read_port as legacy_job_schedule_read;
 #[doc(hidden)]
 pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
 #[doc(hidden)]

@@ -131,6 +131,25 @@ pub(super) fn execution_into_vo(
     }
 }
 
+pub(super) fn schedule_into_vo(schedule: job_schedule::Model) -> JobScheduleVo {
+    JobScheduleVo {
+        id: schedule.id.to_string(),
+        name: schedule.name,
+        handler_key: schedule.handler_key,
+        cron_expression: schedule.cron_expression,
+        timezone: schedule.timezone,
+        enabled: schedule.enabled,
+        misfire_policy: schedule.misfire_policy,
+        concurrency_policy: schedule.concurrency_policy,
+        max_runtime_seconds: schedule.max_runtime_seconds,
+        next_run_at: schedule.next_run_at,
+        last_run_at: schedule.last_run_at,
+        version: schedule.version,
+        created_at: schedule.created_at,
+        updated_at: schedule.updated_at,
+    }
+}
+
 pub(super) fn normalize_required(value: &str, max_bytes: usize, label: &str) -> AppResult<String> {
     let value = value.trim();
     if value.is_empty() || value.len() > max_bytes {

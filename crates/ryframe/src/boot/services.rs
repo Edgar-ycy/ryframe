@@ -341,6 +341,7 @@ pub async fn build_all(
         Some(Arc::new(
             JobScheduleService::new(
                 database.clone(),
+                ryframe_application::legacy_job_schedule_read(database.clone()),
                 job_queue.clone(),
                 super::jobs::execution_tenant_scope(policies.multi_tenancy),
                 schedule_targets,
