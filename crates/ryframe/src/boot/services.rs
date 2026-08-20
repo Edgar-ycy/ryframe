@@ -208,7 +208,7 @@ pub async fn build_all(
         database.clone(),
         authorization_cache.clone(),
         product.clone(),
-        tenant_data.clone(),
+        super::tenant_provisioning::port(tenant_data.clone()),
     ));
     let tenant_usage = Arc::new(TenantUsageService::new(
         database.clone(),

@@ -7,16 +7,12 @@ use ryframe_db::{
     TenantProvisioningRepository, TenantRepository, entities::tenant,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_tenant_db::{
-    PendingTenantDataPlacement, TenantDataError, TenantDataPlacementRepository,
-    TenantDatabaseRouter,
-};
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
 use sha2::Sha256;
 
 use super::ProductService;
-use crate::AuthorizationCache;
+use crate::{AuthorizationCache, TenantProvisioningPlacement, TenantProvisioningPort};
 
 const SYSTEM_TENANT_ID: &str = "system";
 const MIN_TENANT_USERS: i32 = 1;
@@ -112,7 +108,7 @@ pub struct TenantService {
     provisioning_repo: TenantProvisioningRepository,
     product_repo: ProductRepository,
     product_service: Arc<ProductService>,
-    tenant_data: Arc<TenantDatabaseRouter>,
+    tenant_provisioning: Arc<dyn TenantProvisioningPort>,
     authorization_cache: AuthorizationCache,
 }
 
@@ -121,7 +117,7 @@ impl TenantService {
         db: ControlDatabaseCluster,
         authorization_cache: AuthorizationCache,
         product_service: Arc<ProductService>,
-        tenant_data: Arc<TenantDatabaseRouter>,
+        tenant_provisioning: Arc<dyn TenantProvisioningPort>,
     ) -> Self {
         Self {
             db,
@@ -129,7 +125,7 @@ impl TenantService {
             provisioning_repo: TenantProvisioningRepository,
             product_repo: ProductRepository,
             product_service,
-            tenant_data,
+            tenant_provisioning,
             authorization_cache,
         }
     }
@@ -168,15 +164,12 @@ impl TenantService {
             max_storage_mb,
             max_requests_per_minute,
         );
-        let pending = self
-            .tenant_data
-            .prepare_provisioning(
-                tenant_id.clone(),
-                params.data_target_key.clone(),
-                1,
-                switch_token,
-            )
-            .map_err(map_tenant_data_error)?;
+        let pending = self.tenant_provisioning.prepare(
+            tenant_id.clone(),
+            params.data_target_key.clone(),
+            1,
+            switch_token,
+        )?;
         let transaction = self
             .db
             .write()
@@ -226,10 +219,9 @@ impl TenantService {
                     actor.user_id,
                 )
                 .await?;
-            TenantDataPlacementRepository
+            self.tenant_provisioning
                 .create_pending(&transaction, &pending)
-                .await
-                .map_err(map_tenant_data_error)?;
+                .await?;
             false
         };
         crate::commit_current_audit(transaction).await?;
@@ -242,9 +234,9 @@ impl TenantService {
                 .ok_or_else(|| AppError::NotFound("租户不存在".into()));
         }
 
-        if let Err(error) = self.tenant_data.provision_pending_fence(&pending).await {
+        if let Err(error) = self.tenant_provisioning.provision_fence(&pending).await {
             self.mark_provisioning_failed(&pending).await;
-            return Err(map_tenant_data_error(error));
+            return Err(error);
         }
 
         if let Err(error) = self
@@ -273,7 +265,7 @@ impl TenantService {
         transaction: &sea_orm::DatabaseTransaction,
         params: &CreateTenantParams,
         quota: &ValidatedTenantQuota,
-        pending: &PendingTenantDataPlacement,
+        pending: &TenantProvisioningPlacement,
     ) -> AppResult<bool> {
         let existing = self
             .tenant_repo
@@ -341,10 +333,9 @@ impl TenantService {
                 "租户创建重试的管理员凭据与已持久化请求不一致".into(),
             ));
         }
-        TenantDataPlacementRepository
+        self.tenant_provisioning
             .create_or_resume_pending(transaction, pending)
-            .await
-            .map_err(map_tenant_data_error)?;
+            .await?;
         if existing.status == tenant::Model::STATUS_PROVISIONING_FAILED {
             self.tenant_repo
                 .update_status(
@@ -359,7 +350,7 @@ impl TenantService {
 
     async fn sync_provisioning_resources(
         &self,
-        pending: &PendingTenantDataPlacement,
+        pending: &TenantProvisioningPlacement,
         plan_version_id: i64,
     ) -> AppResult<()> {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
@@ -378,17 +369,16 @@ impl TenantService {
         crate::commit_current_audit(transaction).await
     }
 
-    async fn finalize_provisioning(&self, pending: &PendingTenantDataPlacement) -> AppResult<()> {
+    async fn finalize_provisioning(&self, pending: &TenantProvisioningPlacement) -> AppResult<()> {
         let transaction = self.db.write().begin().await.map_err(database_error)?;
         let tenant = self
             .tenant_repo
             .lock_tenant_in_txn(&transaction, &pending.tenant_id)
             .await?;
         if tenant.status == tenant::Model::STATUS_ENABLED {
-            TenantDataPlacementRepository
+            self.tenant_provisioning
                 .activate(&transaction, pending)
-                .await
-                .map_err(map_tenant_data_error)?;
+                .await?;
             return transaction.commit().await.map_err(database_error);
         }
         if tenant.status != tenant::Model::STATUS_PROVISIONING {
@@ -396,10 +386,9 @@ impl TenantService {
                 "租户 provisioning 状态已变化，无法完成启用".into(),
             ));
         }
-        TenantDataPlacementRepository
+        self.tenant_provisioning
             .activate(&transaction, pending)
-            .await
-            .map_err(map_tenant_data_error)?;
+            .await?;
         self.tenant_repo
             .update_status(
                 &transaction,
@@ -410,7 +399,7 @@ impl TenantService {
         transaction.commit().await.map_err(database_error)
     }
 
-    async fn mark_provisioning_failed(&self, pending: &PendingTenantDataPlacement) {
+    async fn mark_provisioning_failed(&self, pending: &TenantProvisioningPlacement) {
         let Ok(transaction) = self.db.write().begin().await else {
             tracing::error!(tenant_id = %pending.tenant_id, "无法开启租户 provisioning 失败补偿事务");
             return;
@@ -423,10 +412,7 @@ impl TenantService {
             if tenant.status == tenant::Model::STATUS_ENABLED {
                 return Ok(());
             }
-            TenantDataPlacementRepository
-                .fail(&transaction, pending)
-                .await
-                .map_err(map_tenant_data_error)?;
+            self.tenant_provisioning.fail(&transaction, pending).await?;
             self.tenant_repo
                 .update_status(
                     &transaction,
@@ -668,32 +654,6 @@ fn update_optional_fingerprint_field(mac: &mut Hmac<Sha256>, value: Option<&str>
 fn update_fingerprint_field(mac: &mut Hmac<Sha256>, value: &[u8]) {
     mac.update(&(value.len() as u64).to_be_bytes());
     mac.update(value);
-}
-
-fn map_tenant_data_error(error: TenantDataError) -> AppError {
-    let message = error.to_string();
-    match error {
-        TenantDataError::InvalidConfiguration(_)
-        | TenantDataError::InvalidTenantId(_)
-        | TenantDataError::UnknownTarget { .. } => AppError::Validation(message),
-        TenantDataError::PlacementUnavailable { .. }
-        | TenantDataError::InvalidPlacement { .. }
-        | TenantDataError::FenceRejected { .. }
-        | TenantDataError::DedicatedTargetOccupied { .. } => {
-            AppError::TenantOperationConflict(message)
-        }
-        TenantDataError::StalePlacementGeneration { .. } => {
-            AppError::StalePlacementGeneration(message)
-        }
-        TenantDataError::TenantDataMaintenance { .. } => {
-            AppError::TenantDataMaintenance(message, 5)
-        }
-        TenantDataError::TargetUnavailable { .. }
-        | TenantDataError::PoolCapacityExhausted { .. }
-        | TenantDataError::ConnectionBudgetExhausted { .. } => {
-            AppError::TenantDataTargetUnavailable(message, 5)
-        }
-    }
 }
 
 fn database_error(error: impl std::fmt::Display) -> AppError {
