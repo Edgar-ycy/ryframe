@@ -35,6 +35,13 @@ pub trait ServiceAccountWriteTransaction: Send + Sync {
         account: ServiceAccountRecord,
     ) -> PersistenceFuture<'a, ServiceAccountRecord>;
 
+    fn replace_roles<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        role_ids: &'a [i64],
+    ) -> PersistenceFuture<'a, ()>;
+
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;

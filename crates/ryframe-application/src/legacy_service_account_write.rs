@@ -135,6 +135,19 @@ impl ServiceAccountWriteTransaction for LegacyServiceAccountWriteTransaction {
         })
     }
 
+    fn replace_roles<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        account_id: i64,
+        role_ids: &'a [i64],
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            ServiceAccountRepository
+                .replace_roles_in_txn(&self.transaction, tenant_id, account_id, role_ids)
+                .await
+        })
+    }
+
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move { crate::commit_current_audit(self.transaction).await })
     }
