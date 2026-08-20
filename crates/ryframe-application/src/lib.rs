@@ -7,6 +7,7 @@ mod authorization_resolver;
 mod file_content;
 mod id_generator;
 pub mod jobs;
+mod login_protection;
 mod principal_resolver;
 mod refresh_session;
 mod request_tenant_context;
@@ -50,6 +51,7 @@ pub use jobs::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
+pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
 pub use principal_resolver::PrincipalResolver;
 pub use refresh_session::{
     RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,

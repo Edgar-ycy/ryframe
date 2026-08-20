@@ -259,7 +259,7 @@ pub async fn build_all(
         database.clone(),
         policies.auth,
         token_settings,
-        redis_client.clone(),
+        super::login_protection::store(redis_client.clone()),
         refresh_session_port,
         authorization_cache.clone(),
     ));
