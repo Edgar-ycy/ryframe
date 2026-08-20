@@ -82,20 +82,21 @@ impl ExportService {
     ) -> Self {
         let purge = ExportPurgeUseCase::new(db.clone(), Arc::clone(&storage));
         let config_cache = crate::AuthorizationCache::disabled();
+        let role_cache = crate::AuthorizationCache::disabled();
+        let role_product = Arc::new(ProductService::new(
+            db.clone(),
+            crate::AuthorizationCache::disabled(),
+            false,
+        ));
         Self {
             db: db.clone(),
             background_jobs: BackgroundJobRepository,
             exports: ExportJobRepository,
             files: FileRepository,
             roles: RoleService::new(
-                db.clone(),
-                crate::AuthorizationCache::disabled(),
-                Arc::new(ProductService::new(
-                    db.clone(),
-                    crate::AuthorizationCache::disabled(),
-                    false,
-                )),
+                role_cache.clone(),
                 crate::legacy_role_read(db.clone()),
+                crate::legacy_role_write(db.clone(), role_cache, role_product),
             ),
             posts: PostService::new(crate::legacy_post_persistence(db.clone())),
             configs: ConfigService::new(

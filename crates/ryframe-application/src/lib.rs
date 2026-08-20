@@ -17,6 +17,7 @@ mod legacy_oper_log_persistence;
 mod legacy_overview_persistence;
 mod legacy_post_persistence;
 mod legacy_role_read;
+mod legacy_role_write;
 mod login_info_persistence;
 mod login_protection;
 mod notice_persistence;
@@ -28,6 +29,7 @@ mod principal_resolver;
 mod refresh_session;
 mod request_tenant_context;
 mod role_read;
+mod role_write;
 mod runtime_policy;
 mod service_identity_secret;
 mod spreadsheet;
@@ -93,6 +95,8 @@ pub use legacy_overview_persistence::port as legacy_overview_persistence;
 pub use legacy_post_persistence::port as legacy_post_persistence;
 #[doc(hidden)]
 pub use legacy_role_read::port as legacy_role_read;
+#[doc(hidden)]
+pub use legacy_role_write::port as legacy_role_write;
 pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
 };
@@ -115,6 +119,7 @@ pub use refresh_session::{
 };
 pub use request_tenant_context::{TenantContext, with_tenant_context};
 pub use role_read::{RoleFilter, RoleReadPort, RoleRecord};
+pub use role_write::{RolePermissionRef, RoleWritePort, RoleWriteTransaction};
 pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,

@@ -169,10 +169,13 @@ pub async fn build_all(
         policies.service_accounts.enabled() && redis_client.is_some(),
     ));
     let role = Arc::new(RoleService::new(
-        database.clone(),
         authorization_cache.clone(),
-        product.clone(),
         ryframe_application::legacy_role_read(database.clone()),
+        ryframe_application::legacy_role_write(
+            database.clone(),
+            authorization_cache.clone(),
+            product.clone(),
+        ),
     ));
     let tenant = Arc::new(TenantService::new(
         database.clone(),
