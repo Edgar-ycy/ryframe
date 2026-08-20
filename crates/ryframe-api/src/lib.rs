@@ -25,6 +25,7 @@ pub mod oper_log_middleware;
 pub mod permission_catalog;
 mod principal;
 pub mod probes;
+pub mod rate_limit;
 pub mod request_locale;
 pub mod router;
 pub mod runtime;

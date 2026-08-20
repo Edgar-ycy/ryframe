@@ -6,20 +6,19 @@ use std::{
 };
 
 use crate::ClientIp;
+use crate::metrics::{record_rate_limit_rejection, record_redis_degraded};
+use crate::rate_limit::{HttpRateLimiter, api_client_key, tenant_user_key};
+use crate::settings::RateLimitSettings;
 use axum::{
     extract::{MatchedPath, State},
     http::{HeaderValue, StatusCode, header::RETRY_AFTER},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use ryframe_adapters::rate_limit::RateLimiter;
-
-use crate::metrics::{record_rate_limit_rejection, record_redis_degraded};
-use crate::settings::RateLimitSettings;
 
 #[derive(Clone)]
 pub struct RateLimitState {
-    pub limiter: Arc<RateLimiter>,
+    pub limiter: Arc<dyn HttpRateLimiter>,
     pub config: Arc<RateLimitSettings>,
 }
 
@@ -72,7 +71,7 @@ pub async fn user_rate_limit_middleware(
     let Some(claims) = request.extensions().get::<ryframe_auth::jwt::Claims>() else {
         return Ok(next.run(request).await);
     };
-    let key = RateLimiter::tenant_user_key(&claims.tenant_id, &claims.sub);
+    let key = tenant_user_key(&claims.tenant_id, &claims.sub);
     match state
         .limiter
         .acquire(
@@ -156,7 +155,7 @@ pub async fn api_rate_limit_middleware(
         .map(|value| value.0)
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     // 将固定窗口限定到命中的规则，防止客户端通过变换具体 URL 绕过共享限额。
-    let key = RateLimiter::api_client_key(rule_scope, client_ip);
+    let key = api_client_key(rule_scope, client_ip);
     match state
         .limiter
         .acquire(&key, state.config.api_window_secs, limit)

@@ -146,7 +146,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
             settings.messaging.clone(),
         )),
         token_blacklist,
-        rate_limiter: limiter,
+        rate_limiter: super::limiter::http_limiter(limiter),
         trusted_proxies,
         runtime: RuntimeComponents::new(redis_client),
     }

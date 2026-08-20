@@ -28,7 +28,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete as delete_route, get as get_route, post},
 };
-use ryframe_adapters::rate_limit::RateLimiter;
 use ryframe_application::system::OnlineUserService;
 use ryframe_auth::jwt::Claims;
 use ryframe_kernel::AppError;
@@ -39,11 +38,12 @@ use utoipa::ToSchema;
 use crate::{
     RequestPrincipal,
     metrics::{record_rate_limit_rejection, record_redis_degraded},
+    rate_limit::{HttpRateLimiter, tenant_key},
 };
 
 #[derive(Clone)]
 struct AuthenticatedTenantRateLimitState {
-    limiter: Arc<RateLimiter>,
+    limiter: Arc<dyn HttpRateLimiter>,
     config: Arc<crate::settings::RateLimitSettings>,
 }
 
@@ -80,7 +80,7 @@ async fn authenticated_tenant_rate_limit(
     if principal.tenant_request_limit_per_minute == 0 {
         return Ok(next.run(request).await);
     }
-    let key = RateLimiter::tenant_key(&principal.tenant_id);
+    let key = tenant_key(&principal.tenant_id);
     let limit = principal.tenant_request_limit_per_minute;
 
     match state.limiter.acquire(&key, 60, limit).await {
