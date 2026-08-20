@@ -5,9 +5,8 @@ use axum::{
     extract::State,
     response::{IntoResponse, Response},
 };
-use ryframe_application::UserInfo;
+use ryframe_application::{TenantRuntimeSnapshot, UserInfo};
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
-use ryframe_tenant_db::{TenantDataError, TenantRuntimeSnapshot};
 
 use crate::{
     dto::{
@@ -65,8 +64,7 @@ pub(super) async fn build_session_context(
             .services
             .tenant_data
             .runtime_snapshot(&actor.tenant_id)
-            .await
-            .map_err(map_tenant_data_error)?;
+            .await?;
         let user = state.services.auth.get_current_user(actor).await?;
         let service_product = state
             .services
@@ -90,8 +88,7 @@ pub(super) async fn build_session_context(
             .services
             .tenant_data
             .runtime_snapshot(&actor.tenant_id)
-            .await
-            .map_err(map_tenant_data_error)?;
+            .await?;
 
         if before == after
             && product.runtime_epoch == before.runtime_epoch().to_string()
@@ -141,31 +138,6 @@ pub(super) fn login_actor(user_id: i64, user: &UserInfo) -> ActorContext {
         custom_dept_ids: Vec::new(),
         include_self: true,
         is_super_admin: user.is_super_admin,
-    }
-}
-
-pub(crate) fn map_tenant_data_error(error: TenantDataError) -> AppError {
-    match error {
-        TenantDataError::StalePlacementGeneration { .. } => {
-            AppError::StalePlacementGeneration(error.to_string())
-        }
-        TenantDataError::TenantDataMaintenance { .. } => {
-            AppError::TenantDataMaintenance(error.to_string(), 5)
-        }
-        TenantDataError::InvalidTenantId(message) => AppError::Validation(message),
-        TenantDataError::InvalidConfiguration(message)
-        | TenantDataError::InvalidPlacement {
-            reason: message, ..
-        } => AppError::Config(message),
-        TenantDataError::UnknownTarget { .. }
-        | TenantDataError::PlacementUnavailable { .. }
-        | TenantDataError::TargetUnavailable { .. }
-        | TenantDataError::PoolCapacityExhausted { .. }
-        | TenantDataError::ConnectionBudgetExhausted { .. }
-        | TenantDataError::FenceRejected { .. }
-        | TenantDataError::DedicatedTargetOccupied { .. } => {
-            AppError::TenantDataTargetUnavailable(error.to_string(), 5)
-        }
     }
 }
 

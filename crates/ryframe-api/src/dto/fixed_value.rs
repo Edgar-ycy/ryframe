@@ -1,3 +1,4 @@
+use ryframe_application::TenantBusinessDataState as ApplicationTenantBusinessDataState;
 use ryframe_kernel::AppError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -177,13 +178,13 @@ fixed_string_enum! {
     }
 }
 
-impl From<ryframe_tenant_db::TenantDataState> for TenantBusinessDataState {
-    fn from(value: ryframe_tenant_db::TenantDataState) -> Self {
+impl From<ApplicationTenantBusinessDataState> for TenantBusinessDataState {
+    fn from(value: ApplicationTenantBusinessDataState) -> Self {
         match value {
-            ryframe_tenant_db::TenantDataState::Provisioning => Self::Provisioning,
-            ryframe_tenant_db::TenantDataState::Active => Self::Active,
-            ryframe_tenant_db::TenantDataState::Maintenance => Self::Maintenance,
-            ryframe_tenant_db::TenantDataState::Failed => Self::Failed,
+            ApplicationTenantBusinessDataState::Provisioning => Self::Provisioning,
+            ApplicationTenantBusinessDataState::Active => Self::Active,
+            ApplicationTenantBusinessDataState::Maintenance => Self::Maintenance,
+            ApplicationTenantBusinessDataState::Failed => Self::Failed,
         }
     }
 }

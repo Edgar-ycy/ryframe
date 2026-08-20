@@ -9,6 +9,7 @@ mod request_tenant_context;
 mod runtime_policy;
 mod service_identity_secret;
 pub mod system;
+mod tenant_runtime;
 mod trace_context;
 
 pub use audit::{
@@ -43,6 +44,9 @@ pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
     ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
+};
+pub use tenant_runtime::{
+    TenantBusinessDataState, TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
 };
 
 use ryframe_kernel::{ActorContext, AppError, AppResult, TenantId};

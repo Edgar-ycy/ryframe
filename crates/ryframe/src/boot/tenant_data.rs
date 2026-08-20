@@ -3,8 +3,9 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use ryframe_config::{AppConfig, TenantDatabaseTargetMode};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
-use ryframe_tenant_db::TenantDatabaseTargetHealthStatus;
-use ryframe_tenant_db::{TenantDataTargetHealth, TenantDatabaseRouter};
+use ryframe_tenant_db::{
+    TenantDataTargetHealth, TenantDatabaseRouter, TenantDatabaseTargetHealthStatus,
+};
 
 /// 构造租户数据路由器，不主动连接任何独立目标。
 ///

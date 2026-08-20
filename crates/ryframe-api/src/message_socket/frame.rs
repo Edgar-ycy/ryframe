@@ -185,7 +185,7 @@ pub(super) fn serialize_message_frame(message: &MessageVo) -> HttpResult<String>
 }
 
 pub(super) fn serialize_tenant_context_changed_frame(
-    snapshot: &ryframe_tenant_db::TenantRuntimeSnapshot,
+    snapshot: &TenantRuntimeSnapshot,
 ) -> HttpResult<String> {
     #[derive(Serialize)]
     struct TenantContextChanged<'a> {

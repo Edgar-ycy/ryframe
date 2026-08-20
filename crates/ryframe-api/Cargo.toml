@@ -16,7 +16,6 @@ ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }
 ryframe-adapters = { path = "../ryframe-adapters" }
-ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 ryframe-macro = { path = "../ryframe-macro" }
 axum = { workspace = true, features = ["multipart"] }
 http = { workspace = true }

@@ -153,9 +153,7 @@ async fn tenant_context_headers(
             .tenant_data
             .runtime_snapshot(&tenant_id)
             .await
-            .map_err(|error| {
-                HttpAppError::from(auth_handler::map_tenant_data_error(error)).into_response()
-            })?;
+            .map_err(|error| HttpAppError::from(error).into_response())?;
         auth_handler::TenantContextHeaderValues {
             authorization_epoch: snapshot.authorization_epoch().to_string(),
             runtime_epoch: snapshot.runtime_epoch().to_string(),

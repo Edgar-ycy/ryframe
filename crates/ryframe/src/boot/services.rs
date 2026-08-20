@@ -5,7 +5,9 @@ use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
 use ryframe_api::AppServices;
 use ryframe_application::{
     AuditOutbox, AuthService, AuthorizationCache, JobQueue, JobScheduleService,
+    TenantBusinessDataState, TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
     agent::{AgentService, service_capability_descriptors},
+    map_tenant_data_error,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
         DeptService, DictService, ExportService, FileService, LoginInfoService, MenuService,
@@ -18,9 +20,38 @@ use ryframe_application::{
 use ryframe_config::AppConfig;
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
-use ryframe_tenant_db::TenantDatabaseRouter;
+use ryframe_tenant_db::{TenantDataState, TenantDatabaseRouter};
 
 use super::application_policy::{ApplicationPolicies, load_pepper_keyring};
+
+struct TenantRuntimeReader {
+    router: Arc<TenantDatabaseRouter>,
+}
+
+impl TenantRuntimeReadPort for TenantRuntimeReader {
+    fn runtime_snapshot<'a>(&'a self, tenant_id: &'a str) -> TenantRuntimeReadFuture<'a> {
+        Box::pin(async move {
+            let snapshot = self
+                .router
+                .runtime_snapshot(tenant_id)
+                .await
+                .map_err(map_tenant_data_error)?;
+            let state = match snapshot.business_data_state() {
+                TenantDataState::Provisioning => TenantBusinessDataState::Provisioning,
+                TenantDataState::Active => TenantBusinessDataState::Active,
+                TenantDataState::Maintenance => TenantBusinessDataState::Maintenance,
+                TenantDataState::Failed => TenantBusinessDataState::Failed,
+            };
+            Ok(TenantRuntimeSnapshot::new(
+                snapshot.tenant_id().to_owned(),
+                snapshot.authorization_epoch(),
+                snapshot.runtime_epoch(),
+                snapshot.placement_generation(),
+                state,
+            ))
+        })
+    }
+}
 
 /// 构造所有 Service 实例
 ///
@@ -233,7 +264,9 @@ pub async fn build_all(
         role,
         tenant,
         product,
-        tenant_data,
+        tenant_data: Arc::new(TenantRuntimeReader {
+            router: tenant_data,
+        }),
         tenant_usage,
         service_accounts,
         agent,

@@ -83,7 +83,7 @@ async fn main() -> Result<(), AppError> {
     let limit = boot::limiter::init(&config, &redis.client)?;
     let services = boot::services::build_all(
         &database,
-        tenant_database_router,
+        Arc::clone(&tenant_database_router),
         &config,
         &application_policies,
         &redis.client,
@@ -149,7 +149,7 @@ async fn main() -> Result<(), AppError> {
                     user_import: services.user_import.clone(),
                     tenant_config_transfer: services.tenant_config_transfer.clone(),
                     tenant_data_migration: services.tenant_data_migration.clone(),
-                    tenant_data: services.tenant_data.clone(),
+                    tenant_data: Arc::clone(&tenant_database_router),
                     redis: redis.client.clone(),
                     messaging_enabled: application_policies.messaging.enabled(),
                 },

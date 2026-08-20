@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::TrustedProxySet;
 use ryframe_adapters::{RedisClient, TokenBlacklist, rate_limit::RateLimiter};
 use ryframe_application::{
-    AuditOutbox, AuthService, JobQueue, JobScheduleService,
+    AuditOutbox, AuthService, JobQueue, JobScheduleService, TenantRuntimeReadPort,
     agent::AgentService,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
@@ -15,7 +15,6 @@ use ryframe_application::{
     },
 };
 use ryframe_kernel::Localizer;
-use ryframe_tenant_db::TenantDatabaseRouter;
 
 use crate::{
     auth_middleware::AuthState, monitor::MonitorState, runtime::RuntimeComponents,
@@ -29,7 +28,7 @@ pub struct AppServices {
     pub role: Arc<RoleService>,
     pub tenant: Arc<TenantService>,
     pub product: Arc<ProductService>,
-    pub tenant_data: Arc<TenantDatabaseRouter>,
+    pub tenant_data: Arc<dyn TenantRuntimeReadPort>,
     pub tenant_usage: Arc<TenantUsageService>,
     pub service_accounts: Option<Arc<ServiceAccountService>>,
     pub agent: Option<Arc<AgentService>>,

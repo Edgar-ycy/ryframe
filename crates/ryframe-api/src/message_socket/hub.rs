@@ -256,10 +256,7 @@ impl MessageHub {
     }
 
     /// 向本实例中同一租户的全部在线连接广播强一致上下文快照。
-    pub fn send_tenant_context_changed(
-        &self,
-        snapshot: &ryframe_tenant_db::TenantRuntimeSnapshot,
-    ) -> usize {
+    pub fn send_tenant_context_changed(&self, snapshot: &TenantRuntimeSnapshot) -> usize {
         let tenant_id = snapshot.tenant_id();
         let payload = match serialize_tenant_context_changed_frame(snapshot) {
             Ok(payload) => payload,
@@ -328,7 +325,7 @@ impl MessageHub {
         &self,
         redis: Option<RedisClient>,
         service: Arc<MessageService>,
-        tenant_data: Arc<ryframe_tenant_db::TenantDatabaseRouter>,
+        tenant_data: Arc<dyn TenantRuntimeReadPort>,
     ) -> Option<JoinHandle<()>> {
         ryframe_adapters::metrics::set_message_redis_listener_connected(false);
         if !self.config.enabled {
