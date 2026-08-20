@@ -75,9 +75,9 @@ pub(super) async fn quarantine_invalid_schedule(
         &schedule,
         NewExecution {
             fire_key: &fire_key,
-            trigger_kind: job_schedule_execution::Model::TRIGGER_SCHEDULED,
+            trigger_kind: TRIGGER_SCHEDULED,
             scheduled_for,
-            outcome: job_schedule_execution::Model::OUTCOME_INVALID_CONFIGURATION,
+            outcome: OUTCOME_INVALID_CONFIGURATION,
             detail: Some(detail.to_owned()),
             created_at: now,
         },
@@ -174,11 +174,7 @@ pub(super) fn normalize_optional(
 pub(super) fn normalize_trigger_kind(value: Option<String>) -> AppResult<Option<String>> {
     normalize_enum_filter(
         value,
-        &[
-            job_schedule_execution::Model::TRIGGER_SCHEDULED,
-            job_schedule_execution::Model::TRIGGER_MISFIRE,
-            job_schedule_execution::Model::TRIGGER_MANUAL,
-        ],
+        &[TRIGGER_SCHEDULED, TRIGGER_MISFIRE, TRIGGER_MANUAL],
         "触发类型",
     )
 }
@@ -187,11 +183,11 @@ pub(super) fn normalize_outcome(value: Option<String>) -> AppResult<Option<Strin
     normalize_enum_filter(
         value,
         &[
-            job_schedule_execution::Model::OUTCOME_ENQUEUED,
-            job_schedule_execution::Model::OUTCOME_SKIPPED_MISFIRE,
-            job_schedule_execution::Model::OUTCOME_SKIPPED_CONCURRENCY,
-            job_schedule_execution::Model::OUTCOME_TARGET_UNAVAILABLE,
-            job_schedule_execution::Model::OUTCOME_INVALID_CONFIGURATION,
+            OUTCOME_ENQUEUED,
+            OUTCOME_SKIPPED_MISFIRE,
+            OUTCOME_SKIPPED_CONCURRENCY,
+            OUTCOME_TARGET_UNAVAILABLE,
+            OUTCOME_INVALID_CONFIGURATION,
         ],
         "执行结果",
     )

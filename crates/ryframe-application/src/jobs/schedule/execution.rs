@@ -31,7 +31,7 @@ impl JobScheduleService {
                     quarantine_invalid_schedule(&transaction, schedule, now, &detail).await?;
                     DueScheduleResult {
                         enqueued: false,
-                        outcome: job_schedule_execution::Model::OUTCOME_INVALID_CONFIGURATION,
+                        outcome: OUTCOME_INVALID_CONFIGURATION,
                     }
                 }
             };
@@ -88,13 +88,13 @@ impl JobScheduleService {
             following
         };
         let trigger_kind = if misfired {
-            job_schedule_execution::Model::TRIGGER_MISFIRE
+            TRIGGER_MISFIRE
         } else {
-            job_schedule_execution::Model::TRIGGER_SCHEDULED
+            TRIGGER_SCHEDULED
         };
         let fire_key = automatic_fire_key(due);
 
-        if misfired && schedule.misfire_policy == job_schedule::Model::MISFIRE_SKIP {
+        if misfired && schedule.misfire_policy == MISFIRE_SKIP {
             self.record_non_enqueued_due_execution(
                 transaction,
                 NonEnqueuedDueExecution {
@@ -104,14 +104,14 @@ impl JobScheduleService {
                     scheduled_for: due,
                     next_run_at,
                     now,
-                    outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_MISFIRE,
+                    outcome: OUTCOME_SKIPPED_MISFIRE,
                     detail: Some("计划停机期间错过多次触发，已按 skip 策略跳过".into()),
                 },
             )
             .await?;
             return Ok(DueScheduleResult {
                 enqueued: false,
-                outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_MISFIRE,
+                outcome: OUTCOME_SKIPPED_MISFIRE,
             });
         }
 
@@ -127,19 +127,19 @@ impl JobScheduleService {
                         scheduled_for: due,
                         next_run_at,
                         now,
-                        outcome: job_schedule_execution::Model::OUTCOME_TARGET_UNAVAILABLE,
+                        outcome: OUTCOME_TARGET_UNAVAILABLE,
                         detail: Some(error.to_string()),
                     },
                 )
                 .await?;
                 return Ok(DueScheduleResult {
                     enqueued: false,
-                    outcome: job_schedule_execution::Model::OUTCOME_TARGET_UNAVAILABLE,
+                    outcome: OUTCOME_TARGET_UNAVAILABLE,
                 });
             }
         };
 
-        if schedule.concurrency_policy == job_schedule::Model::CONCURRENCY_FORBID
+        if schedule.concurrency_policy == CONCURRENCY_FORBID
             && self
                 .repository
                 .has_active_job(transaction, schedule.id)
@@ -154,14 +154,14 @@ impl JobScheduleService {
                     scheduled_for: due,
                     next_run_at,
                     now,
-                    outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_CONCURRENCY,
+                    outcome: OUTCOME_SKIPPED_CONCURRENCY,
                     detail: Some("同一计划已有待执行或运行中的任务".into()),
                 },
             )
             .await?;
             return Ok(DueScheduleResult {
                 enqueued: false,
-                outcome: job_schedule_execution::Model::OUTCOME_SKIPPED_CONCURRENCY,
+                outcome: OUTCOME_SKIPPED_CONCURRENCY,
             });
         }
 
@@ -172,7 +172,7 @@ impl JobScheduleService {
                 fire_key: &fire_key,
                 trigger_kind,
                 scheduled_for: due,
-                outcome: job_schedule_execution::Model::OUTCOME_ENQUEUED,
+                outcome: OUTCOME_ENQUEUED,
                 detail: None,
                 created_at: now,
             },
@@ -194,7 +194,7 @@ impl JobScheduleService {
         advance_schedule(transaction, schedule, next_run_at, due, now).await?;
         Ok(DueScheduleResult {
             enqueued: true,
-            outcome: job_schedule_execution::Model::OUTCOME_ENQUEUED,
+            outcome: OUTCOME_ENQUEUED,
         })
     }
 
@@ -243,7 +243,15 @@ impl JobScheduleService {
         {
             return Err("普通租户不能使用平台维护调度目标".into());
         }
-        validate_persisted_schedule(schedule, now)
+        validate_persisted_schedule(
+            schedule.next_run_at,
+            &schedule.misfire_policy,
+            &schedule.concurrency_policy,
+            schedule.max_runtime_seconds,
+            &schedule.cron_expression,
+            &schedule.timezone,
+            now,
+        )
     }
 }
 

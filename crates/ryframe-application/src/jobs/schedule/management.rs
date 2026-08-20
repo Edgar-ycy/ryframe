@@ -352,7 +352,7 @@ impl JobScheduleService {
             return self.execution_vo(existing).await;
         }
         let target = self.resolve_target(tenant_id, &schedule.handler_key, true)?;
-        if schedule.concurrency_policy == job_schedule::Model::CONCURRENCY_FORBID
+        if schedule.concurrency_policy == CONCURRENCY_FORBID
             && self.repository.has_active_job(&transaction, id).await?
         {
             return rollback_with(
@@ -367,9 +367,9 @@ impl JobScheduleService {
             &schedule,
             NewExecution {
                 fire_key: &fire_key,
-                trigger_kind: job_schedule_execution::Model::TRIGGER_MANUAL,
+                trigger_kind: TRIGGER_MANUAL,
                 scheduled_for: now,
-                outcome: job_schedule_execution::Model::OUTCOME_ENQUEUED,
+                outcome: OUTCOME_ENQUEUED,
                 detail: None,
                 created_at: now,
             },
@@ -378,7 +378,7 @@ impl JobScheduleService {
         let context = ScheduledJobContext {
             tenant_id,
             schedule_id: schedule.id,
-            trigger_kind: job_schedule_execution::Model::TRIGGER_MANUAL,
+            trigger_kind: TRIGGER_MANUAL,
             scheduled_for: now,
             max_runtime_seconds: schedule.max_runtime_seconds,
             fire_key: &fire_key,
@@ -393,7 +393,7 @@ impl JobScheduleService {
         active.updated_at = Set(now);
         active.update(&transaction).await.map_err(database_error)?;
         transaction.commit().await.map_err(database_error)?;
-        self.record_trigger(job_schedule_execution::Model::OUTCOME_ENQUEUED);
+        self.record_trigger(OUTCOME_ENQUEUED);
         self.queue.notify_background_jobs().await;
         self.execution_vo(execution).await
     }
@@ -444,9 +444,7 @@ impl JobScheduleService {
         self.resolve_target(tenant_id, &handler_key, true)?;
         let parsed = ParsedSchedule::parse(&command.cron_expression, &command.timezone)?;
         let misfire_policy = match command.misfire_policy.as_str() {
-            job_schedule::Model::MISFIRE_SKIP | job_schedule::Model::MISFIRE_FIRE_ONCE => {
-                command.misfire_policy
-            }
+            MISFIRE_SKIP | MISFIRE_FIRE_ONCE => command.misfire_policy,
             _ => {
                 return Err(AppError::Validation(
                     "错过执行策略只能是 skip 或 fire_once".into(),
@@ -454,9 +452,7 @@ impl JobScheduleService {
             }
         };
         let concurrency_policy = match command.concurrency_policy.as_str() {
-            job_schedule::Model::CONCURRENCY_FORBID | job_schedule::Model::CONCURRENCY_ALLOW => {
-                command.concurrency_policy
-            }
+            CONCURRENCY_FORBID | CONCURRENCY_ALLOW => command.concurrency_policy,
             _ => {
                 return Err(AppError::Validation(
                     "并发策略只能是 forbid 或 allow".into(),

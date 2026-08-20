@@ -1,28 +1,27 @@
 use super::*;
 
 pub(super) fn validate_persisted_schedule(
-    schedule: &job_schedule::Model,
+    next_run_at: Option<DateTime<Utc>>,
+    misfire_policy: &str,
+    concurrency_policy: &str,
+    max_runtime_seconds: i32,
+    cron_expression: &str,
+    timezone: &str,
     now: DateTime<Utc>,
 ) -> Result<ParsedSchedule, String> {
-    if schedule.next_run_at.is_none() {
+    if next_run_at.is_none() {
         return Err("已启用计划缺少 next_run_at".into());
     }
-    if !matches!(
-        schedule.misfire_policy.as_str(),
-        job_schedule::Model::MISFIRE_SKIP | job_schedule::Model::MISFIRE_FIRE_ONCE
-    ) {
+    if !matches!(misfire_policy, MISFIRE_SKIP | MISFIRE_FIRE_ONCE) {
         return Err("错过执行策略只能是 skip 或 fire_once".into());
     }
-    if !matches!(
-        schedule.concurrency_policy.as_str(),
-        job_schedule::Model::CONCURRENCY_FORBID | job_schedule::Model::CONCURRENCY_ALLOW
-    ) {
+    if !matches!(concurrency_policy, CONCURRENCY_FORBID | CONCURRENCY_ALLOW) {
         return Err("并发策略只能是 forbid 或 allow".into());
     }
-    if !(1..=86_400).contains(&schedule.max_runtime_seconds) {
+    if !(1..=86_400).contains(&max_runtime_seconds) {
         return Err("最大运行时长必须在 1 到 86400 秒之间".into());
     }
-    let parsed = ParsedSchedule::parse(&schedule.cron_expression, &schedule.timezone)
+    let parsed = ParsedSchedule::parse(cron_expression, timezone)
         .map_err(|error| error.message().to_owned())?;
     parsed
         .next_after(now)
@@ -107,5 +106,44 @@ impl ParsedSchedule {
             ));
         }
         Ok(occurrences)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::{CONCURRENCY_FORBID, MISFIRE_SKIP, validate_persisted_schedule};
+
+    #[test]
+    fn persisted_schedule_validation_uses_application_values() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 21, 0, 0, 0).unwrap();
+        let next_run_at = Utc.with_ymd_and_hms(2026, 8, 22, 0, 0, 0).unwrap();
+
+        assert!(
+            validate_persisted_schedule(
+                Some(next_run_at),
+                MISFIRE_SKIP,
+                CONCURRENCY_FORBID,
+                300,
+                "0 0 0 * * * *",
+                "Asia/Shanghai",
+                now,
+            )
+            .is_ok()
+        );
+        let invalid = validate_persisted_schedule(
+            Some(next_run_at),
+            "unknown",
+            CONCURRENCY_FORBID,
+            300,
+            "0 0 0 * * * *",
+            "Asia/Shanghai",
+            now,
+        );
+        assert_eq!(
+            invalid.err().as_deref(),
+            Some("错过执行策略只能是 skip 或 fire_once")
+        );
     }
 }

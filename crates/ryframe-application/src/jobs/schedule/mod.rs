@@ -27,6 +27,18 @@ const SYSTEM_TENANT_ID: &str = "system";
 const MAX_NAME_BYTES: usize = 100;
 const MAX_CRON_BYTES: usize = 191;
 const MAX_TIMEZONE_BYTES: usize = 64;
+const MISFIRE_SKIP: &str = "skip";
+const MISFIRE_FIRE_ONCE: &str = "fire_once";
+const CONCURRENCY_FORBID: &str = "forbid";
+const CONCURRENCY_ALLOW: &str = "allow";
+const TRIGGER_SCHEDULED: &str = "scheduled";
+const TRIGGER_MISFIRE: &str = "misfire";
+const TRIGGER_MANUAL: &str = "manual";
+const OUTCOME_ENQUEUED: &str = "enqueued";
+const OUTCOME_SKIPPED_MISFIRE: &str = "skipped_misfire";
+const OUTCOME_SKIPPED_CONCURRENCY: &str = "skipped_concurrency";
+const OUTCOME_TARGET_UNAVAILABLE: &str = "target_unavailable";
+const OUTCOME_INVALID_CONFIGURATION: &str = "invalid_configuration";
 
 #[derive(Clone, Debug)]
 pub struct JobScheduleListParams {
