@@ -24,6 +24,7 @@ pub mod logging;
 pub mod message_listener;
 pub mod readiness;
 pub mod redis;
+pub mod refresh_sessions;
 pub mod services;
 pub mod session_security;
 pub mod spreadsheet;

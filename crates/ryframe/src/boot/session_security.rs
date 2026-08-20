@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use ryframe_adapters::{RefreshSessionRevocation, RefreshSessionStore, TokenBlacklist};
+use ryframe_adapters::TokenBlacklist;
 use ryframe_api::session_security::{
     AccessRevocationStore, RefreshSessionControl, SessionRevocation, SessionSecurityFuture,
+};
+use ryframe_application::{
+    RefreshSessionPort, RefreshSessionRevocation as ApplicationSessionRevocation,
 };
 
 struct AccessRevocationStoreBridge {
@@ -20,7 +23,7 @@ impl AccessRevocationStore for AccessRevocationStoreBridge {
 }
 
 struct RefreshSessionControlBridge {
-    store: RefreshSessionStore,
+    store: Arc<dyn RefreshSessionPort>,
 }
 
 impl RefreshSessionControl for RefreshSessionControlBridge {
@@ -90,15 +93,15 @@ pub fn access_revocations(store: TokenBlacklist) -> Arc<dyn AccessRevocationStor
     Arc::new(AccessRevocationStoreBridge { store })
 }
 
-pub fn refresh_sessions(store: RefreshSessionStore) -> Arc<dyn RefreshSessionControl> {
+pub fn refresh_sessions(store: Arc<dyn RefreshSessionPort>) -> Arc<dyn RefreshSessionControl> {
     Arc::new(RefreshSessionControlBridge { store })
 }
 
-const fn map_session_revocation(value: RefreshSessionRevocation) -> SessionRevocation {
+const fn map_session_revocation(value: ApplicationSessionRevocation) -> SessionRevocation {
     match value {
-        RefreshSessionRevocation::Revoked => SessionRevocation::Revoked,
-        RefreshSessionRevocation::AlreadyRevoked => SessionRevocation::AlreadyRevoked,
-        RefreshSessionRevocation::NotFoundOrForeign => SessionRevocation::NotFoundOrForeign,
+        ApplicationSessionRevocation::Revoked => SessionRevocation::Revoked,
+        ApplicationSessionRevocation::AlreadyRevoked => SessionRevocation::AlreadyRevoked,
+        ApplicationSessionRevocation::NotFoundOrForeign => SessionRevocation::NotFoundOrForeign,
     }
 }
 
@@ -109,15 +112,15 @@ mod tests {
     #[test]
     fn session_revocation_mapping_is_complete() {
         assert_eq!(
-            map_session_revocation(RefreshSessionRevocation::Revoked),
+            map_session_revocation(ApplicationSessionRevocation::Revoked),
             SessionRevocation::Revoked
         );
         assert_eq!(
-            map_session_revocation(RefreshSessionRevocation::AlreadyRevoked),
+            map_session_revocation(ApplicationSessionRevocation::AlreadyRevoked),
             SessionRevocation::AlreadyRevoked
         );
         assert_eq!(
-            map_session_revocation(RefreshSessionRevocation::NotFoundOrForeign),
+            map_session_revocation(ApplicationSessionRevocation::NotFoundOrForeign),
             SessionRevocation::NotFoundOrForeign
         );
     }

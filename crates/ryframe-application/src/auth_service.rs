@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use ryframe_adapters::{RedisClient, RefreshSessionStore};
+use ryframe_adapters::RedisClient;
 use ryframe_auth::jwt::TokenSettings;
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{DeptRepository, UserRepository, entities::user};
 use serde::Serialize;
 
-use crate::{AuthPolicy, AuthorizationCache, AuthorizationResolver};
+use crate::{AuthPolicy, AuthorizationCache, AuthorizationResolver, RefreshSessionPort};
 
 mod brute_force;
 mod identity;
@@ -74,9 +74,9 @@ pub struct AuthService {
     authorization_resolver: AuthorizationResolver,
     policy: AuthPolicy,
     token_settings: Arc<TokenSettings>,
-    /// Redis 客户端（用于 refresh family 与登录暴力破解防护，可空）
+    /// Redis 客户端（仅用于登录暴力破解防护，可空）
     redis: Option<RedisClient>,
-    refresh_sessions: RefreshSessionStore,
+    refresh_sessions: Arc<dyn RefreshSessionPort>,
     authorization_cache: AuthorizationCache,
 }
 
@@ -86,10 +86,10 @@ impl AuthService {
         policy: AuthPolicy,
         token_settings: Arc<TokenSettings>,
         redis: Option<RedisClient>,
+        refresh_sessions: Arc<dyn RefreshSessionPort>,
         authorization_cache: AuthorizationCache,
     ) -> Self {
         ryframe_auth::password::warm_dummy_hash();
-        let refresh_sessions = RefreshSessionStore::new(redis.clone());
         Self {
             db,
             user_repo: UserRepository,
@@ -103,8 +103,8 @@ impl AuthService {
         }
     }
 
-    pub fn refresh_sessions(&self) -> RefreshSessionStore {
-        self.refresh_sessions.clone()
+    pub fn refresh_sessions(&self) -> Arc<dyn RefreshSessionPort> {
+        Arc::clone(&self.refresh_sessions)
     }
 
     pub fn token_settings(&self) -> Arc<TokenSettings> {

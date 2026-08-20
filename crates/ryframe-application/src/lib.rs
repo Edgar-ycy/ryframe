@@ -8,6 +8,7 @@ mod file_content;
 mod id_generator;
 pub mod jobs;
 mod principal_resolver;
+mod refresh_session;
 mod request_tenant_context;
 mod runtime_policy;
 mod service_identity_secret;
@@ -50,6 +51,10 @@ pub use jobs::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 pub use principal_resolver::PrincipalResolver;
+pub use refresh_session::{
+    RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,
+    RefreshSessionRevocation, RefreshSessionRotation,
+};
 pub use request_tenant_context::{TenantContext, with_tenant_context};
 pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,

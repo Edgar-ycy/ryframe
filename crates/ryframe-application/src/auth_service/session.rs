@@ -1,9 +1,9 @@
-use ryframe_adapters::{RefreshFamily, RefreshRotation};
 use ryframe_auth::{jwt, password};
 use ryframe_db::{Repository, TenantRepository, entities::user};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use super::{AuthService, LoginResult, UserInfo};
+use crate::{RefreshSessionFamily, RefreshSessionRotation};
 
 const MAX_REFRESH_SESSION_SECONDS: usize = 7 * 24 * 60 * 60;
 
@@ -135,7 +135,7 @@ impl AuthService {
             &self.token_settings,
         )?;
         self.refresh_sessions
-            .register(RefreshFamily {
+            .register(RefreshSessionFamily {
                 sid: sid.clone(),
                 tenant_id: user.tenant_id.clone(),
                 user_id: user.id,
@@ -191,23 +191,23 @@ impl AuthService {
             )
             .await?
         {
-            RefreshRotation::Rotated {
+            RefreshSessionRotation::Rotated {
                 current_jti,
                 issued_at,
             }
-            | RefreshRotation::Recovered {
+            | RefreshSessionRotation::Recovered {
                 current_jti,
                 issued_at,
             } => (current_jti, issued_at),
-            RefreshRotation::Concurrent => {
+            RefreshSessionRotation::Concurrent => {
                 return Err(AppError::Conflict("refresh already in progress".into()));
             }
-            RefreshRotation::Replayed => {
+            RefreshSessionRotation::Replayed => {
                 return Err(AppError::Authentication(
                     "refresh token replay detected; session revoked".into(),
                 ));
             }
-            RefreshRotation::MissingOrRevoked => {
+            RefreshSessionRotation::MissingOrRevoked => {
                 return Err(AppError::Authentication(
                     "refresh session is not active".into(),
                 ));
