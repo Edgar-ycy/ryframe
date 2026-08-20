@@ -1,7 +1,6 @@
-use ryframe_db::ControlDatabaseCluster;
-use ryframe_db::DeptRepository;
+use std::sync::Arc;
 
-use crate::AuthorizationCache;
+use crate::{AuthorizationCache, DeptReadPort, DeptWritePort};
 
 mod commands;
 mod model;
@@ -13,16 +12,20 @@ const CACHE_TTL_SECS: u64 = 3600;
 const DEPT_TREE_CACHE_NAMESPACE: &str = "dept-tree";
 
 pub struct DeptService {
-    db: ControlDatabaseCluster,
-    dept_repo: DeptRepository,
+    read: Arc<dyn DeptReadPort>,
+    write: Arc<dyn DeptWritePort>,
     authorization_cache: AuthorizationCache,
 }
 
 impl DeptService {
-    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(
+        read: Arc<dyn DeptReadPort>,
+        write: Arc<dyn DeptWritePort>,
+        authorization_cache: AuthorizationCache,
+    ) -> Self {
         Self {
-            db,
-            dept_repo: DeptRepository,
+            read,
+            write,
             authorization_cache,
         }
     }

@@ -241,7 +241,8 @@ pub async fn build_all(
     ));
 
     let dept = Arc::new(DeptService::new(
-        database.clone(),
+        ryframe_application::legacy_dept_read(database.clone()),
+        ryframe_application::legacy_dept_write(database.clone(), authorization_cache.clone()),
         authorization_cache.clone(),
     ));
     let post = Arc::new(PostService::new(

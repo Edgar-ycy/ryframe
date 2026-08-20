@@ -1,5 +1,6 @@
-use ryframe_db::{entities::dept, repositories::dept_repo::DeptTreeNode as RepoDeptTreeNode};
 use serde::{Deserialize, Serialize};
+
+use crate::{DeptRecord, DeptTreeRecord};
 
 #[derive(Debug, Serialize)]
 pub struct DeptVo {
@@ -14,8 +15,8 @@ pub struct DeptVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<dept::Model> for DeptVo {
-    fn from(dept: dept::Model) -> Self {
+impl From<DeptRecord> for DeptVo {
+    fn from(dept: DeptRecord) -> Self {
         Self {
             id: dept.id.to_string(),
             name: dept.name,
@@ -39,12 +40,12 @@ pub struct DeptTreeNode {
     pub children: Vec<DeptTreeNode>,
 }
 
-impl From<RepoDeptTreeNode> for DeptTreeNode {
-    fn from(node: RepoDeptTreeNode) -> Self {
+impl From<DeptTreeRecord> for DeptTreeNode {
+    fn from(node: DeptTreeRecord) -> Self {
         Self {
-            id: node.id,
+            id: node.id.to_string(),
             name: node.name,
-            parent_id: node.parent_id,
+            parent_id: node.parent_id.map(|id| id.to_string()),
             sort: node.sort,
             status: node.status,
             children: node.children.into_iter().map(Self::from).collect(),
