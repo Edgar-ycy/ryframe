@@ -5,11 +5,11 @@ use std::{
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    ControlDatabaseCluster, PermissionRepository, ReadConsistency, Repository, RoleRepository,
-    ServiceAccountLock, ServiceAccountRepository, ServiceCredentialRepository,
-    ServiceDelegationRepository, UserRepository,
+    ControlDatabaseCluster, ReadConsistency, Repository, RoleRepository, ServiceAccountLock,
+    ServiceAccountRepository, ServiceCredentialRepository, ServiceDelegationRepository,
+    UserRepository,
     entities::{
-        role, service_account, service_account_role, service_credential, service_delegation,
+        role, service_account, service_credential, service_delegation,
         service_delegation_capability,
     },
 };
@@ -23,7 +23,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, PepperKeyring, ServiceAccountAuditReadPort, ServiceAccountPolicy,
+    AuthorizationCache, PepperKeyring, ServiceAccountAuditReadPort,
+    ServiceAccountAuthorizationReadPort, ServiceAccountPolicy,
     service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
 };
 
@@ -54,9 +55,9 @@ pub struct ServiceAccountService {
     credential_repo: ServiceCredentialRepository,
     delegation_repo: ServiceDelegationRepository,
     role_repo: RoleRepository,
-    permission_repo: PermissionRepository,
     user_repo: UserRepository,
     authorization_cache: AuthorizationCache,
+    authorization_read: Arc<dyn ServiceAccountAuthorizationReadPort>,
     audit_read: Arc<dyn ServiceAccountAuditReadPort>,
 }
 
@@ -67,6 +68,7 @@ impl ServiceAccountService {
         keyring: Arc<PepperKeyring>,
         capabilities: Vec<ServiceCapabilityDescriptor>,
         authorization_cache: AuthorizationCache,
+        authorization_read: Arc<dyn ServiceAccountAuthorizationReadPort>,
         audit_read: Arc<dyn ServiceAccountAuditReadPort>,
     ) -> AppResult<Self> {
         validate_capabilities(&capabilities)?;
@@ -79,9 +81,9 @@ impl ServiceAccountService {
             credential_repo: ServiceCredentialRepository,
             delegation_repo: ServiceDelegationRepository,
             role_repo: RoleRepository,
-            permission_repo: PermissionRepository,
             user_repo: UserRepository,
             authorization_cache,
+            authorization_read,
             audit_read,
         })
     }

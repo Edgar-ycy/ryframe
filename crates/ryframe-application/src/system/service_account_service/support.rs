@@ -56,60 +56,6 @@ impl ServiceAccountService {
         }
     }
 
-    pub(super) async fn user_permission_codes(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        user_id: i64,
-    ) -> AppResult<HashSet<String>> {
-        let roles = self
-            .role_repo
-            .find_user_roles(db, tenant_id, user_id)
-            .await?;
-        let ids = roles.into_iter().map(|role| role.id).collect::<Vec<_>>();
-        Ok(self
-            .permission_repo
-            .find_role_perms(db, tenant_id, &ids)
-            .await?
-            .into_iter()
-            .map(|permission| permission.code)
-            .collect())
-    }
-
-    pub(super) async fn account_permission_codes(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        account_id: i64,
-    ) -> AppResult<HashSet<String>> {
-        let role_ids = self
-            .account_repo
-            .role_ids(db, tenant_id, account_id)
-            .await?;
-        let enabled_role_ids = if role_ids.is_empty() {
-            Vec::new()
-        } else {
-            role::Entity::find()
-                .filter(role::Column::TenantId.eq(tenant_id))
-                .filter(role::Column::Id.is_in(role_ids))
-                .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
-                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-                .all(db)
-                .await
-                .map_err(database_error)?
-                .into_iter()
-                .map(|role| role.id)
-                .collect()
-        };
-        Ok(self
-            .permission_repo
-            .find_role_perms(db, tenant_id, &enabled_role_ids)
-            .await?
-            .into_iter()
-            .map(|permission| permission.code)
-            .collect())
-    }
-
     pub(super) async fn common_capability_keys_in_txn(
         &self,
         txn: &sea_orm::DatabaseTransaction,

@@ -29,114 +29,21 @@ pub(super) fn common_capabilities(
     user_permissions: &HashSet<String>,
     account_permissions: &HashSet<String>,
 ) -> Vec<ServiceCapabilityDescriptor> {
-    let user_permissions = user_permissions.iter().cloned().collect::<Vec<_>>();
-    let account_permissions = account_permissions.iter().cloned().collect::<Vec<_>>();
     capabilities
         .iter()
         .filter(|capability| {
             capability.delegated
-                && ryframe_auth::rbac::has_permission(
-                    &user_permissions,
-                    capability.permission.as_str(),
-                )
-                && ryframe_auth::rbac::has_permission(
-                    &account_permissions,
-                    capability.permission.as_str(),
-                )
+                && has_permission(user_permissions, &capability.permission)
+                && has_permission(account_permissions, &capability.permission)
         })
         .cloned()
         .collect()
 }
 
-pub(super) async fn account_permission_codes_for_accounts(
-    db: &DatabaseConnection,
-    tenant_id: &str,
-    account_ids: &[i64],
-) -> AppResult<HashMap<i64, HashSet<String>>> {
-    if account_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let account_roles = service_account_role::Entity::find()
-        .filter(service_account_role::Column::TenantId.eq(tenant_id))
-        .filter(service_account_role::Column::AccountId.is_in(account_ids.iter().copied()))
-        .all(db)
-        .await
-        .map_err(database_error)?;
-    if account_roles.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let role_ids = account_roles
-        .iter()
-        .map(|relation| relation.role_id)
-        .collect::<HashSet<_>>();
-    let enabled_role_ids = role::Entity::find()
-        .filter(role::Column::TenantId.eq(tenant_id))
-        .filter(role::Column::Id.is_in(role_ids.iter().copied()))
-        .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
-        .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-        .all(db)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(|role| role.id)
-        .collect::<HashSet<_>>();
-    if enabled_role_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let role_permissions = ryframe_db::entities::role_permission::Entity::find()
-        .filter(ryframe_db::entities::role_permission::Column::TenantId.eq(tenant_id))
-        .filter(
-            ryframe_db::entities::role_permission::Column::RoleId
-                .is_in(enabled_role_ids.iter().copied()),
-        )
-        .all(db)
-        .await
-        .map_err(database_error)?;
-    let permission_ids = role_permissions
-        .iter()
-        .map(|relation| relation.perm_id)
-        .collect::<HashSet<_>>();
-    let permission_codes = if permission_ids.is_empty() {
-        HashMap::new()
-    } else {
-        ryframe_db::entities::permission::Entity::find()
-            .filter(ryframe_db::entities::permission::Column::TenantId.eq(tenant_id))
-            .filter(
-                ryframe_db::entities::permission::Column::Id.is_in(permission_ids.iter().copied()),
-            )
-            .filter(ryframe_db::entities::permission::Column::Status.eq("1"))
-            .all(db)
-            .await
-            .map_err(database_error)?
-            .into_iter()
-            .map(|permission| (permission.id, permission.code))
-            .collect::<HashMap<_, _>>()
-    };
-    let role_to_permissions = role_permissions.into_iter().fold(
-        HashMap::<i64, HashSet<String>>::new(),
-        |mut mapping, relation| {
-            if let Some(code) = permission_codes.get(&relation.perm_id) {
-                mapping
-                    .entry(relation.role_id)
-                    .or_default()
-                    .insert(code.clone());
-            }
-            mapping
-        },
-    );
-    let mut result = HashMap::<i64, HashSet<String>>::new();
-    for relation in account_roles {
-        if !enabled_role_ids.contains(&relation.role_id) {
-            continue;
-        }
-        if let Some(codes) = role_to_permissions.get(&relation.role_id) {
-            result
-                .entry(relation.account_id)
-                .or_default()
-                .extend(codes.iter().cloned());
-        }
-    }
-    Ok(result)
+fn has_permission(permissions: &HashSet<String>, required: &str) -> bool {
+    permissions.iter().any(|permission| {
+        ryframe_auth::rbac::has_permission(std::slice::from_ref(permission), required)
+    })
 }
 
 pub(super) async fn validate_dept(
@@ -214,5 +121,43 @@ pub(super) fn delegation_vo_with_keys(
         capability_keys,
         revoked_at: delegation.revoked_at,
         created_at: delegation.created_at,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{ServiceCapabilityDescriptor, common_capabilities};
+
+    fn permissions(values: &[&str]) -> HashSet<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn delegated_capability_requires_both_permission_sets() {
+        let capabilities = vec![
+            ServiceCapabilityDescriptor {
+                key: "read".to_owned(),
+                permission: "system:user:list".to_owned(),
+                direct: true,
+                delegated: true,
+            },
+            ServiceCapabilityDescriptor {
+                key: "write".to_owned(),
+                permission: "system:user:create".to_owned(),
+                direct: true,
+                delegated: false,
+            },
+        ];
+
+        let common = common_capabilities(
+            &capabilities,
+            &permissions(&["system:user:*"]),
+            &permissions(&["system:user:list"]),
+        );
+
+        assert_eq!(common.len(), 1);
+        assert_eq!(common[0].key, "read");
     }
 }

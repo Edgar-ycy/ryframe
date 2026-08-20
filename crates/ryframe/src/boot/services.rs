@@ -206,6 +206,7 @@ pub async fn build_all(
             Arc::clone(&keyring),
             descriptors,
             authorization_cache.clone(),
+            ryframe_application::legacy_service_account_authorization_persistence(database.clone()),
             ryframe_application::legacy_service_account_audit_persistence(database.clone()),
         )?);
         let agent = Arc::new(AgentService::new(

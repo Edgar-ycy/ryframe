@@ -8,22 +8,15 @@ impl ServiceAccountService {
     ) -> AppResult<Vec<ServiceCapabilityDescriptor>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        self.account_repo
-            .find_by_id(&db, tenant_id, account_id)
+        let snapshot = self
+            .authorization_read
+            .permission_snapshot(tenant_id, actor.user_id, account_id)
             .await?
-            .filter(service_account::Model::is_enabled)
             .ok_or_else(|| AppError::NotFound("可用的服务账号不存在".into()))?;
-        let user_permissions = self
-            .user_permission_codes(&db, tenant_id, actor.user_id)
-            .await?;
-        let account_permissions = self
-            .account_permission_codes(&db, tenant_id, account_id)
-            .await?;
         Ok(common_capabilities(
             &self.capabilities,
-            &user_permissions,
-            &account_permissions,
+            &snapshot.user_permissions,
+            &snapshot.account_permissions,
         ))
     }
 
@@ -34,48 +27,21 @@ impl ServiceAccountService {
     ) -> AppResult<Vec<ServiceDelegationTargetVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_enabled()?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let user_permissions = self
-            .user_permission_codes(&db, tenant_id, actor.user_id)
-            .await?;
         const MAX_DELEGATION_TARGETS: u64 = 1_000;
-        let account_query = service_account::Entity::find()
-            .filter(service_account::Column::TenantId.eq(tenant_id))
-            .filter(service_account::Column::Status.eq(service_account::Model::STATUS_NORMAL))
-            .filter(service_account::Column::DelFlag.eq(service_account::Model::DEL_FLAG_NORMAL));
-        if account_query
-            .clone()
-            .count(&db)
-            .await
-            .map_err(database_error)?
-            > MAX_DELEGATION_TARGETS
-        {
-            return Err(AppError::Validation(
-                "当前租户可用服务账号超过 1000 个，请由管理员收敛账号数量".into(),
-            ));
-        }
-        let accounts = account_query
-            .order_by_asc(service_account::Column::Code)
-            .all(&db)
-            .await
-            .map_err(database_error)?;
-        let account_ids = accounts
-            .iter()
-            .map(|account| account.id)
-            .collect::<Vec<_>>();
-        let account_permissions =
-            account_permission_codes_for_accounts(&db, tenant_id, &account_ids).await?;
+        let target_set = self
+            .authorization_read
+            .delegation_targets(tenant_id, actor.user_id, MAX_DELEGATION_TARGETS)
+            .await?;
         let mut targets = Vec::new();
-        for account in accounts {
-            let permissions = account_permissions
-                .get(&account.id)
-                .cloned()
-                .unwrap_or_default();
-            let capabilities =
-                common_capabilities(&self.capabilities, &user_permissions, &permissions);
+        for account in target_set.accounts {
+            let capabilities = common_capabilities(
+                &self.capabilities,
+                &target_set.user_permissions,
+                &account.permission_codes,
+            );
             if !capabilities.is_empty() {
                 targets.push(ServiceDelegationTargetVo {
-                    account_id: account.id.to_string(),
+                    account_id: account.account_id.to_string(),
                     code: account.code,
                     name: account.name,
                     capabilities,

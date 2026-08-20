@@ -29,6 +29,7 @@ mod legacy_profile_persistence;
 mod legacy_role_read;
 mod legacy_role_write;
 mod legacy_service_account_audit_persistence;
+mod legacy_service_account_authorization_persistence;
 mod legacy_tenant_usage_persistence;
 mod legacy_user_query_persistence;
 mod login_info_persistence;
@@ -49,6 +50,7 @@ mod role_read;
 mod role_write;
 mod runtime_policy;
 mod service_account_audit_persistence;
+mod service_account_authorization_persistence;
 mod service_identity_secret;
 mod spreadsheet;
 pub mod system;
@@ -146,6 +148,8 @@ pub use legacy_role_write::port as legacy_role_write;
 #[doc(hidden)]
 pub use legacy_service_account_audit_persistence::port as legacy_service_account_audit_persistence;
 #[doc(hidden)]
+pub use legacy_service_account_authorization_persistence::port as legacy_service_account_authorization_persistence;
+#[doc(hidden)]
 pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
 #[doc(hidden)]
 pub use legacy_user_query_persistence::port as legacy_user_query_persistence;
@@ -194,6 +198,10 @@ pub use runtime_policy::{
 };
 pub use service_account_audit_persistence::{
     ServiceAccessAuditRecord, ServiceAccountAuditReadPort,
+};
+pub use service_account_authorization_persistence::{
+    ServiceAccountAuthorizationReadPort, ServiceAccountPermissionSnapshot,
+    ServiceDelegationTargetRecord, ServiceDelegationTargetSet,
 };
 pub use spreadsheet::{
     SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,
