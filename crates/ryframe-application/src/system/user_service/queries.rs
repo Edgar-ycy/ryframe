@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-use ryframe_db::{
-    ReadConsistency, Repository, TenantRepository, UserFilter,
-    entities::{role, tenant, user},
-};
+use ryframe_db::{ReadConsistency, UserFilter};
 use ryframe_kernel::{ActorContext, AppError, AppResult, ExportCursorWindow, PageResult};
 use sea_orm::DatabaseConnection;
 use serde::Serialize;
@@ -11,13 +8,14 @@ use sha2::{Digest, Sha256};
 
 use super::super::{OptionItem, OptionList};
 use super::{RoleBriefVo, UserDetailVo, UserListParams, UserService, UserVo};
+use crate::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord};
 
 /// 从主库重新计算的当前授权结果，供长时间后台任务和诊断接口共用。
 pub(crate) struct CurrentAuthorization {
     pub actor: ActorContext,
-    pub tenant: tenant::Model,
-    pub user: user::Model,
-    pub roles: Vec<role::Model>,
+    pub tenant: IdentityTenantRecord,
+    pub user: IdentityUserRecord,
+    pub roles: Vec<IdentityRoleRecord>,
     pub permission_codes: Vec<String>,
     pub fingerprint: String,
 }
@@ -96,21 +94,21 @@ impl UserService {
         tenant_id: &str,
         user_id: i64,
     ) -> AppResult<CurrentAuthorization> {
-        let db = self.db.write();
-        let tenant = TenantRepository
-            .find_by_tenant_id(db, tenant_id)
+        let tenant = self
+            .authorization_resolver
+            .tenant(tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let user = self
-            .user_repo
-            .find_by_id(db, tenant_id, user_id)
+            .authorization_resolver
+            .user_by_id(tenant_id, user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         let resolved = self
             .authorization_resolver
-            .resolve(db, tenant_id, &user)
+            .resolve(tenant_id, &user)
             .await?;
-        let is_super_admin = resolved.roles.iter().any(|role| role.is_super == 1);
+        let is_super_admin = resolved.roles.iter().any(|role| role.is_super);
 
         let actor = ActorContext {
             user_id,
@@ -321,7 +319,7 @@ struct ExportRoleFingerprint<'a> {
     id: i64,
     code: &'a str,
     data_scope: &'a str,
-    is_super: i8,
+    is_super: bool,
 }
 
 #[derive(Serialize)]
@@ -337,7 +335,7 @@ fn calculate_export_authorization_fingerprint(
     tenant_authorization_epoch: i32,
     user_authorization_version: i32,
     actor: &ActorContext,
-    roles: &[role::Model],
+    roles: &[IdentityRoleRecord],
     permission_codes: &[String],
 ) -> AppResult<String> {
     let mut roles = roles

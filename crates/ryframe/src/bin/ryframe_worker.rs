@@ -143,6 +143,7 @@ async fn main() -> Result<(), AppError> {
     let user = Arc::new(UserService::new(
         database.clone(),
         authorization_cache.clone(),
+        ryframe_application::legacy_identity_authorization(database.clone()),
     ));
     let product = Arc::new(ProductService::new(
         database.clone(),

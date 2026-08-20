@@ -1,9 +1,8 @@
 use ryframe_auth::{jwt, password};
-use ryframe_db::{Repository, TenantRepository, entities::user};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use super::{AuthService, LoginResult, UserInfo};
-use crate::{RefreshSessionFamily, RefreshSessionRotation};
+use crate::{IdentityUserRecord, RefreshSessionFamily, RefreshSessionRotation};
 
 const MAX_REFRESH_SESSION_SECONDS: usize = 7 * 24 * 60 * 60;
 
@@ -19,12 +18,10 @@ impl AuthService {
         password: &str,
     ) -> AppResult<LoginResult> {
         crate::enforce_tenant_scope(tenant_id)?;
-        let tenant = TenantRepository
-            .ensure_available(self.db.write(), tenant_id)
-            .await?;
+        let tenant = self.available_tenant(tenant_id).await?;
         let user = self
-            .user_repo
-            .find_by_username(self.db.write(), tenant_id, username)
+            .authorization_resolver
+            .user_by_username(tenant_id, username)
             .await?;
 
         // 始终执行 Argon2 校验（包括未知账户），避免更快的数据库未命中泄露用户名
@@ -84,12 +81,10 @@ impl AuthService {
     /// 获取当前用户信息。
     pub async fn get_current_user(&self, actor: &ActorContext) -> AppResult<UserInfo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let tenant = TenantRepository
-            .ensure_available(self.db.write(), tenant_id)
-            .await?;
+        let tenant = self.available_tenant(tenant_id).await?;
         let user = self
-            .user_repo
-            .find_by_id(self.db.write(), tenant_id, actor.user_id)
+            .authorization_resolver
+            .user_by_id(tenant_id, actor.user_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户不存在".into()))?;
         if !user.is_enabled() {
@@ -103,7 +98,7 @@ impl AuthService {
 
     async fn issue_login_result(
         &self,
-        user: &user::Model,
+        user: &IdentityUserRecord,
         tenant_session_version: i32,
         user_info: UserInfo,
     ) -> AppResult<LoginResult> {
@@ -161,7 +156,7 @@ impl AuthService {
 
     async fn issue_refresh_result(
         &self,
-        user: &user::Model,
+        user: &IdentityUserRecord,
         tenant_session_version: i32,
         user_info: UserInfo,
         claims: &jwt::Claims,

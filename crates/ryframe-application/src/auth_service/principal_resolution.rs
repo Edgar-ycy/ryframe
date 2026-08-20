@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
-use ryframe_db::ReadConsistency;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use crate::{
@@ -57,17 +56,10 @@ impl AuthService {
         &self,
         claims: &Claims,
     ) -> AppResult<AuthorizationSnapshot> {
-        let selected = self.db.select_read(ReadConsistency::Strong);
-        let identity = self
-            .validate_token_identity_on(&selected.connection, claims)
-            .await?;
+        let identity = self.validate_token_identity(claims).await?;
         let authorization = self
             .authorization_resolver
-            .resolve(
-                &selected.connection,
-                &identity.user.tenant_id,
-                &identity.user,
-            )
+            .resolve(&identity.user.tenant_id, &identity.user)
             .await?;
 
         Ok(build_authorization_snapshot(&identity, authorization))

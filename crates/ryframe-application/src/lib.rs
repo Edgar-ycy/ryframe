@@ -9,10 +9,12 @@ mod dept_persistence;
 mod dict_persistence;
 mod file_content;
 mod id_generator;
+mod identity_authorization;
 pub mod jobs;
 mod legacy_config_persistence;
 mod legacy_dept_persistence;
 mod legacy_dict_persistence;
+mod legacy_identity_authorization;
 mod legacy_login_info_persistence;
 mod legacy_menu_persistence;
 mod legacy_message_persistence;
@@ -83,6 +85,9 @@ pub use dict_persistence::{
 };
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
+pub use identity_authorization::{
+    IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
+};
 #[allow(deprecated)]
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
@@ -102,6 +107,8 @@ pub use legacy_config_persistence::port as legacy_config_persistence;
 pub use legacy_dept_persistence::{read_port as legacy_dept_read, write_port as legacy_dept_write};
 #[doc(hidden)]
 pub use legacy_dict_persistence::port as legacy_dict_persistence;
+#[doc(hidden)]
+pub use legacy_identity_authorization::port as legacy_identity_authorization;
 #[doc(hidden)]
 pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
 #[doc(hidden)]

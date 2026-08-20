@@ -5,12 +5,12 @@ use chrono::{DateTime, Utc};
 use ryframe_db::{
     ControlDatabaseCluster, DataRetentionRepository, DeptRepository, MenuRepository,
     PermissionRepository, RoleRepository, UserRepository,
-    entities::{menu, permission, role, tenant},
+    entities::{menu, permission},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 use serde::Serialize;
 
-use crate::AuthorizationCache;
+use crate::{AuthorizationCache, IdentityRoleRecord};
 
 use super::UserService;
 
@@ -326,7 +326,7 @@ impl AuthorizationDiagnosticService {
         if !user_enabled {
             warnings.push("user_disabled".to_owned());
         }
-        if authorization.tenant.status != tenant::Model::STATUS_ENABLED {
+        if authorization.tenant.status != "enabled" {
             warnings.push("tenant_disabled".to_owned());
         } else if authorization
             .tenant
@@ -389,13 +389,13 @@ impl AuthorizationDiagnosticService {
         &self,
         db: &sea_orm::DatabaseConnection,
         tenant_id: &str,
-        roles: &[role::Model],
+        roles: &[IdentityRoleRecord],
         active_permissions: &[permission::Model],
     ) -> AppResult<BTreeMap<String, PermissionSource>> {
         let mut sources = BTreeMap::<String, PermissionSource>::new();
         let super_roles = roles
             .iter()
-            .filter(|role| role.is_super == 1)
+            .filter(|role| role.is_super)
             .map(|role| role.code.clone())
             .collect::<BTreeSet<_>>();
         if !super_roles.is_empty() {

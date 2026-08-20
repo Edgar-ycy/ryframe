@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use ryframe_auth::jwt::TokenSettings;
-use ryframe_db::ControlDatabaseCluster;
-use ryframe_db::{DeptRepository, UserRepository, entities::user};
 use serde::Serialize;
 
 use crate::{
-    AuthPolicy, AuthorizationCache, AuthorizationResolver, LoginProtectionPort, RefreshSessionPort,
+    AuthPolicy, AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort,
+    IdentityUserRecord, LoginProtectionPort, RefreshSessionPort,
 };
 
 mod brute_force;
@@ -47,8 +46,8 @@ pub struct UserInfo {
     pub perms: Vec<String>,
 }
 
-impl From<&user::Model> for UserInfo {
-    fn from(user: &user::Model) -> Self {
+impl From<&IdentityUserRecord> for UserInfo {
+    fn from(user: &IdentityUserRecord) -> Self {
         Self {
             id: user.id.to_string(),
             tenant_id: user.tenant_id.clone(),
@@ -69,9 +68,6 @@ impl From<&user::Model> for UserInfo {
 
 /// 认证服务
 pub struct AuthService {
-    db: ControlDatabaseCluster,
-    user_repo: UserRepository,
-    dept_repo: DeptRepository,
     authorization_resolver: AuthorizationResolver,
     policy: AuthPolicy,
     token_settings: Arc<TokenSettings>,
@@ -82,7 +78,7 @@ pub struct AuthService {
 
 impl AuthService {
     pub fn new(
-        db: ControlDatabaseCluster,
+        identity_read: Arc<dyn IdentityAuthorizationReadPort>,
         policy: AuthPolicy,
         token_settings: Arc<TokenSettings>,
         login_protection: Arc<dyn LoginProtectionPort>,
@@ -91,10 +87,7 @@ impl AuthService {
     ) -> Self {
         ryframe_auth::password::warm_dummy_hash();
         Self {
-            db,
-            user_repo: UserRepository,
-            dept_repo: DeptRepository,
-            authorization_resolver: AuthorizationResolver::new(),
+            authorization_resolver: AuthorizationResolver::new(identity_read),
             policy,
             token_settings,
             login_protection,

@@ -159,9 +159,11 @@ pub async fn build_all(
 ) -> Result<AppServices, AppError> {
     let authorization_cache =
         super::authorization_cache::cache(redis_client.clone(), policies.cache);
+    let identity_read = ryframe_application::legacy_identity_authorization(database.clone());
     let user = Arc::new(UserService::new(
         database.clone(),
         authorization_cache.clone(),
+        Arc::clone(&identity_read),
     ));
     let product = Arc::new(ProductService::new(
         database.clone(),
@@ -233,7 +235,7 @@ pub async fn build_all(
     )?);
     let refresh_session_port = super::refresh_sessions::store(redis_client.clone());
     let auth = Arc::new(AuthService::new(
-        database.clone(),
+        identity_read,
         policies.auth,
         token_settings,
         super::login_protection::store(redis_client.clone()),

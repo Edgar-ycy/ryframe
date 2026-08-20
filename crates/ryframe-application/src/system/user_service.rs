@@ -3,6 +3,8 @@ mod password_reset;
 mod queries;
 mod roles;
 
+use std::sync::Arc;
+
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{
     DeptRepository, RoleRepository, UserRepository,
@@ -12,7 +14,7 @@ use ryframe_kernel::{AppResult, ValidatedPageQuery};
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 
-use crate::{AuthorizationCache, AuthorizationResolver};
+use crate::{AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort};
 
 pub(crate) use queries::CurrentAuthorization;
 
@@ -131,13 +133,17 @@ impl UserListParams {
 }
 
 impl UserService {
-    pub fn new(db: ControlDatabaseCluster, authorization_cache: AuthorizationCache) -> Self {
+    pub fn new(
+        db: ControlDatabaseCluster,
+        authorization_cache: AuthorizationCache,
+        identity_read: Arc<dyn IdentityAuthorizationReadPort>,
+    ) -> Self {
         Self {
             db,
             user_repo: UserRepository,
             role_repo: RoleRepository,
             dept_repo: DeptRepository,
-            authorization_resolver: AuthorizationResolver::new(),
+            authorization_resolver: AuthorizationResolver::new(identity_read),
             authorization_cache,
         }
     }
