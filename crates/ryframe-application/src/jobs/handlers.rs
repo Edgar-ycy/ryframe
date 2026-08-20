@@ -8,11 +8,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use ryframe_db::background_job;
 use ryframe_kernel::{AppError, AppResult};
 use serde::Deserialize;
 
-use super::worker::JobHandler;
+use super::worker::{ClaimedBackgroundJob, JobHandler};
 use crate::system::{
     EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, ExportJobPayload, ExportService,
     MESSAGE_DISPATCH_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE, MessageService,
@@ -56,8 +55,8 @@ impl JobHandler for ExportJobHandler {
         EXPORT_JOB_TYPE
     }
 
-    async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
-        let payload: ExportJobPayload = serde_json::from_value(job.payload.clone())
+    async fn handle(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
+        let payload = ExportJobPayload::deserialize(&job.payload)
             .map_err(|error| AppError::Validation(format!("导出后台任务载荷无效: {error}")))?;
         self.service.execute_background_job(job, &payload).await
     }
@@ -84,7 +83,7 @@ impl JobHandler for ExportCleanupJobHandler {
         EXPORT_CLEANUP_JOB_TYPE
     }
 
-    async fn handle(&self, _job: &background_job::Model) -> AppResult<()> {
+    async fn handle(&self, _job: &ClaimedBackgroundJob) -> AppResult<()> {
         let cleaned = self.service.cleanup_expired().await?;
         if cleaned == 0 {
             tracing::debug!("没有需要清理的过期导出结果");
@@ -137,7 +136,7 @@ impl JobHandler for MessageRetentionJobHandler {
         MESSAGE_RETENTION_JOB_TYPE
     }
 
-    async fn handle(&self, _job: &background_job::Model) -> AppResult<()> {
+    async fn handle(&self, _job: &ClaimedBackgroundJob) -> AppResult<()> {
         let deleted = self.service.delete_expired().await?;
         (self.on_deleted)(deleted);
         if deleted == 0 {
@@ -196,8 +195,8 @@ impl JobHandler for MessageDispatchJobHandler {
         MESSAGE_DISPATCH_JOB_TYPE
     }
 
-    async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
-        let payload: MessageDispatchJobPayload = serde_json::from_value(job.payload.clone())
+    async fn handle(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
+        let payload = MessageDispatchJobPayload::deserialize(&job.payload)
             .map_err(|error| AppError::Validation(format!("消息投递任务载荷无效: {error}")))?;
         let message_id = payload
             .message_id

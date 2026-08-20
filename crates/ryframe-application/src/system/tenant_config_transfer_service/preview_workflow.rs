@@ -1,7 +1,7 @@
 use super::*;
 
 impl TenantConfigTransferService {
-    pub(super) async fn execute_preview(&self, job: &background_job::Model) -> AppResult<()> {
+    pub(super) async fn execute_preview(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         let tenant_id = job_tenant(job)?;
         let transfer_id = payload_id(job, "transfer_id")?;
         let transfer = self

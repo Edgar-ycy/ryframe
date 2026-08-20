@@ -204,13 +204,13 @@ pub(super) fn operation_job_id(
     }
 }
 
-pub(super) fn job_tenant(job: &background_job::Model) -> AppResult<&str> {
+pub(super) fn job_tenant(job: &ClaimedBackgroundJob) -> AppResult<&str> {
     job.tenant_id
         .as_deref()
         .ok_or_else(|| AppError::Validation("配置迁移任务缺少租户".into()))
 }
 
-pub(super) fn payload_id(job: &background_job::Model, key: &str) -> AppResult<i64> {
+pub(super) fn payload_id(job: &ClaimedBackgroundJob, key: &str) -> AppResult<i64> {
     let value = job
         .payload
         .get(key)

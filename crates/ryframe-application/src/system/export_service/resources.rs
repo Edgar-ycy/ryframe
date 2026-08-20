@@ -1,8 +1,8 @@
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::{
-    LoginInfoFilter, OperLogFilter, SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact,
-    SpreadsheetBatchProgress, SpreadsheetWriter,
+    ClaimedBackgroundJob, LoginInfoFilter, OperLogFilter, SPREADSHEET_MAX_DATA_ROWS,
+    SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter,
 };
 use ryframe_db::{
     ExportStartDisposition, UserFilter,
@@ -29,7 +29,7 @@ impl ExportService {
     /// 执行一个已领取的后台导出任务。
     pub async fn execute_background_job(
         &self,
-        background_job: &background_job::Model,
+        background_job: &ClaimedBackgroundJob,
         payload: &ExportJobPayload,
     ) -> AppResult<()> {
         payload.validate()?;

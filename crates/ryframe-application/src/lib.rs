@@ -84,14 +84,15 @@ pub use id_generator::{BusinessIdGenerator, install as install_id_generator, nex
 #[allow(deprecated)]
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
-    CallbackScheduleMetricsObserver, CreateJobSchedule, ExportCleanupJobHandler, ExportJobHandler,
-    JobHandler, JobMetricsObserver, JobQueue, JobRunResult, JobScheduleExecutionListParams,
-    JobScheduleExecutionVo, JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview,
-    JobScheduleService, JobScheduleVo, JobWakeupFuture, JobWakeupStream, JobWakeupTransport,
-    JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
-    MessageWakeupPublisher, OutboxRunResult, OutboxWorker, ScheduleMetricsObserver,
-    ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
-    ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
+    CallbackScheduleMetricsObserver, ClaimedBackgroundJob, CreateJobSchedule,
+    ExportCleanupJobHandler, ExportJobHandler, JobHandler, JobMetricsObserver, JobQueue,
+    JobRunResult, JobScheduleExecutionListParams, JobScheduleExecutionVo, JobScheduleListParams,
+    JobScheduleOccurrence, JobSchedulePreview, JobScheduleService, JobScheduleVo, JobWakeupFuture,
+    JobWakeupStream, JobWakeupTransport, JobWorker, MessageDispatchJobHandler,
+    MessageRetentionJobHandler, MessageWakeupFuture, MessageWakeupPublisher, OutboxRunResult,
+    OutboxWorker, ScheduleMetricsObserver, ScheduledJobContext, ScheduledJobTarget,
+    ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
+    UpdateJobSchedule,
 };
 #[doc(hidden)]
 pub use legacy_config_persistence::port as legacy_config_persistence;

@@ -15,7 +15,7 @@ impl JobHandler for UserImportJobHandler {
         USER_IMPORT_JOB_TYPE
     }
 
-    async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
+    async fn handle(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         self.service.execute_background_job(job.id).await
     }
 

@@ -1,7 +1,7 @@
 use super::*;
 
 impl TenantConfigTransferService {
-    pub(super) async fn execute_rollback(&self, job: &background_job::Model) -> AppResult<()> {
+    pub(super) async fn execute_rollback(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         let tenant_id = job_tenant(job)?;
         let transfer_id = payload_id(job, "transfer_id")?;
         let owner_token = Uuid::new_v4().to_string();

@@ -11,7 +11,7 @@ use ryframe_auth::password;
 use ryframe_db::{
     ControlDatabaseCluster, CreateUserImportJob, DeptRepository, EnqueueBackgroundJob,
     FileRepository, TenantConfigTransferRepository, TenantRepository, UserImportFilter,
-    UserImportRepository, UserRepository, background_job,
+    UserImportRepository, UserRepository,
     entities::{dept, user, user_import_job, user_import_row_result},
 };
 use ryframe_kernel::{
@@ -28,7 +28,7 @@ use super::{
     DownloadedFile, FileService, IMPORT_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
     UserService,
 };
-use crate::{JobHandler, JobQueue, SpreadsheetDocumentProcessor};
+use crate::{ClaimedBackgroundJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor};
 
 /// 可恢复用户导入的稳定后台任务类型。
 pub const USER_IMPORT_JOB_TYPE: &str = "system.user.import";

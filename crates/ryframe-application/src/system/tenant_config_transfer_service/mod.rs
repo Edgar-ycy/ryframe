@@ -34,7 +34,7 @@ use super::{
     TenantConfigPackageLimits, TenantConfigPackageResources, UploadPolicy, UserService,
     parse_tenant_config_package,
 };
-use crate::{AuthorizationCache, JobHandler, JobQueue};
+use crate::{AuthorizationCache, ClaimedBackgroundJob, JobHandler, JobQueue};
 
 mod apply_resources;
 mod apply_workflow;

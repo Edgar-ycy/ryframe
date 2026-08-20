@@ -3,14 +3,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use ryframe_db::{
-    TenantRepository, background_job, tenant_data_migration, tenant_data_placement,
-    tenant_operation_lease,
+    TenantRepository, tenant_data_migration, tenant_data_placement, tenant_operation_lease,
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde_json::Value as JsonValue;
 
-use crate::{JobHandler, TenantDataFence};
+use crate::{ClaimedBackgroundJob, JobHandler, TenantDataFence};
 
 use super::recovery::RecoveryIntent;
 use super::{
@@ -33,7 +32,7 @@ impl JobHandler for TenantDataMigrationJobHandler {
         super::TENANT_DATA_MIGRATION_JOB_TYPE
     }
 
-    async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
+    async fn handle(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         let migration_id = job
             .payload
             .get("migration_id")

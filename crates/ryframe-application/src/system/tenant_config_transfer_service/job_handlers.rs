@@ -18,7 +18,7 @@ macro_rules! transfer_job_handler {
                 $job_type
             }
 
-            async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
+            async fn handle(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
                 self.service.$method(job).await
             }
 

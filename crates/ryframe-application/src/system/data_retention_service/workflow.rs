@@ -1,7 +1,7 @@
 use super::*;
 
 impl DataRetentionService {
-    pub async fn execute_job(&self, job: &background_job::Model) -> AppResult<()> {
+    pub async fn execute_job(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         let now = self.repository.database_utc_now(self.db.write()).await?;
         let trigger_kind = job
             .payload
@@ -152,7 +152,7 @@ impl DataRetentionService {
     }
 
     /// 在 Worker 领取后先建立运行记录，使外层超时或租约恢复也能同步公开状态。
-    pub async fn prepare_job(&self, job: &background_job::Model) -> AppResult<()> {
+    pub async fn prepare_job(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         let now = self.repository.database_utc_now(self.db.write()).await?;
         let trigger_kind = job
             .payload

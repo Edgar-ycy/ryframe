@@ -27,7 +27,7 @@ pub use schedule_targets::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope,
 };
 pub use wakeup::{JobWakeupFuture, JobWakeupStream, JobWakeupTransport};
-pub use worker::{JobHandler, JobRunResult, JobWorker};
+pub use worker::{ClaimedBackgroundJob, JobHandler, JobRunResult, JobWorker};
 
 /// 消息发布 Outbox 事件的稳定类型标识。
 pub const MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE: &str = "system.message.published";

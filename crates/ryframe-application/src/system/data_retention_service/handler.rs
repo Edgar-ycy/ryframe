@@ -16,7 +16,7 @@ impl JobHandler for DataRetentionJobHandler {
         DATA_RETENTION_JOB_TYPE
     }
 
-    async fn handle(&self, job: &background_job::Model) -> AppResult<()> {
+    async fn handle(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         self.service.prepare_job(job).await?;
         self.service.execute_job(job).await
     }

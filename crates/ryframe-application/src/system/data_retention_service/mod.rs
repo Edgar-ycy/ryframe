@@ -5,8 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
     ControlDatabaseCluster, DataRetentionRepository, EnqueueBackgroundJob, FileRepository,
     RetentionCleanupResult, RetentionCutoff, RetentionResource, TenantRepository,
-    UserImportRepository, background_job, data_retention_run, tenant_config_bundle,
-    tenant_config_transfer,
+    UserImportRepository, data_retention_run, tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -19,7 +18,7 @@ use sea_orm::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{JobHandler, JobQueue, system::FileService};
+use crate::{ClaimedBackgroundJob, JobHandler, JobQueue, system::FileService};
 
 pub const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";
 

@@ -24,7 +24,7 @@ pub trait JobHandler: Send + Sync {
     fn job_type(&self) -> &'static str;
 
     /// 执行已领取任务；返回错误将触发退避重试或死信。
-    async fn handle(&self, job: &background_job::Model) -> AppResult<()>;
+    async fn handle(&self, job: &ClaimedBackgroundJob) -> AppResult<()>;
 
     /// 判断错误是否属于重试无法恢复的业务错误；默认交给现有重试预算处理。
     fn should_dead_letter(&self, _error: &AppError) -> bool {
@@ -40,6 +40,17 @@ pub trait JobHandler: Send + Sync {
     async fn reconcile_authoritative_jobs(&self) -> AppResult<()> {
         Ok(())
     }
+}
+
+/// 已完成租约领取、可交给业务处理器执行的任务数据。
+#[derive(Debug)]
+pub struct ClaimedBackgroundJob {
+    pub id: i64,
+    pub tenant_id: Option<String>,
+    pub payload: serde_json::Value,
+    pub lease_owner: Option<String>,
+    pub attempts: i32,
+    pub max_attempts: i32,
 }
 
 enum LeaseHeartbeatOutcome<T> {
@@ -308,7 +319,7 @@ impl JobWorker {
     /// 处理已完成租约领取的任务，并保留原有状态转换语义。
     async fn run_claimed_job(
         &self,
-        job: background_job::Model,
+        mut job: background_job::Model,
         worker_id: &str,
     ) -> AppResult<JobRunResult> {
         let Some(handler) = self.handlers.get(&job.job_type).cloned() else {
@@ -346,6 +357,14 @@ impl JobWorker {
             job.traceparent.as_deref(),
             job.tracestate.as_deref(),
         ));
+        let claimed_job = ClaimedBackgroundJob {
+            id: job.id,
+            tenant_id: job.tenant_id.take(),
+            payload: std::mem::take(&mut job.payload),
+            lease_owner: job.lease_owner.take(),
+            attempts: job.attempts,
+            max_attempts: job.max_attempts,
+        };
         async {
             let heartbeat_queue = self.queue.clone();
             let heartbeat_worker_id = worker_id.to_owned();
@@ -355,7 +374,11 @@ impl JobWorker {
                 if let Some(seconds) = job.max_runtime_seconds {
                     let seconds = u64::try_from(seconds)
                         .map_err(|_| AppError::Internal("计划任务最大运行时长不是正整数".into()))?;
-                    match time::timeout(StdDuration::from_secs(seconds), handler.handle(&job)).await
+                    match time::timeout(
+                        StdDuration::from_secs(seconds),
+                        handler.handle(&claimed_job),
+                    )
+                    .await
                     {
                         Ok(result) => result,
                         Err(_) => Err(AppError::ServiceUnavailable(format!(
@@ -363,7 +386,7 @@ impl JobWorker {
                         ))),
                     }
                 } else {
-                    handler.handle(&job).await
+                    handler.handle(&claimed_job).await
                 }
             };
             let handler_result =

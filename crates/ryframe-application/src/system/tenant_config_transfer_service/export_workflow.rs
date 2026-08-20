@@ -1,7 +1,7 @@
 use super::*;
 
 impl TenantConfigTransferService {
-    pub(super) async fn execute_export(&self, job: &background_job::Model) -> AppResult<()> {
+    pub(super) async fn execute_export(&self, job: &ClaimedBackgroundJob) -> AppResult<()> {
         let tenant_id = job_tenant(job)?;
         let bundle_id = payload_id(job, "bundle_id")?;
         let requester = self
