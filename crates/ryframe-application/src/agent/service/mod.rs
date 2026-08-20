@@ -18,7 +18,8 @@ use serde::Serialize;
 
 use super::{
     AgentAccessMode, AgentAuthorizationSnapshot, AgentCapability, AgentCapabilityVo,
-    AgentDepartmentVo, AgentDictionaryItemVo, AgentDictionaryVo, AgentPage, AgentPostVo,
+    AgentCredentialHint, AgentDelegationHint, AgentDepartmentVo, AgentDictionaryItemVo,
+    AgentDictionaryVo, AgentIdentityReadPort, AgentLimitHints, AgentPage, AgentPostVo,
     AgentPrincipal, AgentRequest, AgentRowScope, AgentSuccess, AgentUserVo,
     limiter::{AgentLimitInput, AgentLimiter},
     registry::AgentCapabilityDescriptor,
@@ -44,12 +45,13 @@ pub struct AgentService {
     multi_tenancy: MultiTenancyPolicy,
     keyring: Arc<PepperKeyring>,
     limiter: Arc<dyn AgentLimiter>,
+    identity: Arc<dyn AgentIdentityReadPort>,
     product_service: Arc<ProductService>,
 }
 
 pub(super) struct IdentityHint {
-    pub(super) credential: service_credential::Model,
-    pub(super) delegation: Option<service_delegation::Model>,
+    pub(super) credential: AgentCredentialHint,
+    pub(super) delegation: Option<AgentDelegationHint>,
 }
 
 pub(super) struct AuthorizedContext {
@@ -81,6 +83,7 @@ impl AgentService {
     pub fn new(
         db: ControlDatabaseCluster,
         limiter: Arc<dyn AgentLimiter>,
+        identity: Arc<dyn AgentIdentityReadPort>,
         keyring: Arc<PepperKeyring>,
         config: ServiceAccountPolicy,
         multi_tenancy: MultiTenancyPolicy,
@@ -95,6 +98,7 @@ impl AgentService {
             multi_tenancy,
             keyring,
             limiter,
+            identity,
             product_service,
         })
     }

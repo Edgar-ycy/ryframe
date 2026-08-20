@@ -1,9 +1,13 @@
+mod identity;
 mod limiter;
 mod registry;
 mod scope;
 mod service;
 mod types;
 
+pub use identity::{
+    AgentCredentialHint, AgentDelegationHint, AgentIdentityReadPort, AgentLimitHints,
+};
 pub use limiter::{
     AgentConcurrencyLease, AgentLeaseReleaseFuture, AgentLimitFuture, AgentLimitInput, AgentLimiter,
 };

@@ -157,34 +157,14 @@ impl AgentService {
     }
 
     async fn limit_hints(&self, hint: &IdentityHint) -> AppResult<(i32, i32)> {
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let result = async {
-            let tenant = ServiceAccountRepository
-                .lock_tenant_in_txn(
-                    &transaction,
-                    &hint.credential.tenant_id,
-                    ServiceAccountLock::Share,
-                )
-                .await?;
-            let account = ServiceAccountRepository
-                .find_by_id_in_txn(
-                    &transaction,
-                    &tenant.tenant_id,
-                    hint.credential.account_id,
-                    ServiceAccountLock::Share,
-                )
-                .await?;
-            Ok::<_, AppError>((
-                tenant.max_requests_per_min,
-                account.map_or_else(
-                    || i32::try_from(self.config.default_requests_per_minute).unwrap_or(i32::MAX),
-                    |item| item.max_requests_per_minute,
-                ),
-            ))
-        }
-        .await;
-        let _ = transaction.rollback().await;
-        result
+        let hints = self
+            .identity
+            .limit_hints(&hint.credential.tenant_id, hint.credential.account_id)
+            .await?;
+        Ok(effective_limits(
+            hints,
+            self.config.default_requests_per_minute,
+        ))
     }
 
     async fn identity_hint(
@@ -192,8 +172,9 @@ impl AgentService {
         parsed_key: &ParsedApiKey,
         parsed_delegation: Option<&ParsedDelegation>,
     ) -> AppResult<IdentityHint> {
-        let credential = ServiceCredentialRepository
-            .find_hint_by_key_id(self.db.write(), &parsed_key.key_id)
+        let credential = self
+            .identity
+            .credential_hint(&parsed_key.key_id)
             .await?
             .ok_or_else(invalid_credential)?;
         let delegation = if let Some(parsed) = parsed_delegation {
@@ -203,8 +184,8 @@ impl AgentService {
                 .map(|(_, pepper)| parsed.mac(pepper))
                 .collect::<AppResult<Vec<_>>>()?;
             Some(
-                ServiceDelegationRepository
-                    .find_by_mac_candidates(self.db.write(), &candidates)
+                self.identity
+                    .delegation_hint(&candidates)
                     .await?
                     .ok_or_else(invalid_credential)?,
             )
@@ -215,5 +196,45 @@ impl AgentService {
             credential,
             delegation,
         })
+    }
+}
+
+fn effective_limits(hints: AgentLimitHints, default_account_limit: u32) -> (i32, i32) {
+    (
+        hints.tenant_limit,
+        hints
+            .account_limit
+            .unwrap_or_else(|| i32::try_from(default_account_limit).unwrap_or(i32::MAX)),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_account_limit_uses_bounded_default() {
+        let limits = effective_limits(
+            AgentLimitHints {
+                tenant_limit: 120,
+                account_limit: None,
+            },
+            u32::MAX,
+        );
+
+        assert_eq!(limits, (120, i32::MAX));
+    }
+
+    #[test]
+    fn account_limit_overrides_default() {
+        let limits = effective_limits(
+            AgentLimitHints {
+                tenant_limit: 120,
+                account_limit: Some(30),
+            },
+            60,
+        );
+
+        assert_eq!(limits, (120, 30));
     }
 }

@@ -227,6 +227,7 @@ pub async fn build_all(
         let agent = Arc::new(AgentService::new(
             database.clone(),
             super::agent_limiter::redis_limiter(redis),
+            ryframe_application::legacy_agent_identity_read(database.clone()),
             keyring,
             policies.service_accounts,
             policies.multi_tenancy,
