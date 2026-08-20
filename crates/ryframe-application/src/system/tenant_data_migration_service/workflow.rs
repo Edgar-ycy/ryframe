@@ -697,7 +697,7 @@ impl TenantDataMigrationService {
     }
 
     fn ensure_migration_contract(&self, migration: &tenant_data_migration::Model) -> AppResult<()> {
-        let fingerprint = self.catalog.schema_fingerprint();
+        let fingerprint = self.targets.catalog_fingerprint();
         if migration.source_schema_fingerprint != fingerprint
             || migration.target_schema_fingerprint != fingerprint
         {
@@ -706,24 +706,20 @@ impl TenantDataMigrationService {
             ));
         }
         let source_mode = self
-            .router
-            .targets()
-            .target_mode_code(&migration.source_target_key)
+            .targets
+            .mode_code(&migration.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let source_kind = self
-            .router
-            .targets()
-            .target_kind_code(&migration.source_target_key)
+            .targets
+            .kind_code(&migration.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let target_mode = self
-            .router
-            .targets()
-            .target_mode_code(&migration.target_key)
+            .targets
+            .mode_code(&migration.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
         let target_kind = self
-            .router
-            .targets()
-            .target_kind_code(&migration.target_key)
+            .targets
+            .kind_code(&migration.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
         if migration.source_target_mode != source_mode
             || migration.source_target_kind != source_kind

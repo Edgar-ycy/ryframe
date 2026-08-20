@@ -23,6 +23,14 @@ pub struct TenantDataCatalogTable {
     pub copy_order: u32,
 }
 
+pub type TenantDataRow = Vec<Option<String>>;
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct TenantDataRowBatch {
+    pub rows: Vec<TenantDataRow>,
+    pub next_cursor: Option<Vec<String>>,
+}
+
 pub type TenantDataMigrationFuture<'a, T = ()> =
     Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
 
@@ -52,4 +60,27 @@ pub trait TenantDataMigrationPort: Send + Sync {
         batch_size: u32,
     ) -> TenantDataMigrationFuture<'a, u64>;
     fn finish_cleanup<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a>;
+
+    fn read_rows_batch<'a>(
+        &'a self,
+        target_key: &'a str,
+        tenant_id: &'a str,
+        table: &'a str,
+        cursor: Option<&'a [String]>,
+        batch_size: u32,
+    ) -> TenantDataMigrationFuture<'a, TenantDataRowBatch>;
+
+    fn write_rows_batch<'a>(
+        &'a self,
+        fence: TenantDataFence<'a>,
+        table: &'a str,
+        rows: &'a [TenantDataRow],
+    ) -> TenantDataMigrationFuture<'a>;
+
+    fn verify_foreign_keys<'a>(
+        &'a self,
+        target_key: &'a str,
+        tenant_id: &'a str,
+        table: &'a str,
+    ) -> TenantDataMigrationFuture<'a>;
 }

@@ -3294,7 +3294,6 @@ dependencies = [
  "ryframe-auth",
  "ryframe-db",
  "ryframe-kernel",
- "ryframe-tenant-db",
  "sea-orm",
  "serde",
  "serde_json",

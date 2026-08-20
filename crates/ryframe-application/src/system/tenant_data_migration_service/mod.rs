@@ -13,7 +13,6 @@ use ryframe_db::{
     tenant_data_migration_item, tenant_operation_lease,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use ryframe_tenant_db::TenantDatabaseRouter;
 use sea_orm::TransactionTrait;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -39,20 +38,17 @@ pub(super) fn checked_generation(value: i64, field: &str) -> AppResult<i64> {
 #[derive(Clone)]
 pub struct TenantDataMigrationService {
     pub(super) database: ControlDatabaseCluster,
-    pub(super) router: Arc<TenantDatabaseRouter>,
     targets: Arc<dyn TenantDataTargetPort>,
     pub(super) tenant_migration: Arc<dyn TenantDataMigrationPort>,
     pub(super) queue: Arc<JobQueue>,
     pub(super) authorization_cache: AuthorizationCache,
     pub(super) repository: TenantDataRepository,
     pub(super) lease_repository: Arc<TenantOperationLeaseRepository>,
-    pub(super) catalog: ryframe_tenant_db::migration::TenantDataCatalog,
 }
 
 impl TenantDataMigrationService {
     pub fn new(
         database: ControlDatabaseCluster,
-        router: Arc<TenantDatabaseRouter>,
         targets: Arc<dyn TenantDataTargetPort>,
         tenant_migration: Arc<dyn TenantDataMigrationPort>,
         queue: Arc<JobQueue>,
@@ -60,26 +56,13 @@ impl TenantDataMigrationService {
     ) -> Self {
         Self {
             database,
-            router,
             targets,
             tenant_migration,
             queue,
             authorization_cache,
             repository: TenantDataRepository,
             lease_repository: Arc::new(TenantOperationLeaseRepository),
-            catalog: ryframe_tenant_db::migration::TENANT_DATA_CATALOG,
         }
-    }
-
-    /// 仅用于针对复制/恢复算法的隔离集成测试；生产组合根始终使用编译期 catalog。
-    #[doc(hidden)]
-    pub fn with_catalog_for_tests(
-        mut self,
-        catalog: ryframe_tenant_db::migration::TenantDataCatalog,
-    ) -> AppResult<Self> {
-        catalog.validate_structure().map_err(AppError::Config)?;
-        self.catalog = catalog;
-        Ok(self)
     }
 
     pub async fn list_targets(&self, actor: &ActorContext) -> AppResult<Vec<DataTargetSummary>> {
@@ -408,24 +391,20 @@ impl TenantDataMigrationService {
             command.target_key
         ));
         let source_mode = self
-            .router
-            .targets()
-            .target_mode_code(&preview.source_target_key)
+            .targets
+            .mode_code(&preview.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let source_kind = self
-            .router
-            .targets()
-            .target_kind_code(&preview.source_target_key)
+            .targets
+            .kind_code(&preview.source_target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("源目标未注册".into(), 5))?;
         let target_mode = self
-            .router
-            .targets()
-            .target_mode_code(&command.target_key)
+            .targets
+            .mode_code(&command.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
         let target_kind = self
-            .router
-            .targets()
-            .target_kind_code(&command.target_key)
+            .targets
+            .kind_code(&command.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
         let transaction = self
             .database
@@ -501,8 +480,8 @@ impl TenantDataMigrationService {
                     source_generation: placement.placement_generation,
                     source_switch_token: placement.switch_token,
                     target_generation,
-                    source_schema_fingerprint: self.catalog.schema_fingerprint(),
-                    target_schema_fingerprint: self.catalog.schema_fingerprint(),
+                    source_schema_fingerprint: self.targets.catalog_fingerprint(),
+                    target_schema_fingerprint: self.targets.catalog_fingerprint(),
                     plan_hash: command.plan_hash.clone(),
                     create_idempotency_key_hash: create_key_hash.clone(),
                     switch_token: switch_token.clone(),

@@ -6,7 +6,6 @@ use ryframe_application::{
     ArtifactStore, AuditOutbox, AuthService, JobQueue, JobScheduleService, TenantBusinessDataState,
     TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
     agent::{AgentService, service_capability_descriptors},
-    map_tenant_data_error,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
         DataRetentionService, DeptService, DictCacheStore, DictCacheStoreFuture, DictService,
@@ -37,7 +36,7 @@ impl TenantRuntimeReadPort for TenantRuntimeReader {
                 .router
                 .runtime_snapshot(tenant_id)
                 .await
-                .map_err(map_tenant_data_error)?;
+                .map_err(super::tenant_data::map_error)?;
             let state = match snapshot.business_data_state() {
                 TenantDataState::Provisioning => TenantBusinessDataState::Provisioning,
                 TenantDataState::Active => TenantBusinessDataState::Active,
@@ -299,7 +298,6 @@ pub async fn build_all(
     );
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         database.clone(),
-        tenant_data.clone(),
         super::tenant_data_targets::port(tenant_data.clone()),
         super::tenant_data_migration::port(tenant_data.clone()),
         job_queue.clone(),

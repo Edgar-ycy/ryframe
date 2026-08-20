@@ -3,11 +3,13 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use ryframe_application::{
     TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetFuture, TenantDataTargetHealth,
-    TenantDataTargetMetadata, TenantDataTargetPort, map_tenant_data_error,
+    TenantDataTargetMetadata, TenantDataTargetPort,
 };
 use ryframe_tenant_db::{
     TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, migration::TENANT_DATA_CATALOG,
 };
+
+use super::tenant_data::map_error as map_tenant_data_error;
 
 struct TenantDataTargetBridge {
     router: Arc<TenantDatabaseRouter>,

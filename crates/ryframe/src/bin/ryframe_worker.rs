@@ -50,12 +50,12 @@ mod process_logging;
 mod process_readiness;
 #[path = "../boot/spreadsheet.rs"]
 mod process_spreadsheet;
-#[path = "../boot/tenant_data.rs"]
-mod process_tenant_data;
 #[path = "../boot/tenant_data_migration.rs"]
 mod process_tenant_data_migration;
 #[path = "../boot/tenant_data_targets.rs"]
 mod process_tenant_data_targets;
+#[path = "../boot/tenant_data.rs"]
+mod tenant_data;
 
 /// Worker 进程在收到关闭信号后的全部后台任务总宽限时间。
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
@@ -115,11 +115,8 @@ async fn main() -> Result<(), AppError> {
     ryframe_db::migration::verify_current_schema(database.write())
         .await
         .map_err(|error| AppError::Internal(format!("数据库结构指纹校验失败: {error}")))?;
-    let tenant_data = Arc::new(process_tenant_data::build_router(
-        database.clone(),
-        &config,
-    )?);
-    process_tenant_data::verify_current_targets(&tenant_data).await?;
+    let tenant_data = Arc::new(tenant_data::build_router(database.clone(), &config)?);
+    tenant_data::verify_current_targets(&tenant_data).await?;
     if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
         ryframe_db::TenantRepository
             .ensure_available(database.write(), tenant_id)
@@ -203,7 +200,6 @@ async fn main() -> Result<(), AppError> {
     ));
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         database.clone(),
-        tenant_data.clone(),
         process_tenant_data_targets::port(tenant_data.clone()),
         process_tenant_data_migration::port(tenant_data.clone()),
         queue.clone(),
