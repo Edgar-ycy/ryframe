@@ -7,7 +7,9 @@ mod authorization_resolver;
 mod file_content;
 mod id_generator;
 pub mod jobs;
+mod legacy_post_persistence;
 mod login_protection;
+mod post_persistence;
 mod principal_resolver;
 mod refresh_session;
 mod request_tenant_context;
@@ -54,7 +56,12 @@ pub use jobs::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
+#[doc(hidden)]
+pub use legacy_post_persistence::port as legacy_post_persistence;
 pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
+pub use post_persistence::{
+    PostFilter, PostPersistenceFuture, PostPersistencePort, PostRecord, PostTransaction,
+};
 pub use principal_resolver::PrincipalResolver;
 pub use refresh_session::{
     RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,

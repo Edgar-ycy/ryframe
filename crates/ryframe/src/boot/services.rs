@@ -240,7 +240,9 @@ pub async fn build_all(
         database.clone(),
         authorization_cache.clone(),
     ));
-    let post = Arc::new(PostService::new(database.clone()));
+    let post = Arc::new(PostService::new(
+        ryframe_application::legacy_post_persistence(database.clone()),
+    ));
     let config_service = Arc::new(ConfigService::new(
         database.clone(),
         authorization_cache.clone(),
