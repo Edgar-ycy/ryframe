@@ -50,13 +50,13 @@ impl DataRetentionService {
         run.policy_snapshot = serde_json::to_value(&overview).map_err(json_error)?;
         let cutoffs = self.cutoffs(now);
         let mut eligible = self
-            .repository
-            .preview(self.db.write(), &cutoffs, Some(run.id))
+            .cleanup_persistence
+            .preview(&cutoffs, Some(run.id))
             .await?;
         eligible.insert(
             "user_import_artifacts".to_owned(),
-            UserImportRepository
-                .count_expired_artifacts(self.db.write(), self.import_artifact_cutoff(now))
+            self.cleanup_persistence
+                .count_expired_import_artifacts(self.import_artifact_cutoff(now))
                 .await?,
         );
         eligible.extend(self.preview_tenant_config_artifacts(now).await?);
@@ -107,9 +107,8 @@ impl DataRetentionService {
         }
         for cutoff in cutoffs {
             match self
-                .repository
+                .cleanup_persistence
                 .cleanup_resource(
-                    self.db.write(),
                     cutoff,
                     self.config.cleanup_batch_size,
                     self.config.max_rows_per_resource_per_run,

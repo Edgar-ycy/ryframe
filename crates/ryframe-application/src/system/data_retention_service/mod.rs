@@ -3,8 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    ControlDatabaseCluster, DataRetentionRepository, FileRepository, RetentionCleanupResult,
-    RetentionCutoff, RetentionResource, TenantRepository, UserImportRepository,
+    ControlDatabaseCluster, DataRetentionRepository, FileRepository, TenantRepository,
     tenant_config_bundle, tenant_config_transfer,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
@@ -19,7 +18,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
-    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, RetentionRunPersistencePort,
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, RetentionCleanupPersistencePort,
+    RetentionCleanupResult, RetentionCutoff, RetentionResource, RetentionRunPersistencePort,
     RetentionRunRecord, system::FileService,
 };
 
@@ -120,6 +120,7 @@ impl From<RetentionRunRecord> for DataRetentionRunVo {
 pub struct DataRetentionService {
     db: ControlDatabaseCluster,
     repository: Arc<DataRetentionRepository>,
+    cleanup_persistence: Arc<dyn RetentionCleanupPersistencePort>,
     run_persistence: Arc<dyn RetentionRunPersistencePort>,
     queue: Arc<JobQueue>,
     file_service: Arc<FileService>,
@@ -129,6 +130,7 @@ pub struct DataRetentionService {
 impl DataRetentionService {
     pub fn new(
         db: ControlDatabaseCluster,
+        cleanup_persistence: Arc<dyn RetentionCleanupPersistencePort>,
         run_persistence: Arc<dyn RetentionRunPersistencePort>,
         queue: Arc<JobQueue>,
         file_service: Arc<FileService>,
@@ -137,6 +139,7 @@ impl DataRetentionService {
         Self {
             db,
             repository: Arc::new(DataRetentionRepository),
+            cleanup_persistence,
             run_persistence,
             queue,
             file_service,
@@ -154,17 +157,11 @@ impl DataRetentionService {
         ensure_system_tenant(actor)?;
         let calculated_at = self.run_persistence.database_now().await?;
         let cutoffs = self.cutoffs(calculated_at);
-        let mut eligible_counts = self
-            .repository
-            .preview(self.db.write(), &cutoffs, None)
-            .await?;
+        let mut eligible_counts = self.cleanup_persistence.preview(&cutoffs, None).await?;
         eligible_counts.insert(
             "user_import_artifacts".to_owned(),
-            UserImportRepository
-                .count_expired_artifacts(
-                    self.db.write(),
-                    self.import_artifact_cutoff(calculated_at),
-                )
+            self.cleanup_persistence
+                .count_expired_import_artifacts(self.import_artifact_cutoff(calculated_at))
                 .await?,
         );
         eligible_counts.extend(self.preview_tenant_config_artifacts(calculated_at).await?);

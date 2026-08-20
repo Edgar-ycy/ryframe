@@ -20,8 +20,9 @@ impl DataRetentionService {
             if limit == 0 {
                 break;
             }
-            let artifacts = UserImportRepository
-                .list_expired_artifacts_after_id(self.db.write(), before, after_id, limit)
+            let artifacts = self
+                .cleanup_persistence
+                .list_expired_import_artifacts(before, after_id, limit)
                 .await?;
             if artifacts.is_empty() {
                 break;
@@ -41,8 +42,9 @@ impl DataRetentionService {
                 break;
             }
         }
-        let remaining = UserImportRepository
-            .count_expired_artifacts(self.db.write(), before)
+        let remaining = self
+            .cleanup_persistence
+            .count_expired_import_artifacts(before)
             .await?;
         Ok(RetentionCleanupResult { deleted, remaining })
     }

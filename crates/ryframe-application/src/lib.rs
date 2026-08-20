@@ -37,6 +37,7 @@ mod legacy_password_reset_persistence;
 mod legacy_permission_persistence;
 mod legacy_post_persistence;
 mod legacy_profile_persistence;
+mod legacy_retention_cleanup_persistence;
 mod legacy_retention_run_persistence;
 mod legacy_role_read;
 mod legacy_role_write;
@@ -61,6 +62,7 @@ mod principal_resolver;
 mod profile_persistence;
 mod refresh_session;
 mod request_tenant_context;
+mod retention_cleanup_persistence;
 mod retention_run_persistence;
 mod role_read;
 mod role_write;
@@ -186,6 +188,8 @@ pub use legacy_post_persistence::port as legacy_post_persistence;
 #[doc(hidden)]
 pub use legacy_profile_persistence::port as legacy_profile_persistence;
 #[doc(hidden)]
+pub use legacy_retention_cleanup_persistence::port as legacy_retention_cleanup_persistence;
+#[doc(hidden)]
 pub use legacy_retention_run_persistence::port as legacy_retention_run_persistence;
 #[doc(hidden)]
 pub use legacy_role_read::port as legacy_role_read;
@@ -242,6 +246,10 @@ pub use refresh_session::{
     RefreshSessionRevocation, RefreshSessionRotation,
 };
 pub use request_tenant_context::{TenantContext, with_tenant_context};
+pub use retention_cleanup_persistence::{
+    ExpiredImportArtifact, RetentionCleanupPersistencePort, RetentionCleanupResult,
+    RetentionCutoff, RetentionResource,
+};
 pub use retention_run_persistence::{
     RetentionRunPersistencePort, RetentionRunRecord, RetentionRunTransaction,
 };
