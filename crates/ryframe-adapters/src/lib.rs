@@ -3,6 +3,7 @@ pub mod distributed_lock;
 pub mod excel;
 pub mod file_upload;
 pub mod i18n;
+pub mod idempotency;
 pub mod metrics;
 pub mod monitor;
 pub mod rate_limit;

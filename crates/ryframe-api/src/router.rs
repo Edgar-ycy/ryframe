@@ -376,7 +376,7 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
 ///
 /// `rate_limit_state` 传递到子路由以启用用户级限流。
 pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
-    let idempotency_state = IdempotencyState::new(state.redis.clone(), 300);
+    let idempotency_state = IdempotencyState::new(state.idempotency_store.clone(), 300);
     idempotency_state.spawn_gc();
     let public_runtime = Router::new()
         .route("/ws", get_route(crate::message_socket::upgrade))

@@ -16,6 +16,7 @@ use ryframe_application::{
 };
 use ryframe_kernel::Localizer;
 
+use crate::middleware::idempotency::HttpIdempotencyStore;
 use crate::{
     auth_middleware::AuthState, monitor::MonitorState, rate_limit::HttpRateLimiter,
     runtime::RuntimeComponents, settings::HttpRuntimeSettings,
@@ -67,6 +68,7 @@ pub struct AppState {
     pub localizer: Arc<Localizer>,
     pub services: Arc<AppServices>,
     pub redis: Option<RedisClient>,
+    pub idempotency_store: Option<Arc<dyn HttpIdempotencyStore>>,
     pub message_hub: Arc<crate::message_socket::MessageHub>,
     pub token_blacklist: TokenBlacklist,
     pub rate_limiter: Arc<dyn HttpRateLimiter>,

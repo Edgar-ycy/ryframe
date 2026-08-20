@@ -12,6 +12,7 @@
 pub mod app_state;
 pub mod application_policy;
 pub mod datasource;
+pub mod idempotency;
 pub mod jobs;
 pub mod limiter;
 pub mod logging;

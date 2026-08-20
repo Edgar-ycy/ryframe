@@ -3257,7 +3257,6 @@ dependencies = [
  "opentelemetry",
  "percent-encoding",
  "rand 0.10.1",
- "redis",
  "regex",
  "ryframe-adapters",
  "ryframe-application",

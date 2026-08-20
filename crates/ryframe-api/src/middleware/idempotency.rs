@@ -1,6 +1,8 @@
 //! HTTP 写请求幂等保留与响应重放。
 
 use std::{
+    future::Future,
+    pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -16,22 +18,19 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dashmap::{DashMap, mapref::entry::Entry};
-use redis::AsyncCommands;
-use ryframe_adapters::RedisClient;
 use ryframe_auth::RequestPrincipal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::metrics::{record_idempotency_conflict, record_redis_degraded};
 
-const KEY_PREFIX: &str = "ryframe:v0.7:idempotency:";
 const DEFAULT_PROCESSING_TTL_SECS: u64 = 30;
 const MAX_REQUEST_BYTES: usize = 10 * 1024 * 1024;
 const MAX_CACHED_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone)]
 pub struct IdempotencyState {
-    redis: Option<RedisClient>,
+    store: Option<Arc<dyn HttpIdempotencyStore>>,
     local: Arc<DashMap<String, LocalRecord>>,
     completed_ttl_secs: u64,
     processing_ttl_secs: u64,
@@ -72,10 +71,56 @@ enum Reservation {
     NonReplayable,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum StoredIdempotencyReservation {
+    Acquired,
+    Processing,
+    Conflict,
+    Completed(String),
+    NonReplayable,
+}
+
+pub type IdempotencyStoreFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+
+/// HTTP 幂等状态的外部持久化端口。
+pub trait HttpIdempotencyStore: Send + Sync {
+    fn reserve<'a>(
+        &'a self,
+        key: &'a str,
+        fingerprint: &'a str,
+        processing_ttl_secs: u64,
+    ) -> IdempotencyStoreFuture<'a, StoredIdempotencyReservation>;
+
+    fn begin_execution<'a>(
+        &'a self,
+        key: &'a str,
+        fingerprint: &'a str,
+        completed_ttl_secs: u64,
+    ) -> IdempotencyStoreFuture<'a, ()>;
+
+    fn complete<'a>(
+        &'a self,
+        key: &'a str,
+        fingerprint: &'a str,
+        response: &'a str,
+        completed_ttl_secs: u64,
+    ) -> IdempotencyStoreFuture<'a, ()>;
+
+    fn mark_non_replayable<'a>(
+        &'a self,
+        key: &'a str,
+        fingerprint: &'a str,
+        completed_ttl_secs: u64,
+    ) -> IdempotencyStoreFuture<'a, ()>;
+
+    fn release<'a>(&'a self, key: &'a str) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+}
+
 impl IdempotencyState {
-    pub fn new(redis: Option<RedisClient>, ttl_seconds: u64) -> Self {
+    pub fn new(store: Option<Arc<dyn HttpIdempotencyStore>>, ttl_seconds: u64) -> Self {
         Self {
-            redis,
+            store,
             local: Arc::new(DashMap::new()),
             completed_ttl_secs: ttl_seconds.max(1),
             processing_ttl_secs: DEFAULT_PROCESSING_TTL_SECS,
@@ -88,11 +133,24 @@ impl IdempotencyState {
     }
 
     async fn reserve(&self, key: &str, fingerprint: &str) -> Result<Reservation, String> {
-        if let Some(redis) = &self.redis {
+        if let Some(store) = &self.store {
             if let Some(reservation) = self.local_terminal(key, fingerprint) {
                 return Ok(reservation);
             }
-            return self.reserve_redis(redis, key, fingerprint).await;
+            return match store
+                .reserve(key, fingerprint, self.processing_ttl_secs)
+                .await?
+            {
+                StoredIdempotencyReservation::Acquired => Ok(Reservation::Acquired),
+                StoredIdempotencyReservation::Processing => Ok(Reservation::Processing),
+                StoredIdempotencyReservation::Conflict => Ok(Reservation::Conflict),
+                StoredIdempotencyReservation::NonReplayable => Ok(Reservation::NonReplayable),
+                StoredIdempotencyReservation::Completed(response) => {
+                    serde_json::from_str(&response)
+                        .map(Reservation::Completed)
+                        .map_err(|error| format!("幂等响应缓存无效: {error}"))
+                }
+            };
         }
         Ok(self.reserve_local(key, fingerprint))
     }
@@ -111,75 +169,6 @@ impl IdempotencyState {
             LocalState::Completed(response) => Some(Reservation::Completed(response.clone())),
             LocalState::NonReplayable => Some(Reservation::NonReplayable),
             LocalState::Processing => None,
-        }
-    }
-
-    async fn reserve_redis(
-        &self,
-        redis: &RedisClient,
-        key: &str,
-        fingerprint: &str,
-    ) -> Result<Reservation, String> {
-        let meta_key = redis.scoped_key(&meta_key(key));
-        let guard_key = redis.scoped_key(&guard_key(key));
-        let watched = [meta_key.clone(), guard_key.clone()];
-        let fingerprint = fingerprint.to_owned();
-        let processing_ttl = self.processing_ttl_secs;
-        let result = redis
-            .transaction(&watched, move |mut connection, mut transaction| {
-                let meta_key = meta_key.clone();
-                let guard_key = guard_key.clone();
-                let fingerprint = fingerprint.clone();
-                async move {
-                    let exists: bool = connection.exists(&meta_key).await?;
-                    if exists {
-                        let existing: Option<String> =
-                            connection.hget(&meta_key, "fingerprint").await?;
-                        if existing.as_deref() != Some(fingerprint.as_str()) {
-                            return Ok(Some(2_i64));
-                        }
-                        let state: Option<String> = connection.hget(&meta_key, "state").await?;
-                        return Ok(Some(match state.as_deref() {
-                            Some("processing") => 3,
-                            Some("non_replayable") => 4,
-                            Some("completed") => 5,
-                            _ => 6,
-                        }));
-                    }
-                    let guard: Option<String> = connection.get(&guard_key).await?;
-                    if let Some(guard) = guard {
-                        return Ok(Some(if guard == fingerprint { 4 } else { 2 }));
-                    }
-                    transaction
-                        .hset(&meta_key, "state", "processing")
-                        .ignore()
-                        .hset(&meta_key, "fingerprint", fingerprint)
-                        .ignore()
-                        .expire(&meta_key, redis_ttl_secs(processing_ttl))
-                        .ignore();
-                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
-                    Ok(committed.map(|()| 1_i64))
-                }
-            })
-            .await
-            .map_err(|error| format!("Redis idempotency reservation failed: {error}"))?;
-
-        match result {
-            1 => Ok(Reservation::Acquired),
-            2 => Ok(Reservation::Conflict),
-            3 => Ok(Reservation::Processing),
-            4 => Ok(Reservation::NonReplayable),
-            5 => {
-                let response = redis
-                    .get(response_key(key))
-                    .await
-                    .map_err(|error| format!("Redis idempotency response read failed: {error}"))?
-                    .ok_or_else(|| "completed idempotency response is missing".to_string())?;
-                serde_json::from_str(&response)
-                    .map(Reservation::Completed)
-                    .map_err(|error| format!("invalid cached idempotency response: {error}"))
-            }
-            value => Err(format!("unexpected Redis idempotency result: {value}")),
         }
     }
 
@@ -216,39 +205,12 @@ impl IdempotencyState {
     }
 
     async fn begin_execution(&self, key: &str, fingerprint: &str) -> Result<(), String> {
-        let Some(redis) = &self.redis else {
+        let Some(store) = &self.store else {
             return Ok(());
         };
-        let meta_key = redis.scoped_key(&meta_key(key));
-        let guard_key = redis.scoped_key(&guard_key(key));
-        let watched = [meta_key.clone(), guard_key.clone()];
-        let fingerprint = fingerprint.to_owned();
-        let ttl = self.completed_ttl_secs;
-        match redis
-            .transaction(&watched, move |mut connection, mut transaction| {
-                let meta_key = meta_key.clone();
-                let guard_key = guard_key.clone();
-                let fingerprint = fingerprint.clone();
-                async move {
-                    let stored_fingerprint: Option<String> =
-                        connection.hget(&meta_key, "fingerprint").await?;
-                    let state: Option<String> = connection.hget(&meta_key, "state").await?;
-                    if stored_fingerprint.as_deref() != Some(fingerprint.as_str())
-                        || state.as_deref() != Some("processing")
-                    {
-                        return Ok(Some(false));
-                    }
-                    transaction.set_ex(&guard_key, fingerprint, ttl).ignore();
-                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
-                    Ok(committed.map(|()| true))
-                }
-            })
+        store
+            .begin_execution(key, fingerprint, self.completed_ttl_secs)
             .await
-        {
-            Ok(true) => Ok(()),
-            Ok(false) => Err("idempotency execution guard was rejected".into()),
-            Err(error) => Err(format!("Redis idempotency execution guard failed: {error}")),
-        }
     }
 
     async fn complete(
@@ -257,51 +219,14 @@ impl IdempotencyState {
         fingerprint: &str,
         response: CachedResponse,
     ) -> Result<(), String> {
-        if let Some(redis) = &self.redis {
+        if let Some(store) = &self.store {
             let serialized = serde_json::to_string(&response)
-                .map_err(|error| format!("cannot serialize idempotency response: {error}"))?;
-            let meta_key = redis.scoped_key(&meta_key(key));
-            let response_key = redis.scoped_key(&response_key(key));
-            let guard_key = redis.scoped_key(&guard_key(key));
-            let watched = [meta_key.clone(), response_key.clone(), guard_key.clone()];
-            let fingerprint = fingerprint.to_owned();
-            let transaction_fingerprint = fingerprint.clone();
-            let ttl = self.completed_ttl_secs;
-            let result = match redis
-                .transaction(&watched, move |mut connection, mut transaction| {
-                    let meta_key = meta_key.clone();
-                    let response_key = response_key.clone();
-                    let guard_key = guard_key.clone();
-                    let fingerprint = transaction_fingerprint.clone();
-                    let serialized = serialized.clone();
-                    async move {
-                        let stored_fingerprint: Option<String> =
-                            connection.hget(&meta_key, "fingerprint").await?;
-                        if stored_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                            return Ok(Some(false));
-                        }
-                        transaction
-                            .set_ex(&response_key, serialized, ttl)
-                            .ignore()
-                            .hset(&meta_key, "state", "completed")
-                            .ignore()
-                            .expire(&meta_key, redis_ttl_secs(ttl))
-                            .ignore()
-                            .del(&guard_key)
-                            .ignore();
-                        let committed: Option<()> =
-                            transaction.query_async(&mut connection).await?;
-                        Ok(committed.map(|()| true))
-                    }
-                })
-                .await
-            {
-                Ok(true) => Ok(()),
-                Ok(false) => Err("idempotency completion was rejected".into()),
-                Err(error) => Err(format!("Redis idempotency completion failed: {error}")),
-            };
+                .map_err(|error| format!("无法序列化幂等响应: {error}"))?;
+            let result = store
+                .complete(key, fingerprint, &serialized, self.completed_ttl_secs)
+                .await;
             if result.is_err() {
-                self.store_local_terminal(key, &fingerprint, LocalState::Completed(response));
+                self.store_local_terminal(key, fingerprint, LocalState::Completed(response));
             }
             return result;
         }
@@ -318,40 +243,12 @@ impl IdempotencyState {
     }
 
     async fn mark_non_replayable(&self, key: &str, fingerprint: &str) -> Result<(), String> {
-        if let Some(redis) = &self.redis {
-            let meta_key = redis.scoped_key(&meta_key(key));
-            let watched = [meta_key.clone()];
-            let fingerprint = fingerprint.to_owned();
-            let transaction_fingerprint = fingerprint.clone();
-            let ttl = self.completed_ttl_secs;
-            let result = match redis
-                .transaction(&watched, move |mut connection, mut transaction| {
-                    let meta_key = meta_key.clone();
-                    let fingerprint = transaction_fingerprint.clone();
-                    async move {
-                        let stored_fingerprint: Option<String> =
-                            connection.hget(&meta_key, "fingerprint").await?;
-                        if stored_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                            return Ok(Some(false));
-                        }
-                        transaction
-                            .hset(&meta_key, "state", "non_replayable")
-                            .ignore()
-                            .expire(&meta_key, redis_ttl_secs(ttl))
-                            .ignore();
-                        let committed: Option<()> =
-                            transaction.query_async(&mut connection).await?;
-                        Ok(committed.map(|()| true))
-                    }
-                })
-                .await
-            {
-                Ok(true) => Ok(()),
-                Ok(false) => Err("non-replayable marker was rejected".into()),
-                Err(error) => Err(format!("Redis idempotency marker failed: {error}")),
-            };
+        if let Some(store) = &self.store {
+            let result = store
+                .mark_non_replayable(key, fingerprint, self.completed_ttl_secs)
+                .await;
             if result.is_err() {
-                self.store_local_terminal(key, &fingerprint, LocalState::NonReplayable);
+                self.store_local_terminal(key, fingerprint, LocalState::NonReplayable);
             }
             return result;
         }
@@ -379,10 +276,8 @@ impl IdempotencyState {
     }
 
     async fn release(&self, key: &str) {
-        if let Some(redis) = &self.redis {
-            let _ = redis.del(meta_key(key)).await;
-            let _ = redis.del(response_key(key)).await;
-            let _ = redis.del(guard_key(key)).await;
+        if let Some(store) = &self.store {
+            store.release(key).await;
         } else {
             self.local.remove(key);
         }
@@ -464,7 +359,7 @@ pub async fn idempotency_middleware(
     let storage_key = storage_key(&principal.tenant_id, principal.user_id, &raw_key);
 
     match state.reserve(&storage_key, &fingerprint).await {
-        Ok(Reservation::Completed(response)) => return rebuild_response(&response),
+        Ok(Reservation::Completed(response)) => return rebuild_response(response),
         Ok(Reservation::Processing) => {
             record_idempotency_conflict("processing");
             return conflict_response("an identical request is still processing", 1);
@@ -666,27 +561,11 @@ fn hex_sha256(value: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn meta_key(key: &str) -> String {
-    format!("{KEY_PREFIX}{key}:meta")
-}
-
-fn response_key(key: &str) -> String {
-    format!("{KEY_PREFIX}{key}:response")
-}
-
-fn guard_key(key: &str) -> String {
-    format!("{KEY_PREFIX}{key}:guard")
-}
-
-fn redis_ttl_secs(ttl_secs: u64) -> i64 {
-    ttl_secs.min(i64::MAX as u64) as i64
-}
-
-fn rebuild_response(cached: &CachedResponse) -> Response {
+fn rebuild_response(cached: CachedResponse) -> Response {
     let status = StatusCode::from_u16(cached.status).unwrap_or(StatusCode::OK);
-    let mut response = Response::new(Body::from(cached.body.clone()));
+    let mut response = Response::new(Body::from(cached.body));
     *response.status_mut() = status;
-    for cached_header in &cached.headers {
+    for cached_header in cached.headers {
         let Ok(name) = HeaderName::from_bytes(cached_header.name.as_bytes()) else {
             continue;
         };
@@ -721,4 +600,52 @@ fn unavailable_response(error: String) -> Response {
         "idempotency service unavailable",
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_store_replays_only_the_same_fingerprint() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("测试运行时应创建成功")
+            .block_on(async {
+                let state = IdempotencyState::new(None, 300);
+                assert!(matches!(
+                    state.reserve("key", "fingerprint").await,
+                    Ok(Reservation::Acquired)
+                ));
+                assert!(matches!(
+                    state.reserve("key", "fingerprint").await,
+                    Ok(Reservation::Processing)
+                ));
+                state
+                    .complete(
+                        "key",
+                        "fingerprint",
+                        CachedResponse {
+                            status: StatusCode::CREATED.as_u16(),
+                            body: b"created".to_vec(),
+                            headers: Vec::new(),
+                        },
+                    )
+                    .await
+                    .expect("本地完成状态应写入成功");
+
+                let Ok(Reservation::Completed(response)) =
+                    state.reserve("key", "fingerprint").await
+                else {
+                    panic!("相同指纹应回放已完成响应");
+                };
+                assert_eq!(response.status, StatusCode::CREATED.as_u16());
+                assert_eq!(response.body, b"created");
+                assert!(matches!(
+                    state.reserve("key", "different").await,
+                    Ok(Reservation::Conflict)
+                ));
+            });
+    }
 }

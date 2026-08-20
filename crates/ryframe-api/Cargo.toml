@@ -40,7 +40,6 @@ tracing = { workspace = true }
 percent-encoding = { workspace = true }
 dashmap = { workspace = true }
 futures-util = { workspace = true }
-redis = { workspace = true }
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 
