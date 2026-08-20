@@ -60,7 +60,7 @@ pub(super) fn mask_missing_identity(error: AppError) -> AppError {
     }
 }
 
-pub(super) fn database_error(error: sea_orm::DbErr) -> AppError {
+pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
 }
 
