@@ -8,6 +8,11 @@ pub use limiter::{
     AgentConcurrencyLease, AgentLeaseReleaseFuture, AgentLimitFuture, AgentLimitInput, AgentLimiter,
 };
 pub use registry::{AgentCapability, AgentCapabilityDescriptor, service_capability_descriptors};
+pub(crate) use scope::{
+    AgentAuthorizationSnapshot, AgentDepartmentSnapshot, AgentPermissionSnapshot,
+    AgentRoleDepartmentSnapshot, AgentRolePermissionSnapshot, AgentRoleSnapshot, AgentRowScope,
+    AgentUserSnapshot,
+};
 pub use service::AgentService;
 pub use types::{
     AgentAccessMode, AgentCapabilityVo, AgentDepartmentVo, AgentDictionaryItemVo,

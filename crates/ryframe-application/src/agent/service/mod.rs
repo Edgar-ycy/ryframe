@@ -7,22 +7,19 @@ use std::{
 use chrono::{DateTime, Utc};
 use ryframe_auth::rbac;
 use ryframe_db::{
-    AgentQueryRepository, AgentRowScope, ControlDatabaseCluster, DataRetentionRepository,
+    AgentQueryRepository, ControlDatabaseCluster, DataRetentionRepository,
     ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
-    ServiceAuthorizationRepository, ServiceAuthorizationSnapshot, ServiceCredentialRepository,
-    ServiceDelegationRepository,
-    entities::{
-        role, service_access_audit, service_account, service_credential, service_delegation,
-    },
+    ServiceAuthorizationRepository, ServiceCredentialRepository, ServiceDelegationRepository,
+    entities::{service_access_audit, service_account, service_credential, service_delegation},
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
 use serde::Serialize;
 
 use super::{
-    AgentAccessMode, AgentCapability, AgentCapabilityVo, AgentDepartmentVo, AgentDictionaryItemVo,
-    AgentDictionaryVo, AgentPage, AgentPostVo, AgentPrincipal, AgentRequest, AgentSuccess,
-    AgentUserVo,
+    AgentAccessMode, AgentAuthorizationSnapshot, AgentCapability, AgentCapabilityVo,
+    AgentDepartmentVo, AgentDictionaryItemVo, AgentDictionaryVo, AgentPage, AgentPostVo,
+    AgentPrincipal, AgentRequest, AgentRowScope, AgentSuccess, AgentUserVo,
     limiter::{AgentLimitInput, AgentLimiter},
     registry::AgentCapabilityDescriptor,
     scope::{
@@ -60,7 +57,7 @@ pub(super) struct AuthorizedContext {
     pub(super) account: service_account::Model,
     pub(super) credential: service_credential::Model,
     delegation: Option<service_delegation::Model>,
-    pub(super) snapshot: ServiceAuthorizationSnapshot,
+    pub(super) snapshot: AgentAuthorizationSnapshot,
     pub(super) delegation_capabilities: BTreeSet<String>,
     pub(super) account_permissions: Vec<String>,
     pub(super) user_permissions: Vec<String>,

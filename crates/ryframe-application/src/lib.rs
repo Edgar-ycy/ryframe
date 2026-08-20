@@ -16,6 +16,7 @@ mod identity_authorization;
 mod job_queue_persistence;
 mod job_schedule_persistence;
 pub mod jobs;
+mod legacy_agent_snapshot;
 mod legacy_audit_persistence;
 mod legacy_authorization_diagnostic_persistence;
 mod legacy_authorization_mirror_persistence;

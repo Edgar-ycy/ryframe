@@ -86,14 +86,16 @@ impl AgentService {
                     SERVICE_ACCOUNTS_CAPABILITY,
                 )
                 .await?;
-            let snapshot = ServiceAuthorizationRepository
-                .lock_snapshot_in_txn(
-                    &transaction,
-                    &tenant.tenant_id,
-                    account.id,
-                    delegation.as_ref().map(|item| item.user_id),
-                )
-                .await?;
+            let snapshot = crate::legacy_agent_snapshot::authorization_snapshot(
+                ServiceAuthorizationRepository
+                    .lock_snapshot_in_txn(
+                        &transaction,
+                        &tenant.tenant_id,
+                        account.id,
+                        delegation.as_ref().map(|item| item.user_id),
+                    )
+                    .await?,
+            );
             validate_subjects(&snapshot, delegation.is_some())?;
             let account_permissions = subject_permissions(&snapshot, &snapshot.account_role_ids);
             let user_permissions = subject_permissions(&snapshot, &snapshot.user_role_ids);

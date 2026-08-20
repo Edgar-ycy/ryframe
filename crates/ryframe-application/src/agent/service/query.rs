@@ -38,11 +38,12 @@ impl AgentService {
                     context.user_scope.as_ref(),
                     user_dept,
                 );
+                let scope_empty = matches!(&scope, AgentRowScope::Empty);
                 let result = AgentQueryRepository
                     .users_page(
                         transaction,
                         &context.tenant.tenant_id,
-                        &scope,
+                        &crate::legacy_agent_snapshot::row_scope(scope),
                         offset,
                         page_size,
                     )
@@ -73,7 +74,7 @@ impl AgentService {
                     result.total,
                     self.config.max_page_size,
                 );
-                Ok(QueryResult::page(data.items.len(), data, &scope)?)
+                Ok(QueryResult::page(data.items.len(), data, scope_empty)?)
             }
             AgentCapability::DirectoryDepartments => {
                 let scope = departments_scope(
@@ -81,11 +82,12 @@ impl AgentService {
                     context.user_scope.as_ref(),
                     user_dept,
                 );
+                let scope_empty = matches!(&scope, AgentRowScope::Empty);
                 let result = AgentQueryRepository
                     .departments_page(
                         transaction,
                         &context.tenant.tenant_id,
-                        &scope,
+                        &crate::legacy_agent_snapshot::row_scope(scope),
                         offset,
                         page_size,
                     )
@@ -107,7 +109,7 @@ impl AgentService {
                     result.total,
                     self.config.max_page_size,
                 );
-                Ok(QueryResult::page(data.items.len(), data, &scope)?)
+                Ok(QueryResult::page(data.items.len(), data, scope_empty)?)
             }
             AgentCapability::DirectoryPosts => {
                 if !both_all(context) {
@@ -202,14 +204,14 @@ impl QueryResult {
         }
     }
 
-    fn page<T>(row_count: usize, data: T, scope: &AgentRowScope) -> AppResult<Self>
+    fn page<T>(row_count: usize, data: T, scope_empty: bool) -> AppResult<Self>
     where
         T: Serialize,
     {
         Ok(Self {
             data: json_value(data)?,
             row_count,
-            reason_code: if matches!(scope, AgentRowScope::Empty) {
+            reason_code: if scope_empty {
                 "data_scope_empty"
             } else {
                 "ok"
@@ -254,7 +256,7 @@ impl QueryResult {
 }
 
 pub(super) fn validate_subjects(
-    snapshot: &ServiceAuthorizationSnapshot,
+    snapshot: &AgentAuthorizationSnapshot,
     delegated: bool,
 ) -> AppResult<()> {
     let account_role_ids = snapshot
@@ -265,13 +267,13 @@ pub(super) fn validate_subjects(
     if snapshot
         .roles
         .iter()
-        .any(|role| account_role_ids.contains(&role.id) && role.is_super != 0)
+        .any(|role| account_role_ids.contains(&role.id) && role.is_super)
     {
         return Err(AppError::Authorization("服务账号不能绑定超级角色".into()));
     }
     if delegated {
         let user = snapshot.user.as_ref().ok_or_else(invalid_credential)?;
-        if !user.is_enabled() || user.del_flag != ryframe_db::user::Model::DEL_FLAG_NORMAL {
+        if !user.is_enabled() {
             return Err(invalid_credential());
         }
     }
@@ -279,30 +281,26 @@ pub(super) fn validate_subjects(
 }
 
 pub(super) fn subject_permissions(
-    snapshot: &ServiceAuthorizationSnapshot,
+    snapshot: &AgentAuthorizationSnapshot,
     subject_role_ids: &[i64],
 ) -> Vec<String> {
     let role_ids = subject_role_ids.iter().copied().collect::<BTreeSet<_>>();
     let active_role_ids = snapshot
         .roles
         .iter()
-        .filter(|role| {
-            role_ids.contains(&role.id)
-                && role.status == role::Model::STATUS_NORMAL
-                && role.del_flag == role::Model::DEL_FLAG_NORMAL
-        })
+        .filter(|role| role_ids.contains(&role.id) && role.is_active())
         .map(|role| role.id)
         .collect::<BTreeSet<_>>();
     let permission_ids = snapshot
         .role_permissions
         .iter()
         .filter(|relation| active_role_ids.contains(&relation.role_id))
-        .map(|relation| relation.perm_id)
+        .map(|relation| relation.permission_id)
         .collect::<BTreeSet<_>>();
     snapshot
         .permissions
         .iter()
-        .filter(|permission| permission_ids.contains(&permission.id) && permission.status == "1")
+        .filter(|permission| permission_ids.contains(&permission.id) && permission.is_active())
         .map(|permission| permission.code.clone())
         .collect()
 }
