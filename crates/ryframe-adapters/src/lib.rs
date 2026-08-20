@@ -7,7 +7,6 @@ pub mod file_upload;
 pub mod i18n;
 pub mod metrics;
 pub mod monitor;
-pub mod multi_tenant;
 pub mod rate_limit;
 pub mod redis_client;
 pub mod refresh_session;
@@ -25,7 +24,6 @@ pub use database_monitor::{DatabaseMonitor, DatabaseNodeHealth, DatabaseTopology
 pub use distributed_lock::{
     DistributedLock, LocalDistributedLock, LockGuard, RedisDistributedLock, create_distributed_lock,
 };
-pub use multi_tenant::{TenantContext, enforce_tenant_context, with_tenant_context};
 pub use redis_client::{RedisClient, RedisNamespace};
 pub use refresh_session::{
     RefreshFamily, RefreshRotation, RefreshSessionIdentity, RefreshSessionRevocation,

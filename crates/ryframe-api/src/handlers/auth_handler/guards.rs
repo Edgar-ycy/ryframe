@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
-use ryframe_adapters::TenantContext;
+use ryframe_application::TenantContext;
 use ryframe_auth::jwt::TokenSettings;
 use ryframe_kernel::AppError;
 

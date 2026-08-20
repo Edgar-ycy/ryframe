@@ -5,6 +5,7 @@ mod authorization_cache;
 mod authorization_resolver;
 pub mod jobs;
 mod principal_resolver;
+mod request_tenant_context;
 mod runtime_policy;
 mod service_identity_secret;
 pub mod system;
@@ -37,6 +38,7 @@ pub use jobs::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 pub use principal_resolver::PrincipalResolver;
+pub use request_tenant_context::{TenantContext, with_tenant_context};
 pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
@@ -52,7 +54,7 @@ pub(crate) fn validated_tenant_id(actor: &ActorContext) -> AppResult<&str> {
 }
 
 pub(crate) fn enforce_tenant_scope(tenant_id: &str) -> AppResult<()> {
-    ryframe_adapters::enforce_tenant_context(TenantId::parse(tenant_id)?)
+    request_tenant_context::enforce_tenant_context(TenantId::parse(tenant_id)?)
 }
 
 /// 在应用边界把租户数据基础设施错误映射为稳定领域错误，不依赖展示字符串。

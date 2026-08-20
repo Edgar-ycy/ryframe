@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::CookieJar;
-use ryframe_adapters::TenantContext;
+use ryframe_application::TenantContext;
 use ryframe_application::system::{LoginStatus, RecordLoginCommand};
 use ryframe_kernel::{AppError, AppResult};
 use validator::Validate;

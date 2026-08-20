@@ -1,7 +1,4 @@
 //! 请求范围租户身份的一致性校验。
-//!
-//! 数据放置和目标选择由 `ryframe-tenant-db` 的权威 placement/fence 完成；本模块不再
-//! 暴露无实际路由能力的隔离策略或 Repository 包装器。
 
 use std::future::Future;
 
@@ -27,9 +24,9 @@ impl TenantContext {
     }
 }
 
-/// 存在请求本地状态时，核验显式用例租户是否与其一致。后台任务没有请求本地状态，
-/// 其显式租户输入仍是权威范围。
-pub fn enforce_tenant_context(tenant_id: TenantId<'_>) -> AppResult<()> {
+/// 存在请求本地状态时，核验显式用例租户是否与其一致。
+/// 后台任务没有请求本地状态，其显式租户输入仍是权威范围。
+pub(crate) fn enforce_tenant_context(tenant_id: TenantId<'_>) -> AppResult<()> {
     REQUEST_TENANT_CONTEXT
         .try_with(|context| {
             if context.tenant_id == tenant_id.as_str() {
