@@ -184,7 +184,7 @@ pub async fn build_all(
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
     ));
     let tenant_usage = Arc::new(TenantUsageService::new(
-        database.clone(),
+        ryframe_application::legacy_tenant_usage_persistence(database.clone()),
         Arc::new(TenantRateLimitReader {
             limiter: rate_limiter,
         }),

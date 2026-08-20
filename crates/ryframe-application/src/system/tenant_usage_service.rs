@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use ryframe_db::{
-    ControlDatabaseCluster, ReadConsistency, TenantRepository, TenantUsageAggregate,
-    TenantUsagePageFilter, TenantUsageRepository, entities::tenant,
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
+
+use crate::{
+    TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
+};
 
 use super::tenant_service::TenantVo;
 
@@ -87,9 +87,7 @@ pub struct TenantCapacityVo {
 }
 
 pub struct TenantUsageService {
-    db: ControlDatabaseCluster,
-    tenant_repo: TenantRepository,
-    usage_repo: TenantUsageRepository,
+    persistence: Arc<dyn TenantUsagePersistencePort>,
     rate_limit_reader: Arc<dyn TenantRateLimitReadPort>,
     rate_limit_enabled: bool,
     scheduler_enabled: bool,
@@ -97,15 +95,13 @@ pub struct TenantUsageService {
 
 impl TenantUsageService {
     pub fn new(
-        db: ControlDatabaseCluster,
+        persistence: Arc<dyn TenantUsagePersistencePort>,
         rate_limit_reader: Arc<dyn TenantRateLimitReadPort>,
         rate_limit_enabled: bool,
         scheduler_enabled: bool,
     ) -> Self {
         Self {
-            db,
-            tenant_repo: TenantRepository,
-            usage_repo: TenantUsageRepository,
+            persistence,
             rate_limit_reader,
             rate_limit_enabled,
             scheduler_enabled,
@@ -127,13 +123,11 @@ impl TenantUsageService {
                 "筛选租户容量状态需要租户用量查看权限".into(),
             ));
         }
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let calculated_at = Utc::now();
         let result = self
-            .usage_repo
+            .persistence
             .page(
-                &db,
-                TenantUsagePageFilter {
+                TenantUsageFilter {
                     tenant_id: params.tenant_id.as_deref(),
                     name: params.name.as_deref(),
                     status: tenant_status_db(params.status.as_deref()),
@@ -146,15 +140,16 @@ impl TenantUsageService {
             .await?;
         let tenants = result.records;
         let usage = if include_usage {
-            self.load_usage_map(&db, &tenants).await?
+            self.load_usage_map(&tenants).await?
         } else {
             BTreeMap::new()
         };
+        let mut usage = usage;
         let records = tenants
             .into_iter()
             .map(|tenant| {
-                let tenant_id = tenant.tenant_id.clone();
-                tenant_capacity_vo(tenant, usage.get(&tenant_id).cloned(), calculated_at)
+                let tenant_usage = usage.remove(&tenant.tenant_id);
+                tenant_capacity_vo(tenant, tenant_usage, calculated_at)
             })
             .collect();
         Ok(PageResult::new(records, result.total, page))
@@ -168,14 +163,13 @@ impl TenantUsageService {
     ) -> AppResult<TenantCapacityVo> {
         ensure_system_tenant(actor)?;
         ryframe_kernel::TenantId::parse(tenant_id)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let tenant = self
-            .tenant_repo
-            .find_by_tenant_id(&db, tenant_id)
+            .persistence
+            .find(tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let usage = if include_usage {
-            self.load_usage_map(&db, std::slice::from_ref(&tenant))
+            self.load_usage_map(std::slice::from_ref(&tenant))
                 .await?
                 .remove(tenant_id)
         } else {
@@ -187,13 +181,12 @@ impl TenantUsageService {
     pub async fn usage(&self, actor: &ActorContext, tenant_id: &str) -> AppResult<TenantUsageVo> {
         ensure_system_tenant(actor)?;
         ryframe_kernel::TenantId::parse(tenant_id)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let tenant = self
-            .tenant_repo
-            .find_by_tenant_id(&db, tenant_id)
+            .persistence
+            .find(tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        self.load_usage_map(&db, std::slice::from_ref(&tenant))
+        self.load_usage_map(std::slice::from_ref(&tenant))
             .await?
             .remove(tenant_id)
             .ok_or_else(|| AppError::Database("租户容量聚合缺少目标租户".into()))
@@ -201,8 +194,7 @@ impl TenantUsageService {
 
     async fn load_usage_map(
         &self,
-        db: &sea_orm::DatabaseConnection,
-        tenants: &[tenant::Model],
+        tenants: &[TenantCapacityRecord],
     ) -> AppResult<BTreeMap<String, TenantUsageVo>> {
         if tenants.is_empty() {
             return Ok(BTreeMap::new());
@@ -211,13 +203,7 @@ impl TenantUsageService {
             .iter()
             .map(|tenant| tenant.tenant_id.clone())
             .collect::<Vec<_>>();
-        let aggregates = self
-            .usage_repo
-            .aggregate_for_tenants(db, &tenant_ids)
-            .await?
-            .into_iter()
-            .map(|usage| (usage.tenant_id.clone(), usage))
-            .collect::<BTreeMap<_, _>>();
+        let aggregates = self.persistence.aggregate(&tenant_ids).await?;
         let request_windows = self.request_window_map(tenants).await;
         let calculated_at = Utc::now();
         Ok(tenants
@@ -225,11 +211,8 @@ impl TenantUsageService {
             .map(|tenant| {
                 let aggregate = aggregates
                     .get(&tenant.tenant_id)
-                    .cloned()
-                    .unwrap_or_else(|| TenantUsageAggregate {
-                        tenant_id: tenant.tenant_id.clone(),
-                        ..Default::default()
-                    });
+                    .copied()
+                    .unwrap_or_default();
                 let request_window = request_windows
                     .get(&tenant.tenant_id)
                     .cloned()
@@ -250,7 +233,7 @@ impl TenantUsageService {
 
     async fn request_window_map(
         &self,
-        tenants: &[tenant::Model],
+        tenants: &[TenantCapacityRecord],
     ) -> BTreeMap<String, RequestWindowUsage> {
         if !self.rate_limit_enabled {
             return tenants
@@ -319,7 +302,7 @@ impl TenantUsageService {
 }
 
 fn tenant_capacity_vo(
-    tenant: tenant::Model,
+    tenant: TenantCapacityRecord,
     usage: Option<TenantUsageVo>,
     now: DateTime<Utc>,
 ) -> TenantCapacityVo {
@@ -327,14 +310,28 @@ fn tenant_capacity_vo(
     TenantCapacityVo {
         expiration_status: expiration_status(&tenant, now).to_owned(),
         capacity_status,
-        tenant: TenantVo::from(tenant),
+        tenant: tenant_vo(tenant),
         usage,
     }
 }
 
+fn tenant_vo(tenant: TenantCapacityRecord) -> TenantVo {
+    TenantVo {
+        tenant_id: tenant.tenant_id,
+        name: tenant.name,
+        domain: tenant.domain,
+        status: tenant.status,
+        expire_at: tenant.expire_at,
+        max_users: tenant.max_users,
+        max_roles: tenant.max_roles,
+        max_storage_mb: tenant.max_storage_mb,
+        max_requests_per_min: tenant.max_requests_per_min,
+    }
+}
+
 fn tenant_usage_vo(
-    tenant: &tenant::Model,
-    aggregate: TenantUsageAggregate,
+    tenant: &TenantCapacityRecord,
+    aggregate: TenantUsageAggregateRecord,
     request_window: RequestWindowUsage,
     scheduler_enabled: bool,
     calculated_at: DateTime<Utc>,
@@ -414,7 +411,7 @@ fn capacity_status(usage: &TenantUsageVo) -> String {
     "unlimited".to_owned()
 }
 
-fn expiration_status(tenant: &tenant::Model, now: DateTime<Utc>) -> &'static str {
+fn expiration_status(tenant: &TenantCapacityRecord, now: DateTime<Utc>) -> &'static str {
     match tenant.expire_at {
         None => "never",
         Some(expire_at) if expire_at <= now => "expired",
@@ -423,7 +420,7 @@ fn expiration_status(tenant: &tenant::Model, now: DateTime<Utc>) -> &'static str
     }
 }
 
-fn unknown_request_window(tenant: &tenant::Model) -> RequestWindowUsage {
+fn unknown_request_window(tenant: &TenantCapacityRecord) -> RequestWindowUsage {
     RequestWindowUsage {
         current: None,
         limit: (tenant.max_requests_per_min > 0)
@@ -476,8 +473,8 @@ fn validate_page_params(params: &TenantUsagePageParams) -> AppResult<()> {
 
 fn tenant_status_db(status: Option<&str>) -> Option<&'static str> {
     match status {
-        Some("enabled") => Some(tenant::Model::STATUS_NORMAL),
-        Some("disabled") => Some(tenant::Model::STATUS_DISABLED),
+        Some("enabled") => Some("0"),
+        Some("disabled") => Some("1"),
         _ => None,
     }
 }
@@ -503,4 +500,50 @@ fn ensure_system_tenant(actor: &ActorContext) -> AppResult<()> {
         return Err(AppError::Authorization("仅系统租户可以查看租户容量".into()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+
+    use super::{TenantCapacityRecord, expiration_status, percentage_basis_points, quota_status};
+
+    fn tenant(expire_at: Option<chrono::DateTime<Utc>>) -> TenantCapacityRecord {
+        TenantCapacityRecord {
+            tenant_id: "tenant-a".into(),
+            name: "测试租户".into(),
+            domain: None,
+            status: "0".into(),
+            expire_at,
+            max_users: 100,
+            max_roles: 20,
+            max_storage_mb: 1024,
+            max_requests_per_min: 1000,
+        }
+    }
+
+    #[test]
+    fn quota_thresholds_are_stable() {
+        assert_eq!(quota_status(1, 0), "unlimited");
+        assert_eq!(quota_status(79, 100), "normal");
+        assert_eq!(quota_status(80, 100), "warning");
+        assert_eq!(quota_status(90, 100), "critical");
+        assert_eq!(quota_status(100, 100), "exceeded");
+        assert_eq!(percentage_basis_points(1, 3), Some(3333));
+    }
+
+    #[test]
+    fn expiration_boundaries_use_the_calculation_time() {
+        let now = Utc::now();
+        assert_eq!(expiration_status(&tenant(None), now), "never");
+        assert_eq!(expiration_status(&tenant(Some(now)), now), "expired");
+        assert_eq!(
+            expiration_status(&tenant(Some(now + Duration::days(30))), now),
+            "expiring"
+        );
+        assert_eq!(
+            expiration_status(&tenant(Some(now + Duration::days(31))), now),
+            "active"
+        );
+    }
 }

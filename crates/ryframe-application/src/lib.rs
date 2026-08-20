@@ -25,6 +25,7 @@ mod legacy_profile_persistence;
 mod legacy_role_read;
 mod legacy_role_write;
 mod legacy_service_account_audit_persistence;
+mod legacy_tenant_usage_persistence;
 mod login_info_persistence;
 mod login_protection;
 mod menu_persistence;
@@ -50,6 +51,7 @@ mod tenant_data_migration;
 mod tenant_data_targets;
 mod tenant_provisioning;
 mod tenant_runtime;
+mod tenant_usage_persistence;
 mod trace_context;
 
 pub use artifact_store::{
@@ -126,6 +128,8 @@ pub use legacy_role_read::port as legacy_role_read;
 pub use legacy_role_write::port as legacy_role_write;
 #[doc(hidden)]
 pub use legacy_service_account_audit_persistence::port as legacy_service_account_audit_persistence;
+#[doc(hidden)]
+pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
 pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
 };
@@ -190,6 +194,9 @@ pub use tenant_provisioning::{
 };
 pub use tenant_runtime::{
     TenantBusinessDataState, TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
+};
+pub use tenant_usage_persistence::{
+    TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
 
 use ryframe_kernel::{ActorContext, AppResult, TenantId};
