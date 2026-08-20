@@ -1,17 +1,13 @@
-use std::{cmp::Reverse, collections::HashMap, sync::Arc};
+use std::{cmp::Reverse, future::Future, pin::Pin, sync::Arc};
 
 use chrono::Utc;
-use ryframe_adapters::{RedisClient, RefreshSessionStore};
 use ryframe_kernel::{ActorContext, AppError, AppResult, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 
 mod keyspace;
 mod memory_backend;
-mod redis_backend;
-mod session_codec;
 
-use session_codec::remaining_ttl;
+use crate::RefreshSessionPort;
 
 /// 在线用户信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,44 +42,58 @@ pub struct UserSession {
     pub absolute_exp: i64,
 }
 
-/// 在线用户管理服务（支持 Redis / 内存双模式）。
+pub type OnlineSessionMetadataFuture<'a, T> =
+    Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
+
+/// 在线设备展示元数据的出站端口。
+pub trait OnlineSessionMetadataStore: Send + Sync {
+    fn add(&self, session: UserSession, ttl_seconds: u64) -> OnlineSessionMetadataFuture<'_, ()>;
+
+    fn remove<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        sid: &'a str,
+    ) -> OnlineSessionMetadataFuture<'a, ()>;
+
+    fn list<'a>(&'a self, tenant_id: &'a str) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>>;
+
+    fn list_for_user<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+    ) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>>;
+
+    fn touch<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        sid: &'a str,
+    ) -> OnlineSessionMetadataFuture<'a, bool>;
+
+    fn cleanup_expired(&self) -> OnlineSessionMetadataFuture<'_, ()>;
+}
+
+/// 在线用户管理服务。
 #[derive(Clone)]
-pub enum OnlineUserService {
-    /// Redis 存储用于多实例部署。
-    Redis {
-        client: Box<RedisClient>,
-        refresh_sessions: RefreshSessionStore,
-    },
-    /// 内存存储仅保证单进程一致性。
-    InMemory {
-        sessions: Arc<RwLock<HashMap<String, UserSession>>>,
-        refresh_sessions: RefreshSessionStore,
-    },
+pub struct OnlineUserService {
+    metadata: Arc<dyn OnlineSessionMetadataStore>,
+    refresh_sessions: Arc<dyn RefreshSessionPort>,
 }
 
 impl OnlineUserService {
-    pub fn new_redis(client: RedisClient, refresh_sessions: RefreshSessionStore) -> Self {
-        Self::Redis {
-            client: Box::new(client),
+    pub fn new(
+        metadata: Arc<dyn OnlineSessionMetadataStore>,
+        refresh_sessions: Arc<dyn RefreshSessionPort>,
+    ) -> Self {
+        Self {
+            metadata,
             refresh_sessions,
         }
     }
 
-    pub fn new_in_memory(refresh_sessions: RefreshSessionStore) -> Self {
-        Self::InMemory {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+    pub fn new_in_memory(refresh_sessions: Arc<dyn RefreshSessionPort>) -> Self {
+        Self {
+            metadata: Arc::new(memory_backend::InMemoryOnlineSessionMetadata::default()),
             refresh_sessions,
-        }
-    }
-
-    fn refresh_sessions(&self) -> &RefreshSessionStore {
-        match self {
-            Self::Redis {
-                refresh_sessions, ..
-            }
-            | Self::InMemory {
-                refresh_sessions, ..
-            } => refresh_sessions,
         }
     }
 
@@ -91,7 +101,7 @@ impl OnlineUserService {
     pub async fn add_user(&self, session: UserSession) -> AppResult<()> {
         ryframe_kernel::TenantId::parse(&session.tenant_id)?;
         let identity = self
-            .refresh_sessions()
+            .refresh_sessions
             .identity(&session.sid)
             .await?
             .filter(|identity| {
@@ -102,25 +112,13 @@ impl OnlineUserService {
             .ok_or_else(|| AppError::ServiceUnavailable("无法登记不完整的登录设备会话".into()))?;
         let ttl = remaining_ttl(identity.absolute_exp)
             .ok_or_else(|| AppError::Authentication("登录设备会话已过期".into()))?;
-        match self {
-            Self::Redis { client, .. } => redis_backend::add(client, &session, ttl).await,
-            Self::InMemory { sessions, .. } => {
-                memory_backend::add(sessions, session).await;
-                Ok(())
-            }
-        }
+        self.metadata.add(session, ttl).await
     }
 
     /// 清理展示元数据和索引。权威会话撤销必须由调用方先完成。
     pub async fn remove_user(&self, tenant_id: &str, sid: &str) -> AppResult<()> {
         ryframe_kernel::TenantId::parse(tenant_id)?;
-        match self {
-            Self::Redis { client, .. } => redis_backend::remove(client, tenant_id, sid).await,
-            Self::InMemory { sessions, .. } => {
-                memory_backend::remove(sessions, tenant_id, sid).await;
-                Ok(())
-            }
-        }
+        self.metadata.remove(tenant_id, sid).await
     }
 
     async fn authoritative_sessions(
@@ -131,13 +129,13 @@ impl OnlineUserService {
     ) -> AppResult<Vec<UserSession>> {
         let mut sessions = Vec::with_capacity(metadata.len());
         for mut session in metadata {
-            let identity = self.refresh_sessions().identity(&session.sid).await?;
+            let identity = self.refresh_sessions.identity(&session.sid).await?;
             let Some(identity) = identity.filter(|identity| {
                 identity.tenant_id == tenant_id
                     && identity.user_id == session.user_id
                     && expected_user_id.is_none_or(|user_id| identity.user_id == user_id)
             }) else {
-                // 旧索引可能在升级或故障恢复后残留；列表读取负责安全收敛。
+                // 展示元数据失去权威会话后必须立即安全收敛。
                 if let Err(error) = self.remove_user(tenant_id, &session.sid).await {
                     tracing::warn!(%error, sid = %session.sid, "清理失效登录设备元数据失败");
                 }
@@ -157,25 +155,7 @@ impl OnlineUserService {
         user_id: i64,
     ) -> AppResult<Vec<UserSession>> {
         ryframe_kernel::TenantId::parse(tenant_id)?;
-        let metadata = match self {
-            Self::Redis { client, .. } => {
-                redis_backend::list_for_user(client, tenant_id, user_id).await?
-            }
-            Self::InMemory { sessions, .. } => {
-                memory_backend::list_for_user(sessions, tenant_id, user_id).await
-            }
-        };
-        // 新核心索引覆盖当前版本会话；旧 metadata SCAN 覆盖升级前最多七天的会话。
-        // 缺少 metadata 的 SID 不可安全展示，也不得根据令牌族合成浏览器、IP 等信息。
-        let indexed_sids = self
-            .refresh_sessions()
-            .session_sids_for_user(tenant_id, user_id)
-            .await?;
-        tracing::trace!(
-            indexed_session_count = indexed_sids.len(),
-            legacy_metadata_count = metadata.len(),
-            "合并登录设备新索引与兼容元数据"
-        );
+        let metadata = self.metadata.list_for_user(tenant_id, user_id).await?;
         self.authoritative_sessions(tenant_id, metadata, Some(user_id))
             .await
     }
@@ -215,37 +195,29 @@ impl OnlineUserService {
 
     pub async fn list_online_users(&self, actor: &ActorContext) -> AppResult<Vec<OnlineUserVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let metadata = match self {
-            Self::Redis { client, .. } => redis_backend::list(client, tenant_id).await?,
-            Self::InMemory { sessions, .. } => memory_backend::list(sessions, tenant_id).await,
-        };
+        let metadata = self.metadata.list(tenant_id).await?;
         Ok(self
             .authoritative_sessions(tenant_id, metadata, None)
             .await?
-            .iter()
-            .map(session_to_vo)
+            .into_iter()
+            .map(session_into_vo)
             .collect())
     }
 
     /// 严格更新已经存在的设备元数据，不会根据访问令牌重新创建缺失记录。
     pub async fn touch_user_strict(&self, tenant_id: &str, sid: &str) -> AppResult<()> {
         ryframe_kernel::TenantId::parse(tenant_id)?;
-        self.refresh_sessions()
+        self.refresh_sessions
             .identity(sid)
             .await?
             .filter(|identity| identity.tenant_id == tenant_id)
             .ok_or_else(|| AppError::Authentication("登录设备会话已失效".into()))?;
-        match self {
-            Self::Redis { client, .. } => redis_backend::touch(client, tenant_id, sid).await,
-            Self::InMemory { sessions, .. } => {
-                if memory_backend::touch(sessions, tenant_id, sid).await {
-                    Ok(())
-                } else {
-                    Err(AppError::ServiceUnavailable(
-                        "登录设备元数据暂不可用".into(),
-                    ))
-                }
-            }
+        if self.metadata.touch(tenant_id, sid).await? {
+            Ok(())
+        } else {
+            Err(AppError::ServiceUnavailable(
+                "登录设备元数据暂不可用".into(),
+            ))
         }
     }
 
@@ -257,8 +229,8 @@ impl OnlineUserService {
     }
 
     pub async fn cleanup_expired(&self) {
-        if let Self::InMemory { sessions, .. } = self {
-            memory_backend::cleanup_expired(sessions).await;
+        if let Err(error) = self.metadata.cleanup_expired().await {
+            tracing::warn!(%error, "清理过期登录设备元数据失败");
         }
     }
 
@@ -267,15 +239,20 @@ impl OnlineUserService {
     }
 }
 
-pub fn session_to_vo(session: &UserSession) -> OnlineUserVo {
+fn remaining_ttl(absolute_exp: i64) -> Option<u64> {
+    let remaining = absolute_exp - Utc::now().timestamp();
+    (remaining > 0).then_some(remaining as u64)
+}
+
+fn session_into_vo(session: UserSession) -> OnlineUserVo {
     OnlineUserVo {
-        sid: session.sid.clone(),
-        username: session.username.clone(),
-        dept_name: session.dept_name.clone(),
-        ipaddr: session.ipaddr.clone(),
-        login_location: session.login_location.clone(),
-        browser: session.browser.clone(),
-        os: session.os.clone(),
+        sid: session.sid,
+        username: session.username,
+        dept_name: session.dept_name,
+        ipaddr: session.ipaddr,
+        login_location: session.login_location,
+        browser: session.browser,
+        os: session.os,
         login_time: session.login_time.to_rfc3339(),
         last_access_time: session.last_access_time.to_rfc3339(),
     }

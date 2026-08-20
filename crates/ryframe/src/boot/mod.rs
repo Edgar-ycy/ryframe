@@ -23,6 +23,7 @@ pub mod limiter;
 pub mod logging;
 pub mod login_protection;
 pub mod message_listener;
+pub mod online_sessions;
 pub mod readiness;
 pub mod redis;
 pub mod refresh_sessions;

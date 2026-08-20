@@ -1,11 +1,13 @@
 use chrono::Utc;
 use redis::AsyncCommands;
 use ryframe_adapters::RedisClient;
+use ryframe_application::system::{
+    OnlineSessionMetadataFuture, OnlineSessionMetadataStore, UserSession,
+};
 use ryframe_kernel::{AppError, AppResult};
 
 use super::{
-    UserSession,
-    keyspace::{session_key, tenant_index_key, tenant_pattern, tenant_user_index_key},
+    keyspace::{session_key, tenant_index_key, tenant_user_index_key},
     session_codec::{decode_batch, encode, remaining_ttl},
 };
 
@@ -233,25 +235,17 @@ async fn load_keys(
     Ok(sessions)
 }
 
-/// 同时读取旧版 metadata SCAN 与新版租户索引，兼容升级前最多七天的会话。
 pub(super) async fn list(client: &RedisClient, tenant_id: &str) -> AppResult<Vec<UserSession>> {
-    let mut keys = client
-        .scan_keys(tenant_pattern(tenant_id))
-        .await
-        .map_err(|error| unavailable("legacy_list", error))?;
     let indexed_sids: Vec<String> = client
         .conn()
         .clone()
         .smembers(client.scoped_key(&tenant_index_key(tenant_id)))
         .await
         .map_err(|error| unavailable("tenant_index", error))?;
-    keys.extend(
-        indexed_sids
-            .into_iter()
-            .map(|sid| client.scoped_key(&session_key(tenant_id, &sid))),
-    );
-    keys.sort_unstable();
-    keys.dedup();
+    let keys = indexed_sids
+        .into_iter()
+        .map(|sid| client.scoped_key(&session_key(tenant_id, &sid)))
+        .collect();
     load_keys(client, tenant_id, keys).await
 }
 
@@ -260,39 +254,29 @@ pub(super) async fn list_for_user(
     tenant_id: &str,
     user_id: i64,
 ) -> AppResult<Vec<UserSession>> {
-    // 首版双读不能只依赖新索引：升级前的会话只有旧 metadata key。
-    let mut keys = client
-        .scan_keys(tenant_pattern(tenant_id))
-        .await
-        .map_err(|error| unavailable("legacy_user_list", error))?;
     let indexed_sids: Vec<String> = client
         .conn()
         .clone()
         .smembers(client.scoped_key(&tenant_user_index_key(tenant_id, user_id)))
         .await
         .map_err(|error| unavailable("user_index", error))?;
-    keys.extend(
-        indexed_sids
-            .into_iter()
-            .map(|sid| client.scoped_key(&session_key(tenant_id, &sid))),
-    );
-    keys.sort_unstable();
-    keys.dedup();
+    let keys = indexed_sids
+        .into_iter()
+        .map(|sid| client.scoped_key(&session_key(tenant_id, &sid)))
+        .collect();
     let mut sessions = load_keys(client, tenant_id, keys).await?;
     sessions.retain(|session| session.user_id == user_id);
     Ok(sessions)
 }
 
-pub(super) async fn touch(client: &RedisClient, tenant_id: &str, sid: &str) -> AppResult<()> {
+pub(super) async fn touch(client: &RedisClient, tenant_id: &str, sid: &str) -> AppResult<bool> {
     let key = session_key(tenant_id, sid);
     let Some(json) = client
         .get(&key)
         .await
         .map_err(|error| unavailable("touch_get", error))?
     else {
-        return Err(AppError::ServiceUnavailable(
-            "登录设备元数据暂不可用".into(),
-        ));
+        return Ok(false);
     };
     let mut session = serde_json::from_str::<UserSession>(&json).map_err(|error| {
         tracing::error!(%error, %key, "反序列化在线用户失败");
@@ -300,7 +284,7 @@ pub(super) async fn touch(client: &RedisClient, tenant_id: &str, sid: &str) -> A
     })?;
     if session.tenant_id != tenant_id || session.sid != sid {
         tracing::warn!(%key, "拒绝更新身份不匹配的在线用户元数据");
-        return Ok(());
+        return Ok(false);
     }
     session.last_access_time = Utc::now();
     let replacement = encode(&session)
@@ -312,6 +296,55 @@ pub(super) async fn touch(client: &RedisClient, tenant_id: &str, sid: &str) -> A
     match apply_touch_if_unchanged(client, &session, &json, replacement_ref).await? {
         // 尽力而为的 touch 遵循最后写入者胜出：并发请求已经更新时跳过即可，
         // 元数据被并发撤销时同样不算服务故障。
-        TouchCasOutcome::Updated | TouchCasOutcome::Skipped | TouchCasOutcome::Deleted => Ok(()),
+        TouchCasOutcome::Updated | TouchCasOutcome::Skipped => Ok(true),
+        TouchCasOutcome::Deleted => Ok(false),
+    }
+}
+
+pub(super) struct RedisOnlineSessionMetadata {
+    client: RedisClient,
+}
+
+impl RedisOnlineSessionMetadata {
+    pub(super) const fn new(client: RedisClient) -> Self {
+        Self { client }
+    }
+}
+
+impl OnlineSessionMetadataStore for RedisOnlineSessionMetadata {
+    fn add(&self, session: UserSession, ttl_seconds: u64) -> OnlineSessionMetadataFuture<'_, ()> {
+        Box::pin(async move { add(&self.client, &session, ttl_seconds).await })
+    }
+
+    fn remove<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        sid: &'a str,
+    ) -> OnlineSessionMetadataFuture<'a, ()> {
+        Box::pin(async move { remove(&self.client, tenant_id, sid).await })
+    }
+
+    fn list<'a>(&'a self, tenant_id: &'a str) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>> {
+        Box::pin(async move { list(&self.client, tenant_id).await })
+    }
+
+    fn list_for_user<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+    ) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>> {
+        Box::pin(async move { list_for_user(&self.client, tenant_id, user_id).await })
+    }
+
+    fn touch<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        sid: &'a str,
+    ) -> OnlineSessionMetadataFuture<'a, bool> {
+        Box::pin(async move { touch(&self.client, tenant_id, sid).await })
+    }
+
+    fn cleanup_expired(&self) -> OnlineSessionMetadataFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
     }
 }

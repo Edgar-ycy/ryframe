@@ -253,14 +253,13 @@ pub async fn build_all(
         &config.auth.access_token_expire,
         &config.auth.refresh_token_expire,
     )?);
-    let (refresh_session_store, refresh_session_port) =
-        super::refresh_sessions::stores(redis_client.clone());
+    let refresh_session_port = super::refresh_sessions::store(redis_client.clone());
     let auth = Arc::new(AuthService::new(
         database.clone(),
         policies.auth,
         token_settings,
         super::login_protection::store(redis_client.clone()),
-        refresh_session_port,
+        Arc::clone(&refresh_session_port),
         authorization_cache.clone(),
     ));
     let menu = Arc::new(MenuService::new(
@@ -390,12 +389,12 @@ pub async fn build_all(
     );
 
     let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
-        Arc::new(OnlineUserService::new_redis(
-            redis.clone(),
-            refresh_session_store,
+        Arc::new(OnlineUserService::new(
+            super::online_sessions::redis_store(redis.clone()),
+            refresh_session_port,
         ))
     } else {
-        Arc::new(OnlineUserService::new_in_memory(refresh_session_store))
+        Arc::new(OnlineUserService::new_in_memory(refresh_session_port))
     };
     let captcha: Arc<dyn CaptchaStore> = if let Some(redis) = redis_client {
         Arc::new(RedisCaptchaStore {

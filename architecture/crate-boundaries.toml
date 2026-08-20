@@ -70,7 +70,6 @@ allowed_internal_edges = [
     "ryframe-macro -> ryframe-adapters",
     "ryframe-application -> ryframe-auth",
     "ryframe-application -> ryframe-config",
-    "ryframe-application -> ryframe-adapters",
     "ryframe-application -> ryframe-db",
     "ryframe-application -> ryframe-kernel",
     "ryframe-application -> ryframe-tenant-db",

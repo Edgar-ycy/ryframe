@@ -10,13 +10,11 @@ description.workspace = true
 
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-adapters = { path = "../ryframe-adapters" }
 ryframe-db = { path = "../ryframe-db" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-tenant-db = { path = "../ryframe-tenant-db" }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
-redis = { workspace = true }
 base64 = { workspace = true }
 hmac = { workspace = true }
 rand = { workspace = true }

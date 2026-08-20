@@ -143,7 +143,10 @@ pub use file_service::{
 };
 pub mod online_user_service;
 pub mod overview_service;
-pub use online_user_service::{OnlineUserService, OnlineUserVo, UserSession};
+pub use online_user_service::{
+    OnlineSessionMetadataFuture, OnlineSessionMetadataStore, OnlineUserService, OnlineUserVo,
+    UserSession,
+};
 pub use overview_service::{
     OverviewCoreSnapshot, OverviewRange, OverviewService, OverviewTrendBucket, OverviewTrends,
 };

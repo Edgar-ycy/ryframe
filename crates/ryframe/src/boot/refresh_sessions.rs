@@ -122,14 +122,9 @@ impl RefreshSessionPort for RefreshSessionBridge {
     }
 }
 
-pub fn stores(
-    redis: Option<ryframe_adapters::RedisClient>,
-) -> (RefreshSessionStore, Arc<dyn RefreshSessionPort>) {
+pub fn store(redis: Option<ryframe_adapters::RedisClient>) -> Arc<dyn RefreshSessionPort> {
     let store = RefreshSessionStore::new(redis);
-    let port = Arc::new(RefreshSessionBridge {
-        store: store.clone(),
-    });
-    (store, port)
+    Arc::new(RefreshSessionBridge { store })
 }
 
 fn map_identity(identity: AdapterIdentity) -> RefreshSessionIdentity {
@@ -192,7 +187,7 @@ mod tests {
 
     #[tokio::test]
     async fn memory_store_preserves_refresh_family_semantics() {
-        let (_, sessions) = stores(None);
+        let sessions = store(None);
         let sid = ryframe_auth::jwt::new_sid();
         let now = chrono::Utc::now().timestamp();
         sessions

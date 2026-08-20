@@ -3291,8 +3291,6 @@ dependencies = [
  "hmac",
  "opentelemetry",
  "rand 0.10.1",
- "redis",
- "ryframe-adapters",
  "ryframe-auth",
  "ryframe-db",
  "ryframe-kernel",
