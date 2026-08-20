@@ -217,9 +217,13 @@ pub async fn build_all(
         (None, None)
     };
     let permission = Arc::new(PermissionService::new(
-        database.clone(),
+        ryframe_application::legacy_permission_read(database.clone()),
+        ryframe_application::legacy_permission_write(
+            database.clone(),
+            authorization_cache.clone(),
+            Arc::clone(&product),
+        ),
         authorization_cache.clone(),
-        product.clone(),
     ));
     let token_settings = Arc::new(ryframe_auth::jwt::TokenSettings::new(
         Arc::<str>::from(config.auth.jwt_secret.as_str()),

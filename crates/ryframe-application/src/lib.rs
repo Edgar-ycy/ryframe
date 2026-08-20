@@ -17,6 +17,7 @@ mod legacy_login_info_persistence;
 mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
 mod legacy_overview_persistence;
+mod legacy_permission_persistence;
 mod legacy_post_persistence;
 mod legacy_profile_persistence;
 mod legacy_role_read;
@@ -26,6 +27,7 @@ mod login_protection;
 mod notice_persistence;
 mod oper_log_persistence;
 mod overview_persistence;
+mod permission_persistence;
 mod persistence;
 mod post_persistence;
 mod principal_resolver;
@@ -100,6 +102,10 @@ pub use legacy_oper_log_persistence::port as legacy_oper_log_persistence;
 #[doc(hidden)]
 pub use legacy_overview_persistence::port as legacy_overview_persistence;
 #[doc(hidden)]
+pub use legacy_permission_persistence::{
+    read_port as legacy_permission_read, write_port as legacy_permission_write,
+};
+#[doc(hidden)]
 pub use legacy_post_persistence::port as legacy_post_persistence;
 #[doc(hidden)]
 pub use legacy_profile_persistence::port as legacy_profile_persistence;
@@ -119,6 +125,9 @@ pub use oper_log_persistence::{
 };
 pub use overview_persistence::{
     OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
+};
+pub use permission_persistence::{
+    PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,
 };
 pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};

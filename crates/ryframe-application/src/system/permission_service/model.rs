@@ -1,5 +1,6 @@
-use ryframe_db::entities::permission;
 use serde::{Deserialize, Serialize};
+
+use crate::PermissionRecord;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -44,8 +45,8 @@ pub struct PermissionVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<permission::Model> for PermissionVo {
-    fn from(permission: permission::Model) -> Self {
+impl From<PermissionRecord> for PermissionVo {
+    fn from(permission: PermissionRecord) -> Self {
         Self {
             id: permission.id.to_string(),
             name: permission.name,
