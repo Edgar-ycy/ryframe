@@ -31,6 +31,11 @@ impl MigrationStatus {
 
 pub struct Migrator;
 
+/// 当前唯一控制库 baseline 的稳定 schema 指纹。
+pub fn schema_fingerprint() -> String {
+    m20260820_000000_control_baseline::schema_fingerprint()
+}
+
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
