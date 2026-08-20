@@ -27,6 +27,7 @@ mod legacy_message_persistence;
 mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
 mod legacy_overview_persistence;
+mod legacy_password_reset_persistence;
 mod legacy_permission_persistence;
 mod legacy_post_persistence;
 mod legacy_profile_persistence;
@@ -43,6 +44,7 @@ mod message_persistence;
 mod notice_persistence;
 mod oper_log_persistence;
 mod overview_persistence;
+mod password_reset_persistence;
 mod permission_persistence;
 mod persistence;
 mod post_persistence;
@@ -146,6 +148,8 @@ pub use legacy_oper_log_persistence::port as legacy_oper_log_persistence;
 #[doc(hidden)]
 pub use legacy_overview_persistence::port as legacy_overview_persistence;
 #[doc(hidden)]
+pub use legacy_password_reset_persistence::port as legacy_password_reset_persistence;
+#[doc(hidden)]
 pub use legacy_permission_persistence::{
     read_port as legacy_permission_read, write_port as legacy_permission_write,
 };
@@ -185,6 +189,10 @@ pub use oper_log_persistence::{
 };
 pub use overview_persistence::{
     OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
+};
+pub use password_reset_persistence::{
+    NewPasswordResetRequest, PASSWORD_RESET_STATUS_PENDING, PasswordResetPersistencePort,
+    PasswordResetRequestRecord, PasswordResetTransaction, PasswordResetUserState,
 };
 pub use permission_persistence::{
     PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,

@@ -5,23 +5,24 @@ mod roles;
 
 use std::sync::Arc;
 
-use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{
-    DeptRepository, RoleRepository, UserRepository,
-    entities::{password_reset_request, role, user},
+    ControlDatabaseCluster, DeptRepository, RoleRepository, UserRepository,
+    entities::{role, user},
 };
 use ryframe_kernel::{AppResult, ValidatedPageQuery};
 use sea_orm::DatabaseTransaction;
 use serde::Serialize;
 
 use crate::{
-    AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort, UserQueryReadPort,
-    UserQueryRecord, UserQueryRoleRecord,
+    AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort,
+    PasswordResetPersistencePort, UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord,
 };
 
 pub(crate) use queries::CurrentAuthorization;
 
 pub const USER_STATUS_NORMAL: &str = user::Model::STATUS_NORMAL;
+pub const USER_STATUS_PENDING_ACTIVATION: &str = user::Model::STATUS_PENDING_ACTIVATION;
+pub const USER_STATUS_MUST_RESET_PASSWORD: &str = user::Model::STATUS_MUST_RESET_PASSWORD;
 
 #[derive(Debug, Serialize)]
 pub struct UserVo {
@@ -76,7 +77,7 @@ impl From<UserQueryRecord> for UserVo {
 
 #[derive(Debug)]
 pub struct PasswordResetRequestOutcome {
-    pub request: password_reset_request::Model,
+    pub request: crate::PasswordResetRequestRecord,
     pub token: String,
 }
 
@@ -125,6 +126,7 @@ pub struct UserService {
     authorization_resolver: AuthorizationResolver,
     authorization_cache: AuthorizationCache,
     queries: Arc<dyn UserQueryReadPort>,
+    password_resets: Arc<dyn PasswordResetPersistencePort>,
 }
 
 pub struct CreateUserParams<'a> {
@@ -171,6 +173,7 @@ impl UserService {
         authorization_cache: AuthorizationCache,
         identity_read: Arc<dyn IdentityAuthorizationReadPort>,
         queries: Arc<dyn UserQueryReadPort>,
+        password_resets: Arc<dyn PasswordResetPersistencePort>,
     ) -> Self {
         Self {
             db,
@@ -180,6 +183,7 @@ impl UserService {
             authorization_resolver: AuthorizationResolver::new(identity_read),
             authorization_cache,
             queries,
+            password_resets,
         }
     }
 

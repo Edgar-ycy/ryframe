@@ -145,6 +145,10 @@ async fn main() -> Result<(), AppError> {
         authorization_cache.clone(),
         ryframe_application::legacy_identity_authorization(database.clone()),
         ryframe_application::legacy_user_query_persistence(database.clone()),
+        ryframe_application::legacy_password_reset_persistence(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
     ));
     let product = Arc::new(ProductService::new(
         database.clone(),
