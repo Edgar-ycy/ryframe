@@ -91,7 +91,7 @@ pub(super) async fn handle_client_frame(
                 .await
             {
                 Ok(_) => {
-                    ryframe_adapters::metrics::observe_message_ack_latency(started.elapsed());
+                    crate::metrics::observe_message_ack_latency(started.elapsed());
                     let _ = queue_text(outbound, serialize_ack_frame(&parsed.ids));
                 }
                 Err(error) => {

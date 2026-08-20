@@ -189,7 +189,7 @@ pub async fn login(
                 .clear_login_failures(&tenant_id, &req.username, &ip)
                 .await
             {
-                ryframe_adapters::metrics::record_redis_degraded("login_protection");
+                crate::metrics::record_redis_degraded("login_protection");
                 if let Err(revoke_error) = state
                     .services
                     .auth
@@ -219,7 +219,7 @@ pub async fn login(
             };
             if let Err(error) = add_online_user(&state, &tenant_id, &result, &ip, user_agent).await
             {
-                ryframe_adapters::metrics::record_redis_degraded("login_session_metadata");
+                crate::metrics::record_redis_degraded("login_session_metadata");
                 if let Err(revoke_error) = state
                     .services
                     .auth
@@ -248,7 +248,7 @@ pub async fn login(
         }
         Err(error) => {
             if matches!(&error, AppError::ServiceUnavailable(_)) {
-                ryframe_adapters::metrics::record_redis_degraded("login_session");
+                crate::metrics::record_redis_degraded("login_session");
             }
             if matches!(&error, AppError::Authentication(_))
                 && let Err(record_error) = state
@@ -257,7 +257,7 @@ pub async fn login(
                     .record_login_failure(&tenant_id, &req.username, &ip)
                     .await
             {
-                ryframe_adapters::metrics::record_redis_degraded("login_protection");
+                crate::metrics::record_redis_degraded("login_protection");
                 return Err(record_error.into());
             }
             record_login_failure_log(&state, &tenant_id, &req.username, &ip, user_agent, &error)

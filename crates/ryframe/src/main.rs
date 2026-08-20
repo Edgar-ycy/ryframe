@@ -15,6 +15,27 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    ryframe_api::metrics::install(ryframe_api::metrics::ApiMetricsHooks {
+        begin_http_request: ryframe_adapters::metrics::begin_http_request,
+        finish_http_request: ryframe_adapters::metrics::finish_http_request,
+        abandon_http_request: ryframe_adapters::metrics::abandon_http_request,
+        metrics_text: ryframe_adapters::metrics::metrics_text,
+        record_refresh_replay: ryframe_adapters::metrics::record_refresh_replay,
+        record_csrf_rejection: ryframe_adapters::metrics::record_csrf_rejection,
+        record_redis_degraded: ryframe_adapters::metrics::record_redis_degraded,
+        record_idempotency_conflict: ryframe_adapters::metrics::record_idempotency_conflict,
+        record_rate_limit_rejection: ryframe_adapters::metrics::record_rate_limit_rejection,
+        record_ws_ticket: ryframe_adapters::metrics::record_ws_ticket,
+        set_ws_connections: ryframe_adapters::metrics::set_ws_connections,
+        record_message_delivery: ryframe_adapters::metrics::record_message_delivery,
+        set_message_redis_listener_connected:
+            ryframe_adapters::metrics::set_message_redis_listener_connected,
+        record_message_replay_query: ryframe_adapters::metrics::record_message_replay_query,
+        database_read_fallback_total: ryframe_adapters::metrics::database_read_fallback_total,
+        database_read_selection_totals: ryframe_adapters::metrics::database_read_selection_totals,
+        observe_message_ack_latency: ryframe_adapters::metrics::observe_message_ack_latency,
+    })
+    .map_err(|error| AppError::Internal(error.into()))?;
     ryframe_api::auth_middleware::set_backend_failure_hook(
         ryframe_adapters::metrics::record_redis_degraded,
     );

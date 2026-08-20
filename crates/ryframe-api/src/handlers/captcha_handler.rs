@@ -138,7 +138,7 @@ pub async fn verify_captcha_handler(
         .verify(&req.captcha_id, &req.code)
         .await
         .inspect_err(|_| {
-            ryframe_adapters::metrics::record_redis_degraded("captcha_store");
+            crate::metrics::record_redis_degraded("captcha_store");
         })?;
 
     if valid {
@@ -224,7 +224,7 @@ async fn issue_captcha(
         .set(captcha_id.clone(), answer)
         .await
         .inspect_err(|_| {
-            ryframe_adapters::metrics::record_redis_degraded("captcha_store");
+            crate::metrics::record_redis_degraded("captcha_store");
         })?;
     Ok((captcha_id, image_data))
 }
@@ -238,14 +238,14 @@ async fn enforce_captcha_limit(state: &AppState, key: &str, limit: u32) -> HttpR
         .acquire(key, 60, limit)
         .await
         .map_err(|error| {
-            ryframe_adapters::metrics::record_redis_degraded("captcha_rate_limit");
+            crate::metrics::record_redis_degraded("captcha_rate_limit");
             tracing::error!(%error, "captcha rate-limit backend unavailable");
             AppError::ServiceUnavailable("验证码限流服务暂不可用".into())
         })?;
     if decision.allowed {
         return Ok(());
     }
-    ryframe_adapters::metrics::record_rate_limit_rejection("captcha_ip");
+    crate::metrics::record_rate_limit_rejection("captcha_ip");
     Err(AppError::RateLimited(
         "验证码请求过于频繁，请稍后再试".into(),
         decision.retry_after_secs,

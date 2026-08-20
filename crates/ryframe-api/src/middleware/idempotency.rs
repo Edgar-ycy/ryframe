@@ -18,10 +18,11 @@ use axum::{
 use dashmap::{DashMap, mapref::entry::Entry};
 use redis::AsyncCommands;
 use ryframe_adapters::RedisClient;
-use ryframe_adapters::metrics::{record_idempotency_conflict, record_redis_degraded};
 use ryframe_auth::RequestPrincipal;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::metrics::{record_idempotency_conflict, record_redis_degraded};
 
 const KEY_PREFIX: &str = "ryframe:v0.7:idempotency:";
 const DEFAULT_PROCESSING_TTL_SECS: u64 = 30;

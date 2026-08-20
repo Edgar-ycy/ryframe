@@ -17,6 +17,7 @@ pub mod http;
 pub mod macros;
 pub mod message_presenter;
 pub mod message_socket;
+pub mod metrics;
 pub mod middleware;
 pub mod monitor;
 pub mod openapi;

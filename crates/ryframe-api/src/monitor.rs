@@ -321,10 +321,7 @@ pub(crate) async fn metrics_handler(
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    text_response(
-        ryframe_adapters::metrics::metrics_text(),
-        "text/plain; version=0.0.4",
-    )
+    text_response(crate::metrics::metrics_text(), "text/plain; version=0.0.4")
 }
 
 #[get("/db-pool")]

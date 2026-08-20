@@ -53,7 +53,7 @@ pub async fn websocket_ticket(
     {
         Ok(grant) => grant,
         Err(error @ AppError::ServiceUnavailable(_)) => {
-            ryframe_adapters::metrics::record_ws_ticket("backend_error");
+            crate::metrics::record_ws_ticket("backend_error");
             return Ok(websocket_ticket_unavailable_response(
                 error,
                 state.websocket_ticket_is_expected_unavailable(),
@@ -61,7 +61,7 @@ pub async fn websocket_ticket(
         }
         Err(error) => return Err(error.into()),
     };
-    ryframe_adapters::metrics::record_ws_ticket("issued");
+    crate::metrics::record_ws_ticket("issued");
     Ok(Json(ApiResponse::success(WebSocketTicketResponse {
         ticket: grant.ticket,
         expires_in: grant.expires_in,

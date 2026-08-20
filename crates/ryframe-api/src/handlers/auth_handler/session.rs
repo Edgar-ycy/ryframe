@@ -119,7 +119,7 @@ pub async fn logout(
                 .try_blacklist(&claims.jti, remaining)
                 .await
                 .inspect_err(|_| {
-                    ryframe_adapters::metrics::record_redis_degraded("logout_revocation");
+                    crate::metrics::record_redis_degraded("logout_revocation");
                 })?;
         }
     }
@@ -132,7 +132,7 @@ pub async fn logout(
             .revoke(&claims.sid)
             .await
             .inspect_err(|_| {
-                ryframe_adapters::metrics::record_redis_degraded("logout_session");
+                crate::metrics::record_redis_degraded("logout_session");
             })?;
         if let Err(error) = state
             .services
@@ -140,7 +140,7 @@ pub async fn logout(
             .remove_user(&claims.tenant_id, &claims.sid)
             .await
         {
-            ryframe_adapters::metrics::record_redis_degraded("logout_session_metadata");
+            crate::metrics::record_redis_degraded("logout_session_metadata");
             tracing::warn!(%error, sid = %claims.sid, "清理退出会话元数据失败");
         }
     }
@@ -232,7 +232,7 @@ pub async fn refresh(
                 .touch_user_strict(&result.user_info.tenant_id, &result.sid)
                 .await
                 .inspect_err(|_| {
-                    ryframe_adapters::metrics::record_redis_degraded("refresh_session_metadata");
+                    crate::metrics::record_redis_degraded("refresh_session_metadata");
                 })?;
             record_login_success(
                 &state,
@@ -257,7 +257,7 @@ pub async fn refresh(
         }
         Err(error) => {
             if matches!(&error, AppError::ServiceUnavailable(_)) {
-                ryframe_adapters::metrics::record_redis_degraded("refresh_session");
+                crate::metrics::record_redis_degraded("refresh_session");
             }
             record_login_failure_log(
                 &state,
@@ -272,7 +272,7 @@ pub async fn refresh(
             let concurrent = matches!(&error, AppError::Conflict(message) if message == "refresh already in progress");
             if matches!(&error, AppError::Authentication(message) if message.contains("replay detected"))
             {
-                ryframe_adapters::metrics::record_refresh_replay();
+                crate::metrics::record_refresh_replay();
             }
             let error = HttpAppError::from(error);
             let mut response = if clear_cookie {
@@ -385,7 +385,7 @@ pub async fn revoke_session(
         .revoke_for_user(&current_user.tenant_id, current_user.user_id, &sid)
         .await
         .inspect_err(|_| {
-            ryframe_adapters::metrics::record_redis_degraded("profile_session_revoke");
+            crate::metrics::record_redis_degraded("profile_session_revoke");
         })?;
     if matches!(result, RefreshSessionRevocation::NotFoundOrForeign) {
         return Err(AppError::NotFound("登录设备不存在".into()).into());
@@ -396,7 +396,7 @@ pub async fn revoke_session(
         .remove_user(&current_user.tenant_id, &sid)
         .await
     {
-        ryframe_adapters::metrics::record_redis_degraded("profile_session_metadata_cleanup");
+        crate::metrics::record_redis_degraded("profile_session_metadata_cleanup");
         tracing::warn!(%error, %sid, "撤销会话后的展示元数据清理失败");
     }
 
@@ -465,7 +465,7 @@ pub async fn revoke_other_sessions(
         )
         .await
         .inspect_err(|_| {
-            ryframe_adapters::metrics::record_redis_degraded("profile_session_revoke_others");
+            crate::metrics::record_redis_degraded("profile_session_revoke_others");
         })?;
 
     // Refresh Family 已经完成权威批量撤销；展示元数据清理失败不能回滚或掩盖安全结果。
@@ -476,7 +476,7 @@ pub async fn revoke_other_sessions(
             .remove_user(&current_user.tenant_id, sid)
             .await
         {
-            ryframe_adapters::metrics::record_redis_degraded("profile_session_metadata_cleanup");
+            crate::metrics::record_redis_degraded("profile_session_metadata_cleanup");
             tracing::warn!(%error, %sid, "批量撤销后的展示元数据清理失败");
         }
     }

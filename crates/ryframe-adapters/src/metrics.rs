@@ -1,6 +1,6 @@
 //! Prometheus 指标注册、记录与进程采样。
 
-use std::{sync::LazyLock, time::Instant};
+use std::{sync::LazyLock, time::Duration};
 
 use lazy_static::lazy_static;
 use prometheus::{
@@ -393,47 +393,26 @@ fn ensure_registered() {
     });
 }
 
-/// 一次 HTTP 请求的低基数指标观察。
-pub struct HttpRequestObservation {
-    method: String,
-    path: String,
-    started: Instant,
-    in_flight: bool,
+pub fn begin_http_request() {
+    ensure_registered();
+    HTTP_REQUESTS_IN_FLIGHT.inc();
 }
 
-impl HttpRequestObservation {
-    /// 创建观察并递增当前处理中的请求数量。
-    pub fn start(method: String, path: String) -> Self {
-        ensure_registered();
-        HTTP_REQUESTS_IN_FLIGHT.inc();
-        Self {
-            method,
-            path,
-            started: Instant::now(),
-            in_flight: true,
-        }
-    }
-
-    /// 记录终态状态码与耗时，并结束当前观察。
-    pub fn finish(mut self, status: u16) {
-        HTTP_REQUESTS_IN_FLIGHT.dec();
-        self.in_flight = false;
-        let status = status.to_string();
-        HTTP_REQUESTS_TOTAL
-            .with_label_values(&[&self.method, &self.path, &status])
-            .inc();
-        HTTP_REQUEST_DURATION
-            .with_label_values(&[&self.method, &self.path])
-            .observe(self.started.elapsed().as_secs_f64());
-    }
+pub fn finish_http_request(method: &str, path: &str, status: u16, duration: Duration) {
+    ensure_registered();
+    HTTP_REQUESTS_IN_FLIGHT.dec();
+    let status = status.to_string();
+    HTTP_REQUESTS_TOTAL
+        .with_label_values(&[method, path, &status])
+        .inc();
+    HTTP_REQUEST_DURATION
+        .with_label_values(&[method, path])
+        .observe(duration.as_secs_f64());
 }
 
-impl Drop for HttpRequestObservation {
-    fn drop(&mut self) {
-        if self.in_flight {
-            HTTP_REQUESTS_IN_FLIGHT.dec();
-        }
-    }
+pub fn abandon_http_request() {
+    ensure_registered();
+    HTTP_REQUESTS_IN_FLIGHT.dec();
 }
 
 pub fn metrics_text() -> String {

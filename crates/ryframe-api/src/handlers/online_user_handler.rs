@@ -86,7 +86,7 @@ pub async fn force_logout(
         .await
         .inspect_err(|error| {
             if matches!(error, AppError::ServiceUnavailable(_)) {
-                ryframe_adapters::metrics::record_redis_degraded("force_logout_session");
+                crate::metrics::record_redis_degraded("force_logout_session");
             }
         })?;
     if !revoked {
@@ -101,7 +101,7 @@ pub async fn force_logout(
         .remove_user(&current_user.tenant_id, &sid)
         .await
     {
-        ryframe_adapters::metrics::record_redis_degraded("force_logout_metadata");
+        crate::metrics::record_redis_degraded("force_logout_metadata");
         tracing::warn!(%error, %sid, "强制下线后的展示元数据清理失败");
     }
 

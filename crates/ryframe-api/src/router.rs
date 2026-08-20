@@ -28,10 +28,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete as delete_route, get as get_route, post},
 };
-use ryframe_adapters::{
-    metrics::{record_rate_limit_rejection, record_redis_degraded},
-    rate_limit::RateLimiter,
-};
+use ryframe_adapters::rate_limit::RateLimiter;
 use ryframe_application::system::OnlineUserService;
 use ryframe_auth::jwt::Claims;
 use ryframe_kernel::AppError;
@@ -39,7 +36,10 @@ use ryframe_macro::{get, route};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::RequestPrincipal;
+use crate::{
+    RequestPrincipal,
+    metrics::{record_rate_limit_rejection, record_redis_degraded},
+};
 
 #[derive(Clone)]
 struct AuthenticatedTenantRateLimitState {

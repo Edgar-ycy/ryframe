@@ -1,11 +1,11 @@
 //! Axum 请求指标采集边界。
 
+use crate::metrics::HttpRequestObservation;
 use axum::{
     extract::{MatchedPath, Request},
     middleware::Next,
     response::Response,
 };
-use ryframe_adapters::metrics::HttpRequestObservation;
 
 const UNMATCHED_ROUTE: &str = "/unmatched";
 

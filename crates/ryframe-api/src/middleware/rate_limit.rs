@@ -12,11 +12,9 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use ryframe_adapters::{
-    metrics::{record_rate_limit_rejection, record_redis_degraded},
-    rate_limit::RateLimiter,
-};
+use ryframe_adapters::rate_limit::RateLimiter;
 
+use crate::metrics::{record_rate_limit_rejection, record_redis_degraded};
 use crate::settings::RateLimitSettings;
 
 #[derive(Clone)]

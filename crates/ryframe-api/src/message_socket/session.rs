@@ -25,7 +25,7 @@ pub async fn upgrade(
     validate_websocket_origin(&state, &headers)?;
     let ticket = match state.services.websocket_ticket.consume(&query.ticket).await {
         Ok(ticket) => {
-            ryframe_adapters::metrics::record_ws_ticket("consumed");
+            crate::metrics::record_ws_ticket("consumed");
             ticket
         }
         Err(error) => {
@@ -34,7 +34,7 @@ pub async fn upgrade(
             } else {
                 "rejected"
             };
-            ryframe_adapters::metrics::record_ws_ticket(result);
+            crate::metrics::record_ws_ticket(result);
             return Err(error.into());
         }
     };
@@ -74,7 +74,7 @@ async fn handle_socket(
     let (mut socket_sender, mut socket_receiver) = socket.split();
     let Some(connection_id) = hub.try_register(&ticket, outbound.clone(), shutdown_sender.clone())
     else {
-        ryframe_adapters::metrics::record_message_delivery("connection_limit");
+        crate::metrics::record_message_delivery("connection_limit");
         let _ = socket_sender
             .send(Message::Close(Some(CloseFrame {
                 code: 1008,
