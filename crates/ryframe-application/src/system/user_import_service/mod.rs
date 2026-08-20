@@ -9,8 +9,8 @@ use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use ryframe_auth::password;
 use ryframe_db::{
-    ControlDatabaseCluster, CreateUserImportJob, FileRepository, TenantConfigTransferRepository,
-    TenantRepository, UserImportRepository, UserRepository,
+    ControlDatabaseCluster, FileRepository, TenantConfigTransferRepository, TenantRepository,
+    UserImportRepository, UserRepository,
     entities::{user, user_import_job, user_import_row_result},
 };
 use ryframe_kernel::{
@@ -28,9 +28,9 @@ use super::{
     UserService,
 };
 use crate::{
-    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor,
-    UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
-    UserImportReadFilter, UserImportRowRecord,
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, NewUserImportJob,
+    SpreadsheetDocumentProcessor, UserImportDepartmentRecord, UserImportJobRecord,
+    UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord, UserImportSourceState,
 };
 
 /// 可恢复用户导入的稳定后台任务类型。

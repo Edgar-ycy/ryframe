@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
 use ryframe_db::{
-    ControlDatabaseCluster, DeptRepository, UserImportFilter, UserImportRepository, UserRepository,
-    entities::{user_import_job, user_import_row_result},
+    ControlDatabaseCluster, CreateUserImportJob, DeptRepository, FileRepository, TenantRepository,
+    UserImportFilter, UserImportRepository, UserRepository,
+    entities::{sys_file, user_import_job, user_import_row_result},
 };
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{DatabaseTransaction, EntityTrait, TransactionTrait};
 
 use crate::{
-    PersistenceFuture, UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
-    UserImportReadFilter, UserImportRowRecord, UserImportTransaction,
+    BackgroundJobTransaction, EnqueueJob, EnqueueJobResult, NewUserImportJob, PersistenceFuture,
+    UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
+    UserImportReadFilter, UserImportRowRecord, UserImportSourceRecord, UserImportSourceState,
+    UserImportTransaction,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn UserImportPersistencePort> {
@@ -163,6 +166,45 @@ impl UserImportPersistencePort for LegacyUserImportPersistence {
                 .map(|rows| rows.into_iter().map(row_record).collect())
         })
     }
+
+    fn request_cancel<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        import_id: i64,
+    ) -> PersistenceFuture<'a, bool> {
+        Box::pin(async move {
+            let now = UserImportRepository
+                .database_utc_now(self.database.write())
+                .await?;
+            UserImportRepository
+                .request_cancel(self.database.write(), tenant_id, import_id, now)
+                .await
+        })
+    }
+}
+
+impl BackgroundJobTransaction for LegacyUserImportTransaction {
+    fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult> {
+        <DatabaseTransaction as BackgroundJobTransaction>::enqueue(&self.transaction, command)
+    }
+
+    fn reactivate_linked<'a>(
+        &'a self,
+        job_id: i64,
+        expected_job_type: &'a str,
+        payload_key: &'a str,
+        expected_resource_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'a, bool> {
+        <DatabaseTransaction as BackgroundJobTransaction>::reactivate_linked(
+            &self.transaction,
+            job_id,
+            expected_job_type,
+            payload_key,
+            expected_resource_id,
+            now,
+        )
+    }
 }
 
 impl UserImportTransaction for LegacyUserImportTransaction {
@@ -170,6 +212,126 @@ impl UserImportTransaction for LegacyUserImportTransaction {
         Box::pin(async move {
             UserImportRepository
                 .database_utc_now(&self.transaction)
+                .await
+        })
+    }
+
+    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            TenantRepository
+                .lock_tenant_in_txn(&self.transaction, tenant_id)
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn find_by_idempotency<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        idempotency_key_hash: &'a str,
+    ) -> PersistenceFuture<'a, Option<UserImportJobRecord>> {
+        Box::pin(async move {
+            UserImportRepository
+                .find_by_idempotency_in_txn(&self.transaction, tenant_id, idempotency_key_hash)
+                .await
+                .map(|job| job.map(job_record))
+        })
+    }
+
+    fn requester_username<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+    ) -> PersistenceFuture<'a, Option<String>> {
+        Box::pin(async move {
+            UserRepository
+                .find_usernames_by_ids(&self.transaction, tenant_id, &[user_id])
+                .await
+                .map(|users| users.into_iter().next().map(|(_, username)| username))
+        })
+    }
+
+    fn active_count<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
+        Box::pin(async move {
+            UserImportRepository
+                .count_active_in_txn(&self.transaction, tenant_id)
+                .await
+        })
+    }
+
+    fn lock_source<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        source_file_id: i64,
+    ) -> PersistenceFuture<'a, Option<UserImportSourceRecord>> {
+        Box::pin(async move {
+            FileRepository
+                .find_by_id_any_status_for_update(&self.transaction, tenant_id, source_file_id)
+                .await
+                .map(|file| file.map(source_record))
+        })
+    }
+
+    fn restore_source<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        source_file_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'a, bool> {
+        Box::pin(async move {
+            FileRepository
+                .restore_import_file_for_reference_in_txn(
+                    &self.transaction,
+                    tenant_id,
+                    source_file_id,
+                    now,
+                )
+                .await
+        })
+    }
+
+    fn create(
+        &self,
+        job: NewUserImportJob,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'_, UserImportJobRecord> {
+        Box::pin(async move {
+            UserImportRepository
+                .create_in_txn(
+                    &self.transaction,
+                    CreateUserImportJob {
+                        id: job.id,
+                        tenant_id: job.tenant_id,
+                        requester_user_id: job.requester_user_id,
+                        background_job_id: job.background_job_id,
+                        idempotency_key_hash: job.idempotency_key_hash,
+                        source_file_id: job.source_file_id,
+                        source_name_snapshot: job.source_name,
+                        source_sha256: job.source_sha256,
+                    },
+                    now,
+                )
+                .await
+                .map(job_record)
+        })
+    }
+
+    fn mark_source_for_cleanup<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        source_file_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+        cleanup_after: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'a, bool> {
+        Box::pin(async move {
+            FileRepository
+                .mark_import_orphan_for_cleanup_in_txn(
+                    &self.transaction,
+                    tenant_id,
+                    source_file_id,
+                    now,
+                    cleanup_after,
+                )
                 .await
         })
     }
@@ -263,6 +425,23 @@ fn row_record(row: user_import_row_result::Model) -> UserImportRowRecord {
         code: row.code,
         message: row.message,
         created_at: row.created_at,
+    }
+}
+
+fn source_record(file: sys_file::Model) -> UserImportSourceRecord {
+    let state = if file.del_flag != sys_file::Model::DEL_FLAG_NORMAL {
+        UserImportSourceState::Unavailable
+    } else if file.upload_status == sys_file::Model::UPLOAD_STATUS_READY {
+        UserImportSourceState::Ready
+    } else if file.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP {
+        UserImportSourceState::Recoverable
+    } else {
+        UserImportSourceState::Unavailable
+    };
+    UserImportSourceRecord {
+        bucket: file.bucket,
+        sha256: file.file_sha256,
+        state,
     }
 }
 

@@ -85,23 +85,20 @@ impl UserImportService {
     ) -> AppResult<Option<UserImportJobVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_sha256("幂等键", idempotency_key_hash)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let existing = UserImportRepository
-            .find_by_idempotency_in_txn(&transaction, tenant_id, idempotency_key_hash)
+        let transaction = self.persistence.begin().await?;
+        let existing = transaction
+            .find_by_idempotency(tenant_id, idempotency_key_hash)
             .await?;
         let Some(existing) = existing else {
-            transaction.rollback().await.map_err(database_error)?;
+            transaction.rollback().await?;
             return Ok(None);
         };
-        let requester_username = UserRepository
-            .find_usernames_by_ids(&transaction, tenant_id, &[existing.requester_user_id])
-            .await?
-            .into_iter()
-            .next()
-            .map(|(_, username)| username);
+        let requester_username = transaction
+            .requester_username(tenant_id, existing.requester_user_id)
+            .await?;
         let job = job_vo_with_requester(existing, requester_username);
         // 幂等重放同样属于成功写请求；短事务绑定审计，避免产生 transaction_unbound 告警。
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         Ok(Some(job))
     }
 
@@ -122,30 +119,23 @@ impl UserImportService {
             ));
         }
 
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        TenantRepository
-            .lock_tenant_in_txn(&transaction, tenant_id)
-            .await?;
-        if let Some(existing) = UserImportRepository
-            .find_by_idempotency_in_txn(&transaction, tenant_id, &command.idempotency_key_hash)
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_tenant(tenant_id).await?;
+        if let Some(existing) = transaction
+            .find_by_idempotency(tenant_id, &command.idempotency_key_hash)
             .await?
         {
-            let requester_username = UserRepository
-                .find_usernames_by_ids(&transaction, tenant_id, &[existing.requester_user_id])
-                .await?
-                .into_iter()
-                .next()
-                .map(|(_, username)| username);
+            let requester_username = transaction
+                .requester_username(tenant_id, existing.requester_user_id)
+                .await?;
             let job = job_vo_with_requester(existing, requester_username);
-            crate::commit_current_audit(transaction).await?;
+            transaction.commit().await?;
             return Ok(RequestUserImportOutcome {
                 job,
                 inserted: false,
             });
         }
-        let active = UserImportRepository
-            .count_active_in_txn(&transaction, tenant_id)
-            .await?;
+        let active = transaction.active_count(tenant_id).await?;
         if active
             >= u64::try_from(self.config.max_active_per_tenant)
                 .map_err(|_| AppError::Config("用户导入活动任务上限无效".into()))?
@@ -156,76 +146,53 @@ impl UserImportService {
         }
 
         let import_id = next_id()?;
-        let now = UserImportRepository.database_utc_now(&transaction).await?;
-        let source_file = FileRepository
-            .find_by_id_any_status_for_update(&transaction, tenant_id, command.source_file_id)
+        let now = transaction.database_now().await?;
+        let source_file = transaction
+            .lock_source(tenant_id, command.source_file_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入源文件不存在或已被回收".into()))?;
-        if source_file.bucket != IMPORT_BUCKET {
-            return Err(AppError::Validation("用户导入源文件存储边界不匹配".into()));
-        }
-        if source_file.file_sha256 != command.source_sha256 {
-            return Err(AppError::Validation("用户导入源文件摘要不匹配".into()));
-        }
-        if source_file.upload_status == ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_CLEANUP
-        {
-            if !FileRepository
-                .restore_import_file_for_reference_in_txn(
-                    &transaction,
-                    tenant_id,
-                    command.source_file_id,
-                    now,
-                )
+        if validate_import_source(&source_file, &command.source_sha256)?
+            && !transaction
+                .restore_source(tenant_id, command.source_file_id, now)
                 .await?
-            {
-                return Err(AppError::NotFound(
-                    "用户导入源文件已进入最终回收阶段".into(),
-                ));
-            }
-        } else if source_file.upload_status
-            != ryframe_db::entities::sys_file::Model::UPLOAD_STATUS_READY
-            || source_file.del_flag != ryframe_db::entities::sys_file::Model::DEL_FLAG_NORMAL
         {
-            return Err(AppError::Validation("用户导入源文件尚未完成上传".into()));
+            return Err(AppError::NotFound(
+                "用户导入源文件已进入最终回收阶段".into(),
+            ));
         }
         let trace_context = crate::trace_context::current_trace_context();
-        let queued = self
-            .queue
-            .enqueue_in_transaction(
-                &transaction,
-                EnqueueJob {
-                    tenant_id: Some(tenant_id.to_owned()),
-                    schedule_id: None,
-                    scheduled_for: Some(now),
-                    max_runtime_seconds: Some(USER_IMPORT_MAX_RUNTIME_SECONDS),
-                    job_type: USER_IMPORT_JOB_TYPE.to_owned(),
-                    payload: serde_json::json!({ "import_job_id": import_id.to_string() }),
-                    priority: 0,
-                    available_at: now,
-                    max_attempts: USER_IMPORT_MAX_ATTEMPTS,
-                    dedupe_key: Some(format!("{tenant_id}:{}", command.idempotency_key_hash)),
-                    traceparent: trace_context.traceparent,
-                    tracestate: trace_context.tracestate,
-                },
-            )
+        let queued = transaction
+            .enqueue(EnqueueJob {
+                tenant_id: Some(tenant_id.to_owned()),
+                schedule_id: None,
+                scheduled_for: Some(now),
+                max_runtime_seconds: Some(USER_IMPORT_MAX_RUNTIME_SECONDS),
+                job_type: USER_IMPORT_JOB_TYPE.to_owned(),
+                payload: serde_json::json!({ "import_job_id": import_id.to_string() }),
+                priority: 0,
+                available_at: now,
+                max_attempts: USER_IMPORT_MAX_ATTEMPTS,
+                dedupe_key: Some(format!("{tenant_id}:{}", command.idempotency_key_hash)),
+                traceparent: trace_context.traceparent,
+                tracestate: trace_context.tracestate,
+            })
             .await?;
-        let job = UserImportRepository
-            .create_in_txn(
-                &transaction,
-                CreateUserImportJob {
+        let job = transaction
+            .create(
+                NewUserImportJob {
                     id: import_id,
                     tenant_id: tenant_id.to_owned(),
                     requester_user_id: actor.user_id,
                     background_job_id: queued.job_id,
                     idempotency_key_hash: command.idempotency_key_hash,
                     source_file_id: command.source_file_id,
-                    source_name_snapshot: command.source_name,
+                    source_name: command.source_name,
                     source_sha256: command.source_sha256,
                 },
                 now,
             )
             .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         self.queue.notify_background_jobs().await;
         Ok(RequestUserImportOutcome {
             job: job_vo_with_requester(job, Some(actor.username.clone())),
@@ -240,14 +207,12 @@ impl UserImportService {
         source_file_id: i64,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         let result: AppResult<bool> = async {
-            TenantRepository
-                .lock_tenant_in_txn(&transaction, tenant_id)
-                .await?;
-            let now = FileRepository.database_utc_now(&transaction).await?;
-            let Some(file) = FileRepository
-                .find_by_id_any_status_for_update(&transaction, tenant_id, source_file_id)
+            transaction.lock_tenant(tenant_id).await?;
+            let now = transaction.database_now().await?;
+            let Some(file) = transaction
+                .lock_source(tenant_id, source_file_id)
                 .await?
             else {
                 return Ok(false);
@@ -255,9 +220,8 @@ impl UserImportService {
             if file.bucket != IMPORT_BUCKET {
                 return Err(AppError::Validation("只能清理用户导入专用文件".into()));
             }
-            FileRepository
-                .mark_import_orphan_for_cleanup_in_txn(
-                    &transaction,
+            transaction
+                .mark_source_for_cleanup(
                     tenant_id,
                     source_file_id,
                     now,
@@ -268,8 +232,8 @@ impl UserImportService {
         .await;
         match result {
             // 该事务只负责失败补偿，不能把主请求提前标记为审计成功。
-            Ok(true) => transaction.commit().await.map_err(database_error),
-            Ok(false) => transaction.rollback().await.map_err(database_error),
+            Ok(true) => transaction.commit().await,
+            Ok(false) => transaction.rollback().await,
             Err(error) => {
                 if let Err(rollback_error) = transaction.rollback().await {
                     tracing::error!(%rollback_error, "用户导入孤儿文件回收事务回滚失败");
@@ -365,13 +329,7 @@ impl UserImportService {
     pub async fn cancel(&self, actor: &ActorContext, id: i64) -> AppResult<UserImportJobVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_visible(tenant_id, id).await?;
-        let now = UserImportRepository
-            .database_utc_now(self.db.write())
-            .await?;
-        if !UserImportRepository
-            .request_cancel(self.db.write(), tenant_id, id, now)
-            .await?
-        {
+        if !self.persistence.request_cancel(tenant_id, id).await? {
             return Err(AppError::Conflict("用户导入任务已结束或状态已变化".into()));
         }
         self.get(actor, id).await
@@ -409,5 +367,68 @@ impl UserImportService {
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
         Ok(())
+    }
+}
+
+fn validate_import_source(
+    source: &crate::UserImportSourceRecord,
+    expected_sha256: &str,
+) -> AppResult<bool> {
+    if source.bucket != IMPORT_BUCKET {
+        return Err(AppError::Validation(
+            "用户导入源文件存储边界不匹配".into(),
+        ));
+    }
+    if source.sha256 != expected_sha256 {
+        return Err(AppError::Validation("用户导入源文件摘要不匹配".into()));
+    }
+    match source.state {
+        UserImportSourceState::Ready => Ok(false),
+        UserImportSourceState::Recoverable => Ok(true),
+        UserImportSourceState::Unavailable => {
+            Err(AppError::Validation("用户导入源文件尚未完成上传".into()))
+        }
+    }
+}
+
+#[cfg(test)]
+mod management_tests {
+    use super::*;
+
+    fn source(state: UserImportSourceState) -> crate::UserImportSourceRecord {
+        crate::UserImportSourceRecord {
+            bucket: IMPORT_BUCKET.into(),
+            sha256: "a".repeat(64),
+            state,
+        }
+    }
+
+    #[test]
+    fn source_state_controls_restoration() {
+        assert!(!validate_import_source(
+            &source(UserImportSourceState::Ready),
+            &"a".repeat(64)
+        )
+        .unwrap());
+        assert!(validate_import_source(
+            &source(UserImportSourceState::Recoverable),
+            &"a".repeat(64)
+        )
+        .unwrap());
+        assert!(validate_import_source(
+            &source(UserImportSourceState::Unavailable),
+            &"a".repeat(64)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn source_bucket_and_digest_fail_closed() {
+        let mut candidate = source(UserImportSourceState::Ready);
+        candidate.bucket = "uploads".into();
+        assert!(validate_import_source(&candidate, &"a".repeat(64)).is_err());
+
+        candidate.bucket = IMPORT_BUCKET.into();
+        assert!(validate_import_source(&candidate, &"b".repeat(64)).is_err());
     }
 }

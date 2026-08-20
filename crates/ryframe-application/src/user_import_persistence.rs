@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::PersistenceFuture;
+use crate::{BackgroundJobTransaction, PersistenceFuture};
 
 #[derive(Debug)]
 pub struct UserImportDepartmentRecord {
@@ -75,13 +75,82 @@ pub struct UserImportRowRecord {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UserImportSourceState {
+    Ready,
+    Recoverable,
+    Unavailable,
+}
+
+#[derive(Debug)]
+pub struct UserImportSourceRecord {
+    pub bucket: String,
+    pub sha256: String,
+    pub state: UserImportSourceState,
+}
+
+#[derive(Debug)]
+pub struct NewUserImportJob {
+    pub id: i64,
+    pub tenant_id: String,
+    pub requester_user_id: i64,
+    pub background_job_id: i64,
+    pub idempotency_key_hash: String,
+    pub source_file_id: i64,
+    pub source_name: String,
+    pub source_sha256: String,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UserImportReadFilter<'a> {
     pub status: Option<&'a str>,
 }
 
-pub trait UserImportTransaction: Send + Sync {
+pub trait UserImportTransaction: BackgroundJobTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+
+    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+
+    fn find_by_idempotency<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        idempotency_key_hash: &'a str,
+    ) -> PersistenceFuture<'a, Option<UserImportJobRecord>>;
+
+    fn requester_username<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_id: i64,
+    ) -> PersistenceFuture<'a, Option<String>>;
+
+    fn active_count<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64>;
+
+    fn lock_source<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        source_file_id: i64,
+    ) -> PersistenceFuture<'a, Option<UserImportSourceRecord>>;
+
+    fn restore_source<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        source_file_id: i64,
+        now: DateTime<Utc>,
+    ) -> PersistenceFuture<'a, bool>;
+
+    fn create(
+        &self,
+        job: NewUserImportJob,
+        now: DateTime<Utc>,
+    ) -> PersistenceFuture<'_, UserImportJobRecord>;
+
+    fn mark_source_for_cleanup<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        source_file_id: i64,
+        now: DateTime<Utc>,
+        cleanup_after: DateTime<Utc>,
+    ) -> PersistenceFuture<'a, bool>;
 
     fn lock(&self, import_id: i64) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
 
@@ -138,6 +207,12 @@ pub trait UserImportPersistencePort: Send + Sync {
         tenant_id: &'a str,
         user_ids: &'a [i64],
     ) -> PersistenceFuture<'a, Vec<(i64, String)>>;
+
+    fn request_cancel<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        import_id: i64,
+    ) -> PersistenceFuture<'a, bool>;
 }
 
 #[cfg(test)]

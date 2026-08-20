@@ -328,8 +328,9 @@ pub use tenant_usage_persistence::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
 pub use user_import_persistence::{
-    UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
-    UserImportReadFilter, UserImportRowRecord, UserImportTransaction,
+    NewUserImportJob, UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
+    UserImportReadFilter, UserImportRowRecord, UserImportSourceRecord, UserImportSourceState,
+    UserImportTransaction,
 };
 pub use user_query_persistence::{
     USER_QUERY_STATUS_NORMAL, UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort,
