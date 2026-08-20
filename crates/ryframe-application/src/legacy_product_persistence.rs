@@ -19,10 +19,10 @@ use sea_orm::{
 
 use crate::{
     PersistenceFuture, ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState,
-    ProductPlanRecord, ProductPlanState, ProductReadPort, ProductVersionRecord,
-    ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult, ProductWritePort,
-    ProductWriteTransaction, ProvisioningCapabilityResources, TenantCapabilityOverrideRecord,
-    TenantProductSnapshot,
+    ProductPlanRecord, ProductPlanState, ProductReadPort, ProductTransactionPort,
+    ProductVersionRecord, ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult,
+    ProductWritePort, ProductWriteTransaction, ProvisioningCapabilityResources,
+    TenantCapabilityOverrideRecord, TenantProductSnapshot,
 };
 
 pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn ProductReadPort> {
@@ -45,6 +45,60 @@ struct LegacyProductWrite {
 
 struct LegacyProductWriteTransaction {
     transaction: DatabaseTransaction,
+}
+
+impl ProductTransactionPort for DatabaseTransaction {
+    fn current_tenant_product<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> PersistenceFuture<'a, TenantProductSnapshot> {
+        Box::pin(async move {
+            ProductRepository
+                .tenant_product(self, tenant_id)
+                .await?
+                .map(tenant_snapshot)
+                .ok_or_else(|| AppError::NotFound("租户不存在".into()))
+        })
+    }
+
+    fn lock_assignable_version(
+        &self,
+        version_id: i64,
+    ) -> PersistenceFuture<'_, ProductVersionSnapshot> {
+        Box::pin(async move {
+            let repository = ProductRepository;
+            let observed = repository
+                .find_version_by_id(self, version_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))?;
+            let plan = repository
+                .lock_plan_by_id_in_txn(self, observed.plan.id)
+                .await?;
+            let version = repository
+                .lock_version_by_id_in_txn(self, version_id)
+                .await?;
+            if version.plan_id != plan.id {
+                return Err(AppError::Conflict(
+                    "目标产品套餐版本所属套餐已变化，请重新预览".into(),
+                ));
+            }
+            repository
+                .find_version_by_id(self, version_id)
+                .await?
+                .map(version_snapshot)
+                .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))
+        })
+    }
+
+    fn sync_capability_resources<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        resources: &'a ProvisioningCapabilityResources,
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(
+            async move { sync_persisted_capability_resources(self, tenant_id, resources).await },
+        )
+    }
 }
 
 impl ProductReadPort for LegacyProductRead {
@@ -201,13 +255,7 @@ impl ProductWriteTransaction for LegacyProductWriteTransaction {
         &'a self,
         tenant_id: &'a str,
     ) -> PersistenceFuture<'a, TenantProductSnapshot> {
-        Box::pin(async move {
-            ProductRepository
-                .tenant_product(&self.transaction, tenant_id)
-                .await?
-                .map(tenant_snapshot)
-                .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))
-        })
+        self.transaction.current_tenant_product(tenant_id)
     }
 
     fn sync_capability_resources<'a>(
@@ -215,9 +263,8 @@ impl ProductWriteTransaction for LegacyProductWriteTransaction {
         tenant_id: &'a str,
         resources: &'a ProvisioningCapabilityResources,
     ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            sync_persisted_capability_resources(&self.transaction, tenant_id, resources).await
-        })
+        self.transaction
+            .sync_capability_resources(tenant_id, resources)
     }
 
     fn replace_assignment(&self, change: ProductAssignmentChange) -> PersistenceFuture<'_, ()> {

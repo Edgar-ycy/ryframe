@@ -4,7 +4,6 @@ use std::{
 };
 
 use chrono::{Duration, Utc};
-use ryframe_db::ProductRepository;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -41,7 +40,6 @@ use support::*;
 pub struct ProductService {
     read: Arc<dyn ProductReadPort>,
     write: Arc<dyn ProductWritePort>,
-    repository: ProductRepository,
     authorization_cache: AuthorizationCache,
     service_accounts_deployment_available: bool,
 }
@@ -56,7 +54,6 @@ impl ProductService {
         Self {
             read,
             write,
-            repository: ProductRepository,
             authorization_cache,
             service_accounts_deployment_available,
         }

@@ -141,6 +141,25 @@ pub trait ProductReadPort: Send + Sync {
     ) -> PersistenceFuture<'a, Option<TenantProductSnapshot>>;
 }
 
+/// 由调用方已有控制库事务提供的产品快照能力。
+pub trait ProductTransactionPort: Send + Sync {
+    fn current_tenant_product<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> PersistenceFuture<'a, TenantProductSnapshot>;
+
+    fn lock_assignable_version(
+        &self,
+        version_id: i64,
+    ) -> PersistenceFuture<'_, ProductVersionSnapshot>;
+
+    fn sync_capability_resources<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        resources: &'a ProvisioningCapabilityResources,
+    ) -> PersistenceFuture<'a, ()>;
+}
+
 pub trait ProductWriteTransaction: Send + Sync {
     fn lock_change_tenant<'a>(
         &'a self,

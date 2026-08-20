@@ -1,28 +1,21 @@
 use std::collections::{BTreeSet, HashSet};
 
-use ryframe_kernel::{AppError, AppResult};
-use sea_orm::DatabaseTransaction;
-
 use super::{
     CAPABILITY_CATALOG, CapabilityRequirement, ProductContextVo, ProductService,
     ProvisioningCapabilityResources,
 };
+use ryframe_kernel::{AppError, AppResult};
 
 impl ProductService {
     /// 在调用方持有的控制库事务中读取当前真正可用的能力版本，供配置包导出
     /// 生成只读依赖声明。部署不可用或仅保留 entitlement 的能力不会进入配置包。
     pub async fn enabled_capability_requirements_in_txn(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn crate::ProductTransactionPort,
         tenant_id: &str,
     ) -> AppResult<Vec<CapabilityRequirement>> {
-        let bundle = self
-            .repository
-            .tenant_product(transaction, tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let context =
-            self.context_from_snapshot(crate::legacy_product_persistence::tenant_snapshot(bundle))?;
+            self.context_from_snapshot(transaction.current_tenant_product(tenant_id).await?)?;
         let mut requirements = context
             .capabilities
             .into_iter()
@@ -47,20 +40,15 @@ impl ProductService {
     /// variant 与 schema 任一不匹配都拒绝，且绝不借配置包修改产品上下文。
     pub async fn ensure_capability_requirements_in_txn(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn crate::ProductTransactionPort,
         tenant_id: &str,
         requirements: &[CapabilityRequirement],
     ) -> AppResult<()> {
         if requirements.is_empty() {
             return Ok(());
         }
-        let bundle = self
-            .repository
-            .tenant_product(transaction, tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let context =
-            self.context_from_snapshot(crate::legacy_product_persistence::tenant_snapshot(bundle))?;
+            self.context_from_snapshot(transaction.current_tenant_product(tenant_id).await?)?;
         let mut seen = BTreeSet::new();
         for requirement in requirements {
             if !seen.insert(requirement.code.as_str()) {
@@ -137,37 +125,19 @@ impl ProductService {
     /// 租户创建首事务内重新锁定并校验可分配版本，防止与 retire/套餐停用并发。
     pub async fn provisioning_resources_in_txn(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn crate::ProductTransactionPort,
         version_id: i64,
     ) -> AppResult<ProvisioningCapabilityResources> {
-        let observed = self
-            .repository
-            .find_version_by_id(transaction, version_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))?;
-        let plan = self
-            .repository
-            .lock_plan_by_id_in_txn(transaction, observed.plan.id)
-            .await?;
-        let version = self
-            .repository
-            .lock_version_by_id_in_txn(transaction, version_id)
-            .await?;
-        if plan.status != super::PLAN_STATUS_ENABLED {
+        let version = transaction.lock_assignable_version(version_id).await?;
+        if version.plan_status != super::PLAN_STATUS_ENABLED {
             return Err(AppError::Conflict("目标产品套餐已停用".into()));
         }
-        if version.status != super::VERSION_PUBLISHED {
+        if version.version_status != super::VERSION_PUBLISHED {
             return Err(AppError::Conflict("目标产品套餐版本已不再可分配".into()));
         }
-        let capabilities = self
-            .repository
-            .list_capabilities(transaction, version_id)
-            .await?
-            .into_iter()
-            .map(crate::legacy_product_persistence::capability_record)
-            .collect::<Vec<_>>();
-        self.validate_publishable_capability_records(&capabilities)?;
-        let enabled_codes = capabilities
+        self.validate_publishable_capability_records(&version.capabilities)?;
+        let enabled_codes = version
+            .capabilities
             .iter()
             .map(|capability| capability.code.as_str())
             .collect::<BTreeSet<_>>();
@@ -180,19 +150,16 @@ impl ProductService {
     /// 权限、菜单和默认管理员授权在一个控制库事务内完成，因此失败可安全重试。
     pub async fn sync_provisioning_resources_in_txn(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn crate::ProductTransactionPort,
         tenant_id: &str,
         version_id: i64,
     ) -> AppResult<()> {
         let resources = self
             .provisioning_resources_in_txn(transaction, version_id)
             .await?;
-        crate::legacy_product_persistence::sync_persisted_capability_resources(
-            transaction,
-            tenant_id,
-            &resources,
-        )
-        .await
+        transaction
+            .sync_capability_resources(tenant_id, &resources)
+            .await
     }
 
     /// 角色授权写入前的 Capability 守卫。普通角色和超级管理员都不能

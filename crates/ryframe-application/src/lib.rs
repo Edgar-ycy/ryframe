@@ -271,9 +271,10 @@ pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTran
 pub use principal_resolver::PrincipalResolver;
 pub use product_persistence::{
     ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState, ProductPlanRecord,
-    ProductPlanState, ProductReadPort, ProductVersionRecord, ProductVersionSnapshot,
-    ProductVersionState, ProductVersionWriteResult, ProductWritePort, ProductWriteTransaction,
-    ProvisioningCapabilityResources, TenantCapabilityOverrideRecord, TenantProductSnapshot,
+    ProductPlanState, ProductReadPort, ProductTransactionPort, ProductVersionRecord,
+    ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult, ProductWritePort,
+    ProductWriteTransaction, ProvisioningCapabilityResources, TenantCapabilityOverrideRecord,
+    TenantProductSnapshot,
 };
 pub use profile_persistence::{
     ProfileAvatarFile, ProfileAvatarState, ProfilePersistencePort, ProfileRecord,
