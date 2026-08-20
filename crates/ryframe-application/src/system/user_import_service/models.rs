@@ -57,30 +57,6 @@ pub struct UserImportJobVo {
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<user_import_job::Model> for UserImportJobVo {
-    fn from(job: user_import_job::Model) -> Self {
-        Self {
-            id: job.id.to_string(),
-            source_name: job.source_name_snapshot,
-            requester_username: None,
-            duplicate_policy: job.duplicate_policy,
-            status: job.status,
-            total_rows: job.total_rows,
-            processed_rows: job.processed_rows,
-            success_count: job.success_count,
-            skipped_count: job.skipped_count,
-            failure_count: job.failure_count,
-            cancel_requested: job.cancel_requested,
-            report_available: job.error_report_file_id.is_some(),
-            last_error: job.last_error,
-            started_at: job.started_at,
-            completed_at: job.completed_at,
-            created_at: job.created_at,
-            updated_at: job.updated_at,
-        }
-    }
-}
-
 impl From<UserImportJobRecord> for UserImportJobVo {
     fn from(job: UserImportJobRecord) -> Self {
         Self {
@@ -126,19 +102,6 @@ pub struct UserImportRowVo {
     pub code: String,
     pub message: String,
     pub created_at: DateTime<Utc>,
-}
-
-impl From<user_import_row_result::Model> for UserImportRowVo {
-    fn from(row: user_import_row_result::Model) -> Self {
-        Self {
-            row_number: row.row_number,
-            username: row.username_snapshot,
-            outcome: row.outcome,
-            code: row.code,
-            message: row.message,
-            created_at: row.created_at,
-        }
-    }
 }
 
 impl From<UserImportRowRecord> for UserImportRowVo {

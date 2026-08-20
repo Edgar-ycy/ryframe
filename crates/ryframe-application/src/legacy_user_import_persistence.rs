@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
 use ryframe_db::{
-    ControlDatabaseCluster, CreateUserImportJob, DeptRepository, FileRepository, TenantRepository,
-    UserImportFilter, UserImportRepository, UserRepository,
-    entities::{sys_file, user_import_job, user_import_row_result},
+    ControlDatabaseCluster, CreateUserImportJob, DeptRepository, FileRepository,
+    TenantConfigTransferRepository, TenantRepository, UserImportFilter, UserImportRepository,
+    UserRepository,
+    entities::{sys_file, user, user_import_job, user_import_row_result},
 };
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{DatabaseTransaction, EntityTrait, TransactionTrait};
 
 use crate::{
-    BackgroundJobTransaction, EnqueueJob, EnqueueJobResult, NewUserImportJob, PersistenceFuture,
+    BackgroundJobTransaction, EnqueueJob, EnqueueJobResult, NewImportedUser, NewUserImportJob,
+    NewUserImportRow, PersistenceFuture, UserImportAuthorizationSnapshot,
     UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
     UserImportReadFilter, UserImportRowRecord, UserImportSourceRecord, UserImportSourceState,
     UserImportTransaction,
@@ -336,6 +338,95 @@ impl UserImportTransaction for LegacyUserImportTransaction {
         })
     }
 
+    fn lock_configuration(&self, import_id: i64) -> PersistenceFuture<'_, Option<String>> {
+        Box::pin(async move {
+            let Some(import) = user_import_job::Entity::find_by_id(import_id)
+                .one(&self.transaction)
+                .await
+                .map_err(database_error)?
+            else {
+                return Ok(None);
+            };
+            TenantConfigTransferRepository
+                .lock_tenant_configuration_in_txn(&self.transaction, &import.tenant_id, None)
+                .await?;
+            Ok(Some(import.tenant_id))
+        })
+    }
+
+    fn lock_authorization<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        requester_user_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> PersistenceFuture<'a, UserImportAuthorizationSnapshot> {
+        Box::pin(async move {
+            let tenant = TenantRepository
+                .lock_tenant_in_txn(&self.transaction, tenant_id)
+                .await?;
+            let requester = UserRepository
+                .find_by_id_for_update(&self.transaction, tenant_id, requester_user_id)
+                .await?;
+            Ok(UserImportAuthorizationSnapshot {
+                tenant_epoch: tenant.authorization_epoch,
+                tenant_available: tenant.is_available(now),
+                requester_enabled: requester.as_ref().is_some_and(user::Model::is_enabled),
+                requester_version: requester.map(|user| user.authorization_version),
+            })
+        })
+    }
+
+    fn existing_usernames<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        usernames: &'a [String],
+    ) -> PersistenceFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            UserRepository
+                .find_existing_usernames_in_txn(&self.transaction, tenant_id, usernames)
+                .await
+        })
+    }
+
+    fn ensure_user_quota<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        additional_users: usize,
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            TenantRepository
+                .ensure_user_quota_for_batch_in_txn(&self.transaction, tenant_id, additional_users)
+                .await
+        })
+    }
+
+    fn insert_users<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        users: Vec<NewImportedUser>,
+    ) -> PersistenceFuture<'a, ()> {
+        Box::pin(async move {
+            UserRepository
+                .insert_many_in_txn(
+                    &self.transaction,
+                    tenant_id,
+                    users.into_iter().map(user_model).collect(),
+                )
+                .await
+        })
+    }
+
+    fn insert_rows(&self, rows: Vec<NewUserImportRow>) -> PersistenceFuture<'_, ()> {
+        Box::pin(async move {
+            UserImportRepository
+                .insert_row_results_in_txn(
+                    &self.transaction,
+                    rows.into_iter().map(import_row_model).collect(),
+                )
+                .await
+        })
+    }
+
     fn lock(&self, import_id: i64) -> PersistenceFuture<'_, Option<UserImportJobRecord>> {
         Box::pin(async move {
             UserImportRepository
@@ -442,6 +533,44 @@ fn source_record(file: sys_file::Model) -> UserImportSourceRecord {
         bucket: file.bucket,
         sha256: file.file_sha256,
         state,
+    }
+}
+
+fn user_model(user: NewImportedUser) -> user::Model {
+    user::Model {
+        id: user.id,
+        tenant_id: user.tenant_id,
+        username: user.username,
+        password_hash: user.password_hash,
+        nickname: user.nickname,
+        email: user.email,
+        phone: user.phone,
+        avatar: None,
+        avatar_file_id: None,
+        preferred_locale: None,
+        status: user::Model::STATUS_PENDING_ACTIVATION.to_owned(),
+        authorization_version: 1,
+        dept_id: Some(user.department_id),
+        remark: None,
+        login_ip: None,
+        login_date: None,
+        del_flag: user::Model::DEL_FLAG_NORMAL.to_owned(),
+        created_at: user.created_at,
+        updated_at: user.created_at,
+    }
+}
+
+fn import_row_model(row: NewUserImportRow) -> user_import_row_result::Model {
+    user_import_row_result::Model {
+        id: row.id,
+        tenant_id: row.tenant_id,
+        import_job_id: row.import_job_id,
+        row_number: row.row_number,
+        username_snapshot: row.username,
+        outcome: row.outcome,
+        code: row.code,
+        message: row.message,
+        created_at: row.created_at,
     }
 }
 

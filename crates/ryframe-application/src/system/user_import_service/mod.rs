@@ -8,15 +8,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use ryframe_auth::password;
-use ryframe_db::{
-    ControlDatabaseCluster, FileRepository, TenantConfigTransferRepository, TenantRepository,
-    UserImportRepository, UserRepository,
-    entities::{user, user_import_job, user_import_row_result},
-};
+use ryframe_db::{ControlDatabaseCluster, FileRepository, TenantRepository, UserImportRepository};
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, DataScope, PageResult, ValidatedPageQuery,
 };
-use sea_orm::{EntityTrait, TransactionTrait};
+use sea_orm::TransactionTrait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
@@ -28,9 +24,10 @@ use super::{
     UserService,
 };
 use crate::{
-    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, NewUserImportJob,
-    SpreadsheetDocumentProcessor, UserImportDepartmentRecord, UserImportJobRecord,
-    UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord, UserImportSourceState,
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, NewImportedUser, NewUserImportJob,
+    NewUserImportRow, SpreadsheetDocumentProcessor, UserImportDepartmentRecord,
+    UserImportJobRecord, UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord,
+    UserImportSourceState,
 };
 
 /// 可恢复用户导入的稳定后台任务类型。

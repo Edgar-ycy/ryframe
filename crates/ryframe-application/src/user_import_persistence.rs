@@ -75,6 +75,54 @@ pub struct UserImportRowRecord {
     pub created_at: DateTime<Utc>,
 }
 
+impl UserImportRowRecord {
+    pub const OUTCOME_SKIPPED: &'static str = "skipped";
+    pub const OUTCOME_FAILED: &'static str = "failed";
+}
+
+#[derive(Debug)]
+pub struct NewImportedUser {
+    pub id: i64,
+    pub tenant_id: String,
+    pub username: String,
+    pub password_hash: String,
+    pub nickname: String,
+    pub email: String,
+    pub phone: String,
+    pub department_id: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct NewUserImportRow {
+    pub id: i64,
+    pub tenant_id: String,
+    pub import_job_id: i64,
+    pub row_number: i32,
+    pub username: String,
+    pub outcome: String,
+    pub code: String,
+    pub message: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UserImportAuthorizationSnapshot {
+    pub tenant_epoch: i32,
+    pub tenant_available: bool,
+    pub requester_enabled: bool,
+    pub requester_version: Option<i32>,
+}
+
+impl UserImportAuthorizationSnapshot {
+    pub fn matches(self, tenant_epoch: i32, requester_version: i32) -> bool {
+        self.tenant_available
+            && self.requester_enabled
+            && self.tenant_epoch == tenant_epoch
+            && self.requester_version == Some(requester_version)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserImportSourceState {
     Ready,
@@ -151,6 +199,35 @@ pub trait UserImportTransaction: BackgroundJobTransaction {
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
     ) -> PersistenceFuture<'a, bool>;
+
+    fn lock_configuration(&self, import_id: i64) -> PersistenceFuture<'_, Option<String>>;
+
+    fn lock_authorization<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        requester_user_id: i64,
+        now: DateTime<Utc>,
+    ) -> PersistenceFuture<'a, UserImportAuthorizationSnapshot>;
+
+    fn existing_usernames<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        usernames: &'a [String],
+    ) -> PersistenceFuture<'a, Vec<String>>;
+
+    fn ensure_user_quota<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        additional_users: usize,
+    ) -> PersistenceFuture<'a, ()>;
+
+    fn insert_users<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        users: Vec<NewImportedUser>,
+    ) -> PersistenceFuture<'a, ()>;
+
+    fn insert_rows(&self, rows: Vec<NewUserImportRow>) -> PersistenceFuture<'_, ()>;
 
     fn lock(&self, import_id: i64) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
 
@@ -252,5 +329,26 @@ mod tests {
         assert!(!record.is_terminal());
         record.status = UserImportJobRecord::STATUS_PARTIAL.into();
         assert!(record.is_terminal());
+    }
+
+    #[test]
+    fn authorization_snapshot_requires_exact_versions() {
+        let current = UserImportAuthorizationSnapshot {
+            tenant_epoch: 2,
+            tenant_available: true,
+            requester_enabled: true,
+            requester_version: Some(3),
+        };
+
+        assert!(current.matches(2, 3));
+        assert!(!current.matches(1, 3));
+        assert!(!current.matches(2, 4));
+        assert!(
+            !UserImportAuthorizationSnapshot {
+                requester_enabled: false,
+                ..current
+            }
+            .matches(2, 3)
+        );
     }
 }

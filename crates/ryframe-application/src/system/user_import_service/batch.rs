@@ -101,59 +101,49 @@ impl UserImportService {
         next_offset: usize,
         mut prepared: PreparedBatch,
     ) -> AppResult<CommitBatchOutcome> {
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let import_snapshot = user_import_job::Entity::find_by_id(import_id)
-            .one(self.db.write())
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, &import_snapshot.tenant_id, None)
-            .await?;
-        let mut import = UserImportRepository
-            .lock_by_id_in_txn(&transaction, import_id)
+        let transaction = self.persistence.begin().await?;
+        let tenant_id = transaction
+            .lock_configuration(import_id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
+        let mut import = transaction
+            .lock(import_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
+        if import.tenant_id != tenant_id {
+            return Err(AppError::Conflict("用户导入任务租户状态已变化".into()));
+        }
         if import.cancel_requested {
-            let now = UserImportRepository.database_utc_now(&transaction).await?;
-            import.status = user_import_job::Model::STATUS_CANCELLED.to_owned();
+            let now = transaction.database_now().await?;
+            import.status = UserImportJobRecord::STATUS_CANCELLED.to_owned();
             import.completed_at = Some(now);
             import.updated_at = now;
-            UserImportRepository
-                .save_in_txn(&transaction, import)
-                .await?;
-            transaction.commit().await.map_err(database_error)?;
+            transaction.save(import).await?;
+            transaction.commit().await?;
             return Ok(CommitBatchOutcome::Committed);
         }
         if usize::try_from(import.processed_rows).ok() != Some(expected_offset) {
-            transaction.rollback().await.map_err(database_error)?;
+            transaction.rollback().await?;
             return Ok(CommitBatchOutcome::Committed);
         }
-        let now = UserImportRepository.database_utc_now(&transaction).await?;
+        let now = transaction.database_now().await?;
         let usernames = prepared
             .users
             .iter()
             .map(|item| item.candidate.data.username.clone())
             .collect::<Vec<_>>();
-        let tenant = TenantRepository
-            .lock_tenant_in_txn(&transaction, &import.tenant_id)
+        let authorization = transaction
+            .lock_authorization(&import.tenant_id, import.requester_user_id, now)
             .await?;
-        let requester = UserRepository
-            .find_by_id_for_update(&transaction, &import.tenant_id, import.requester_user_id)
-            .await?;
-        let authorization_changed = tenant.authorization_epoch
-            != prepared.tenant_authorization_epoch
-            || !tenant.is_available(now)
-            || requester.as_ref().is_none_or(|user| {
-                !user.is_enabled()
-                    || user.authorization_version != prepared.requester_authorization_version
-            });
-        if authorization_changed {
-            transaction.rollback().await.map_err(database_error)?;
+        if !authorization.matches(
+            prepared.tenant_authorization_epoch,
+            prepared.requester_authorization_version,
+        ) {
+            transaction.rollback().await?;
             return Ok(CommitBatchOutcome::AuthorizationChanged);
         }
-        let existing = UserRepository
-            .find_existing_usernames_in_txn(&transaction, &import.tenant_id, &usernames)
+        let existing = transaction
+            .existing_usernames(&import.tenant_id, &usernames)
             .await?
             .into_iter()
             .collect::<HashSet<_>>();
@@ -172,12 +162,8 @@ impl UserImportService {
         }
 
         if !new_users.is_empty()
-            && let Err(error) = TenantRepository
-                .ensure_user_quota_for_batch_in_txn(
-                    &transaction,
-                    &import.tenant_id,
-                    new_users.len(),
-                )
+            && let Err(error) = transaction
+                .ensure_user_quota(&import.tenant_id, new_users.len())
                 .await
         {
             if !matches!(error, AppError::Validation(_)) {
@@ -193,17 +179,17 @@ impl UserImportService {
             }
         }
 
-        let user_models = new_users
+        let users = new_users
             .into_iter()
-            .map(|prepared| build_user_model(&import.tenant_id, prepared, now))
+            .map(|prepared| build_user_record(&import.tenant_id, prepared, now))
             .collect::<AppResult<Vec<_>>>()?;
-        let success_count = i32::try_from(user_models.len())
+        let success_count = i32::try_from(users.len())
             .map_err(|_| AppError::Internal("用户导入成功计数溢出".into()))?;
         let skipped_count = i32::try_from(
             prepared
                 .issues
                 .iter()
-                .filter(|issue| issue.outcome == user_import_row_result::Model::OUTCOME_SKIPPED)
+                .filter(|issue| issue.outcome == UserImportRowRecord::OUTCOME_SKIPPED)
                 .count(),
         )
         .map_err(|_| AppError::Internal("用户导入跳过计数溢出".into()))?;
@@ -211,22 +197,20 @@ impl UserImportService {
             prepared
                 .issues
                 .iter()
-                .filter(|issue| issue.outcome == user_import_row_result::Model::OUTCOME_FAILED)
+                .filter(|issue| issue.outcome == UserImportRowRecord::OUTCOME_FAILED)
                 .count(),
         )
         .map_err(|_| AppError::Internal("用户导入失败计数溢出".into()))?;
 
-        UserRepository
-            .insert_many_in_txn(&transaction, &import.tenant_id, user_models)
+        transaction
+            .insert_users(&import.tenant_id, users)
             .await?;
-        let row_models = prepared
+        let row_records = prepared
             .issues
             .into_iter()
-            .map(|issue| issue.into_model(&import.tenant_id, import_id, now))
+            .map(|issue| issue.into_record(&import.tenant_id, import_id, now))
             .collect::<AppResult<Vec<_>>>()?;
-        UserImportRepository
-            .insert_row_results_in_txn(&transaction, row_models)
-            .await?;
+        transaction.insert_rows(row_records).await?;
         import.processed_rows = i32::try_from(next_offset)
             .map_err(|_| AppError::Internal("用户导入进度计数溢出".into()))?;
         import.success_count = import.success_count.saturating_add(success_count);
@@ -234,10 +218,8 @@ impl UserImportService {
         import.failure_count = import.failure_count.saturating_add(failure_count);
         import.updated_at = now;
         import.last_error = None;
-        UserImportRepository
-            .save_in_txn(&transaction, import)
-            .await?;
-        transaction.commit().await.map_err(database_error)?;
+        transaction.save(import).await?;
+        transaction.commit().await?;
         Ok(CommitBatchOutcome::Committed)
     }
 }
@@ -273,7 +255,7 @@ impl RowIssue {
         Self::new(
             row_number,
             username,
-            user_import_row_result::Model::OUTCOME_FAILED,
+            UserImportRowRecord::OUTCOME_FAILED,
             code,
             message,
         )
@@ -283,7 +265,7 @@ impl RowIssue {
         Self::new(
             row_number,
             username,
-            user_import_row_result::Model::OUTCOME_SKIPPED,
+            UserImportRowRecord::OUTCOME_SKIPPED,
             code,
             message,
         )
@@ -305,18 +287,18 @@ impl RowIssue {
         }
     }
 
-    fn into_model(
+    fn into_record(
         self,
         tenant_id: &str,
         import_job_id: i64,
         now: DateTime<Utc>,
-    ) -> AppResult<user_import_row_result::Model> {
-        Ok(user_import_row_result::Model {
+    ) -> AppResult<NewUserImportRow> {
+        Ok(NewUserImportRow {
             id: next_id()?,
             tenant_id: tenant_id.to_owned(),
             import_job_id,
             row_number: self.row_number,
-            username_snapshot: self.username,
+            username: self.username,
             outcome: self.outcome.to_owned(),
             code: self.code,
             message: self.message,
@@ -325,12 +307,12 @@ impl RowIssue {
     }
 }
 
-fn build_user_model(
+fn build_user_record(
     tenant_id: &str,
     prepared: PreparedUser,
     now: DateTime<Utc>,
-) -> AppResult<user::Model> {
-    Ok(user::Model {
+) -> AppResult<NewImportedUser> {
+    Ok(NewImportedUser {
         id: next_id()?,
         tenant_id: tenant_id.to_owned(),
         username: prepared.candidate.data.username,
@@ -338,18 +320,8 @@ fn build_user_model(
         nickname: prepared.candidate.data.nickname,
         email: prepared.candidate.data.email,
         phone: prepared.candidate.data.phone.unwrap_or_default(),
-        avatar: None,
-        avatar_file_id: None,
-        preferred_locale: None,
-        status: user::Model::STATUS_PENDING_ACTIVATION.to_owned(),
-        authorization_version: 1,
-        dept_id: Some(prepared.candidate.department_id),
-        remark: None,
-        login_ip: None,
-        login_date: None,
-        del_flag: user::Model::DEL_FLAG_NORMAL.to_owned(),
+        department_id: prepared.candidate.department_id,
         created_at: now,
-        updated_at: now,
     })
 }
 
