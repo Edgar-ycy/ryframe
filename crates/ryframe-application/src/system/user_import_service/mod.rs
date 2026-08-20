@@ -10,7 +10,7 @@ use futures_util::future::try_join_all;
 use ryframe_auth::password;
 use ryframe_db::{
     ControlDatabaseCluster, CreateUserImportJob, FileRepository, TenantConfigTransferRepository,
-    TenantRepository, UserImportFilter, UserImportRepository, UserRepository,
+    TenantRepository, UserImportRepository, UserRepository,
     entities::{user, user_import_job, user_import_row_result},
 };
 use ryframe_kernel::{
@@ -29,7 +29,8 @@ use super::{
 };
 use crate::{
     ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor,
-    UserImportDepartmentReadPort, UserImportDepartmentRecord,
+    UserImportDepartmentRecord, UserImportJobRecord, UserImportReadFilter, UserImportReadPort,
+    UserImportRowRecord,
 };
 
 /// 可恢复用户导入的稳定后台任务类型。
@@ -58,7 +59,7 @@ pub struct UserImportService {
     config: crate::UserImportPolicy,
     hash_permits: Arc<Semaphore>,
     spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
-    departments: Arc<dyn UserImportDepartmentReadPort>,
+    persistence: Arc<dyn UserImportReadPort>,
 }
 
 include!("models.rs");

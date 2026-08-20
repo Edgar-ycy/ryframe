@@ -1,6 +1,6 @@
 impl UserImportService {
     async fn load_department_directory(&self, tenant_id: &str) -> AppResult<DepartmentDirectory> {
-        let departments = self.departments.list(tenant_id).await?;
+        let departments = self.persistence.list_departments(tenant_id).await?;
         Ok(DepartmentDirectory::from_departments(departments))
     }
 
@@ -387,12 +387,12 @@ fn normalize_status(value: Option<&str>) -> AppResult<Option<String>> {
     };
     if !matches!(
         value,
-        user_import_job::Model::STATUS_PENDING
-            | user_import_job::Model::STATUS_RUNNING
-            | user_import_job::Model::STATUS_SUCCEEDED
-            | user_import_job::Model::STATUS_PARTIAL
-            | user_import_job::Model::STATUS_FAILED
-            | user_import_job::Model::STATUS_CANCELLED
+        UserImportJobRecord::STATUS_PENDING
+            | UserImportJobRecord::STATUS_RUNNING
+            | UserImportJobRecord::STATUS_SUCCEEDED
+            | UserImportJobRecord::STATUS_PARTIAL
+            | UserImportJobRecord::STATUS_FAILED
+            | UserImportJobRecord::STATUS_CANCELLED
     ) {
         return Err(AppError::Validation("用户导入状态筛选无效".into()));
     }

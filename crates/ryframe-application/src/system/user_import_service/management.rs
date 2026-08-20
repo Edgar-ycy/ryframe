@@ -5,7 +5,7 @@ impl UserImportService {
         user_service: Arc<UserService>,
         file_service: Arc<FileService>,
         spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
-        departments: Arc<dyn UserImportDepartmentReadPort>,
+        persistence: Arc<dyn UserImportReadPort>,
         config: crate::UserImportPolicy,
     ) -> Self {
         Self {
@@ -15,7 +15,7 @@ impl UserImportService {
             file_service,
             hash_permits: Arc::new(Semaphore::new(config.hash_parallelism)),
             spreadsheets,
-            departments,
+            persistence,
             config,
         }
     }
@@ -286,12 +286,12 @@ impl UserImportService {
     ) -> AppResult<PageResult<UserImportJobVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let status = normalize_status(params.status.as_deref())?;
-        let page = UserImportRepository
-            .list_for_tenant(
-                self.db.write(),
+        let page = self
+            .persistence
+            .list(
                 tenant_id,
-                &params.page,
-                UserImportFilter {
+                params.page,
+                UserImportReadFilter {
                     status: status.as_deref(),
                 },
             )
@@ -303,8 +303,9 @@ impl UserImportService {
             .collect::<Vec<_>>();
         requester_ids.sort_unstable();
         requester_ids.dedup();
-        let requester_usernames = UserRepository
-            .find_usernames_by_ids(self.db.write(), tenant_id, &requester_ids)
+        let requester_usernames = self
+            .persistence
+            .requester_usernames(tenant_id, &requester_ids)
             .await?
             .into_iter()
             .collect::<HashMap<_, _>>();
@@ -324,12 +325,14 @@ impl UserImportService {
 
     pub async fn get(&self, actor: &ActorContext, id: i64) -> AppResult<UserImportJobVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let job = UserImportRepository
-            .find_by_id_for_tenant(self.db.write(), tenant_id, id)
+        let job = self
+            .persistence
+            .find(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
-        let requester_username = UserRepository
-            .find_usernames_by_ids(self.db.write(), tenant_id, &[job.requester_user_id])
+        let requester_username = self
+            .persistence
+            .requester_usernames(tenant_id, &[job.requester_user_id])
             .await?
             .into_iter()
             .next()
@@ -345,8 +348,9 @@ impl UserImportService {
     ) -> AppResult<PageResult<UserImportRowVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_visible(tenant_id, id).await?;
-        let rows = UserImportRepository
-            .list_row_results(self.db.write(), tenant_id, id, &page)
+        let rows = self
+            .persistence
+            .rows(tenant_id, id, page)
             .await?;
         Ok(PageResult::new(
             rows.records
@@ -379,8 +383,9 @@ impl UserImportService {
         id: i64,
     ) -> AppResult<DownloadedFile> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let job = UserImportRepository
-            .find_by_id_for_tenant(self.db.write(), tenant_id, id)
+        let job = self
+            .persistence
+            .find(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
         if !job.is_terminal() {
@@ -399,8 +404,8 @@ impl UserImportService {
     }
 
     async fn ensure_visible(&self, tenant_id: &str, id: i64) -> AppResult<()> {
-        UserImportRepository
-            .find_by_id_for_tenant(self.db.write(), tenant_id, id)
+        self.persistence
+            .find(tenant_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))?;
         Ok(())

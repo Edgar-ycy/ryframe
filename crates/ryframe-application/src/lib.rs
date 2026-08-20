@@ -226,7 +226,7 @@ pub use legacy_tenant_config_retention_persistence::port as legacy_tenant_config
 #[doc(hidden)]
 pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
 #[doc(hidden)]
-pub use legacy_user_import_persistence::department_port as legacy_user_import_department_read;
+pub use legacy_user_import_persistence::read_port as legacy_user_import_read;
 #[doc(hidden)]
 pub use legacy_user_query_persistence::port as legacy_user_query_persistence;
 #[doc(hidden)]
@@ -327,7 +327,10 @@ pub use tenant_runtime::{
 pub use tenant_usage_persistence::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
-pub use user_import_persistence::{UserImportDepartmentReadPort, UserImportDepartmentRecord};
+pub use user_import_persistence::{
+    UserImportDepartmentRecord, UserImportJobRecord, UserImportReadFilter, UserImportReadPort,
+    UserImportRowRecord,
+};
 pub use user_query_persistence::{
     USER_QUERY_STATUS_NORMAL, UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort,
     UserQueryRecord, UserQueryRoleRecord,
