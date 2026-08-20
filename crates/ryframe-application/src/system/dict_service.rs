@@ -1,22 +1,14 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use ryframe_db::{AutoFill, FillContext};
-use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
-use ryframe_db::{
-    DictDataRepository, DictTypeFilter, DictTypeRepository, TenantConfigTransferRepository,
-    entities::{dict_data, dict_type},
-};
+use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
-use sea_orm::{
-    ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
-};
 use serde::{Deserialize, Serialize};
 
-/// 字典缓存 Redis key 前缀
+use crate::{DictDataRecord, DictPersistencePort, DictTypeFilter, DictTypeRecord};
+
 const DICT_CACHE_KEY_PREFIX: &str = "sys_dict:data:";
-/// 缓存过期时间（1 小时）
 const CACHE_TTL_SECS: u64 = 3600;
 
 pub type DictCacheStoreFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
@@ -35,7 +27,7 @@ fn dict_cache_key(tenant_id: &str, type_code: &str) -> String {
 
 #[derive(Debug, Serialize)]
 pub struct DictTypeVo {
-    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    /// ID 使用字符串，避免 64 位值超出 JavaScript 安全整数范围。
     pub id: String,
     pub name: String,
     pub code: String,
@@ -44,15 +36,15 @@ pub struct DictTypeVo {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl From<dict_type::Model> for DictTypeVo {
-    fn from(t: dict_type::Model) -> Self {
+impl From<DictTypeRecord> for DictTypeVo {
+    fn from(dict_type: DictTypeRecord) -> Self {
         Self {
-            id: t.id.to_string(),
-            name: t.name,
-            code: t.code,
-            status: t.status,
-            remark: t.remark,
-            created_at: t.created_at,
+            id: dict_type.id.to_string(),
+            name: dict_type.name,
+            code: dict_type.code,
+            status: dict_type.status,
+            remark: dict_type.remark,
+            created_at: dict_type.created_at,
         }
     }
 }
@@ -67,7 +59,7 @@ pub struct DictTypeListParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DictDataVo {
-    /// id 使用 String 避免 Snowflake 64 位 ID 超出 JS Number.MAX_SAFE_INTEGER
+    /// ID 使用字符串，避免 64 位值超出 JavaScript 安全整数范围。
     pub id: String,
     pub type_code: String,
     pub label: String,
@@ -77,58 +69,56 @@ pub struct DictDataVo {
     pub css_class: Option<String>,
 }
 
-impl From<dict_data::Model> for DictDataVo {
-    fn from(d: dict_data::Model) -> Self {
+impl From<DictDataRecord> for DictDataVo {
+    fn from(data: DictDataRecord) -> Self {
         Self {
-            id: d.id.to_string(),
-            type_code: d.type_code,
-            label: d.label,
-            value: d.value,
-            sort: d.sort,
-            status: d.status,
-            css_class: d.css_class,
+            id: data.id.to_string(),
+            type_code: data.type_code,
+            label: data.label,
+            value: data.value,
+            sort: data.sort,
+            status: data.status,
+            css_class: data.css_class,
         }
     }
 }
 
 pub struct DictService {
-    db: ControlDatabaseCluster,
-    dict_type_repo: DictTypeRepository,
-    dict_data_repo: DictDataRepository,
+    persistence: Arc<dyn DictPersistencePort>,
     cache: Option<Arc<dyn DictCacheStore>>,
 }
 
 impl DictService {
-    pub fn new(db: ControlDatabaseCluster, cache: Option<Arc<dyn DictCacheStore>>) -> Self {
-        Self {
-            db,
-            dict_type_repo: DictTypeRepository,
-            dict_data_repo: DictDataRepository,
-            cache,
-        }
+    pub fn new(
+        persistence: Arc<dyn DictPersistencePort>,
+        cache: Option<Arc<dyn DictCacheStore>>,
+    ) -> Self {
+        Self { persistence, cache }
     }
 
-    // --- 字典类型 ---
-
-    /// 分页查询字典类型
     pub async fn find_types_by_page(
         &self,
         actor: &ActorContext,
         params: DictTypeListParams,
     ) -> AppResult<PageResult<DictTypeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
-        let filter = DictTypeFilter {
-            name: params.name.as_deref(),
-            code: params.code.as_deref(),
-            status: params.status.as_deref(),
-        };
         let page = self
-            .dict_type_repo
-            .find_by_page_filtered(&db, tenant_id, &params.page, &filter)
+            .persistence
+            .find_types_by_page(
+                tenant_id,
+                params.page,
+                DictTypeFilter {
+                    name: params.name.as_deref(),
+                    code: params.code.as_deref(),
+                    status: params.status.as_deref(),
+                },
+            )
             .await?;
-        let records = page.records.into_iter().map(DictTypeVo::from).collect();
-        Ok(PageResult::new(records, page.total, &params.page))
+        Ok(PageResult::new(
+            page.records.into_iter().map(DictTypeVo::from).collect(),
+            page.total,
+            &params.page,
+        ))
     }
 
     /// 按稳定主键窗口读取一批字典类型导出数据。
@@ -141,11 +131,9 @@ impl DictService {
         window: ExportCursorWindow,
     ) -> AppResult<Vec<DictTypeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let filter = DictTypeFilter { name, code, status };
         Ok(self
-            .dict_type_repo
-            .find_for_export_after_id(&db, tenant_id, &filter, window)
+            .persistence
+            .find_type_export_batch(tenant_id, DictTypeFilter { name, code, status }, window)
             .await?
             .into_iter()
             .map(DictTypeVo::from)
@@ -159,43 +147,30 @@ impl DictService {
         code: &str,
     ) -> AppResult<DictTypeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let mut new_type = dict_type::Model {
+        let now = Utc::now();
+        let record = DictTypeRecord {
             id: crate::next_id()?,
-            tenant_id: tenant_id.to_owned(),
-            name: name.to_string(),
-            code: code.to_string(),
-            status: dict_type::Model::STATUS_NORMAL.to_string(),
+            name: name.to_owned(),
+            code: code.to_owned(),
+            status: "1".into(),
             remark: None,
-            del_flag: dict_type::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: Default::default(),
-            updated_at: Default::default(),
+            created_at: now,
+            updated_at: now,
         };
-        new_type.fill_on_insert(&FillContext::new())?;
-        let transaction = db.begin().await.map_err(database_error)?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        if dict_type::Entity::find()
-            .filter(dict_type::Column::TenantId.eq(tenant_id))
-            .filter(dict_type::Column::Code.eq(code))
-            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
-            .lock(LockType::Update)
-            .one(&transaction)
-            .await
-            .map_err(database_error)?
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        if transaction
+            .find_type_by_code_for_update(tenant_id, code)
+            .await?
             .is_some()
         {
             return Err(AppError::Conflict("字典类型编码已存在".into()));
         }
-        let saved = self
-            .dict_type_repo
-            .insert_in_transaction(&transaction, tenant_id, new_type)
+        let saved = transaction.insert_type(tenant_id, record).await?;
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         Ok(DictTypeVo::from(saved))
     }
 
@@ -207,58 +182,37 @@ impl DictService {
         status: String,
     ) -> AppResult<DictTypeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let transaction = db.begin().await.map_err(database_error)?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        let mut t = dict_type::Entity::find_by_id(id)
-            .filter(dict_type::Column::TenantId.eq(tenant_id))
-            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
-            .lock(LockType::Update)
-            .one(&transaction)
-            .await
-            .map_err(database_error)?
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        let mut dict_type = transaction
+            .find_type_by_id_for_update(tenant_id, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
-        t.name = name.to_string();
-        t.status = status;
-        t.fill_on_update(&FillContext::new())?;
-        let saved = self
-            .dict_type_repo
-            .update_in_transaction(&transaction, tenant_id, t)
+        dict_type.name = name.to_owned();
+        dict_type.status = status;
+        dict_type.updated_at = Utc::now();
+        let saved = transaction.update_type(tenant_id, dict_type).await?;
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         Ok(DictTypeVo::from(saved))
     }
 
     pub async fn delete_type(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let transaction = db.begin().await.map_err(database_error)?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        dict_type::Entity::find_by_id(id)
-            .filter(dict_type::Column::TenantId.eq(tenant_id))
-            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
-            .lock(LockType::Update)
-            .one(&transaction)
-            .await
-            .map_err(database_error)?
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        transaction
+            .find_type_by_id_for_update(tenant_id, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
-        self.dict_type_repo
-            .delete_in_transaction(&transaction, tenant_id, id)
+        transaction.delete_type(tenant_id, id).await?;
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await
+        transaction.commit().await
     }
-
-    // --- 字典数据 ---
 
     pub async fn find_data_by_type(
         &self,
@@ -273,24 +227,22 @@ impl DictService {
             return Ok(cached);
         }
 
-        // 仅在缓存未命中后选择数据库节点，避免把缓存命中误计为数据库读取。
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
-        let data = self
-            .dict_data_repo
-            .find_by_type_code(&db, tenant_id, type_code)
-            .await?;
-        let vos: Vec<DictDataVo> = data.into_iter().map(DictDataVo::from).collect();
-
+        let values = self
+            .persistence
+            .find_data_by_type(tenant_id, type_code)
+            .await?
+            .into_iter()
+            .map(DictDataVo::from)
+            .collect::<Vec<_>>();
         if let Some(cache) = &self.cache {
             let cache_key = dict_cache_key(tenant_id, type_code);
-            if let Ok(json) = serde_json::to_string(&vos)
+            if let Ok(json) = serde_json::to_string(&values)
                 && let Err(error) = cache.put(cache_key, json, CACHE_TTL_SECS).await
             {
-                tracing::warn!(tenant_id, type_code, %error, "failed to cache dictionary data");
+                tracing::warn!(tenant_id, type_code, %error, "写入字典缓存失败");
             }
         }
-
-        Ok(vos)
+        Ok(values)
     }
 
     pub async fn create_data(
@@ -302,49 +254,34 @@ impl DictService {
         sort: i32,
     ) -> AppResult<DictDataVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let mut new_data = dict_data::Model {
+        let now = Utc::now();
+        let record = DictDataRecord {
             id: crate::next_id()?,
-            tenant_id: tenant_id.to_owned(),
-            type_code: type_code.to_string(),
-            label: label.to_string(),
-            value: value.to_string(),
+            type_code: type_code.to_owned(),
+            label: label.to_owned(),
+            value: value.to_owned(),
             sort,
-            status: dict_data::Model::STATUS_NORMAL.to_string(),
+            status: "1".into(),
             css_class: None,
             remark: None,
-            del_flag: dict_data::Model::DEL_FLAG_NORMAL.to_string(),
-            created_at: Default::default(),
-            updated_at: Default::default(),
+            created_at: now,
+            updated_at: now,
         };
-        new_data.fill_on_insert(&FillContext::new())?;
-        let transaction = db.begin().await.map_err(database_error)?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        dict_type::Entity::find()
-            .filter(dict_type::Column::TenantId.eq(tenant_id))
-            .filter(dict_type::Column::Code.eq(type_code))
-            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
-            .lock(LockType::Update)
-            .one(&transaction)
-            .await
-            .map_err(database_error)?
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        transaction
+            .find_type_by_code_for_update(tenant_id, type_code)
+            .await?
             .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
-        let saved = self
-            .dict_data_repo
-            .insert_in_transaction(&transaction, tenant_id, new_data)
+        let saved = transaction.insert_data(tenant_id, record).await?;
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
-        let vo = DictDataVo::from(saved);
-
-        // 更新缓存
-        self.invalidate_dict_cache(tenant_id, type_code).await;
-
-        Ok(vo)
+        transaction.commit().await?;
+        let value = DictDataVo::from(saved);
+        self.invalidate_dict_cache(tenant_id, &value.type_code)
+            .await;
+        Ok(value)
     }
 
     pub async fn update_data(
@@ -357,83 +294,52 @@ impl DictService {
         status: String,
     ) -> AppResult<DictDataVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let transaction = db.begin().await.map_err(database_error)?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        let mut d = dict_data::Entity::find_by_id(id)
-            .filter(dict_data::Column::TenantId.eq(tenant_id))
-            .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
-            .lock(LockType::Update)
-            .one(&transaction)
-            .await
-            .map_err(database_error)?
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        let mut data = transaction
+            .find_data_by_id_for_update(tenant_id, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("字典数据不存在".into()))?;
-        let type_code = d.type_code.clone();
-        d.label = label.to_string();
-        d.value = value.to_string();
-        d.sort = sort;
-        d.status = status;
-        d.fill_on_update(&FillContext::new())?;
-        let saved = self
-            .dict_data_repo
-            .update_in_transaction(&transaction, tenant_id, d)
+        data.label = label.to_owned();
+        data.value = value.to_owned();
+        data.sort = sort;
+        data.status = status;
+        data.updated_at = Utc::now();
+        let saved = transaction.update_data(tenant_id, data).await?;
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
-        let vo = DictDataVo::from(saved);
-
-        // 更新缓存
-        self.invalidate_dict_cache(tenant_id, &type_code).await;
-
-        Ok(vo)
+        transaction.commit().await?;
+        let value = DictDataVo::from(saved);
+        self.invalidate_dict_cache(tenant_id, &value.type_code)
+            .await;
+        Ok(value)
     }
 
     pub async fn delete_data(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.write();
-        let transaction = db.begin().await.map_err(database_error)?;
-        TenantConfigTransferRepository
-            .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
-            .await?;
-        let d = dict_data::Entity::find_by_id(id)
-            .filter(dict_data::Column::TenantId.eq(tenant_id))
-            .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
-            .lock(LockType::Update)
-            .one(&transaction)
-            .await
-            .map_err(database_error)?
+        let transaction = self.persistence.begin().await?;
+        transaction.lock_configuration(tenant_id).await?;
+        let data = transaction
+            .find_data_by_id_for_update(tenant_id, id)
+            .await?
             .ok_or_else(|| AppError::NotFound("字典数据不存在".into()))?;
-        let type_code = d.type_code.clone();
-        self.dict_data_repo
-            .delete_in_transaction(&transaction, tenant_id, id)
+        transaction.delete_data(tenant_id, id).await?;
+        transaction
+            .increment_configuration_version(tenant_id)
             .await?;
-        TenantConfigTransferRepository
-            .increment_configuration_version_in_txn(&transaction, tenant_id)
-            .await?;
-        crate::commit_current_audit(transaction).await?;
-
-        // 更新缓存
-        self.invalidate_dict_cache(tenant_id, &type_code).await;
-
+        transaction.commit().await?;
+        self.invalidate_dict_cache(tenant_id, &data.type_code).await;
         Ok(())
     }
 
-    /// 清除字典类型缓存
     async fn invalidate_dict_cache(&self, tenant_id: &str, type_code: &str) {
         if let Some(cache) = &self.cache
             && let Err(error) = cache.remove(dict_cache_key(tenant_id, type_code)).await
         {
-            tracing::warn!(tenant_id, type_code, %error, "failed to invalidate dictionary cache");
+            tracing::warn!(tenant_id, type_code, %error, "删除字典缓存失败");
         }
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 #[cfg(test)]

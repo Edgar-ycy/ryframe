@@ -5,10 +5,12 @@ mod auth_service;
 mod authorization_cache;
 mod authorization_resolver;
 mod config_persistence;
+mod dict_persistence;
 mod file_content;
 mod id_generator;
 pub mod jobs;
 mod legacy_config_persistence;
+mod legacy_dict_persistence;
 mod legacy_login_info_persistence;
 mod legacy_notice_persistence;
 mod legacy_oper_log_persistence;
@@ -53,6 +55,9 @@ pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthoriza
 pub use config_persistence::{
     ConfigFilter, ConfigPersistencePort, ConfigRecord, ConfigTransaction,
 };
+pub use dict_persistence::{
+    DictDataRecord, DictPersistencePort, DictTransaction, DictTypeFilter, DictTypeRecord,
+};
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 #[allow(deprecated)]
@@ -70,6 +75,8 @@ pub use jobs::{
 };
 #[doc(hidden)]
 pub use legacy_config_persistence::port as legacy_config_persistence;
+#[doc(hidden)]
+pub use legacy_dict_persistence::port as legacy_dict_persistence;
 #[doc(hidden)]
 pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
 #[doc(hidden)]

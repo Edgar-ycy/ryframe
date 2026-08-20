@@ -101,7 +101,7 @@ impl ExportService {
                 crate::legacy_config_persistence(db.clone(), config_cache.clone()),
                 config_cache,
             ),
-            dicts: DictService::new(db.clone(), None),
+            dicts: DictService::new(crate::legacy_dict_persistence(db.clone()), None),
             oper_logs: OperLogService::new(crate::legacy_oper_log_persistence(db.clone())),
             login_infos: LoginInfoService::new(crate::legacy_login_info_persistence(db)),
             users,

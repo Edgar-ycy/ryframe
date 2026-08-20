@@ -252,7 +252,7 @@ pub async fn build_all(
     ));
 
     let dict = Arc::new(DictService::new(
-        database.clone(),
+        ryframe_application::legacy_dict_persistence(database.clone()),
         redis_client.as_ref().map(|client| {
             Arc::new(RedisDictCacheStore {
                 client: client.clone(),
