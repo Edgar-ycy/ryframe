@@ -1,10 +1,13 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use async_trait::async_trait;
-use ryframe_adapters::RedisClient;
 use ryframe_db::background_job;
 use ryframe_kernel::{AppError, AppResult};
 use serde::Deserialize;
@@ -12,11 +15,16 @@ use serde::Deserialize;
 use super::worker::JobHandler;
 use crate::system::{
     EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, ExportJobPayload, ExportService,
-    MESSAGE_DISPATCH_JOB_TYPE, MESSAGE_DISPATCH_REDIS_CHANNEL, MESSAGE_RETENTION_JOB_TYPE,
-    MessageService,
+    MESSAGE_DISPATCH_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE, MessageService,
 };
 
 type RedisWakeupFailureCallback = dyn Fn() + Send + Sync;
+
+pub type MessageWakeupFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+pub trait MessageWakeupPublisher: Send + Sync {
+    fn publish(&self, message_id: i64) -> MessageWakeupFuture<'_>;
+}
 
 /// 执行对象存储导出并更新公开导出任务状态的处理器。
 pub struct ExportJobHandler {
@@ -96,7 +104,7 @@ struct MessageDispatchJobPayload {
 /// 将消息投递任务交给消息中心服务处理。
 pub struct MessageDispatchJobHandler {
     service: Arc<MessageService>,
-    redis: Option<RedisClient>,
+    wakeup: Option<Arc<dyn MessageWakeupPublisher>>,
     on_redis_wakeup_failure: Arc<RedisWakeupFailureCallback>,
     redis_wakeup_degraded: AtomicBool,
 }
@@ -145,10 +153,13 @@ impl MessageDispatchJobHandler {
     /// 使用消息中心服务和可选 Redis 唤醒通道创建处理器。
     ///
     /// Redis 只用于降低在线投递延迟；未配置 Redis 时，客户端仍会通过收件箱补拉消息。
-    pub fn new(service: Arc<MessageService>, redis: Option<RedisClient>) -> Self {
+    pub fn new(
+        service: Arc<MessageService>,
+        wakeup: Option<Arc<dyn MessageWakeupPublisher>>,
+    ) -> Self {
         Self {
             service,
-            redis,
+            wakeup,
             on_redis_wakeup_failure: Arc::new(|| {}),
             redis_wakeup_degraded: AtomicBool::new(false),
         }
@@ -193,11 +204,8 @@ impl JobHandler for MessageDispatchJobHandler {
             .parse::<i64>()
             .map_err(|_| AppError::Validation("消息投递任务的 message_id 无效".into()))?;
         self.service.dispatch(message_id).await?;
-        if let Some(redis) = &self.redis {
-            match redis
-                .publish(MESSAGE_DISPATCH_REDIS_CHANNEL, message_id.to_string())
-                .await
-            {
+        if let Some(wakeup) = &self.wakeup {
+            match wakeup.publish(message_id).await {
                 Ok(_) => self.report_redis_wakeup_success(),
                 Err(error) => self.report_redis_wakeup_failure(error),
             }

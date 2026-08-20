@@ -12,7 +12,7 @@ mod worker;
 
 pub use handlers::{
     ExportCleanupJobHandler, ExportJobHandler, MessageDispatchJobHandler,
-    MessageRetentionJobHandler,
+    MessageRetentionJobHandler, MessageWakeupFuture, MessageWakeupPublisher,
 };
 pub use metrics::{CallbackJobMetricsObserver, JobMetricsObserver};
 pub use outbox::{OutboxRunResult, OutboxWorker};

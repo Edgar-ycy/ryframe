@@ -4,7 +4,8 @@ use ryframe_adapters::RedisClient;
 use ryframe_application::{
     CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
     JobWorker, JobWorkerPolicy, MessageDispatchJobHandler, MessageRetentionJobHandler,
-    MultiTenancyPolicy, ScheduleMetricsObserver, ScheduledJobTargetRegistry,
+    MessageWakeupFuture, MessageWakeupPublisher, MultiTenancyPolicy, ScheduleMetricsObserver,
+    ScheduledJobTargetRegistry,
     system::{
         DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
         TenantConfigApplyJobHandler, TenantConfigExportJobHandler, TenantConfigPreviewJobHandler,
@@ -15,6 +16,25 @@ use ryframe_application::{
 use ryframe_db::ExecutionTenantScope;
 use ryframe_kernel::{AppError, AppResult};
 use ryframe_tenant_db::TenantDatabaseRouter;
+
+struct RedisMessageWakeupPublisher {
+    client: RedisClient,
+}
+
+impl MessageWakeupPublisher for RedisMessageWakeupPublisher {
+    fn publish(&self, message_id: i64) -> MessageWakeupFuture<'_> {
+        Box::pin(async move {
+            self.client
+                .publish(
+                    ryframe_application::system::MESSAGE_DISPATCH_REDIS_CHANNEL,
+                    message_id.to_string(),
+                )
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+}
 
 /// 构造内置后台任务处理器所需的业务服务。
 pub struct JobWorkerDependencies {
@@ -66,10 +86,16 @@ pub fn build_job_worker(
     }
     worker
         .with_handler(Arc::new(
-            MessageDispatchJobHandler::new(dependencies.message.clone(), dependencies.redis)
-                .with_redis_wakeup_failure_observer(Arc::new(|| {
-                    ryframe_adapters::metrics::record_redis_degraded("message_dispatch_wakeup");
-                })),
+            MessageDispatchJobHandler::new(
+                dependencies.message.clone(),
+                dependencies.redis.map(|client| {
+                    Arc::new(RedisMessageWakeupPublisher { client })
+                        as Arc<dyn MessageWakeupPublisher>
+                }),
+            )
+            .with_redis_wakeup_failure_observer(Arc::new(|| {
+                ryframe_adapters::metrics::record_redis_degraded("message_dispatch_wakeup");
+            })),
         ))?
         .with_handler(Arc::new(
             MessageRetentionJobHandler::new(dependencies.message).with_deleted_observer(Arc::new(
