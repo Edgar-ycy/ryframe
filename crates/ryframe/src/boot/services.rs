@@ -4,7 +4,7 @@ use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
 use ryframe_api::AppServices;
 use ryframe_application::{
     ArtifactStore, AuditOutbox, AuthService, JobQueue, JobScheduleService,
-    agent::{AgentService, service_capability_descriptors},
+    agent::{AgentService, AgentServiceDependencies, service_capability_descriptors},
     system::{
         AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
         DataRetentionService, DeptService, DictCacheStore, DictCacheStoreFuture, DictService,
@@ -227,11 +227,14 @@ pub async fn build_all(
         let agent = Arc::new(AgentService::new(
             database.clone(),
             super::agent_limiter::redis_limiter(redis),
-            ryframe_application::legacy_agent_identity_read(database.clone()),
             keyring,
             policies.service_accounts,
             policies.multi_tenancy,
             product.clone(),
+            AgentServiceDependencies {
+                identity: ryframe_application::legacy_agent_identity_read(database.clone()),
+                audit: ryframe_application::legacy_agent_audit_write(database.clone()),
+            },
         )?);
         (Some(management), Some(agent))
     } else {

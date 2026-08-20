@@ -122,7 +122,7 @@ impl AgentService {
             ServiceAccessAuditRepository
                 .insert(
                     &transaction,
-                    success_audit(
+                    crate::legacy_agent_audit::model(success_audit(
                         request,
                         descriptor,
                         &authorized,
@@ -131,7 +131,7 @@ impl AgentService {
                         body.len(),
                         completed_at,
                         &self.keyring,
-                    )?,
+                    )?),
                 )
                 .await?;
             let principal = AgentPrincipal {

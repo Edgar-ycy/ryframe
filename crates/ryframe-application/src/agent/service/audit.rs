@@ -10,10 +10,6 @@ impl AgentService {
         http_status: i32,
     ) -> AppResult<()> {
         let request_id = normalized_request_id(&request.request_id);
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let completed_at = DataRetentionRepository
-            .database_utc_now(&transaction)
-            .await?;
         let descriptor = request.capability.descriptor();
         let access_mode = if request.delegation.is_some() {
             "delegated"
@@ -23,7 +19,7 @@ impl AgentService {
             ACCESS_MODE_UNKNOWN
         };
         let active_pepper = self.keyring.active().1;
-        let audit = service_access_audit::Model {
+        let audit = AgentAccessAuditDraft {
             id: crate::next_id()?,
             request_id,
             tenant_id: hint.map(|item| item.credential.tenant_id.clone()),
@@ -57,12 +53,8 @@ impl AgentService {
             delegation_version: hint
                 .and_then(|item| item.delegation.as_ref().map(|row| row.version)),
             started_at: request.started_at,
-            completed_at,
         };
-        ServiceAccessAuditRepository
-            .insert(&transaction, audit)
-            .await?;
-        transaction.commit().await.map_err(database_error)
+        self.audit.record_failure(audit).await
     }
 
     pub(super) async fn audit_failure_bounded(
@@ -97,9 +89,9 @@ pub(super) fn success_audit(
     response_bytes: usize,
     completed_at: DateTime<Utc>,
     keyring: &PepperKeyring,
-) -> AppResult<service_access_audit::Model> {
+) -> AppResult<AgentAccessAuditRecord> {
     let active_pepper = keyring.active().1;
-    Ok(service_access_audit::Model {
+    Ok(AgentAccessAuditDraft {
         id: crate::next_id()?,
         request_id: request.request_id.clone(),
         tenant_id: Some(context.tenant.tenant_id.clone()),
@@ -116,7 +108,7 @@ pub(super) fn success_audit(
             AgentAccessMode::Direct.as_str()
         }
         .into(),
-        result: service_access_audit::Model::RESULT_SUCCESS.into(),
+        result: "success".into(),
         reason_code: reason_code.into(),
         http_status: 200,
         request_ip_digest: Some(keyed_hash(
@@ -140,6 +132,6 @@ pub(super) fn success_audit(
             .map(|user| user.authorization_version),
         delegation_version: context.delegation.as_ref().map(|item| item.version),
         started_at: request.started_at,
-        completed_at,
-    })
+    }
+    .complete(completed_at))
 }

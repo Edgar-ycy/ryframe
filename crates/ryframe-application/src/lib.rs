@@ -16,6 +16,7 @@ mod identity_authorization;
 mod job_queue_persistence;
 mod job_schedule_persistence;
 pub mod jobs;
+mod legacy_agent_audit;
 mod legacy_agent_identity;
 mod legacy_agent_snapshot;
 mod legacy_audit_persistence;
@@ -152,6 +153,8 @@ pub use jobs::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
+#[doc(hidden)]
+pub use legacy_agent_audit::port as legacy_agent_audit_write;
 #[doc(hidden)]
 pub use legacy_agent_identity::port as legacy_agent_identity_read;
 #[doc(hidden)]

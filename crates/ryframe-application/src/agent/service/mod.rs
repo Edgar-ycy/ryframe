@@ -10,17 +10,18 @@ use ryframe_db::{
     AgentQueryRepository, ControlDatabaseCluster, DataRetentionRepository,
     ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
     ServiceAuthorizationRepository, ServiceCredentialRepository, ServiceDelegationRepository,
-    entities::{service_access_audit, service_account, service_credential, service_delegation},
+    entities::{service_account, service_credential, service_delegation},
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
 use serde::Serialize;
 
 use super::{
-    AgentAccessMode, AgentAuthorizationSnapshot, AgentCapability, AgentCapabilityVo,
-    AgentCredentialHint, AgentDelegationHint, AgentDepartmentVo, AgentDictionaryItemVo,
-    AgentDictionaryVo, AgentIdentityReadPort, AgentLimitHints, AgentPage, AgentPostVo,
-    AgentPrincipal, AgentRequest, AgentRowScope, AgentSuccess, AgentUserVo,
+    AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAccessMode, AgentAuditWritePort,
+    AgentAuthorizationSnapshot, AgentCapability, AgentCapabilityVo, AgentCredentialHint,
+    AgentDelegationHint, AgentDepartmentVo, AgentDictionaryItemVo, AgentDictionaryVo,
+    AgentIdentityReadPort, AgentLimitHints, AgentPage, AgentPostVo, AgentPrincipal, AgentRequest,
+    AgentRowScope, AgentSuccess, AgentUserVo,
     limiter::{AgentLimitInput, AgentLimiter},
     registry::AgentCapabilityDescriptor,
     scope::{
@@ -35,8 +36,13 @@ use crate::system::{ProductService, SERVICE_ACCOUNTS_CAPABILITY};
 use crate::{MultiTenancyPolicy, PepperKeyring, ServiceAccountPolicy};
 
 const ACCESS_MODE_UNKNOWN: &str = "unknown";
-const RESULT_DENIED: &str = service_access_audit::Model::RESULT_DENIED;
-const RESULT_ERROR: &str = service_access_audit::Model::RESULT_ERROR;
+const RESULT_DENIED: &str = "denied";
+const RESULT_ERROR: &str = "error";
+
+pub struct AgentServiceDependencies {
+    pub identity: Arc<dyn AgentIdentityReadPort>,
+    pub audit: Arc<dyn AgentAuditWritePort>,
+}
 
 #[derive(Clone)]
 pub struct AgentService {
@@ -46,6 +52,7 @@ pub struct AgentService {
     keyring: Arc<PepperKeyring>,
     limiter: Arc<dyn AgentLimiter>,
     identity: Arc<dyn AgentIdentityReadPort>,
+    audit: Arc<dyn AgentAuditWritePort>,
     product_service: Arc<ProductService>,
 }
 
@@ -83,11 +90,11 @@ impl AgentService {
     pub fn new(
         db: ControlDatabaseCluster,
         limiter: Arc<dyn AgentLimiter>,
-        identity: Arc<dyn AgentIdentityReadPort>,
         keyring: Arc<PepperKeyring>,
         config: ServiceAccountPolicy,
         multi_tenancy: MultiTenancyPolicy,
         product_service: Arc<ProductService>,
+        dependencies: AgentServiceDependencies,
     ) -> AppResult<Self> {
         if !config.enabled() {
             return Err(AppError::Config("服务账号功能未启用".into()));
@@ -98,7 +105,8 @@ impl AgentService {
             multi_tenancy,
             keyring,
             limiter,
-            identity,
+            identity: dependencies.identity,
+            audit: dependencies.audit,
             product_service,
         })
     }

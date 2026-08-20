@@ -1,3 +1,4 @@
+mod audit_persistence;
 mod identity;
 mod limiter;
 mod registry;
@@ -5,6 +6,7 @@ mod scope;
 mod service;
 mod types;
 
+pub use audit_persistence::{AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAuditWritePort};
 pub use identity::{
     AgentCredentialHint, AgentDelegationHint, AgentIdentityReadPort, AgentLimitHints,
 };
@@ -17,7 +19,7 @@ pub(crate) use scope::{
     AgentRoleDepartmentSnapshot, AgentRolePermissionSnapshot, AgentRoleSnapshot, AgentRowScope,
     AgentUserSnapshot,
 };
-pub use service::AgentService;
+pub use service::{AgentService, AgentServiceDependencies};
 pub use types::{
     AgentAccessMode, AgentCapabilityVo, AgentDepartmentVo, AgentDictionaryItemVo,
     AgentDictionaryVo, AgentPage, AgentPostVo, AgentPrincipal, AgentRequest, AgentSuccess,
