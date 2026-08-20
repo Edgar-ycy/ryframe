@@ -290,8 +290,10 @@ pub async fn build_all(
         super::file_content::processor(),
     ));
     file.spawn_upload_janitor();
-    let job_queue =
-        Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis_client.clone()));
+    let job_queue = Arc::new(
+        JobQueue::new(database.clone())
+            .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
+    );
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         database.clone(),
         tenant_data.clone(),

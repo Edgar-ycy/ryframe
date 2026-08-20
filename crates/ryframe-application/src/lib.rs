@@ -41,11 +41,11 @@ pub use jobs::{
     CallbackScheduleMetricsObserver, CreateJobSchedule, ExportCleanupJobHandler, ExportJobHandler,
     JobHandler, JobMetricsObserver, JobQueue, JobRunResult, JobScheduleExecutionListParams,
     JobScheduleExecutionVo, JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview,
-    JobScheduleService, JobScheduleVo, JobWorker, MessageDispatchJobHandler,
-    MessageRetentionJobHandler, MessageWakeupFuture, MessageWakeupPublisher, OutboxRunResult,
-    OutboxWorker, ScheduleMetricsObserver, ScheduledJobContext, ScheduledJobTarget,
-    ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
-    UpdateJobSchedule,
+    JobScheduleService, JobScheduleVo, JobWakeupFuture, JobWakeupStream, JobWakeupTransport,
+    JobWorker, MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
+    MessageWakeupPublisher, OutboxRunResult, OutboxWorker, ScheduleMetricsObserver,
+    ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
+    ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
 pub use principal_resolver::PrincipalResolver;
 pub use request_tenant_context::{TenantContext, with_tenant_context};

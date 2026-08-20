@@ -4,7 +4,6 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use ryframe_adapters::RedisClient;
 use ryframe_auth::RequestPrincipal;
 use ryframe_db::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ControlDatabaseCluster,
@@ -18,7 +17,7 @@ use tokio::{sync::watch, task::JoinHandle};
 
 use super::{
     metrics::JobMetricsObserver,
-    wakeup::{QueueWakeup, WakeupQueue},
+    wakeup::{JobWakeupTransport, QueueWakeup, WakeupQueue},
 };
 /// 后台任务分页列表的业务查询参数。
 #[derive(Clone, Debug)]
@@ -123,9 +122,9 @@ impl JobQueue {
         }
     }
 
-    /// 配置可选 Redis 唤醒提示；未配置 Redis 时仍保留本进程本地唤醒。
-    pub fn with_wakeup_redis(mut self, redis: Option<RedisClient>) -> Self {
-        self.wakeup = Arc::new(QueueWakeup::new(redis, self.metrics_observer.clone()));
+    /// 配置可选的跨进程唤醒传输；未配置时仍保留本进程本地唤醒。
+    pub fn with_wakeup_transport(mut self, transport: Option<Arc<dyn JobWakeupTransport>>) -> Self {
+        self.wakeup = Arc::new(QueueWakeup::new(transport, self.metrics_observer.clone()));
         self
     }
 

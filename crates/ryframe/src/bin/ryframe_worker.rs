@@ -127,7 +127,10 @@ async fn main() -> Result<(), AppError> {
     let authorization_cache = AuthorizationCache::new(redis.clone(), application_policies.cache);
     let object_storage = connect_storage_for_worker(&config).await?;
 
-    let queue = Arc::new(JobQueue::new(database.clone()).with_wakeup_redis(redis.clone()));
+    let queue = Arc::new(
+        JobQueue::new(database.clone())
+            .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
+    );
     install_job_metrics(&queue);
     let oper_log = Arc::new(OperLogService::new(database.clone()));
     let message = Arc::new(MessageService::new(

@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use futures_util::StreamExt;
 use ryframe_adapters::RedisClient;
 use ryframe_application::{
     CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
-    JobWorker, JobWorkerPolicy, MessageDispatchJobHandler, MessageRetentionJobHandler,
-    MessageWakeupFuture, MessageWakeupPublisher, MultiTenancyPolicy, ScheduleMetricsObserver,
+    JobWakeupFuture, JobWakeupStream, JobWakeupTransport, JobWorker, JobWorkerPolicy,
+    MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
+    MessageWakeupPublisher, MultiTenancyPolicy, ScheduleMetricsObserver,
     ScheduledJobTargetRegistry,
     system::{
         DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
@@ -19,6 +21,46 @@ use ryframe_tenant_db::TenantDatabaseRouter;
 
 struct RedisMessageWakeupPublisher {
     client: RedisClient,
+}
+
+struct RedisJobWakeupTransport {
+    client: RedisClient,
+}
+
+impl JobWakeupTransport for RedisJobWakeupTransport {
+    fn publish<'a>(&'a self, channel: &'a str, payload: &'a str) -> JobWakeupFuture<'a, ()> {
+        Box::pin(async move {
+            self.client
+                .publish(channel, payload)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn subscribe<'a>(&'a self, channel: &'a str) -> JobWakeupFuture<'a, JobWakeupStream> {
+        Box::pin(async move {
+            let subscription = self
+                .client
+                .subscribe(channel)
+                .await
+                .map_err(|error| error.to_string())?;
+            let messages = subscription.into_on_message().map(|message| {
+                message
+                    .get_payload::<String>()
+                    .map_err(|error| error.to_string())
+            });
+            Ok(Box::pin(messages) as JobWakeupStream)
+        })
+    }
+}
+
+pub fn job_wakeup_transport(client: Option<&RedisClient>) -> Option<Arc<dyn JobWakeupTransport>> {
+    client.map(|client| {
+        Arc::new(RedisJobWakeupTransport {
+            client: client.clone(),
+        }) as Arc<dyn JobWakeupTransport>
+    })
 }
 
 impl MessageWakeupPublisher for RedisMessageWakeupPublisher {

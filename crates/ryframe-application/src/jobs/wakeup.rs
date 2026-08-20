@@ -1,4 +1,6 @@
 use std::{
+    future::Future,
+    pin::Pin,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
@@ -6,8 +8,7 @@ use std::{
     time::Duration,
 };
 
-use futures_util::StreamExt;
-use ryframe_adapters::RedisClient;
+use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -15,6 +16,16 @@ use super::metrics::JobMetricsObserver;
 
 /// 后台任务和 Outbox 共用的 Redis 唤醒频道。
 pub const JOB_WAKEUP_REDIS_CHANNEL: &str = "ryframe:jobs:wakeup";
+
+pub type JobWakeupStream = Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>;
+pub type JobWakeupFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
+
+/// 后台任务跨进程唤醒传输端口。
+pub trait JobWakeupTransport: Send + Sync {
+    fn publish<'a>(&'a self, channel: &'a str, payload: &'a str) -> JobWakeupFuture<'a, ()>;
+
+    fn subscribe<'a>(&'a self, channel: &'a str) -> JobWakeupFuture<'a, JobWakeupStream>;
+}
 
 const WAKEUP_PROTOCOL_VERSION: u8 = 1;
 const BACKGROUND_JOB_WAKEUP_PAYLOAD: &str = r#"{"v":1,"queue":"background_job"}"#;
@@ -67,7 +78,7 @@ pub(super) struct QueueWakeup {
 }
 
 struct QueueWakeupInner {
-    redis: Option<RedisClient>,
+    transport: Option<Arc<dyn JobWakeupTransport>>,
     background_job: watch::Sender<u64>,
     outbox: watch::Sender<u64>,
     listener_started: AtomicBool,
@@ -76,14 +87,14 @@ struct QueueWakeupInner {
 
 impl QueueWakeup {
     pub(super) fn new(
-        redis: Option<RedisClient>,
+        transport: Option<Arc<dyn JobWakeupTransport>>,
         metrics_observer: Arc<RwLock<Option<Arc<dyn JobMetricsObserver>>>>,
     ) -> Self {
         let (background_job, _) = watch::channel(0_u64);
         let (outbox, _) = watch::channel(0_u64);
         Self {
             inner: Arc::new(QueueWakeupInner {
-                redis,
+                transport,
                 background_job,
                 outbox,
                 listener_started: AtomicBool::new(false),
@@ -104,11 +115,11 @@ impl QueueWakeup {
         self.notify_local(queue);
         self.record_wakeup(queue, "local", "success");
 
-        let Some(redis) = self.inner.redis.as_ref() else {
+        let Some(transport) = self.inner.transport.as_ref() else {
             self.record_wakeup(queue, "redis", "bypass");
             return;
         };
-        match redis
+        match transport
             .publish(JOB_WAKEUP_REDIS_CHANNEL, queue.payload())
             .await
         {
@@ -130,7 +141,7 @@ impl QueueWakeup {
         &self,
         shutdown: watch::Receiver<bool>,
     ) -> Option<JoinHandle<()>> {
-        let Some(redis) = self.inner.redis.clone() else {
+        let Some(transport) = self.inner.transport.clone() else {
             self.set_listener_up(false);
             return None;
         };
@@ -140,7 +151,7 @@ impl QueueWakeup {
         self.set_listener_up(false);
         let wakeup = self.clone();
         Some(tokio::spawn(async move {
-            wakeup.redis_listener(redis, shutdown).await;
+            wakeup.transport_listener(transport, shutdown).await;
         }))
     }
 
@@ -152,15 +163,19 @@ impl QueueWakeup {
         sender.send_modify(|revision| *revision = revision.wrapping_add(1));
     }
 
-    async fn redis_listener(&self, redis: RedisClient, mut shutdown: watch::Receiver<bool>) {
+    async fn transport_listener(
+        &self,
+        transport: Arc<dyn JobWakeupTransport>,
+        mut shutdown: watch::Receiver<bool>,
+    ) {
         let mut retry_seconds = 1_u64;
         let mut degraded = false;
         loop {
             if *shutdown.borrow() {
                 break;
             }
-            match redis.subscribe(JOB_WAKEUP_REDIS_CHANNEL).await {
-                Ok(subscription) => {
+            match transport.subscribe(JOB_WAKEUP_REDIS_CHANNEL).await {
+                Ok(mut messages) => {
                     self.set_listener_up(true);
                     if degraded {
                         tracing::info!(
@@ -170,7 +185,6 @@ impl QueueWakeup {
                     }
                     degraded = false;
                     retry_seconds = 1;
-                    let mut messages = subscription.into_on_message();
                     let interrupted = loop {
                         tokio::select! {
                             changed = shutdown.changed() => {
@@ -183,7 +197,7 @@ impl QueueWakeup {
                                 let Some(message) = message else {
                                     break true;
                                 };
-                                self.handle_redis_message(message.get_payload::<String>());
+                                self.handle_transport_message(message);
                             }
                         }
                     };
@@ -211,7 +225,7 @@ impl QueueWakeup {
         self.set_listener_up(false);
     }
 
-    fn handle_redis_message(&self, payload: Result<String, redis::RedisError>) {
+    fn handle_transport_message(&self, payload: Result<String, String>) {
         let payload = match payload {
             Ok(payload) => payload,
             Err(error) => {
@@ -242,7 +256,7 @@ impl QueueWakeup {
         self.record_wakeup(queue, "redis", "success");
     }
 
-    fn record_listener_failure(&self, degraded: &mut bool, error: Option<&redis::RedisError>) {
+    fn record_listener_failure(&self, degraded: &mut bool, error: Option<&str>) {
         if *degraded {
             if let Some(error) = error {
                 tracing::debug!(%error, channel = JOB_WAKEUP_REDIS_CHANNEL, "后台任务 Redis 唤醒订阅仍不可用");
@@ -290,5 +304,61 @@ impl QueueWakeup {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use futures_util::stream;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct RecordingTransport {
+        published: Mutex<Vec<(String, String)>>,
+    }
+
+    impl JobWakeupTransport for RecordingTransport {
+        fn publish<'a>(&'a self, channel: &'a str, payload: &'a str) -> JobWakeupFuture<'a, ()> {
+            Box::pin(async move {
+                self.published
+                    .lock()
+                    .expect("记录锁不应中毒")
+                    .push((channel.to_owned(), payload.to_owned()));
+                Ok(())
+            })
+        }
+
+        fn subscribe<'a>(&'a self, _channel: &'a str) -> JobWakeupFuture<'a, JobWakeupStream> {
+            Box::pin(async { Ok(Box::pin(stream::empty()) as JobWakeupStream) })
+        }
+    }
+
+    #[tokio::test]
+    async fn notifies_local_waiter_and_transport() {
+        let transport = Arc::new(RecordingTransport::default());
+        let wakeup = QueueWakeup::new(
+            Some(Arc::clone(&transport) as Arc<dyn JobWakeupTransport>),
+            Arc::new(RwLock::new(None)),
+        );
+        let mut receiver = wakeup.subscribe(WakeupQueue::BackgroundJob);
+
+        wakeup.notify(WakeupQueue::BackgroundJob).await;
+        receiver.changed().await.expect("本地唤醒通道应保持有效");
+
+        assert_eq!(*receiver.borrow(), 1);
+        assert_eq!(
+            transport
+                .published
+                .lock()
+                .expect("记录锁不应中毒")
+                .as_slice(),
+            [(
+                JOB_WAKEUP_REDIS_CHANNEL.to_owned(),
+                BACKGROUND_JOB_WAKEUP_PAYLOAD.to_owned(),
+            )]
+        );
     }
 }
