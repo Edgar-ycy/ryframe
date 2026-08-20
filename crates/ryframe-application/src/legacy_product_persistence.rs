@@ -47,6 +47,18 @@ impl ProductReadPort for LegacyProductRead {
         })
     }
 
+    fn find_version(
+        &self,
+        version_id: i64,
+    ) -> PersistenceFuture<'_, Option<ProductVersionSnapshot>> {
+        Box::pin(async move {
+            ProductRepository
+                .find_version_by_id(self.database.write(), version_id)
+                .await
+                .map(|bundle| bundle.map(version_snapshot))
+        })
+    }
+
     fn tenant_product<'a>(
         &'a self,
         tenant_id: &'a str,

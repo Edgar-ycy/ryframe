@@ -70,6 +70,11 @@ pub trait ProductReadPort: Send + Sync {
 
     fn find_plan(&self, plan_id: i64) -> PersistenceFuture<'_, Option<ProductPlanRecord>>;
 
+    fn find_version(
+        &self,
+        version_id: i64,
+    ) -> PersistenceFuture<'_, Option<ProductVersionSnapshot>>;
+
     fn tenant_product<'a>(
         &'a self,
         tenant_id: &'a str,

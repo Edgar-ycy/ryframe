@@ -5,8 +5,7 @@ use std::{
 
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    ControlDatabaseCluster, ProductPlanVersionBundle, ProductRepository,
-    TenantOperationLeaseRepository,
+    ControlDatabaseCluster, ProductRepository, TenantOperationLeaseRepository,
     entities::{
         product_plan, product_plan_capability, product_plan_version, tenant_capability_override,
         tenant_operation_lease,
@@ -551,8 +550,12 @@ impl ProductService {
             &normalized,
             capability_override_allowed,
         )?;
-        let target_context =
-            self.target_context(tenant_id, &epoch_text, target_bundle, &normalized)?;
+        let target_context = self.target_context(
+            tenant_id,
+            &epoch_text,
+            crate::legacy_product_persistence::version_snapshot(target_bundle),
+            &normalized,
+        )?;
         let authorization_changed =
             capability_changes(&current, &target_context)
                 .iter()
@@ -743,7 +746,7 @@ impl ProductService {
         &self,
         tenant_id: &str,
         runtime_epoch: &str,
-        target: ProductPlanVersionBundle,
+        target: ProductVersionSnapshot,
         overrides: &[CapabilityOverrideInput],
     ) -> AppResult<ProductContextVo> {
         let override_records = overrides
@@ -761,7 +764,6 @@ impl ProductService {
         let epoch = runtime_epoch
             .parse::<i64>()
             .map_err(|_| AppError::Internal("内部 runtime_epoch 无效".into()))?;
-        let target = crate::legacy_product_persistence::version_snapshot(target);
         let context = self.context(tenant_id, epoch, &target, &override_records)?;
         self.validate_target_context(&context)?;
         Ok(context)
@@ -855,16 +857,16 @@ impl ProductService {
         })
     }
 
-    async fn published_target(&self, version_id: i64) -> AppResult<ProductPlanVersionBundle> {
+    async fn published_target(&self, version_id: i64) -> AppResult<ProductVersionSnapshot> {
         let target = self
-            .repository
-            .find_version_by_id(self.db.write(), version_id)
+            .read
+            .find_version(version_id)
             .await?
             .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))?;
-        if target.plan.status != PLAN_STATUS_ENABLED {
+        if target.plan_status != PLAN_STATUS_ENABLED {
             return Err(AppError::Conflict("目标产品套餐已停用".into()));
         }
-        match target.version.status.as_str() {
+        match target.version_status.as_str() {
             VERSION_PUBLISHED => {}
             VERSION_DRAFT => {
                 return Err(AppError::Conflict("草稿产品套餐版本不可分配".into()));
@@ -874,7 +876,7 @@ impl ProductService {
             }
             _ => return Err(AppError::Config("产品套餐版本状态无效".into())),
         }
-        self.validate_publishable_capabilities(&target.capabilities)?;
+        self.validate_publishable_capability_records(&target.capabilities)?;
         Ok(target)
     }
 

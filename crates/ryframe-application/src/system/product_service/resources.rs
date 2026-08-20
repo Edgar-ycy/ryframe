@@ -134,7 +134,7 @@ impl ProductService {
         let enabled_codes = target
             .capabilities
             .iter()
-            .map(|capability| capability.capability_code.as_str())
+            .map(|capability| capability.code.as_str())
             .collect::<BTreeSet<_>>();
         Ok(resources_for_enabled_codes(&enabled_codes))
     }

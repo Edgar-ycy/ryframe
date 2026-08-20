@@ -108,6 +108,27 @@ impl ProductService {
         }
         Ok(())
     }
+
+    pub(super) fn validate_publishable_capability_records(
+        &self,
+        capabilities: &[crate::ProductCapabilityRecord],
+    ) -> AppResult<()> {
+        self.validate_capability_record_relationships(capabilities)?;
+        for capability in capabilities {
+            let descriptor = CAPABILITY_CATALOG
+                .iter()
+                .find(|descriptor| descriptor.code == capability.code)
+                .expect("capabilities were validated above");
+            if !self.deployment_enabled(descriptor.code) {
+                return Err(AppError::CapabilityUnavailable(format!(
+                    "当前部署不满足能力 {} 的依赖: {}",
+                    descriptor.code,
+                    descriptor.deployment_dependencies.join(", ")
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
