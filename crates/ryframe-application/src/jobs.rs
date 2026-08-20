@@ -4,7 +4,6 @@ mod metrics;
 mod outbox;
 mod queue;
 mod schedule;
-mod schedule_compat;
 mod schedule_metrics;
 mod schedule_targets;
 mod wakeup;
@@ -22,8 +21,6 @@ pub use schedule::{
     JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview, JobScheduleService,
     JobScheduleVo, UpdateJobSchedule,
 };
-#[allow(deprecated)]
-pub use schedule_compat::spawn_message_retention_scheduler;
 pub use schedule_metrics::{CallbackScheduleMetricsObserver, ScheduleMetricsObserver};
 pub use schedule_targets::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
