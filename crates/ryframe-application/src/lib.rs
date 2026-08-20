@@ -4,6 +4,7 @@ mod audit;
 mod auth_service;
 mod authorization_cache;
 mod authorization_diagnostic_persistence;
+mod authorization_mirror_persistence;
 mod authorization_resolver;
 mod config_persistence;
 mod dept_persistence;
@@ -17,6 +18,7 @@ mod job_schedule_persistence;
 pub mod jobs;
 mod legacy_audit_persistence;
 mod legacy_authorization_diagnostic_persistence;
+mod legacy_authorization_mirror_persistence;
 mod legacy_config_persistence;
 mod legacy_dept_persistence;
 mod legacy_dict_persistence;
@@ -95,6 +97,9 @@ pub use authorization_cache::{
 pub use authorization_diagnostic_persistence::{
     AuthorizationDiagnosticReadPort, DiagnosticDepartmentRecord, DiagnosticMenuRecord,
     DiagnosticPermissionRecord, DiagnosticRoleRecord,
+};
+pub use authorization_mirror_persistence::{
+    AuthorizationMirrorEvent, AuthorizationMirrorTransaction,
 };
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
 pub use config_persistence::{

@@ -6,20 +6,6 @@ use crate::CacheAvailabilityPolicy;
 
 use super::*;
 
-fn validate_cache_namespace(namespace: &str) -> AppResult<()> {
-    if namespace.is_empty()
-        || namespace.len() > 64
-        || !namespace.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
-        })
-    {
-        return Err(AppError::Validation(
-            "缓存命名空间只能包含 1 到 64 个小写字母、数字、点、下划线或连字符".into(),
-        ));
-    }
-    Ok(())
-}
-
 #[derive(Clone)]
 pub struct AuthorizationCache {
     backend: Option<Arc<dyn AuthorizationCacheBackend>>,
