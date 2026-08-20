@@ -121,7 +121,7 @@ impl PostRepository {
         db: &C,
         tenant_id: &str,
         filter: &PostFilter<'_>,
-        window: super::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow,
     ) -> AppResult<Vec<post::Model>>
     where
         C: ConnectionTrait,
@@ -145,7 +145,7 @@ impl PostRepository {
         db: &C,
         tenant_id: &str,
         filter: &PostFilter<'_>,
-    ) -> AppResult<super::ExportQuerySnapshot>
+    ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
     {

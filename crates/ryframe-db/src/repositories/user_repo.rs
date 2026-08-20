@@ -325,7 +325,7 @@ impl UserRepository {
         tenant_id: &str,
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
-        window: super::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow,
     ) -> AppResult<Vec<user::Model>>
     where
         C: ConnectionTrait,
@@ -352,12 +352,12 @@ impl UserRepository {
         tenant_id: &str,
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
-    ) -> AppResult<super::ExportQuerySnapshot>
+    ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
     {
         let Some(select) = Self::export_select(tenant_id, filter, scope_ctx) else {
-            return Ok(super::ExportQuerySnapshot {
+            return Ok(ryframe_kernel::ExportQuerySnapshot {
                 matched_rows: 0,
                 upper_id: None,
             });

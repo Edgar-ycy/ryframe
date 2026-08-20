@@ -4,10 +4,10 @@ use crate::{
     SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter,
 };
 use ryframe_db::{
-    ExportCursorWindow, ExportStartDisposition, LoginInfoFilter, OperLogFilter, UserFilter,
+    ExportStartDisposition, LoginInfoFilter, OperLogFilter, UserFilter,
     entities::{background_job, export_job},
 };
-use ryframe_kernel::{ActorContext, AppError, AppResult};
+use ryframe_kernel::{ActorContext, AppError, AppResult, ExportCursorWindow};
 use sea_orm::TransactionTrait;
 
 use super::*;

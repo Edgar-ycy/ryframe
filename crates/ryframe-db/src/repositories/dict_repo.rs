@@ -124,7 +124,7 @@ impl DictTypeRepository {
         db: &C,
         tenant_id: &str,
         filter: &DictTypeFilter<'_>,
-        window: super::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow,
     ) -> AppResult<Vec<dict_type::Model>>
     where
         C: ConnectionTrait,
@@ -148,7 +148,7 @@ impl DictTypeRepository {
         db: &C,
         tenant_id: &str,
         filter: &DictTypeFilter<'_>,
-    ) -> AppResult<super::ExportQuerySnapshot>
+    ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
     {

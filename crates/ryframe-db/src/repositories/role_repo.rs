@@ -131,7 +131,7 @@ impl RoleRepository {
         db: &C,
         tenant_id: &str,
         filter: &RoleFilter<'_>,
-        window: super::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow,
     ) -> AppResult<Vec<role::Model>>
     where
         C: ConnectionTrait,
@@ -155,7 +155,7 @@ impl RoleRepository {
         db: &C,
         tenant_id: &str,
         filter: &RoleFilter<'_>,
-    ) -> AppResult<super::ExportQuerySnapshot>
+    ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
     {

@@ -108,7 +108,7 @@ impl LoginInfoRepository {
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
-        window: super::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow,
     ) -> AppResult<Vec<login_info::Model>>
     where
         C: ConnectionTrait,
@@ -133,7 +133,7 @@ impl LoginInfoRepository {
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
-    ) -> AppResult<super::ExportQuerySnapshot>
+    ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
     {

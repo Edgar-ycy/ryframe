@@ -201,7 +201,7 @@ impl ConfigRepository {
         db: &C,
         tenant_id: &str,
         filter: &ConfigFilter<'_>,
-        window: super::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow,
     ) -> AppResult<Vec<config::Model>>
     where
         C: ConnectionTrait,
@@ -225,7 +225,7 @@ impl ConfigRepository {
         db: &C,
         tenant_id: &str,
         filter: &ConfigFilter<'_>,
-    ) -> AppResult<super::ExportQuerySnapshot>
+    ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
     {

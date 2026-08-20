@@ -158,7 +158,7 @@ impl OperLogRepository {
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
         scope_ctx: &DataScopeContext,
-        window: super::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow,
     ) -> AppResult<Vec<oper_log::Model>>
     where
         C: ConnectionTrait,
@@ -183,7 +183,7 @@ impl OperLogRepository {
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
         scope_ctx: &DataScopeContext,
-    ) -> AppResult<super::ExportQuerySnapshot>
+    ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
     {
