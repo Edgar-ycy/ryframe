@@ -5,13 +5,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use ryframe_auth::RequestPrincipal;
-use ryframe_db::{
-    BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, ControlDatabaseCluster,
-    FailBackgroundJob, JobFailureDisposition as DatabaseJobFailureDisposition, background_job,
-    tenant_config_bundle, tenant_config_transfer,
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
-use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
 use serde::Serialize;
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -19,7 +13,11 @@ use super::{
     metrics::JobMetricsObserver,
     wakeup::{JobWakeupTransport, QueueWakeup, WakeupQueue},
 };
-use crate::{ExecutionTenantScope, legacy_execution_tenant_scope::database_scope};
+use crate::{
+    BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
+    BackgroundJobStatsRecord, BackgroundJobTransaction, ClaimedJobRecord, ExecutionTenantScope,
+    FailJobCommand, JobFailureOutcome, TenantConfigJobKind,
+};
 
 #[derive(Clone, Debug)]
 pub struct EnqueueJob {
@@ -41,60 +39,6 @@ pub struct EnqueueJob {
 pub struct EnqueueJobResult {
     pub job_id: i64,
     pub inserted: bool,
-}
-
-#[derive(Debug)]
-pub(super) struct ClaimedJobRecord {
-    pub id: i64,
-    pub tenant_id: Option<String>,
-    pub job_type: String,
-    pub payload: serde_json::Value,
-    pub lease_owner: Option<String>,
-    pub attempts: i32,
-    pub max_attempts: i32,
-    pub max_runtime_seconds: Option<i32>,
-    pub traceparent: Option<String>,
-    pub tracestate: Option<String>,
-}
-
-pub(super) struct FailJobCommand<'a> {
-    pub job_id: i64,
-    pub worker_id: &'a str,
-    pub retry_at: DateTime<Utc>,
-    pub error_message: &'a str,
-    pub force_dead: bool,
-    pub now: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum JobFailureOutcome {
-    Retried { available_at: DateTime<Utc> },
-    Dead,
-    LeaseLost,
-}
-
-pub(crate) fn database_enqueue(command: EnqueueJob) -> ryframe_db::EnqueueBackgroundJob {
-    ryframe_db::EnqueueBackgroundJob {
-        tenant_id: command.tenant_id,
-        schedule_id: command.schedule_id,
-        scheduled_for: command.scheduled_for,
-        max_runtime_seconds: command.max_runtime_seconds,
-        job_type: command.job_type,
-        payload: command.payload,
-        priority: command.priority,
-        available_at: command.available_at,
-        max_attempts: command.max_attempts,
-        dedupe_key: command.dedupe_key,
-        traceparent: command.traceparent,
-        tracestate: command.tracestate,
-    }
-}
-
-fn enqueue_result(result: ryframe_db::EnqueueBackgroundJobResult) -> EnqueueJobResult {
-    EnqueueJobResult {
-        job_id: result.job.id,
-        inserted: result.inserted,
-    }
 }
 
 /// 后台任务分页列表的业务查询参数。
@@ -130,8 +74,8 @@ pub struct BackgroundJobVo {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
-impl From<background_job::Model> for BackgroundJobVo {
-    fn from(job: background_job::Model) -> Self {
+impl From<BackgroundJobRecord> for BackgroundJobVo {
+    fn from(job: BackgroundJobRecord) -> Self {
         let last_error = public_job_error(&job.job_type, job.last_error);
         Self {
             id: job.id.to_string(),
@@ -166,8 +110,8 @@ pub struct BackgroundJobQueueStats {
     pub ready: u64,
 }
 
-impl From<BackgroundJobStats> for BackgroundJobQueueStats {
-    fn from(stats: BackgroundJobStats) -> Self {
+impl From<BackgroundJobStatsRecord> for BackgroundJobQueueStats {
+    fn from(stats: BackgroundJobStatsRecord) -> Self {
         Self {
             total: stats.total,
             pending: stats.pending,
@@ -182,19 +126,17 @@ impl From<BackgroundJobStats> for BackgroundJobQueueStats {
 /// 持久化任务的业务层入口。
 #[derive(Clone)]
 pub struct JobQueue {
-    database: ControlDatabaseCluster,
-    repository: Arc<BackgroundJobRepository>,
+    persistence: Arc<dyn BackgroundJobPersistencePort>,
     metrics_observer: Arc<RwLock<Option<Arc<dyn JobMetricsObserver>>>>,
     wakeup: Arc<QueueWakeup>,
 }
 
 impl JobQueue {
-    /// 使用主库构造任务队列。所有领取、状态迁移和入队都必须走主库。
-    pub fn new(database: ControlDatabaseCluster) -> Self {
+    /// 使用控制库持久化端口构造任务队列。
+    pub fn new(persistence: Arc<dyn BackgroundJobPersistencePort>) -> Self {
         let metrics_observer = Arc::new(RwLock::new(None));
         Self {
-            database,
-            repository: Arc::new(BackgroundJobRepository),
+            persistence,
             wakeup: Arc::new(QueueWakeup::new(None, metrics_observer.clone())),
             metrics_observer,
         }
@@ -213,17 +155,9 @@ impl JobQueue {
         now: DateTime<Utc>,
         tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<Option<ClaimedJobRecord>> {
-        let tenant_scope = database_scope(tenant_scope);
-        self.repository
-            .claim_next(
-                self.database.write(),
-                worker_id,
-                lease_duration,
-                now,
-                &tenant_scope,
-            )
+        self.persistence
+            .claim_next(worker_id, lease_duration, now, tenant_scope)
             .await
-            .map(|job| job.map(claimed_job_record))
     }
 
     pub(super) async fn dead_letter(
@@ -233,8 +167,8 @@ impl JobQueue {
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.repository
-            .dead_letter(self.database.write(), job_id, worker_id, error_message, now)
+        self.persistence
+            .dead_letter(job_id, worker_id, error_message, now)
             .await
     }
 
@@ -245,14 +179,8 @@ impl JobQueue {
         lease_duration: chrono::Duration,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.repository
-            .renew_lease(
-                self.database.write(),
-                job_id,
-                worker_id,
-                lease_duration,
-                now,
-            )
+        self.persistence
+            .renew_lease(job_id, worker_id, lease_duration, now)
             .await
     }
 
@@ -262,9 +190,7 @@ impl JobQueue {
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.repository
-            .complete(self.database.write(), job_id, worker_id, now)
-            .await
+        self.persistence.complete(job_id, worker_id, now).await
     }
 
     pub(super) async fn defer_retryable_conflict(
@@ -275,55 +201,27 @@ impl JobQueue {
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.repository
-            .defer_retryable_conflict(
-                self.database.write(),
-                job_id,
-                worker_id,
-                available_at,
-                error_message,
-                now,
-            )
+        self.persistence
+            .defer_retryable_conflict(job_id, worker_id, available_at, error_message, now)
             .await
     }
 
     pub(super) async fn fail(&self, command: FailJobCommand<'_>) -> AppResult<JobFailureOutcome> {
-        let disposition = self
-            .repository
-            .fail(
-                self.database.write(),
-                FailBackgroundJob {
-                    job_id: command.job_id,
-                    worker_id: command.worker_id,
-                    retry_at: command.retry_at,
-                    error_message: command.error_message,
-                    force_dead: command.force_dead,
-                    now: command.now,
-                },
-            )
-            .await?;
-        Ok(match disposition {
-            DatabaseJobFailureDisposition::Retried { available_at } => {
-                JobFailureOutcome::Retried { available_at }
-            }
-            DatabaseJobFailureDisposition::Dead => JobFailureOutcome::Dead,
-            DatabaseJobFailureDisposition::LeaseLost => JobFailureOutcome::LeaseLost,
-        })
+        self.persistence.fail(command).await
     }
 
     /// 在业务 control 事务内原地复活已关联任务，不创建并发副本。
     pub async fn reactivate_linked_in_transaction(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn BackgroundJobTransaction,
         job_id: i64,
         expected_job_type: &str,
         payload_key: &str,
         expected_resource_id: i64,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.repository
-            .reactivate_linked_in_txn(
-                transaction,
+        transaction
+            .reactivate_linked(
                 job_id,
                 expected_job_type,
                 payload_key,
@@ -357,10 +255,9 @@ impl JobQueue {
         let Some(observer) = self.metrics_observer() else {
             return Ok(());
         };
-        let tenant_scope = database_scope(tenant_scope);
         for stats in self
-            .repository
-            .stats_for_types(self.primary(), job_types, &tenant_scope)
+            .persistence
+            .stats_for_types(job_types, tenant_scope)
             .await?
         {
             observer.set_queue_depth(&stats.job_type, "pending", stats.pending);
@@ -375,9 +272,7 @@ impl JobQueue {
 
     /// 获取数据库当前 UTC 时间，避免多个 Worker 依赖不同机器时钟。
     pub async fn database_now(&self) -> AppResult<DateTime<Utc>> {
-        self.repository
-            .database_utc_now(self.database.write())
-            .await
+        self.persistence.database_now().await
     }
 
     /// 回收崩溃 Worker 遗留的过期任务租约。
@@ -385,12 +280,11 @@ impl JobQueue {
         &self,
         tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<()> {
-        let tenant_scope = database_scope(tenant_scope);
         loop {
             let now = self.database_now().await?;
             let recovered = self
-                .repository
-                .recover_expired_leases(self.primary(), now, &tenant_scope)
+                .persistence
+                .recover_expired_leases(now, tenant_scope)
                 .await?;
             if recovered.requeued.saturating_add(recovered.dead) < 500 {
                 break;
@@ -401,13 +295,9 @@ impl JobQueue {
 
     /// 写入一条任务。调用方不需要自行提供时间戳，时间统一由数据库确定。
     pub async fn enqueue(&self, command: EnqueueJob) -> AppResult<EnqueueJobResult> {
-        let now = self.database_now().await?;
-        let result = self
-            .repository
-            .enqueue(self.database.write(), database_enqueue(command), now)
-            .await?;
+        let result = self.persistence.enqueue(command).await?;
         self.notify_background_jobs().await;
-        Ok(enqueue_result(result))
+        Ok(result)
     }
 
     /// 在既有业务事务中写入任务，保证业务数据和任务记录一起提交或回滚。
@@ -416,29 +306,10 @@ impl JobQueue {
     /// 任务可靠性仍由数据库轮询和租约机制保证。
     pub async fn enqueue_in_transaction(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn BackgroundJobTransaction,
         command: EnqueueJob,
     ) -> AppResult<EnqueueJobResult> {
-        let now = self.repository.database_utc_now(transaction).await?;
-        self.enqueue_in_transaction_at(transaction, command, now)
-            .await
-    }
-
-    pub(super) async fn enqueue_in_transaction_at(
-        &self,
-        transaction: &DatabaseTransaction,
-        command: EnqueueJob,
-        now: DateTime<Utc>,
-    ) -> AppResult<EnqueueJobResult> {
-        self.repository
-            .enqueue_in_transaction(transaction, database_enqueue(command), now)
-            .await
-            .map(enqueue_result)
-    }
-
-    /// 仅供持有 control 业务资源的 watchdog 核对权威关联任务。
-    pub async fn linked_job(&self, job_id: i64) -> AppResult<Option<background_job::Model>> {
-        self.repository.find_by_id(self.primary(), job_id).await
+        transaction.enqueue(command).await
     }
 
     /// 查询当前租户的后台任务；任务类型和状态均为精确匹配。
@@ -453,17 +324,16 @@ impl JobQueue {
         let status = normalize_job_status_filter(params.status)?;
         let schedule_id = normalize_schedule_id_filter(params.schedule_id)?;
         let page = self
-            .repository
+            .persistence
             .list(
-                self.primary(),
-                BackgroundJobFilter {
+                BackgroundJobReadFilter {
                     tenant_id: Some(tenant_id),
                     include_platform,
                     schedule_id,
                     job_type: job_type.as_deref(),
                     status: status.as_deref(),
                 },
-                &params.page,
+                params.page,
             )
             .await?;
 
@@ -487,10 +357,9 @@ impl JobQueue {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let include_platform = tenant_id == "system";
         let now = self.database_now().await?;
-        self.repository
-            .stats_filtered(
-                self.primary(),
-                BackgroundJobFilter {
+        self.persistence
+            .stats(
+                BackgroundJobReadFilter {
                     tenant_id: Some(tenant_id),
                     include_platform,
                     ..Default::default()
@@ -513,11 +382,11 @@ impl JobQueue {
         let tenant_id = crate::validated_tenant_id(principal)?;
         let include_platform = tenant_id == "system";
         let existing = self
-            .repository
-            .find_by_id_for_tenant(self.primary(), tenant_id, include_platform, job_id)
+            .persistence
+            .find_for_tenant(tenant_id, include_platform, job_id)
             .await?
             .ok_or_else(|| AppError::NotFound("后台任务不存在或不属于当前租户".into()))?;
-        if existing.status != background_job::Model::STATUS_DEAD {
+        if existing.status != BackgroundJobRecord::STATUS_DEAD {
             return Err(AppError::Conflict("仅允许重新投递死信任务".into()));
         }
         if let Some(required_permission) = manual_retry_permission(&existing.job_type)
@@ -533,15 +402,8 @@ impl JobQueue {
 
         let now = self.database_now().await?;
         let retried = self
-            .repository
-            .retry_dead(
-                self.primary(),
-                tenant_id,
-                include_platform,
-                job_id,
-                principal.user_id,
-                now,
-            )
+            .persistence
+            .retry_dead(tenant_id, include_platform, job_id, principal.user_id, now)
             .await?;
         if !retried {
             return Err(AppError::Conflict(
@@ -550,8 +412,8 @@ impl JobQueue {
         }
         self.notify_background_jobs().await;
 
-        self.repository
-            .find_by_id_for_tenant(self.primary(), tenant_id, include_platform, job_id)
+        self.persistence
+            .find_for_tenant(tenant_id, include_platform, job_id)
             .await?
             .map(BackgroundJobVo::from)
             .ok_or_else(|| AppError::Internal("后台任务重试后无法读取".into()))
@@ -560,7 +422,7 @@ impl JobQueue {
     async fn ensure_tenant_config_retry_owner(
         &self,
         principal: &RequestPrincipal,
-        job: &background_job::Model,
+        job: &BackgroundJobRecord,
     ) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(principal)?;
         if manual_retry_permission(&job.job_type).is_some()
@@ -570,29 +432,18 @@ impl JobQueue {
                 "后台任务关联的配置资源不存在或不可访问".into(),
             ));
         }
-        let owner_id = match job.job_type.as_str() {
-            "system.tenant_config.export" => tenant_config_bundle::Entity::find()
-                .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
-                .filter(tenant_config_bundle::Column::BackgroundJobId.eq(job.id))
-                .one(self.primary())
-                .await
-                .map_err(database_error)?
-                .map(|bundle| bundle.created_by),
-            "system.tenant_config.preview" => {
-                transfer_job_owner(self.primary(), tenant_id, job.id, TransferJobKind::Preview)
-                    .await?
-            }
-            "system.tenant_config.apply" => {
-                transfer_job_owner(self.primary(), tenant_id, job.id, TransferJobKind::Apply)
-                    .await?
-            }
-            "system.tenant_config.rollback" => {
-                transfer_job_owner(self.primary(), tenant_id, job.id, TransferJobKind::Rollback)
-                    .await?
-            }
+        let kind = match job.job_type.as_str() {
+            "system.tenant_config.export" => TenantConfigJobKind::Export,
+            "system.tenant_config.preview" => TenantConfigJobKind::Preview,
+            "system.tenant_config.apply" => TenantConfigJobKind::Apply,
+            "system.tenant_config.rollback" => TenantConfigJobKind::Rollback,
             _ => return Ok(()),
-        }
-        .ok_or_else(|| AppError::NotFound("后台任务关联的配置资源不存在".into()))?;
+        };
+        let owner_id = self
+            .persistence
+            .tenant_config_job_owner(tenant_id, job.id, kind)
+            .await?
+            .ok_or_else(|| AppError::NotFound("后台任务关联的配置资源不存在".into()))?;
         if owner_id != principal.user_id {
             return Err(AppError::Authorization(
                 "仅允许原配置任务申请人重新投递该任务".into(),
@@ -621,10 +472,6 @@ impl JobQueue {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
-    }
-
-    pub(super) fn primary(&self) -> &sea_orm::DatabaseConnection {
-        self.database.write()
     }
 
     /// 在任务已成功提交后向本地与可选 Redis 等待者发送提示。
@@ -679,58 +526,6 @@ fn public_job_error(job_type: &str, error: Option<String>) -> Option<String> {
     })
 }
 
-fn claimed_job_record(job: background_job::Model) -> ClaimedJobRecord {
-    ClaimedJobRecord {
-        id: job.id,
-        tenant_id: job.tenant_id,
-        job_type: job.job_type,
-        payload: job.payload,
-        lease_owner: job.lease_owner,
-        attempts: job.attempts,
-        max_attempts: job.max_attempts,
-        max_runtime_seconds: job.max_runtime_seconds,
-        traceparent: job.traceparent,
-        tracestate: job.tracestate,
-    }
-}
-
-#[derive(Clone, Copy)]
-enum TransferJobKind {
-    Preview,
-    Apply,
-    Rollback,
-}
-
-async fn transfer_job_owner(
-    db: &sea_orm::DatabaseConnection,
-    tenant_id: &str,
-    job_id: i64,
-    kind: TransferJobKind,
-) -> AppResult<Option<i64>> {
-    let query = tenant_config_transfer::Entity::find()
-        .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id));
-    let query = match kind {
-        TransferJobKind::Preview => {
-            query.filter(tenant_config_transfer::Column::PreviewBackgroundJobId.eq(job_id))
-        }
-        TransferJobKind::Apply => {
-            query.filter(tenant_config_transfer::Column::ApplyBackgroundJobId.eq(job_id))
-        }
-        TransferJobKind::Rollback => {
-            query.filter(tenant_config_transfer::Column::RollbackBackgroundJobId.eq(job_id))
-        }
-    };
-    query
-        .one(db)
-        .await
-        .map_err(database_error)
-        .map(|transfer| transfer.map(|transfer| transfer.requested_by))
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 fn normalize_job_type_filter(value: Option<String>) -> AppResult<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
@@ -764,10 +559,10 @@ fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String
     let value = value.trim();
     if !matches!(
         value,
-        background_job::Model::STATUS_PENDING
-            | background_job::Model::STATUS_RUNNING
-            | background_job::Model::STATUS_SUCCEEDED
-            | background_job::Model::STATUS_DEAD
+        BackgroundJobRecord::STATUS_PENDING
+            | BackgroundJobRecord::STATUS_RUNNING
+            | BackgroundJobRecord::STATUS_SUCCEEDED
+            | BackgroundJobRecord::STATUS_DEAD
     ) {
         return Err(AppError::Validation(
             "任务状态只能是 pending、running、succeeded 或 dead".into(),
@@ -778,76 +573,18 @@ fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String
 
 #[cfg(test)]
 mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::{EnqueueJob, claimed_job_record, database_enqueue};
+    use super::{normalize_job_status_filter, public_job_error};
 
     #[test]
-    fn enqueue_command_maps_every_field_without_loss() {
-        let available_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let command = database_enqueue(EnqueueJob {
-            tenant_id: Some("tenant-a".to_owned()),
-            schedule_id: Some(8),
-            scheduled_for: Some(available_at),
-            max_runtime_seconds: Some(30),
-            job_type: "test.job".to_owned(),
-            payload: serde_json::json!({"id": "9"}),
-            priority: 4,
-            available_at,
-            max_attempts: 5,
-            dedupe_key: Some("dedupe".to_owned()),
-            traceparent: Some("traceparent".to_owned()),
-            tracestate: Some("tracestate".to_owned()),
-        });
-
-        assert_eq!(command.tenant_id.as_deref(), Some("tenant-a"));
-        assert_eq!(command.schedule_id, Some(8));
-        assert_eq!(command.scheduled_for, Some(available_at));
-        assert_eq!(command.max_runtime_seconds, Some(30));
-        assert_eq!(command.job_type, "test.job");
-        assert_eq!(command.payload, serde_json::json!({"id": "9"}));
-        assert_eq!(command.priority, 4);
-        assert_eq!(command.available_at, available_at);
-        assert_eq!(command.max_attempts, 5);
-        assert_eq!(command.dedupe_key.as_deref(), Some("dedupe"));
-        assert_eq!(command.traceparent.as_deref(), Some("traceparent"));
-        assert_eq!(command.tracestate.as_deref(), Some("tracestate"));
-    }
-
-    #[test]
-    fn claimed_job_mapping_keeps_worker_fields() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let claimed = claimed_job_record(ryframe_db::background_job::Model {
-            id: 9,
-            tenant_id: Some("tenant-a".to_owned()),
-            schedule_id: None,
-            scheduled_for: None,
-            max_runtime_seconds: Some(30),
-            job_type: "job.test".to_owned(),
-            payload: serde_json::json!({"key": "value"}),
-            status: ryframe_db::background_job::Model::STATUS_RUNNING.to_owned(),
-            priority: 0,
-            available_at: now,
-            attempts: 2,
-            max_attempts: 5,
-            lease_owner: Some("worker-a".to_owned()),
-            lease_until: Some(now),
-            dedupe_key: None,
-            traceparent: Some("trace".to_owned()),
-            tracestate: Some("state".to_owned()),
-            last_error: None,
-            created_at: now,
-            updated_at: now,
-            completed_at: None,
-        });
-
-        assert_eq!(claimed.id, 9);
-        assert_eq!(claimed.tenant_id.as_deref(), Some("tenant-a"));
-        assert_eq!(claimed.job_type, "job.test");
-        assert_eq!(claimed.attempts, 2);
-        assert_eq!(claimed.max_attempts, 5);
-        assert_eq!(claimed.max_runtime_seconds, Some(30));
-        assert_eq!(claimed.traceparent.as_deref(), Some("trace"));
-        assert_eq!(claimed.tracestate.as_deref(), Some("state"));
+    fn status_and_public_error_rules_are_application_owned() {
+        assert_eq!(
+            normalize_job_status_filter(Some("dead".into())).unwrap(),
+            Some("dead".into())
+        );
+        assert!(normalize_job_status_filter(Some("cancelled".into())).is_err());
+        assert_eq!(
+            public_job_error("system.tenant_config.apply", Some("secret".into())).as_deref(),
+            Some("配置应用失败，请稍后重试或联系管理员")
+        );
     }
 }

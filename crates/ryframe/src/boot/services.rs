@@ -294,8 +294,10 @@ pub async fn build_all(
     ));
     file.spawn_upload_janitor();
     let job_queue = Arc::new(
-        JobQueue::new(database.clone())
-            .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
+        JobQueue::new(ryframe_application::legacy_job_queue_persistence(
+            database.clone(),
+        ))
+        .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
     );
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         database.clone(),

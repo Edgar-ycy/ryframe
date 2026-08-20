@@ -9,13 +9,13 @@ mod schedule_targets;
 mod wakeup;
 mod worker;
 
+pub(crate) use crate::legacy_job_queue_persistence::database_enqueue;
 pub use handlers::{
     ExportCleanupJobHandler, ExportJobHandler, MessageDispatchJobHandler,
     MessageRetentionJobHandler, MessageWakeupFuture, MessageWakeupPublisher,
 };
 pub use metrics::{CallbackJobMetricsObserver, JobMetricsObserver};
 pub use outbox::{OutboxRunResult, OutboxWorker};
-pub(crate) use queue::database_enqueue;
 pub use queue::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, EnqueueJob,
     EnqueueJobResult, JobQueue,

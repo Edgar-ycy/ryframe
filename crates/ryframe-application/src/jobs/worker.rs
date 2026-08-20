@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use super::{
     backoff::{jittered_delay, next_idle_wait},
-    queue::{ClaimedJobRecord, FailJobCommand, JobFailureOutcome, JobQueue},
+    queue::JobQueue,
 };
-use crate::ExecutionTenantScope;
+use crate::{ClaimedJobRecord, ExecutionTenantScope, FailJobCommand, JobFailureOutcome};
 
 /// 任务处理器。实现必须具备幂等性，因为 Worker 提供至少一次投递语义。
 ///

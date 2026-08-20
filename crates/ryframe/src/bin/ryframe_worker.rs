@@ -131,8 +131,10 @@ async fn main() -> Result<(), AppError> {
     let object_storage = connect_storage_for_worker(&config).await?;
 
     let queue = Arc::new(
-        JobQueue::new(database.clone())
-            .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
+        JobQueue::new(ryframe_application::legacy_job_queue_persistence(
+            database.clone(),
+        ))
+        .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
     );
     let outbox_persistence = ryframe_application::legacy_outbox_persistence(database.clone());
     install_job_metrics(&queue);
