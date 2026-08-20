@@ -1,5 +1,5 @@
-use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_auth::password;
+use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency, TenantRepository};
 use ryframe_db::{
     DeptRepository, FileRepository, PermissionRepository, Repository, RoleRepository,

@@ -1,6 +1,6 @@
-use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
 use ryframe_auth::password;
+use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{
     PasswordResetRequestRepository, Repository, TenantRepository,
     entities::{password_reset_request, user_role},

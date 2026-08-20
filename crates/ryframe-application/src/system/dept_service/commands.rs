@@ -1,5 +1,5 @@
-use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
+use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{
     TenantConfigTransferRepository,
     entities::{dept, role_dept, user},

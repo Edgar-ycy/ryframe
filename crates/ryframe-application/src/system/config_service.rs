@@ -1,4 +1,4 @@
-use ryframe_adapters::auto_fill::{AutoFill, FillContext};
+use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository,
     ExportCursorWindow, Repository, TenantConfigTransferRepository, entities::config,

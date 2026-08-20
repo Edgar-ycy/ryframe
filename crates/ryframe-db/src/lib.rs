@@ -1,3 +1,4 @@
+mod auto_fill;
 pub mod cluster;
 pub mod connection;
 pub mod data_scope;
@@ -10,6 +11,7 @@ pub mod repositories;
 mod repository;
 pub mod resource_ownership;
 pub mod sql_logger;
+pub use auto_fill::{AutoFill, FillContext};
 pub use cluster::{
     CallbackDatabaseMetricsObserver, ControlDatabaseCluster, DatabaseMetricsObserver,
     DatabaseNodeKind, DatabaseReadSelectionReason, ReadConsistency, SelectedDatabase,
@@ -23,7 +25,8 @@ pub mod transaction;
 #[doc(hidden)]
 pub mod __macro_support {
     pub mod auto_fill {
-        pub use ryframe_adapters::auto_fill::{AppResult, AutoFill, FillContext};
+        pub use crate::auto_fill::{AutoFill, FillContext};
+        pub use ryframe_kernel::AppResult;
 
         pub fn next_id() -> AppResult<i64> {
             Ok(ryframe_adapters::snowflake::try_next_snowflake_id()?)

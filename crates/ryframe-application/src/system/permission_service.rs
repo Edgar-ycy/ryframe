@@ -1,8 +1,8 @@
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
-use ryframe_adapters::auto_fill::{AutoFill, FillContext};
 use ryframe_adapters::snowflake;
+use ryframe_db::{AutoFill, FillContext};
 use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
 use ryframe_db::{
     PermissionRepository, Repository, TenantConfigTransferRepository, entities::permission,
