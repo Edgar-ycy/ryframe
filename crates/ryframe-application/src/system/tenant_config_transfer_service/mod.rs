@@ -20,12 +20,11 @@ use super::{
 };
 use crate::{
     AuthorizationCache, ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
-    TenantConfigArchivePort,
     ports::tenant_config::{
-        TenantConfigBundleRecord, TenantConfigOperationLeaseRecord, TenantConfigRequesterRecord,
-        TenantConfigTransferItemRecord, TenantConfigTransferPersistencePort,
-        TenantConfigTransferRecord, TenantConfigTransferTransaction,
-        TenantConfigurationFenceRecord,
+        TenantConfigArchivePort, TenantConfigBundleRecord, TenantConfigOperationLeaseRecord,
+        TenantConfigRequesterRecord, TenantConfigTransferItemRecord,
+        TenantConfigTransferPersistencePort, TenantConfigTransferRecord,
+        TenantConfigTransferTransaction, TenantConfigurationFenceRecord,
     },
 };
 

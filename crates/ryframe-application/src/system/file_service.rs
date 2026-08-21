@@ -4,14 +4,11 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
 
-use crate::{
-    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FileContentProcessor,
-    ProcessedFileContent,
-    ports::files::{
-        FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
-        FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileDownloadPersistencePort,
-        FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord,
-    },
+use crate::ports::files::{
+    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
+    FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FILE_UPLOAD_STATUS_READY,
+    FileCleanupPersistencePort, FileContentProcessor, FileDownloadPersistencePort,
+    FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord, ProcessedFileContent,
 };
 
 mod policy;
@@ -678,7 +675,7 @@ fn map_storage_read_error(error: ArtifactStoreError) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::{map_storage_read_error, map_storage_write_error};
-    use crate::{ArtifactStoreError, ArtifactStoreErrorKind};
+    use crate::ports::files::{ArtifactStoreError, ArtifactStoreErrorKind};
     use ryframe_kernel::AppError;
 
     #[test]

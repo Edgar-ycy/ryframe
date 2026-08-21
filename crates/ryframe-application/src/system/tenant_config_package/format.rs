@@ -12,7 +12,7 @@ use super::{
 };
 
 pub(super) fn build_package_blocking(
-    archive: &dyn crate::TenantConfigArchivePort,
+    archive: &dyn crate::ports::tenant_config::TenantConfigArchivePort,
     mut resources: TenantConfigPackageResources,
     mut required_capabilities: Vec<CapabilityRequirement>,
     source: TenantConfigPackageSource,
@@ -68,7 +68,7 @@ pub(super) fn build_package_blocking(
 }
 
 pub(super) fn parse_package_blocking(
-    archive: &dyn crate::TenantConfigArchivePort,
+    archive: &dyn crate::ports::tenant_config::TenantConfigArchivePort,
     data: &[u8],
     limits: TenantConfigPackageLimits,
 ) -> AppResult<ParsedTenantConfigPackage> {

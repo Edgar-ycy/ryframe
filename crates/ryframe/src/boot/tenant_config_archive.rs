@@ -3,7 +3,9 @@ use std::{
     sync::Arc,
 };
 
-use ryframe_application::{TenantConfigArchiveContents, TenantConfigArchivePort};
+use ryframe_application::ports::tenant_config::{
+    TenantConfigArchiveContents, TenantConfigArchivePort,
+};
 use ryframe_kernel::{AppError, AppResult};
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
 

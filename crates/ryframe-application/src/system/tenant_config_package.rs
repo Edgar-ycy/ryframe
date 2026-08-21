@@ -639,7 +639,7 @@ pub struct TenantConfigPackageSource {
 
 /// 在阻塞线程中构造只含两个受控文件的配置包。
 pub async fn build_tenant_config_package(
-    archive: Arc<dyn crate::TenantConfigArchivePort>,
+    archive: Arc<dyn crate::ports::tenant_config::TenantConfigArchivePort>,
     resources: TenantConfigPackageResources,
     required_capabilities: Vec<CapabilityRequirement>,
     source: TenantConfigPackageSource,
@@ -663,7 +663,7 @@ pub async fn build_tenant_config_package(
 
 /// 在阻塞线程中解析并校验受控配置包。
 pub async fn parse_tenant_config_package(
-    archive: Arc<dyn crate::TenantConfigArchivePort>,
+    archive: Arc<dyn crate::ports::tenant_config::TenantConfigArchivePort>,
     data: Vec<u8>,
     limits: TenantConfigPackageLimits,
 ) -> AppResult<ParsedTenantConfigPackage> {
@@ -672,7 +672,7 @@ pub async fn parse_tenant_config_package(
 }
 
 pub(super) async fn parse_tenant_config_package_with_source(
-    archive: Arc<dyn crate::TenantConfigArchivePort>,
+    archive: Arc<dyn crate::ports::tenant_config::TenantConfigArchivePort>,
     data: Vec<u8>,
     limits: TenantConfigPackageLimits,
 ) -> AppResult<(ParsedTenantConfigPackage, Vec<u8>)> {

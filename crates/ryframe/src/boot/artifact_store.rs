@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_adapters::storage::{ObjectStorage, StorageError};
-use ryframe_application::{
+use ryframe_application::ports::files::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
 };
 

@@ -18,7 +18,8 @@ use ryframe_adapters::storage::{
 };
 use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
-    ArtifactStore, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
+    CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
+    ports::files::ArtifactStore,
     system::{
         CONFIG_PACKAGE_BUCKET, ConfigService, DataRetentionService, DictService, EXPORT_BUCKET,
         ExportPersistencePorts, ExportResourceServices, ExportService, FileService, IMPORT_BUCKET,

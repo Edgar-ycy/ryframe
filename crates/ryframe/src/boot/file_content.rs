@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use ryframe_adapters::file_upload::{compress_image, get_content_type, validate_file_signature};
-use ryframe_application::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
+use ryframe_application::ports::files::{
+    FileContentFuture, FileContentProcessor, ProcessedFileContent,
+};
 
 struct FileContentBridge;
 

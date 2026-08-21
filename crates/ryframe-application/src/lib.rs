@@ -1,10 +1,8 @@
 pub mod agent;
-mod artifact_store;
 mod audit;
 mod auth_service;
 mod authorization_cache;
 mod authorization_resolver;
-mod file_content;
 mod id_generator;
 pub mod jobs;
 mod persistence;
@@ -15,14 +13,10 @@ mod runtime_policy;
 mod service_identity_secret;
 mod spreadsheet;
 pub mod system;
-mod tenant_config_archive;
 #[doc(hidden)]
 pub mod tenant_config_stable_key;
 mod trace_context;
 
-pub use artifact_store::{
-    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
-};
 #[doc(hidden)]
 pub use audit::{
     AUDIT_AGGREGATE_TYPE, OUTBOX_MAX_ATTEMPTS, bind_current_audit, validate_audit_event,
@@ -42,7 +36,6 @@ pub use authorization_cache::{
     set_authorization_cache_lookup_hook,
 };
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
-pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 #[allow(deprecated)]
 pub use jobs::{
@@ -70,7 +63,6 @@ pub use spreadsheet::{
     SpreadsheetDocumentFuture, SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow,
     SpreadsheetWriter, SpreadsheetWriterFactory,
 };
-pub use tenant_config_archive::{TenantConfigArchiveContents, TenantConfigArchivePort};
 #[doc(hidden)]
 pub use trace_context::current_trace_context;
 pub use trace_context::{PersistedTraceContext, TraceContextPort, install_trace_context_port};

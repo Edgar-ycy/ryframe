@@ -4,12 +4,12 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 
 use super::{EXPORT_BUCKET, EXPORT_STATUS_SUCCEEDED, storage_error};
-use crate::{
-    ArtifactStore,
-    ports::export::{
+use crate::ports::{
+    export::{
         ExportCleanupFile, ExportCleanupFileLookup, ExportCleanupPersistencePort,
         ExportCleanupRecord, ExportCleanupTransaction,
     },
+    files::ArtifactStore,
 };
 
 /// 导出对象、独占文件元数据与公开任务记录的统一清理用例。
@@ -164,7 +164,7 @@ async fn delete_object_idempotently(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::{ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture};
+    use crate::ports::files::{ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture};
 
     use super::*;
 

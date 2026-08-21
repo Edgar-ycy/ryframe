@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ryframe_adapters::storage::{
     LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
 };
-use ryframe_application::ArtifactStore;
+use ryframe_application::ports::files::ArtifactStore;
 use ryframe_application::system::{
     AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, EXPORT_BUCKET, IMPORT_BUCKET, UPLOAD_BUCKET,
 };

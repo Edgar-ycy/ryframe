@@ -3,8 +3,9 @@ use std::sync::Arc;
 use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
 use ryframe_api::AppServices;
 use ryframe_application::{
-    ArtifactStore, AuditOutbox, AuthService, JobQueue, JobScheduleService,
+    AuditOutbox, AuthService, JobQueue, JobScheduleService,
     agent::{AgentService, AgentServiceDependencies, service_capability_descriptors},
+    ports::files::ArtifactStore,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
         DataRetentionService, DeptService, DictCacheStore, DictCacheStoreFuture, DictService,
