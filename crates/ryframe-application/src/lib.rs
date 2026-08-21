@@ -11,6 +11,7 @@ mod dept_persistence;
 mod dict_persistence;
 mod execution_tenant_scope;
 mod export_artifact_persistence;
+mod export_deletion_persistence;
 mod export_requester_persistence;
 mod file_content;
 mod id_generator;
@@ -30,6 +31,7 @@ mod legacy_dept_persistence;
 mod legacy_dict_persistence;
 mod legacy_execution_tenant_scope;
 mod legacy_export_artifact_persistence;
+mod legacy_export_deletion_persistence;
 mod legacy_export_requester_persistence;
 mod legacy_identity_authorization;
 mod legacy_job_queue_persistence;
@@ -139,6 +141,7 @@ pub use export_artifact_persistence::{
     CompleteExportArtifact, ExportArtifactFileDraft, ExportArtifactFileRecord,
     ExportArtifactPersistencePort, ExportArtifactState, ExportArtifactTransaction,
 };
+pub use export_deletion_persistence::{ExportDeletionPersistencePort, ExportDeletionTransaction};
 pub use export_requester_persistence::{
     ExportDownloadFile, ExportRequesterPersistencePort, ExportRequesterRecord,
     ExportRequesterTransaction,
@@ -192,6 +195,8 @@ pub use legacy_dept_persistence::{read_port as legacy_dept_read, write_port as l
 pub use legacy_dict_persistence::port as legacy_dict_persistence;
 #[doc(hidden)]
 pub use legacy_export_artifact_persistence::port as legacy_export_artifact_persistence;
+#[doc(hidden)]
+pub use legacy_export_deletion_persistence::port as legacy_export_deletion_persistence;
 #[doc(hidden)]
 pub use legacy_export_requester_persistence::port as legacy_export_requester_persistence;
 #[doc(hidden)]

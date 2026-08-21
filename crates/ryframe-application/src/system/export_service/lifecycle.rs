@@ -17,24 +17,16 @@ impl ExportService {
     ) -> AppResult<ExportDeletionResult> {
         normalize_deletion_ids(&mut ids)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.deletion_persistence.begin().await?;
         let result = async {
-            let now = self.background_jobs.database_utc_now(&transaction).await?;
-            let marked = self
-                .exports
-                .mark_delete_pending_in_transaction(
-                    &transaction,
-                    tenant_id,
-                    actor.user_id,
-                    &ids,
-                    now,
-                )
+            let now = transaction.database_now().await?;
+            let removed_unread_count = transaction
+                .mark_delete_pending(tenant_id, actor.user_id, &ids, now)
                 .await?;
             let trace_context = crate::trace_context::current_trace_context();
-            self.background_jobs
-                .enqueue_in_transaction(
-                    &transaction,
-                    database_enqueue(EnqueueJob {
+            transaction
+                .enqueue_cleanup(
+                    EnqueueJob {
                         tenant_id: None,
                         schedule_id: None,
                         scheduled_for: Some(now),
@@ -51,20 +43,20 @@ impl ExportService {
                         )),
                         traceparent: trace_context.traceparent,
                         tracestate: trace_context.tracestate,
-                    }),
+                    },
                     now,
                 )
                 .await?;
-            Ok::<_, AppError>(marked)
+            Ok::<_, AppError>(removed_unread_count)
         }
         .await;
-        let marked = match result {
-            Ok(marked) => {
-                crate::commit_current_audit(transaction).await?;
+        let removed_unread_count = match result {
+            Ok(removed_unread_count) => {
+                transaction.commit().await?;
                 if let Some(job_queue) = &self.job_queue {
                     job_queue.notify_background_jobs().await;
                 }
-                marked
+                removed_unread_count
             }
             Err(error) => {
                 let _ = transaction.rollback().await;
@@ -75,7 +67,7 @@ impl ExportService {
         Ok(ExportDeletionResult {
             accepted_count: ids.len() as u64,
             accepted_ids: ids,
-            removed_unread_count: marked.removed_unread_count,
+            removed_unread_count,
         })
     }
 

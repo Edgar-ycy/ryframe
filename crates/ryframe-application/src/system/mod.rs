@@ -47,9 +47,9 @@ pub use dict_service::{
 pub use export_service::{
     ConfigExportFilter, DictTypeExportFilter, EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE,
     EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION, ExportDeletionResult, ExportDownloadLocation,
-    ExportJobPayload, ExportJobVo, ExportPurgeUseCase, ExportSelection, ExportService,
-    LoginLogExportFilter, OperLogExportFilter, PostExportFilter, RequestExportCommand,
-    RoleExportFilter, UserExportFilter,
+    ExportJobPayload, ExportJobVo, ExportPersistencePorts, ExportPurgeUseCase, ExportSelection,
+    ExportService, LoginLogExportFilter, OperLogExportFilter, PostExportFilter,
+    RequestExportCommand, RoleExportFilter, UserExportFilter,
 };
 pub use login_info_service::{
     LoginInfoQuery, LoginInfoService, LoginInfoVo, LoginStatus, RecordLoginCommand,

@@ -20,9 +20,9 @@ use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
     ArtifactStore, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
-        CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportService, FileService,
-        IMPORT_BUCKET, MessageService, ProductService, TenantConfigTransferService,
-        TenantDataMigrationService, UserImportService, UserService,
+        CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportPersistencePorts,
+        ExportService, FileService, IMPORT_BUCKET, MessageService, ProductService,
+        TenantConfigTransferService, TenantDataMigrationService, UserImportService, UserService,
     },
 };
 use ryframe_config::{
@@ -173,8 +173,11 @@ async fn main() -> Result<(), AppError> {
     let export = Arc::new(
         ExportService::new(
             database.clone(),
-            ryframe_application::legacy_export_artifact_persistence(database.clone()),
-            ryframe_application::legacy_export_requester_persistence(database.clone()),
+            ExportPersistencePorts::new(
+                ryframe_application::legacy_export_artifact_persistence(database.clone()),
+                ryframe_application::legacy_export_deletion_persistence(database.clone()),
+                ryframe_application::legacy_export_requester_persistence(database.clone()),
+            ),
             user.clone(),
             object_storage,
             process_spreadsheet::writer_factory(),

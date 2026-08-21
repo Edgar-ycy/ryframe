@@ -6,7 +6,8 @@ use ryframe_kernel::AppError;
 
 use crate::{
     ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort,
-    ExportRequesterPersistencePort, JobQueue, SpreadsheetWriterFactory,
+    ExportDeletionPersistencePort, ExportRequesterPersistencePort, JobQueue,
+    SpreadsheetWriterFactory,
 };
 
 use super::{
@@ -61,6 +62,7 @@ pub struct ExportService {
     background_jobs: BackgroundJobRepository,
     exports: ExportJobRepository,
     artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
+    deletion_persistence: Arc<dyn ExportDeletionPersistencePort>,
     requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
     users: Arc<UserService>,
     roles: RoleService,
@@ -78,11 +80,31 @@ pub struct ExportService {
     purge: ExportPurgeUseCase,
 }
 
+/// 导出用例依赖的控制库端口集合，组合根只负责装配具体实现。
+pub struct ExportPersistencePorts {
+    artifact: Arc<dyn ExportArtifactPersistencePort>,
+    deletion: Arc<dyn ExportDeletionPersistencePort>,
+    requester: Arc<dyn ExportRequesterPersistencePort>,
+}
+
+impl ExportPersistencePorts {
+    pub fn new(
+        artifact: Arc<dyn ExportArtifactPersistencePort>,
+        deletion: Arc<dyn ExportDeletionPersistencePort>,
+        requester: Arc<dyn ExportRequesterPersistencePort>,
+    ) -> Self {
+        Self {
+            artifact,
+            deletion,
+            requester,
+        }
+    }
+}
+
 impl ExportService {
     pub fn new(
         db: ControlDatabaseCluster,
-        artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
-        requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
+        persistence: ExportPersistencePorts,
         users: Arc<UserService>,
         storage: Arc<dyn ArtifactStore>,
         spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
@@ -101,8 +123,9 @@ impl ExportService {
             db: db.clone(),
             background_jobs: BackgroundJobRepository,
             exports: ExportJobRepository,
-            artifact_persistence,
-            requester_persistence,
+            artifact_persistence: persistence.artifact,
+            deletion_persistence: persistence.deletion,
+            requester_persistence: persistence.requester,
             roles: RoleService::new(
                 role_cache.clone(),
                 crate::legacy_role_read(db.clone()),
