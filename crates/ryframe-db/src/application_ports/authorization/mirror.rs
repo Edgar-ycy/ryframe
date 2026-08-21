@@ -1,4 +1,4 @@
-use super::super::control_transaction::DatabasePortTransaction;
+use super::super::transaction::DatabasePortTransaction;
 use crate::{
     CacheNamespaceVersionRepository, OutboxEventRepository, RecordOutboxEvent, TenantRepository,
     UserRepository,

@@ -20,7 +20,7 @@ use ryframe_application::{
     },
 };
 
-use super::super::control_transaction::DatabasePortTransaction;
+use super::super::transaction::DatabasePortTransaction;
 
 pub fn port(
     database: ControlDatabaseCluster,
@@ -301,10 +301,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move {
-            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
-                .await
-        })
+        Box::pin(async move { self.transaction.commit_audited().await })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {

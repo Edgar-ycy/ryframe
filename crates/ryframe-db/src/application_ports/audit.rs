@@ -12,7 +12,7 @@ use ryframe_application::{
     AuditTransactionBinding, PersistenceFuture,
 };
 
-pub fn outbox_port(database: ControlDatabaseCluster) -> Arc<dyn AuditOutboxPersistencePort> {
+pub fn outbox(database: ControlDatabaseCluster) -> Arc<dyn AuditOutboxPersistencePort> {
     Arc::new(DatabaseAuditOutboxPersistence { database })
 }
 

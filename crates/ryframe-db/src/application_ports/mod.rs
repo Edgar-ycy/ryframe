@@ -1,8 +1,7 @@
 pub mod agent;
-mod audit_persistence;
+pub mod audit;
 pub mod auth;
 pub mod authorization;
-mod control_transaction;
 pub mod export;
 pub mod files;
 pub mod jobs;
@@ -12,8 +11,6 @@ pub mod service_accounts;
 pub mod system;
 pub mod tenant_config;
 pub mod tenants;
-pub mod users;
-
-pub use audit_persistence::outbox_port as audit_outbox_persistence;
 #[doc(hidden)]
-pub use control_transaction::DatabasePortTransaction;
+pub mod transaction;
+pub mod users;

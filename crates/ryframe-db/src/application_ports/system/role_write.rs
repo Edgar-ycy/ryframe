@@ -16,7 +16,7 @@ use ryframe_application::{
     ports::system::{RolePermissionRef, RoleRecord, RoleWritePort, RoleWriteTransaction},
 };
 
-use super::super::control_transaction::DatabasePortTransaction;
+use super::super::transaction::DatabasePortTransaction;
 
 pub fn port(
     database: crate::ControlDatabaseCluster,
@@ -284,10 +284,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
 
 impl ControlTransaction for DatabaseRoleWriteTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move {
-            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
-                .await
-        })
+        Box::pin(async move { self.transaction.commit_audited().await })
     }
 }
 

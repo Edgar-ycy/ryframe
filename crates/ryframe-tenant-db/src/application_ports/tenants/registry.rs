@@ -14,8 +14,8 @@ use ryframe_application::{
 };
 use ryframe_db::{
     ControlDatabaseCluster, ProductRepository, ProvisionTenantCommand, ReadConsistency,
-    TenantProvisioningRepository, TenantRepository, application_ports::DatabasePortTransaction,
-    entities::tenant,
+    TenantProvisioningRepository, TenantRepository,
+    application_ports::transaction::DatabasePortTransaction, entities::tenant,
 };
 use ryframe_kernel::AppError;
 use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait};

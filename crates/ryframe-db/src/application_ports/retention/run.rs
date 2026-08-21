@@ -4,7 +4,7 @@ use crate::{ControlDatabaseCluster, DataRetentionRepository, entities::data_rete
 use ryframe_kernel::{AppError, PageResult, ValidatedPageQuery};
 use sea_orm::TransactionTrait;
 
-use super::super::control_transaction::DatabasePortTransaction;
+use super::super::transaction::DatabasePortTransaction;
 
 use ryframe_application::{
     PersistenceFuture,
@@ -153,10 +153,7 @@ impl RetentionRunTransaction for DatabaseRetentionRunTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move {
-            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
-                .await
-        })
+        Box::pin(async move { self.transaction.commit_audited().await })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {

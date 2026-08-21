@@ -15,7 +15,7 @@ use ryframe_application::{
 use ryframe_db::{
     ControlDatabaseCluster, CreateTenantDataMigration, TenantDataRepository,
     TenantOperationLeaseRepository, TenantRepository, ValidatedTenantDataBackup,
-    application_ports::DatabasePortTransaction,
+    application_ports::transaction::DatabasePortTransaction,
     entities::{
         tenant_data_backup_point, tenant_data_migration, tenant_data_migration_item,
         tenant_data_placement, tenant_operation_lease,

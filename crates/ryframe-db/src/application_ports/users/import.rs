@@ -9,7 +9,7 @@ use crate::{
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{EntityTrait, TransactionTrait};
 
-use super::super::control_transaction::DatabasePortTransaction;
+use super::super::transaction::DatabasePortTransaction;
 
 use ryframe_application::{
     EnqueueJob, EnqueueJobResult, PersistenceFuture,
@@ -452,10 +452,7 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move {
-            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
-                .await
-        })
+        Box::pin(async move { self.transaction.commit_audited().await })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {

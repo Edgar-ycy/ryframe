@@ -11,7 +11,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
-use super::super::control_transaction::DatabasePortTransaction;
+use super::super::transaction::DatabasePortTransaction;
 
 use ryframe_application::{
     EnqueueJob, EnqueueJobResult, PersistenceFuture,

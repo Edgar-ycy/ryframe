@@ -84,9 +84,7 @@ impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move {
-            super::super::audit_persistence::commit_current_audit(self.transaction).await
-        })
+        Box::pin(async move { super::super::audit::commit_current_audit(self.transaction).await })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {

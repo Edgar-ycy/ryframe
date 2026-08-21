@@ -50,10 +50,6 @@ impl ConnectionTrait for DatabasePortTransaction {
 }
 
 impl DatabasePortTransaction {
-    pub(super) fn into_inner(self) -> DatabaseTransaction {
-        self.0
-    }
-
     #[doc(hidden)]
     pub async fn commit(self) -> Result<(), DbErr> {
         self.0.commit().await
@@ -66,6 +62,6 @@ impl DatabasePortTransaction {
 
     #[doc(hidden)]
     pub async fn commit_audited(self) -> ryframe_kernel::AppResult<()> {
-        super::audit_persistence::commit_current_audit(self.0).await
+        super::audit::commit_current_audit(self.0).await
     }
 }

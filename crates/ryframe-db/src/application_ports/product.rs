@@ -28,7 +28,7 @@ use ryframe_application::{
     },
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::transaction::DatabasePortTransaction;
 
 pub fn read(database: ControlDatabaseCluster) -> Arc<dyn ProductReadPort> {
     Arc::new(DatabaseProductRead { database })
@@ -477,9 +477,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
-        })
+        Box::pin(async move { self.transaction.commit_audited().await })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {

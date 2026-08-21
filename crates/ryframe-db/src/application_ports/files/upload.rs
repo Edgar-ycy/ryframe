@@ -188,7 +188,7 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
         Box::pin(async move {
             match mode {
                 FileUploadCommitMode::CurrentRequest => {
-                    super::super::audit_persistence::commit_current_audit(self.transaction).await
+                    super::super::audit::commit_current_audit(self.transaction).await
                 }
                 FileUploadCommitMode::Unbound => {
                     FileRepository

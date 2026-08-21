@@ -14,7 +14,7 @@ use sea_orm::{
     TransactionTrait, sea_query::LockType,
 };
 
-use super::super::control_transaction::DatabasePortTransaction;
+use super::super::transaction::DatabasePortTransaction;
 
 use ryframe_application::{
     PersistenceFuture,
@@ -646,10 +646,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
     }
 
     fn commit_audited(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move {
-            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
-                .await
-        })
+        Box::pin(async move { self.transaction.commit_audited().await })
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
