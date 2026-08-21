@@ -13,6 +13,8 @@ use sea_orm::{
     QuerySelect,
 };
 
+use super::account_record;
+
 use ryframe_application::{
     PersistenceFuture,
     ports::service_accounts::{
@@ -205,24 +207,6 @@ async fn delegations_with_capabilities(
         result.push(delegation_record(row, keys));
     }
     Ok(result)
-}
-
-fn account_record(account: service_account::Model) -> ServiceAccountRecord {
-    ServiceAccountRecord {
-        id: account.id,
-        tenant_id: account.tenant_id,
-        code: account.code,
-        name: account.name,
-        description: account.description,
-        dept_id: account.dept_id,
-        status: account.status,
-        authorization_version: account.authorization_version,
-        max_requests_per_minute: account.max_requests_per_minute,
-        created_by: account.created_by,
-        deleted: account.del_flag == service_account::Model::DEL_FLAG_DELETED,
-        created_at: account.created_at,
-        updated_at: account.updated_at,
-    }
 }
 
 fn credential_record(credential: service_credential::Model) -> ServiceCredentialRecord {
