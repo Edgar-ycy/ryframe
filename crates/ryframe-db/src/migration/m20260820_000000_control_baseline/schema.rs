@@ -698,7 +698,7 @@ pub(crate) const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_ex
     `authorization_fingerprint` CHAR(64) NOT NULL,
     `request_fingerprint` CHAR(64) NOT NULL,
     `active_request_fingerprint` CHAR(64) DEFAULT NULL,
-    `snapshot_at` DATETIME NOT NULL,
+    `snapshot_at` DATETIME(6) NOT NULL,
     `upper_id` BIGINT NOT NULL,
     `matched_rows` BIGINT NOT NULL,
     `exported_rows` BIGINT NOT NULL DEFAULT 0,

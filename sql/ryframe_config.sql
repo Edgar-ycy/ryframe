@@ -1,5 +1,5 @@
 -- 自动生成文件：RyFrame 控制库新基线快照。
--- schema fingerprint: 6c5c4af5df9d7ee8
+-- schema fingerprint: 595a420d869c5fdb
 -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
 -- 重新生成命令：cargo run -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -1263,7 +1263,7 @@ CREATE TABLE IF NOT EXISTS `sys_export_job` (
     `authorization_fingerprint` CHAR(64) NOT NULL,
     `request_fingerprint` CHAR(64) NOT NULL,
     `active_request_fingerprint` CHAR(64) DEFAULT NULL,
-    `snapshot_at` DATETIME NOT NULL,
+    `snapshot_at` DATETIME(6) NOT NULL,
     `upper_id` BIGINT NOT NULL,
     `matched_rows` BIGINT NOT NULL,
     `exported_rows` BIGINT NOT NULL DEFAULT 0,

@@ -148,14 +148,29 @@ impl StoredExportRequest {
     ) -> ryframe_kernel::AppResult<()> {
         let matched_rows = u64::try_from(export.matched_rows)
             .map_err(|_| ryframe_kernel::AppError::Validation("导出任务匹配行数无效".into()))?;
-        if i32::from(self.request_version) != export.request_version
-            || self.authorization_fingerprint != export.authorization_fingerprint
-            || &self.snapshot_at != export.snapshot_at
-            || self.upper_id != export.upper_id
-            || self.matched_rows != matched_rows
-        {
+        if i32::from(self.request_version) != export.request_version {
             return Err(ryframe_kernel::AppError::Validation(
-                "导出请求快照与任务选择边界不一致".into(),
+                "导出请求快照版本与任务记录不一致".into(),
+            ));
+        }
+        if self.authorization_fingerprint != export.authorization_fingerprint {
+            return Err(ryframe_kernel::AppError::Validation(
+                "导出请求授权指纹与任务记录不一致".into(),
+            ));
+        }
+        if &self.snapshot_at != export.snapshot_at {
+            return Err(ryframe_kernel::AppError::Validation(
+                "导出请求快照时间与任务记录不一致".into(),
+            ));
+        }
+        if self.upper_id != export.upper_id {
+            return Err(ryframe_kernel::AppError::Validation(
+                "导出请求 ID 上界与任务记录不一致".into(),
+            ));
+        }
+        if self.matched_rows != matched_rows {
+            return Err(ryframe_kernel::AppError::Validation(
+                "导出请求匹配行数与任务记录不一致".into(),
             ));
         }
         Ok(())

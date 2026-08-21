@@ -147,6 +147,6 @@ mod tests {
         tables.dedup();
         assert_eq!(tables.len(), count);
         assert_eq!(count, 51);
-        assert_eq!(schema_fingerprint(), "6c5c4af5df9d7ee8");
+        assert_eq!(schema_fingerprint(), "595a420d869c5fdb");
     }
 }
