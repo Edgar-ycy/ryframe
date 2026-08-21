@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use chrono::Duration;
-use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 
 use crate::{
@@ -11,8 +10,8 @@ use crate::{
 };
 
 use super::{
-    ConfigService, DictService, LoginInfoService, OperLogService, PostService, ProductService,
-    RoleService, UserService,
+    ConfigService, DictService, LoginInfoService, OperLogService, PostService, RoleService,
+    UserService,
 };
 
 mod cleanup;
@@ -64,12 +63,12 @@ pub struct ExportService {
     request_persistence: Arc<dyn ExportRequestPersistencePort>,
     requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
     users: Arc<UserService>,
-    roles: RoleService,
-    posts: PostService,
-    configs: ConfigService,
-    dicts: DictService,
-    oper_logs: OperLogService,
-    login_infos: LoginInfoService,
+    roles: Arc<RoleService>,
+    posts: Arc<PostService>,
+    configs: Arc<ConfigService>,
+    dicts: Arc<DictService>,
+    oper_logs: Arc<OperLogService>,
+    login_infos: Arc<LoginInfoService>,
     storage: Arc<dyn ArtifactStore>,
     spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
     default_max_attempts: i32,
@@ -87,6 +86,17 @@ pub struct ExportPersistencePorts {
     execution: Arc<dyn ExportExecutionPersistencePort>,
     request: Arc<dyn ExportRequestPersistencePort>,
     requester: Arc<dyn ExportRequesterPersistencePort>,
+}
+
+/// 导出七类资源所复用的应用服务，由组合根统一装配。
+pub struct ExportResourceServices {
+    pub users: Arc<UserService>,
+    pub roles: Arc<RoleService>,
+    pub posts: Arc<PostService>,
+    pub configs: Arc<ConfigService>,
+    pub dicts: Arc<DictService>,
+    pub oper_logs: Arc<OperLogService>,
+    pub login_infos: Arc<LoginInfoService>,
 }
 
 impl ExportPersistencePorts {
@@ -111,22 +121,13 @@ impl ExportPersistencePorts {
 
 impl ExportService {
     pub fn new(
-        db: ControlDatabaseCluster,
         persistence: ExportPersistencePorts,
-        users: Arc<UserService>,
+        resources: ExportResourceServices,
         storage: Arc<dyn ArtifactStore>,
         spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
         policy: crate::ExportPolicy,
     ) -> Self {
         let purge = ExportPurgeUseCase::new(Arc::clone(&persistence.cleanup), Arc::clone(&storage));
-        let config_cache = crate::AuthorizationCache::disabled();
-        let role_cache = crate::AuthorizationCache::disabled();
-        let role_product = Arc::new(ProductService::new(
-            crate::legacy_product_read(db.clone()),
-            crate::legacy_product_write(db.clone()),
-            crate::AuthorizationCache::disabled(),
-            false,
-        ));
         Self {
             artifact_persistence: persistence.artifact,
             cleanup_persistence: persistence.cleanup,
@@ -134,20 +135,13 @@ impl ExportService {
             execution_persistence: persistence.execution,
             request_persistence: persistence.request,
             requester_persistence: persistence.requester,
-            roles: RoleService::new(
-                role_cache.clone(),
-                crate::legacy_role_read(db.clone()),
-                crate::legacy_role_write(db.clone(), role_cache, role_product),
-            ),
-            posts: PostService::new(crate::legacy_post_persistence(db.clone())),
-            configs: ConfigService::new(
-                crate::legacy_config_persistence(db.clone(), config_cache.clone()),
-                config_cache,
-            ),
-            dicts: DictService::new(crate::legacy_dict_persistence(db.clone()), None),
-            oper_logs: OperLogService::new(crate::legacy_oper_log_persistence(db.clone())),
-            login_infos: LoginInfoService::new(crate::legacy_login_info_persistence(db)),
-            users,
+            roles: resources.roles,
+            posts: resources.posts,
+            configs: resources.configs,
+            dicts: resources.dicts,
+            oper_logs: resources.oper_logs,
+            login_infos: resources.login_infos,
+            users: resources.users,
             storage,
             spreadsheets,
             default_max_attempts: policy.default_max_attempts,

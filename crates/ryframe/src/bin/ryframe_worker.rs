@@ -20,8 +20,9 @@ use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
     ArtifactStore, CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
     system::{
-        CONFIG_PACKAGE_BUCKET, DataRetentionService, EXPORT_BUCKET, ExportPersistencePorts,
-        ExportService, FileService, IMPORT_BUCKET, MessageService, ProductService,
+        CONFIG_PACKAGE_BUCKET, ConfigService, DataRetentionService, DictService, EXPORT_BUCKET,
+        ExportPersistencePorts, ExportResourceServices, ExportService, FileService, IMPORT_BUCKET,
+        LoginInfoService, MessageService, OperLogService, PostService, ProductService, RoleService,
         TenantConfigTransferService, TenantDataMigrationService, UserImportService, UserService,
     },
 };
@@ -164,6 +165,35 @@ async fn main() -> Result<(), AppError> {
         authorization_cache.clone(),
         application_policies.service_accounts.enabled() && redis.is_some(),
     ));
+    let role = Arc::new(RoleService::new(
+        authorization_cache.clone(),
+        ryframe_application::legacy_role_read(database.clone()),
+        ryframe_application::legacy_role_write(
+            database.clone(),
+            authorization_cache.clone(),
+            Arc::clone(&product),
+        ),
+    ));
+    let post = Arc::new(PostService::new(
+        ryframe_application::legacy_post_persistence(database.clone()),
+    ));
+    let config_service = Arc::new(ConfigService::new(
+        ryframe_application::legacy_config_persistence(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
+        authorization_cache.clone(),
+    ));
+    let dict = Arc::new(DictService::new(
+        ryframe_application::legacy_dict_persistence(database.clone()),
+        None,
+    ));
+    let oper_log = Arc::new(OperLogService::new(
+        ryframe_application::legacy_oper_log_persistence(database.clone()),
+    ));
+    let login_info = Arc::new(LoginInfoService::new(
+        ryframe_application::legacy_login_info_persistence(database.clone()),
+    ));
     let file = Arc::new(FileService::new(
         database.clone(),
         object_storage.clone(),
@@ -172,7 +202,6 @@ async fn main() -> Result<(), AppError> {
     file.spawn_upload_janitor();
     let export = Arc::new(
         ExportService::new(
-            database.clone(),
             ExportPersistencePorts::new(
                 ryframe_application::legacy_export_artifact_persistence(database.clone()),
                 ryframe_application::legacy_export_cleanup_persistence(database.clone()),
@@ -181,7 +210,15 @@ async fn main() -> Result<(), AppError> {
                 ryframe_application::legacy_export_request_persistence(database.clone()),
                 ryframe_application::legacy_export_requester_persistence(database.clone()),
             ),
-            user.clone(),
+            ExportResourceServices {
+                users: Arc::clone(&user),
+                roles: role,
+                posts: post,
+                configs: config_service,
+                dicts: dict,
+                oper_logs: oper_log,
+                login_infos: login_info,
+            },
             object_storage,
             process_spreadsheet::writer_factory(),
             application_policies.export,

@@ -8,14 +8,14 @@ use ryframe_application::{
     system::{
         AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
         DataRetentionService, DeptService, DictCacheStore, DictCacheStoreFuture, DictService,
-        ExportPersistencePorts, ExportService, FileService, InMemoryCaptchaStore, LoginInfoService,
-        MenuService, MessageService, NoticeService, OnlineUserService, OperLogService,
-        OverviewService, PermissionService, PostService, ProductService, ProfileService,
-        RoleService, ServiceAccountReadDependencies, ServiceAccountService,
-        TenantConfigTransferService, TenantDataMigrationService, TenantRateLimitReadFuture,
-        TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService, TenantUsageService,
-        UserImportService, UserService, WebSocketTicketService, WebSocketTicketStore,
-        WebSocketTicketStoreFuture,
+        ExportPersistencePorts, ExportResourceServices, ExportService, FileService,
+        InMemoryCaptchaStore, LoginInfoService, MenuService, MessageService, NoticeService,
+        OnlineUserService, OperLogService, OverviewService, PermissionService, PostService,
+        ProductService, ProfileService, RoleService, ServiceAccountReadDependencies,
+        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
+        TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
+        TenantUsageService, UserImportService, UserService, WebSocketTicketService,
+        WebSocketTicketStore, WebSocketTicketStoreFuture,
     },
 };
 use ryframe_config::AppConfig;
@@ -412,7 +412,6 @@ pub async fn build_all(
     ));
     let export = Arc::new(
         ExportService::new(
-            database.clone(),
             ExportPersistencePorts::new(
                 ryframe_application::legacy_export_artifact_persistence(database.clone()),
                 ryframe_application::legacy_export_cleanup_persistence(database.clone()),
@@ -421,7 +420,15 @@ pub async fn build_all(
                 ryframe_application::legacy_export_request_persistence(database.clone()),
                 ryframe_application::legacy_export_requester_persistence(database.clone()),
             ),
-            user.clone(),
+            ExportResourceServices {
+                users: Arc::clone(&user),
+                roles: Arc::clone(&role),
+                posts: Arc::clone(&post),
+                configs: Arc::clone(&config_service),
+                dicts: Arc::clone(&dict),
+                oper_logs: Arc::clone(&oper_log),
+                login_infos: Arc::clone(&login_info),
+            },
             object_storage,
             super::spreadsheet::writer_factory(),
             policies.export,
