@@ -8,10 +8,7 @@ impl ExportService {
     /// 整轮只读取一次数据库时间，单项失败不会阻塞后续项；最终返回首个错误，
     /// 使后台任务保留告警并按既有退避策略重试尚未清理的墓碑。
     pub async fn cleanup_expired(&self) -> AppResult<u64> {
-        let now = self
-            .background_jobs
-            .database_utc_now(self.db.write())
-            .await?;
+        let now = self.cleanup_persistence.database_now().await?;
         let mut cleaned = 0_u64;
         let mut failed = 0_u64;
         let mut first_error = None;
@@ -19,8 +16,8 @@ impl ExportService {
         let mut after_id = None;
         loop {
             let exports = self
-                .exports
-                .list_delete_pending_after_id(self.db.write(), after_id, EXPORT_CLEANUP_BATCH_SIZE)
+                .cleanup_persistence
+                .list_delete_pending(after_id, EXPORT_CLEANUP_BATCH_SIZE)
                 .await?;
             if exports.is_empty() {
                 break;
@@ -49,13 +46,8 @@ impl ExportService {
         after_id = None;
         loop {
             let exports = self
-                .exports
-                .list_expired_succeeded_after_id(
-                    self.db.write(),
-                    now,
-                    after_id,
-                    EXPORT_CLEANUP_BATCH_SIZE,
-                )
+                .cleanup_persistence
+                .list_expired(now, after_id, EXPORT_CLEANUP_BATCH_SIZE)
                 .await?;
             if exports.is_empty() {
                 break;

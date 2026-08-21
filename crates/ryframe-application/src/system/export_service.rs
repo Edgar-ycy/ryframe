@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use chrono::Duration;
-use ryframe_db::{BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository};
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 
 use crate::{
-    ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort,
+    ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort, ExportCleanupPersistencePort,
     ExportDeletionPersistencePort, ExportExecutionPersistencePort, ExportRequestPersistencePort,
     ExportRequesterPersistencePort, JobQueue, SpreadsheetWriterFactory,
 };
@@ -28,7 +28,7 @@ pub use filters::{
     ConfigExportFilter, DictTypeExportFilter, ExportSelection, LoginLogExportFilter,
     OperLogExportFilter, PostExportFilter, RoleExportFilter, UserExportFilter,
 };
-pub use purge::ExportPurgeUseCase;
+use purge::ExportPurgeUseCase;
 pub use types::{
     EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION,
     ExportDeletionResult, ExportDownloadLocation, ExportJobPayload, ExportJobVo,
@@ -57,10 +57,8 @@ const EXPORT_STATUS_CANCELLED: &str = "cancelled";
 
 /// 异步导出任务服务。
 pub struct ExportService {
-    db: ControlDatabaseCluster,
-    background_jobs: BackgroundJobRepository,
-    exports: ExportJobRepository,
     artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
+    cleanup_persistence: Arc<dyn ExportCleanupPersistencePort>,
     deletion_persistence: Arc<dyn ExportDeletionPersistencePort>,
     execution_persistence: Arc<dyn ExportExecutionPersistencePort>,
     request_persistence: Arc<dyn ExportRequestPersistencePort>,
@@ -84,6 +82,7 @@ pub struct ExportService {
 /// 导出用例依赖的控制库端口集合，组合根只负责装配具体实现。
 pub struct ExportPersistencePorts {
     artifact: Arc<dyn ExportArtifactPersistencePort>,
+    cleanup: Arc<dyn ExportCleanupPersistencePort>,
     deletion: Arc<dyn ExportDeletionPersistencePort>,
     execution: Arc<dyn ExportExecutionPersistencePort>,
     request: Arc<dyn ExportRequestPersistencePort>,
@@ -93,6 +92,7 @@ pub struct ExportPersistencePorts {
 impl ExportPersistencePorts {
     pub fn new(
         artifact: Arc<dyn ExportArtifactPersistencePort>,
+        cleanup: Arc<dyn ExportCleanupPersistencePort>,
         deletion: Arc<dyn ExportDeletionPersistencePort>,
         execution: Arc<dyn ExportExecutionPersistencePort>,
         request: Arc<dyn ExportRequestPersistencePort>,
@@ -100,6 +100,7 @@ impl ExportPersistencePorts {
     ) -> Self {
         Self {
             artifact,
+            cleanup,
             deletion,
             execution,
             request,
@@ -117,7 +118,7 @@ impl ExportService {
         spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
         policy: crate::ExportPolicy,
     ) -> Self {
-        let purge = ExportPurgeUseCase::new(db.clone(), Arc::clone(&storage));
+        let purge = ExportPurgeUseCase::new(Arc::clone(&persistence.cleanup), Arc::clone(&storage));
         let config_cache = crate::AuthorizationCache::disabled();
         let role_cache = crate::AuthorizationCache::disabled();
         let role_product = Arc::new(ProductService::new(
@@ -127,10 +128,8 @@ impl ExportService {
             false,
         ));
         Self {
-            db: db.clone(),
-            background_jobs: BackgroundJobRepository,
-            exports: ExportJobRepository,
             artifact_persistence: persistence.artifact,
+            cleanup_persistence: persistence.cleanup,
             deletion_persistence: persistence.deletion,
             execution_persistence: persistence.execution,
             request_persistence: persistence.request,
@@ -164,10 +163,6 @@ impl ExportService {
         self.job_queue = Some(job_queue);
         self
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 fn storage_error(error: ArtifactStoreError) -> AppError {
