@@ -246,7 +246,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir --parents "$(dirname "$SBOM_PATH")"
-          export SOURCE_DATE_EPOCH="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
+          SOURCE_DATE_EPOCH="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
+          export SOURCE_DATE_EPOCH
           cargo cyclonedx \
             --manifest-path crates/ryframe/Cargo.toml \
             --format json \
