@@ -1,5 +1,5 @@
 schema_version = 1
-active_profile = "transition"
+active_profile = "final"
 
 # 源码规模检查从当前 profile 的 product_packages 自动发现所有生产 crate，
 # 不再维护容易漏项的目录白名单。
