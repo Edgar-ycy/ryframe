@@ -432,9 +432,13 @@ impl RedisReset {
             return Err(ResetError::new("Redis scope 外哨兵键与不可变清单不匹配"));
         }
         let client = RedisClient::connect(config).await.map_err(|error| {
+            let detail = error
+                .to_string()
+                .replace(&config.connection_url(), "<Redis 连接地址>")
+                .replace(&config.password, "<已隐藏>");
             ResetError::new(format!(
-                "Redis 连接预检失败（错误类型：{:?}）",
-                error.kind()
+                "Redis 连接预检失败（错误类型：{:?}，详情：{detail}）",
+                error.kind(),
             ))
         })?;
         client
