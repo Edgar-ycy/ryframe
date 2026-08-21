@@ -6,7 +6,7 @@ use ryframe_kernel::{
 };
 use serde::Serialize;
 
-use crate::{PostFilter, PostPersistencePort, PostRecord};
+use crate::ports::system::{PostFilter, PostPersistencePort, PostRecord};
 
 #[derive(Debug, Serialize)]
 pub struct PostVo {
@@ -188,7 +188,7 @@ mod tests {
     use ryframe_kernel::DataScope;
 
     use super::*;
-    use crate::{ControlTransaction, PersistenceFuture, PostTransaction};
+    use crate::{ControlTransaction, PersistenceFuture, ports::system::PostTransaction};
 
     struct FakePersistence {
         calls: Arc<Mutex<Vec<&'static str>>>,

@@ -12,11 +12,13 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    AuthorizationCache, ControlTransaction, MenuFilter, MenuReadPort, MenuRecord, MenuTreeRecord,
-    MenuWritePort, MenuWriteTransaction, PersistenceFuture,
+    AuthorizationCache, ControlTransaction, PersistenceFuture,
+    ports::system::{
+        MenuFilter, MenuReadPort, MenuRecord, MenuTreeRecord, MenuWritePort, MenuWriteTransaction,
+    },
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn MenuReadPort> {
     Arc::new(DatabaseMenuRead { database })
@@ -303,7 +305,8 @@ impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
 impl ControlTransaction for DatabaseMenuWriteTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 }

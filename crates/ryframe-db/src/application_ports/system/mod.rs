@@ -1,0 +1,28 @@
+mod config;
+mod dept;
+mod dict;
+mod login_info;
+mod menu;
+mod message;
+mod notice;
+mod oper_log;
+mod overview;
+mod permission;
+mod post;
+mod role_read;
+mod role_write;
+
+pub use config::port as config;
+pub use dept::{read_port as dept_read, write_port as dept_write};
+pub use dict::port as dict;
+pub use login_info::port as login_info;
+pub use menu::{read_port as menu_read, write_port as menu_write};
+pub use message::port as message;
+pub use notice::port as notice;
+pub(crate) use oper_log::insert_event_in_transaction as insert_oper_log;
+pub use oper_log::port as oper_log;
+pub use overview::port as overview;
+pub use permission::{read_port as permission_read, write_port as permission_write};
+pub use post::port as post;
+pub use role_read::port as role_read;
+pub use role_write::port as role_write;

@@ -7,7 +7,8 @@ use ryframe_kernel::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthorizationCache, ConfigFilter, ConfigPersistencePort, ConfigRecord, NamespaceCacheLookup,
+    AuthorizationCache, NamespaceCacheLookup,
+    ports::system::{ConfigFilter, ConfigPersistencePort, ConfigRecord},
 };
 
 const CACHE_TTL_SECS: u64 = 3600;
@@ -341,7 +342,7 @@ mod tests {
     use ryframe_kernel::DataScope;
 
     use super::*;
-    use crate::{ConfigTransaction, ControlTransaction, PersistenceFuture};
+    use crate::{ControlTransaction, PersistenceFuture, ports::system::ConfigTransaction};
 
     struct FakePersistence {
         calls: Arc<Mutex<Vec<&'static str>>>,

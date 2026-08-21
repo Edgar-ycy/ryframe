@@ -11,11 +11,13 @@ use sea_orm::{
 
 use ryframe_application::system::ProductService;
 use ryframe_application::{
-    AuthorizationCache, ControlTransaction, PermissionReadPort, PermissionRecord,
-    PermissionWritePort, PermissionWriteTransaction, PersistenceFuture,
+    AuthorizationCache, ControlTransaction, PersistenceFuture,
+    ports::system::{
+        PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,
+    },
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn PermissionReadPort> {
     Arc::new(DatabasePermissionRead { database })
@@ -244,7 +246,7 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
             let snapshot = ProductRepository
                 .tenant_product(&self.transaction, tenant_id)
                 .await?
-                .map(super::product_persistence::tenant_snapshot)
+                .map(super::super::product_persistence::tenant_snapshot)
                 .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product_service
                 .filter_syncable_permission_codes(snapshot, codes)
@@ -282,7 +284,8 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
 impl ControlTransaction for DatabasePermissionWriteTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 }

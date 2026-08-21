@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
 
-use crate::{BackgroundJobQueueStats, JobQueue, OverviewPersistencePort};
+use crate::{BackgroundJobQueueStats, JobQueue, ports::system::OverviewPersistencePort};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverviewRange {

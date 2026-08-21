@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::PermissionRecord;
+use crate::ports::system::PermissionRecord;
 
 use super::PermissionTreeNode;
 

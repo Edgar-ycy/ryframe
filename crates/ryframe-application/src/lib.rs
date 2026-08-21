@@ -4,23 +4,12 @@ mod audit;
 mod auth_service;
 mod authorization_cache;
 mod authorization_resolver;
-mod config_persistence;
-mod dept_persistence;
-mod dict_persistence;
 mod file_content;
 mod id_generator;
 pub mod jobs;
-mod login_info_persistence;
 mod login_protection;
-mod menu_persistence;
-mod message_persistence;
-mod notice_persistence;
-mod oper_log_persistence;
-mod overview_persistence;
-mod permission_persistence;
 mod persistence;
 pub mod ports;
-mod post_persistence;
 mod principal_resolver;
 mod product_persistence;
 mod profile_persistence;
@@ -28,8 +17,6 @@ mod refresh_session;
 mod request_tenant_context;
 mod retention_cleanup_persistence;
 mod retention_run_persistence;
-mod role_read;
-mod role_write;
 mod runtime_policy;
 mod service_identity_secret;
 mod spreadsheet;
@@ -73,15 +60,6 @@ pub use authorization_cache::{
     set_authorization_cache_lookup_hook,
 };
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
-pub use config_persistence::{
-    ConfigFilter, ConfigPersistencePort, ConfigRecord, ConfigTransaction,
-};
-pub use dept_persistence::{
-    DeptFilter, DeptReadPort, DeptRecord, DeptTreeRecord, DeptWritePort, DeptWriteTransaction,
-};
-pub use dict_persistence::{
-    DictDataRecord, DictPersistencePort, DictTransaction, DictTypeFilter, DictTypeRecord,
-};
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 #[allow(deprecated)]
@@ -97,32 +75,8 @@ pub use jobs::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
-pub use login_info_persistence::{
-    LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
-};
 pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
-pub use menu_persistence::{
-    MenuFilter, MenuReadPort, MenuRecord, MenuTreeRecord, MenuWritePort, MenuWriteTransaction,
-};
-pub use message_persistence::{
-    MessageAudienceRecord, MessageAudienceRecordKind, MessageInboxFilter, MessageOutboxRecord,
-    MessagePage, MessagePersistencePort, MessageRecipientRecord, MessageRecord, MessageTransaction,
-    PublishMessageRecord, PublishedMessageRecord,
-};
-pub use notice_persistence::{
-    NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction,
-};
-pub use oper_log_persistence::{
-    OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction,
-};
-pub use overview_persistence::{
-    OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
-};
-pub use permission_persistence::{
-    PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,
-};
 pub use persistence::{ControlTransaction, PersistenceFuture};
-pub use post_persistence::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};
 pub use principal_resolver::PrincipalResolver;
 pub use product_persistence::{
     ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState, ProductPlanRecord,
@@ -147,8 +101,6 @@ pub use retention_cleanup_persistence::{
 pub use retention_run_persistence::{
     RetentionRunPersistencePort, RetentionRunRecord, RetentionRunTransaction,
 };
-pub use role_read::{RoleFilter, RoleReadPort, RoleRecord};
-pub use role_write::{RolePermissionRef, RoleWritePort, RoleWriteTransaction};
 pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,

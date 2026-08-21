@@ -3,7 +3,8 @@ use std::sync::Arc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 
 use crate::{
-    AuthorizationCache, MenuFilter, MenuReadPort, MenuRecord, MenuWritePort, MenuWriteTransaction,
+    AuthorizationCache,
+    ports::system::{MenuFilter, MenuReadPort, MenuRecord, MenuWritePort, MenuWriteTransaction},
 };
 
 mod model;

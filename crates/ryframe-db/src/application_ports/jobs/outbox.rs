@@ -9,10 +9,11 @@ use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    EnqueueJob, OperLogRecord, PersistenceFuture,
+    EnqueueJob, PersistenceFuture,
     ports::jobs::{
         ClaimedOutboxEvent, ExecutionTenantScope, OutboxFailureOutcome, OutboxPersistencePort,
     },
+    ports::system::OperLogRecord,
 };
 
 use super::{queue::database_enqueue, tenant_scope::database_scope};
@@ -92,13 +93,9 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
         Box::pin(async move {
             let transaction = begin(self.database.write()).await?;
             let result = async {
-                super::super::oper_log_persistence::insert_event_in_transaction(
-                    &transaction,
-                    tenant_id,
-                    record,
-                )
-                .await
-                .inspect_err(|_| ryframe_application::record_audit_failure("oper_log_write"))?;
+                super::super::system::insert_oper_log(&transaction, tenant_id, record)
+                    .await
+                    .inspect_err(|_| ryframe_application::record_audit_failure("oper_log_write"))?;
                 self.repository
                     .mark_published_in_transaction(&transaction, event_id, worker_id, now)
                     .await

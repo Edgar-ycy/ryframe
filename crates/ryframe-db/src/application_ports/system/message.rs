@@ -9,9 +9,12 @@ use crate::{
 use sea_orm::{EntityTrait, TransactionTrait};
 
 use ryframe_application::{
-    ControlTransaction, MessageAudienceRecordKind, MessageInboxFilter, MessageOutboxRecord,
-    MessagePage, MessagePersistencePort, MessageRecipientRecord, MessageRecord, MessageTransaction,
-    PersistenceFuture, PublishMessageRecord, PublishedMessageRecord,
+    ControlTransaction, PersistenceFuture,
+    ports::system::{
+        MessageAudienceRecordKind, MessageInboxFilter, MessageOutboxRecord, MessagePage,
+        MessagePersistencePort, MessageRecipientRecord, MessageRecord, MessageTransaction,
+        PublishMessageRecord, PublishedMessageRecord,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn MessagePersistencePort> {
@@ -282,9 +285,9 @@ impl MessageTransaction for DatabaseMessageTransaction {
 
 impl ControlTransaction for DatabaseMessageTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 }
 

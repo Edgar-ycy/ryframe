@@ -140,7 +140,7 @@ async fn main() -> Result<(), AppError> {
     let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
     install_job_metrics(&queue);
     let message = Arc::new(MessageService::new(
-        ryframe_db::application_ports::message_persistence(database.clone()),
+        ryframe_db::application_ports::system::message(database.clone()),
         queue.clone(),
         application_policies.messaging,
     ));
@@ -165,32 +165,32 @@ async fn main() -> Result<(), AppError> {
     ));
     let role = Arc::new(RoleService::new(
         authorization_cache.clone(),
-        ryframe_db::application_ports::role_read(database.clone()),
-        ryframe_db::application_ports::role_write(
+        ryframe_db::application_ports::system::role_read(database.clone()),
+        ryframe_db::application_ports::system::role_write(
             database.clone(),
             authorization_cache.clone(),
             Arc::clone(&product),
         ),
     ));
     let post = Arc::new(PostService::new(
-        ryframe_db::application_ports::post_persistence(database.clone()),
+        ryframe_db::application_ports::system::post(database.clone()),
     ));
     let config_service = Arc::new(ConfigService::new(
-        ryframe_db::application_ports::config_persistence(
+        ryframe_db::application_ports::system::config(
             database.clone(),
             authorization_cache.clone(),
         ),
         authorization_cache.clone(),
     ));
     let dict = Arc::new(DictService::new(
-        ryframe_db::application_ports::dict_persistence(database.clone()),
+        ryframe_db::application_ports::system::dict(database.clone()),
         None,
     ));
     let oper_log = Arc::new(OperLogService::new(
-        ryframe_db::application_ports::oper_log_persistence(database.clone()),
+        ryframe_db::application_ports::system::oper_log(database.clone()),
     ));
     let login_info = Arc::new(LoginInfoService::new(
-        ryframe_db::application_ports::login_info_persistence(database.clone()),
+        ryframe_db::application_ports::system::login_info(database.clone()),
     ));
     let file = Arc::new(FileService::new(
         ryframe_db::application_ports::files::cleanup(database.clone()),

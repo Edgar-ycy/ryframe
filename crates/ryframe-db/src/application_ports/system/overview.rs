@@ -4,8 +4,10 @@ use crate::{ControlDatabaseCluster, DataRetentionRepository, OverviewRepository}
 use chrono::{DateTime, Utc};
 
 use ryframe_application::{
-    OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, PersistenceFuture,
-    ScheduleOverviewStats,
+    PersistenceFuture,
+    ports::system::{
+        OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn OverviewPersistencePort> {

@@ -2,7 +2,7 @@ use chrono::Duration;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde_json::Value;
 
-use crate::{
+use crate::ports::system::{
     MessageAudienceRecord, MessageAudienceRecordKind, MessageOutboxRecord, PublishMessageRecord,
 };
 

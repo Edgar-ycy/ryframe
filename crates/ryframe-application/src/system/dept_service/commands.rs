@@ -1,6 +1,6 @@
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
-use crate::{DeptRecord, DeptWriteTransaction};
+use crate::ports::system::{DeptRecord, DeptWriteTransaction};
 
 use super::{CreateDeptCommand, DeptService, DeptVo, UpdateDeptCommand};
 

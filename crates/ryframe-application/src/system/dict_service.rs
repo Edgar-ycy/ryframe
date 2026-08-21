@@ -6,7 +6,7 @@ use ryframe_kernel::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{DictDataRecord, DictPersistencePort, DictTypeFilter, DictTypeRecord};
+use crate::ports::system::{DictDataRecord, DictPersistencePort, DictTypeFilter, DictTypeRecord};
 
 const DICT_CACHE_KEY_PREFIX: &str = "sys_dict:data:";
 const CACHE_TTL_SECS: u64 = 3600;

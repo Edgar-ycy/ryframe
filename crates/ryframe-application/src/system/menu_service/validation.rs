@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use ryframe_kernel::{AppError, AppResult};
 
-use crate::MenuWriteTransaction;
+use crate::ports::system::MenuWriteTransaction;
 
 use super::{MenuService, MenuType};
 

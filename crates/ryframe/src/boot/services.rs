@@ -182,8 +182,8 @@ pub async fn build_all(
     ));
     let role = Arc::new(RoleService::new(
         authorization_cache.clone(),
-        ryframe_db::application_ports::role_read(database.clone()),
-        ryframe_db::application_ports::role_write(
+        ryframe_db::application_ports::system::role_read(database.clone()),
+        ryframe_db::application_ports::system::role_write(
             database.clone(),
             authorization_cache.clone(),
             product.clone(),
@@ -242,8 +242,8 @@ pub async fn build_all(
         (None, None)
     };
     let permission = Arc::new(PermissionService::new(
-        ryframe_db::application_ports::permission_read(database.clone()),
-        ryframe_db::application_ports::permission_write(
+        ryframe_db::application_ports::system::permission_read(database.clone()),
+        ryframe_db::application_ports::system::permission_write(
             database.clone(),
             authorization_cache.clone(),
             Arc::clone(&product),
@@ -265,21 +265,27 @@ pub async fn build_all(
         authorization_cache.clone(),
     ));
     let menu = Arc::new(MenuService::new(
-        ryframe_db::application_ports::menu_read(database.clone()),
-        ryframe_db::application_ports::menu_write(database.clone(), authorization_cache.clone()),
+        ryframe_db::application_ports::system::menu_read(database.clone()),
+        ryframe_db::application_ports::system::menu_write(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
         authorization_cache.clone(),
     ));
 
     let dept = Arc::new(DeptService::new(
-        ryframe_db::application_ports::dept_read(database.clone()),
-        ryframe_db::application_ports::dept_write(database.clone(), authorization_cache.clone()),
+        ryframe_db::application_ports::system::dept_read(database.clone()),
+        ryframe_db::application_ports::system::dept_write(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
         authorization_cache.clone(),
     ));
     let post = Arc::new(PostService::new(
-        ryframe_db::application_ports::post_persistence(database.clone()),
+        ryframe_db::application_ports::system::post(database.clone()),
     ));
     let config_service = Arc::new(ConfigService::new(
-        ryframe_db::application_ports::config_persistence(
+        ryframe_db::application_ports::system::config(
             database.clone(),
             authorization_cache.clone(),
         ),
@@ -287,7 +293,7 @@ pub async fn build_all(
     ));
 
     let dict = Arc::new(DictService::new(
-        ryframe_db::application_ports::dict_persistence(database.clone()),
+        ryframe_db::application_ports::system::dict(database.clone()),
         redis_client.as_ref().map(|client| {
             Arc::new(RedisDictCacheStore {
                 client: client.clone(),
@@ -295,10 +301,10 @@ pub async fn build_all(
         }),
     ));
     let notice = Arc::new(NoticeService::new(
-        ryframe_db::application_ports::notice_persistence(database.clone()),
+        ryframe_db::application_ports::system::notice(database.clone()),
     ));
     let oper_log = Arc::new(OperLogService::new(
-        ryframe_db::application_ports::oper_log_persistence(database.clone()),
+        ryframe_db::application_ports::system::oper_log(database.clone()),
     ));
     let file = Arc::new(FileService::new(
         ryframe_db::application_ports::files::cleanup(database.clone()),
@@ -359,7 +365,7 @@ pub async fn build_all(
         policies.messaging.enabled() && redis_client.is_some(),
     ));
     let overview = Arc::new(OverviewService::new(
-        ryframe_db::application_ports::overview_persistence(database.clone()),
+        ryframe_db::application_ports::system::overview(database.clone()),
         job_queue.clone(),
         policies.job_runtime,
     ));
@@ -386,7 +392,7 @@ pub async fn build_all(
         .with_job_queue(job_queue.clone()),
     );
     let message = Arc::new(MessageService::new(
-        ryframe_db::application_ports::message_persistence(database.clone()),
+        ryframe_db::application_ports::system::message(database.clone()),
         job_queue.clone(),
         policies.messaging,
     ));
@@ -399,7 +405,7 @@ pub async fn build_all(
         policies.messaging,
     ));
     let login_info = Arc::new(LoginInfoService::new(
-        ryframe_db::application_ports::login_info_persistence(database.clone()),
+        ryframe_db::application_ports::system::login_info(database.clone()),
     ));
 
     let profile = Arc::new(ProfileService::new(

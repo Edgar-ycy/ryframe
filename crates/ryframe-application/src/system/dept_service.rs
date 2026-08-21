@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use crate::{AuthorizationCache, DeptReadPort, DeptWritePort};
+use crate::{
+    AuthorizationCache,
+    ports::system::{DeptReadPort, DeptWritePort},
+};
 
 mod commands;
 mod model;

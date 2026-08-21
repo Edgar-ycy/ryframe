@@ -4,7 +4,7 @@ use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 
-use crate::{NoticeFilter, NoticePersistencePort, NoticeRecord};
+use crate::ports::system::{NoticeFilter, NoticePersistencePort, NoticeRecord};
 
 #[derive(Debug, Serialize)]
 pub struct NoticeVo {
@@ -152,7 +152,7 @@ mod tests {
     use ryframe_kernel::DataScope;
 
     use super::*;
-    use crate::{ControlTransaction, NoticeTransaction, PersistenceFuture};
+    use crate::{ControlTransaction, PersistenceFuture, ports::system::NoticeTransaction};
 
     struct FakePersistence {
         calls: Arc<Mutex<Vec<&'static str>>>,

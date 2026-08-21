@@ -2,7 +2,7 @@ use ryframe_kernel::{
     ActorContext, AppResult, DataScope, DataScopeContext, PageResult, ValidatedPageQuery,
 };
 
-use crate::DeptFilter;
+use crate::ports::system::DeptFilter;
 
 use super::{CACHE_TTL_SECS, DEPT_TREE_CACHE_NAMESPACE, DeptService, DeptTreeNode, DeptVo};
 

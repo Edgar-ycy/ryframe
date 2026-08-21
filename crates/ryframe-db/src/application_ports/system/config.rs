@@ -11,11 +11,11 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    AuthorizationCache, ConfigFilter, ConfigPersistencePort, ConfigRecord, ConfigTransaction,
-    ControlTransaction, PersistenceFuture,
+    AuthorizationCache, ControlTransaction, PersistenceFuture,
+    ports::system::{ConfigFilter, ConfigPersistencePort, ConfigRecord, ConfigTransaction},
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 pub fn port(
     database: ControlDatabaseCluster,
@@ -244,7 +244,8 @@ impl ConfigTransaction for DatabaseConfigTransaction {
 impl ControlTransaction for DatabaseConfigTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 }

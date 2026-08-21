@@ -6,7 +6,10 @@ use crate::{
 };
 use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
 
-use ryframe_application::{PersistenceFuture, RoleFilter, RoleReadPort, RoleRecord};
+use ryframe_application::{
+    PersistenceFuture,
+    ports::system::{RoleFilter, RoleReadPort, RoleRecord},
+};
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn RoleReadPort> {
     Arc::new(DatabaseRoleRead { database })

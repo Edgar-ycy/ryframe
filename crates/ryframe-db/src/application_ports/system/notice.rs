@@ -10,8 +10,8 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    ControlTransaction, NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction,
-    PersistenceFuture,
+    ControlTransaction, PersistenceFuture,
+    ports::system::{NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction},
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn NoticePersistencePort> {
@@ -140,9 +140,9 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
 
 impl ControlTransaction for DatabaseNoticeTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 }
 

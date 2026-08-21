@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{MenuRecord, MenuTreeRecord};
+use crate::ports::system::{MenuRecord, MenuTreeRecord};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuType {

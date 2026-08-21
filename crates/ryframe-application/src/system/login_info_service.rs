@@ -4,7 +4,7 @@ use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 
-use crate::{LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord};
+use crate::ports::system::{LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord};
 
 use super::log_time_range::parse_log_time_range;
 
@@ -160,7 +160,7 @@ mod tests {
     use ryframe_kernel::DataScope;
 
     use super::*;
-    use crate::{ControlTransaction, LoginInfoTransaction, PersistenceFuture};
+    use crate::{ControlTransaction, PersistenceFuture, ports::system::LoginInfoTransaction};
 
     struct FakePersistence {
         calls: Arc<Mutex<Vec<&'static str>>>,

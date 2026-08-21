@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{DeptRecord, DeptTreeRecord};
+use crate::ports::system::{DeptRecord, DeptTreeRecord};
 
 #[derive(Debug, Serialize)]
 pub struct DeptVo {

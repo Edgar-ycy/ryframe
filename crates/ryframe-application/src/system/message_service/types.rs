@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::{MessagePage, MessageRecipientRecord, MessageRecord};
+use crate::ports::system::{MessagePage, MessageRecipientRecord, MessageRecord};
 
 /// 创建消息的业务参数。
 #[derive(Debug)]

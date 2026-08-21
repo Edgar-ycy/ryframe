@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_kernel::{AppError, AppResult};
 
-use crate::{JobQueue, MessagePersistencePort};
+use crate::{JobQueue, ports::system::MessagePersistencePort};
 
 mod inbox;
 mod publish;

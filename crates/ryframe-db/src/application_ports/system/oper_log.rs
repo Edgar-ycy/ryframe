@@ -8,8 +8,8 @@ use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    ControlTransaction, OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction,
-    PersistenceFuture,
+    ControlTransaction, PersistenceFuture,
+    ports::system::{OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction},
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn OperLogPersistencePort> {
@@ -131,9 +131,9 @@ impl OperLogTransaction for DatabaseOperLogTransaction {
 
 impl ControlTransaction for DatabaseOperLogTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 }
 

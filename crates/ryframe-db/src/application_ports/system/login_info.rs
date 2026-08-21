@@ -8,8 +8,10 @@ use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::TransactionTrait;
 
 use ryframe_application::{
-    ControlTransaction, LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord,
-    LoginInfoTransaction, PersistenceFuture,
+    ControlTransaction, PersistenceFuture,
+    ports::system::{
+        LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn LoginInfoPersistencePort> {
@@ -122,9 +124,9 @@ impl LoginInfoTransaction for DatabaseLoginInfoTransaction {
 
 impl ControlTransaction for DatabaseLoginInfoTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 }
 

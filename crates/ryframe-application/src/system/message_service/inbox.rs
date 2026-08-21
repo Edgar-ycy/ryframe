@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
-use crate::MessageInboxFilter;
+use crate::ports::system::MessageInboxFilter;
 
 use super::{MessageDelivery, MessageInbox, MessageService};
 

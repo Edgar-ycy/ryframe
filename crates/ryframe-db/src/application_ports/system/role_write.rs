@@ -12,11 +12,11 @@ use sea_orm::{
 
 use ryframe_application::system::ProductService;
 use ryframe_application::{
-    AuthorizationCache, ControlTransaction, PersistenceFuture, RolePermissionRef, RoleRecord,
-    RoleWritePort, RoleWriteTransaction,
+    AuthorizationCache, ControlTransaction, PersistenceFuture,
+    ports::system::{RolePermissionRef, RoleRecord, RoleWritePort, RoleWriteTransaction},
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 pub fn port(
     database: crate::ControlDatabaseCluster,
@@ -199,7 +199,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
             let snapshot = ProductRepository
                 .tenant_product(&self.transaction, tenant_id)
                 .await?
-                .map(super::product_persistence::tenant_snapshot)
+                .map(super::super::product_persistence::tenant_snapshot)
                 .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product_service
                 .ensure_permission_codes_enabled(snapshot, permission_codes)
@@ -285,7 +285,8 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
 impl ControlTransaction for DatabaseRoleWriteTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 }

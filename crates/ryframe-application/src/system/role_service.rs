@@ -6,7 +6,10 @@ use ryframe_kernel::{
 };
 use serde::Serialize;
 
-use crate::{AuthorizationCache, RoleFilter, RoleReadPort, RoleRecord, RoleWritePort};
+use crate::{
+    AuthorizationCache,
+    ports::system::{RoleFilter, RoleReadPort, RoleRecord, RoleWritePort},
+};
 
 use super::{OptionItem, OptionList};
 

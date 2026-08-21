@@ -4,8 +4,10 @@ use std::sync::Arc;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use crate::{
-    AuthorizationCache, PermissionReadPort, PermissionRecord, PermissionWritePort,
-    PermissionWriteTransaction,
+    AuthorizationCache,
+    ports::system::{
+        PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,
+    },
 };
 
 mod model;

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
-use crate::{EnqueueJob, OperLogRecord, PersistenceFuture};
+use crate::{EnqueueJob, PersistenceFuture, ports::system::OperLogRecord};
 
 use super::ExecutionTenantScope;
 

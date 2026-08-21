@@ -11,8 +11,10 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    ControlTransaction, DictDataRecord, DictPersistencePort, DictTransaction, DictTypeFilter,
-    DictTypeRecord, PersistenceFuture,
+    ControlTransaction, PersistenceFuture,
+    ports::system::{
+        DictDataRecord, DictPersistencePort, DictTransaction, DictTypeFilter, DictTypeRecord,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn DictPersistencePort> {
@@ -260,9 +262,9 @@ impl DictTransaction for DatabaseDictTransaction {
 
 impl ControlTransaction for DatabaseDictTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 }
 

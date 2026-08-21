@@ -1,4 +1,6 @@
-use crate::{ControlTransaction, PersistenceFuture, RoleRecord};
+use crate::{ControlTransaction, PersistenceFuture};
+
+use super::RoleRecord;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RolePermissionRef {
