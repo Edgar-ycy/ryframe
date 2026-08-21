@@ -644,12 +644,20 @@ fn extract_ddl_option(statement: &str, option: &str) -> Result<String, DbErr> {
 fn extract_column_type(value: &str) -> &str {
     let value = value.trim_start();
     let first_whitespace = value.find(char::is_whitespace).unwrap_or(value.len());
-    if let Some(open) = value[..first_whitespace].find('(')
+    let base_end = if let Some(open) = value[..first_whitespace].find('(')
         && let Some(close) = value[open + 1..].find(')')
     {
-        return &value[..open + close + 2];
+        open + close + 2
+    } else {
+        first_whitespace
+    };
+    let remainder = &value[base_end..];
+    let modifier = remainder.trim_start();
+    let modifier_end = modifier.find(char::is_whitespace).unwrap_or(modifier.len());
+    if modifier[..modifier_end].eq_ignore_ascii_case("UNSIGNED") {
+        return &value[..base_end + (remainder.len() - modifier.len()) + modifier_end];
     }
-    &value[..first_whitespace]
+    &value[..base_end]
 }
 
 fn extract_identifier_option(value: &str, keyword: &str) -> Option<String> {
@@ -786,10 +794,13 @@ fn expected_extra(value: &str) -> String {
         .replace("current_timestamp()", "current_timestamp");
     let mut parts = Vec::new();
     if lower.contains("auto_increment") {
-        parts.push("auto_increment");
+        parts.push("auto_increment".to_owned());
     }
-    if lower.contains("on update current_timestamp") {
-        parts.push("on update current_timestamp");
+    if let Some((_, update)) = lower.split_once("on update ")
+        && let Some(function) = update.split_whitespace().next()
+        && function.starts_with("current_timestamp")
+    {
+        parts.push(format!("on update {function}"));
     }
     parts.join(" ")
 }
@@ -832,4 +843,35 @@ fn compatible_column_type(expected: &str, actual: &str) -> bool {
 
 fn nullable_label(nullable: bool) -> &'static str {
     if nullable { "NULL" } else { "NOT NULL" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expected_extra, extract_column_type, normalize_column_type};
+
+    #[test]
+    fn expected_column_type_keeps_unsigned_modifier() {
+        assert_eq!(
+            normalize_column_type(extract_column_type("SMALLINT UNSIGNED NOT NULL")),
+            "smallintunsigned"
+        );
+        assert_eq!(
+            normalize_column_type(extract_column_type("VARCHAR(64) CHARACTER SET utf8mb4")),
+            "varchar(64)"
+        );
+    }
+
+    #[test]
+    fn expected_extra_keeps_timestamp_precision() {
+        assert_eq!(
+            expected_extra(
+                "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)"
+            ),
+            "on update current_timestamp(6)"
+        );
+        assert_eq!(
+            expected_extra("TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+            "on update current_timestamp"
+        );
+    }
 }
