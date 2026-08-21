@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use ryframe_db::ControlDatabaseCluster;
-use ryframe_db::entities::sys_file;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
 
 use crate::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_UPLOAD_STATUS_CLEANUP,
     FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileContentProcessor,
-    FileDownloadPersistencePort, ProcessedFileContent,
+    FileDownloadPersistencePort, FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord,
+    ProcessedFileContent,
 };
 
 mod policy;
@@ -17,9 +16,7 @@ mod upload_reservation;
 
 pub use policy::UploadPolicy;
 
-use upload_reservation::{
-    ReservationOutcome, UploadAuditBinding, UploadReservationGuard, storage_error_is_not_found,
-};
+use upload_reservation::{ReservationOutcome, UploadReservationGuard, storage_error_is_not_found};
 
 /// 文件上传响应
 #[derive(Debug)]
@@ -107,25 +104,25 @@ where
 }
 
 pub struct FileService {
-    db: ControlDatabaseCluster,
     cleanup: Arc<dyn FileCleanupPersistencePort>,
     downloads: Arc<dyn FileDownloadPersistencePort>,
+    uploads: Arc<dyn FileUploadPersistencePort>,
     storage: Arc<dyn ArtifactStore>,
     content: Arc<dyn FileContentProcessor>,
 }
 
 impl FileService {
     pub fn new(
-        db: ControlDatabaseCluster,
         cleanup: Arc<dyn FileCleanupPersistencePort>,
         downloads: Arc<dyn FileDownloadPersistencePort>,
+        uploads: Arc<dyn FileUploadPersistencePort>,
         storage: Arc<dyn ArtifactStore>,
         content: Arc<dyn FileContentProcessor>,
     ) -> Self {
         Self {
-            db,
             cleanup,
             downloads,
+            uploads,
             storage,
             content,
         }
@@ -148,9 +145,9 @@ impl FileService {
         Ok(())
     }
 
-    /// 上传单个文件并写入 sys_file 元数据表
+    /// 上传单个文件并持久化文件元数据。
     ///
-    /// 包含：验证 → 压缩（可选）→ 上传对象存储 → 写入 sys_file 表 → 返回 UploadResponse
+    /// 包含：验证 → 压缩（可选）→ 上传对象存储 → 持久化元数据 → 返回响应。
     pub async fn upload_single(
         &self,
         actor: &ActorContext,
@@ -161,7 +158,7 @@ impl FileService {
             tenant_id,
             &actor.username,
             command,
-            UploadAuditBinding::CurrentRequest,
+            FileUploadCommitMode::CurrentRequest,
         )
         .await
     }
@@ -180,7 +177,7 @@ impl FileService {
             tenant_id,
             uploaded_by,
             command,
-            UploadAuditBinding::CurrentRequest,
+            FileUploadCommitMode::CurrentRequest,
         )
         .await
     }
@@ -195,8 +192,13 @@ impl FileService {
         if tenant_id.is_empty() || tenant_id.len() > 64 {
             return Err(AppError::Validation("内部文件租户标识无效".into()));
         }
-        self.upload_for_tenant(tenant_id, uploaded_by, command, UploadAuditBinding::Unbound)
-            .await
+        self.upload_for_tenant(
+            tenant_id,
+            uploaded_by,
+            command,
+            FileUploadCommitMode::Unbound,
+        )
+        .await
     }
 
     /// 上传由服务端生成或已经完成格式校验的配置包，不接受客户端 bucket。
@@ -231,7 +233,7 @@ impl FileService {
         tenant_id: &str,
         uploaded_by: &str,
         command: UploadCommand<'_>,
-        audit_binding: UploadAuditBinding,
+        commit_mode: FileUploadCommitMode,
     ) -> AppResult<UploadResponse> {
         let UploadCommand {
             original_name,
@@ -265,7 +267,7 @@ impl FileService {
         let now = Utc::now();
         let reservation_token = uuid::Uuid::new_v4().to_string();
         let file_id = crate::next_id()?;
-        let model = sys_file::Model {
+        let model = FileUploadRecord {
             id: file_id,
             tenant_id: tenant_id.to_owned(),
             original_name: original_name.clone(),
@@ -278,11 +280,11 @@ impl FileService {
             content_type: content_type.clone(),
             file_sha256: file_sha256.clone(),
             upload_by: Some(uploaded_by.to_owned()),
-            upload_status: sys_file::Model::UPLOAD_STATUS_PENDING.to_owned(),
+            upload_status: crate::FILE_UPLOAD_STATUS_PENDING.to_owned(),
             reservation_token: Some(reservation_token),
             // 在预留事务内、等待租户行锁结束后，使用主数据库时钟设置。
             reservation_expires_at: None,
-            del_flag: sys_file::Model::DEL_FLAG_NORMAL.to_owned(),
+            del_flag: crate::FILE_DEL_FLAG_NORMAL.to_owned(),
             created_at: now,
             updated_at: now,
         };
@@ -293,7 +295,7 @@ impl FileService {
             }
             ReservationOutcome::InProgress(existing) => {
                 return self
-                    .recover_in_progress_upload(existing, &file_sha256, audit_binding)
+                    .recover_in_progress_upload(existing, &file_sha256, commit_mode)
                     .await;
             }
             ReservationOutcome::Reserved(reservation) => reservation,
@@ -309,7 +311,7 @@ impl FileService {
             return Err(error);
         }
 
-        if let Err(error) = self.finalize_upload(&mut guard, audit_binding).await {
+        if let Err(error) = self.finalize_upload(&mut guard, commit_mode).await {
             guard.compensate().await;
             return Err(error);
         }
@@ -567,7 +569,7 @@ impl FileService {
         Ok(marked)
     }
 
-    fn upload_response_for_existing(existing: sys_file::Model) -> UploadResponse {
+    fn upload_response_for_existing(existing: FileUploadRecord) -> UploadResponse {
         UploadResponse {
             file_id: existing.id.to_string(),
             bucket: existing.bucket,

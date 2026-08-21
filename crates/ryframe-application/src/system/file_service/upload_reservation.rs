@@ -1,15 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
-use ryframe_db::{FileRepository, Repository, entities::sys_file};
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 
 use crate::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
     FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FileCleanupPersistencePort,
-    FileCleanupRecord,
+    FileCleanupRecord, FileUploadCommitMode, FileUploadRecord,
 };
 
 use super::{
@@ -88,22 +86,16 @@ fn plan_compensation(cleanup_claimed: bool) -> CompensationPlan {
 }
 
 pub(super) enum ReservationOutcome {
-    Ready(sys_file::Model),
-    InProgress(sys_file::Model),
-    Reserved(sys_file::Model),
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum UploadAuditBinding {
-    CurrentRequest,
-    Unbound,
+    Ready(FileUploadRecord),
+    InProgress(FileUploadRecord),
+    Reserved(FileUploadRecord),
 }
 
 enum ReservationTransactionOutcome {
-    Ready(sys_file::Model),
-    Restored(sys_file::Model),
-    InProgress(sys_file::Model),
-    Reserved(sys_file::Model),
+    Ready(FileUploadRecord),
+    Restored(FileUploadRecord),
+    InProgress(FileUploadRecord),
+    Reserved(FileUploadRecord),
 }
 
 /// 在上传预留变为 `ready` 前持有其持久化所有权。
@@ -114,14 +106,14 @@ enum ReservationTransactionOutcome {
 pub(super) struct UploadReservationGuard {
     cleanup: Arc<dyn FileCleanupPersistencePort>,
     storage: Arc<dyn ArtifactStore>,
-    reservation: Option<sys_file::Model>,
+    reservation: Option<FileUploadRecord>,
 }
 
 impl UploadReservationGuard {
     pub(super) fn new(
         cleanup: Arc<dyn FileCleanupPersistencePort>,
         storage: Arc<dyn ArtifactStore>,
-        reservation: sys_file::Model,
+        reservation: FileUploadRecord,
     ) -> Self {
         Self {
             cleanup,
@@ -130,7 +122,7 @@ impl UploadReservationGuard {
         }
     }
 
-    pub(super) fn reservation(&self) -> &sys_file::Model {
+    pub(super) fn reservation(&self) -> &FileUploadRecord {
         self.reservation
             .as_ref()
             .expect("upload reservation guard must be armed")
@@ -190,10 +182,10 @@ impl FileService {
 
         // 模型时间戳在等待租户锁之前准备。紧接 PUT 前从主数据库时钟续期一次，
         // 避免过长的锁等待使新预留过期。
-        let database_now = FileRepository.database_utc_now(self.db.write()).await?;
-        if !FileRepository
-            .renew_pending_reservation(
-                self.db.write(),
+        let database_now = self.uploads.database_now().await?;
+        if !self
+            .uploads
+            .renew_pending(
                 &reservation.tenant_id,
                 reservation.id,
                 reservation_token,
@@ -231,10 +223,10 @@ impl FileService {
                     });
                 }
                 _ = heartbeat.tick() => {
-                    let database_now = FileRepository.database_utc_now(self.db.write()).await?;
-                    let renewed = FileRepository
-                        .renew_pending_reservation(
-                            self.db.write(),
+                    let database_now = self.uploads.database_now().await?;
+                    let renewed = self
+                        .uploads
+                        .renew_pending(
                             &reservation.tenant_id,
                             reservation.id,
                             reservation_token,
@@ -254,49 +246,31 @@ impl FileService {
     pub(super) async fn reserve_upload(
         &self,
         tenant_id: &str,
-        mut model: sys_file::Model,
+        mut model: FileUploadRecord,
     ) -> AppResult<ReservationOutcome> {
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启文件预留事务失败: {error}")))?;
+        let transaction = self.uploads.begin().await?;
         let operation = async {
-            ryframe_db::TenantRepository
-                .lock_tenant_in_txn(&transaction, tenant_id)
-                .await?;
-            let database_now = FileRepository.database_utc_now(&transaction).await?;
+            transaction.lock_tenant(tenant_id).await?;
+            let database_now = transaction.database_now().await?;
             model.reservation_expires_at = Some(reservation_expires_at(database_now));
             model.updated_at = database_now;
 
             let file_sha256 = model.file_sha256.as_str();
-            if let Some(existing) = FileRepository
-                .find_by_sha256_any_status_in_txn(
-                    &transaction,
-                    tenant_id,
-                    &model.bucket,
-                    file_sha256,
-                )
+            if let Some(existing) = transaction
+                .find_by_sha256_for_update(tenant_id, &model.bucket, file_sha256)
                 .await?
             {
-                if existing.upload_status == sys_file::Model::UPLOAD_STATUS_READY {
+                if existing.upload_status == crate::FILE_UPLOAD_STATUS_READY {
                     return Ok(ReservationTransactionOutcome::Ready(existing));
                 }
-                if existing.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP
+                if existing.upload_status == FILE_UPLOAD_STATUS_CLEANUP
                     && existing.reservation_token.is_none()
-                    && FileRepository
-                        .restore_file_for_reference_in_txn(
-                            &transaction,
-                            tenant_id,
-                            existing.id,
-                            &model.bucket,
-                            database_now,
-                        )
+                    && transaction
+                        .restore_for_reference(tenant_id, existing.id, &model.bucket, database_now)
                         .await?
                 {
                     let mut restored = existing;
-                    restored.upload_status = sys_file::Model::UPLOAD_STATUS_READY.to_owned();
+                    restored.upload_status = crate::FILE_UPLOAD_STATUS_READY.to_owned();
                     restored.reservation_token = None;
                     restored.reservation_expires_at = None;
                     restored.updated_at = database_now;
@@ -305,15 +279,14 @@ impl FileService {
                 return Ok(ReservationTransactionOutcome::InProgress(existing));
             }
 
-            ryframe_db::TenantRepository
-                .ensure_storage_quota_in_txn(
-                    &transaction,
+            transaction
+                .ensure_storage_quota(
                     tenant_id,
                     u64::try_from(model.file_size).unwrap_or_default(),
                 )
                 .await?;
-            FileRepository
-                .insert_in_txn(&transaction, tenant_id, model)
+            transaction
+                .insert(tenant_id, model)
                 .await
                 .map(ReservationTransactionOutcome::Reserved)
         }
@@ -346,16 +319,12 @@ impl FileService {
             }
             ReservationTransactionOutcome::Restored(restored) => {
                 // 该分支包含状态写入，必须提交；不能与只读去重的 `Ready` 分支合并回滚。
-                match FileRepository.commit_upload_reservation(transaction).await {
+                match transaction.commit(FileUploadCommitMode::Unbound).await {
                     Ok(()) => Ok(ReservationOutcome::Ready(restored)),
                     Err(commit_error) => {
-                        match FileRepository
-                            .find_by_id_any_status(self.db.write(), tenant_id, restored.id)
-                            .await
-                        {
+                        match self.uploads.find_any(tenant_id, restored.id).await {
                             Ok(Some(confirmed))
-                                if confirmed.upload_status
-                                    == sys_file::Model::UPLOAD_STATUS_READY
+                                if confirmed.upload_status == crate::FILE_UPLOAD_STATUS_READY
                                     && confirmed.reservation_token.is_none() =>
                             {
                                 tracing::warn!(
@@ -394,19 +363,15 @@ impl FileService {
                 Ok(ReservationOutcome::InProgress(existing))
             }
             ReservationTransactionOutcome::Reserved(saved) => {
-                match FileRepository.commit_upload_reservation(transaction).await {
+                match transaction.commit(FileUploadCommitMode::Unbound).await {
                     Ok(()) => Ok(ReservationOutcome::Reserved(saved)),
                     Err(commit_error) => {
                         // 丢失 COMMIT 响应时结果不明确。尚未写入对象，因此需在 PUT 前
                         // 校验持久化所有权。
-                        match FileRepository
-                            .find_by_id_any_status(self.db.write(), tenant_id, saved.id)
-                            .await
-                        {
+                        match self.uploads.find_any(tenant_id, saved.id).await {
                             Ok(Some(confirmed))
                                 if confirmed.reservation_token == saved.reservation_token
-                                    && confirmed.upload_status
-                                        == sys_file::Model::UPLOAD_STATUS_PENDING =>
+                                    && confirmed.upload_status == FILE_UPLOAD_STATUS_PENDING =>
                             {
                                 tracing::warn!(
                                     file_id = saved.id,
@@ -416,8 +381,7 @@ impl FileService {
                                 Ok(ReservationOutcome::Reserved(confirmed))
                             }
                             Ok(Some(confirmed))
-                                if confirmed.upload_status
-                                    == sys_file::Model::UPLOAD_STATUS_READY =>
+                                if confirmed.upload_status == crate::FILE_UPLOAD_STATUS_READY =>
                             {
                                 Ok(ReservationOutcome::Ready(confirmed))
                             }
@@ -444,21 +408,21 @@ impl FileService {
 
     pub(super) async fn recover_in_progress_upload(
         &self,
-        mut existing: sys_file::Model,
+        mut existing: FileUploadRecord,
         expected_sha256: &str,
-        audit_binding: UploadAuditBinding,
+        commit_mode: FileUploadCommitMode,
     ) -> AppResult<UploadResponse> {
-        if existing.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP {
+        if existing.upload_status == FILE_UPLOAD_STATUS_CLEANUP {
             return Err(AppError::Conflict(
                 "相同文件正在执行失败补偿，请稍后重试".into(),
             ));
         }
-        if existing.upload_status != sys_file::Model::UPLOAD_STATUS_PENDING {
+        if existing.upload_status != FILE_UPLOAD_STATUS_PENDING {
             return Err(AppError::Internal("文件上传预留状态无效".into()));
         }
         let reservation_token = existing
             .reservation_token
-            .clone()
+            .as_deref()
             .ok_or_else(|| AppError::Internal("文件上传预留缺少所有权令牌".into()))?;
 
         let object = match self
@@ -486,33 +450,28 @@ impl FileService {
             return Err(AppError::Conflict("相同文件正在上传，请稍后重试".into()));
         }
 
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启上传恢复事务失败: {error}")))?;
-        match FileRepository
+        let transaction = self.uploads.begin().await?;
+        match transaction
             .mark_ready(
-                &transaction,
                 &existing.tenant_id,
                 existing.id,
-                &reservation_token,
+                reservation_token,
                 Utc::now(),
             )
             .await
         {
-            Ok(true) => match commit_upload_state(transaction, audit_binding).await {
+            Ok(true) => match transaction.commit(commit_mode).await {
                 Ok(()) => {
-                    existing.upload_status = sys_file::Model::UPLOAD_STATUS_READY.to_owned();
+                    existing.upload_status = crate::FILE_UPLOAD_STATUS_READY.to_owned();
                     existing.reservation_token = None;
                     existing.reservation_expires_at = None;
-                    existing.del_flag = sys_file::Model::DEL_FLAG_NORMAL.to_owned();
+                    existing.del_flag = FILE_DEL_FLAG_NORMAL.to_owned();
                     Ok(Self::upload_response_for_existing(existing))
                 }
                 Err(error) => {
-                    if let Some(ready) = FileRepository
-                        .find_by_id(self.db.write(), &existing.tenant_id, existing.id)
+                    if let Some(ready) = self
+                        .uploads
+                        .find_ready(&existing.tenant_id, existing.id)
                         .await?
                     {
                         tracing::warn!(
@@ -528,8 +487,8 @@ impl FileService {
             },
             Ok(false) => {
                 let _ = transaction.rollback().await;
-                FileRepository
-                    .find_by_id(self.db.write(), &existing.tenant_id, existing.id)
+                self.uploads
+                    .find_ready(&existing.tenant_id, existing.id)
                     .await?
                     .map_or_else(
                         || Err(AppError::Conflict("相同文件正在上传，请稍后重试".into())),
@@ -538,8 +497,9 @@ impl FileService {
             }
             Err(error) => {
                 let _ = transaction.rollback().await;
-                if let Some(ready) = FileRepository
-                    .find_by_id(self.db.write(), &existing.tenant_id, existing.id)
+                if let Some(ready) = self
+                    .uploads
+                    .find_ready(&existing.tenant_id, existing.id)
                     .await?
                 {
                     tracing::warn!(
@@ -557,22 +517,16 @@ impl FileService {
     pub(super) async fn finalize_upload(
         &self,
         guard: &mut UploadReservationGuard,
-        audit_binding: UploadAuditBinding,
+        commit_mode: FileUploadCommitMode,
     ) -> AppResult<()> {
         let reservation = guard.reservation();
         let reservation_token = reservation
             .reservation_token
             .as_deref()
             .ok_or_else(|| AppError::Internal("文件上传预留缺少所有权令牌".into()))?;
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启上传完成事务失败: {error}")))?;
-        let result = FileRepository
+        let transaction = self.uploads.begin().await?;
+        let result = transaction
             .mark_ready(
-                &transaction,
                 &reservation.tenant_id,
                 reservation.id,
                 reservation_token,
@@ -580,10 +534,11 @@ impl FileService {
             )
             .await;
         match result {
-            Ok(true) => match commit_upload_state(transaction, audit_binding).await {
+            Ok(true) => match transaction.commit(commit_mode).await {
                 Ok(()) => Ok(()),
-                Err(error) => match FileRepository
-                    .find_by_id(self.db.write(), &reservation.tenant_id, reservation.id)
+                Err(error) => match self
+                    .uploads
+                    .find_ready(&reservation.tenant_id, reservation.id)
                     .await
                 {
                     Ok(Some(_)) => {
@@ -608,8 +563,9 @@ impl FileService {
             },
             Ok(false) => {
                 let _ = transaction.rollback().await;
-                if FileRepository
-                    .find_by_id(self.db.write(), &reservation.tenant_id, reservation.id)
+                if self
+                    .uploads
+                    .find_ready(&reservation.tenant_id, reservation.id)
                     .await?
                     .is_some()
                 {
@@ -620,8 +576,9 @@ impl FileService {
             }
             Err(error) => {
                 let _ = transaction.rollback().await;
-                match FileRepository
-                    .find_by_id(self.db.write(), &reservation.tenant_id, reservation.id)
+                match self
+                    .uploads
+                    .find_ready(&reservation.tenant_id, reservation.id)
                     .await
                 {
                     Ok(Some(_)) => {
@@ -779,20 +736,10 @@ impl FileService {
     }
 }
 
-async fn commit_upload_state(
-    transaction: sea_orm::DatabaseTransaction,
-    audit_binding: UploadAuditBinding,
-) -> AppResult<()> {
-    match audit_binding {
-        UploadAuditBinding::CurrentRequest => crate::commit_current_audit(transaction).await,
-        UploadAuditBinding::Unbound => FileRepository.commit_upload_reservation(transaction).await,
-    }
-}
-
 async fn compensate_upload_reservation(
     cleanup: Arc<dyn FileCleanupPersistencePort>,
     storage: Arc<dyn ArtifactStore>,
-    reservation: sys_file::Model,
+    reservation: FileUploadRecord,
 ) {
     let Some(reservation_token) = reservation.reservation_token.as_deref() else {
         tracing::error!(
