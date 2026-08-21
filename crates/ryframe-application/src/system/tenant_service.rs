@@ -2,17 +2,16 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, KeyInit, Mac};
-use ryframe_db::{
-    ControlDatabaseCluster, ProductRepository, ProvisionTenantCommand, ReadConsistency,
-    TenantProvisioningRepository, TenantRepository, entities::tenant,
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::{ActiveModelTrait, TransactionTrait};
 use serde::Serialize;
 use sha2::Sha256;
 
 use super::ProductService;
-use crate::{AuthorizationCache, TenantProvisioningPlacement, TenantProvisioningPort};
+use crate::{
+    AuthorizationCache, ProvisionTenantRecord, TENANT_STATUS_DISABLED, TENANT_STATUS_ENABLED,
+    TENANT_STATUS_PROVISIONING, TENANT_STATUS_PROVISIONING_FAILED, TenantPersistencePort,
+    TenantProvisioningPlacement, TenantProvisioningPort, TenantRecord, TenantTransaction,
+};
 
 const SYSTEM_TENANT_ID: &str = "system";
 const MIN_TENANT_USERS: i32 = 1;
@@ -31,8 +30,8 @@ pub struct TenantVo {
     pub max_requests_per_min: i32,
 }
 
-impl From<tenant::Model> for TenantVo {
-    fn from(tenant: tenant::Model) -> Self {
+impl From<TenantRecord> for TenantVo {
+    fn from(tenant: TenantRecord) -> Self {
         Self {
             tenant_id: tenant.tenant_id,
             name: tenant.name,
@@ -103,10 +102,7 @@ pub struct UpdateTenantParams {
 }
 
 pub struct TenantService {
-    db: ControlDatabaseCluster,
-    tenant_repo: TenantRepository,
-    provisioning_repo: TenantProvisioningRepository,
-    product_repo: ProductRepository,
+    persistence: Arc<dyn TenantPersistencePort>,
     product_service: Arc<ProductService>,
     tenant_provisioning: Arc<dyn TenantProvisioningPort>,
     authorization_cache: AuthorizationCache,
@@ -114,16 +110,13 @@ pub struct TenantService {
 
 impl TenantService {
     pub fn new(
-        db: ControlDatabaseCluster,
+        persistence: Arc<dyn TenantPersistencePort>,
         authorization_cache: AuthorizationCache,
         product_service: Arc<ProductService>,
         tenant_provisioning: Arc<dyn TenantProvisioningPort>,
     ) -> Self {
         Self {
-            db,
-            tenant_repo: TenantRepository,
-            provisioning_repo: TenantProvisioningRepository,
-            product_repo: ProductRepository,
+            persistence,
             product_service,
             tenant_provisioning,
             authorization_cache,
@@ -132,9 +125,8 @@ impl TenantService {
 
     pub async fn list(&self, actor: &ActorContext) -> AppResult<Vec<TenantVo>> {
         ensure_platform_admin(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
-        self.tenant_repo
-            .list_all(&db)
+        self.persistence
+            .list()
             .await
             .map(|tenants| tenants.into_iter().map(TenantVo::from).collect())
     }
@@ -170,25 +162,17 @@ impl TenantService {
             1,
             switch_token,
         )?;
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        let existing = self
-            .tenant_repo
-            .lock_optional_tenant_in_txn(&transaction, &tenant_id)
-            .await?;
+        let transaction = self.persistence.begin().await?;
+        let existing = transaction.lock_optional_tenant(&tenant_id).await?;
         let already_enabled = if existing.is_some() {
-            self.resume_provisioning_in_txn(&transaction, &params, &quota, &pending)
+            self.resume_provisioning_in_txn(transaction.as_ref(), &params, &quota, &pending)
                 .await?
         } else {
             let capability_resources = self
                 .product_service
-                .provisioning_resources_in_txn(&transaction, params.plan_version_id)
+                .provisioning_resources_in_txn(transaction.product(), params.plan_version_id)
                 .await?;
-            let command = ProvisionTenantCommand {
+            let command = ProvisionTenantRecord {
                 provisioning_request_token: pending.switch_token.clone(),
                 tenant_id: tenant_id.clone(),
                 name: params.name.clone(),
@@ -208,27 +192,18 @@ impl TenantService {
                 managed_capability_permission_codes: capability_resources.managed_permission_codes,
                 default_admin_permission_codes: Vec::new(),
             };
-            self.provisioning_repo
-                .provision_in_transaction(&transaction, command)
+            transaction.provision(command).await?;
+            transaction
+                .assign_initial_product(&tenant_id, params.plan_version_id, actor.user_id)
                 .await?;
-            self.product_repo
-                .assign_initial_in_txn(
-                    &transaction,
-                    &tenant_id,
-                    params.plan_version_id,
-                    actor.user_id,
-                )
-                .await?;
-            self.tenant_provisioning
-                .create_pending(&transaction, &pending)
-                .await?;
+            transaction.create_pending(&pending).await?;
             false
         };
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit_audited().await?;
         if already_enabled {
             return self
-                .tenant_repo
-                .find_by_tenant_id(self.db.write(), &tenant_id)
+                .persistence
+                .find(&tenant_id)
                 .await?
                 .map(TenantVo::from)
                 .ok_or_else(|| AppError::NotFound("租户不存在".into()));
@@ -253,8 +228,8 @@ impl TenantService {
             return Err(error);
         }
         let enabled = self
-            .tenant_repo
-            .find_by_tenant_id(self.db.write(), &tenant_id)
+            .persistence
+            .find(&tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         Ok(TenantVo::from(enabled))
@@ -262,18 +237,14 @@ impl TenantService {
 
     async fn resume_provisioning_in_txn(
         &self,
-        transaction: &sea_orm::DatabaseTransaction,
+        transaction: &dyn TenantTransaction,
         params: &CreateTenantParams,
         quota: &ValidatedTenantQuota,
         pending: &TenantProvisioningPlacement,
     ) -> AppResult<bool> {
-        let existing = self
-            .tenant_repo
-            .lock_tenant_in_txn(transaction, &params.tenant_id)
-            .await?;
-        let request = self
-            .provisioning_repo
-            .lock_provision_request_in_txn(transaction, &params.tenant_id)
+        let existing = transaction.lock_tenant(&params.tenant_id).await?;
+        let request = transaction
+            .lock_provision_request(&params.tenant_id)
             .await?
             .ok_or_else(|| {
                 AppError::Conflict("现有租户没有创建 Saga 幂等记录，不能作为创建请求续跑".into())
@@ -290,7 +261,7 @@ impl TenantService {
         }
         // 创建完成后的套餐、数据放置、管理员密码和基础资料允许由独立业务继续变更；
         // 权威请求 token 匹配即证明这是原创建请求的持久幂等重放。
-        if existing.status == tenant::Model::STATUS_ENABLED {
+        if existing.status == TENANT_STATUS_ENABLED {
             return Ok(true);
         }
         if existing.name != params.name
@@ -307,15 +278,12 @@ impl TenantService {
         }
         if !matches!(
             existing.status.as_str(),
-            tenant::Model::STATUS_PROVISIONING
-                | tenant::Model::STATUS_PROVISIONING_FAILED
-                | tenant::Model::STATUS_ENABLED
+            TENANT_STATUS_PROVISIONING | TENANT_STATUS_PROVISIONING_FAILED | TENANT_STATUS_ENABLED
         ) {
             return Err(AppError::Conflict("现有租户状态不允许恢复创建 Saga".into()));
         }
-        let assignment = self
-            .product_repo
-            .assignment(transaction, &params.tenant_id)
+        let assignment = transaction
+            .product_assignment(&params.tenant_id)
             .await?
             .ok_or_else(|| AppError::Conflict("现有租户缺少 provisioning 套餐快照".into()))?;
         if assignment.plan_version_id != params.plan_version_id {
@@ -323,9 +291,8 @@ impl TenantService {
                 "租户创建重试的 plan_version_id 与已持久化请求不一致".into(),
             ));
         }
-        let admin = self
-            .provisioning_repo
-            .find_user_by_username(transaction, &params.tenant_id, &params.admin_username)
+        let admin = transaction
+            .find_admin(&params.tenant_id, &params.admin_username)
             .await?
             .ok_or_else(|| AppError::Conflict("租户创建重试的管理员账号不匹配".into()))?;
         if !ryframe_auth::password::verify(&params.admin_password, &admin.password_hash)? {
@@ -333,16 +300,10 @@ impl TenantService {
                 "租户创建重试的管理员凭据与已持久化请求不一致".into(),
             ));
         }
-        self.tenant_provisioning
-            .create_or_resume_pending(transaction, pending)
-            .await?;
-        if existing.status == tenant::Model::STATUS_PROVISIONING_FAILED {
-            self.tenant_repo
-                .update_status(
-                    transaction,
-                    &params.tenant_id,
-                    tenant::Model::STATUS_PROVISIONING,
-                )
+        transaction.create_or_resume_pending(pending).await?;
+        if existing.status == TENANT_STATUS_PROVISIONING_FAILED {
+            transaction
+                .update_status(&params.tenant_id, TENANT_STATUS_PROVISIONING)
                 .await?;
         }
         Ok(false)
@@ -353,72 +314,55 @@ impl TenantService {
         pending: &TenantProvisioningPlacement,
         plan_version_id: i64,
     ) -> AppResult<()> {
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let tenant = self
-            .tenant_repo
-            .lock_tenant_in_txn(&transaction, &pending.tenant_id)
-            .await?;
-        if tenant.status != tenant::Model::STATUS_PROVISIONING {
+        let transaction = self.persistence.begin().await?;
+        let tenant = transaction.lock_tenant(&pending.tenant_id).await?;
+        if tenant.status != TENANT_STATUS_PROVISIONING {
             return Err(AppError::TenantOperationConflict(
                 "租户已不处于 provisioning，不能同步初始化能力资源".into(),
             ));
         }
         self.product_service
-            .sync_provisioning_resources_in_txn(&transaction, &pending.tenant_id, plan_version_id)
+            .sync_provisioning_resources_in_txn(
+                transaction.product(),
+                &pending.tenant_id,
+                plan_version_id,
+            )
             .await?;
-        crate::commit_current_audit(transaction).await
+        transaction.commit_audited().await
     }
 
     async fn finalize_provisioning(&self, pending: &TenantProvisioningPlacement) -> AppResult<()> {
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let tenant = self
-            .tenant_repo
-            .lock_tenant_in_txn(&transaction, &pending.tenant_id)
-            .await?;
-        if tenant.status == tenant::Model::STATUS_ENABLED {
-            self.tenant_provisioning
-                .activate(&transaction, pending)
-                .await?;
-            return transaction.commit().await.map_err(database_error);
+        let transaction = self.persistence.begin().await?;
+        let tenant = transaction.lock_tenant(&pending.tenant_id).await?;
+        if tenant.status == TENANT_STATUS_ENABLED {
+            transaction.activate_placement(pending).await?;
+            return transaction.commit().await;
         }
-        if tenant.status != tenant::Model::STATUS_PROVISIONING {
+        if tenant.status != TENANT_STATUS_PROVISIONING {
             return Err(AppError::Conflict(
                 "租户 provisioning 状态已变化，无法完成启用".into(),
             ));
         }
-        self.tenant_provisioning
-            .activate(&transaction, pending)
+        transaction.activate_placement(pending).await?;
+        transaction
+            .update_status(&pending.tenant_id, TENANT_STATUS_ENABLED)
             .await?;
-        self.tenant_repo
-            .update_status(
-                &transaction,
-                &pending.tenant_id,
-                tenant::Model::STATUS_ENABLED,
-            )
-            .await?;
-        transaction.commit().await.map_err(database_error)
+        transaction.commit().await
     }
 
     async fn mark_provisioning_failed(&self, pending: &TenantProvisioningPlacement) {
-        let Ok(transaction) = self.db.write().begin().await else {
+        let Ok(transaction) = self.persistence.begin().await else {
             tracing::error!(tenant_id = %pending.tenant_id, "无法开启租户 provisioning 失败补偿事务");
             return;
         };
         let result = async {
-            let tenant = self
-                .tenant_repo
-                .lock_tenant_in_txn(&transaction, &pending.tenant_id)
-                .await?;
-            if tenant.status == tenant::Model::STATUS_ENABLED {
+            let tenant = transaction.lock_tenant(&pending.tenant_id).await?;
+            if tenant.status == TENANT_STATUS_ENABLED {
                 return Ok(());
             }
-            self.tenant_provisioning.fail(&transaction, pending).await?;
-            self.tenant_repo
-                .update_status(
-                    &transaction,
-                    &pending.tenant_id,
-                    tenant::Model::STATUS_PROVISIONING_FAILED,
-                )
+            transaction.fail_placement(pending).await?;
+            transaction
+                .update_status(&pending.tenant_id, TENANT_STATUS_PROVISIONING_FAILED)
                 .await
         }
         .await;
@@ -448,16 +392,9 @@ impl TenantService {
             params.max_storage_mb,
             params.max_requests_per_min,
         )?;
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        let mut tenant = self
-            .tenant_repo
-            .lock_and_validate_resource_limits_in_txn(
-                &transaction,
+        let transaction = self.persistence.begin().await?;
+        let mut tenant = transaction
+            .lock_tenant_with_limits(
                 tenant_id,
                 params.max_users,
                 params.max_roles,
@@ -466,7 +403,7 @@ impl TenantService {
             .await?;
         if !matches!(
             tenant.status.as_str(),
-            tenant::Model::STATUS_ENABLED | tenant::Model::STATUS_DISABLED
+            TENANT_STATUS_ENABLED | TENANT_STATUS_DISABLED
         ) {
             return Err(AppError::TenantOperationConflict(
                 "provisioning 租户只能由创建 Saga 更新，不能修改普通租户资料".into(),
@@ -484,17 +421,12 @@ impl TenantService {
         tenant.max_requests_per_min = params.max_requests_per_min;
         tenant.updated_at = Utc::now();
 
-        let active: tenant::ActiveModel = tenant.into();
-        let saved = active
-            .reset_all()
-            .update(&transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let saved = transaction.save_tenant(tenant).await?;
         let authorization_epoch = self
             .authorization_cache
-            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .increment_tenant_epoch_in_transaction(transaction.authorization_mirror(), tenant_id)
             .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit_audited().await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await?;
@@ -513,41 +445,31 @@ impl TenantService {
         }
         if !matches!(
             status.as_str(),
-            tenant::Model::STATUS_ENABLED | tenant::Model::STATUS_DISABLED
+            TENANT_STATUS_ENABLED | TENANT_STATUS_DISABLED
         ) {
             return Err(AppError::Validation(
                 "租户状态只能切换为 enabled 或 disabled".into(),
             ));
         }
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
-        let current = self
-            .tenant_repo
-            .lock_tenant_in_txn(&transaction, tenant_id)
-            .await?;
+        let transaction = self.persistence.begin().await?;
+        let current = transaction.lock_tenant(tenant_id).await?;
         if !matches!(
             current.status.as_str(),
-            tenant::Model::STATUS_ENABLED | tenant::Model::STATUS_DISABLED
+            TENANT_STATUS_ENABLED | TENANT_STATUS_DISABLED
         ) {
             return Err(AppError::Conflict(
                 "provisioning 租户只能由创建 Saga 完成或重试，不能直接切换状态".into(),
             ));
         }
         if current.status == status {
-            return crate::commit_current_audit(transaction).await;
+            return transaction.commit_audited().await;
         }
-        self.tenant_repo
-            .update_status(&transaction, tenant_id, &status)
-            .await?;
+        transaction.update_status(tenant_id, &status).await?;
         let authorization_epoch = self
             .authorization_cache
-            .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+            .increment_tenant_epoch_in_transaction(transaction.authorization_mirror(), tenant_id)
             .await?;
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit_audited().await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await
@@ -654,8 +576,4 @@ fn update_optional_fingerprint_field(mac: &mut Hmac<Sha256>, value: Option<&str>
 fn update_fingerprint_field(mac: &mut Hmac<Sha256>, value: &[u8]) {
     mac.update(&(value.len() as u64).to_be_bytes());
     mac.update(value);
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

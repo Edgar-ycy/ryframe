@@ -11,6 +11,7 @@ mod placement_repo;
 mod registry;
 mod router;
 
+pub use application_ports::tenant_persistence_port;
 pub use error::TenantDataError;
 pub use placement::{
     TenantDataAccess, TenantDataPlacement, TenantDataState, TenantRuntimeSnapshot,

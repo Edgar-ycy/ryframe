@@ -2,12 +2,8 @@ use ryframe_application::{
     TenantProvisioningFuture, TenantProvisioningPlacement, TenantProvisioningPort,
 };
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::DatabaseTransaction;
 
-use crate::{
-    PendingTenantDataPlacement, TenantDataError, TenantDataPlacementRepository,
-    TenantDatabaseRouter,
-};
+use crate::{PendingTenantDataPlacement, TenantDataError, TenantDatabaseRouter};
 
 impl TenantProvisioningPort for TenantDatabaseRouter {
     fn prepare(
@@ -22,64 +18,12 @@ impl TenantProvisioningPort for TenantDatabaseRouter {
             .map_err(map_error)
     }
 
-    fn create_pending<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .create_pending(transaction, &to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
-    }
-
-    fn create_or_resume_pending<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .create_or_resume_pending(transaction, &to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
-    }
-
     fn provision_fence<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
     ) -> TenantProvisioningFuture<'a> {
         Box::pin(async move {
             self.provision_pending_fence(&to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
-    }
-
-    fn activate<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .activate(transaction, &to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
-    }
-
-    fn fail<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .fail(transaction, &to_infrastructure_placement(placement))
                 .await
                 .map_err(map_error)
         })
@@ -95,7 +39,7 @@ fn to_application_placement(placement: PendingTenantDataPlacement) -> TenantProv
     }
 }
 
-fn to_infrastructure_placement(
+pub(super) fn to_infrastructure_placement(
     placement: &TenantProvisioningPlacement,
 ) -> PendingTenantDataPlacement {
     PendingTenantDataPlacement {

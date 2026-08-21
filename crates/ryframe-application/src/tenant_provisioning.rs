@@ -1,7 +1,6 @@
 use std::{future::Future, pin::Pin};
 
 use ryframe_kernel::AppResult;
-use sea_orm::DatabaseTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TenantProvisioningPlacement {
@@ -23,32 +22,8 @@ pub trait TenantProvisioningPort: Send + Sync {
         switch_token: String,
     ) -> AppResult<TenantProvisioningPlacement>;
 
-    fn create_pending<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a>;
-
-    fn create_or_resume_pending<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a>;
-
     fn provision_fence<'a>(
         &'a self,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a>;
-
-    fn activate<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a>;
-
-    fn fail<'a>(
-        &'a self,
-        transaction: &'a DatabaseTransaction,
         placement: &'a TenantProvisioningPlacement,
     ) -> TenantProvisioningFuture<'a>;
 }

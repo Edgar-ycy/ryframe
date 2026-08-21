@@ -190,9 +190,9 @@ pub async fn build_all(
         ),
     ));
     let tenant = Arc::new(TenantService::new(
-        database.clone(),
+        ryframe_tenant_db::tenant_persistence_port(database.clone()),
         authorization_cache.clone(),
-        product.clone(),
+        Arc::clone(&product),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
     ));
     let tenant_usage = Arc::new(TenantUsageService::new(

@@ -2,6 +2,9 @@ mod migration;
 mod provisioning;
 mod runtime;
 mod targets;
+mod tenant_persistence;
+
+pub use tenant_persistence::port as tenant_persistence_port;
 
 use ryframe_kernel::AppError;
 
