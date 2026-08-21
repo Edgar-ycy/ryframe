@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use ryframe_db::ControlDatabaseCluster;
-use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
+use ryframe_db::entities::sys_file;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FileContentProcessor,
+    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_UPLOAD_STATUS_CLEANUP,
+    FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileContentProcessor,
     FileDownloadPersistencePort, ProcessedFileContent,
 };
 
@@ -108,6 +108,7 @@ where
 
 pub struct FileService {
     db: ControlDatabaseCluster,
+    cleanup: Arc<dyn FileCleanupPersistencePort>,
     downloads: Arc<dyn FileDownloadPersistencePort>,
     storage: Arc<dyn ArtifactStore>,
     content: Arc<dyn FileContentProcessor>,
@@ -116,12 +117,14 @@ pub struct FileService {
 impl FileService {
     pub fn new(
         db: ControlDatabaseCluster,
+        cleanup: Arc<dyn FileCleanupPersistencePort>,
         downloads: Arc<dyn FileDownloadPersistencePort>,
         storage: Arc<dyn ArtifactStore>,
         content: Arc<dyn FileContentProcessor>,
     ) -> Self {
         Self {
             db,
+            cleanup,
             downloads,
             storage,
             content,
@@ -414,48 +417,28 @@ impl FileService {
         expired_before: DateTime<Utc>,
     ) -> AppResult<bool> {
         let expected_bucket = IMPORT_BUCKET;
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let transaction = self.cleanup.begin().await?;
         // 用户导入创建同样先锁租户再锁文件。统一锁顺序可保证资格复核与新任务引用
         // 串行发生，避免初始候选查询后文件被活动任务重新引用。
-        TenantRepository
-            .lock_tenant_in_txn(&transaction, tenant_id)
-            .await?;
-        let Some(file) = FileRepository
-            .find_by_id_any_status_for_update(&transaction, tenant_id, file_id)
-            .await?
-        else {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+        transaction.lock_tenant(tenant_id).await?;
+        let Some(file) = transaction.find_for_update(tenant_id, file_id).await? else {
+            transaction.rollback().await?;
             return Ok(false);
         };
         if file.bucket != expected_bucket {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+            transaction.rollback().await?;
             return Err(AppError::Authorization("内部文件存储边界不匹配".into()));
         }
-        if file.upload_status != sys_file::Model::UPLOAD_STATUS_READY {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+        if file.upload_status != FILE_UPLOAD_STATUS_READY {
+            transaction.rollback().await?;
             return Ok(false);
         }
 
-        let claimed_at = FileRepository.database_utc_now(&transaction).await?;
+        let claimed_at = transaction.database_now().await?;
         let claim_until = claimed_at + chrono::Duration::seconds(INTERNAL_DELETE_CLAIM_SECONDS);
         let claim_token = uuid::Uuid::new_v4().to_string();
-        if !FileRepository
-            .claim_ready_expired_import_artifact_in_txn(
-                &transaction,
+        if !transaction
+            .claim_expired_import(
                 tenant_id,
                 file_id,
                 &claim_token,
@@ -464,23 +447,18 @@ impl FileService {
             )
             .await?
         {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+            transaction.rollback().await?;
             return Ok(false);
         }
 
         // 先持久化不可恢复的清理声明，再触碰对象存储。提交响应不明时必须从主库验证
         // 令牌，只有能够证明本实例拥有清理权才允许删除对象。
         if let Err(commit_error) = transaction.commit().await {
-            let verified = FileRepository
-                .find_by_id_any_status(self.db.write(), tenant_id, file_id)
-                .await;
+            let verified = self.cleanup.find(tenant_id, file_id).await;
             match verified {
                 Ok(Some(current))
                     if current.bucket == expected_bucket
-                        && current.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP
+                        && current.upload_status == FILE_UPLOAD_STATUS_CLEANUP
                         && current.reservation_token.as_deref() == Some(claim_token.as_str()) => {}
                 Ok(_) => {
                     return Err(AppError::Database(format!(
@@ -499,10 +477,10 @@ impl FileService {
         if let Err(error) = delete_result
             && !storage_error_is_not_found(&error)
         {
-            let retry_at = FileRepository.database_utc_now(self.db.write()).await?;
-            if let Err(defer_error) = FileRepository
-                .defer_cleanup_claim(
-                    self.db.write(),
+            let retry_at = self.cleanup.database_now().await?;
+            if let Err(defer_error) = self
+                .cleanup
+                .defer_claim(
                     tenant_id,
                     file_id,
                     &claim_token,
@@ -521,8 +499,9 @@ impl FileService {
             return Err(map_storage_write_error(error));
         }
 
-        if FileRepository
-            .complete_cleanup_claim(self.db.write(), tenant_id, file_id, &claim_token)
+        if self
+            .cleanup
+            .complete_claim(tenant_id, file_id, &claim_token)
             .await?
         {
             return Ok(true);
@@ -530,14 +509,11 @@ impl FileService {
 
         // 元数据已被删除，或仍是不可恢复的清理墓碑，都表示业务文件已经完成删除。
         // 后一种情况由已经接管令牌的实例收尾，不允许将其误判为仍可使用的文件。
-        match FileRepository
-            .find_by_id_any_status(self.db.write(), tenant_id, file_id)
-            .await?
-        {
+        match self.cleanup.find(tenant_id, file_id).await? {
             None => Ok(true),
             Some(current)
                 if current.bucket == expected_bucket
-                    && current.upload_status == sys_file::Model::UPLOAD_STATUS_CLEANUP =>
+                    && current.upload_status == FILE_UPLOAD_STATUS_CLEANUP =>
             {
                 Ok(true)
             }
@@ -557,43 +533,23 @@ impl FileService {
         file_id: i64,
     ) -> AppResult<bool> {
         const ORPHAN_GRACE_MINUTES: i64 = 15;
-        let transaction = self
-            .db
-            .write()
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        TenantRepository
-            .lock_tenant_in_txn(&transaction, tenant_id)
-            .await?;
-        let Some(file) = FileRepository
-            .find_by_id_any_status_for_update(&transaction, tenant_id, file_id)
-            .await?
-        else {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+        let transaction = self.cleanup.begin().await?;
+        transaction.lock_tenant(tenant_id).await?;
+        let Some(file) = transaction.find_for_update(tenant_id, file_id).await? else {
+            transaction.rollback().await?;
             return Ok(false);
         };
         if file.bucket != CONFIG_PACKAGE_BUCKET {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+            transaction.rollback().await?;
             return Err(AppError::Authorization("内部文件存储边界不匹配".into()));
         }
-        if file.upload_status != sys_file::Model::UPLOAD_STATUS_READY {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+        if file.upload_status != FILE_UPLOAD_STATUS_READY {
+            transaction.rollback().await?;
             return Ok(false);
         }
-        let now = FileRepository.database_utc_now(&transaction).await?;
-        let marked = FileRepository
-            .mark_unreferenced_config_package_for_cleanup_in_txn(
-                &transaction,
+        let now = transaction.database_now().await?;
+        let marked = transaction
+            .mark_unreferenced_config_package(
                 tenant_id,
                 file_id,
                 now,
@@ -601,15 +557,9 @@ impl FileService {
             )
             .await?;
         if marked {
-            transaction
-                .commit()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+            transaction.commit().await?;
         } else {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+            transaction.rollback().await?;
         }
         Ok(marked)
     }

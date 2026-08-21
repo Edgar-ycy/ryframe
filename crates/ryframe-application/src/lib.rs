@@ -16,6 +16,7 @@ mod export_deletion_persistence;
 mod export_execution_persistence;
 mod export_request_persistence;
 mod export_requester_persistence;
+mod file_cleanup_persistence;
 mod file_content;
 mod file_download_persistence;
 mod id_generator;
@@ -40,6 +41,7 @@ mod legacy_export_deletion_persistence;
 mod legacy_export_execution_persistence;
 mod legacy_export_request_persistence;
 mod legacy_export_requester_persistence;
+mod legacy_file_cleanup_persistence;
 mod legacy_file_download_persistence;
 mod legacy_identity_authorization;
 mod legacy_job_queue_persistence;
@@ -165,6 +167,10 @@ pub use export_requester_persistence::{
     ExportDownloadFile, ExportRequesterPersistencePort, ExportRequesterRecord,
     ExportRequesterTransaction,
 };
+pub use file_cleanup_persistence::{
+    FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort,
+    FileCleanupRecord, FileCleanupTransaction,
+};
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use file_download_persistence::{FileDownloadPersistencePort, FileDownloadRecord};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
@@ -225,6 +231,8 @@ pub use legacy_export_execution_persistence::port as legacy_export_execution_per
 pub use legacy_export_request_persistence::port as legacy_export_request_persistence;
 #[doc(hidden)]
 pub use legacy_export_requester_persistence::port as legacy_export_requester_persistence;
+#[doc(hidden)]
+pub use legacy_file_cleanup_persistence::port as legacy_file_cleanup_persistence;
 #[doc(hidden)]
 pub use legacy_file_download_persistence::port as legacy_file_download_persistence;
 #[doc(hidden)]

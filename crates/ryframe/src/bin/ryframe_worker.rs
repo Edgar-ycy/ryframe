@@ -196,6 +196,7 @@ async fn main() -> Result<(), AppError> {
     ));
     let file = Arc::new(FileService::new(
         database.clone(),
+        ryframe_application::legacy_file_cleanup_persistence(database.clone()),
         ryframe_application::legacy_file_download_persistence(database.clone()),
         object_storage.clone(),
         process_file_content::processor(),
