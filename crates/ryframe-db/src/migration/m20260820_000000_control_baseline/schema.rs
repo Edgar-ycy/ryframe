@@ -693,7 +693,7 @@ pub(crate) const EXPORT_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_ex
     `resource` VARCHAR(64) NOT NULL,
     `background_job_id` BIGINT NOT NULL,
     `request_params` JSON NOT NULL,
-    `request_version` SMALLINT UNSIGNED NOT NULL,
+    `request_version` INT NOT NULL,
     `permission_code` VARCHAR(128) NOT NULL,
     `authorization_fingerprint` CHAR(64) NOT NULL,
     `request_fingerprint` CHAR(64) NOT NULL,

@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn review_snapshot_matches_the_fresh_schema() {
         let snapshot = mysql_snapshot_sql();
-        assert!(snapshot.contains("schema fingerprint: 5f4a35deaa7f715e"));
+        assert!(snapshot.contains("schema fingerprint: 6c5c4af5df9d7ee8"));
         assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 51);
         for required in [
             "`sys_background_job`",

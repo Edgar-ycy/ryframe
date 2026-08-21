@@ -2,7 +2,7 @@
 mod macros;
 
 use ryframe_kernel::{AppError, AppResult, ExportQuerySnapshot};
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QuerySelect, Select};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QuerySelect, Select, sea_query::Expr};
 
 pub mod agent_query_repo;
 pub mod background_job_repo;
@@ -111,13 +111,15 @@ where
 {
     let (matched_rows, upper_id) = select
         .select_only()
-        .column_as(id_column.count(), "matched_rows")
+        .expr_as(Expr::cust("CAST(COUNT(*) AS SIGNED)"), "matched_rows")
         .column_as(id_column.max(), "upper_id")
-        .into_tuple::<(u64, Option<i64>)>()
+        .into_tuple::<(i64, Option<i64>)>()
         .one(db)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?
         .ok_or_else(|| AppError::Database("导出选择聚合未返回结果".into()))?;
+    let matched_rows = u64::try_from(matched_rows)
+        .map_err(|_| AppError::Database("导出选择聚合返回负数行数".into()))?;
     Ok(ExportQuerySnapshot {
         matched_rows,
         upper_id,
