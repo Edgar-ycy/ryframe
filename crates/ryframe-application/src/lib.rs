@@ -14,8 +14,6 @@ mod principal_resolver;
 mod product_persistence;
 mod refresh_session;
 mod request_tenant_context;
-mod retention_cleanup_persistence;
-mod retention_run_persistence;
 mod runtime_policy;
 mod service_identity_secret;
 mod spreadsheet;
@@ -86,13 +84,6 @@ pub use refresh_session::{
     RefreshSessionRevocation, RefreshSessionRotation,
 };
 pub use request_tenant_context::{TenantContext, with_tenant_context};
-pub use retention_cleanup_persistence::{
-    ExpiredImportArtifact, RetentionCleanupPersistencePort, RetentionCleanupResult,
-    RetentionCutoff, RetentionResource,
-};
-pub use retention_run_persistence::{
-    RetentionRunPersistencePort, RetentionRunRecord, RetentionRunTransaction,
-};
 pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,

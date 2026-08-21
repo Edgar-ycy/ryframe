@@ -224,8 +224,8 @@ async fn main() -> Result<(), AppError> {
     );
     let data_retention = Arc::new(DataRetentionService::new(
         ryframe_db::application_ports::tenant_config_retention_persistence(database.clone()),
-        ryframe_db::application_ports::retention_cleanup_persistence(database.clone()),
-        ryframe_db::application_ports::retention_run_persistence(database.clone()),
+        ryframe_db::application_ports::retention::cleanup(database.clone()),
+        ryframe_db::application_ports::retention::run(database.clone()),
         queue.clone(),
         file.clone(),
         application_policies.retention,

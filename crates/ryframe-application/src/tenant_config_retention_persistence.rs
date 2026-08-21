@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::{PersistenceFuture, RetentionCleanupResult};
+use crate::{PersistenceFuture, ports::retention::RetentionCleanupResult};
 
 pub const TENANT_CONFIG_PACKAGE_RESOURCE: &str = "tenant_config_packages";
 pub const TENANT_CONFIG_SNAPSHOT_RESOURCE: &str = "tenant_config_snapshots";

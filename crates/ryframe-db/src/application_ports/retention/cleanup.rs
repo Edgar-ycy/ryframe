@@ -8,8 +8,11 @@ use crate::{
 use chrono::{DateTime, Utc};
 
 use ryframe_application::{
-    ExpiredImportArtifact, PersistenceFuture, RetentionCleanupPersistencePort,
-    RetentionCleanupResult, RetentionCutoff, RetentionResource,
+    PersistenceFuture,
+    ports::retention::{
+        ExpiredImportArtifact, RetentionCleanupPersistencePort, RetentionCleanupResult,
+        RetentionCutoff, RetentionResource,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn RetentionCleanupPersistencePort> {
