@@ -1,21 +1,19 @@
 use super::*;
-use ryframe_db::{
-    MarkExportJobSucceeded,
-    entities::{export_job, sys_file},
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
+
+use crate::{CompleteExportArtifact, ExportArtifactFileDraft, ExportArtifactState};
 
 impl ExportService {
     pub(super) async fn persist_export_file(
         &self,
-        export: export_job::Model,
+        export_id: i64,
+        tenant_id: &str,
         actor: ActorContext,
         artifact: Box<dyn crate::SpreadsheetArtifact>,
         resource: &str,
     ) -> AppResult<()> {
-        let (file_name, key) = export_file_location(&export.tenant_id, resource, export.id);
-        let file_id = deterministic_export_file_id(export.id);
+        let (file_name, key) = export_file_location(tenant_id, resource, export_id);
+        let file_id = deterministic_export_file_id(export_id);
         let content_type =
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_owned();
         let file_size = i64::try_from(artifact.size())
@@ -39,75 +37,51 @@ impl ExportService {
             self.delete_uncommitted_object(&key).await;
             return Err(storage_error(error));
         }
-        let now = match self.background_jobs.database_utc_now(self.db.write()).await {
-            Ok(now) => now,
+        let transaction = match self.artifact_persistence.begin().await {
+            Ok(transaction) => transaction,
             Err(error) => {
                 self.delete_uncommitted_object(&key).await;
                 return Err(error);
             }
         };
-        let file = sys_file::Model {
-            id: file_id,
-            tenant_id: export.tenant_id.clone(),
-            original_name: file_name.clone(),
-            storage_name: file_name.clone(),
-            storage_path: key.clone(),
-            bucket: EXPORT_BUCKET.into(),
-            file_url: format!("{EXPORT_BUCKET}/{key}"),
-            file_size,
-            content_type: content_type.clone(),
-            file_sha256,
-            upload_by: Some(actor.username),
-            upload_status: sys_file::Model::UPLOAD_STATUS_READY.into(),
-            reservation_token: None,
-            reservation_expires_at: None,
-            del_flag: sys_file::Model::DEL_FLAG_NORMAL.into(),
-            created_at: now,
-            updated_at: now,
-        };
-        let transaction = match self.db.write().begin().await {
-            Ok(transaction) => transaction,
-            Err(error) => {
-                self.delete_uncommitted_object(&key).await;
-                return Err(database_error(error));
-            }
-        };
         let result = async {
-            let current = self
-                .exports
-                .find_by_id_for_update_in_transaction(&transaction, export.id)
+            let current = transaction
+                .lock_export(export_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("导出任务不存在".into()))?;
-            if current.status == EXPORT_STATUS_SUCCEEDED {
-                return if current.result_file_id == Some(file_id) {
-                    Ok(false)
-                } else {
-                    Err(AppError::Conflict("导出任务结果文件标识冲突".into()))
-                };
-            }
-            if current.status != EXPORT_STATUS_RUNNING {
-                return Err(AppError::Conflict("导出任务已不再允许运行".into()));
+            if !artifact_write_required(&current, file_id)? {
+                return Ok(false);
             }
 
-            let file = self
-                .files
-                .insert_in_txn(&transaction, &export.tenant_id, file)
-                .await?;
-            let completed_at = self.background_jobs.database_utc_now(&transaction).await?;
-            if !self
-                .exports
-                .mark_succeeded_in_transaction(
-                    &transaction,
-                    MarkExportJobSucceeded {
-                        id: export.id,
-                        file_id: file.id,
+            let now = transaction.database_now().await?;
+            let file = transaction
+                .insert_ready_file(
+                    tenant_id,
+                    ExportArtifactFileDraft {
+                        id: file_id,
                         file_name,
-                        content_type: file.content_type,
-                        file_size: file.file_size,
-                        expires_at: completed_at + self.export_retention,
-                        completed_at,
+                        storage_path: key.clone(),
+                        bucket: EXPORT_BUCKET.into(),
+                        file_url: format!("{EXPORT_BUCKET}/{key}"),
+                        file_size,
+                        content_type,
+                        sha256: file_sha256,
+                        uploaded_by: actor.username,
+                        created_at: now,
                     },
                 )
+                .await?;
+            let completed_at = transaction.database_now().await?;
+            if !transaction
+                .mark_succeeded(CompleteExportArtifact {
+                    export_id,
+                    file_id: file.id,
+                    file_name: file.file_name,
+                    content_type: file.content_type,
+                    file_size: file.file_size,
+                    expires_at: completed_at + self.export_retention,
+                    completed_at,
+                })
                 .await?
             {
                 return Err(AppError::Conflict("导出任务状态已变化".into()));
@@ -117,16 +91,16 @@ impl ExportService {
         .await;
 
         match result {
-            Ok(_) => match crate::commit_current_audit(transaction).await {
+            Ok(_) => match transaction.commit().await {
                 Ok(()) => Ok(()),
                 Err(error) => {
-                    self.compensate_uncommitted_object(export.id, &key).await;
+                    self.compensate_uncommitted_object(export_id, &key).await;
                     Err(error)
                 }
             },
             Err(error) => {
                 let _ = transaction.rollback().await;
-                self.compensate_uncommitted_object(export.id, &key).await;
+                self.compensate_uncommitted_object(export_id, &key).await;
                 Err(error)
             }
         }
@@ -134,14 +108,10 @@ impl ExportService {
 
     /// 事务失败后只删除未被成功状态引用的确定性对象；读取失败时宁可保留孤儿对象。
     async fn compensate_uncommitted_object(&self, export_id: i64, key: &str) {
-        let Ok(transaction) = self.db.write().begin().await else {
+        let Ok(transaction) = self.artifact_persistence.begin().await else {
             return;
         };
-        let Ok(Some(current)) = self
-            .exports
-            .find_by_id_for_update_in_transaction(&transaction, export_id)
-            .await
-        else {
+        let Ok(Some(current)) = transaction.lock_export(export_id).await else {
             let _ = transaction.rollback().await;
             return;
         };
@@ -155,5 +125,62 @@ impl ExportService {
         if let Err(error) = self.storage.delete(EXPORT_BUCKET, key).await {
             tracing::warn!(%error, "清理未提交的导出对象失败，后续相同任务重试会覆盖确定性对象键");
         }
+    }
+}
+
+fn artifact_write_required(current: &ExportArtifactState, file_id: i64) -> AppResult<bool> {
+    if current.status == EXPORT_STATUS_SUCCEEDED {
+        return if current.result_file_id == Some(file_id) {
+            Ok(false)
+        } else {
+            Err(AppError::Conflict("导出任务结果文件标识冲突".into()))
+        };
+    }
+    if current.status != EXPORT_STATUS_RUNNING {
+        return Err(AppError::Conflict("导出任务已不再允许运行".into()));
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn running_export_requires_artifact_write() {
+        let current = ExportArtifactState {
+            status: EXPORT_STATUS_RUNNING.into(),
+            result_file_id: None,
+        };
+        assert!(artifact_write_required(&current, 42).expect("运行任务应继续落账"));
+    }
+
+    #[test]
+    fn matching_succeeded_export_is_idempotent() {
+        let current = ExportArtifactState {
+            status: EXPORT_STATUS_SUCCEEDED.into(),
+            result_file_id: Some(42),
+        };
+        assert!(!artifact_write_required(&current, 42).expect("相同文件应幂等完成"));
+    }
+
+    #[test]
+    fn conflicting_or_terminal_export_is_rejected() {
+        let conflicting = ExportArtifactState {
+            status: EXPORT_STATUS_SUCCEEDED.into(),
+            result_file_id: Some(43),
+        };
+        let cancelled = ExportArtifactState {
+            status: EXPORT_STATUS_CANCELLED.into(),
+            result_file_id: None,
+        };
+        assert!(matches!(
+            artifact_write_required(&conflicting, 42),
+            Err(AppError::Conflict(_))
+        ));
+        assert!(matches!(
+            artifact_write_required(&cancelled, 42),
+            Err(AppError::Conflict(_))
+        ));
     }
 }

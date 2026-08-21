@@ -200,8 +200,14 @@ impl ExportService {
         {
             return Ok(());
         }
-        self.persist_export_file(export, actor, artifact, selection.resource())
-            .await
+        self.persist_export_file(
+            export.id,
+            &export.tenant_id,
+            actor,
+            artifact,
+            selection.resource(),
+        )
+        .await
     }
 
     async fn ensure_execution_active(

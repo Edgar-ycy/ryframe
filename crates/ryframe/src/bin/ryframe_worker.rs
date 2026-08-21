@@ -173,6 +173,7 @@ async fn main() -> Result<(), AppError> {
     let export = Arc::new(
         ExportService::new(
             database.clone(),
+            ryframe_application::legacy_export_artifact_persistence(database.clone()),
             user.clone(),
             object_storage,
             process_spreadsheet::writer_factory(),

@@ -7,7 +7,10 @@ use ryframe_db::{
 };
 use ryframe_kernel::AppError;
 
-use crate::{ArtifactStore, ArtifactStoreError, JobQueue, SpreadsheetWriterFactory};
+use crate::{
+    ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort, JobQueue,
+    SpreadsheetWriterFactory,
+};
 
 use super::{
     ConfigService, DictService, LoginInfoService, OperLogService, PostService, ProductService,
@@ -61,6 +64,7 @@ pub struct ExportService {
     background_jobs: BackgroundJobRepository,
     exports: ExportJobRepository,
     files: FileRepository,
+    artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
     users: Arc<UserService>,
     roles: RoleService,
     posts: PostService,
@@ -80,6 +84,7 @@ pub struct ExportService {
 impl ExportService {
     pub fn new(
         db: ControlDatabaseCluster,
+        artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
         users: Arc<UserService>,
         storage: Arc<dyn ArtifactStore>,
         spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
@@ -99,6 +104,7 @@ impl ExportService {
             background_jobs: BackgroundJobRepository,
             exports: ExportJobRepository,
             files: FileRepository,
+            artifact_persistence,
             roles: RoleService::new(
                 role_cache.clone(),
                 crate::legacy_role_read(db.clone()),
