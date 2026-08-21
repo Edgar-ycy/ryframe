@@ -417,12 +417,12 @@ pub async fn build_all(
     let export = Arc::new(
         ExportService::new(
             ExportPersistencePorts::new(
-                ryframe_db::application_ports::export_artifact_persistence(database.clone()),
-                ryframe_db::application_ports::export_cleanup_persistence(database.clone()),
-                ryframe_db::application_ports::export_deletion_persistence(database.clone()),
-                ryframe_db::application_ports::export_execution_persistence(database.clone()),
-                ryframe_db::application_ports::export_request_persistence(database.clone()),
-                ryframe_db::application_ports::export_requester_persistence(database.clone()),
+                ryframe_db::application_ports::export::artifact(database.clone()),
+                ryframe_db::application_ports::export::cleanup(database.clone()),
+                ryframe_db::application_ports::export::deletion(database.clone()),
+                ryframe_db::application_ports::export::execution(database.clone()),
+                ryframe_db::application_ports::export::request(database.clone()),
+                ryframe_db::application_ports::export::requester(database.clone()),
             ),
             ExportResourceServices {
                 users: Arc::clone(&user),

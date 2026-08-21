@@ -1,5 +1,7 @@
 use ryframe_kernel::{ActorContext, AppError, AppResult, ExportQuerySnapshot};
 
+use crate::ports::export::ExportRequestTransaction;
+
 use super::*;
 
 /// 创建任务时固化的选择边界，Worker 不能越过该主键上界。
@@ -13,7 +15,7 @@ impl ExportService {
     /// 在任务事务的主库一致性快照中计算筛选结果数量与主键上界。
     pub(super) async fn summarize_request_selection(
         &self,
-        transaction: &dyn crate::ExportRequestTransaction,
+        transaction: &dyn ExportRequestTransaction,
         actor: &ActorContext,
         selection: &ExportSelection,
     ) -> AppResult<ExportRequestSnapshot> {

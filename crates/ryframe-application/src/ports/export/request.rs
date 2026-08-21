@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, ExportQuerySnapshot};
 use serde_json::Value;
 
-use crate::{EnqueueJob, ExportRequesterRecord, PersistenceFuture, system::ExportSelection};
+use crate::{EnqueueJob, PersistenceFuture, system::ExportSelection};
+
+use super::ExportRequesterRecord;
 
 #[derive(Debug)]
 pub struct CreateExportRecord {

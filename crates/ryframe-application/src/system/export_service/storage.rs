@@ -1,7 +1,7 @@
 use super::*;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
-use crate::{CompleteExportArtifact, ExportArtifactFileDraft, ExportArtifactState};
+use crate::ports::export::{CompleteExportArtifact, ExportArtifactFileDraft, ExportArtifactState};
 
 impl ExportService {
     pub(super) async fn persist_export_file(

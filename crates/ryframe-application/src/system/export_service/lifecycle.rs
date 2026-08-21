@@ -1,7 +1,10 @@
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
 
-use crate::EnqueueJob;
+use crate::{
+    EnqueueJob,
+    ports::export::{CreateExportRecord, ExportRequesterRecord},
+};
 
 use super::*;
 
@@ -142,7 +145,7 @@ impl ExportService {
             };
             let export = transaction
                 .create_export(
-                    crate::CreateExportRecord {
+                    CreateExportRecord {
                         tenant_id: tenant_id.to_owned(),
                         requester_id: actor.user_id,
                         resource: resource.to_owned(),
@@ -354,7 +357,7 @@ impl ExportService {
     }
 }
 
-fn export_requester_view(export: crate::ExportRequesterRecord) -> ExportJobVo {
+fn export_requester_view(export: ExportRequesterRecord) -> ExportJobVo {
     ExportJobVo {
         id: export.id.to_string(),
         resource: export.resource,
@@ -373,7 +376,7 @@ fn export_requester_view(export: crate::ExportRequesterRecord) -> ExportJobVo {
     }
 }
 
-fn export_requester_snapshot(export: &crate::ExportRequesterRecord) -> PersistedExportSnapshot<'_> {
+fn export_requester_snapshot(export: &ExportRequesterRecord) -> PersistedExportSnapshot<'_> {
     PersistedExportSnapshot {
         request_version: export.request_version,
         authorization_fingerprint: &export.authorization_fingerprint,
@@ -432,11 +435,11 @@ fn deletion_cleanup_dedupe_key(tenant_id: &str, requester_id: i64, ids: &[i64]) 
 mod deletion_tests {
     use super::*;
 
-    fn requester_record() -> crate::ExportRequesterRecord {
+    fn requester_record() -> ExportRequesterRecord {
         let now = chrono::DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
             .expect("测试时间应有效")
             .with_timezone(&chrono::Utc);
-        crate::ExportRequesterRecord {
+        ExportRequesterRecord {
             id: 42,
             resource: "users".into(),
             status: EXPORT_STATUS_SUCCEEDED.into(),

@@ -5,8 +5,11 @@ use ryframe_kernel::{AppError, AppResult};
 
 use super::{EXPORT_BUCKET, EXPORT_STATUS_SUCCEEDED, storage_error};
 use crate::{
-    ArtifactStore, ExportCleanupFile, ExportCleanupFileLookup, ExportCleanupPersistencePort,
-    ExportCleanupRecord, ExportCleanupTransaction,
+    ArtifactStore,
+    ports::export::{
+        ExportCleanupFile, ExportCleanupFileLookup, ExportCleanupPersistencePort,
+        ExportCleanupRecord, ExportCleanupTransaction,
+    },
 };
 
 /// 导出对象、独占文件元数据与公开任务记录的统一清理用例。

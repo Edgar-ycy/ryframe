@@ -2,14 +2,17 @@ use std::sync::Arc;
 
 use crate::{
     BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
-    ReadConsistency, Repository, entities::export_job,
+    ReadConsistency, Repository,
 };
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    ExportDownloadFile, ExportRequesterPersistencePort, ExportRequesterRecord,
-    ExportRequesterTransaction, PersistenceFuture,
+    PersistenceFuture,
+    ports::export::{
+        ExportDownloadFile, ExportRequesterPersistencePort, ExportRequesterRecord,
+        ExportRequesterTransaction,
+    },
 };
 
 struct DatabaseExportRequesterPersistence {
@@ -39,7 +42,7 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
             ExportJobRepository
                 .find_by_id_for_requester(&database, tenant_id, requester_id, export_id)
                 .await
-                .map(|record| record.map(map_export))
+                .map(|record| record.map(super::mapping::requester_record))
         })
     }
 
@@ -57,7 +60,12 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
             ExportJobRepository
                 .list_for_requester(&database, tenant_id, requester_id, limit)
                 .await
-                .map(|records| records.into_iter().map(map_export).collect())
+                .map(|records| {
+                    records
+                        .into_iter()
+                        .map(super::mapping::requester_record)
+                        .collect()
+                })
         })
     }
 
@@ -75,7 +83,12 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
             ExportJobRepository
                 .list_for_requester(&database, tenant_id, requester_id, limit)
                 .await
-                .map(|records| records.into_iter().map(map_export).collect())
+                .map(|records| {
+                    records
+                        .into_iter()
+                        .map(super::mapping::requester_record)
+                        .collect()
+                })
         })
     }
 
@@ -157,38 +170,13 @@ impl ExportRequesterTransaction for DatabaseExportRequesterTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
-    }
-}
-
-pub(crate) fn map_export(record: export_job::Model) -> ExportRequesterRecord {
-    ExportRequesterRecord {
-        id: record.id,
-        resource: record.resource,
-        status: record.status,
-        result_file_name: record.result_file_name,
-        content_type: record.content_type,
-        file_size: record.file_size,
-        expires_at: record.expires_at,
-        error_message: record.error_message,
-        snapshot_at: record.snapshot_at,
-        matched_rows: record.matched_rows,
-        created_at: record.created_at,
-        updated_at: record.updated_at,
-        completed_at: record.completed_at,
-        notification_read_at: record.notification_read_at,
-        permission_code: record.permission_code,
-        request_params: record.request_params,
-        request_version: record.request_version,
-        authorization_fingerprint: record.authorization_fingerprint,
-        upper_id: record.upper_id,
-        result_file_id: record.result_file_id,
     }
 }
 

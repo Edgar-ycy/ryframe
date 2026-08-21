@@ -5,7 +5,8 @@ use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    EnqueueJob, ExportDeletionPersistencePort, ExportDeletionTransaction, PersistenceFuture,
+    EnqueueJob, PersistenceFuture,
+    ports::export::{ExportDeletionPersistencePort, ExportDeletionTransaction},
 };
 
 struct DatabaseExportDeletionPersistence {
@@ -74,7 +75,7 @@ impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
             BackgroundJobRepository
                 .enqueue_in_transaction(
                     &self.transaction,
-                    super::job_queue_persistence::database_enqueue(command),
+                    super::super::job_queue_persistence::database_enqueue(command),
                     now,
                 )
                 .await
@@ -83,9 +84,9 @@ impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {

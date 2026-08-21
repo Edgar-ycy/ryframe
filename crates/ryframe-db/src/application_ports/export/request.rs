@@ -10,8 +10,12 @@ use ryframe_kernel::{ActorContext, AppError, ExportQuerySnapshot};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    CreateExportRecord, EnqueueJob, ExportRequestPersistencePort, ExportRequestTransaction,
-    ExportRequesterRecord, PersistenceFuture, system::ExportSelection,
+    EnqueueJob, PersistenceFuture,
+    ports::export::{
+        CreateExportRecord, ExportRequestPersistencePort, ExportRequestTransaction,
+        ExportRequesterRecord,
+    },
+    system::ExportSelection,
 };
 
 struct DatabaseExportRequestPersistence {
@@ -65,7 +69,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                     request_fingerprint,
                 )
                 .await
-                .map(|record| record.map(super::export_requester_persistence::map_export))
+                .map(|record| record.map(super::mapping::requester_record))
         })
     }
 
@@ -187,7 +191,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
             BackgroundJobRepository
                 .enqueue_in_transaction(
                     &self.transaction,
-                    super::job_queue_persistence::database_enqueue(command),
+                    super::super::job_queue_persistence::database_enqueue(command),
                     now,
                 )
                 .await
@@ -204,14 +208,14 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
             ExportJobRepository
                 .create_in_transaction(&self.transaction, database_create(command), now)
                 .await
-                .map(super::export_requester_persistence::map_export)
+                .map(super::mapping::requester_record)
         })
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {

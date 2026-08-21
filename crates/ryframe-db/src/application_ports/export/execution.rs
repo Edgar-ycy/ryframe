@@ -9,8 +9,11 @@ use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    ExportBackgroundLease, ExportExecutionPersistencePort, ExportExecutionRecord,
-    ExportExecutionState, ExportExecutionTransaction, ExportStartDecision, PersistenceFuture,
+    PersistenceFuture,
+    ports::export::{
+        ExportBackgroundLease, ExportExecutionPersistencePort, ExportExecutionRecord,
+        ExportExecutionState, ExportExecutionTransaction, ExportStartDecision,
+    },
 };
 
 struct DatabaseExportExecutionPersistence {
@@ -125,9 +128,9 @@ impl ExportExecutionTransaction for DatabaseExportExecutionTransaction {
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(
-            async move { super::audit_persistence::commit_current_audit(self.transaction).await },
-        )
+        Box::pin(async move {
+            super::super::audit_persistence::commit_current_audit(self.transaction).await
+        })
     }
 
     fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
