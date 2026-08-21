@@ -3174,7 +3174,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "ryframe"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3206,7 +3206,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-adapters"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "calamine",
@@ -3245,7 +3245,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-api"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "axum",
  "axum-extra",
@@ -3282,7 +3282,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-application"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3306,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-auth"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "argon2",
  "chrono",
@@ -3322,7 +3322,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-config"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "base64 0.23.1",
  "percent-encoding",
@@ -3334,7 +3334,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-db"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3357,7 +3357,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-generator"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3372,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-kernel"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "serde",
  "validator",
@@ -3380,7 +3380,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-macro"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "axum",
  "proc-macro2",
@@ -3390,7 +3390,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-tenant-db"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5135,7 +5135,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "libc",
  "serde_json",
