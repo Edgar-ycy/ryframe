@@ -31,10 +31,6 @@ mod retention_run_persistence;
 mod role_read;
 mod role_write;
 mod runtime_policy;
-mod service_account_audit_persistence;
-mod service_account_authorization_persistence;
-mod service_account_read;
-mod service_account_write;
 mod service_identity_secret;
 mod spreadsheet;
 pub mod system;
@@ -157,21 +153,6 @@ pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
     ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
-};
-pub use service_account_audit_persistence::{
-    ServiceAccessAuditRecord, ServiceAccountAuditReadPort,
-};
-pub use service_account_authorization_persistence::{
-    ServiceAccountAuthorizationReadPort, ServiceAccountPermissionSnapshot,
-    ServiceDelegationTargetRecord, ServiceDelegationTargetSet,
-};
-pub use service_account_read::{
-    ServiceAccountDetailRecord, ServiceAccountReadPort, ServiceAccountRecord,
-    ServiceCredentialRecord, ServiceDelegationRecord,
-};
-pub use service_account_write::{
-    ServiceAccountUserRecord, ServiceAccountWritePort, ServiceAccountWriteTransaction,
-    ServiceCredentialWriteRecord, ServiceDelegationIdentity, ServiceDelegationWriteRecord,
 };
 pub use spreadsheet::{
     SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,

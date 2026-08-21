@@ -1,9 +1,8 @@
 use chrono::{DateTime, Utc};
 
-use crate::{
-    PersistenceFuture, ServiceAccountPermissionSnapshot, ServiceAccountRecord,
-    ports::authorization::AuthorizationMirrorTransaction,
-};
+use crate::{PersistenceFuture, ports::authorization::AuthorizationMirrorTransaction};
+
+use super::{ServiceAccountPermissionSnapshot, ServiceAccountRecord};
 
 #[derive(Debug)]
 pub struct ServiceCredentialWriteRecord {

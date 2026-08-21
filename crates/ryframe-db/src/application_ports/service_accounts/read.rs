@@ -14,8 +14,11 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    PersistenceFuture, ServiceAccountDetailRecord, ServiceAccountReadPort, ServiceAccountRecord,
-    ServiceCredentialRecord, ServiceDelegationRecord,
+    PersistenceFuture,
+    ports::service_accounts::{
+        ServiceAccountDetailRecord, ServiceAccountReadPort, ServiceAccountRecord,
+        ServiceCredentialRecord, ServiceDelegationRecord,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ServiceAccountReadPort> {

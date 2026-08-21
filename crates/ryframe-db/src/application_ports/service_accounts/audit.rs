@@ -5,7 +5,8 @@ use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use ryframe_application::{
-    PersistenceFuture, ServiceAccessAuditRecord, ServiceAccountAuditReadPort,
+    PersistenceFuture,
+    ports::service_accounts::{ServiceAccessAuditRecord, ServiceAccountAuditReadPort},
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ServiceAccountAuditReadPort> {

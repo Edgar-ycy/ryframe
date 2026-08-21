@@ -226,8 +226,8 @@ pub struct ServiceAccessAuditVo {
     pub completed_at: DateTime<Utc>,
 }
 
-impl From<crate::ServiceAccessAuditRecord> for ServiceAccessAuditVo {
-    fn from(audit: crate::ServiceAccessAuditRecord) -> Self {
+impl From<crate::ports::service_accounts::ServiceAccessAuditRecord> for ServiceAccessAuditVo {
+    fn from(audit: crate::ports::service_accounts::ServiceAccessAuditRecord) -> Self {
         Self {
             id: audit.id.to_string(),
             request_id: audit.request_id,

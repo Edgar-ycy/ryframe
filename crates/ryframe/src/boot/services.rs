@@ -210,20 +210,17 @@ pub async fn build_all(
         let keyring = load_pepper_keyring(config)?;
         let descriptors = service_capability_descriptors();
         let management = Arc::new(ServiceAccountService::new(
-            ryframe_db::application_ports::service_account_write(database.clone()),
+            ryframe_db::application_ports::service_accounts::write(database.clone()),
             policies.service_accounts,
             Arc::clone(&keyring),
             descriptors,
             authorization_cache.clone(),
             ServiceAccountReadDependencies {
-                accounts: ryframe_db::application_ports::service_account_read(database.clone()),
-                authorization:
-                    ryframe_db::application_ports::service_account_authorization_persistence(
-                        database.clone(),
-                    ),
-                audits: ryframe_db::application_ports::service_account_audit_persistence(
+                accounts: ryframe_db::application_ports::service_accounts::read(database.clone()),
+                authorization: ryframe_db::application_ports::service_accounts::authorization(
                     database.clone(),
                 ),
+                audits: ryframe_db::application_ports::service_accounts::audit(database.clone()),
             },
         )?);
         let agent = Arc::new(AgentService::new(
