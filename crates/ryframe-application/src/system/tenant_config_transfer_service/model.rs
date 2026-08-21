@@ -192,6 +192,16 @@ impl TenantConfigTargetCatalog {
             api_permission_codes,
         })
     }
+
+    #[doc(hidden)]
+    pub fn page_routes(&self) -> &BTreeMap<String, (String, String)> {
+        &self.page_routes
+    }
+
+    #[doc(hidden)]
+    pub fn api_permission_codes(&self) -> &BTreeMap<String, String> {
+        &self.api_permission_codes
+    }
 }
 
 fn json_counts(value: &Value) -> BTreeMap<String, u64> {

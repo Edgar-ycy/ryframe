@@ -164,7 +164,8 @@ impl ProductService {
 
     /// 角色授权写入前的 Capability 守卫。普通角色和超级管理员都不能
     /// 绕过产品授权或部署依赖。
-    pub(crate) fn ensure_permission_codes_enabled(
+    #[doc(hidden)]
+    pub fn ensure_permission_codes_enabled(
         &self,
         snapshot: crate::TenantProductSnapshot,
         permission_codes: &[String],
@@ -214,7 +215,8 @@ impl ProductService {
     }
 
     /// 路由权限同步只能看到当前租户真正可用的 Capability 权限。
-    pub(crate) fn filter_syncable_permission_codes(
+    #[doc(hidden)]
+    pub fn filter_syncable_permission_codes(
         &self,
         snapshot: crate::TenantProductSnapshot,
         permission_codes: BTreeSet<String>,

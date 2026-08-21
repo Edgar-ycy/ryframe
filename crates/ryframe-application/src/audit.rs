@@ -17,8 +17,10 @@ use crate::system::{OperLogStatus, RecordOperLogCommand};
 /// 操作审计事件在事务 Outbox 中使用的稳定类型标识。
 pub const AUDIT_OPERATION_OUTBOX_EVENT_TYPE: &str = "audit.operation";
 
-pub(crate) const AUDIT_AGGREGATE_TYPE: &str = "operation_audit";
-pub(crate) const OUTBOX_MAX_ATTEMPTS: i32 = 20;
+#[doc(hidden)]
+pub const AUDIT_AGGREGATE_TYPE: &str = "operation_audit";
+#[doc(hidden)]
+pub const OUTBOX_MAX_ATTEMPTS: i32 = 20;
 
 static AUDIT_FAILURE_HOOK: OnceLock<fn(&'static str)> = OnceLock::new();
 
@@ -140,7 +142,8 @@ impl AuditTransactionBinding {
     }
 }
 
-pub(crate) fn bind_current_audit() -> Option<(AuditOperationEvent, AuditTransactionBinding)> {
+#[doc(hidden)]
+pub fn bind_current_audit() -> Option<(AuditOperationEvent, AuditTransactionBinding)> {
     let context = CURRENT_AUDIT_REQUEST.try_with(Clone::clone).ok()?;
     context
         .state
@@ -195,7 +198,8 @@ impl AuditOutbox {
     }
 }
 
-pub(crate) fn validate_audit_event(event: &AuditOperationEvent) -> AppResult<()> {
+#[doc(hidden)]
+pub fn validate_audit_event(event: &AuditOperationEvent) -> AppResult<()> {
     validate_identifier("event_id", &event.event_id)?;
     validate_identifier("request_id", &event.request_id)?;
     crate::enforce_tenant_scope(&event.tenant_id)

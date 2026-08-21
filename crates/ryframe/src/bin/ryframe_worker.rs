@@ -134,70 +134,70 @@ async fn main() -> Result<(), AppError> {
     let object_storage = connect_storage_for_worker(&config).await?;
 
     let queue = Arc::new(
-        JobQueue::new(ryframe_application::legacy_job_queue_persistence(
+        JobQueue::new(ryframe_db::application_ports::job_queue_persistence(
             database.clone(),
         ))
         .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
     );
-    let outbox_persistence = ryframe_application::legacy_outbox_persistence(database.clone());
+    let outbox_persistence = ryframe_db::application_ports::outbox_persistence(database.clone());
     install_job_metrics(&queue);
     let message = Arc::new(MessageService::new(
-        ryframe_application::legacy_message_persistence(database.clone()),
+        ryframe_db::application_ports::message_persistence(database.clone()),
         queue.clone(),
         application_policies.messaging,
     ));
     let user = Arc::new(UserService::new(
         authorization_cache.clone(),
-        ryframe_application::legacy_identity_authorization(database.clone()),
-        ryframe_application::legacy_user_query_persistence(database.clone()),
-        ryframe_application::legacy_user_write_persistence(
+        ryframe_db::application_ports::identity_authorization(database.clone()),
+        ryframe_db::application_ports::user_query_persistence(database.clone()),
+        ryframe_db::application_ports::user_write_persistence(
             database.clone(),
             authorization_cache.clone(),
         ),
-        ryframe_application::legacy_password_reset_persistence(
+        ryframe_db::application_ports::password_reset_persistence(
             database.clone(),
             authorization_cache.clone(),
         ),
     ));
     let product = Arc::new(ProductService::new(
-        ryframe_application::legacy_product_read(database.clone()),
-        ryframe_application::legacy_product_write(database.clone()),
+        ryframe_db::application_ports::product_read(database.clone()),
+        ryframe_db::application_ports::product_write(database.clone()),
         authorization_cache.clone(),
         application_policies.service_accounts.enabled() && redis.is_some(),
     ));
     let role = Arc::new(RoleService::new(
         authorization_cache.clone(),
-        ryframe_application::legacy_role_read(database.clone()),
-        ryframe_application::legacy_role_write(
+        ryframe_db::application_ports::role_read(database.clone()),
+        ryframe_db::application_ports::role_write(
             database.clone(),
             authorization_cache.clone(),
             Arc::clone(&product),
         ),
     ));
     let post = Arc::new(PostService::new(
-        ryframe_application::legacy_post_persistence(database.clone()),
+        ryframe_db::application_ports::post_persistence(database.clone()),
     ));
     let config_service = Arc::new(ConfigService::new(
-        ryframe_application::legacy_config_persistence(
+        ryframe_db::application_ports::config_persistence(
             database.clone(),
             authorization_cache.clone(),
         ),
         authorization_cache.clone(),
     ));
     let dict = Arc::new(DictService::new(
-        ryframe_application::legacy_dict_persistence(database.clone()),
+        ryframe_db::application_ports::dict_persistence(database.clone()),
         None,
     ));
     let oper_log = Arc::new(OperLogService::new(
-        ryframe_application::legacy_oper_log_persistence(database.clone()),
+        ryframe_db::application_ports::oper_log_persistence(database.clone()),
     ));
     let login_info = Arc::new(LoginInfoService::new(
-        ryframe_application::legacy_login_info_persistence(database.clone()),
+        ryframe_db::application_ports::login_info_persistence(database.clone()),
     ));
     let file = Arc::new(FileService::new(
-        ryframe_application::legacy_file_cleanup_persistence(database.clone()),
-        ryframe_application::legacy_file_download_persistence(database.clone()),
-        ryframe_application::legacy_file_upload_persistence(database.clone()),
+        ryframe_db::application_ports::file_cleanup_persistence(database.clone()),
+        ryframe_db::application_ports::file_download_persistence(database.clone()),
+        ryframe_db::application_ports::file_upload_persistence(database.clone()),
         object_storage.clone(),
         process_file_content::processor(),
     ));
@@ -205,12 +205,12 @@ async fn main() -> Result<(), AppError> {
     let export = Arc::new(
         ExportService::new(
             ExportPersistencePorts::new(
-                ryframe_application::legacy_export_artifact_persistence(database.clone()),
-                ryframe_application::legacy_export_cleanup_persistence(database.clone()),
-                ryframe_application::legacy_export_deletion_persistence(database.clone()),
-                ryframe_application::legacy_export_execution_persistence(database.clone()),
-                ryframe_application::legacy_export_request_persistence(database.clone()),
-                ryframe_application::legacy_export_requester_persistence(database.clone()),
+                ryframe_db::application_ports::export_artifact_persistence(database.clone()),
+                ryframe_db::application_ports::export_cleanup_persistence(database.clone()),
+                ryframe_db::application_ports::export_deletion_persistence(database.clone()),
+                ryframe_db::application_ports::export_execution_persistence(database.clone()),
+                ryframe_db::application_ports::export_request_persistence(database.clone()),
+                ryframe_db::application_ports::export_requester_persistence(database.clone()),
             ),
             ExportResourceServices {
                 users: Arc::clone(&user),
@@ -228,9 +228,9 @@ async fn main() -> Result<(), AppError> {
         .with_job_queue(queue.clone()),
     );
     let data_retention = Arc::new(DataRetentionService::new(
-        ryframe_application::legacy_tenant_config_retention_persistence(database.clone()),
-        ryframe_application::legacy_retention_cleanup_persistence(database.clone()),
-        ryframe_application::legacy_retention_run_persistence(database.clone()),
+        ryframe_db::application_ports::tenant_config_retention_persistence(database.clone()),
+        ryframe_db::application_ports::retention_cleanup_persistence(database.clone()),
+        ryframe_db::application_ports::retention_run_persistence(database.clone()),
         queue.clone(),
         file.clone(),
         application_policies.retention,
@@ -240,12 +240,12 @@ async fn main() -> Result<(), AppError> {
         user.clone(),
         file.clone(),
         process_spreadsheet::document_processor(),
-        ryframe_application::legacy_user_import_persistence(database.clone()),
+        ryframe_db::application_ports::user_import_persistence(database.clone()),
         application_policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
         ryframe_application::system::TenantConfigTransferDependencies {
-            persistence: ryframe_application::legacy_tenant_config_transfer_persistence(
+            persistence: ryframe_db::application_ports::tenant_config_transfer_persistence(
                 database.clone(),
             ),
             queue: queue.clone(),
@@ -290,7 +290,7 @@ async fn main() -> Result<(), AppError> {
         process_jobs::validate_schedule_targets(&worker, &schedule_targets)?;
         Some(Arc::new(
             JobScheduleService::new(
-                ryframe_application::legacy_job_schedule_persistence(database.clone()),
+                ryframe_db::application_ports::job_schedule_persistence(database.clone()),
                 queue.clone(),
                 execution_tenant_scope.clone(),
                 schedule_targets,

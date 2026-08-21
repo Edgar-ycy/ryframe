@@ -9,7 +9,6 @@ mod schedule_targets;
 mod wakeup;
 mod worker;
 
-pub(crate) use crate::legacy_job_queue_persistence::database_enqueue;
 pub use handlers::{
     ExportCleanupJobHandler, ExportJobHandler, MessageDispatchJobHandler,
     MessageRetentionJobHandler, MessageWakeupFuture, MessageWakeupPublisher,

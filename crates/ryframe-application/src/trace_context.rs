@@ -26,7 +26,8 @@ pub fn install_trace_context_port(port: Arc<dyn TraceContextPort>) -> AppResult<
         .map_err(|_| AppError::Config("链路追踪上下文端口不能重复安装".into()))
 }
 
-pub(crate) fn current_trace_context() -> PersistedTraceContext {
+#[doc(hidden)]
+pub fn current_trace_context() -> PersistedTraceContext {
     TRACE_CONTEXT
         .get()
         .map_or_else(PersistedTraceContext::default, |port| port.current())

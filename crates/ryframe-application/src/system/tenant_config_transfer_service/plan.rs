@@ -78,16 +78,18 @@ fn validate_transfer_item_text(value: &str, max_chars: usize, label: &str) -> Ap
     Ok(())
 }
 
-pub(super) struct PlanItemDescription {
-    pub(super) resource_type: &'static str,
-    pub(super) stable_key: String,
-    pub(super) display_name: String,
-    pub(super) action: &'static str,
-    pub(super) detail_code: Option<&'static str>,
-    pub(super) detail: Option<String>,
+#[doc(hidden)]
+pub struct PlanItemDescription {
+    pub resource_type: &'static str,
+    pub stable_key: String,
+    pub display_name: String,
+    pub action: &'static str,
+    pub detail_code: Option<&'static str>,
+    pub detail: Option<String>,
 }
 
-pub(super) fn compare_resources(
+#[doc(hidden)]
+pub fn compare_resources(
     source: &TenantConfigPackageResources,
     target: &TenantConfigPackageResources,
     allowed_routes: &BTreeMap<String, (String, String)>,

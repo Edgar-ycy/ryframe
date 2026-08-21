@@ -7,10 +7,11 @@ use ryframe_application::{
 };
 use ryframe_db::{
     ControlDatabaseCluster, ProductRepository, ProvisionTenantCommand, ReadConsistency,
-    TenantProvisioningRepository, TenantRepository, entities::tenant,
+    TenantProvisioningRepository, TenantRepository, application_ports::DatabasePortTransaction,
+    entities::tenant,
 };
 use ryframe_kernel::AppError;
-use sea_orm::{ActiveModelTrait, DatabaseTransaction, IntoActiveModel, TransactionTrait};
+use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait};
 
 use crate::TenantDataPlacementRepository;
 
@@ -21,7 +22,7 @@ struct TenantPersistence {
 }
 
 struct TenantWorkUnit {
-    transaction: DatabaseTransaction,
+    transaction: DatabasePortTransaction,
 }
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantPersistencePort> {
@@ -59,7 +60,9 @@ impl TenantPersistencePort for TenantPersistence {
                 .begin()
                 .await
                 .map_err(database_error)?;
-            Ok(Box::new(TenantWorkUnit { transaction }) as Box<dyn TenantTransaction>)
+            Ok(Box::new(TenantWorkUnit {
+                transaction: transaction.into(),
+            }) as Box<dyn TenantTransaction>)
         })
     }
 }
@@ -264,7 +267,7 @@ impl TenantTransaction for TenantWorkUnit {
     }
 
     fn commit_audited(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { ryframe_application::commit_current_audit(self.transaction).await })
+        Box::pin(async move { self.transaction.commit_audited().await })
     }
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {

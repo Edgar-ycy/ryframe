@@ -75,7 +75,8 @@ impl ProductService {
     }
 
     /// 校验调用方在同一事务中读取的产品快照。
-    pub(crate) fn require_capability_snapshot(
+    #[doc(hidden)]
+    pub fn require_capability_snapshot(
         &self,
         snapshot: TenantProductSnapshot,
         capability_code: &str,

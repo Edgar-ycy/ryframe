@@ -25,55 +25,6 @@ mod identity_authorization;
 mod job_queue_persistence;
 mod job_schedule_persistence;
 pub mod jobs;
-mod legacy_agent_audit;
-mod legacy_agent_identity;
-mod legacy_agent_persistence;
-mod legacy_agent_snapshot;
-mod legacy_audit_persistence;
-mod legacy_authorization_diagnostic_persistence;
-mod legacy_authorization_mirror_persistence;
-mod legacy_config_persistence;
-mod legacy_dept_persistence;
-mod legacy_dict_persistence;
-mod legacy_execution_tenant_scope;
-mod legacy_export_artifact_persistence;
-mod legacy_export_cleanup_persistence;
-mod legacy_export_deletion_persistence;
-mod legacy_export_execution_persistence;
-mod legacy_export_request_persistence;
-mod legacy_export_requester_persistence;
-mod legacy_file_cleanup_persistence;
-mod legacy_file_download_persistence;
-mod legacy_file_upload_persistence;
-mod legacy_identity_authorization;
-mod legacy_job_queue_persistence;
-mod legacy_job_schedule_persistence;
-mod legacy_login_info_persistence;
-mod legacy_menu_persistence;
-mod legacy_message_persistence;
-mod legacy_notice_persistence;
-mod legacy_oper_log_persistence;
-mod legacy_outbox_persistence;
-mod legacy_overview_persistence;
-mod legacy_password_reset_persistence;
-mod legacy_permission_persistence;
-mod legacy_post_persistence;
-mod legacy_product_persistence;
-mod legacy_profile_persistence;
-mod legacy_retention_cleanup_persistence;
-mod legacy_retention_run_persistence;
-mod legacy_role_read;
-mod legacy_role_write;
-mod legacy_service_account_audit_persistence;
-mod legacy_service_account_authorization_persistence;
-mod legacy_service_account_read;
-mod legacy_service_account_write;
-mod legacy_tenant_config_retention_persistence;
-mod legacy_tenant_config_transfer_persistence;
-mod legacy_tenant_usage_persistence;
-mod legacy_user_import_persistence;
-mod legacy_user_query_persistence;
-mod legacy_user_write_persistence;
 mod login_info_persistence;
 mod login_protection;
 mod menu_persistence;
@@ -105,6 +56,8 @@ mod spreadsheet;
 pub mod system;
 mod tenant_config_archive;
 mod tenant_config_retention_persistence;
+#[doc(hidden)]
+pub mod tenant_config_stable_key;
 mod tenant_config_transfer_persistence;
 mod tenant_data_migration;
 mod tenant_data_migration_persistence;
@@ -120,6 +73,10 @@ mod user_write_persistence;
 
 pub use artifact_store::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
+};
+#[doc(hidden)]
+pub use audit::{
+    AUDIT_AGGREGATE_TYPE, OUTBOX_MAX_ATTEMPTS, bind_current_audit, validate_audit_event,
 };
 pub use audit::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AuditOperationEvent, AuditOutbox,
@@ -210,105 +167,6 @@ pub use jobs::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
 };
-#[doc(hidden)]
-pub use legacy_agent_audit::port as legacy_agent_audit_write;
-#[doc(hidden)]
-pub use legacy_agent_identity::port as legacy_agent_identity_read;
-#[doc(hidden)]
-pub use legacy_agent_persistence::port as legacy_agent_persistence;
-#[doc(hidden)]
-pub use legacy_audit_persistence::{
-    commit_current_audit, outbox_port as legacy_audit_outbox_persistence,
-    record_current_audit_in_transaction,
-};
-#[doc(hidden)]
-pub use legacy_authorization_diagnostic_persistence::port as legacy_authorization_diagnostic_persistence;
-#[doc(hidden)]
-pub use legacy_config_persistence::port as legacy_config_persistence;
-#[doc(hidden)]
-pub use legacy_dept_persistence::{read_port as legacy_dept_read, write_port as legacy_dept_write};
-#[doc(hidden)]
-pub use legacy_dict_persistence::port as legacy_dict_persistence;
-#[doc(hidden)]
-pub use legacy_export_artifact_persistence::port as legacy_export_artifact_persistence;
-#[doc(hidden)]
-pub use legacy_export_cleanup_persistence::port as legacy_export_cleanup_persistence;
-#[doc(hidden)]
-pub use legacy_export_deletion_persistence::port as legacy_export_deletion_persistence;
-#[doc(hidden)]
-pub use legacy_export_execution_persistence::port as legacy_export_execution_persistence;
-#[doc(hidden)]
-pub use legacy_export_request_persistence::port as legacy_export_request_persistence;
-#[doc(hidden)]
-pub use legacy_export_requester_persistence::port as legacy_export_requester_persistence;
-#[doc(hidden)]
-pub use legacy_file_cleanup_persistence::port as legacy_file_cleanup_persistence;
-#[doc(hidden)]
-pub use legacy_file_download_persistence::port as legacy_file_download_persistence;
-#[doc(hidden)]
-pub use legacy_file_upload_persistence::port as legacy_file_upload_persistence;
-#[doc(hidden)]
-pub use legacy_identity_authorization::port as legacy_identity_authorization;
-#[doc(hidden)]
-pub use legacy_job_queue_persistence::port as legacy_job_queue_persistence;
-#[doc(hidden)]
-pub use legacy_job_schedule_persistence::port as legacy_job_schedule_persistence;
-#[doc(hidden)]
-pub use legacy_login_info_persistence::port as legacy_login_info_persistence;
-#[doc(hidden)]
-pub use legacy_menu_persistence::{read_port as legacy_menu_read, write_port as legacy_menu_write};
-#[doc(hidden)]
-pub use legacy_message_persistence::port as legacy_message_persistence;
-#[doc(hidden)]
-pub use legacy_notice_persistence::port as legacy_notice_persistence;
-#[doc(hidden)]
-pub use legacy_oper_log_persistence::port as legacy_oper_log_persistence;
-#[doc(hidden)]
-pub use legacy_outbox_persistence::port as legacy_outbox_persistence;
-#[doc(hidden)]
-pub use legacy_overview_persistence::port as legacy_overview_persistence;
-#[doc(hidden)]
-pub use legacy_password_reset_persistence::port as legacy_password_reset_persistence;
-#[doc(hidden)]
-pub use legacy_permission_persistence::{
-    read_port as legacy_permission_read, write_port as legacy_permission_write,
-};
-#[doc(hidden)]
-pub use legacy_post_persistence::port as legacy_post_persistence;
-#[doc(hidden)]
-pub use legacy_product_persistence::{
-    read_port as legacy_product_read, write_port as legacy_product_write,
-};
-#[doc(hidden)]
-pub use legacy_profile_persistence::port as legacy_profile_persistence;
-#[doc(hidden)]
-pub use legacy_retention_cleanup_persistence::port as legacy_retention_cleanup_persistence;
-#[doc(hidden)]
-pub use legacy_retention_run_persistence::port as legacy_retention_run_persistence;
-#[doc(hidden)]
-pub use legacy_role_read::port as legacy_role_read;
-#[doc(hidden)]
-pub use legacy_role_write::port as legacy_role_write;
-#[doc(hidden)]
-pub use legacy_service_account_audit_persistence::port as legacy_service_account_audit_persistence;
-#[doc(hidden)]
-pub use legacy_service_account_authorization_persistence::port as legacy_service_account_authorization_persistence;
-#[doc(hidden)]
-pub use legacy_service_account_read::port as legacy_service_account_read;
-#[doc(hidden)]
-pub use legacy_service_account_write::port as legacy_service_account_write;
-#[doc(hidden)]
-pub use legacy_tenant_config_retention_persistence::port as legacy_tenant_config_retention_persistence;
-#[doc(hidden)]
-pub use legacy_tenant_config_transfer_persistence::port as legacy_tenant_config_transfer_persistence;
-#[doc(hidden)]
-pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
-#[doc(hidden)]
-pub use legacy_user_import_persistence::port as legacy_user_import_persistence;
-#[doc(hidden)]
-pub use legacy_user_query_persistence::port as legacy_user_query_persistence;
-#[doc(hidden)]
-pub use legacy_user_write_persistence::port as legacy_user_write_persistence;
 pub use login_info_persistence::{
     LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
 };
@@ -437,6 +295,8 @@ pub use tenant_runtime::{
 pub use tenant_usage_persistence::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
+#[doc(hidden)]
+pub use trace_context::current_trace_context;
 pub use trace_context::{PersistedTraceContext, TraceContextPort, install_trace_context_port};
 pub use user_import_persistence::{
     NewImportedUser, NewUserImportJob, NewUserImportRow, UserImportAuthorizationSnapshot,

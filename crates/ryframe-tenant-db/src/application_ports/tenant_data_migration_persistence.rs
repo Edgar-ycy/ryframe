@@ -9,20 +9,21 @@ use ryframe_application::{
 use ryframe_db::{
     ControlDatabaseCluster, CreateTenantDataMigration, TenantDataRepository,
     TenantOperationLeaseRepository, TenantRepository, ValidatedTenantDataBackup,
+    application_ports::DatabasePortTransaction,
     entities::{
         tenant_data_backup_point, tenant_data_migration, tenant_data_migration_item,
         tenant_data_placement, tenant_operation_lease,
     },
 };
 use ryframe_kernel::AppError;
-use sea_orm::{DatabaseTransaction, TransactionTrait};
+use sea_orm::TransactionTrait;
 
 struct TenantDataMigrationPersistence {
     database: ControlDatabaseCluster,
 }
 
 struct TenantDataMigrationWorkUnit {
-    transaction: DatabaseTransaction,
+    transaction: DatabasePortTransaction,
 }
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantDataMigrationPersistencePort> {
@@ -195,8 +196,9 @@ impl TenantDataMigrationPersistencePort for TenantDataMigrationPersistence {
                 .begin()
                 .await
                 .map_err(database_error)?;
-            Ok(Box::new(TenantDataMigrationWorkUnit { transaction })
-                as Box<dyn TenantDataMigrationTransaction>)
+            Ok(Box::new(TenantDataMigrationWorkUnit {
+                transaction: transaction.into(),
+            }) as Box<dyn TenantDataMigrationTransaction>)
         })
     }
 }
