@@ -416,6 +416,7 @@ pub async fn build_all(
             ExportPersistencePorts::new(
                 ryframe_application::legacy_export_artifact_persistence(database.clone()),
                 ryframe_application::legacy_export_deletion_persistence(database.clone()),
+                ryframe_application::legacy_export_execution_persistence(database.clone()),
                 ryframe_application::legacy_export_request_persistence(database.clone()),
                 ryframe_application::legacy_export_requester_persistence(database.clone()),
             ),

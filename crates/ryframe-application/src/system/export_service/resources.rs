@@ -1,15 +1,11 @@
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::{
-    ClaimedBackgroundJob, LoginInfoFilter, OperLogFilter, SPREADSHEET_MAX_DATA_ROWS,
-    SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter, UserQueryFilter,
-};
-use ryframe_db::{
-    ExportStartDisposition,
-    entities::{background_job, export_job},
+    BackgroundJobRecord, ClaimedBackgroundJob, ExportExecutionRecord, ExportStartDecision,
+    LoginInfoFilter, OperLogFilter, SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact,
+    SpreadsheetBatchProgress, SpreadsheetWriter, UserQueryFilter,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, ExportCursorWindow};
-use sea_orm::TransactionTrait;
 
 use super::*;
 
@@ -37,13 +33,10 @@ impl ExportService {
             .lease_owner
             .as_deref()
             .ok_or_else(|| AppError::ServiceUnavailable("导出后台任务缺少有效租约".into()))?;
-        let now = self
-            .background_jobs
-            .database_utc_now(self.db.write())
-            .await?;
+        let now = self.execution_persistence.database_now().await?;
         let mut export = self
-            .exports
-            .find_by_background_job_id(self.db.write(), background_job.id)
+            .execution_persistence
+            .find_by_background_job(background_job.id)
             .await?
             .ok_or_else(|| AppError::NotFound("后台任务未关联导出请求".into()))?;
         if export.resource != payload.resource() {
@@ -55,38 +48,43 @@ impl ExportService {
             return Ok(());
         }
 
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        let disposition = self
-            .exports
-            .try_mark_running_in_transaction(
-                &transaction,
+        let transaction = self.execution_persistence.begin().await?;
+        let disposition = match transaction
+            .try_start(
                 export.id,
                 &export.tenant_id,
                 EXPORT_MAX_RUNNING_PER_TENANT,
                 now,
             )
-            .await?;
-        crate::commit_current_audit(transaction).await?;
+            .await
+        {
+            Ok(disposition) => disposition,
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                return Err(error);
+            }
+        };
+        transaction.commit().await?;
         match disposition {
-            ExportStartDisposition::Started => {}
-            ExportStartDisposition::AlreadyRunning => {
+            ExportStartDecision::Started => {}
+            ExportStartDecision::AlreadyRunning => {
                 return Err(AppError::ServiceUnavailable(
                     "同一导出任务已经被 Worker 执行".into(),
                 ));
             }
-            ExportStartDisposition::ConcurrencyLimited => {
+            ExportStartDecision::ConcurrencyLimited => {
                 return Err(AppError::ServiceUnavailable(
                     "当前租户已有两个导出任务正在执行，请稍后重试".into(),
                 ));
             }
-            ExportStartDisposition::NotRunnable => return Ok(()),
+            ExportStartDecision::NotRunnable => return Ok(()),
         }
 
         let request: StoredExportRequest =
             serde_json::from_value(std::mem::take(&mut export.request_params))
                 .map_err(|error| AppError::Validation(format!("导出请求快照无效: {error}")))?;
         request.validate(&export.resource)?;
-        request.validate_persisted_snapshot(PersistedExportSnapshot::from(&export))?;
+        request.validate_persisted_snapshot(export_execution_snapshot(&export))?;
         let (actor, authorization_fingerprint) = self
             .users
             .resolve_current_export_authorization(
@@ -117,7 +115,7 @@ impl ExportService {
 
     async fn stream_export(
         &self,
-        export: export_job::Model,
+        export: ExportExecutionRecord,
         actor: ActorContext,
         selection: &ExportSelection,
         upper_id: i64,
@@ -160,13 +158,10 @@ impl ExportService {
             }
             let exported_rows = i64::try_from(batch.progress.total_rows)
                 .map_err(|_| AppError::PayloadTooLarge("导出进度超过数据库范围".into()))?;
-            let progress_at = self
-                .background_jobs
-                .database_utc_now(self.db.write())
-                .await?;
+            let progress_at = self.execution_persistence.database_now().await?;
             if !self
-                .exports
-                .update_exported_rows(self.db.write(), export.id, exported_rows, progress_at)
+                .execution_persistence
+                .update_exported_rows(export.id, exported_rows, progress_at)
                 .await?
             {
                 return Err(AppError::Conflict("导出任务状态已变化".into()));
@@ -212,22 +207,19 @@ impl ExportService {
 
     async fn ensure_execution_active(
         &self,
-        export: &export_job::Model,
+        export: &ExportExecutionRecord,
         execution: &ExportExecution<'_>,
         rows: u64,
         input_bytes: u64,
     ) -> AppResult<bool> {
         validate_runtime_limits(execution, rows, input_bytes, self.export_max_rows)?;
-        let now = self
-            .background_jobs
-            .database_utc_now(self.db.write())
-            .await?;
+        let now = self.execution_persistence.database_now().await?;
         let background = self
-            .background_jobs
-            .find_by_id(self.db.write(), execution.background_job_id)
+            .execution_persistence
+            .find_background_lease(execution.background_job_id)
             .await?
             .ok_or_else(|| AppError::ServiceUnavailable("导出后台任务已不存在".into()))?;
-        if background.status != background_job::Model::STATUS_RUNNING
+        if background.status != BackgroundJobRecord::STATUS_RUNNING
             || background.lease_owner.as_deref() != Some(execution.lease_owner)
             || background
                 .lease_until
@@ -238,8 +230,8 @@ impl ExportService {
             ));
         }
         let current = self
-            .exports
-            .find_by_id(self.db.write(), export.id)
+            .execution_persistence
+            .find_export_state(export.id)
             .await?
             .ok_or_else(|| AppError::NotFound("导出任务不存在".into()))?;
         if current.status == EXPORT_STATUS_CANCELLED {
@@ -454,6 +446,16 @@ impl ExportService {
     }
 }
 
+fn export_execution_snapshot(export: &ExportExecutionRecord) -> PersistedExportSnapshot<'_> {
+    PersistedExportSnapshot {
+        request_version: export.request_version,
+        authorization_fingerprint: &export.authorization_fingerprint,
+        snapshot_at: &export.snapshot_at,
+        upper_id: export.upper_id,
+        matched_rows: export.matched_rows,
+    }
+}
+
 fn append_rows(
     writer: &mut dyn SpreadsheetWriter,
     rows: impl Iterator<Item = serde_json::Value>,
@@ -607,6 +609,34 @@ mod tests {
         assert!(EXPORT_MAX_RUNNING_PER_TENANT == 2);
         assert!(EXPORT_MAX_RESULT_BYTES == 512 * 1024 * 1024);
     };
+
+    #[test]
+    fn execution_snapshot_uses_application_record() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
+            .expect("测试时间应有效")
+            .with_timezone(&chrono::Utc);
+        let record = ExportExecutionRecord {
+            id: 1,
+            tenant_id: "tenant-a".into(),
+            requester_id: 7,
+            resource: "users".into(),
+            request_params: serde_json::json!({}),
+            request_version: i32::from(EXPORT_REQUEST_VERSION),
+            permission_code: "system:user:export".into(),
+            authorization_fingerprint: "authorization".into(),
+            snapshot_at: now,
+            upper_id: 99,
+            matched_rows: 8,
+            status: EXPORT_STATUS_RUNNING.into(),
+        };
+
+        let snapshot = export_execution_snapshot(&record);
+        assert_eq!(snapshot.request_version, i32::from(EXPORT_REQUEST_VERSION));
+        assert_eq!(snapshot.authorization_fingerprint, "authorization");
+        assert_eq!(snapshot.snapshot_at, &now);
+        assert_eq!(snapshot.upper_id, 99);
+        assert_eq!(snapshot.matched_rows, 8);
+    }
 
     #[test]
     fn cursor_window_rejects_non_advancing_or_oversized_batches() {

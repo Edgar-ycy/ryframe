@@ -6,8 +6,8 @@ use ryframe_kernel::AppError;
 
 use crate::{
     ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort,
-    ExportDeletionPersistencePort, ExportRequestPersistencePort, ExportRequesterPersistencePort,
-    JobQueue, SpreadsheetWriterFactory,
+    ExportDeletionPersistencePort, ExportExecutionPersistencePort, ExportRequestPersistencePort,
+    ExportRequesterPersistencePort, JobQueue, SpreadsheetWriterFactory,
 };
 
 use super::{
@@ -17,7 +17,6 @@ use super::{
 
 mod cleanup;
 mod filters;
-mod legacy_mapping;
 mod lifecycle;
 mod preflight;
 mod purge;
@@ -63,6 +62,7 @@ pub struct ExportService {
     exports: ExportJobRepository,
     artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
     deletion_persistence: Arc<dyn ExportDeletionPersistencePort>,
+    execution_persistence: Arc<dyn ExportExecutionPersistencePort>,
     request_persistence: Arc<dyn ExportRequestPersistencePort>,
     requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
     users: Arc<UserService>,
@@ -85,6 +85,7 @@ pub struct ExportService {
 pub struct ExportPersistencePorts {
     artifact: Arc<dyn ExportArtifactPersistencePort>,
     deletion: Arc<dyn ExportDeletionPersistencePort>,
+    execution: Arc<dyn ExportExecutionPersistencePort>,
     request: Arc<dyn ExportRequestPersistencePort>,
     requester: Arc<dyn ExportRequesterPersistencePort>,
 }
@@ -93,12 +94,14 @@ impl ExportPersistencePorts {
     pub fn new(
         artifact: Arc<dyn ExportArtifactPersistencePort>,
         deletion: Arc<dyn ExportDeletionPersistencePort>,
+        execution: Arc<dyn ExportExecutionPersistencePort>,
         request: Arc<dyn ExportRequestPersistencePort>,
         requester: Arc<dyn ExportRequesterPersistencePort>,
     ) -> Self {
         Self {
             artifact,
             deletion,
+            execution,
             request,
             requester,
         }
@@ -129,6 +132,7 @@ impl ExportService {
             exports: ExportJobRepository,
             artifact_persistence: persistence.artifact,
             deletion_persistence: persistence.deletion,
+            execution_persistence: persistence.execution,
             request_persistence: persistence.request,
             requester_persistence: persistence.requester,
             roles: RoleService::new(
