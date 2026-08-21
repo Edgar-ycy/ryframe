@@ -568,6 +568,8 @@ fn menu_route_contract() -> serde_json::Value {
         .map(|menu| {
             serde_json::json!({
                 "route_key": menu.route_key,
+                "name": menu.name,
+                "title_key": menu.title_key,
                 "menu_type": menu.menu_type,
                 "page_key": menu.page_key,
                 "permission_code": menu.permission_code,
@@ -577,7 +579,7 @@ fn menu_route_contract() -> serde_json::Value {
         .collect::<Vec<_>>();
 
     serde_json::json!({
-        "version": 1,
+        "version": 2,
         "routes": routes,
     })
 }
@@ -949,6 +951,8 @@ mod tests {
                 route,
                 &serde_json::json!({
                     "route_key": menu.route_key,
+                    "name": menu.name,
+                    "title_key": menu.title_key,
                     "menu_type": menu.menu_type,
                     "page_key": menu.page_key,
                     "permission_code": menu.permission_code,

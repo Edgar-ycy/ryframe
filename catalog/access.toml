@@ -333,71 +333,97 @@ policy = "public"
 
 [[menus]]
 route_key = "home"
+name = "首页"
+title_key = "dashboard"
 menu_type = "C"
 page_key = "home"
 
 [[menus]]
 route_key = "system"
+name = "系统管理"
+title_key = "system"
 menu_type = "M"
 
 [[menus]]
 route_key = "monitor"
+name = "系统监控"
+title_key = "systemMonitor"
 menu_type = "M"
 
 [[menus]]
 route_key = "platform"
+name = "平台管理"
+title_key = "platform"
 menu_type = "M"
 
 [[menus]]
 route_key = "system.user"
+name = "用户管理"
+title_key = "user"
 menu_type = "C"
 page_key = "system.user"
 permission = "system:user:list"
 
 [[menus]]
 route_key = "system.role"
+name = "角色管理"
+title_key = "role"
 menu_type = "C"
 page_key = "system.role"
 permission = "system:role:list"
 
 [[menus]]
 route_key = "system.menu"
+name = "菜单管理"
+title_key = "menu"
 menu_type = "C"
 page_key = "system.menu"
 permission = "system:menu:list"
 
 [[menus]]
 route_key = "system.dept"
+name = "部门管理"
+title_key = "dept"
 menu_type = "C"
 page_key = "system.dept"
 permission = "system:dept:list"
 
 [[menus]]
 route_key = "system.post"
+name = "岗位管理"
+title_key = "post"
 menu_type = "C"
 page_key = "system.post"
 permission = "system:post:list"
 
 [[menus]]
 route_key = "system.dict"
+name = "字典管理"
+title_key = "dict"
 menu_type = "C"
 page_key = "system.dict"
 permission = "system:dict:list"
 
 [[menus]]
 route_key = "system.config"
+name = "参数设置"
+title_key = "config"
 menu_type = "C"
 page_key = "system.config"
 permission = "system:config:list"
 
 [[menus]]
 route_key = "system.config-transfer"
+name = "配置迁移"
+title_key = "configTransfer"
 menu_type = "C"
 page_key = "system.config-transfer"
 permission = "system:config-transfer:list"
 
 [[menus]]
 route_key = "system.service-accounts"
+name = "服务账号"
+title_key = "serviceAccounts"
 menu_type = "C"
 page_key = "system.service-accounts"
 permission = "system:service-account:list"
@@ -405,102 +431,136 @@ capability = "system.service_accounts"
 
 [[menus]]
 route_key = "platform.product-plans"
+name = "产品套餐"
+title_key = "productPlans"
 menu_type = "C"
 page_key = "platform.product-plans"
 permission = "platform:product-plan:list"
 
 [[menus]]
 route_key = "platform.data-targets"
+name = "数据目标"
+title_key = "dataTargets"
 menu_type = "C"
 page_key = "platform.data-targets"
 permission = "tenant:data-placement:view"
 
 [[menus]]
 route_key = "platform.tenant"
+name = "租户管理"
+title_key = "tenant"
 menu_type = "C"
 page_key = "platform.tenant"
 permission = "tenant:list"
 
 [[menus]]
 route_key = "system.notice"
+name = "通知公告"
+title_key = "notice"
 menu_type = "C"
 page_key = "system.notice"
 permission = "system:notice:list"
 
 [[menus]]
 route_key = "system.perm"
+name = "权限管理"
+title_key = "permission"
 menu_type = "C"
 page_key = "system.perm"
 permission = "system:perm:list"
 
 [[menus]]
 route_key = "system.authorization-diagnostics"
+name = "权限诊断"
+title_key = "authorizationDiagnostics"
 menu_type = "C"
 page_key = "system.authorization-diagnostics"
 permission = "system:authorization-diagnostic:list"
 
 [[menus]]
 route_key = "system.operlog"
+name = "操作日志"
+title_key = "operlog"
 menu_type = "C"
 page_key = "system.operlog"
 permission = "system:operlog:list"
 
 [[menus]]
 route_key = "system.logininfor"
+name = "登录日志"
+title_key = "loginlog"
 menu_type = "C"
 page_key = "system.logininfor"
 permission = "system:logininfor:list"
 
 [[menus]]
 route_key = "monitor.online"
+name = "在线用户"
+title_key = "online"
 menu_type = "C"
 page_key = "monitor.online"
 permission = "monitor:online:list"
 
 [[menus]]
 route_key = "monitor.server"
+name = "服务监控"
+title_key = "server"
 menu_type = "C"
 page_key = "monitor.server"
 permission = "monitor:server:list"
 
 [[menus]]
 route_key = "monitor.runtime"
+name = "运行时监控"
+title_key = "runtimeMonitor"
 menu_type = "C"
 page_key = "monitor.runtime"
 permission = "monitor:runtime:list"
 
 [[menus]]
 route_key = "monitor.cache"
+name = "缓存监控"
+title_key = "cache"
 menu_type = "C"
 page_key = "monitor.cache"
 permission = "monitor:cache:list"
 
 [[menus]]
 route_key = "monitor.db-pool"
+name = "连接池监控"
+title_key = "dbPoolMonitor"
 menu_type = "C"
 page_key = "monitor.db-pool"
 permission = "monitor:db-pool:list"
 
 [[menus]]
 route_key = "monitor.jobs"
+name = "后台任务"
+title_key = "jobs"
 menu_type = "C"
 page_key = "monitor.jobs"
 permission = "monitor:job:list"
 
 [[menus]]
 route_key = "monitor.schedules"
+name = "定时任务"
+title_key = "schedules"
 menu_type = "C"
 page_key = "monitor.schedules"
 permission = "monitor:schedule:list"
 
 [[menus]]
 route_key = "monitor.retention"
+name = "数据保留"
+title_key = "retention"
 menu_type = "C"
 page_key = "monitor.retention"
 permission = "monitor:retention:list"
 
 [[menus]]
 route_key = "monitor.overview"
+name = "运维总览"
+title_key = "overview"
 menu_type = "C"
 page_key = "monitor.overview"
 permission = "monitor:overview:list"

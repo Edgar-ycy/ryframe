@@ -40685,215 +40685,275 @@
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "首页",
         "page_key": "home",
         "permission_code": null,
-        "route_key": "home"
+        "route_key": "home",
+        "title_key": "dashboard"
       },
       {
         "capability_code": null,
         "menu_type": "M",
+        "name": "系统管理",
         "page_key": null,
         "permission_code": null,
-        "route_key": "system"
+        "route_key": "system",
+        "title_key": "system"
       },
       {
         "capability_code": null,
         "menu_type": "M",
+        "name": "系统监控",
         "page_key": null,
         "permission_code": null,
-        "route_key": "monitor"
+        "route_key": "monitor",
+        "title_key": "systemMonitor"
       },
       {
         "capability_code": null,
         "menu_type": "M",
+        "name": "平台管理",
         "page_key": null,
         "permission_code": null,
-        "route_key": "platform"
+        "route_key": "platform",
+        "title_key": "platform"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "用户管理",
         "page_key": "system.user",
         "permission_code": "system:user:list",
-        "route_key": "system.user"
+        "route_key": "system.user",
+        "title_key": "user"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "角色管理",
         "page_key": "system.role",
         "permission_code": "system:role:list",
-        "route_key": "system.role"
+        "route_key": "system.role",
+        "title_key": "role"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "菜单管理",
         "page_key": "system.menu",
         "permission_code": "system:menu:list",
-        "route_key": "system.menu"
+        "route_key": "system.menu",
+        "title_key": "menu"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "部门管理",
         "page_key": "system.dept",
         "permission_code": "system:dept:list",
-        "route_key": "system.dept"
+        "route_key": "system.dept",
+        "title_key": "dept"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "岗位管理",
         "page_key": "system.post",
         "permission_code": "system:post:list",
-        "route_key": "system.post"
+        "route_key": "system.post",
+        "title_key": "post"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "字典管理",
         "page_key": "system.dict",
         "permission_code": "system:dict:list",
-        "route_key": "system.dict"
+        "route_key": "system.dict",
+        "title_key": "dict"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "参数设置",
         "page_key": "system.config",
         "permission_code": "system:config:list",
-        "route_key": "system.config"
+        "route_key": "system.config",
+        "title_key": "config"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "配置迁移",
         "page_key": "system.config-transfer",
         "permission_code": "system:config-transfer:list",
-        "route_key": "system.config-transfer"
+        "route_key": "system.config-transfer",
+        "title_key": "configTransfer"
       },
       {
         "capability_code": "system.service_accounts",
         "menu_type": "C",
+        "name": "服务账号",
         "page_key": "system.service-accounts",
         "permission_code": "system:service-account:list",
-        "route_key": "system.service-accounts"
+        "route_key": "system.service-accounts",
+        "title_key": "serviceAccounts"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "产品套餐",
         "page_key": "platform.product-plans",
         "permission_code": "platform:product-plan:list",
-        "route_key": "platform.product-plans"
+        "route_key": "platform.product-plans",
+        "title_key": "productPlans"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "数据目标",
         "page_key": "platform.data-targets",
         "permission_code": "tenant:data-placement:view",
-        "route_key": "platform.data-targets"
+        "route_key": "platform.data-targets",
+        "title_key": "dataTargets"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "租户管理",
         "page_key": "platform.tenant",
         "permission_code": "tenant:list",
-        "route_key": "platform.tenant"
+        "route_key": "platform.tenant",
+        "title_key": "tenant"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "通知公告",
         "page_key": "system.notice",
         "permission_code": "system:notice:list",
-        "route_key": "system.notice"
+        "route_key": "system.notice",
+        "title_key": "notice"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "权限管理",
         "page_key": "system.perm",
         "permission_code": "system:perm:list",
-        "route_key": "system.perm"
+        "route_key": "system.perm",
+        "title_key": "permission"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "权限诊断",
         "page_key": "system.authorization-diagnostics",
         "permission_code": "system:authorization-diagnostic:list",
-        "route_key": "system.authorization-diagnostics"
+        "route_key": "system.authorization-diagnostics",
+        "title_key": "authorizationDiagnostics"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "操作日志",
         "page_key": "system.operlog",
         "permission_code": "system:operlog:list",
-        "route_key": "system.operlog"
+        "route_key": "system.operlog",
+        "title_key": "operlog"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "登录日志",
         "page_key": "system.logininfor",
         "permission_code": "system:logininfor:list",
-        "route_key": "system.logininfor"
+        "route_key": "system.logininfor",
+        "title_key": "loginlog"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "在线用户",
         "page_key": "monitor.online",
         "permission_code": "monitor:online:list",
-        "route_key": "monitor.online"
+        "route_key": "monitor.online",
+        "title_key": "online"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "服务监控",
         "page_key": "monitor.server",
         "permission_code": "monitor:server:list",
-        "route_key": "monitor.server"
+        "route_key": "monitor.server",
+        "title_key": "server"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "运行时监控",
         "page_key": "monitor.runtime",
         "permission_code": "monitor:runtime:list",
-        "route_key": "monitor.runtime"
+        "route_key": "monitor.runtime",
+        "title_key": "runtimeMonitor"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "缓存监控",
         "page_key": "monitor.cache",
         "permission_code": "monitor:cache:list",
-        "route_key": "monitor.cache"
+        "route_key": "monitor.cache",
+        "title_key": "cache"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "连接池监控",
         "page_key": "monitor.db-pool",
         "permission_code": "monitor:db-pool:list",
-        "route_key": "monitor.db-pool"
+        "route_key": "monitor.db-pool",
+        "title_key": "dbPoolMonitor"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "后台任务",
         "page_key": "monitor.jobs",
         "permission_code": "monitor:job:list",
-        "route_key": "monitor.jobs"
+        "route_key": "monitor.jobs",
+        "title_key": "jobs"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "定时任务",
         "page_key": "monitor.schedules",
         "permission_code": "monitor:schedule:list",
-        "route_key": "monitor.schedules"
+        "route_key": "monitor.schedules",
+        "title_key": "schedules"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "数据保留",
         "page_key": "monitor.retention",
         "permission_code": "monitor:retention:list",
-        "route_key": "monitor.retention"
+        "route_key": "monitor.retention",
+        "title_key": "retention"
       },
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "运维总览",
         "page_key": "monitor.overview",
         "permission_code": "monitor:overview:list",
-        "route_key": "monitor.overview"
+        "route_key": "monitor.overview",
+        "title_key": "overview"
       }
     ],
-    "version": 1
+    "version": 2
   },
   "x-ryframe-notice-policy": {
     "content_markdown": {

@@ -11,6 +11,8 @@ pub enum AccessPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MenuRouteDescriptor {
     pub route_key: &'static str,
+    pub name: &'static str,
+    pub title_key: &'static str,
     pub menu_type: &'static str,
     pub page_key: Option<&'static str>,
     pub permission_code: Option<&'static str>,

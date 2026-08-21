@@ -35,6 +35,8 @@ struct AccessCatalog {
 #[serde(deny_unknown_fields)]
 struct MenuEntry {
     route_key: String,
+    name: String,
+    title_key: String,
     menu_type: String,
     page_key: Option<String>,
     permission: Option<String>,
@@ -224,6 +226,10 @@ fn validate_catalog(catalog: &AccessCatalog) -> Result<(), Box<dyn Error>> {
     let mut page_keys = BTreeSet::new();
     for menu in &catalog.menus {
         validate_identifier("菜单 route_key", &menu.route_key)?;
+        validate_identifier("菜单 title_key", &menu.title_key)?;
+        if menu.name.trim() != menu.name || menu.name.is_empty() || menu.name.chars().count() > 64 {
+            return Err(format!("菜单 {} 的 name 格式无效", menu.route_key).into());
+        }
         if !route_keys.insert(menu.route_key.as_str()) {
             return Err(format!("菜单 route_key 重复: {}", menu.route_key).into());
         }
@@ -855,8 +861,14 @@ fn render_catalog(
     generated.push_str("const MENU_ROUTES: &[MenuRouteDescriptor] = &[\n");
     for menu in &catalog.menus {
         generated.push_str(&format!(
-            "    MenuRouteDescriptor {{ route_key: {:?}, menu_type: {:?}, page_key: {:?}, permission_code: {:?}, capability_code: {:?} }},\n",
-            menu.route_key, menu.menu_type, menu.page_key, menu.permission, menu.capability
+            "    MenuRouteDescriptor {{ route_key: {:?}, name: {:?}, title_key: {:?}, menu_type: {:?}, page_key: {:?}, permission_code: {:?}, capability_code: {:?} }},\n",
+            menu.route_key,
+            menu.name,
+            menu.title_key,
+            menu.menu_type,
+            menu.page_key,
+            menu.permission,
+            menu.capability
         ));
     }
     generated.push_str("];\n");

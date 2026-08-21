@@ -30,6 +30,7 @@ const ACCESS_CATALOG: &str = include_str!("../../../../catalog/access.toml");
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AccessMenu<'a> {
     route_key: &'a str,
+    name: &'a str,
     menu_type: &'a str,
     permission: Option<&'a str>,
 }
@@ -76,10 +77,12 @@ where
         if let Some(id) = menu_id(db, menu.route_key).await? {
             db.execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
-                "UPDATE `sys_menu` SET `parent_id` = ?, `menu_type` = ?, `perm_id` = ?, `status` = '1', \
+                "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, ?, `name`), \
+                 `parent_id` = ?, `menu_type` = ?, `perm_id` = ?, `status` = '1', \
                  `del_flag` = '0', `updated_at` = UTC_TIMESTAMP(6) \
                  WHERE `id` = ? AND `tenant_id` = 'system'",
                 [
+                    menu.name.into(),
                     parent_id.into(),
                     menu.menu_type.into(),
                     permission_id.into(),
@@ -97,7 +100,7 @@ where
              VALUES (?, 'system', ?, ?, ?, ?, ?, NULL, ?, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
             [
                 id.into(),
-                menu.route_key.into(),
+                menu.name.into(),
                 parent_id.into(),
                 menu.menu_type.into(),
                 permission_id.into(),
@@ -150,6 +153,7 @@ fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
             }
             current = Some(AccessMenu {
                 route_key: "",
+                name: "",
                 menu_type: "",
                 permission: None,
             });
@@ -166,6 +170,8 @@ fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
         };
         if let Some(value) = catalog_string_value(line, "route_key") {
             menu.route_key = value;
+        } else if let Some(value) = catalog_string_value(line, "name") {
+            menu.name = value;
         } else if let Some(value) = catalog_string_value(line, "menu_type") {
             menu.menu_type = value;
         } else if let Some(value) = catalog_string_value(line, "permission") {
@@ -177,6 +183,8 @@ fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
     }
     if menus.iter().any(|menu| {
         menu.route_key.is_empty()
+            || menu.name.is_empty()
+            || menu.name.chars().count() > 64
             || !matches!(menu.menu_type, "M" | "C")
             || !menu
                 .route_key
@@ -370,13 +378,14 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
                 )
             },
         );
+        let menu_name = menu.name.replace('\'', "''");
         statements.push(format!(
             "INSERT INTO `sys_menu` \
              (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
              SELECT {}, 'system', '{}', {}, '{}', {}, '{}', NULL, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
              WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{}')",
             20_000 + index,
-            menu.route_key,
+            menu_name,
             parent_id,
             menu.menu_type,
             permission_id,
@@ -385,9 +394,9 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
             menu.route_key,
         ));
         statements.push(format!(
-            "UPDATE `sys_menu` SET `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `status` = '1', `del_flag` = '0' \
+            "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '{}', `name`), `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `status` = '1', `del_flag` = '0' \
              WHERE `tenant_id` = 'system' AND `route_key` = '{}'",
-            parent_id, menu.menu_type, permission_id, menu.route_key,
+            menu_name, parent_id, menu.menu_type, permission_id, menu.route_key,
         ));
     }
     Ok(statements)
@@ -717,6 +726,8 @@ mod tests {
         let mut preceding_routes = BTreeSet::new();
         for menu in &menus {
             assert!(menu.route_key.len() <= 64);
+            assert!(!menu.name.is_empty());
+            assert!(menu.name.chars().count() <= 64);
             if let Some(parent) = menu.parent_route_key() {
                 assert!(preceding_routes.contains(parent));
             }
