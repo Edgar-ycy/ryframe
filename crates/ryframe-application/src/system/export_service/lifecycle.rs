@@ -1,4 +1,4 @@
-use ryframe_db::{CreateExportJob, ReadConsistency};
+use ryframe_db::CreateExportJob;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
@@ -204,25 +204,23 @@ impl ExportService {
     ) -> AppResult<ExportJobVo> {
         validate_job_id(id)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let export = self
-            .exports
-            .find_by_id_for_requester(&db, tenant_id, actor.user_id, id)
+            .requester_persistence
+            .find(tenant_id, actor.user_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("导出任务不存在或不属于当前用户".into()))?;
         self.users
             .ensure_current_permission(actor, &export.permission_code)
             .await?;
-        Ok(ExportJobVo::from(export))
+        Ok(export_requester_view(export))
     }
 
     /// 读取当前申请人仍具备查看权限的最近导出任务。
     pub async fn list_for_requester(&self, actor: &ActorContext) -> AppResult<Vec<ExportJobVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Eventual).connection;
         let exports = self
-            .exports
-            .list_for_requester(&db, tenant_id, actor.user_id, 100)
+            .requester_persistence
+            .list_recent(tenant_id, actor.user_id, 100)
             .await?;
         let mut result = Vec::with_capacity(exports.len());
         for export in exports {
@@ -232,7 +230,7 @@ impl ExportService {
                 .await
                 .is_ok()
             {
-                result.push(ExportJobVo::from(export));
+                result.push(export_requester_view(export));
             }
         }
         Ok(result)
@@ -241,10 +239,9 @@ impl ExportService {
     /// 统计当前申请人尚未查看的导出完成或失败通知。
     pub async fn unread_notification_count(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let recent_exports = self
-            .exports
-            .list_for_requester(&db, tenant_id, actor.user_id, 100)
+            .requester_persistence
+            .list_recent_for_notifications(tenant_id, actor.user_id, 100)
             .await?;
         let authorization = self
             .users
@@ -285,12 +282,9 @@ impl ExportService {
             ));
         }
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let now = self
-            .background_jobs
-            .database_utc_now(self.db.write())
-            .await?;
-        self.exports
-            .mark_notifications_read(self.db.write(), tenant_id, actor.user_id, ids, now)
+        let now = self.requester_persistence.database_now().await?;
+        self.requester_persistence
+            .mark_notifications_read(tenant_id, actor.user_id, ids, now)
             .await
     }
 
@@ -302,23 +296,18 @@ impl ExportService {
     ) -> AppResult<ExportJobVo> {
         validate_job_id(id)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
         let export = self
-            .exports
-            .find_by_id_for_requester(&db, tenant_id, actor.user_id, id)
+            .requester_persistence
+            .find(tenant_id, actor.user_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("导出任务不存在或不属于当前用户".into()))?;
         self.users
             .ensure_current_permission(actor, &export.permission_code)
             .await?;
-        let now = self
-            .background_jobs
-            .database_utc_now(self.db.write())
-            .await?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
-        if !self
-            .exports
-            .cancel_for_requester(&transaction, tenant_id, actor.user_id, id, now)
+        let transaction = self.requester_persistence.begin().await?;
+        let now = transaction.database_now().await?;
+        if !transaction
+            .cancel(tenant_id, actor.user_id, id, now)
             .await?
         {
             let _ = transaction.rollback().await;
@@ -326,7 +315,7 @@ impl ExportService {
                 "导出任务已完成、已过期或状态已变化".into(),
             ));
         }
-        crate::commit_current_audit(transaction).await?;
+        transaction.commit().await?;
         self.find_for_requester(actor, id).await
     }
 
@@ -338,10 +327,9 @@ impl ExportService {
     ) -> AppResult<ExportDownloadLocation> {
         validate_job_id(id)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let export = self
-            .exports
-            .find_by_id_for_requester(&db, tenant_id, actor.user_id, id)
+        let mut export = self
+            .requester_persistence
+            .find(tenant_id, actor.user_id, id)
             .await?
             .ok_or_else(|| AppError::NotFound("导出任务不存在或不属于当前用户".into()))?;
         let (_, current_fingerprint) = self
@@ -349,22 +337,19 @@ impl ExportService {
             .resolve_current_export_authorization(tenant_id, actor.user_id, &export.permission_code)
             .await?;
         let stored_request: StoredExportRequest =
-            serde_json::from_value(export.request_params.clone())
+            serde_json::from_value(std::mem::take(&mut export.request_params))
                 .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         stored_request
             .validate(&export.resource)
             .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         stored_request
-            .validate_persisted_snapshot(PersistedExportSnapshot::from(&export))
+            .validate_persisted_snapshot(export_requester_snapshot(&export))
             .map_err(|_| AppError::Authorization("导出授权记录无效".into()))?;
         ensure_download_authorization_matches(
             &stored_request.authorization_fingerprint,
             &current_fingerprint,
         )?;
-        let now = self
-            .background_jobs
-            .database_utc_now(self.db.write())
-            .await?;
+        let now = self.requester_persistence.database_now().await?;
         if export.status != EXPORT_STATUS_SUCCEEDED
             || export.expires_at.is_none_or(|expires_at| expires_at <= now)
         {
@@ -374,14 +359,43 @@ impl ExportService {
             .result_file_id
             .ok_or_else(|| AppError::Internal("导出任务缺少结果文件".into()))?;
         let file = self
-            .files
-            .find_by_id(self.db.write(), tenant_id, file_id)
+            .requester_persistence
+            .find_download_file(tenant_id, file_id)
             .await?
             .ok_or_else(|| AppError::NotFound("导出结果文件不存在".into()))?;
         Ok(ExportDownloadLocation {
             bucket: file.bucket,
             path: file.storage_path,
         })
+    }
+}
+
+fn export_requester_view(export: crate::ExportRequesterRecord) -> ExportJobVo {
+    ExportJobVo {
+        id: export.id.to_string(),
+        resource: export.resource,
+        status: export.status,
+        result_file_name: export.result_file_name,
+        content_type: export.content_type,
+        file_size: export.file_size,
+        expires_at: export.expires_at,
+        error_message: export.error_message,
+        snapshot_at: export.snapshot_at,
+        matched_rows: export.matched_rows,
+        created_at: export.created_at,
+        updated_at: export.updated_at,
+        completed_at: export.completed_at,
+        notification_read_at: export.notification_read_at,
+    }
+}
+
+fn export_requester_snapshot(export: &crate::ExportRequesterRecord) -> PersistedExportSnapshot<'_> {
+    PersistedExportSnapshot {
+        request_version: export.request_version,
+        authorization_fingerprint: &export.authorization_fingerprint,
+        snapshot_at: &export.snapshot_at,
+        upper_id: export.upper_id,
+        matched_rows: export.matched_rows,
     }
 }
 
@@ -433,6 +447,51 @@ fn deletion_cleanup_dedupe_key(tenant_id: &str, requester_id: i64, ids: &[i64]) 
 #[cfg(test)]
 mod deletion_tests {
     use super::*;
+
+    fn requester_record() -> crate::ExportRequesterRecord {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
+            .expect("测试时间应有效")
+            .with_timezone(&chrono::Utc);
+        crate::ExportRequesterRecord {
+            id: 42,
+            resource: "users".into(),
+            status: EXPORT_STATUS_SUCCEEDED.into(),
+            result_file_name: Some("users-42.xlsx".into()),
+            content_type: Some(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+            ),
+            file_size: Some(128),
+            expires_at: Some(now),
+            error_message: None,
+            snapshot_at: now,
+            matched_rows: 8,
+            created_at: now,
+            updated_at: now,
+            completed_at: Some(now),
+            notification_read_at: None,
+            permission_code: "system:user:export".into(),
+            request_params: serde_json::json!({"request_version": EXPORT_REQUEST_VERSION}),
+            request_version: i32::from(EXPORT_REQUEST_VERSION),
+            authorization_fingerprint: "authorization".into(),
+            upper_id: 99,
+            result_file_id: Some(7),
+        }
+    }
+
+    #[test]
+    fn requester_record_maps_without_database_types() {
+        let record = requester_record();
+        let snapshot = export_requester_snapshot(&record);
+        assert_eq!(snapshot.request_version, i32::from(EXPORT_REQUEST_VERSION));
+        assert_eq!(snapshot.authorization_fingerprint, "authorization");
+        assert_eq!(snapshot.upper_id, 99);
+        assert_eq!(snapshot.matched_rows, 8);
+
+        let view = export_requester_view(record);
+        assert_eq!(view.id, "42");
+        assert_eq!(view.status, EXPORT_STATUS_SUCCEEDED);
+        assert_eq!(view.result_file_name.as_deref(), Some("users-42.xlsx"));
+    }
 
     #[test]
     fn deletion_ids_are_sorted_deduplicated_and_bounded() {

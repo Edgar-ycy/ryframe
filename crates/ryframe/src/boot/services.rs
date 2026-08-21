@@ -413,6 +413,7 @@ pub async fn build_all(
         ExportService::new(
             database.clone(),
             ryframe_application::legacy_export_artifact_persistence(database.clone()),
+            ryframe_application::legacy_export_requester_persistence(database.clone()),
             user.clone(),
             object_storage,
             super::spreadsheet::writer_factory(),

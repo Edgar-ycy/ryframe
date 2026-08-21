@@ -1,15 +1,12 @@
 use std::sync::Arc;
 
 use chrono::Duration;
-use ryframe_db::{
-    BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
-    Repository,
-};
+use ryframe_db::{BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository};
 use ryframe_kernel::AppError;
 
 use crate::{
-    ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort, JobQueue,
-    SpreadsheetWriterFactory,
+    ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort,
+    ExportRequesterPersistencePort, JobQueue, SpreadsheetWriterFactory,
 };
 
 use super::{
@@ -63,8 +60,8 @@ pub struct ExportService {
     db: ControlDatabaseCluster,
     background_jobs: BackgroundJobRepository,
     exports: ExportJobRepository,
-    files: FileRepository,
     artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
+    requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
     users: Arc<UserService>,
     roles: RoleService,
     posts: PostService,
@@ -85,6 +82,7 @@ impl ExportService {
     pub fn new(
         db: ControlDatabaseCluster,
         artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
+        requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
         users: Arc<UserService>,
         storage: Arc<dyn ArtifactStore>,
         spreadsheets: Arc<dyn SpreadsheetWriterFactory>,
@@ -103,8 +101,8 @@ impl ExportService {
             db: db.clone(),
             background_jobs: BackgroundJobRepository,
             exports: ExportJobRepository,
-            files: FileRepository,
             artifact_persistence,
+            requester_persistence,
             roles: RoleService::new(
                 role_cache.clone(),
                 crate::legacy_role_read(db.clone()),

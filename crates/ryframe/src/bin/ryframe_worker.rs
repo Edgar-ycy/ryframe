@@ -174,6 +174,7 @@ async fn main() -> Result<(), AppError> {
         ExportService::new(
             database.clone(),
             ryframe_application::legacy_export_artifact_persistence(database.clone()),
+            ryframe_application::legacy_export_requester_persistence(database.clone()),
             user.clone(),
             object_storage,
             process_spreadsheet::writer_factory(),
