@@ -9,11 +9,12 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, AuthorizationMirrorTransaction, PepperKeyring, ServiceAccountAuditReadPort,
+    AuthorizationCache, PepperKeyring, ServiceAccountAuditReadPort,
     ServiceAccountAuthorizationReadPort, ServiceAccountPolicy, ServiceAccountReadPort,
     ServiceAccountRecord, ServiceAccountWritePort, ServiceAccountWriteTransaction,
     ServiceCredentialRecord, ServiceCredentialWriteRecord, ServiceDelegationRecord,
     ServiceDelegationWriteRecord,
+    ports::authorization::AuthorizationMirrorTransaction,
     service_identity_secret::{IssuedApiKey, IssuedDelegationToken},
 };
 

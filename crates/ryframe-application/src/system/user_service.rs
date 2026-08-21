@@ -9,9 +9,11 @@ use ryframe_kernel::ValidatedPageQuery;
 use serde::Serialize;
 
 use crate::{
-    AuthorizationCache, AuthorizationResolver, IdentityAuthorizationReadPort,
-    PasswordResetPersistencePort, UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord,
-    UserWritePersistencePort, UserWriteRecord,
+    AuthorizationCache, AuthorizationResolver, UserQueryReadPort, UserQueryRecord,
+    UserQueryRoleRecord, UserWritePersistencePort, UserWriteRecord,
+    ports::auth::{
+        IdentityAuthorizationReadPort, PasswordResetPersistencePort, PasswordResetRequestRecord,
+    },
 };
 
 pub use crate::{
@@ -73,7 +75,7 @@ impl From<UserQueryRecord> for UserVo {
 
 #[derive(Debug)]
 pub struct PasswordResetRequestOutcome {
-    pub request: crate::PasswordResetRequestRecord,
+    pub request: PasswordResetRequestRecord,
     pub token: String,
 }
 

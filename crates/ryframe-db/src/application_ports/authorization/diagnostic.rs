@@ -6,8 +6,11 @@ use crate::{
 };
 
 use ryframe_application::{
-    AuthorizationDiagnosticReadPort, DiagnosticDepartmentRecord, DiagnosticMenuRecord,
-    DiagnosticPermissionRecord, DiagnosticRoleRecord, PersistenceFuture,
+    PersistenceFuture,
+    ports::authorization::{
+        AuthorizationDiagnosticReadPort, DiagnosticDepartmentRecord, DiagnosticMenuRecord,
+        DiagnosticPermissionRecord, DiagnosticRoleRecord,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn AuthorizationDiagnosticReadPort> {

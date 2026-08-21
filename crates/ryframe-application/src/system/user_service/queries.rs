@@ -4,7 +4,10 @@ use sha2::{Digest, Sha256};
 
 use super::super::{OptionItem, OptionList};
 use super::{RoleBriefVo, UserDetailVo, UserListParams, UserService, UserVo};
-use crate::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord, UserQueryFilter};
+use crate::{
+    UserQueryFilter,
+    ports::auth::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord},
+};
 
 /// 从主库重新计算的当前授权结果，供长时间后台任务和诊断接口共用。
 pub(crate) struct CurrentAuthorization {

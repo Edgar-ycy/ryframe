@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 
 use crate::{
     PersistenceFuture, ProductTransactionPort,
+    ports::authorization::AuthorizationMirrorTransaction,
     ports::jobs::BackgroundJobTransaction,
     system::{TenantConfigPackageResources, TenantConfigTargetCatalog},
 };
@@ -144,7 +145,7 @@ pub trait TenantConfigTransferTransaction: Send + Sync {
 
     fn product(&self) -> &dyn ProductTransactionPort;
 
-    fn authorization_mirror(&self) -> &dyn crate::AuthorizationMirrorTransaction;
+    fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
 

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
+use crate::{PersistenceFuture, ports::authorization::AuthorizationMirrorTransaction};
 
 #[derive(Debug)]
 pub struct ProductCapabilityRecord {
@@ -199,7 +199,7 @@ pub trait ProductWriteTransaction: Send + Sync {
         expected_epoch: i64,
     ) -> PersistenceFuture<'a, ()>;
 
-    fn authorization_mirror(&self) -> &dyn crate::AuthorizationMirrorTransaction;
+    fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
     fn release_change_lease<'a>(
         &'a self,

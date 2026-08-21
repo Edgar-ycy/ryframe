@@ -1,7 +1,7 @@
 use ryframe_kernel::{AppError, AppResult};
 
 use super::*;
-use crate::{AuthorizationMirrorEvent, AuthorizationMirrorTransaction};
+use crate::ports::authorization::{AuthorizationMirrorEvent, AuthorizationMirrorTransaction};
 
 impl AuthorizationCache {
     /// 在业务事务内递增一组用户授权版本，并原子记录 Redis 镜像修复事件。

@@ -1,12 +1,12 @@
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 use crate::{
     CacheNamespaceVersionRepository, OutboxEventRepository, RecordOutboxEvent, TenantRepository,
     UserRepository,
 };
 
 use ryframe_application::{
-    AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuthorizationMirrorEvent,
-    AuthorizationMirrorTransaction, PersistenceFuture,
+    AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, PersistenceFuture,
+    ports::authorization::{AuthorizationMirrorEvent, AuthorizationMirrorTransaction},
 };
 
 impl AuthorizationMirrorTransaction for DatabasePortTransaction {

@@ -6,8 +6,13 @@ use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 use serde::Serialize;
 
 use crate::{
-    AuthorizationCache, AuthorizationDiagnosticReadPort, DiagnosticMenuRecord,
-    DiagnosticPermissionRecord, IdentityRoleRecord,
+    AuthorizationCache,
+    ports::{
+        auth::IdentityRoleRecord,
+        authorization::{
+            AuthorizationDiagnosticReadPort, DiagnosticMenuRecord, DiagnosticPermissionRecord,
+        },
+    },
 };
 
 use super::UserService;

@@ -311,7 +311,9 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         })
     }
 
-    fn authorization_mirror(&self) -> &dyn ryframe_application::AuthorizationMirrorTransaction {
+    fn authorization_mirror(
+        &self,
+    ) -> &dyn ryframe_application::ports::authorization::AuthorizationMirrorTransaction {
         &self.transaction
     }
 

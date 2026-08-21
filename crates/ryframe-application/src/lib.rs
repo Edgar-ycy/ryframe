@@ -3,15 +3,12 @@ mod artifact_store;
 mod audit;
 mod auth_service;
 mod authorization_cache;
-mod authorization_diagnostic_persistence;
-mod authorization_mirror_persistence;
 mod authorization_resolver;
 mod config_persistence;
 mod dept_persistence;
 mod dict_persistence;
 mod file_content;
 mod id_generator;
-mod identity_authorization;
 pub mod jobs;
 mod login_info_persistence;
 mod login_protection;
@@ -20,7 +17,6 @@ mod message_persistence;
 mod notice_persistence;
 mod oper_log_persistence;
 mod overview_persistence;
-mod password_reset_persistence;
 mod permission_persistence;
 mod persistence;
 pub mod ports;
@@ -80,13 +76,6 @@ pub use authorization_cache::{
     AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,
     set_authorization_cache_lookup_hook,
 };
-pub use authorization_diagnostic_persistence::{
-    AuthorizationDiagnosticReadPort, DiagnosticDepartmentRecord, DiagnosticMenuRecord,
-    DiagnosticPermissionRecord, DiagnosticRoleRecord,
-};
-pub use authorization_mirror_persistence::{
-    AuthorizationMirrorEvent, AuthorizationMirrorTransaction,
-};
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
 pub use config_persistence::{
     ConfigFilter, ConfigPersistencePort, ConfigRecord, ConfigTransaction,
@@ -99,9 +88,6 @@ pub use dict_persistence::{
 };
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
-pub use identity_authorization::{
-    IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
-};
 #[allow(deprecated)]
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
@@ -135,10 +121,6 @@ pub use oper_log_persistence::{
 };
 pub use overview_persistence::{
     OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
-};
-pub use password_reset_persistence::{
-    NewPasswordResetRequest, PASSWORD_RESET_STATUS_PENDING, PasswordResetPersistencePort,
-    PasswordResetRequestRecord, PasswordResetTransaction, PasswordResetUserState,
 };
 pub use permission_persistence::{
     PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,

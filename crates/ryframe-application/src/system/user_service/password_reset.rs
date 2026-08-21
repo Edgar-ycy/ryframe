@@ -6,7 +6,10 @@ use super::{
     PasswordResetRequestOutcome, USER_STATUS_MUST_RESET_PASSWORD, USER_STATUS_NORMAL,
     USER_STATUS_PENDING_ACTIVATION, UserService,
 };
-use crate::{NewPasswordResetRequest, PASSWORD_RESET_STATUS_PENDING, PasswordResetUserState};
+use crate::ports::auth::{
+    NewPasswordResetRequest, PASSWORD_RESET_STATUS_PENDING, PasswordResetTransaction,
+    PasswordResetUserState,
+};
 
 impl UserService {
     pub async fn request_password_reset(
@@ -132,7 +135,7 @@ impl UserService {
 
     async fn complete_password_reset_in_transaction(
         &self,
-        transaction: &dyn crate::PasswordResetTransaction,
+        transaction: &dyn PasswordResetTransaction,
         tenant_id: &str,
         request_id: i64,
         token: &str,

@@ -13,12 +13,14 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    NewPasswordResetRequest, PASSWORD_RESET_STATUS_PENDING, PasswordResetPersistencePort,
-    PasswordResetRequestRecord, PasswordResetTransaction, PasswordResetUserState,
     PersistenceFuture,
+    ports::auth::{
+        NewPasswordResetRequest, PASSWORD_RESET_STATUS_PENDING, PasswordResetPersistencePort,
+        PasswordResetRequestRecord, PasswordResetTransaction, PasswordResetUserState,
+    },
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 pub fn port(
     database: ControlDatabaseCluster,
@@ -321,7 +323,8 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 

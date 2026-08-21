@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 
 use crate::{
-    AuthorizationMirrorTransaction, PersistenceFuture, ServiceAccountPermissionSnapshot,
-    ServiceAccountRecord,
+    PersistenceFuture, ServiceAccountPermissionSnapshot, ServiceAccountRecord,
+    ports::authorization::AuthorizationMirrorTransaction,
 };
 
 #[derive(Debug)]

@@ -160,7 +160,7 @@ pub async fn build_all(
 ) -> Result<AppServices, AppError> {
     let authorization_cache =
         super::authorization_cache::cache(redis_client.clone(), policies.cache);
-    let identity_read = ryframe_db::application_ports::identity_authorization(database.clone());
+    let identity_read = ryframe_db::application_ports::auth::identity(database.clone());
     let user = Arc::new(UserService::new(
         authorization_cache.clone(),
         Arc::clone(&identity_read),
@@ -169,7 +169,7 @@ pub async fn build_all(
             database.clone(),
             authorization_cache.clone(),
         ),
-        ryframe_db::application_ports::password_reset_persistence(
+        ryframe_db::application_ports::auth::password_reset(
             database.clone(),
             authorization_cache.clone(),
         ),
@@ -356,7 +356,7 @@ pub async fn build_all(
         },
     ));
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
-        ryframe_db::application_ports::authorization_diagnostic_persistence(database.clone()),
+        ryframe_db::application_ports::authorization::diagnostic(database.clone()),
         user.clone(),
         authorization_cache.clone(),
         policies.messaging.enabled() && redis_client.is_some(),

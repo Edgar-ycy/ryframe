@@ -6,8 +6,10 @@ use crate::{
 };
 
 use ryframe_application::{
-    IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
     PersistenceFuture,
+    ports::auth::{
+        IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn IdentityAuthorizationReadPort> {

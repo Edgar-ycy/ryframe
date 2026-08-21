@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use ryframe_kernel::{AppResult, DataScope, DataScopeContext};
 
-use crate::{IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityUserRecord};
+use crate::ports::auth::{
+    IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
+};
 
 /// 从控制库事实计算得到的最终授权结果。
 pub(crate) struct ResolvedAuthorization {
@@ -27,7 +29,7 @@ impl AuthorizationResolver {
         Self { persistence }
     }
 
-    pub async fn tenant(&self, tenant_id: &str) -> AppResult<Option<crate::IdentityTenantRecord>> {
+    pub async fn tenant(&self, tenant_id: &str) -> AppResult<Option<IdentityTenantRecord>> {
         self.persistence.tenant(tenant_id).await
     }
 

@@ -1,7 +1,7 @@
 use ryframe_auth::jwt::Claims;
 use ryframe_kernel::{AppError, AppResult};
 
-use crate::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord};
+use crate::ports::auth::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord};
 
 use super::{AuthService, UserInfo};
 
