@@ -144,7 +144,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.validate-release.outputs.backend_commit }}
 
-      - name: Check out fixed frontend Changelog
+      - name: Check out fixed frontend source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ${{ needs.validate-release.outputs.frontend_repository }}
@@ -202,35 +202,19 @@ jobs:
             exit 1
           fi
 
-      - name: Build non-empty release notes from both Changelogs
+      - name: Build release notes from immutable tag annotations
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
         run: |
           set -euo pipefail
-          extract_section() {
-            local changelog="$1"
-            local label="$2"
-            local output="$3"
-            awk -v version="$RELEASE_TAG" '
-              BEGIN { heading = "## [" version "]" }
-              !found && ($0 == heading || index($0, heading " ") == 1 || index($0, heading "\t") == 1) {
-                found=1
-              }
-              found && emitted && /^## \[/ { exit }
-              found { print; emitted=1 }
-              END { if (!found) exit 2 }
-            ' "$changelog" > "$output"
-            if ! grep --extended-regexp --quiet '^-[[:space:]]+[^[:space:]]' "$output"; then
-              echo "$label $RELEASE_TAG CHANGELOG section has no update items." >&2
-              exit 1
-            fi
-          }
-
           backend_notes="$RUNNER_TEMP/backend-release-notes.md"
           frontend_notes="$RUNNER_TEMP/frontend-release-notes.md"
-          extract_section CHANGELOG.md Backend "$backend_notes"
-          extract_section frontend/CHANGELOG.md Frontend "$frontend_notes"
+          git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$backend_notes"
+          git -C frontend for-each-ref --format='%(contents)' \
+            "refs/tags/$RELEASE_TAG" > "$frontend_notes"
+          test -s "$backend_notes"
+          test -s "$frontend_notes"
 
           {
             printf '# RyFrame %s\n\n' "$RELEASE_TAG"

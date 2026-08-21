@@ -28,7 +28,6 @@ COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 class ReleaseIdentity:
     tag: str
     version: str
-    stable_tag: str
 
 
 @dataclass(frozen=True)
@@ -64,7 +63,7 @@ def release_identity(tag: str) -> ReleaseIdentity:
             "(prerelease tags are not supported)"
         )
     version = match.group("version")
-    return ReleaseIdentity(tag=tag, version=version, stable_tag=tag)
+    return ReleaseIdentity(tag=tag, version=version)
 
 
 def repository_slug(value: str, label: str) -> str:
@@ -98,38 +97,6 @@ def normalize_markdown(value: str) -> str:
     return "\n".join(normalized)
 
 
-def changelog_section(path: Path, stable_tag: str, label: str) -> str:
-    """返回一个精确且非空的 Keep a Changelog 版本章节。"""
-    changelog = (
-        path.read_text(encoding="utf-8")
-        .replace("\r\n", "\n")
-        .replace("\r", "\n")
-    )
-    heading = re.compile(
-        rf"^## \[{re.escape(stable_tag)}\](?:[ \t]+.*)?$", re.MULTILINE
-    )
-    match = heading.search(changelog)
-    if match is None:
-        fail(f"{label} CHANGELOG has no exact section for {stable_tag}")
-
-    remainder = changelog[match.end() :]
-    next_heading = re.search(
-        r"^## \[[^\]\r\n]+\](?:[ \t]+.*)?$", remainder, re.MULTILINE
-    )
-    end = match.end() + (next_heading.start() if next_heading else len(remainder))
-    section = normalize_markdown(changelog[match.start() : end])
-    if re.search(r"^-[ \t]+\S", section, re.MULTILINE) is None:
-        fail(
-            f"{label} CHANGELOG section {stable_tag} must contain at least "
-            "one update item"
-        )
-    return section
-
-
-def validate_changelog(stable_tag: str) -> str:
-    return changelog_section(ROOT / "CHANGELOG.md", stable_tag, "backend")
-
-
 def git_text(repository: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repository), *args],
@@ -151,11 +118,9 @@ def git_tag_object(repository: Path, tag: str) -> str:
 def validate_annotated_tag_notes(
     repository: Path,
     tag: str,
-    changelog_path: Path,
-    stable_tag: str,
     label: str,
 ) -> str:
-    """要求带注释标签与仓库中的精确发布说明一致。"""
+    """要求带注释标签直接携带不可变发布说明。"""
     tag_ref = f"refs/tags/{tag}"
     object_type = git_text(repository, "cat-file", "-t", tag_ref)
     if object_type != "tag":
@@ -164,15 +129,9 @@ def validate_annotated_tag_notes(
     notes = normalize_markdown(
         git_text(repository, "for-each-ref", "--format=%(contents)", tag_ref)
     )
-    expected = changelog_section(changelog_path, stable_tag, label)
     if not notes:
         fail(f"{label} tag {tag} annotation must not be empty")
-    if notes != expected:
-        fail(
-            f"{label} tag {tag} annotation must equal the exact "
-            f"{stable_tag} CHANGELOG section"
-        )
-    return expected
+    return notes
 
 
 def validate_workspace_packages(expected: str) -> None:
@@ -267,7 +226,6 @@ def validate_frontend(
     frontend: Path,
     tag: str,
     version: str,
-    stable_tag: str,
     expected_commit: str,
 ) -> tuple[RepositoryRef, str]:
     if not frontend.is_dir():
@@ -280,8 +238,6 @@ def validate_frontend(
     validate_annotated_tag_notes(
         frontend,
         tag,
-        frontend / "CHANGELOG.md",
-        stable_tag,
         "frontend",
     )
     return (
@@ -355,12 +311,9 @@ def main() -> int:
                 f"workspace version is {root_version!r}, "
                 f"tag requires {identity.version!r}"
             )
-        validate_changelog(identity.stable_tag)
         validate_annotated_tag_notes(
             ROOT,
             identity.tag,
-            ROOT / "CHANGELOG.md",
-            identity.stable_tag,
             "backend",
         )
         validate_workspace_packages(identity.version)
@@ -380,7 +333,6 @@ def main() -> int:
             frontend,
             identity.tag,
             identity.version,
-            identity.stable_tag,
             frontend_commit,
         )
         validate_frontend_contract_source(

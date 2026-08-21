@@ -15,6 +15,14 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "architecture" / "crate-boundaries.toml"
+DOCUMENT_LIMITS = {
+    "README.md": 120,
+    "docs/api.md": 180,
+    "docs/architecture.md": 200,
+    "docs/data.md": 200,
+    "docs/development.md": 160,
+    "docs/operations.md": 240,
+}
 
 
 def read(relative: str) -> str:
@@ -34,6 +42,31 @@ def business_sources() -> list[Path]:
         ):
             result.append(path)
     return result
+
+
+def validate_documentation(errors: list[str]) -> None:
+    actual = {
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.rglob("*.md")
+        if not set(path.relative_to(ROOT).parts).intersection(
+            {".github", ".local-tests", "target", "vendor"}
+        )
+    }
+    expected = set(DOCUMENT_LIMITS)
+    if actual != expected:
+        missing = expected - actual
+        unexpected = actual - expected
+        if missing:
+            errors.append(f"后端缺少约定文档: {', '.join(sorted(missing))}")
+        if unexpected:
+            errors.append(f"后端存在额外人工文档: {', '.join(sorted(unexpected))}")
+    for relative, limit in DOCUMENT_LIMITS.items():
+        path = ROOT / relative
+        if not path.is_file():
+            continue
+        lines = len(path.read_text(encoding="utf-8").splitlines())
+        if lines > limit:
+            errors.append(f"{relative} 共 {lines} 行，超过 {limit} 行上限")
 
 
 def parse_edge(value: str, label: str, errors: list[str]) -> tuple[str, str] | None:
@@ -597,6 +630,7 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
 
 def main() -> int:
     errors: list[str] = []
+    validate_documentation(errors)
     active_profile, profiles, source_size = load_policy(errors)
     metadata = cargo_metadata(errors)
     packages = workspace_packages(metadata) if metadata else {}
