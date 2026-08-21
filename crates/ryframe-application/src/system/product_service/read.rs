@@ -1,12 +1,15 @@
 use std::collections::BTreeSet;
 
-use crate::{ProductPlanRecord, ProductVersionRecord};
+use crate::ports::product::{
+    ProductCapabilityRecord, ProductPlanRecord, ProductPlanState, ProductVersionRecord,
+    ProductVersionState,
+};
 
 use super::*;
 
 impl ProductService {
     pub(super) fn plan_state_vo(
-        plan: crate::ProductPlanState,
+        plan: ProductPlanState,
         versions: Vec<ProductPlanVersionVo>,
     ) -> ProductPlanVo {
         ProductPlanVo {
@@ -21,8 +24,8 @@ impl ProductService {
     }
 
     pub(super) fn version_state_vo(
-        version: crate::ProductVersionState,
-        capabilities: Vec<crate::ProductCapabilityRecord>,
+        version: ProductVersionState,
+        capabilities: Vec<ProductCapabilityRecord>,
     ) -> AppResult<ProductPlanVersionVo> {
         Self::version_record_vo(ProductVersionRecord {
             id: version.id,
@@ -95,7 +98,7 @@ impl ProductService {
 
     pub(super) fn validate_capability_record_relationships(
         &self,
-        capabilities: &[crate::ProductCapabilityRecord],
+        capabilities: &[ProductCapabilityRecord],
     ) -> AppResult<()> {
         let mut enabled = BTreeSet::new();
         for capability in capabilities {
@@ -143,7 +146,7 @@ impl ProductService {
 
     pub(super) fn validate_publishable_capability_records(
         &self,
-        capabilities: &[crate::ProductCapabilityRecord],
+        capabilities: &[ProductCapabilityRecord],
     ) -> AppResult<()> {
         self.validate_capability_record_relationships(capabilities)?;
         for capability in capabilities {
@@ -167,8 +170,8 @@ impl ProductService {
 mod tests {
     use super::*;
 
-    fn capability() -> crate::ProductCapabilityRecord {
-        crate::ProductCapabilityRecord {
+    fn capability() -> ProductCapabilityRecord {
+        ProductCapabilityRecord {
             code: SERVICE_ACCOUNTS_CAPABILITY.into(),
             variant: "default".into(),
             schema_version: 1,
@@ -176,7 +179,7 @@ mod tests {
         }
     }
 
-    fn version(capabilities: Vec<crate::ProductCapabilityRecord>) -> ProductVersionRecord {
+    fn version(capabilities: Vec<ProductCapabilityRecord>) -> ProductVersionRecord {
         ProductVersionRecord {
             id: 1,
             version: 1,

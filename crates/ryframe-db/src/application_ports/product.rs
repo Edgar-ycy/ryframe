@@ -18,20 +18,23 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    PersistenceFuture, ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState,
-    ProductPlanRecord, ProductPlanState, ProductReadPort, ProductTransactionPort,
-    ProductVersionRecord, ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult,
-    ProductWritePort, ProductWriteTransaction, ProvisioningCapabilityResources,
-    TenantCapabilityOverrideRecord, TenantProductSnapshot,
+    PersistenceFuture,
+    ports::product::{
+        ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState,
+        ProductPlanRecord, ProductPlanState, ProductReadPort, ProductTransactionPort,
+        ProductVersionRecord, ProductVersionSnapshot, ProductVersionState,
+        ProductVersionWriteResult, ProductWritePort, ProductWriteTransaction,
+        ProvisioningCapabilityResources, TenantCapabilityOverrideRecord, TenantProductSnapshot,
+    },
 };
 
 use super::control_transaction::DatabasePortTransaction;
 
-pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn ProductReadPort> {
+pub fn read(database: ControlDatabaseCluster) -> Arc<dyn ProductReadPort> {
     Arc::new(DatabaseProductRead { database })
 }
 
-pub fn write_port(database: ControlDatabaseCluster) -> Arc<dyn ProductWritePort> {
+pub fn write(database: ControlDatabaseCluster) -> Arc<dyn ProductWritePort> {
     Arc::new(DatabaseProductWrite { database })
 }
 

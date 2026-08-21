@@ -68,10 +68,10 @@ pub(super) fn ensure_override_change_allowed(
 
 pub(super) fn capability_records(
     values: Vec<CapabilitySnapshotInput>,
-) -> Vec<crate::ProductCapabilityRecord> {
+) -> Vec<crate::ports::product::ProductCapabilityRecord> {
     values
         .into_iter()
-        .map(|value| crate::ProductCapabilityRecord {
+        .map(|value| crate::ports::product::ProductCapabilityRecord {
             code: value.capability_code,
             variant: value.variant_code,
             schema_version: value.schema_version,
@@ -83,18 +83,20 @@ pub(super) fn capability_records(
 pub(super) fn override_records(
     actor_id: i64,
     values: Vec<CapabilityOverrideInput>,
-) -> Vec<crate::TenantCapabilityOverrideRecord> {
+) -> Vec<crate::ports::product::TenantCapabilityOverrideRecord> {
     values
         .into_iter()
-        .map(|value| crate::TenantCapabilityOverrideRecord {
-            code: value.capability_code,
-            enabled: value.enabled,
-            variant: value.variant_code,
-            schema_version: value.schema_version,
-            config: value.config,
-            reason: Some("platform_override".into()),
-            changed_by: Some(actor_id),
-        })
+        .map(
+            |value| crate::ports::product::TenantCapabilityOverrideRecord {
+                code: value.capability_code,
+                enabled: value.enabled,
+                variant: value.variant_code,
+                schema_version: value.schema_version,
+                config: value.config,
+                reason: Some("platform_override".into()),
+                changed_by: Some(actor_id),
+            },
+        )
         .collect()
 }
 

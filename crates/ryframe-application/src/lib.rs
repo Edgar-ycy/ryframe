@@ -11,7 +11,6 @@ mod login_protection;
 mod persistence;
 pub mod ports;
 mod principal_resolver;
-mod product_persistence;
 mod refresh_session;
 mod request_tenant_context;
 mod runtime_policy;
@@ -70,13 +69,6 @@ pub use jobs::{
 pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
 pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use principal_resolver::PrincipalResolver;
-pub use product_persistence::{
-    ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState, ProductPlanRecord,
-    ProductPlanState, ProductReadPort, ProductTransactionPort, ProductVersionRecord,
-    ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult, ProductWritePort,
-    ProductWriteTransaction, ProvisioningCapabilityResources, TenantCapabilityOverrideRecord,
-    TenantProductSnapshot,
-};
 pub use refresh_session::{
     RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,
     RefreshSessionRevocation, RefreshSessionRotation,

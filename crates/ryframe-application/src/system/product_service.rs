@@ -9,9 +9,12 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    AuthorizationCache, ProductAssignmentChange, ProductPlanState, ProductReadPort,
-    ProductVersionSnapshot, ProductVersionState, ProductWritePort, TenantCapabilityOverrideRecord,
-    TenantProductSnapshot,
+    AuthorizationCache,
+    ports::product::{
+        ProductAssignmentChange, ProductPlanState, ProductReadPort, ProductTransactionPort,
+        ProductVersionSnapshot, ProductVersionState, ProductWritePort,
+        TenantCapabilityOverrideRecord, TenantProductSnapshot,
+    },
 };
 
 use super::product_capability_catalog::{
@@ -33,7 +36,7 @@ mod read;
 mod resources;
 mod support;
 
-pub use crate::ProvisioningCapabilityResources;
+pub use crate::ports::product::ProvisioningCapabilityResources;
 pub use model::*;
 use support::*;
 

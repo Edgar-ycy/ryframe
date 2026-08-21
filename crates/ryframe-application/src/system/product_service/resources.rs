@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use super::{
     CAPABILITY_CATALOG, CapabilityRequirement, ProductContextVo, ProductService,
-    ProvisioningCapabilityResources,
+    ProductTransactionPort, ProvisioningCapabilityResources, TenantProductSnapshot,
 };
 use ryframe_kernel::{AppError, AppResult};
 
@@ -11,7 +11,7 @@ impl ProductService {
     /// 生成只读依赖声明。部署不可用或仅保留 entitlement 的能力不会进入配置包。
     pub async fn enabled_capability_requirements_in_txn(
         &self,
-        transaction: &dyn crate::ProductTransactionPort,
+        transaction: &dyn ProductTransactionPort,
         tenant_id: &str,
     ) -> AppResult<Vec<CapabilityRequirement>> {
         let context =
@@ -40,7 +40,7 @@ impl ProductService {
     /// variant 与 schema 任一不匹配都拒绝，且绝不借配置包修改产品上下文。
     pub async fn ensure_capability_requirements_in_txn(
         &self,
-        transaction: &dyn crate::ProductTransactionPort,
+        transaction: &dyn ProductTransactionPort,
         tenant_id: &str,
         requirements: &[CapabilityRequirement],
     ) -> AppResult<()> {
@@ -125,7 +125,7 @@ impl ProductService {
     /// 租户创建首事务内重新锁定并校验可分配版本，防止与 retire/套餐停用并发。
     pub async fn provisioning_resources_in_txn(
         &self,
-        transaction: &dyn crate::ProductTransactionPort,
+        transaction: &dyn ProductTransactionPort,
         version_id: i64,
     ) -> AppResult<ProvisioningCapabilityResources> {
         let version = transaction.lock_assignable_version(version_id).await?;
@@ -150,7 +150,7 @@ impl ProductService {
     /// 权限、菜单和默认管理员授权在一个控制库事务内完成，因此失败可安全重试。
     pub async fn sync_provisioning_resources_in_txn(
         &self,
-        transaction: &dyn crate::ProductTransactionPort,
+        transaction: &dyn ProductTransactionPort,
         tenant_id: &str,
         version_id: i64,
     ) -> AppResult<()> {
@@ -167,7 +167,7 @@ impl ProductService {
     #[doc(hidden)]
     pub fn ensure_permission_codes_enabled(
         &self,
-        snapshot: crate::TenantProductSnapshot,
+        snapshot: TenantProductSnapshot,
         permission_codes: &[String],
     ) -> AppResult<()> {
         let requested = permission_codes
@@ -218,7 +218,7 @@ impl ProductService {
     #[doc(hidden)]
     pub fn filter_syncable_permission_codes(
         &self,
-        snapshot: crate::TenantProductSnapshot,
+        snapshot: TenantProductSnapshot,
         permission_codes: BTreeSet<String>,
     ) -> AppResult<BTreeSet<String>> {
         let context = self.context_from_snapshot(snapshot)?;

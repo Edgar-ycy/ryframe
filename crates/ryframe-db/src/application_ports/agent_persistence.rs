@@ -138,7 +138,7 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
             let snapshot = ProductRepository
                 .tenant_product(&self.transaction, tenant_id)
                 .await?
-                .map(super::product_persistence::tenant_snapshot)
+                .map(super::product::tenant_snapshot)
                 .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product
                 .require_capability_snapshot(snapshot, capability_code)

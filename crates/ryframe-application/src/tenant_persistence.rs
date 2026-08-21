@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 
 use crate::{
-    PersistenceFuture, ProductTransactionPort, TenantProvisioningPlacement,
-    ports::authorization::AuthorizationMirrorTransaction,
+    PersistenceFuture, TenantProvisioningPlacement,
+    ports::authorization::AuthorizationMirrorTransaction, ports::product::ProductTransactionPort,
 };
 
 pub const TENANT_STATUS_PROVISIONING: &str = "provisioning";

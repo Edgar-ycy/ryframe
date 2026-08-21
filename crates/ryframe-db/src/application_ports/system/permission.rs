@@ -246,7 +246,7 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
             let snapshot = ProductRepository
                 .tenant_product(&self.transaction, tenant_id)
                 .await?
-                .map(super::super::product_persistence::tenant_snapshot)
+                .map(super::super::product::tenant_snapshot)
                 .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product_service
                 .filter_syncable_permission_codes(snapshot, codes)

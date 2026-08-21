@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use ryframe_application::{
-    PersistenceFuture, ProductTransactionPort, ProvisionTenantRecord, TenantAdminRecord,
-    TenantPersistencePort, TenantProductAssignmentRecord, TenantProvisionRequestRecord,
-    TenantProvisioningPlacement, TenantRecord, TenantTransaction,
-    ports::authorization::AuthorizationMirrorTransaction,
+    PersistenceFuture, ProvisionTenantRecord, TenantAdminRecord, TenantPersistencePort,
+    TenantProductAssignmentRecord, TenantProvisionRequestRecord, TenantProvisioningPlacement,
+    TenantRecord, TenantTransaction,
+    ports::{authorization::AuthorizationMirrorTransaction, product::ProductTransactionPort},
 };
 use ryframe_db::{
     ControlDatabaseCluster, ProductRepository, ProvisionTenantCommand, ReadConsistency,

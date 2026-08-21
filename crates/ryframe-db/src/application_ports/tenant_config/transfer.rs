@@ -248,7 +248,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         &self.transaction
     }
 
-    fn product(&self) -> &dyn ryframe_application::ProductTransactionPort {
+    fn product(&self) -> &dyn ryframe_application::ports::product::ProductTransactionPort {
         &self.transaction
     }
 

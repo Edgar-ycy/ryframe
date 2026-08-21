@@ -9,7 +9,7 @@ mod control_transaction;
 pub mod export;
 pub mod files;
 pub mod jobs;
-mod product_persistence;
+pub mod product;
 pub mod retention;
 pub mod service_accounts;
 pub mod system;
@@ -23,5 +23,4 @@ pub use agent_persistence::port as agent_persistence;
 pub use audit_persistence::outbox_port as audit_outbox_persistence;
 #[doc(hidden)]
 pub use control_transaction::DatabasePortTransaction;
-pub use product_persistence::{read_port as product_read, write_port as product_write};
 pub use tenant_usage_persistence::port as tenant_usage_persistence;
