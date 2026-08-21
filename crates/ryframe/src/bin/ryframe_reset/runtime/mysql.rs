@@ -462,15 +462,16 @@ async fn server_identity(db: &DatabaseConnection) -> ResetResult<(String, i64)> 
     let row = db
         .query_one_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT @@server_uuid, @@lower_case_table_names",
+            "SELECT @@server_uuid, CAST(@@lower_case_table_names AS CHAR)",
         ))
         .await
         .map_err(|_| ResetError::new("无法读取 MySQL 物理 server 身份"))?
         .ok_or_else(|| ResetError::new("MySQL 物理 server 身份查询无结果"))?;
     let server_uuid = String::try_get_by_index(&row, 0)
         .map_err(|_| ResetError::new("MySQL server_uuid 格式无效"))?;
-    let lower_case_table_names = i64::try_get_by_index(&row, 1)
+    let lower_case_table_names = String::try_get_by_index(&row, 1)
         .map_err(|_| ResetError::new("MySQL lower_case_table_names 格式无效"))?;
+    let lower_case_table_names = parse_lower_case_table_names(&lower_case_table_names)?;
     if server_uuid.trim().is_empty()
         || server_uuid.len() > 64
         || !matches!(lower_case_table_names, 0..=2)
@@ -478,6 +479,16 @@ async fn server_identity(db: &DatabaseConnection) -> ResetResult<(String, i64)> 
         return Err(ResetError::new("MySQL 物理 server 身份值无效"));
     }
     Ok((server_uuid, lower_case_table_names))
+}
+
+fn parse_lower_case_table_names(value: &str) -> ResetResult<i64> {
+    let parsed = value
+        .parse::<i64>()
+        .map_err(|_| ResetError::new("MySQL lower_case_table_names 格式无效"))?;
+    if !matches!(parsed, 0..=2) {
+        return Err(ResetError::new("MySQL lower_case_table_names 值无效"));
+    }
+    Ok(parsed)
 }
 
 fn validate_physical_database_identities(handles: &[DatabaseHandle]) -> ResetResult<()> {
@@ -920,7 +931,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{quote_identifier, same_credentials};
+    use super::{parse_lower_case_table_names, quote_identifier, same_credentials};
     use ryframe_config::DbConnection;
 
     #[test]
@@ -945,5 +956,15 @@ mod tests {
         assert!(same_credentials(&left, &right));
         right.password = "secret-b".into();
         assert!(!same_credentials(&left, &right));
+    }
+
+    #[test]
+    fn lower_case_table_names_accepts_only_mysql_modes() {
+        assert_eq!(parse_lower_case_table_names("0").expect("模式有效"), 0);
+        assert_eq!(parse_lower_case_table_names("1").expect("模式有效"), 1);
+        assert_eq!(parse_lower_case_table_names("2").expect("模式有效"), 2);
+        for invalid in ["-1", "3", " 1", "true"] {
+            assert!(parse_lower_case_table_names(invalid).is_err());
+        }
     }
 }
