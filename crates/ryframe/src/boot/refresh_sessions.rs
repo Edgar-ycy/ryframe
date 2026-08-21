@@ -4,7 +4,7 @@ use ryframe_adapters::{
     RefreshFamily, RefreshRotation, RefreshSessionIdentity as AdapterIdentity,
     RefreshSessionRevocation as AdapterRevocation, RefreshSessionStore,
 };
-use ryframe_application::{
+use ryframe_application::ports::auth::{
     RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,
     RefreshSessionRevocation, RefreshSessionRotation,
 };

@@ -2,7 +2,7 @@ use ryframe_auth::{jwt, password};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use super::{AuthService, LoginResult, UserInfo};
-use crate::{RefreshSessionFamily, RefreshSessionRotation, ports::auth::IdentityUserRecord};
+use crate::ports::auth::{IdentityUserRecord, RefreshSessionFamily, RefreshSessionRotation};
 
 const MAX_REFRESH_SESSION_SECONDS: usize = 7 * 24 * 60 * 60;
 

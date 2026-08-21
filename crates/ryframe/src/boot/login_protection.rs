@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_adapters::RedisClient;
-use ryframe_application::{LoginProtectionFuture, LoginProtectionPort};
+use ryframe_application::ports::auth::{LoginProtectionFuture, LoginProtectionPort};
 use ryframe_kernel::{AppError, AppResult};
 
 struct RedisLoginProtection {

@@ -4,8 +4,9 @@ use ryframe_auth::jwt::TokenSettings;
 use serde::Serialize;
 
 use crate::{
-    AuthPolicy, AuthorizationCache, AuthorizationResolver, LoginProtectionPort, RefreshSessionPort,
+    AuthPolicy, AuthorizationCache, AuthorizationResolver,
     ports::auth::{IdentityAuthorizationReadPort, IdentityUserRecord},
+    ports::auth::{LoginProtectionPort, RefreshSessionPort},
 };
 
 mod brute_force;

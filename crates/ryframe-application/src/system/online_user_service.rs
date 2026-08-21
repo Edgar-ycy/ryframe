@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 mod keyspace;
 mod memory_backend;
 
-use crate::RefreshSessionPort;
+use crate::ports::auth::RefreshSessionPort;
 
 /// 在线用户信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]

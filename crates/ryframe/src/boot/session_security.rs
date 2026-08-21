@@ -4,7 +4,7 @@ use ryframe_adapters::TokenBlacklist;
 use ryframe_api::session_security::{
     AccessRevocationStore, RefreshSessionControl, SessionRevocation, SessionSecurityFuture,
 };
-use ryframe_application::{
+use ryframe_application::ports::auth::{
     RefreshSessionPort, RefreshSessionRevocation as ApplicationSessionRevocation,
 };
 
