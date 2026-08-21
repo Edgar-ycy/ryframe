@@ -263,18 +263,6 @@ pub(super) fn ensure_platform_actor(actor: &ActorContext) -> AppResult<()> {
     Ok(())
 }
 
-pub(super) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .zip(right)
-        .fold(0_u8, |difference, (left, right)| {
-            difference | (left ^ right)
-        })
-        == 0
-}
-
 pub(super) fn string_slice(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }

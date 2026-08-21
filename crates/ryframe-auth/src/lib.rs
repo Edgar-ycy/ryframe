@@ -7,3 +7,26 @@ mod scope_digest;
 
 pub use principal::RequestPrincipal;
 pub use scope_digest::stable_scope_digest;
+
+/// 比较安全敏感字节，避免在首个差异处提前返回。
+#[must_use]
+pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    let mut difference = left.len() ^ right.len();
+    for index in 0..left.len().max(right.len()) {
+        difference |= usize::from(left.get(index).copied().unwrap_or(0))
+            ^ usize::from(right.get(index).copied().unwrap_or(0));
+    }
+    difference == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constant_time_eq;
+
+    #[test]
+    fn constant_time_comparison_checks_content_and_length() {
+        assert!(constant_time_eq(b"monitor-token", b"monitor-token"));
+        assert!(!constant_time_eq(b"monitor-token", b"monitor-other"));
+        assert!(!constant_time_eq(b"monitor-token", b"monitor-token-long"));
+    }
+}

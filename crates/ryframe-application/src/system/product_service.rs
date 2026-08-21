@@ -368,7 +368,7 @@ impl ProductService {
         let epoch_text = preview_runtime_epoch.to_string();
         let expected_hash =
             product_change_hash(tenant_id, target.plan_version_id, &normalized, &epoch_text)?;
-        if !constant_time_eq(plan_hash.as_bytes(), expected_hash.as_bytes()) {
+        if !ryframe_auth::constant_time_eq(plan_hash.as_bytes(), expected_hash.as_bytes()) {
             return Err(AppError::Conflict(
                 "产品变更计划哈希无效，请重新预览".into(),
             ));

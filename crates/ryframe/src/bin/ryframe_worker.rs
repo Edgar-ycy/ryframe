@@ -479,16 +479,7 @@ fn has_valid_metrics_token(headers: &HeaderMap, expected: &str) -> bool {
     else {
         return false;
     };
-    constant_time_eq(actual.as_bytes(), expected.as_bytes())
-}
-
-fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
-    let mut difference = actual.len() ^ expected.len();
-    for index in 0..actual.len().max(expected.len()) {
-        difference |= usize::from(actual.get(index).copied().unwrap_or(0))
-            ^ usize::from(expected.get(index).copied().unwrap_or(0));
-    }
-    difference == 0
+    ryframe_auth::constant_time_eq(actual.as_bytes(), expected.as_bytes())
 }
 
 /// 初始化 worker 的 Redis 连接；可选 Redis 故障只降级为收件箱补拉。

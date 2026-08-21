@@ -273,30 +273,9 @@ fn has_valid_metrics_token(headers: &HeaderMap, expected: &str) -> bool {
     else {
         return false;
     };
-    constant_time_eq(actual.as_bytes(), expected.as_bytes())
-}
-
-fn constant_time_eq(actual: &[u8], expected: &[u8]) -> bool {
-    let mut difference = actual.len() ^ expected.len();
-    for index in 0..actual.len().max(expected.len()) {
-        difference |= usize::from(actual.get(index).copied().unwrap_or(0))
-            ^ usize::from(expected.get(index).copied().unwrap_or(0));
-    }
-    difference == 0
+    ryframe_auth::constant_time_eq(actual.as_bytes(), expected.as_bytes())
 }
 
 fn text_response(text: String, content_type: &'static str) -> axum::response::Response {
     ([(header::CONTENT_TYPE, content_type)], text).into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::constant_time_eq;
-
-    #[test]
-    fn constant_time_comparison_checks_content_and_length() {
-        assert!(constant_time_eq(b"monitor-token", b"monitor-token"));
-        assert!(!constant_time_eq(b"monitor-token", b"monitor-other"));
-        assert!(!constant_time_eq(b"monitor-token", b"monitor-token-long"));
-    }
 }
