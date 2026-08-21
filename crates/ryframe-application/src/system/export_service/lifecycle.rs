@@ -1,10 +1,7 @@
-use ryframe_db::CreateExportJob;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 
 use crate::EnqueueJob;
-use crate::jobs::database_enqueue;
 
 use super::*;
 
@@ -95,49 +92,46 @@ impl ExportService {
             &command.selection,
             &authorization_fingerprint,
         )?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.request_persistence.begin().await?;
         let result = async {
-            let now = self.background_jobs.database_utc_now(&transaction).await?;
-            if let Some(existing) = self
-                .exports
-                .find_active_by_fingerprint_for_update(
-                    &transaction,
-                    tenant_id,
-                    actor.user_id,
-                    &request_fingerprint,
-                )
+            let now = transaction.database_now().await?;
+            if let Some(existing) = transaction
+                .find_active(tenant_id, actor.user_id, &request_fingerprint)
                 .await?
             {
                 return Ok::<_, AppError>((existing, false));
             }
             let snapshot = self
-                .summarize_request_selection(&transaction, &request_actor, &command.selection)
+                .summarize_request_selection(
+                    transaction.as_ref(),
+                    &request_actor,
+                    &command.selection,
+                )
                 .await?;
             let trace_context = crate::trace_context::current_trace_context();
-            let job =
-                self.background_jobs
-                    .enqueue_in_transaction(
-                        &transaction,
-                        database_enqueue(EnqueueJob {
-                            tenant_id: Some(tenant_id.to_owned()),
-                            schedule_id: None,
-                            scheduled_for: Some(now),
-                            max_runtime_seconds: Some(EXPORT_MAX_RUNTIME_SECONDS),
-                            job_type: EXPORT_JOB_TYPE.to_owned(),
-                            payload: serde_json::to_value(ExportJobPayload::new(resource))
-                                .map_err(|error| {
-                                    AppError::Internal(format!("导出后台任务载荷编码失败: {error}"))
-                                })?,
-                            priority: 5,
-                            available_at: now,
-                            max_attempts: self.default_max_attempts,
-                            dedupe_key: None,
-                            traceparent: trace_context.traceparent,
-                            tracestate: trace_context.tracestate,
-                        }),
-                        now,
-                    )
-                    .await?;
+            let background_job_id = transaction
+                .enqueue_job(
+                    EnqueueJob {
+                        tenant_id: Some(tenant_id.to_owned()),
+                        schedule_id: None,
+                        scheduled_for: Some(now),
+                        max_runtime_seconds: Some(EXPORT_MAX_RUNTIME_SECONDS),
+                        job_type: EXPORT_JOB_TYPE.to_owned(),
+                        payload: serde_json::to_value(ExportJobPayload::new(resource)).map_err(
+                            |error| {
+                                AppError::Internal(format!("导出后台任务载荷编码失败: {error}"))
+                            },
+                        )?,
+                        priority: 5,
+                        available_at: now,
+                        max_attempts: self.default_max_attempts,
+                        dedupe_key: None,
+                        traceparent: trace_context.traceparent,
+                        tracestate: trace_context.tracestate,
+                    },
+                    now,
+                )
+                .await?;
             let stored_request = StoredExportRequest {
                 request_version: EXPORT_REQUEST_VERSION,
                 selection: command.selection,
@@ -146,15 +140,13 @@ impl ExportService {
                 upper_id: snapshot.upper_id,
                 matched_rows: snapshot.matched_rows,
             };
-            let export = self
-                .exports
-                .create_in_transaction(
-                    &transaction,
-                    CreateExportJob {
+            let export = transaction
+                .create_export(
+                    crate::CreateExportRecord {
                         tenant_id: tenant_id.to_owned(),
                         requester_id: actor.user_id,
                         resource: resource.to_owned(),
-                        background_job_id: job.job.id,
+                        background_job_id,
                         request_params: serde_json::to_value(&stored_request).map_err(|error| {
                             AppError::Internal(format!("导出请求编码失败: {error}"))
                         })?,
@@ -175,11 +167,11 @@ impl ExportService {
         .await;
         match result {
             Ok((export, inserted)) => {
-                crate::commit_current_audit(transaction).await?;
+                transaction.commit().await?;
                 if inserted && let Some(job_queue) = &self.job_queue {
                     job_queue.notify_background_jobs().await;
                 }
-                Ok(ExportJobVo::from(export))
+                Ok(export_requester_view(export))
             }
             Err(error) => {
                 let _ = transaction.rollback().await;

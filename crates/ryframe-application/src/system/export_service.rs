@@ -6,8 +6,8 @@ use ryframe_kernel::AppError;
 
 use crate::{
     ArtifactStore, ArtifactStoreError, ExportArtifactPersistencePort,
-    ExportDeletionPersistencePort, ExportRequesterPersistencePort, JobQueue,
-    SpreadsheetWriterFactory,
+    ExportDeletionPersistencePort, ExportRequestPersistencePort, ExportRequesterPersistencePort,
+    JobQueue, SpreadsheetWriterFactory,
 };
 
 use super::{
@@ -63,6 +63,7 @@ pub struct ExportService {
     exports: ExportJobRepository,
     artifact_persistence: Arc<dyn ExportArtifactPersistencePort>,
     deletion_persistence: Arc<dyn ExportDeletionPersistencePort>,
+    request_persistence: Arc<dyn ExportRequestPersistencePort>,
     requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
     users: Arc<UserService>,
     roles: RoleService,
@@ -84,6 +85,7 @@ pub struct ExportService {
 pub struct ExportPersistencePorts {
     artifact: Arc<dyn ExportArtifactPersistencePort>,
     deletion: Arc<dyn ExportDeletionPersistencePort>,
+    request: Arc<dyn ExportRequestPersistencePort>,
     requester: Arc<dyn ExportRequesterPersistencePort>,
 }
 
@@ -91,11 +93,13 @@ impl ExportPersistencePorts {
     pub fn new(
         artifact: Arc<dyn ExportArtifactPersistencePort>,
         deletion: Arc<dyn ExportDeletionPersistencePort>,
+        request: Arc<dyn ExportRequestPersistencePort>,
         requester: Arc<dyn ExportRequesterPersistencePort>,
     ) -> Self {
         Self {
             artifact,
             deletion,
+            request,
             requester,
         }
     }
@@ -125,6 +129,7 @@ impl ExportService {
             exports: ExportJobRepository,
             artifact_persistence: persistence.artifact,
             deletion_persistence: persistence.deletion,
+            request_persistence: persistence.request,
             requester_persistence: persistence.requester,
             roles: RoleService::new(
                 role_cache.clone(),

@@ -1,10 +1,4 @@
-use ryframe_db::{
-    ConfigFilter, ConfigRepository, DictTypeFilter, DictTypeRepository, LoginInfoFilter,
-    LoginInfoRepository, OperLogFilter, OperLogRepository, PostFilter, PostRepository, RoleFilter,
-    RoleRepository, UserFilter, UserRepository,
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult, ExportQuerySnapshot};
-use sea_orm::DatabaseTransaction;
 
 use super::*;
 
@@ -19,110 +13,14 @@ impl ExportService {
     /// 在任务事务的主库一致性快照中计算筛选结果数量与主键上界。
     pub(super) async fn summarize_request_selection(
         &self,
-        transaction: &DatabaseTransaction,
+        transaction: &dyn crate::ExportRequestTransaction,
         actor: &ActorContext,
         selection: &ExportSelection,
     ) -> AppResult<ExportRequestSnapshot> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let data_scope = actor.data_scope_context();
-        let summary = match selection {
-            ExportSelection::Users(filter) => {
-                UserRepository
-                    .summarize_export(
-                        transaction,
-                        tenant_id,
-                        &UserFilter {
-                            username: filter.username(),
-                            phone: filter.phone(),
-                            status: filter.status(),
-                            dept_id: filter.dept_id(),
-                        },
-                        &data_scope,
-                    )
-                    .await?
-            }
-            ExportSelection::Roles(filter) => {
-                RoleRepository
-                    .summarize_export(
-                        transaction,
-                        tenant_id,
-                        &RoleFilter {
-                            name: filter.name(),
-                            code: filter.code(),
-                            status: filter.status(),
-                        },
-                    )
-                    .await?
-            }
-            ExportSelection::Posts(filter) => {
-                PostRepository
-                    .summarize_export(
-                        transaction,
-                        tenant_id,
-                        &PostFilter {
-                            name: filter.name(),
-                            code: filter.code(),
-                            status: filter.status(),
-                        },
-                    )
-                    .await?
-            }
-            ExportSelection::Configs(filter) => {
-                ConfigRepository
-                    .summarize_export(
-                        transaction,
-                        tenant_id,
-                        &ConfigFilter {
-                            name: filter.name(),
-                            key: filter.key(),
-                        },
-                    )
-                    .await?
-            }
-            ExportSelection::DictTypes(filter) => {
-                DictTypeRepository
-                    .summarize_export(
-                        transaction,
-                        tenant_id,
-                        &DictTypeFilter {
-                            name: filter.name(),
-                            code: filter.code(),
-                            status: filter.status(),
-                        },
-                    )
-                    .await?
-            }
-            ExportSelection::OperLogs(filter) => {
-                OperLogRepository
-                    .summarize_export(
-                        transaction,
-                        tenant_id,
-                        &OperLogFilter {
-                            oper_name: filter.oper_name(),
-                            status: filter.status(),
-                            begin_time: filter.begin_time(),
-                            end_time: filter.end_time(),
-                        },
-                        &data_scope,
-                    )
-                    .await?
-            }
-            ExportSelection::LoginLogs(filter) => {
-                LoginInfoRepository
-                    .summarize_export(
-                        transaction,
-                        tenant_id,
-                        &LoginInfoFilter {
-                            user_name: filter.user_name(),
-                            status: filter.status(),
-                            begin_time: filter.begin_time(),
-                            end_time: filter.end_time(),
-                        },
-                        &data_scope,
-                    )
-                    .await?
-            }
-        };
+        let summary = transaction
+            .summarize_selection(tenant_id, actor, selection)
+            .await?;
         validate_export_summary(summary, self.export_max_rows)
     }
 }

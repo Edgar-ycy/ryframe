@@ -29,19 +29,19 @@ impl UserExportFilter {
         }
     }
 
-    pub(super) fn username(&self) -> Option<&str> {
+    pub(crate) fn username(&self) -> Option<&str> {
         self.username.as_deref()
     }
 
-    pub(super) fn phone(&self) -> Option<&str> {
+    pub(crate) fn phone(&self) -> Option<&str> {
         self.phone.as_deref()
     }
 
-    pub(super) fn status(&self) -> Option<&str> {
+    pub(crate) fn status(&self) -> Option<&str> {
         self.status.as_deref()
     }
 
-    pub(super) const fn dept_id(&self) -> Option<i64> {
+    pub(crate) const fn dept_id(&self) -> Option<i64> {
         self.dept_id
     }
 
@@ -71,7 +71,7 @@ macro_rules! text_export_filter {
             }
 
             $(
-                pub(super) fn $field(&self) -> Option<&str> {
+                pub(crate) fn $field(&self) -> Option<&str> {
                     self.$field.as_deref()
                 }
             )+
@@ -114,19 +114,19 @@ impl OperLogExportFilter {
         })
     }
 
-    pub(super) fn oper_name(&self) -> Option<&str> {
+    pub(crate) fn oper_name(&self) -> Option<&str> {
         self.oper_name.as_deref()
     }
 
-    pub(super) fn status(&self) -> Option<&str> {
+    pub(crate) fn status(&self) -> Option<&str> {
         self.status.as_deref()
     }
 
-    pub(super) const fn begin_time(&self) -> Option<DateTime<Utc>> {
+    pub(crate) const fn begin_time(&self) -> Option<DateTime<Utc>> {
         self.begin_time
     }
 
-    pub(super) const fn end_time(&self) -> Option<DateTime<Utc>> {
+    pub(crate) const fn end_time(&self) -> Option<DateTime<Utc>> {
         self.end_time
     }
 
@@ -164,19 +164,19 @@ impl LoginLogExportFilter {
         })
     }
 
-    pub(super) fn user_name(&self) -> Option<&str> {
+    pub(crate) fn user_name(&self) -> Option<&str> {
         self.user_name.as_deref()
     }
 
-    pub(super) fn status(&self) -> Option<&str> {
+    pub(crate) fn status(&self) -> Option<&str> {
         self.status.as_deref()
     }
 
-    pub(super) const fn begin_time(&self) -> Option<DateTime<Utc>> {
+    pub(crate) const fn begin_time(&self) -> Option<DateTime<Utc>> {
         self.begin_time
     }
 
-    pub(super) const fn end_time(&self) -> Option<DateTime<Utc>> {
+    pub(crate) const fn end_time(&self) -> Option<DateTime<Utc>> {
         self.end_time
     }
 

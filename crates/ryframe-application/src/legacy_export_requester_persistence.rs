@@ -165,7 +165,7 @@ impl ExportRequesterTransaction for LegacyExportRequesterTransaction {
     }
 }
 
-fn map_export(record: export_job::Model) -> ExportRequesterRecord {
+pub(crate) fn map_export(record: export_job::Model) -> ExportRequesterRecord {
     ExportRequesterRecord {
         id: record.id,
         resource: record.resource,
