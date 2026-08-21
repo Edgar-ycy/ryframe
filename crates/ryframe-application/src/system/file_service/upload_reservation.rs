@@ -1,12 +1,16 @@
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
-use ryframe_db::{ControlDatabaseCluster, FileRepository, Repository, entities::sys_file};
+use ryframe_db::{FileRepository, Repository, entities::sys_file};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::TransactionTrait;
 use sha2::{Digest, Sha256};
 
-use crate::{ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind};
+use crate::{
+    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
+    FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FileCleanupPersistencePort,
+    FileCleanupRecord,
+};
 
 use super::{
     FileService, UploadResponse, map_storage_read_error, map_storage_write_error, run_blocking_task,
@@ -55,11 +59,11 @@ enum CompensationPlan {
 }
 
 fn plan_expired_reservation(
-    reservation: &sys_file::Model,
+    reservation: &FileCleanupRecord,
     now: DateTime<Utc>,
     cleanup_grace: chrono::Duration,
 ) -> Option<ExpiredReservationPlan> {
-    if reservation.del_flag != sys_file::Model::DEL_FLAG_NORMAL
+    if reservation.del_flag != FILE_DEL_FLAG_NORMAL
         || !reservation
             .reservation_expires_at
             .is_some_and(|expires_at| expires_at <= now)
@@ -67,10 +71,10 @@ fn plan_expired_reservation(
         return None;
     }
     match reservation.upload_status.as_str() {
-        sys_file::Model::UPLOAD_STATUS_PENDING => Some(ExpiredReservationPlan::BeginCleanup {
+        FILE_UPLOAD_STATUS_PENDING => Some(ExpiredReservationPlan::BeginCleanup {
             cleanup_after: now + cleanup_grace,
         }),
-        sys_file::Model::UPLOAD_STATUS_CLEANUP => Some(ExpiredReservationPlan::DeleteCleanup),
+        FILE_UPLOAD_STATUS_CLEANUP => Some(ExpiredReservationPlan::DeleteCleanup),
         _ => None,
     }
 }
@@ -108,19 +112,19 @@ enum ReservationTransactionOutcome {
 /// `pending`/`cleanup` 记录及其 TTL；即使本进程从未运行 `Drop`，全局清理器
 /// 也会协调处理这些记录。
 pub(super) struct UploadReservationGuard {
-    db: ControlDatabaseCluster,
+    cleanup: Arc<dyn FileCleanupPersistencePort>,
     storage: Arc<dyn ArtifactStore>,
     reservation: Option<sys_file::Model>,
 }
 
 impl UploadReservationGuard {
     pub(super) fn new(
-        db: ControlDatabaseCluster,
+        cleanup: Arc<dyn FileCleanupPersistencePort>,
         storage: Arc<dyn ArtifactStore>,
         reservation: sys_file::Model,
     ) -> Self {
         Self {
-            db,
+            cleanup,
             storage,
             reservation: Some(reservation),
         }
@@ -138,7 +142,12 @@ impl UploadReservationGuard {
 
     pub(super) async fn compensate(&mut self) {
         if let Some(reservation) = self.reservation.take() {
-            compensate_upload_reservation(self.db.clone(), self.storage.clone(), reservation).await;
+            compensate_upload_reservation(
+                Arc::clone(&self.cleanup),
+                Arc::clone(&self.storage),
+                reservation,
+            )
+            .await;
         }
     }
 }
@@ -148,12 +157,12 @@ impl Drop for UploadReservationGuard {
         let Some(reservation) = self.reservation.take() else {
             return;
         };
-        let db = self.db.clone();
-        let storage = self.storage.clone();
+        let cleanup = Arc::clone(&self.cleanup);
+        let storage = Arc::clone(&self.storage);
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 drop(handle.spawn(async move {
-                    compensate_upload_reservation(db, storage, reservation).await;
+                    compensate_upload_reservation(cleanup, storage, reservation).await;
                 }));
             }
             Err(error) => {
@@ -673,10 +682,10 @@ impl FileService {
     /// 协调一个全局有界批次。该接口为启动引导、运维修复命令和受控演练公开；
     /// 常规上传不会在对延迟敏感的路径上执行对象删除。
     pub async fn reconcile_upload_reservations(&self) -> AppResult<u64> {
-        let now = FileRepository.database_utc_now(self.db.write()).await?;
-        let stale_config_packages = FileRepository
-            .find_stale_unreferenced_config_packages(
-                self.db.write(),
+        let now = self.cleanup.database_now().await?;
+        let stale_config_packages = self
+            .cleanup
+            .find_stale_config_packages(
                 now - chrono::Duration::hours(CONFIG_PACKAGE_ORPHAN_AGE_HOURS),
                 STALE_CONFIG_PACKAGE_BATCH_SIZE,
             )
@@ -690,8 +699,9 @@ impl FileService {
                 processed = processed.saturating_add(1);
             }
         }
-        let reservations = FileRepository
-            .find_expired_reservations(self.db.write(), now, STALE_RESERVATION_BATCH_SIZE)
+        let reservations = self
+            .cleanup
+            .find_expired_reservations(now, STALE_RESERVATION_BATCH_SIZE)
             .await?;
         for reservation in reservations {
             let Some(plan) =
@@ -702,9 +712,9 @@ impl FileService {
             if let ExpiredReservationPlan::BeginCleanup { cleanup_after } = plan {
                 // 首次处理仅创建带有新宽限期的墓碑。客户端任务取消后，延迟的 PUT
                 // 仍可能完成，因此有意延后删除。
-                if FileRepository
+                if self
+                    .cleanup
                     .begin_expired_cleanup(
-                        self.db.write(),
                         &reservation.tenant_id,
                         reservation.id,
                         now,
@@ -716,11 +726,11 @@ impl FileService {
                 }
                 continue;
             }
-            let claimed_at = FileRepository.database_utc_now(self.db.write()).await?;
+            let claimed_at = self.cleanup.database_now().await?;
             let claim_token = uuid::Uuid::new_v4().to_string();
-            if !FileRepository
+            if !self
+                .cleanup
                 .claim_expired_cleanup(
-                    self.db.write(),
                     &reservation.tenant_id,
                     reservation.id,
                     &claim_token,
@@ -745,10 +755,9 @@ impl FileService {
                     %error,
                     "expired upload cleanup failed; durable cleanup state was retained"
                 );
-                let retry_at = FileRepository.database_utc_now(self.db.write()).await?;
-                FileRepository
-                    .defer_cleanup_claim(
-                        self.db.write(),
+                let retry_at = self.cleanup.database_now().await?;
+                self.cleanup
+                    .defer_claim(
                         &reservation.tenant_id,
                         reservation.id,
                         &claim_token,
@@ -758,13 +767,9 @@ impl FileService {
                     .await?;
                 continue;
             }
-            if FileRepository
-                .complete_cleanup_claim(
-                    self.db.write(),
-                    &reservation.tenant_id,
-                    reservation.id,
-                    &claim_token,
-                )
+            if self
+                .cleanup
+                .complete_claim(&reservation.tenant_id, reservation.id, &claim_token)
                 .await?
             {
                 processed += 1;
@@ -785,7 +790,7 @@ async fn commit_upload_state(
 }
 
 async fn compensate_upload_reservation(
-    db: ControlDatabaseCluster,
+    cleanup: Arc<dyn FileCleanupPersistencePort>,
     storage: Arc<dyn ArtifactStore>,
     reservation: sys_file::Model,
 ) {
@@ -796,7 +801,7 @@ async fn compensate_upload_reservation(
         );
         return;
     };
-    let database_now = match FileRepository.database_utc_now(db.write()).await {
+    let database_now = match cleanup.database_now().await {
         Ok(now) => now,
         Err(error) => {
             tracing::error!(
@@ -808,9 +813,8 @@ async fn compensate_upload_reservation(
         }
     };
     let cleanup_after = database_now + cleanup_grace(storage.as_ref());
-    match FileRepository
-        .begin_cleanup(
-            db.write(),
+    match cleanup
+        .begin_owned_cleanup(
             &reservation.tenant_id,
             reservation.id,
             reservation_token,
@@ -855,4 +859,70 @@ async fn compensate_upload_reservation(
 
 pub(super) fn storage_error_is_not_found(error: &ArtifactStoreError) -> bool {
     error.kind() == ArtifactStoreErrorKind::NotFound
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+
+    use super::{ExpiredReservationPlan, plan_expired_reservation};
+    use crate::{
+        FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
+        FileCleanupRecord,
+    };
+
+    fn reservation(status: &str, expires_at: chrono::DateTime<Utc>) -> FileCleanupRecord {
+        FileCleanupRecord {
+            id: 1,
+            tenant_id: "tenant-a".to_owned(),
+            bucket: "uploads".to_owned(),
+            storage_path: "tenant-a/object".to_owned(),
+            upload_status: status.to_owned(),
+            reservation_token: Some("token".to_owned()),
+            reservation_expires_at: Some(expires_at),
+            del_flag: FILE_DEL_FLAG_NORMAL.to_owned(),
+        }
+    }
+
+    #[test]
+    fn expired_pending_reservation_enters_cleanup_grace() {
+        let now = Utc::now();
+        let grace = Duration::minutes(5);
+        let record = reservation(FILE_UPLOAD_STATUS_PENDING, now - Duration::seconds(1));
+
+        assert_eq!(
+            plan_expired_reservation(&record, now, grace),
+            Some(ExpiredReservationPlan::BeginCleanup {
+                cleanup_after: now + grace,
+            })
+        );
+    }
+
+    #[test]
+    fn expired_cleanup_reservation_is_ready_for_deletion() {
+        let now = Utc::now();
+        let record = reservation(FILE_UPLOAD_STATUS_CLEANUP, now - Duration::seconds(1));
+
+        assert_eq!(
+            plan_expired_reservation(&record, now, Duration::minutes(5)),
+            Some(ExpiredReservationPlan::DeleteCleanup)
+        );
+    }
+
+    #[test]
+    fn active_or_deleted_reservation_is_ignored() {
+        let now = Utc::now();
+        let active = reservation(FILE_UPLOAD_STATUS_PENDING, now + Duration::seconds(1));
+        assert_eq!(
+            plan_expired_reservation(&active, now, Duration::minutes(5)),
+            None
+        );
+
+        let mut deleted = reservation(FILE_UPLOAD_STATUS_CLEANUP, now - Duration::seconds(1));
+        deleted.del_flag = "1".to_owned();
+        assert_eq!(
+            plan_expired_reservation(&deleted, now, Duration::minutes(5)),
+            None
+        );
+    }
 }

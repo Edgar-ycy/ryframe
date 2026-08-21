@@ -298,8 +298,11 @@ impl FileService {
             }
             ReservationOutcome::Reserved(reservation) => reservation,
         };
-        let mut guard =
-            UploadReservationGuard::new(self.db.clone(), self.storage.clone(), reservation);
+        let mut guard = UploadReservationGuard::new(
+            Arc::clone(&self.cleanup),
+            Arc::clone(&self.storage),
+            reservation,
+        );
 
         if let Err(error) = self.put_reserved_object(&guard, &final_data).await {
             guard.compensate().await;

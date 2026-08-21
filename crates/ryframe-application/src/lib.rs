@@ -168,8 +168,9 @@ pub use export_requester_persistence::{
     ExportRequesterTransaction,
 };
 pub use file_cleanup_persistence::{
-    FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort,
-    FileCleanupRecord, FileCleanupTransaction,
+    FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
+    FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileCleanupRecord,
+    FileCleanupTransaction,
 };
 pub use file_content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
 pub use file_download_persistence::{FileDownloadPersistencePort, FileDownloadRecord};
