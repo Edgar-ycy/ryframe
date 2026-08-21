@@ -11,7 +11,6 @@ mod principal_resolver;
 mod request_tenant_context;
 mod runtime_policy;
 mod service_identity_secret;
-mod spreadsheet;
 pub mod system;
 #[doc(hidden)]
 pub mod tenant_config_stable_key;
@@ -57,11 +56,6 @@ pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
     ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
-};
-pub use spreadsheet::{
-    SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,
-    SpreadsheetDocumentFuture, SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow,
-    SpreadsheetWriter, SpreadsheetWriterFactory,
 };
 #[doc(hidden)]
 pub use trace_context::current_trace_context;

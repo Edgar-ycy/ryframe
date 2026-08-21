@@ -8,6 +8,7 @@ pub mod jobs;
 pub mod product;
 pub mod retention;
 pub mod service_accounts;
+pub mod spreadsheet;
 pub mod system;
 pub mod tenant_config;
 pub mod tenant_data;

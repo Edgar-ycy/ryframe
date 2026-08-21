@@ -22,7 +22,8 @@ use super::{
     UserService,
 };
 use crate::{
-    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor,
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
+    ports::spreadsheet::SpreadsheetDocumentProcessor,
     ports::users::{
         NewImportedUser, NewUserImportJob, NewUserImportRow, UserImportDepartmentRecord,
         UserImportJobRecord, UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord,

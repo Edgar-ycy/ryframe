@@ -9,7 +9,7 @@ impl ExportService {
         export_id: i64,
         tenant_id: &str,
         actor: ActorContext,
-        artifact: Box<dyn crate::SpreadsheetArtifact>,
+        artifact: Box<dyn crate::ports::spreadsheet::SpreadsheetArtifact>,
         resource: &str,
     ) -> AppResult<()> {
         let (file_name, key) = export_file_location(tenant_id, resource, export_id);

@@ -1,10 +1,12 @@
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::{
-    ClaimedBackgroundJob, SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress,
-    SpreadsheetWriter,
+    ClaimedBackgroundJob,
     ports::export::{ExportExecutionRecord, ExportStartDecision},
     ports::jobs::BackgroundJobRecord,
+    ports::spreadsheet::{
+        SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter,
+    },
     ports::system::{LoginInfoFilter, OperLogFilter},
     ports::users::UserQueryFilter,
 };

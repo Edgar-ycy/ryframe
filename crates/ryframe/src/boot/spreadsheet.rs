@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ryframe_adapters::excel::{
     ExcelArtifact, ExcelExporter, ExcelImporter, IncrementalExcelWriter,
 };
-use ryframe_application::{
+use ryframe_application::ports::spreadsheet::{
     SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetDocumentFuture,
     SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow, SpreadsheetWriter,
     SpreadsheetWriterFactory,
