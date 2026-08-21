@@ -5,7 +5,7 @@ use ryframe_kernel::{AppError, AppResult};
 use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
 
-use crate::{
+use crate::ports::tenant_data::{
     TenantDataCatalogTable, TenantDataFence, TenantDataMigrationItemRecord,
     TenantDataMigrationRecord, TenantDataRow,
 };

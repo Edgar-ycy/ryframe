@@ -1,4 +1,4 @@
-use ryframe_application::{
+use ryframe_application::ports::tenant_data::{
     TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetFuture, TenantDataTargetHealth,
     TenantDataTargetMetadata, TenantDataTargetPort,
 };
@@ -7,7 +7,7 @@ use crate::{
     TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, migration::TENANT_DATA_CATALOG,
 };
 
-use super::map_error;
+use super::super::map_error;
 
 impl TenantDataTargetPort for TenantDatabaseRouter {
     fn contains(&self, target_key: &str) -> bool {

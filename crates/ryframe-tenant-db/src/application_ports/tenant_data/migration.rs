@@ -2,7 +2,7 @@ use crate::{
     TenantDataCleanupBatch, TenantDataCleanupOwnership, TenantDatabaseRouter,
     migration::{TENANT_DATA_CATALOG, TenantDataTableDescriptor},
 };
-use ryframe_application::{
+use ryframe_application::ports::tenant_data::{
     TenantDataCatalogTable, TenantDataCleanupOwnership as ApplicationCleanupOwnership,
     TenantDataFence, TenantDataMigrationFuture, TenantDataMigrationPort, TenantDataRow,
     TenantDataRowBatch,
@@ -10,7 +10,7 @@ use ryframe_application::{
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 
-use super::map_error as map_tenant_data_error;
+use super::super::map_error as map_tenant_data_error;
 
 impl TenantDataMigrationPort for TenantDatabaseRouter {
     fn catalog_tables(&self) -> Vec<TenantDataCatalogTable> {

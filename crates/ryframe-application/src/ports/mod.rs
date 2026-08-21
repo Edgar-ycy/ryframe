@@ -10,5 +10,6 @@ pub mod retention;
 pub mod service_accounts;
 pub mod system;
 pub mod tenant_config;
+pub mod tenant_data;
 pub mod tenants;
 pub mod users;

@@ -254,9 +254,7 @@ async fn main() -> Result<(), AppError> {
         },
     ));
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
-        ryframe_tenant_db::application_ports::tenant_data_migration_persistence_port(
-            database.clone(),
-        ),
+        ryframe_tenant_db::application_ports::tenant_data::tracking(database.clone()),
         Arc::<ryframe_tenant_db::TenantDatabaseRouter>::clone(&tenant_data),
         Arc::<ryframe_tenant_db::TenantDatabaseRouter>::clone(&tenant_data),
         queue.clone(),

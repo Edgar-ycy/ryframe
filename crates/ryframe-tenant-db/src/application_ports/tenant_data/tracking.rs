@@ -1,10 +1,16 @@
 use std::sync::Arc;
 
 use ryframe_application::{
-    CreateTenantDataMigrationRecord, PersistenceFuture, TenantDataBackupPointRecord,
-    TenantDataMigrationItemRecord, TenantDataMigrationPersistencePort, TenantDataMigrationRecord,
-    TenantDataMigrationTransaction, TenantDataPlacementRecord, TenantMigrationContextRecord,
-    TenantOperationLeaseRecord, ports::jobs::BackgroundJobTransaction,
+    PersistenceFuture,
+    ports::{
+        jobs::BackgroundJobTransaction,
+        tenant_data::{
+            CreateTenantDataMigrationRecord, TenantDataBackupPointRecord,
+            TenantDataMigrationItemRecord, TenantDataMigrationPersistencePort,
+            TenantDataMigrationRecord, TenantDataMigrationTransaction, TenantDataPlacementRecord,
+            TenantMigrationContextRecord, TenantOperationLeaseRecord,
+        },
+    },
 };
 use ryframe_db::{
     ControlDatabaseCluster, CreateTenantDataMigration, TenantDataRepository,

@@ -12,11 +12,13 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, CreateTenantDataMigrationRecord, EnqueueJob, JobQueue,
-    TenantDataBackupPointRecord, TenantDataMigrationItemRecord, TenantDataMigrationPersistencePort,
-    TenantDataMigrationPort, TenantDataMigrationRecord, TenantDataPlacementRecord,
-    TenantDataTargetHealth, TenantDataTargetMetadata, TenantDataTargetPort,
-    TenantOperationLeaseRecord,
+    AuthorizationCache, EnqueueJob, JobQueue,
+    ports::tenant_data::{
+        CreateTenantDataMigrationRecord, TenantDataBackupPointRecord,
+        TenantDataMigrationItemRecord, TenantDataMigrationPersistencePort, TenantDataMigrationPort,
+        TenantDataMigrationRecord, TenantDataPlacementRecord, TenantDataTargetHealth,
+        TenantDataTargetMetadata, TenantDataTargetPort, TenantOperationLeaseRecord,
+    },
 };
 
 pub use models::*;

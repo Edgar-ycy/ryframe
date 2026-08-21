@@ -1,6 +1,7 @@
-use crate::{TenantDataMigrationItemRecord, TenantDataMigrationRecord, TenantDataPlacementRecord};
-
-use crate::{TenantDataCleanupOwnership, TenantDataFence};
+use crate::ports::tenant_data::{
+    TenantDataCleanupOwnership, TenantDataFence, TenantDataMigrationItemRecord,
+    TenantDataMigrationRecord, TenantDataPlacementRecord,
+};
 
 use super::workflow::{migration_requires_worker, validate_recovery_intent};
 use super::*;

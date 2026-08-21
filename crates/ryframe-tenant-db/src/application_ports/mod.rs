@@ -1,9 +1,5 @@
-mod migration;
-mod targets;
-mod tenant_data_migration_persistence;
+pub mod tenant_data;
 pub mod tenants;
-
-pub use tenant_data_migration_persistence::port as tenant_data_migration_persistence_port;
 
 use ryframe_kernel::AppError;
 

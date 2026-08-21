@@ -6,8 +6,11 @@ use ryframe_kernel::{AppError, AppResult};
 use serde_json::Value as JsonValue;
 
 use crate::{
-    ClaimedBackgroundJob, JobHandler, TenantDataFence, TenantDataMigrationRecord,
-    TenantDataMigrationTransaction, TenantDataPlacementRecord, TenantOperationLeaseRecord,
+    ClaimedBackgroundJob, JobHandler,
+    ports::tenant_data::{
+        TenantDataFence, TenantDataMigrationRecord, TenantDataMigrationTransaction,
+        TenantDataPlacementRecord, TenantOperationLeaseRecord,
+    },
 };
 
 use super::recovery::RecoveryIntent;
