@@ -74,7 +74,7 @@ async fn record_event_in_transaction(
     max_attempts: i32,
 ) -> AppResult<()> {
     validate_audit_event(event)?;
-    let now = OutboxEventRepository.database_utc_now(transaction).await?;
+    let now = crate::repositories::database_utc_now(transaction).await?;
     let payload = serde_json::to_value(event)
         .map_err(|error| AppError::Internal(format!("审计事件序列化失败: {error}")))?;
     let trace_context = ryframe_application::current_trace_context();

@@ -47,11 +47,7 @@ impl ExportRequestPersistencePort for DatabaseExportRequestPersistence {
 
 impl ExportRequestTransaction for DatabaseExportRequestTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn find_active<'a>(

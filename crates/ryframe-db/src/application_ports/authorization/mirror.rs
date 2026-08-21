@@ -55,7 +55,7 @@ impl AuthorizationMirrorTransaction for DatabasePortTransaction {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { OutboxEventRepository.database_utc_now(self).await })
+        Box::pin(async move { crate::repositories::database_utc_now(self).await })
     }
 
     fn record(&self, event: AuthorizationMirrorEvent) -> PersistenceFuture<'_, ()> {

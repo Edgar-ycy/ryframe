@@ -32,11 +32,7 @@ struct DatabaseOutboxPersistence {
 
 impl OutboxPersistencePort for DatabaseOutboxPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move {
-            self.repository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn claim_next<'a>(

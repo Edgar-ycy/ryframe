@@ -38,11 +38,7 @@ impl ExportDeletionPersistencePort for DatabaseExportDeletionPersistence {
 
 impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn mark_delete_pending<'a>(

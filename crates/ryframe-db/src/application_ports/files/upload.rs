@@ -41,7 +41,7 @@ impl FileUploadPersistencePort for DatabaseFileUploadPersistence {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move { FileRepository.database_utc_now(self.database.write()).await })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn renew_pending<'a>(
@@ -102,7 +102,7 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move { FileRepository.database_utc_now(&self.transaction).await })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn find_by_sha256_for_update<'a>(

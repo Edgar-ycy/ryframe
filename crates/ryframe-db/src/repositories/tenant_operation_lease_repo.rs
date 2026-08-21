@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseTransaction, EntityTrait, QueryFilter,
-    QuerySelect,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect,
     sea_query::{Condition, Expr, LockType},
 };
 
@@ -17,22 +16,6 @@ use crate::entities::{
 pub struct TenantOperationLeaseRepository;
 
 impl TenantOperationLeaseRepository {
-    pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<DateTime<Utc>>
-    where
-        C: ConnectionTrait,
-    {
-        let row = db
-            .query_one_raw(sea_orm::Statement::from_string(
-                db.get_database_backend(),
-                "SELECT UTC_TIMESTAMP(6) AS db_now".to_owned(),
-            ))
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::Database("数据库时钟查询没有返回记录".into()))?;
-        let value: chrono::NaiveDateTime = row.try_get("", "db_now").map_err(database_error)?;
-        Ok(DateTime::from_naive_utc_and_offset(value, Utc))
-    }
-
     /// 锁定租户与统一租约，并验证当前调用者是否允许继续访问后续资源。
     pub async fn lock_tenant_and_validate_in_txn(
         &self,
@@ -47,7 +30,7 @@ impl TenantOperationLeaseRepository {
             .await
             .map_err(database_error)?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let now = self.database_utc_now(transaction).await?;
+        let now = super::database_utc_now(transaction).await?;
         let lease = tenant_operation_lease::Entity::find_by_id(tenant_id.to_owned())
             .lock(LockType::Update)
             .one(transaction)
@@ -90,7 +73,7 @@ impl TenantOperationLeaseRepository {
             .await
             .map_err(database_error)?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let now = self.database_utc_now(transaction).await?;
+        let now = super::database_utc_now(transaction).await?;
         let existing = tenant_operation_lease::Entity::find_by_id(lease.tenant_id.clone())
             .lock(LockType::Update)
             .one(transaction)

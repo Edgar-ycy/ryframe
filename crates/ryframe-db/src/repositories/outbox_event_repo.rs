@@ -4,7 +4,7 @@ use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
     ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, ExprTrait,
-    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
+    QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
     sea_query::{Expr, LockBehavior, LockType},
 };
 use serde_json::Value;
@@ -42,23 +42,6 @@ pub enum OutboxFailureDisposition {
 pub struct OutboxEventRepository;
 
 impl OutboxEventRepository {
-    /// 获取数据库 UTC 时间，避免多个 Worker 依赖不同机器时钟。
-    pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<DateTime<Utc>>
-    where
-        C: ConnectionTrait,
-    {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT UTC_TIMESTAMP(6) AS db_now".to_owned(),
-            ))
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::Database("数据库时钟查询未返回记录".into()))?;
-        let now: chrono::NaiveDateTime = row.try_get("", "db_now").map_err(database_error)?;
-        Ok(DateTime::from_naive_utc_and_offset(now, Utc))
-    }
-
     /// 在调用方事务中记录事件，确保业务写入与异步投递意图原子提交。
     pub async fn record_in_transaction(
         &self,

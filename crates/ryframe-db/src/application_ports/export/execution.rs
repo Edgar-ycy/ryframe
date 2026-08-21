@@ -30,11 +30,7 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportExecutionPersiste
 
 impl ExportExecutionPersistencePort for DatabaseExportExecutionPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn find_by_background_job(

@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
-    AgentQueryRepository, ControlDatabaseCluster, DataRetentionRepository, ProductRepository,
-    ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
-    ServiceAuthorizationRepository, ServiceCredentialRepository, ServiceDelegationRepository,
+    AgentQueryRepository, ControlDatabaseCluster, ProductRepository, ServiceAccessAuditRepository,
+    ServiceAccountLock, ServiceAccountRepository, ServiceAuthorizationRepository,
+    ServiceCredentialRepository, ServiceDelegationRepository,
     entities::{
         dept, dict_data, post, service_account, service_credential, service_delegation, tenant,
         user,
@@ -60,11 +60,7 @@ impl AgentPersistencePort for DatabaseAgentPersistence {
 
 impl AgentPersistenceTransaction for DatabaseAgentTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, AgentTenantRecord> {

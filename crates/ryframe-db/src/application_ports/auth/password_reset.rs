@@ -39,11 +39,7 @@ struct DatabasePasswordResetPersistence {
 
 impl PasswordResetPersistencePort for DatabasePasswordResetPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            PasswordResetRequestRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn find_request<'a>(
@@ -103,11 +99,7 @@ struct DatabasePasswordResetTransaction {
 
 impl PasswordResetTransaction for DatabasePasswordResetTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            PasswordResetRequestRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {

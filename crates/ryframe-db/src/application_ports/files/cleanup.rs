@@ -50,7 +50,7 @@ impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move { FileRepository.database_utc_now(self.database.write()).await })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn find_stale_config_packages(
@@ -201,7 +201,7 @@ impl FileCleanupTransaction for DatabaseFileCleanupTransaction {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move { FileRepository.database_utc_now(&self.transaction).await })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn claim_expired_import<'a>(

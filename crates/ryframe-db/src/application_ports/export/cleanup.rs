@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
-    ReadConsistency, entities::export_job,
+    ControlDatabaseCluster, ExportJobRepository, FileRepository, ReadConsistency,
+    entities::export_job,
 };
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
@@ -29,11 +29,7 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportCleanupPersistenc
 
 impl ExportCleanupPersistencePort for DatabaseExportCleanupPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn list_delete_pending(

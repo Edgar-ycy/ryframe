@@ -39,11 +39,7 @@ struct DatabaseJobQueuePersistence {
 
 impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
     fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move {
-            self.repository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn claim_next<'a>(
@@ -190,10 +186,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
 
     fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult> {
         Box::pin(async move {
-            let now = self
-                .repository
-                .database_utc_now(self.database.write())
-                .await?;
+            let now = crate::repositories::database_utc_now(self.database.write()).await?;
             self.repository
                 .enqueue(self.database.write(), database_enqueue(command), now)
                 .await
@@ -296,7 +289,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
 impl BackgroundJobTransaction for DatabasePortTransaction {
     fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult> {
         Box::pin(async move {
-            let now = BackgroundJobRepository.database_utc_now(self).await?;
+            let now = crate::repositories::database_utc_now(self).await?;
             BackgroundJobRepository
                 .enqueue_in_transaction(self, database_enqueue(command), now)
                 .await

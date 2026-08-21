@@ -72,6 +72,6 @@ pub use repositories::{
     TenantOperationLeaseRepository, TenantProductBundle, TenantProvisioningRepository,
     TenantRepository, TenantUsageAggregate, TenantUsagePageFilter, TenantUsageRepository,
     UserFilter, UserImportArtifact, UserImportFilter, UserImportRepository, UserRepository,
-    ValidatedTenantDataBackup, validate_cache_namespace,
+    ValidatedTenantDataBackup, database_utc_now, validate_cache_namespace,
 };
 pub mod application_ports;

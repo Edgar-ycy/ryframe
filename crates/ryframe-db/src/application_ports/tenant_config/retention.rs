@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    ControlDatabaseCluster, DataRetentionRepository, FileRepository, TenantRepository,
-    tenant_config_bundle, tenant_config_transfer,
+    ControlDatabaseCluster, FileRepository, TenantRepository, tenant_config_bundle,
+    tenant_config_transfer,
 };
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
@@ -27,15 +27,11 @@ const INACTIVE_ROLLBACK_PREDICATE: &str =
     "sys_tenant_config_transfer.status NOT IN ('rollback_pending', 'rolling_back')";
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantConfigRetentionPersistencePort> {
-    Arc::new(DatabaseTenantConfigRetentionPersistence {
-        database,
-        repository: DataRetentionRepository,
-    })
+    Arc::new(DatabaseTenantConfigRetentionPersistence { database })
 }
 
 struct DatabaseTenantConfigRetentionPersistence {
     database: ControlDatabaseCluster,
-    repository: DataRetentionRepository,
 }
 
 impl TenantConfigRetentionPersistencePort for DatabaseTenantConfigRetentionPersistence {
@@ -190,7 +186,7 @@ impl DatabaseTenantConfigRetentionPersistence {
         let mut active: tenant_config_bundle::ActiveModel = current.into();
         active.file_id = Set(None);
         active.status = Set(tenant_config_bundle::Model::STATUS_EXPIRED.to_owned());
-        let now = self.repository.database_utc_now(&transaction).await?;
+        let now = crate::repositories::database_utc_now(&transaction).await?;
         active.updated_at = Set(now);
         active.update(&transaction).await.map_err(database_error)?;
         // 配置包与快照可能共享文件；仅最后一个引用消失的事务创建清理墓碑。
@@ -286,7 +282,7 @@ impl DatabaseTenantConfigRetentionPersistence {
         };
         let mut active: tenant_config_transfer::ActiveModel = current.into();
         active.snapshot_file_id = Set(None);
-        let now = self.repository.database_utc_now(&transaction).await?;
+        let now = crate::repositories::database_utc_now(&transaction).await?;
         active.updated_at = Set(now);
         active.update(&transaction).await.map_err(database_error)?;
         // 回滚快照沿用同一引用计数规则，避免误删仍被其他记录使用的文件。

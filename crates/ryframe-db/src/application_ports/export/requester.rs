@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
-    ReadConsistency, Repository,
+    ControlDatabaseCluster, ExportJobRepository, FileRepository, ReadConsistency, Repository,
 };
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
@@ -93,11 +92,7 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn mark_notifications_read<'a>(
@@ -148,11 +143,7 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
 
 impl ExportRequesterTransaction for DatabaseExportRequesterTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn cancel<'a>(

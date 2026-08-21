@@ -125,11 +125,7 @@ impl JobScheduleReadPort for DatabaseJobSchedulePersistence {
 
 impl JobSchedulePersistencePort for DatabaseJobSchedulePersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn begin(&self) -> PersistenceFuture<'_, Box<dyn JobScheduleTransaction>> {
@@ -175,11 +171,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            self.job_repository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn count_enabled<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
@@ -314,10 +306,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
 
     fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult> {
         Box::pin(async move {
-            let now = self
-                .job_repository
-                .database_utc_now(&self.transaction)
-                .await?;
+            let now = crate::repositories::database_utc_now(&self.transaction).await?;
             let result = self
                 .job_repository
                 .enqueue_in_transaction(&self.transaction, database_enqueue(command), now)

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    ControlDatabaseCluster, DataRetentionRepository, DeptRepository, MenuRepository,
-    PermissionRepository, RoleRepository, UserRepository,
+    ControlDatabaseCluster, DeptRepository, MenuRepository, PermissionRepository, RoleRepository,
+    UserRepository,
 };
 
 use ryframe_application::{
@@ -23,11 +23,7 @@ struct DatabaseAuthorizationDiagnosticPersistence {
 
 impl AuthorizationDiagnosticReadPort for DatabaseAuthorizationDiagnosticPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn user_tenant_id(&self, user_id: i64) -> PersistenceFuture<'_, Option<String>> {

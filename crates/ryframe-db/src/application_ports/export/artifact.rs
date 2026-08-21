@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository, FileRepository,
-    MarkExportJobSucceeded, entities::sys_file,
+    ControlDatabaseCluster, ExportJobRepository, FileRepository, MarkExportJobSucceeded,
+    entities::sys_file,
 };
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
@@ -44,11 +44,7 @@ impl ExportArtifactPersistencePort for DatabaseExportArtifactPersistence {
 
 impl ExportArtifactTransaction for DatabaseExportArtifactTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn lock_export(&self, export_id: i64) -> PersistenceFuture<'_, Option<ExportArtifactState>> {

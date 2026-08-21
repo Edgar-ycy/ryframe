@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use crate::{
-    ControlDatabaseCluster, DataRetentionRepository, ServiceAccessAuditRepository,
-    entities::service_access_audit,
-};
+use crate::{ControlDatabaseCluster, ServiceAccessAuditRepository, entities::service_access_audit};
 use ryframe_kernel::AppError;
 use sea_orm::TransactionTrait;
 
@@ -30,9 +27,7 @@ impl AgentAuditWritePort for DatabaseAgentAuditWrite {
                 .await
                 .map_err(database_error)?;
             let result = async {
-                let completed_at = DataRetentionRepository
-                    .database_utc_now(&transaction)
-                    .await?;
+                let completed_at = crate::repositories::database_utc_now(&transaction).await?;
                 let audit = audit.complete(completed_at);
                 ServiceAccessAuditRepository
                     .insert(&transaction, model(audit))

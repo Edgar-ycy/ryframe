@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select, Statement,
+    DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
     sea_query::LockType,
 };
 
@@ -102,29 +102,6 @@ impl FileRepository {
             .await
             .map(|result| result.rows_affected == 1)
             .map_err(|error| AppError::Database(error.to_string()))
-    }
-
-    /// 读取主数据库的 UTC 时钟，确保每个应用节点对租约和过期作出的决策均使用
-    /// 同一权威来源。
-    pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<chrono::DateTime<chrono::Utc>>
-    where
-        C: ConnectionTrait + ?Sized,
-    {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT UTC_TIMESTAMP(6) AS db_now".to_owned(),
-            ))
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?
-            .ok_or_else(|| AppError::Database("database clock query returned no row".into()))?;
-        let now: chrono::NaiveDateTime = row
-            .try_get("", "db_now")
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        Ok(chrono::DateTime::from_naive_utc_and_offset(
-            now,
-            chrono::Utc,
-        ))
     }
 
     pub async fn insert_in_txn(

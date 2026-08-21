@@ -181,9 +181,7 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
         import_id: i64,
     ) -> PersistenceFuture<'a, bool> {
         Box::pin(async move {
-            let now = UserImportRepository
-                .database_utc_now(self.database.write())
-                .await?;
+            let now = crate::repositories::database_utc_now(self.database.write()).await?;
             UserImportRepository
                 .request_cancel(self.database.write(), tenant_id, import_id, now)
                 .await
@@ -217,11 +215,7 @@ impl BackgroundJobTransaction for DatabaseUserImportTransaction {
 
 impl UserImportTransaction for DatabaseUserImportTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            UserImportRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {

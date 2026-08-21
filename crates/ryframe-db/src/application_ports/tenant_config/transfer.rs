@@ -40,11 +40,7 @@ struct DatabaseTenantConfigTransferTransaction {
 
 impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn bundle_page<'a>(
@@ -259,11 +255,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn lock_tenant_configuration<'a>(

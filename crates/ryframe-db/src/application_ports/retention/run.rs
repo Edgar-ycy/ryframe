@@ -30,11 +30,7 @@ struct DatabaseRetentionRunTransaction {
 
 impl RetentionRunPersistencePort for DatabaseRetentionRunPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            self.repository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn begin(&self) -> PersistenceFuture<'_, Box<dyn RetentionRunTransaction>> {
@@ -92,11 +88,7 @@ impl RetentionRunPersistencePort for DatabaseRetentionRunPersistence {
 
 impl RetentionRunTransaction for DatabaseRetentionRunTransaction {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
     }
 
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction {

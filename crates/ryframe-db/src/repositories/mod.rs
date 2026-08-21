@@ -9,6 +9,7 @@ pub mod background_job_repo;
 pub mod cache_namespace_version_repo;
 pub mod config_repo;
 pub mod data_retention_repo;
+mod database_clock;
 pub mod dept_repo;
 pub mod dict_repo;
 mod execution_tenant_filter;
@@ -56,6 +57,7 @@ pub use config_repo::{ConfigFilter, ConfigRepository};
 pub use data_retention_repo::{
     DataRetentionRepository, RetentionCleanupResult, RetentionCutoff, RetentionResource,
 };
+pub use database_clock::utc_now as database_utc_now;
 pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeFilter, DictTypeRepository};
 pub(crate) use execution_tenant_filter::ExecutionTenantFilter;

@@ -188,7 +188,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
             let tenant = repository
                 .lock_tenant_and_validate_in_txn(&self.transaction, tenant_id, None)
                 .await?;
-            let database_now = repository.database_utc_now(&self.transaction).await?;
+            let database_now = crate::repositories::database_utc_now(&self.transaction).await?;
             Ok(ProductChangeTenantState {
                 status: tenant.status,
                 authorization_epoch: tenant.authorization_epoch,

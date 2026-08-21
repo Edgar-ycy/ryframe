@@ -16,6 +16,7 @@ use ryframe_db::{
     ControlDatabaseCluster, CreateTenantDataMigration, TenantDataRepository,
     TenantOperationLeaseRepository, TenantRepository, ValidatedTenantDataBackup,
     application_ports::transaction::DatabasePortTransaction,
+    database_utc_now,
     entities::{
         tenant_data_backup_point, tenant_data_migration, tenant_data_migration_item,
         tenant_data_placement, tenant_operation_lease,
@@ -38,11 +39,7 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantDataMigrationPers
 
 impl TenantDataMigrationPersistencePort for TenantDataMigrationPersistence {
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            TenantOperationLeaseRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { database_utc_now(self.database.write()).await })
     }
 
     fn occupied_target_keys<'a>(
@@ -215,11 +212,7 @@ impl TenantDataMigrationTransaction for TenantDataMigrationWorkUnit {
     }
 
     fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move {
-            TenantOperationLeaseRepository
-                .database_utc_now(&self.transaction)
-                .await
-        })
+        Box::pin(async move { database_utc_now(&self.transaction).await })
     }
 
     fn acquire_lease(&self, lease: TenantOperationLeaseRecord) -> PersistenceFuture<'_, ()> {

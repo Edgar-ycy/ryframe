@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
+    EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
 
@@ -24,23 +24,6 @@ pub struct TenantConfigurationFence {
 pub struct TenantConfigTransferRepository;
 
 impl TenantConfigTransferRepository {
-    /// 使用数据库时钟作为租约、过期和计划版本的统一时间来源。
-    pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<DateTime<Utc>>
-    where
-        C: ConnectionTrait,
-    {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT UTC_TIMESTAMP(6) AS db_now".to_owned(),
-            ))
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::Database("数据库时钟查询没有返回记录".into()))?;
-        let value: chrono::NaiveDateTime = row.try_get("", "db_now").map_err(database_error)?;
-        Ok(DateTime::from_naive_utc_and_offset(value, Utc))
-    }
-
     /// 锁定租户配置栅栏，并拒绝由其他所有者持有的有效配置迁移租约。
     ///
     /// 所有日常配置写入和迁移任务必须先调用本方法，再按稳定顺序锁定资源行。

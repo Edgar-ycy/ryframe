@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
-    DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, Statement,
+    DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter,
 };
 
 use crate::entities::background_job;
@@ -12,22 +12,6 @@ use super::{
 };
 
 impl BackgroundJobRepository {
-    pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<DateTime<Utc>>
-    where
-        C: ConnectionTrait,
-    {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT UTC_TIMESTAMP(6) AS db_now".to_owned(),
-            ))
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::Database("database clock query returned no row".into()))?;
-        let now: chrono::NaiveDateTime = row.try_get("", "db_now").map_err(database_error)?;
-        Ok(DateTime::from_naive_utc_and_offset(now, Utc))
-    }
-
     pub async fn enqueue(
         &self,
         db: &DatabaseConnection,

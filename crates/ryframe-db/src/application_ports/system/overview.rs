@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{ControlDatabaseCluster, DataRetentionRepository, OverviewRepository};
+use crate::{ControlDatabaseCluster, OverviewRepository};
 use chrono::{DateTime, Utc};
 
 use ryframe_application::{
@@ -20,11 +20,7 @@ struct DatabaseOverviewPersistence {
 
 impl OverviewPersistencePort for DatabaseOverviewPersistence {
     fn database_utc_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .database_utc_now(self.database.write())
-                .await
-        })
+        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
     }
 
     fn schedule_stats<'a>(

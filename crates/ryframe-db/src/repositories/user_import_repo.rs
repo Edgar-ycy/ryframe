@@ -38,24 +38,6 @@ pub struct UserImportArtifact {
 pub struct UserImportRepository;
 
 impl UserImportRepository {
-    pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<DateTime<Utc>>
-    where
-        C: ConnectionTrait,
-    {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT UTC_TIMESTAMP(6) AS db_now".to_owned(),
-            ))
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| AppError::Database("数据库时钟查询没有返回记录".into()))?;
-        let value: chrono::NaiveDateTime = row
-            .try_get("", "db_now")
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        Ok(DateTime::from_naive_utc_and_offset(value, Utc))
-    }
-
     pub async fn find_by_idempotency_in_txn(
         &self,
         transaction: &DatabaseTransaction,

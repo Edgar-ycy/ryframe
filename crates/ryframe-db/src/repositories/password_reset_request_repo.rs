@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QueryOrder, Statement,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder,
 };
 
 use crate::{Repository, entities::password_reset_request};
@@ -70,28 +70,6 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
 }
 
 impl PasswordResetRequestRepository {
-    /// 读取 MySQL 的 UTC 时钟，确保各应用节点的过期和完成决策保持一致。
-    pub async fn database_utc_now<C>(&self, db: &C) -> AppResult<chrono::DateTime<chrono::Utc>>
-    where
-        C: ConnectionTrait + ?Sized,
-    {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                db.get_database_backend(),
-                "SELECT UTC_TIMESTAMP(6) AS db_now".to_owned(),
-            ))
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?
-            .ok_or_else(|| AppError::Database("database clock query returned no row".into()))?;
-        let now: chrono::NaiveDateTime = row
-            .try_get("", "db_now")
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        Ok(chrono::DateTime::from_naive_utc_and_offset(
-            now,
-            chrono::Utc,
-        ))
-    }
-
     /// 仅使 `evaluated_at` 时仍处于 pending 状态的请求过期。赢得行锁的并发完成操作
     /// 不能被持有过期前旧模型的调用方覆盖。
     pub async fn expire_pending(
