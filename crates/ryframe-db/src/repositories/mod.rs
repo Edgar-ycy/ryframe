@@ -88,6 +88,7 @@ pub use service_delegation_repo::ServiceDelegationRepository;
 pub use tenant_config_transfer_repo::{TenantConfigTransferRepository, TenantConfigurationFence};
 pub use tenant_data_repo::{
     CreateTenantDataMigration, RegisterTenantDataBackupPoint, TenantDataRepository,
+    ValidatedTenantDataBackup,
 };
 pub use tenant_operation_lease_repo::TenantOperationLeaseRepository;
 pub use tenant_provisioning_repo::{ProvisionTenantCommand, TenantProvisioningRepository};

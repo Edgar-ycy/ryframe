@@ -7,19 +7,16 @@ mod workflow;
 use std::sync::Arc;
 
 use chrono::Duration;
-use ryframe_db::{
-    ControlDatabaseCluster, CreateTenantDataMigration, TenantDataRepository,
-    TenantOperationLeaseRepository, tenant_data_backup_point, tenant_data_migration,
-    tenant_data_migration_item, tenant_operation_lease,
-};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
-use sea_orm::TransactionTrait;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthorizationCache, EnqueueJob, JobQueue, TenantDataMigrationPort, TenantDataTargetHealth,
-    TenantDataTargetMetadata, TenantDataTargetPort,
+    AuthorizationCache, CreateTenantDataMigrationRecord, EnqueueJob, JobQueue,
+    TenantDataBackupPointRecord, TenantDataMigrationItemRecord, TenantDataMigrationPersistencePort,
+    TenantDataMigrationPort, TenantDataMigrationRecord, TenantDataPlacementRecord,
+    TenantDataTargetHealth, TenantDataTargetMetadata, TenantDataTargetPort,
+    TenantOperationLeaseRecord,
 };
 
 pub use models::*;
@@ -37,31 +34,27 @@ pub(super) fn checked_generation(value: i64, field: &str) -> AppResult<i64> {
 
 #[derive(Clone)]
 pub struct TenantDataMigrationService {
-    pub(super) database: ControlDatabaseCluster,
+    pub(super) persistence: Arc<dyn TenantDataMigrationPersistencePort>,
     targets: Arc<dyn TenantDataTargetPort>,
     pub(super) tenant_migration: Arc<dyn TenantDataMigrationPort>,
     pub(super) queue: Arc<JobQueue>,
     pub(super) authorization_cache: AuthorizationCache,
-    pub(super) repository: TenantDataRepository,
-    pub(super) lease_repository: Arc<TenantOperationLeaseRepository>,
 }
 
 impl TenantDataMigrationService {
     pub fn new(
-        database: ControlDatabaseCluster,
+        persistence: Arc<dyn TenantDataMigrationPersistencePort>,
         targets: Arc<dyn TenantDataTargetPort>,
         tenant_migration: Arc<dyn TenantDataMigrationPort>,
         queue: Arc<JobQueue>,
         authorization_cache: AuthorizationCache,
     ) -> Self {
         Self {
-            database,
+            persistence,
             targets,
             tenant_migration,
             queue,
             authorization_cache,
-            repository: TenantDataRepository,
-            lease_repository: Arc::new(TenantOperationLeaseRepository),
         }
     }
 
@@ -121,8 +114,8 @@ impl TenantDataMigrationService {
             .map(|target| target.key.clone())
             .collect::<Vec<_>>();
         let occupied = self
-            .repository
-            .occupied_target_keys(self.database.write(), &configured_target_keys)
+            .persistence
+            .occupied_target_keys(&configured_target_keys)
             .await?;
         if eligible_for == "migration" {
             let tenant_id = params
@@ -130,8 +123,8 @@ impl TenantDataMigrationService {
                 .as_deref()
                 .ok_or_else(|| AppError::Validation("迁移目标筛选必须提供 tenant_id".into()))?;
             let placement = self
-                .repository
-                .placement(self.database.write(), tenant_id)
+                .persistence
+                .placement(tenant_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("租户数据 placement 不存在".into()))?;
             for target in &mut targets {
@@ -203,9 +196,8 @@ impl TenantDataMigrationService {
         if !self.targets.contains(target_key) {
             return Err(AppError::NotFound("数据目标不存在".into()));
         }
-        self.repository
+        self.persistence
             .backup_points_for_target(
-                self.database.write(),
                 target_key,
                 params.tenant_id.as_deref(),
                 params.limit.clamp(1, 200),
@@ -220,8 +212,8 @@ impl TenantDataMigrationService {
         tenant_id: &str,
     ) -> AppResult<DataPlacementView> {
         ensure_platform_actor(actor)?;
-        self.repository
-            .placement(self.database.write(), tenant_id)
+        self.persistence
+            .placement(tenant_id)
             .await?
             .map(DataPlacementView::from)
             .ok_or_else(|| AppError::NotFound("租户数据 placement 不存在".into()))
@@ -238,8 +230,8 @@ impl TenantDataMigrationService {
         let expected_generation =
             checked_generation(request.expected_placement_generation, "placement")?;
         let placement = self
-            .repository
-            .placement(self.database.write(), tenant_id)
+            .persistence
+            .placement(tenant_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户数据 placement 不存在".into()))?;
         if placement.placement_generation != expected_generation {
@@ -254,7 +246,7 @@ impl TenantDataMigrationService {
             .ok_or_else(|| AppError::Validation("placement generation 已达上限".into()))?;
         let mut blockers = Vec::new();
         let mut warnings = vec!["stop_write_required".to_owned()];
-        if placement.state != ryframe_db::tenant_data_placement::Model::STATE_ACTIVE {
+        if placement.state != TenantDataPlacementRecord::STATE_ACTIVE {
             blockers.push("placement_not_active".to_owned());
         }
         if placement.current_target_key == request.target_key {
@@ -264,8 +256,8 @@ impl TenantDataMigrationService {
             blockers.push("target_not_registered".to_owned());
         }
         if self
-            .repository
-            .active_migration_for_tenant(self.database.write(), tenant_id)
+            .persistence
+            .active_migration_for_tenant(tenant_id)
             .await?
             .is_some()
         {
@@ -352,8 +344,8 @@ impl TenantDataMigrationService {
             command.idempotency_key
         ));
         if let Some(existing) = self
-            .repository
-            .migration_by_create_key(self.database.write(), &create_key_hash)
+            .persistence
+            .migration_by_create_key(&create_key_hash)
             .await?
         {
             ensure_same_create_request(&existing, &command)?;
@@ -378,10 +370,7 @@ impl TenantDataMigrationService {
         }
 
         let migration_id = crate::next_id()?;
-        let now = self
-            .lease_repository
-            .database_utc_now(self.database.write())
-            .await?;
+        let now = self.persistence.database_now().await?;
         let target_generation = command
             .expected_placement_generation
             .checked_add(1)
@@ -406,33 +395,24 @@ impl TenantDataMigrationService {
             .targets
             .kind_code(&command.target_key)
             .ok_or_else(|| AppError::TenantDataTargetUnavailable("目标未注册".into(), 5))?;
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
-        if let Err(error) = self
-            .lease_repository
-            .acquire_in_txn(
-                &transaction,
-                tenant_operation_lease::Model {
-                    tenant_id: tenant_id.to_owned(),
-                    owner_token: switch_token.clone(),
-                    operation: "tenant_data.migration".into(),
-                    resource_type: "tenant_data_migration".into(),
-                    resource_id: migration_id.to_string(),
-                    expires_at: now + Duration::hours(OPERATION_LEASE_HOURS),
-                    created_at: now,
-                    updated_at: now,
-                },
-            )
+        let transaction = self.persistence.begin().await?;
+        if let Err(error) = transaction
+            .acquire_lease(TenantOperationLeaseRecord {
+                tenant_id: tenant_id.to_owned(),
+                owner_token: switch_token.clone(),
+                operation: "tenant_data.migration".into(),
+                resource_type: "tenant_data_migration".into(),
+                resource_id: migration_id.to_string(),
+                expires_at: now + Duration::hours(OPERATION_LEASE_HOURS),
+                created_at: now,
+                updated_at: now,
+            })
             .await
         {
             let _ = transaction.rollback().await;
             if let Some(existing) = self
-                .repository
-                .migration_by_create_key(self.database.write(), &create_key_hash)
+                .persistence
+                .migration_by_create_key(&create_key_hash)
                 .await?
             {
                 ensure_same_create_request(&existing, &command)?;
@@ -440,11 +420,8 @@ impl TenantDataMigrationService {
             }
             return Err(error);
         }
-        let placement = self
-            .repository
-            .lock_placement_in_txn(&transaction, tenant_id)
-            .await?;
-        if placement.state != ryframe_db::tenant_data_placement::Model::STATE_ACTIVE
+        let placement = transaction.lock_placement(tenant_id).await?;
+        if placement.state != TenantDataPlacementRecord::STATE_ACTIVE
             || placement.current_target_key != preview.source_target_key
             || placement.placement_generation
                 != checked_generation(command.expected_placement_generation, "placement")?
@@ -453,9 +430,8 @@ impl TenantDataMigrationService {
                 "租户数据 placement 已变化".into(),
             ));
         }
-        if self
-            .repository
-            .lock_active_migration_for_tenant_in_txn(&transaction, tenant_id)
+        if transaction
+            .lock_active_migration_for_tenant(tenant_id)
             .await?
             .is_some()
         {
@@ -464,40 +440,36 @@ impl TenantDataMigrationService {
             ));
         }
 
-        let inserted = self
-            .repository
-            .insert_migration_in_txn(
-                &transaction,
-                CreateTenantDataMigration {
-                    id: migration_id,
-                    tenant_id: tenant_id.to_owned(),
-                    source_target_key: placement.current_target_key,
-                    target_key: command.target_key.clone(),
-                    source_target_mode: source_mode.into(),
-                    source_target_kind: source_kind.into(),
-                    target_target_mode: target_mode.into(),
-                    target_target_kind: target_kind.into(),
-                    source_generation: placement.placement_generation,
-                    source_switch_token: placement.switch_token,
-                    target_generation,
-                    source_schema_fingerprint: self.targets.catalog_fingerprint(),
-                    target_schema_fingerprint: self.targets.catalog_fingerprint(),
-                    plan_hash: command.plan_hash.clone(),
-                    create_idempotency_key_hash: create_key_hash.clone(),
-                    switch_token: switch_token.clone(),
-                    operator_id: actor.user_id,
-                    retention_hours: RETENTION_HOURS,
-                    now,
-                },
-            )
+        let inserted = transaction
+            .insert_migration(CreateTenantDataMigrationRecord {
+                id: migration_id,
+                tenant_id: tenant_id.to_owned(),
+                source_target_key: placement.current_target_key,
+                target_key: command.target_key.clone(),
+                source_target_mode: source_mode.into(),
+                source_target_kind: source_kind.into(),
+                target_target_mode: target_mode.into(),
+                target_target_kind: target_kind.into(),
+                source_generation: placement.placement_generation,
+                source_switch_token: placement.switch_token,
+                target_generation,
+                source_schema_fingerprint: self.targets.catalog_fingerprint(),
+                target_schema_fingerprint: self.targets.catalog_fingerprint(),
+                plan_hash: command.plan_hash.clone(),
+                create_idempotency_key_hash: create_key_hash.clone(),
+                switch_token: switch_token.clone(),
+                operator_id: actor.user_id,
+                retention_hours: RETENTION_HOURS,
+                now,
+            })
             .await;
         let mut migration = match inserted {
             Ok(migration) => migration,
             Err(error) => {
                 let _ = transaction.rollback().await;
                 if let Some(existing) = self
-                    .repository
-                    .migration_by_create_key(self.database.write(), &create_key_hash)
+                    .persistence
+                    .migration_by_create_key(&create_key_hash)
                     .await?
                 {
                     ensure_same_create_request(&existing, &command)?;
@@ -509,7 +481,7 @@ impl TenantDataMigrationService {
         let queued = self
             .queue
             .enqueue_in_transaction(
-                &transaction,
+                transaction.background_jobs(),
                 EnqueueJob {
                     tenant_id: Some(tenant_id.to_owned()),
                     schedule_id: None,
@@ -535,11 +507,8 @@ impl TenantDataMigrationService {
         };
         migration.background_job_id = Some(queued.job_id);
         migration.updated_at = now;
-        migration = self
-            .repository
-            .save_migration_in_txn(&transaction, migration)
-            .await?;
-        transaction.commit().await.map_err(database_error)?;
+        migration = transaction.save_migration(migration).await?;
+        transaction.commit().await?;
         self.queue.notify_background_jobs().await;
         self.migration_view(migration).await
     }
@@ -551,8 +520,8 @@ impl TenantDataMigrationService {
     ) -> AppResult<MigrationView> {
         ensure_platform_actor(actor)?;
         let migration = self
-            .repository
-            .migration(self.database.write(), migration_id)
+            .persistence
+            .migration(migration_id)
             .await?
             .ok_or_else(|| AppError::NotFound("租户数据迁移不存在".into()))?;
         self.migration_view(migration).await
@@ -567,8 +536,8 @@ impl TenantDataMigrationService {
         ensure_platform_actor(actor)?;
         validate_migration_tenant(tenant_id)?;
         let rows = self
-            .repository
-            .migrations_for_tenant(self.database.write(), tenant_id, limit.clamp(1, 100))
+            .persistence
+            .migrations_for_tenant(tenant_id, limit.clamp(1, 100))
             .await?;
         let mut views = Vec::with_capacity(rows.len());
         for row in rows {
@@ -579,32 +548,21 @@ impl TenantDataMigrationService {
 
     pub(super) async fn migration_view(
         &self,
-        migration: tenant_data_migration::Model,
+        migration: TenantDataMigrationRecord,
     ) -> AppResult<MigrationView> {
-        let items = self
-            .repository
-            .items(self.database.write(), migration.id)
-            .await?;
-        let now = self
-            .lease_repository
-            .database_utc_now(self.database.write())
-            .await?;
+        let items = self.persistence.items(migration.id).await?;
+        let now = self.persistence.database_now().await?;
         let mut can_finalize = false;
         let mut action_reasons = Vec::new();
         if migration.can_finalize() {
             if migration.retention_until.is_none_or(|until| until > now) {
                 action_reasons.push("retention_period_not_elapsed".into());
             } else if let Some(not_before) = migration.activated_at.or(migration.succeeded_at) {
-                let backup = self
-                    .repository
-                    .validated_backup_for_destination(
-                        self.database.write(),
-                        &migration,
-                        not_before,
-                        now,
-                    )
-                    .await?;
-                if backup.is_some() {
+                if self
+                    .persistence
+                    .has_validated_backup(&migration, not_before, now)
+                    .await?
+                {
                     can_finalize = true;
                 } else {
                     action_reasons.push("validated_backup_required".into());
@@ -626,7 +584,7 @@ impl TenantDataMigrationService {
             });
         }
         if migration.finalize_requested_at.is_some()
-            && migration.state == tenant_data_migration::Model::STATE_RETENTION_PENDING
+            && migration.state == TenantDataMigrationRecord::STATE_RETENTION_PENDING
         {
             can_finalize = false;
             action_reasons.push("finalize_requested".into());
@@ -671,7 +629,7 @@ fn validate_idempotency_key(key: &str) -> AppResult<()> {
 }
 
 fn ensure_same_create_request(
-    migration: &tenant_data_migration::Model,
+    migration: &TenantDataMigrationRecord,
     command: &CreateMigrationCommand,
 ) -> AppResult<()> {
     if migration.target_key == command.target_key
@@ -785,12 +743,8 @@ pub(super) fn sha256_hex(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
-impl From<tenant_data_backup_point::Model> for BackupPointView {
-    fn from(model: tenant_data_backup_point::Model) -> Self {
+impl From<TenantDataBackupPointRecord> for BackupPointView {
+    fn from(model: TenantDataBackupPointRecord) -> Self {
         Self {
             id: model.id.to_string(),
             scope: model.scope,
@@ -808,8 +762,8 @@ impl From<tenant_data_backup_point::Model> for BackupPointView {
     }
 }
 
-impl From<ryframe_db::tenant_data_placement::Model> for DataPlacementView {
-    fn from(model: ryframe_db::tenant_data_placement::Model) -> Self {
+impl From<TenantDataPlacementRecord> for DataPlacementView {
+    fn from(model: TenantDataPlacementRecord) -> Self {
         Self {
             tenant_id: model.tenant_id,
             current_target_key: model.current_target_key,
@@ -822,8 +776,8 @@ impl From<ryframe_db::tenant_data_placement::Model> for DataPlacementView {
 
 impl MigrationView {
     fn from_models(
-        migration: tenant_data_migration::Model,
-        items: Vec<tenant_data_migration_item::Model>,
+        migration: TenantDataMigrationRecord,
+        items: Vec<TenantDataMigrationItemRecord>,
         can_cancel: bool,
         can_finalize: bool,
         action_reasons: Vec<String>,
@@ -870,8 +824,8 @@ impl MigrationView {
     }
 }
 
-impl From<tenant_data_migration_item::Model> for MigrationItemView {
-    fn from(model: tenant_data_migration_item::Model) -> Self {
+impl From<TenantDataMigrationItemRecord> for MigrationItemView {
+    fn from(model: TenantDataMigrationItemRecord) -> Self {
         Self {
             id: model.id.to_string(),
             table_name: model.table_name,

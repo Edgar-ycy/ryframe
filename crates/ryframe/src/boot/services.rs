@@ -318,7 +318,7 @@ pub async fn build_all(
         .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
     );
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
-        database.clone(),
+        ryframe_tenant_db::tenant_data_migration_persistence_port(database.clone()),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
         job_queue.clone(),

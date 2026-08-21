@@ -1,30 +1,28 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use ryframe_db::{tenant_data_migration, tenant_data_migration_item};
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::TransactionTrait;
 use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
 
-use crate::{TenantDataCatalogTable, TenantDataFence, TenantDataRow};
+use crate::{
+    TenantDataCatalogTable, TenantDataFence, TenantDataMigrationItemRecord,
+    TenantDataMigrationRecord, TenantDataRow,
+};
 
+use super::TenantDataMigrationService;
 use super::workflow::ensure_not_cancel_requested;
-use super::{TenantDataMigrationService, database_error};
 
 impl TenantDataMigrationService {
     pub(super) async fn copy_catalog(
         &self,
-        migration: &tenant_data_migration::Model,
+        migration: &TenantDataMigrationRecord,
     ) -> AppResult<()> {
         self.targets
             .validate_catalog(&migration.source_target_key)
             .await?;
         self.targets.validate_catalog(&migration.target_key).await?;
-        let existing = self
-            .repository
-            .items(self.database.write(), migration.id)
-            .await?;
+        let existing = self.persistence.items(migration.id).await?;
         let mut existing_by_table = existing
             .into_iter()
             .map(|item| (item.table_name.clone(), item))
@@ -34,71 +32,59 @@ impl TenantDataMigrationService {
                 item
             } else {
                 let now = Utc::now();
-                self.repository
-                    .insert_item(
-                        self.database.write(),
-                        tenant_data_migration_item::Model {
-                            id: crate::next_id()?,
-                            migration_id: migration.id,
-                            table_name: descriptor.name.into(),
-                            copy_order: i32::try_from(descriptor.copy_order).map_err(|_| {
-                                AppError::Validation("catalog copy_order 超出范围".into())
-                            })?,
-                            state: tenant_data_migration_item::Model::STATE_PENDING.into(),
-                            cursor_json: None,
-                            source_row_count: Some(0),
-                            target_row_count: Some(0),
-                            source_digest: None,
-                            target_digest: None,
-                            error_code: None,
-                            error_detail: None,
-                            copy_started_at: None,
-                            copied_at: None,
-                            verified_at: None,
-                            cleanup_state: tenant_data_migration_item::Model::CLEANUP_PENDING
-                                .into(),
-                            cleanup_row_count: 0,
-                            created_at: now,
-                            updated_at: now,
-                        },
-                    )
+                self.persistence
+                    .insert_item(TenantDataMigrationItemRecord {
+                        id: crate::next_id()?,
+                        migration_id: migration.id,
+                        table_name: descriptor.name.into(),
+                        copy_order: i32::try_from(descriptor.copy_order).map_err(|_| {
+                            AppError::Validation("catalog copy_order 超出范围".into())
+                        })?,
+                        state: TenantDataMigrationItemRecord::STATE_PENDING.into(),
+                        cursor_json: None,
+                        source_row_count: Some(0),
+                        target_row_count: Some(0),
+                        source_digest: None,
+                        target_digest: None,
+                        error_code: None,
+                        error_detail: None,
+                        copy_started_at: None,
+                        copied_at: None,
+                        verified_at: None,
+                        cleanup_state: TenantDataMigrationItemRecord::CLEANUP_PENDING.into(),
+                        cleanup_row_count: 0,
+                        created_at: now,
+                        updated_at: now,
+                    })
                     .await?
             };
-            if item.state == tenant_data_migration_item::Model::STATE_VERIFIED {
+            if item.state == TenantDataMigrationItemRecord::STATE_VERIFIED {
                 continue;
             }
-            item.state = tenant_data_migration_item::Model::STATE_COPYING.into();
+            item.state = TenantDataMigrationItemRecord::STATE_COPYING.into();
             item.copy_started_at.get_or_insert(Utc::now());
             item.updated_at = Utc::now();
-            item = self
-                .repository
-                .save_item(self.database.write(), item)
-                .await?;
+            item = self.persistence.save_item(item).await?;
             item = self
                 .copy_table_in_batches(migration, descriptor, item)
                 .await?;
-            item.state = tenant_data_migration_item::Model::STATE_COPIED.into();
+            item.state = TenantDataMigrationItemRecord::STATE_COPIED.into();
             item.copied_at = Some(Utc::now());
             item.updated_at = Utc::now();
-            self.repository
-                .save_item(self.database.write(), item)
-                .await?;
+            self.persistence.save_item(item).await?;
         }
         Ok(())
     }
 
     pub(super) async fn verify_catalog(
         &self,
-        migration: &tenant_data_migration::Model,
+        migration: &TenantDataMigrationRecord,
     ) -> AppResult<()> {
         self.targets
             .validate_catalog(&migration.source_target_key)
             .await?;
         self.targets.validate_catalog(&migration.target_key).await?;
-        let items = self
-            .repository
-            .items(self.database.write(), migration.id)
-            .await?;
+        let items = self.persistence.items(migration.id).await?;
         let mut items_by_table = items
             .into_iter()
             .map(|item| (item.table_name.clone(), item))
@@ -107,12 +93,9 @@ impl TenantDataMigrationService {
             let mut item = items_by_table
                 .remove(descriptor.name)
                 .ok_or_else(|| AppError::Conflict("迁移表级检查点缺失".into()))?;
-            item.state = tenant_data_migration_item::Model::STATE_VERIFYING.into();
+            item.state = TenantDataMigrationItemRecord::STATE_VERIFYING.into();
             item.updated_at = Utc::now();
-            item = self
-                .repository
-                .save_item(self.database.write(), item)
-                .await?;
+            item = self.persistence.save_item(item).await?;
             let (source_count, source_digest) = self
                 .table_digest(migration, &migration.source_target_key, descriptor)
                 .await?;
@@ -139,12 +122,10 @@ impl TenantDataMigrationService {
             item.target_row_count = Some(target_count);
             item.source_digest = Some(source_digest);
             item.target_digest = Some(target_digest);
-            item.state = tenant_data_migration_item::Model::STATE_VERIFIED.into();
+            item.state = TenantDataMigrationItemRecord::STATE_VERIFIED.into();
             item.verified_at = Some(Utc::now());
             item.updated_at = Utc::now();
-            self.repository
-                .save_item(self.database.write(), item)
-                .await?;
+            self.persistence.save_item(item).await?;
         }
         // 摘要与外键校验可能持续较久；进入不可取消边界前重新验证目标与 fence。
         self.targets
@@ -160,10 +141,10 @@ impl TenantDataMigrationService {
 
     async fn copy_table_in_batches(
         &self,
-        migration: &tenant_data_migration::Model,
+        migration: &TenantDataMigrationRecord,
         descriptor: TenantDataCatalogTable,
-        mut item: tenant_data_migration_item::Model,
-    ) -> AppResult<tenant_data_migration_item::Model> {
+        mut item: TenantDataMigrationItemRecord,
+    ) -> AppResult<TenantDataMigrationItemRecord> {
         let mut cursor = item
             .cursor_json
             .as_ref()
@@ -209,46 +190,26 @@ impl TenantDataMigrationService {
                 .ok_or_else(|| AppError::Internal("租户数据行数溢出".into()))?;
             let next_digest = rolling_digest(item.source_digest.as_deref(), &batch.rows)?;
             // 目标批次提交后，再在控制库同一事务内续租并持久化检查点。
-            let progress_now = self
-                .lease_repository
-                .database_utc_now(self.database.write())
+            let progress_now = self.persistence.database_now().await?;
+            let progress_transaction = self.persistence.begin().await?;
+            self.renew_operation_lease(&*progress_transaction, migration, progress_now)
                 .await?;
-            let progress_transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            self.renew_operation_lease(&progress_transaction, migration, progress_now)
-                .await?;
-            let current = self
-                .repository
-                .lock_migration_in_txn(&progress_transaction, migration.id)
-                .await?;
+            let current = progress_transaction.lock_migration(migration.id).await?;
             ensure_not_cancel_requested(&current)?;
-            if current.state != tenant_data_migration::Model::STATE_COPYING {
+            if current.state != TenantDataMigrationRecord::STATE_COPYING {
                 return Err(AppError::TenantOperationConflict(
                     "复制批次提交时迁移状态已变化".into(),
                 ));
             }
-            item = self
-                .repository
-                .lock_item_in_txn(&progress_transaction, item.id)
-                .await?;
+            item = progress_transaction.lock_item(item.id).await?;
             item.cursor_json = cursor.as_ref().map(|values| json!(values));
             item.source_row_count = Some(next_count);
             item.target_row_count = Some(next_count);
             item.source_digest = Some(next_digest.clone());
             item.target_digest = Some(next_digest);
             item.updated_at = progress_now;
-            item = self
-                .repository
-                .save_item(&progress_transaction, item)
-                .await?;
-            progress_transaction
-                .commit()
-                .await
-                .map_err(database_error)?;
+            item = progress_transaction.save_item(item).await?;
+            progress_transaction.commit().await?;
             if batch.rows.len() < COPY_BATCH_SIZE as usize {
                 break;
             }
@@ -258,7 +219,7 @@ impl TenantDataMigrationService {
 
     async fn table_digest(
         &self,
-        migration: &tenant_data_migration::Model,
+        migration: &TenantDataMigrationRecord,
         target_key: &str,
         descriptor: TenantDataCatalogTable,
     ) -> AppResult<(i64, String)> {
@@ -289,7 +250,7 @@ impl TenantDataMigrationService {
                 )
                 .ok_or_else(|| AppError::Internal("租户数据校验行数溢出".into()))?;
             cursor = batch.next_cursor;
-            self.assert_worker_can_run(migration, tenant_data_migration::Model::STATE_VERIFYING)
+            self.assert_worker_can_run(migration, TenantDataMigrationRecord::STATE_VERIFYING)
                 .await?;
             if batch.rows.len() < COPY_BATCH_SIZE as usize {
                 break;
@@ -301,7 +262,7 @@ impl TenantDataMigrationService {
 
 const COPY_BATCH_SIZE: u32 = 500;
 
-fn target_fence(migration: &tenant_data_migration::Model) -> AppResult<TenantDataFence<'_>> {
+fn target_fence(migration: &TenantDataMigrationRecord) -> AppResult<TenantDataFence<'_>> {
     Ok(TenantDataFence {
         tenant_id: &migration.tenant_id,
         target_key: &migration.target_key,

@@ -55,6 +55,17 @@ pub struct RegisterTenantDataBackupPoint {
     pub now: DateTime<Utc>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ValidatedTenantDataBackup<'a> {
+    pub tenant_id: &'a str,
+    pub target_key: &'a str,
+    pub target_mode: &'a str,
+    pub target_generation: i64,
+    pub schema_fingerprint: &'a str,
+    pub not_before: DateTime<Utc>,
+    pub now: DateTime<Utc>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TenantDataRepository;
 
@@ -529,14 +540,12 @@ impl TenantDataRepository {
     pub async fn validated_backup_for_destination<C>(
         &self,
         db: &C,
-        migration: &tenant_data_migration::Model,
-        not_before: DateTime<Utc>,
-        now: DateTime<Utc>,
+        query: ValidatedTenantDataBackup<'_>,
     ) -> AppResult<Option<tenant_data_backup_point::Model>>
     where
         C: ConnectionTrait,
     {
-        let scope = if migration.target_target_mode == "shared" {
+        let scope = if query.target_mode == "shared" {
             Condition::all()
                 .add(
                     tenant_data_backup_point::Column::Scope
@@ -550,18 +559,17 @@ impl TenantDataRepository {
                     tenant_data_backup_point::Column::Scope
                         .eq(tenant_data_backup_point::Model::SCOPE_TENANT),
                 )
-                .add(tenant_data_backup_point::Column::TenantId.eq(&migration.tenant_id))
+                .add(tenant_data_backup_point::Column::TenantId.eq(query.tenant_id))
                 .add(
                     tenant_data_backup_point::Column::PlacementGeneration
-                        .eq(migration.target_generation),
+                        .eq(query.target_generation),
                 )
         };
 
         tenant_data_backup_point::Entity::find()
-            .filter(tenant_data_backup_point::Column::TargetKey.eq(&migration.target_key))
+            .filter(tenant_data_backup_point::Column::TargetKey.eq(query.target_key))
             .filter(
-                tenant_data_backup_point::Column::SchemaFingerprint
-                    .eq(&migration.target_schema_fingerprint),
+                tenant_data_backup_point::Column::SchemaFingerprint.eq(query.schema_fingerprint),
             )
             .filter(
                 tenant_data_backup_point::Column::ValidationStatus
@@ -569,12 +577,12 @@ impl TenantDataRepository {
             )
             .filter(tenant_data_backup_point::Column::Checksum.is_not_null())
             .filter(tenant_data_backup_point::Column::Checksum.ne(""))
-            .filter(tenant_data_backup_point::Column::CapturedAt.gte(not_before))
-            .filter(tenant_data_backup_point::Column::RetentionUntil.gte(now))
+            .filter(tenant_data_backup_point::Column::CapturedAt.gte(query.not_before))
+            .filter(tenant_data_backup_point::Column::RetentionUntil.gte(query.now))
             .filter(
                 Condition::any()
                     .add(tenant_data_backup_point::Column::ExpiresAt.is_null())
-                    .add(tenant_data_backup_point::Column::ExpiresAt.gt(now)),
+                    .add(tenant_data_backup_point::Column::ExpiresAt.gt(query.now)),
             )
             .filter(scope)
             .order_by_desc(tenant_data_backup_point::Column::CapturedAt)
