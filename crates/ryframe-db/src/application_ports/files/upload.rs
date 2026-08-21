@@ -8,8 +8,10 @@ use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord, FileUploadTransaction,
     PersistenceFuture,
+    ports::files::{
+        FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord, FileUploadTransaction,
+    },
 };
 
 struct DatabaseFileUploadPersistence {
@@ -186,7 +188,7 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
         Box::pin(async move {
             match mode {
                 FileUploadCommitMode::CurrentRequest => {
-                    super::audit_persistence::commit_current_audit(self.transaction).await
+                    super::super::audit_persistence::commit_current_audit(self.transaction).await
                 }
                 FileUploadCommitMode::Unbound => {
                     FileRepository
@@ -255,7 +257,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::{map_model, map_record};
-    use ryframe_application::FileUploadRecord;
+    use ryframe_application::ports::files::FileUploadRecord;
 
     fn record() -> FileUploadRecord {
         let created_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();

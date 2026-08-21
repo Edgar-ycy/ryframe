@@ -6,7 +6,8 @@ use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    FileCleanupPersistencePort, FileCleanupRecord, FileCleanupTransaction, PersistenceFuture,
+    PersistenceFuture,
+    ports::files::{FileCleanupPersistencePort, FileCleanupRecord, FileCleanupTransaction},
 };
 
 struct DatabaseFileCleanupPersistence {

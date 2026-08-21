@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, FileRepository, ReadConsistency};
 
-use ryframe_application::{FileDownloadPersistencePort, FileDownloadRecord, PersistenceFuture};
+use ryframe_application::{
+    PersistenceFuture,
+    ports::files::{FileDownloadPersistencePort, FileDownloadRecord},
+};
 
 struct DatabaseFileDownloadPersistence {
     database: ControlDatabaseCluster,

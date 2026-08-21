@@ -5,10 +5,13 @@ use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_UPLOAD_STATUS_CLEANUP,
-    FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileContentProcessor,
-    FileDownloadPersistencePort, FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord,
+    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FileContentProcessor,
     ProcessedFileContent,
+    ports::files::{
+        FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
+        FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileDownloadPersistencePort,
+        FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord,
+    },
 };
 
 mod policy;
@@ -280,11 +283,11 @@ impl FileService {
             content_type: content_type.clone(),
             file_sha256: file_sha256.clone(),
             upload_by: Some(uploaded_by.to_owned()),
-            upload_status: crate::FILE_UPLOAD_STATUS_PENDING.to_owned(),
+            upload_status: FILE_UPLOAD_STATUS_PENDING.to_owned(),
             reservation_token: Some(reservation_token),
             // 在预留事务内、等待租户行锁结束后，使用主数据库时钟设置。
             reservation_expires_at: None,
-            del_flag: crate::FILE_DEL_FLAG_NORMAL.to_owned(),
+            del_flag: FILE_DEL_FLAG_NORMAL.to_owned(),
             created_at: now,
             updated_at: now,
         };

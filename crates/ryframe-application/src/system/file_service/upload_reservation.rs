@@ -5,9 +5,12 @@ use ryframe_kernel::{AppError, AppResult};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
-    FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FileCleanupPersistencePort,
-    FileCleanupRecord, FileUploadCommitMode, FileUploadRecord,
+    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind,
+    ports::files::{
+        FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
+        FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileCleanupRecord,
+        FileUploadCommitMode, FileUploadRecord,
+    },
 };
 
 use super::{
@@ -260,7 +263,7 @@ impl FileService {
                 .find_by_sha256_for_update(tenant_id, &model.bucket, file_sha256)
                 .await?
             {
-                if existing.upload_status == crate::FILE_UPLOAD_STATUS_READY {
+                if existing.upload_status == FILE_UPLOAD_STATUS_READY {
                     return Ok(ReservationTransactionOutcome::Ready(existing));
                 }
                 if existing.upload_status == FILE_UPLOAD_STATUS_CLEANUP
@@ -270,7 +273,7 @@ impl FileService {
                         .await?
                 {
                     let mut restored = existing;
-                    restored.upload_status = crate::FILE_UPLOAD_STATUS_READY.to_owned();
+                    restored.upload_status = FILE_UPLOAD_STATUS_READY.to_owned();
                     restored.reservation_token = None;
                     restored.reservation_expires_at = None;
                     restored.updated_at = database_now;
@@ -324,7 +327,7 @@ impl FileService {
                     Err(commit_error) => {
                         match self.uploads.find_any(tenant_id, restored.id).await {
                             Ok(Some(confirmed))
-                                if confirmed.upload_status == crate::FILE_UPLOAD_STATUS_READY
+                                if confirmed.upload_status == FILE_UPLOAD_STATUS_READY
                                     && confirmed.reservation_token.is_none() =>
                             {
                                 tracing::warn!(
@@ -381,7 +384,7 @@ impl FileService {
                                 Ok(ReservationOutcome::Reserved(confirmed))
                             }
                             Ok(Some(confirmed))
-                                if confirmed.upload_status == crate::FILE_UPLOAD_STATUS_READY =>
+                                if confirmed.upload_status == FILE_UPLOAD_STATUS_READY =>
                             {
                                 Ok(ReservationOutcome::Ready(confirmed))
                             }
@@ -462,7 +465,7 @@ impl FileService {
         {
             Ok(true) => match transaction.commit(commit_mode).await {
                 Ok(()) => {
-                    existing.upload_status = crate::FILE_UPLOAD_STATUS_READY.to_owned();
+                    existing.upload_status = FILE_UPLOAD_STATUS_READY.to_owned();
                     existing.reservation_token = None;
                     existing.reservation_expires_at = None;
                     existing.del_flag = FILE_DEL_FLAG_NORMAL.to_owned();
@@ -813,7 +816,7 @@ mod tests {
     use chrono::{Duration, Utc};
 
     use super::{ExpiredReservationPlan, plan_expired_reservation};
-    use crate::{
+    use crate::ports::files::{
         FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
         FileCleanupRecord,
     };

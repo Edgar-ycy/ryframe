@@ -193,9 +193,9 @@ async fn main() -> Result<(), AppError> {
         ryframe_db::application_ports::login_info_persistence(database.clone()),
     ));
     let file = Arc::new(FileService::new(
-        ryframe_db::application_ports::file_cleanup_persistence(database.clone()),
-        ryframe_db::application_ports::file_download_persistence(database.clone()),
-        ryframe_db::application_ports::file_upload_persistence(database.clone()),
+        ryframe_db::application_ports::files::cleanup(database.clone()),
+        ryframe_db::application_ports::files::download(database.clone()),
+        ryframe_db::application_ports::files::upload(database.clone()),
         object_storage.clone(),
         process_file_content::processor(),
     ));
