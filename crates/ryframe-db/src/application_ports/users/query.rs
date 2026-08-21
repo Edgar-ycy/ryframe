@@ -8,8 +8,11 @@ use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, Validated
 use sea_orm::DatabaseConnection;
 
 use ryframe_application::{
-    PersistenceFuture, UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort, UserQueryRecord,
-    UserQueryRoleRecord,
+    PersistenceFuture,
+    ports::users::{
+        UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort, UserQueryRecord,
+        UserQueryRoleRecord,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn UserQueryReadPort> {

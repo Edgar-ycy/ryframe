@@ -9,14 +9,17 @@ use ryframe_kernel::ValidatedPageQuery;
 use serde::Serialize;
 
 use crate::{
-    AuthorizationCache, AuthorizationResolver, UserQueryReadPort, UserQueryRecord,
-    UserQueryRoleRecord, UserWritePersistencePort, UserWriteRecord,
+    AuthorizationCache, AuthorizationResolver,
     ports::auth::{
         IdentityAuthorizationReadPort, PasswordResetPersistencePort, PasswordResetRequestRecord,
     },
+    ports::users::{
+        UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord, UserWritePersistencePort,
+        UserWriteRecord,
+    },
 };
 
-pub use crate::{
+pub use crate::ports::users::{
     USER_STATUS_DISABLED, USER_STATUS_MUST_RESET_PASSWORD, USER_STATUS_NORMAL,
     USER_STATUS_PENDING_ACTIVATION,
 };

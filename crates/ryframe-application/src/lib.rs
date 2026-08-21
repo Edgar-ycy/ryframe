@@ -12,7 +12,6 @@ mod persistence;
 pub mod ports;
 mod principal_resolver;
 mod product_persistence;
-mod profile_persistence;
 mod refresh_session;
 mod request_tenant_context;
 mod retention_cleanup_persistence;
@@ -34,9 +33,6 @@ mod tenant_provisioning;
 mod tenant_runtime;
 mod tenant_usage_persistence;
 mod trace_context;
-mod user_import_persistence;
-mod user_query_persistence;
-mod user_write_persistence;
 
 pub use artifact_store::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
@@ -84,10 +80,6 @@ pub use product_persistence::{
     ProductVersionSnapshot, ProductVersionState, ProductVersionWriteResult, ProductWritePort,
     ProductWriteTransaction, ProvisioningCapabilityResources, TenantCapabilityOverrideRecord,
     TenantProductSnapshot,
-};
-pub use profile_persistence::{
-    ProfileAvatarFile, ProfileAvatarState, ProfilePersistencePort, ProfileRecord,
-    ProfileTransaction, ProfileUserState,
 };
 pub use refresh_session::{
     RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,
@@ -160,21 +152,6 @@ pub use tenant_usage_persistence::{
 #[doc(hidden)]
 pub use trace_context::current_trace_context;
 pub use trace_context::{PersistedTraceContext, TraceContextPort, install_trace_context_port};
-pub use user_import_persistence::{
-    NewImportedUser, NewUserImportJob, NewUserImportRow, UserImportAuthorizationSnapshot,
-    UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
-    UserImportReadFilter, UserImportRowRecord, UserImportSourceRecord, UserImportSourceState,
-    UserImportTransaction,
-};
-pub use user_query_persistence::{
-    USER_QUERY_STATUS_NORMAL, UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort,
-    UserQueryRecord, UserQueryRoleRecord,
-};
-pub use user_write_persistence::{
-    ManageableUserState, NewUserRecord, USER_STATUS_DISABLED, USER_STATUS_MUST_RESET_PASSWORD,
-    USER_STATUS_NORMAL, USER_STATUS_PENDING_ACTIVATION, UpdateUserRecord, UserAssignmentRole,
-    UserAssignmentState, UserWritePersistencePort, UserWriteRecord, UserWriteTransaction,
-};
 
 use ryframe_kernel::{ActorContext, AppResult, TenantId};
 

@@ -9,12 +9,14 @@ use crate::{
 use sea_orm::{ActiveModelTrait, TransactionTrait};
 
 use ryframe_application::{
-    AuthorizationCache, ControlTransaction, PersistenceFuture, ProfileAvatarFile,
-    ProfileAvatarState, ProfilePersistencePort, ProfileRecord, ProfileTransaction,
-    ProfileUserState,
+    AuthorizationCache, ControlTransaction, PersistenceFuture,
+    ports::users::{
+        ProfileAvatarFile, ProfileAvatarState, ProfilePersistencePort, ProfileRecord,
+        ProfileTransaction, ProfileUserState,
+    },
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 pub fn port(
     database: ControlDatabaseCluster,
@@ -305,7 +307,8 @@ impl ProfileTransaction for DatabaseProfileTransaction {
 impl ControlTransaction for DatabaseProfileTransaction {
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 }

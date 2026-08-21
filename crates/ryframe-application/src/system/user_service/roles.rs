@@ -1,7 +1,7 @@
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use super::{UserService, commands::normalize_ids};
-use crate::{UserAssignmentState, UserWriteTransaction};
+use crate::ports::users::{UserAssignmentState, UserWriteTransaction};
 
 impl UserService {
     pub async fn replace_roles(
@@ -99,7 +99,7 @@ fn validate_assignment_state(
 
 #[cfg(test)]
 mod tests {
-    use crate::UserAssignmentRole;
+    use crate::ports::users::UserAssignmentRole;
 
     use super::*;
 

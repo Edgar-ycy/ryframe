@@ -4,9 +4,9 @@ use sha2::{Digest, Sha256};
 
 use super::super::{OptionItem, OptionList};
 use super::{RoleBriefVo, UserDetailVo, UserListParams, UserService, UserVo};
-use crate::{
-    UserQueryFilter,
-    ports::auth::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord},
+use crate::ports::{
+    auth::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord},
+    users::UserQueryFilter,
 };
 
 /// 从主库重新计算的当前授权结果，供长时间后台任务和诊断接口共用。

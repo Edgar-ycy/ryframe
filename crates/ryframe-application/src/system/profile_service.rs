@@ -4,7 +4,10 @@ use ryframe_auth::password;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
 
-use crate::{AuthorizationCache, ProfileAvatarState, ProfilePersistencePort, ProfileTransaction};
+use crate::{
+    AuthorizationCache,
+    ports::users::{ProfileAvatarState, ProfilePersistencePort, ProfileTransaction},
+};
 
 const AVATAR_CLEANUP_GRACE_MINUTES: i64 = 5;
 

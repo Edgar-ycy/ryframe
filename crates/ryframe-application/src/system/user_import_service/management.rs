@@ -369,7 +369,7 @@ impl UserImportService {
 }
 
 fn validate_import_source(
-    source: &crate::UserImportSourceRecord,
+    source: &UserImportSourceRecord,
     expected_sha256: &str,
 ) -> AppResult<bool> {
     if source.bucket != IMPORT_BUCKET {
@@ -393,8 +393,8 @@ fn validate_import_source(
 mod management_tests {
     use super::*;
 
-    fn source(state: UserImportSourceState) -> crate::UserImportSourceRecord {
-        crate::UserImportSourceRecord {
+    fn source(state: UserImportSourceState) -> UserImportSourceRecord {
+        UserImportSourceRecord {
             bucket: IMPORT_BUCKET.into(),
             sha256: "a".repeat(64),
             state,

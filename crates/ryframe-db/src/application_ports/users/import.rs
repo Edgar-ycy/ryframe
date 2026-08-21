@@ -9,14 +9,17 @@ use crate::{
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{EntityTrait, TransactionTrait};
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    EnqueueJob, EnqueueJobResult, NewImportedUser, NewUserImportJob, NewUserImportRow,
-    PersistenceFuture, UserImportAuthorizationSnapshot, UserImportDepartmentRecord,
-    UserImportJobRecord, UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord,
-    UserImportSourceRecord, UserImportSourceState, UserImportTransaction,
+    EnqueueJob, EnqueueJobResult, PersistenceFuture,
     ports::jobs::BackgroundJobTransaction,
+    ports::users::{
+        NewImportedUser, NewUserImportJob, NewUserImportRow, UserImportAuthorizationSnapshot,
+        UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
+        UserImportReadFilter, UserImportRowRecord, UserImportSourceRecord, UserImportSourceState,
+        UserImportTransaction,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn UserImportPersistencePort> {
@@ -450,7 +453,8 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
 
     fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 

@@ -147,11 +147,8 @@ async fn main() -> Result<(), AppError> {
     let user = Arc::new(UserService::new(
         authorization_cache.clone(),
         ryframe_db::application_ports::auth::identity(database.clone()),
-        ryframe_db::application_ports::user_query_persistence(database.clone()),
-        ryframe_db::application_ports::user_write_persistence(
-            database.clone(),
-            authorization_cache.clone(),
-        ),
+        ryframe_db::application_ports::users::query(database.clone()),
+        ryframe_db::application_ports::users::write(database.clone(), authorization_cache.clone()),
         ryframe_db::application_ports::auth::password_reset(
             database.clone(),
             authorization_cache.clone(),
@@ -238,7 +235,7 @@ async fn main() -> Result<(), AppError> {
         user.clone(),
         file.clone(),
         process_spreadsheet::document_processor(),
-        ryframe_db::application_ports::user_import_persistence(database.clone()),
+        ryframe_db::application_ports::users::import(database.clone()),
         application_policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(

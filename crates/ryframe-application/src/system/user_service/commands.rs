@@ -6,7 +6,9 @@ use super::{
     CreateUserParams, USER_STATUS_DISABLED, USER_STATUS_NORMAL, UpdateUserParams, UserService,
     UserVo,
 };
-use crate::{ManageableUserState, NewUserRecord, UpdateUserRecord, UserWriteTransaction};
+use crate::ports::users::{
+    ManageableUserState, NewUserRecord, UpdateUserRecord, UserWriteTransaction,
+};
 
 impl UserService {
     pub async fn create(
@@ -248,7 +250,7 @@ fn validate_manageable_status(status: &str) -> AppResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::USER_STATUS_PENDING_ACTIVATION;
+    use crate::ports::users::USER_STATUS_PENDING_ACTIVATION;
 
     use super::*;
 

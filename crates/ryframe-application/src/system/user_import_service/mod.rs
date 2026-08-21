@@ -22,10 +22,12 @@ use super::{
     UserService,
 };
 use crate::{
-    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, NewImportedUser, NewUserImportJob,
-    NewUserImportRow, SpreadsheetDocumentProcessor, UserImportDepartmentRecord,
-    UserImportJobRecord, UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord,
-    UserImportSourceState,
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, SpreadsheetDocumentProcessor,
+    ports::users::{
+        NewImportedUser, NewUserImportJob, NewUserImportRow, UserImportDepartmentRecord,
+        UserImportJobRecord, UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord,
+        UserImportSourceRecord, UserImportSourceState,
+    },
 };
 
 /// 可恢复用户导入的稳定后台任务类型。
