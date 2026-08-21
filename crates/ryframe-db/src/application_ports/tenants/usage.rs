@@ -6,8 +6,11 @@ use crate::{
 };
 
 use ryframe_application::{
-    PersistenceFuture, TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter,
-    TenantUsagePersistencePort,
+    PersistenceFuture,
+    ports::tenants::{
+        TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter,
+        TenantUsagePersistencePort,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantUsagePersistencePort> {

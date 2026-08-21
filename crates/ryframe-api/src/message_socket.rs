@@ -20,7 +20,8 @@ use dashmap::{DashMap, mapref::entry::Entry};
 use futures_util::{SinkExt, StreamExt};
 use ryframe_application::system::{MessageService, MessageTemplate, WebSocketTicket};
 use ryframe_application::{
-    AuthorizationChangedEvent, TenantRuntimeReadPort, TenantRuntimeSnapshot,
+    AuthorizationChangedEvent,
+    ports::tenants::{TenantRuntimeReadPort, TenantRuntimeSnapshot},
 };
 use ryframe_kernel::{AppError, Locale, Localizer};
 use serde::{Deserialize, Serialize};

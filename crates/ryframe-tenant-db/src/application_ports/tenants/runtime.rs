@@ -1,10 +1,10 @@
-use ryframe_application::{
+use ryframe_application::ports::tenants::{
     TenantBusinessDataState, TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
 };
 
 use crate::{TenantDataState, TenantDatabaseRouter};
 
-use super::map_error;
+use super::super::map_error;
 
 impl TenantRuntimeReadPort for TenantDatabaseRouter {
     fn runtime_snapshot<'a>(&'a self, tenant_id: &'a str) -> TenantRuntimeReadFuture<'a> {

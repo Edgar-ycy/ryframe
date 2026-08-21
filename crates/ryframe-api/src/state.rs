@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use crate::TrustedProxySet;
 use ryframe_application::{
-    AuditOutbox, AuthService, JobQueue, JobScheduleService, TenantRuntimeReadPort,
+    AuditOutbox, AuthService, JobQueue, JobScheduleService,
     agent::AgentService,
+    ports::tenants::TenantRuntimeReadPort,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
         DeptService, DictService, ExportService, FileService, LoginInfoService, MenuService,

@@ -4,7 +4,8 @@ use futures_util::StreamExt;
 use ryframe_adapters::RedisClient;
 use ryframe_api::message_socket::MessageHub;
 use ryframe_application::{
-    AUTHORIZATION_CHANGED_REDIS_CHANNEL, TenantRuntimeReadPort,
+    AUTHORIZATION_CHANGED_REDIS_CHANNEL,
+    ports::tenants::TenantRuntimeReadPort,
     system::{MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService},
 };
 use tokio::task::JoinHandle;

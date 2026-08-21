@@ -23,10 +23,6 @@ pub mod tenant_config_stable_key;
 mod tenant_data_migration;
 mod tenant_data_migration_persistence;
 mod tenant_data_targets;
-mod tenant_persistence;
-mod tenant_provisioning;
-mod tenant_runtime;
-mod tenant_usage_persistence;
 mod trace_context;
 
 pub use artifact_store::{
@@ -105,21 +101,6 @@ pub use tenant_data_migration_persistence::{
 pub use tenant_data_targets::{
     TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetFuture, TenantDataTargetHealth,
     TenantDataTargetMetadata, TenantDataTargetPort,
-};
-pub use tenant_persistence::{
-    ProvisionTenantRecord, TENANT_STATUS_DISABLED, TENANT_STATUS_ENABLED,
-    TENANT_STATUS_PROVISIONING, TENANT_STATUS_PROVISIONING_FAILED, TenantAdminRecord,
-    TenantPersistencePort, TenantProductAssignmentRecord, TenantProvisionRequestRecord,
-    TenantRecord, TenantTransaction,
-};
-pub use tenant_provisioning::{
-    TenantProvisioningFuture, TenantProvisioningPlacement, TenantProvisioningPort,
-};
-pub use tenant_runtime::{
-    TenantBusinessDataState, TenantRuntimeReadFuture, TenantRuntimeReadPort, TenantRuntimeSnapshot,
-};
-pub use tenant_usage_persistence::{
-    TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
 #[doc(hidden)]
 pub use trace_context::current_trace_context;

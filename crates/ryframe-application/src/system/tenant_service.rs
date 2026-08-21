@@ -8,9 +8,12 @@ use sha2::Sha256;
 
 use super::ProductService;
 use crate::{
-    AuthorizationCache, ProvisionTenantRecord, TENANT_STATUS_DISABLED, TENANT_STATUS_ENABLED,
-    TENANT_STATUS_PROVISIONING, TENANT_STATUS_PROVISIONING_FAILED, TenantPersistencePort,
-    TenantProvisioningPlacement, TenantProvisioningPort, TenantRecord, TenantTransaction,
+    AuthorizationCache,
+    ports::tenants::{
+        ProvisionTenantRecord, TENANT_STATUS_DISABLED, TENANT_STATUS_ENABLED,
+        TENANT_STATUS_PROVISIONING, TENANT_STATUS_PROVISIONING_FAILED, TenantPersistencePort,
+        TenantProvisioningPlacement, TenantProvisioningPort, TenantRecord, TenantTransaction,
+    },
 };
 
 const SYSTEM_TENANT_ID: &str = "system";

@@ -5,7 +5,7 @@ use axum::{
     extract::State,
     response::{IntoResponse, Response},
 };
-use ryframe_application::{TenantRuntimeSnapshot, UserInfo};
+use ryframe_application::{UserInfo, ports::tenants::TenantRuntimeSnapshot};
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 
 use crate::{

@@ -187,13 +187,13 @@ pub async fn build_all(
         ),
     ));
     let tenant = Arc::new(TenantService::new(
-        ryframe_tenant_db::tenant_persistence_port(database.clone()),
+        ryframe_tenant_db::application_ports::tenants::registry(database.clone()),
         authorization_cache.clone(),
         Arc::clone(&product),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
     ));
     let tenant_usage = Arc::new(TenantUsageService::new(
-        ryframe_db::application_ports::tenant_usage_persistence(database.clone()),
+        ryframe_db::application_ports::tenants::usage(database.clone()),
         Arc::new(TenantRateLimitReader {
             limiter: rate_limiter,
         }),
@@ -316,7 +316,9 @@ pub async fn build_all(
             .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
     );
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
-        ryframe_tenant_db::tenant_data_migration_persistence_port(database.clone()),
+        ryframe_tenant_db::application_ports::tenant_data_migration_persistence_port(
+            database.clone(),
+        ),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
         job_queue.clone(),

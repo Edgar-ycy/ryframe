@@ -1,4 +1,4 @@
-use ryframe_application::{
+use ryframe_application::ports::tenants::{
     TenantProvisioningFuture, TenantProvisioningPlacement, TenantProvisioningPort,
 };
 use ryframe_kernel::{AppError, AppResult};

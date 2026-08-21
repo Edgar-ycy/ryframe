@@ -3,7 +3,7 @@
 //! 该 crate 只提供基础设施路由，不拥有控制面 placement API，也不执行租户迁移状态机。
 //! `database.sources` 仍由控制库集群显式管理，不进入本路由器。
 
-mod application_ports;
+pub mod application_ports;
 mod error;
 pub mod migration;
 mod placement;
@@ -11,7 +11,6 @@ mod placement_repo;
 mod registry;
 mod router;
 
-pub use application_ports::{tenant_data_migration_persistence_port, tenant_persistence_port};
 pub use error::TenantDataError;
 pub use placement::{
     TenantDataAccess, TenantDataPlacement, TenantDataState, TenantRuntimeSnapshot,

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 
-use crate::{
+use crate::ports::tenants::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
 

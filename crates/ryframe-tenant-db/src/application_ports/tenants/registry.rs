@@ -1,10 +1,16 @@
 use std::sync::Arc;
 
 use ryframe_application::{
-    PersistenceFuture, ProvisionTenantRecord, TenantAdminRecord, TenantPersistencePort,
-    TenantProductAssignmentRecord, TenantProvisionRequestRecord, TenantProvisioningPlacement,
-    TenantRecord, TenantTransaction,
-    ports::{authorization::AuthorizationMirrorTransaction, product::ProductTransactionPort},
+    PersistenceFuture,
+    ports::{
+        authorization::AuthorizationMirrorTransaction,
+        product::ProductTransactionPort,
+        tenants::{
+            ProvisionTenantRecord, TenantAdminRecord, TenantPersistencePort,
+            TenantProductAssignmentRecord, TenantProvisionRequestRecord,
+            TenantProvisioningPlacement, TenantRecord, TenantTransaction,
+        },
+    },
 };
 use ryframe_db::{
     ControlDatabaseCluster, ProductRepository, ProvisionTenantCommand, ReadConsistency,
@@ -16,7 +22,8 @@ use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait};
 
 use crate::TenantDataPlacementRepository;
 
-use super::{map_error, provisioning::to_infrastructure_placement};
+use super::super::map_error;
+use super::provisioning::to_infrastructure_placement;
 
 struct TenantPersistence {
     database: ControlDatabaseCluster,

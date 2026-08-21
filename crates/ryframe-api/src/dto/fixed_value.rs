@@ -1,4 +1,4 @@
-use ryframe_application::TenantBusinessDataState as ApplicationTenantBusinessDataState;
+use ryframe_application::ports::tenants::TenantBusinessDataState as ApplicationTenantBusinessDataState;
 use ryframe_kernel::AppError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
