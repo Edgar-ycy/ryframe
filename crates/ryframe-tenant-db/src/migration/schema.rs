@@ -121,35 +121,16 @@ pub async fn verify_mysql_80(db: &DatabaseConnection) -> Result<(), DbErr> {
     .one(db)
     .await?
     .ok_or_else(|| DbErr::Custom("cannot verify MySQL server identity".into()))?;
-    let supported = supports_mysql_80_or_newer(&identity.version, &identity.version_comment);
+    let supported = ryframe_db::migration::supports_mysql_80_or_newer(
+        &identity.version,
+        &identity.version_comment,
+    );
     if !supported {
         return Err(DbErr::Custom(
             "tenant-data target requires MySQL 8.0.16 or newer".into(),
         ));
     }
     Ok(())
-}
-
-fn supports_mysql_80_or_newer(version: &str, version_comment: &str) -> bool {
-    if version.to_ascii_lowercase().contains("mariadb")
-        || version_comment.to_ascii_lowercase().contains("mariadb")
-    {
-        return false;
-    }
-
-    let version_core = version.split(['-', '+']).next().unwrap_or_default();
-    let mut parts = version_core.split('.');
-    let Some(major) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
-        return false;
-    };
-    let Some(minor) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
-        return false;
-    };
-    let Some(patch) = parts.next().and_then(|part| part.parse::<u32>().ok()) else {
-        return false;
-    };
-
-    (major, minor, patch) >= (8, 0, 16)
 }
 
 /// dedicated/mysql 目标不得混入控制面对象；shared-control 使用 `verify`。

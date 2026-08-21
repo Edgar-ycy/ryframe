@@ -130,7 +130,9 @@ async fn verify_mysql_80(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-fn supports_mysql_80_or_newer(version: &str, version_comment: &str) -> bool {
+/// 判断服务器身份是否满足控制面和租户数据面共同要求的 MySQL 最低版本。
+#[must_use]
+pub fn supports_mysql_80_or_newer(version: &str, version_comment: &str) -> bool {
     if version.to_ascii_lowercase().contains("mariadb")
         || version_comment.to_ascii_lowercase().contains("mariadb")
     {
@@ -224,4 +226,24 @@ where
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::supports_mysql_80_or_newer;
+
+    #[test]
+    fn supported_version_rejects_old_mysql_mariadb_and_invalid_identity() {
+        assert!(supports_mysql_80_or_newer(
+            "8.0.16",
+            "MySQL Community Server"
+        ));
+        assert!(supports_mysql_80_or_newer("9.1.0-commercial", "MySQL"));
+        assert!(!supports_mysql_80_or_newer("8.0.15", "MySQL"));
+        assert!(!supports_mysql_80_or_newer(
+            "11.4.2-MariaDB",
+            "MariaDB Server"
+        ));
+        assert!(!supports_mysql_80_or_newer("unknown", "MySQL"));
+    }
 }
