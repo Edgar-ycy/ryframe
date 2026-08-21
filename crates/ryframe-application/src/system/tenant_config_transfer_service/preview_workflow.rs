@@ -5,8 +5,8 @@ impl TenantConfigTransferService {
         let tenant_id = job_tenant(job)?;
         let transfer_id = payload_id(job, "transfer_id")?;
         let transfer = self
-            .repository
-            .find_transfer_by_id(self.db.write(), tenant_id, transfer_id)
+            .persistence
+            .find_transfer(tenant_id, transfer_id)
             .await?
             .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
         if transfer.preview_background_job_id != Some(job.id) {
@@ -31,39 +31,37 @@ impl TenantConfigTransferService {
         let parsed = self
             .load_bundle_package(tenant_id, transfer.bundle_id)
             .await?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         let operation = async {
-            let fence = self
-                .repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            let fence = transaction
+                .lock_tenant_configuration(tenant_id, None)
                 .await?;
             self.product_service
                 .ensure_capability_requirements_in_txn(
-                    &transaction,
+                    transaction.product(),
                     tenant_id,
                     &parsed.manifest.required_capabilities,
                 )
                 .await?;
-            let mut current = self
-                .repository
-                .lock_transfer_in_txn(&transaction, tenant_id, transfer_id)
+            let mut current = transaction
+                .lock_transfer(tenant_id, transfer_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
             if current.preview_background_job_id != Some(job.id)
-                || current.status != tenant_config_transfer::Model::STATUS_PREVIEWING
+                || current.status != TenantConfigTransferRecord::STATUS_PREVIEWING
             {
                 return Ok::<_, AppError>(None);
             }
-            let calculated_at = self.repository.database_utc_now(&transaction).await?;
-            ensure_requester_snapshot_in_txn(
-                &transaction,
-                tenant_id,
-                &requester,
-                fence,
-                calculated_at,
-            )
-            .await?;
-            let target = load_resources_on(&transaction, tenant_id).await?;
+            let calculated_at = transaction.database_now().await?;
+            transaction
+                .ensure_requester_snapshot(
+                    tenant_id,
+                    requester_record(&requester),
+                    fence,
+                    calculated_at,
+                )
+                .await?;
+            let target = transaction.load_resources(tenant_id).await?;
             let plan = build_preview_plan(
                 tenant_id,
                 transfer_id,
@@ -75,10 +73,10 @@ impl TenantConfigTransferService {
                 fence.authorization_epoch,
                 calculated_at,
             )?;
-            self.repository
-                .replace_items_in_txn(&transaction, tenant_id, transfer_id, plan.items)
+            transaction
+                .replace_items(tenant_id, transfer_id, plan.items)
                 .await?;
-            current.status = tenant_config_transfer::Model::STATUS_PREVIEWED.to_owned();
+            current.status = TenantConfigTransferRecord::STATUS_PREVIEWED.to_owned();
             current.target_configuration_version = fence.configuration_version;
             current.target_authorization_epoch = fence.authorization_epoch;
             current.plan_hash = Some(plan.plan_hash);
@@ -87,17 +85,13 @@ impl TenantConfigTransferService {
                 serde_json::to_value(plan.counts).map_err(internal_json_error)?;
             current.error_summary = None;
             current.updated_at = calculated_at;
-            Ok(Some(
-                self.repository
-                    .update_transfer(&transaction, current)
-                    .await?,
-            ))
+            Ok(Some(transaction.update_transfer(current).await?))
         }
         .await;
         match operation {
-            Ok(_) => transaction.commit().await.map_err(database_error),
+            Ok(_) => transaction.commit().await,
             Err(error) => {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
                 Err(error)
             }
         }

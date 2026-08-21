@@ -1,10 +1,10 @@
 use super::*;
 
 pub(super) fn ensure_preview_identity(
-    transfer: &tenant_config_transfer::Model,
+    transfer: &TenantConfigTransferRecord,
     source: &ParsedTenantConfigPackage,
     target: &TenantConfigPackageResources,
-    fence: ryframe_db::TenantConfigurationFence,
+    fence: TenantConfigurationFenceRecord,
 ) -> AppResult<()> {
     if transfer.target_configuration_version != fence.configuration_version
         || transfer.target_authorization_epoch != fence.authorization_epoch
@@ -38,7 +38,7 @@ pub(super) fn transfer_request_fingerprint(request_kind: &str, bundle_id: i64) -
 }
 
 pub(super) fn ensure_transfer_request_identity(
-    transfer: &tenant_config_transfer::Model,
+    transfer: &TenantConfigTransferRecord,
     request_kind: &str,
     request_fingerprint: &str,
 ) -> AppResult<()> {
@@ -61,7 +61,7 @@ pub(super) fn parse_file_id(value: &str) -> AppResult<i64> {
 /// 在业务引用写入前锁定内部文件，并恢复仍处于宽限期的去重文件。
 ///
 /// 调用方必须先持有租户配置栅栏；文件锁用于和延迟清理声明串行化。
-pub(super) async fn ensure_config_package_file_ready_in_txn(
+pub(crate) async fn ensure_config_package_file_ready_in_txn(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     file_id: i64,
@@ -106,15 +106,15 @@ pub(super) fn new_transfer_model(
     configuration_version: i64,
     authorization_epoch: i32,
     now: DateTime<Utc>,
-) -> AppResult<tenant_config_transfer::Model> {
-    Ok(tenant_config_transfer::Model {
+) -> AppResult<TenantConfigTransferRecord> {
+    Ok(TenantConfigTransferRecord {
         id: next_id()?,
         tenant_id: tenant_id.to_owned(),
         bundle_id,
         idempotency_key_hash: idempotency_key_hash.to_owned(),
         request_kind: request_kind.to_owned(),
         request_fingerprint: request_fingerprint.to_owned(),
-        status: tenant_config_transfer::Model::STATUS_PREVIEW_READY.to_owned(),
+        status: TenantConfigTransferRecord::STATUS_PREVIEW_READY.to_owned(),
         target_configuration_version: configuration_version,
         target_authorization_epoch: authorization_epoch,
         plan_hash: None,
@@ -135,10 +135,10 @@ pub(super) fn new_transfer_model(
 }
 
 pub(super) fn ensure_bundle_available(
-    bundle: &tenant_config_bundle::Model,
+    bundle: &TenantConfigBundleRecord,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
-    if bundle.status != tenant_config_bundle::Model::STATUS_SUCCEEDED {
+    if bundle.status != TenantConfigBundleRecord::STATUS_SUCCEEDED {
         return Err(AppError::Conflict("配置包尚未生成成功".into()));
     }
     if bundle
@@ -151,21 +151,21 @@ pub(super) fn ensure_bundle_available(
 }
 
 pub(super) fn validate_operation_request(
-    transfer: &tenant_config_transfer::Model,
+    transfer: &TenantConfigTransferRecord,
     operation: &TransferOperationRequest,
 ) -> AppResult<()> {
     let valid = match operation {
         TransferOperationRequest::Preview => matches!(
             transfer.status.as_str(),
-            tenant_config_transfer::Model::STATUS_PREVIEW_READY
-                | tenant_config_transfer::Model::STATUS_PREVIEWED
-                | tenant_config_transfer::Model::STATUS_FAILED
+            TenantConfigTransferRecord::STATUS_PREVIEW_READY
+                | TenantConfigTransferRecord::STATUS_PREVIEWED
+                | TenantConfigTransferRecord::STATUS_FAILED
         ),
         TransferOperationRequest::Apply(_) => {
-            transfer.status == tenant_config_transfer::Model::STATUS_PREVIEWED
+            transfer.status == TenantConfigTransferRecord::STATUS_PREVIEWED
         }
         TransferOperationRequest::Rollback => {
-            transfer.status == tenant_config_transfer::Model::STATUS_APPLIED
+            transfer.status == TenantConfigTransferRecord::STATUS_APPLIED
         }
     };
     if valid {
@@ -178,7 +178,7 @@ pub(super) fn validate_operation_request(
 }
 
 pub(super) fn validate_operation_replay_identity(
-    transfer: &tenant_config_transfer::Model,
+    transfer: &TenantConfigTransferRecord,
     operation: &TransferOperationRequest,
 ) -> AppResult<()> {
     if let TransferOperationRequest::Apply(command) = operation
@@ -194,7 +194,7 @@ pub(super) fn validate_operation_replay_identity(
 }
 
 pub(super) fn operation_job_id(
-    transfer: &tenant_config_transfer::Model,
+    transfer: &TenantConfigTransferRecord,
     operation: &TransferOperationRequest,
 ) -> Option<i64> {
     match operation {

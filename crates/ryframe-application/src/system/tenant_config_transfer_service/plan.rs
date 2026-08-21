@@ -11,7 +11,7 @@ pub(super) struct PlanHashInput<'a> {
 pub(super) struct PreviewPlan {
     pub(super) plan_hash: String,
     pub(super) counts: BTreeMap<String, u64>,
-    pub(super) items: Vec<tenant_config_transfer_item::Model>,
+    pub(super) items: Vec<TenantConfigTransferItemRecord>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -47,7 +47,7 @@ pub(super) fn build_preview_plan(
         validate_transfer_item_text(&description.stable_key, 384, "配置稳定键")?;
         validate_transfer_item_text(&description.display_name, 255, "配置显示名称")?;
         *counts.entry(description.action.to_owned()).or_insert(0) += 1;
-        items.push(tenant_config_transfer_item::Model {
+        items.push(TenantConfigTransferItemRecord {
             id: next_id()?,
             tenant_id: tenant_id.to_owned(),
             transfer_id,
@@ -55,7 +55,7 @@ pub(super) fn build_preview_plan(
             stable_key: description.stable_key,
             display_name: description.display_name,
             action: description.action.to_owned(),
-            outcome: tenant_config_transfer_item::Model::OUTCOME_PENDING.to_owned(),
+            outcome: TenantConfigTransferItemRecord::OUTCOME_PENDING.to_owned(),
             detail_code: description.detail_code.map(str::to_owned),
             detail: description.detail,
             created_at: calculated_at,
@@ -151,18 +151,18 @@ pub(super) fn compare_resources(
             item,
         )?;
         if permission_contains_wildcard(&item.code) || is_platform_only_permission(&item.code) {
-            description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+            description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
             description.detail_code = Some("protected_permission");
             description.detail = Some("平台专用权限或超级通配权限不能迁移".into());
         } else if item.permission_type == "api" {
             match registered_permissions.get(&normalize_stable_key(&item.code)) {
                 None => {
-                    description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+                    description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
                     description.detail_code = Some("permission_not_registered");
                     description.detail = Some("目标环境未注册该接口权限".into());
                 }
                 Some(canonical_code) if canonical_code != &item.code => {
-                    description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+                    description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
                     description.detail_code = Some("permission_catalog_mismatch");
                     description.detail = Some("接口权限代码大小写与目标注册目录不一致".into());
                 }
@@ -173,7 +173,7 @@ pub(super) fn compare_resources(
                             target_item.permission_type != item.permission_type
                         })
                     {
-                        description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+                        description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
                         description.detail_code = Some("permission_catalog_mismatch");
                         description.detail = Some("目标端注册权限类型与配置包不一致".into());
                     }
@@ -182,13 +182,13 @@ pub(super) fn compare_resources(
         } else if item.permission_type != "api"
             && registered_permissions.contains_key(&normalize_stable_key(&item.code))
         {
-            description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+            description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
             description.detail_code = Some("permission_catalog_mismatch");
             description.detail = Some("目标端注册的 API 权限不能被配置包改写为菜单权限".into());
         } else if let Some(target_item) = target_permissions.get(&normalize_stable_key(&item.code))
             && target_item.permission_type != item.permission_type
         {
-            description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+            description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
             description.detail_code = Some("permission_catalog_mismatch");
             description.detail = Some("目标端注册权限类型与配置包不一致".into());
         }
@@ -213,17 +213,17 @@ pub(super) fn compare_resources(
                     .map(|catalog| (route_key, catalog))
             }) {
                 None => {
-                    description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+                    description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
                     description.detail_code = Some("route_not_registered");
                     description.detail = Some("目标环境未注册该页面路由".into());
                 }
                 Some((route_key, (canonical_key, _))) if route_key != canonical_key => {
-                    description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+                    description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
                     description.detail_code = Some("route_catalog_mismatch");
                     description.detail = Some("页面 route_key 大小写与目标注册目录不一致".into());
                 }
                 Some((_, (_, menu_type))) if menu_type != &item.menu_type => {
-                    description.action = tenant_config_transfer_item::Model::ACTION_BLOCKED;
+                    description.action = TenantConfigTransferItemRecord::ACTION_BLOCKED;
                     description.detail_code = Some("route_catalog_mismatch");
                     description.detail = Some("目标端注册的页面路由类型与配置包不一致".into());
                 }
@@ -288,9 +288,9 @@ fn simple_description<T: PartialEq>(
     source: &T,
 ) -> AppResult<PlanItemDescription> {
     let action = match target {
-        None => tenant_config_transfer_item::Model::ACTION_CREATE,
-        Some(target) if target == source => tenant_config_transfer_item::Model::ACTION_UNCHANGED,
-        Some(_) => tenant_config_transfer_item::Model::ACTION_UPDATE,
+        None => TenantConfigTransferItemRecord::ACTION_CREATE,
+        Some(target) if target == source => TenantConfigTransferItemRecord::ACTION_UNCHANGED,
+        Some(_) => TenantConfigTransferItemRecord::ACTION_UPDATE,
     };
     Ok(PlanItemDescription {
         resource_type,

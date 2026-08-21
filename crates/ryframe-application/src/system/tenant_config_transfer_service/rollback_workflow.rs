@@ -6,14 +6,14 @@ impl TenantConfigTransferService {
         let transfer_id = payload_id(job, "transfer_id")?;
         let owner_token = Uuid::new_v4().to_string();
         let transfer = self
-            .repository
-            .find_transfer_by_id(self.db.write(), tenant_id, transfer_id)
+            .persistence
+            .find_transfer(tenant_id, transfer_id)
             .await?
             .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
         if transfer.rollback_background_job_id != Some(job.id) {
             return Ok(());
         }
-        if transfer.status == tenant_config_transfer::Model::STATUS_ROLLED_BACK {
+        if transfer.status == TenantConfigTransferRecord::STATUS_ROLLED_BACK {
             return self.sync_committed_cache_state(tenant_id, &transfer).await;
         }
         let requester = self
@@ -24,7 +24,7 @@ impl TenantConfigTransferService {
                 TRANSFER_ROLLBACK_PERMISSION,
             )
             .await?;
-        let now = self.repository.database_utc_now(self.db.write()).await?;
+        let now = self.persistence.database_now().await?;
         if transfer
             .rollback_expires_at
             .is_none_or(|expires_at| expires_at <= now)
@@ -65,7 +65,7 @@ impl TenantConfigTransferService {
             let _ = lease.release().await;
             return Err(error);
         }
-        let transaction = match self.db.write().begin().await.map_err(database_error) {
+        let transaction = match self.persistence.begin().await {
             Ok(transaction) => transaction,
             Err(error) => {
                 let _ = lease.release().await;
@@ -73,24 +73,22 @@ impl TenantConfigTransferService {
             }
         };
         let operation = async {
-            let fence = self
-                .repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, Some(&owner_token))
+            let fence = transaction
+                .lock_tenant_configuration(tenant_id, Some(&owner_token))
                 .await?;
             self.product_service
                 .ensure_capability_requirements_in_txn(
-                    &transaction,
+                    transaction.product(),
                     tenant_id,
                     &snapshot.manifest.required_capabilities,
                 )
                 .await?;
-            let mut current = self
-                .repository
-                .lock_transfer_in_txn(&transaction, tenant_id, transfer_id)
+            let mut current = transaction
+                .lock_transfer(tenant_id, transfer_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
             if current.rollback_background_job_id != Some(job.id)
-                || current.status != tenant_config_transfer::Model::STATUS_ROLLING_BACK
+                || current.status != TenantConfigTransferRecord::STATUS_ROLLING_BACK
             {
                 return Err(AppError::Conflict("配置回滚任务已被替换".into()));
             }
@@ -101,65 +99,65 @@ impl TenantConfigTransferService {
                     "应用完成后配置已被修改，不能自动回滚".into(),
                 ));
             }
-            let rollback_time = self.repository.database_utc_now(&transaction).await?;
-            ensure_requester_snapshot_in_txn(
-                &transaction,
-                tenant_id,
-                &requester,
-                fence,
-                rollback_time,
-            )
-            .await?;
-            ensure_rollback_references_safe(&transaction, tenant_id, transfer_id).await?;
-            restore_snapshot_in_transaction(
-                &transaction,
-                tenant_id,
-                &snapshot.resources,
-                transfer_id,
-                &self.target_catalog,
-                rollback_time,
-            )
-            .await?;
-            let configuration_version = self
-                .repository
-                .increment_configuration_version_in_txn(&transaction, tenant_id)
+            let rollback_time = transaction.database_now().await?;
+            transaction
+                .ensure_requester_snapshot(
+                    tenant_id,
+                    requester_record(&requester),
+                    fence,
+                    rollback_time,
+                )
+                .await?;
+            transaction
+                .ensure_rollback_references_safe(tenant_id, transfer_id)
+                .await?;
+            transaction
+                .restore_snapshot(
+                    tenant_id,
+                    &snapshot.resources,
+                    transfer_id,
+                    &self.target_catalog,
+                    rollback_time,
+                )
+                .await?;
+            let configuration_version = transaction
+                .increment_configuration_version(tenant_id)
                 .await?;
             let authorization_epoch = self
                 .authorization_cache
-                .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .increment_tenant_epoch_in_transaction(
+                    transaction.authorization_mirror(),
+                    tenant_id,
+                )
                 .await?;
             let namespace_version = self
                 .authorization_cache
                 .record_namespace_version_in_transaction(
-                    &transaction,
+                    transaction.authorization_mirror(),
                     tenant_id,
                     CONFIG_CACHE_NAMESPACE,
                 )
                 .await?;
-            current.status = tenant_config_transfer::Model::STATUS_ROLLED_BACK.to_owned();
+            current.status = TenantConfigTransferRecord::STATUS_ROLLED_BACK.to_owned();
             current.applied_configuration_version = Some(configuration_version);
             current.applied_authorization_epoch = Some(authorization_epoch);
             current.error_summary = None;
-            current.updated_at = self.repository.database_utc_now(&transaction).await?;
-            self.repository
-                .update_transfer(&transaction, current)
+            current.updated_at = transaction.database_now().await?;
+            transaction.update_transfer(current).await?;
+            transaction
+                .mark_plan_outcome(
+                    tenant_id,
+                    transfer_id,
+                    TenantConfigTransferItemRecord::OUTCOME_ROLLED_BACK,
+                )
                 .await?;
-            mark_plan_outcome(
-                &transaction,
-                tenant_id,
-                transfer_id,
-                tenant_config_transfer_item::Model::OUTCOME_ROLLED_BACK,
-            )
-            .await?;
-            self.repository
-                .release_lease_in_txn(&transaction, tenant_id, &owner_token)
-                .await?;
+            transaction.release_lease(tenant_id, &owner_token).await?;
             Ok::<_, AppError>((authorization_epoch, namespace_version))
         }
         .await;
         match operation {
             Ok((epoch, namespace_version)) => {
-                if let Err(error) = transaction.commit().await.map_err(database_error) {
+                if let Err(error) = transaction.commit().await {
                     let _ = lease.release().await;
                     return Err(error);
                 }
@@ -172,7 +170,7 @@ impl TenantConfigTransferService {
                     .await
             }
             Err(error) => {
-                let rollback_result = transaction.rollback().await.map_err(database_error);
+                let rollback_result = transaction.rollback().await;
                 let _ = lease.release().await;
                 rollback_result?;
                 Err(error)

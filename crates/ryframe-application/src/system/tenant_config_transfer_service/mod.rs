@@ -7,19 +7,16 @@ use crate::next_id;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_db::{
-    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ControlDatabaseCluster,
-    FileRepository, TenantConfigTransferRepository,
+    CONFIG_CACHE_NAMESPACE, FileRepository,
     entities::{
-        background_job, config, dept, dict_data, dict_type, menu, permission, post, role,
-        role_dept, role_permission, tenant, tenant_config_bundle, tenant_config_transfer,
-        tenant_config_transfer_item, tenant_operation_lease, user, user_role,
+        config, dept, dict_data, dict_type, menu, permission, post, role, role_dept,
+        role_permission, tenant, tenant_config_transfer_item, user, user_role,
     },
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait,
-    IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
-    sea_query::Expr,
+    IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, sea_query::Expr,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -36,10 +33,12 @@ use super::{
 };
 use crate::{
     AuthorizationCache, ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
-    TenantConfigArchivePort,
+    TenantConfigArchivePort, TenantConfigBundleRecord, TenantConfigOperationLeaseRecord,
+    TenantConfigRequesterRecord, TenantConfigTransferItemRecord, TenantConfigTransferRecord,
+    TenantConfigurationFenceRecord,
 };
 
-mod apply_resources;
+pub(crate) mod apply_resources;
 mod apply_workflow;
 mod export_workflow;
 mod job_handlers;
@@ -49,12 +48,12 @@ mod plan;
 mod preview_workflow;
 mod queries;
 mod requests;
-mod resources;
-mod rollback_resources;
+pub(crate) mod resources;
+pub(crate) mod rollback_resources;
 mod rollback_workflow;
 mod stable_key;
-mod validation;
-mod workflow_support;
+pub(crate) mod validation;
+pub(crate) mod workflow_support;
 
 use apply_resources::*;
 pub use job_handlers::*;
@@ -62,10 +61,8 @@ pub use model::*;
 use plan::*;
 use requests::TransferOperationRequest;
 use resources::*;
-use rollback_resources::*;
 use stable_key::*;
 use validation::*;
-use workflow_support::*;
 pub const TENANT_CONFIG_EXPORT_JOB_TYPE: &str = "system.tenant_config.export";
 pub const TENANT_CONFIG_PREVIEW_JOB_TYPE: &str = "system.tenant_config.preview";
 pub const TENANT_CONFIG_APPLY_JOB_TYPE: &str = "system.tenant_config.apply";
@@ -81,8 +78,7 @@ const REQUEST_KIND_FROM_PACKAGE: &str = "from_package";
 
 #[derive(Clone)]
 pub struct TenantConfigTransferService {
-    db: ControlDatabaseCluster,
-    repository: Arc<TenantConfigTransferRepository>,
+    persistence: Arc<dyn crate::TenantConfigTransferPersistencePort>,
     queue: Arc<JobQueue>,
     user_service: Arc<UserService>,
     file_service: Arc<FileService>,
@@ -95,7 +91,7 @@ pub struct TenantConfigTransferService {
 
 #[derive(Clone)]
 pub struct TenantConfigTransferDependencies {
-    pub db: ControlDatabaseCluster,
+    pub persistence: Arc<dyn crate::TenantConfigTransferPersistencePort>,
     pub queue: Arc<JobQueue>,
     pub user_service: Arc<UserService>,
     pub file_service: Arc<FileService>,
@@ -116,7 +112,7 @@ impl TenantConfigTransferService {
         settings: TenantConfigTransferSettings,
     ) -> Self {
         let TenantConfigTransferDependencies {
-            db,
+            persistence,
             queue,
             user_service,
             file_service,
@@ -129,8 +125,7 @@ impl TenantConfigTransferService {
             config,
         } = settings;
         Self {
-            db,
-            repository: Arc::new(TenantConfigTransferRepository),
+            persistence,
             queue,
             user_service,
             file_service,
@@ -206,5 +201,16 @@ impl TenantConfigTransferService {
     pub(super) fn max_runtime_seconds(&self) -> AppResult<i32> {
         i32::try_from(self.config.max_runtime_seconds)
             .map_err(|_| AppError::Config("配置迁移最大运行时间超出数据库范围".into()))
+    }
+}
+
+fn requester_record(
+    requester: &crate::system::user_service::CurrentAuthorization,
+) -> TenantConfigRequesterRecord {
+    TenantConfigRequesterRecord {
+        tenant_id: requester.tenant.tenant_id.clone(),
+        user_id: requester.actor.user_id,
+        tenant_authorization_epoch: requester.tenant.authorization_epoch,
+        user_authorization_version: requester.user.authorization_version,
     }
 }

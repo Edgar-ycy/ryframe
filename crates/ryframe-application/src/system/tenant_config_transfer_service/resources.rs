@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn load_resources_on<C>(
+pub(crate) async fn load_resources_on<C>(
     db: &C,
     tenant_id: &str,
 ) -> AppResult<TenantConfigPackageResources>

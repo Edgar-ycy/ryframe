@@ -1,10 +1,10 @@
 use super::*;
 
-pub(super) async fn apply_resources_in_transaction(
+pub(crate) async fn apply_resources_in_transaction(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     resources: &TenantConfigPackageResources,
-    plan_items: &[tenant_config_transfer_item::Model],
+    plan_items: &[TenantConfigTransferItemRecord],
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     let changed = plan_items
@@ -12,8 +12,8 @@ pub(super) async fn apply_resources_in_transaction(
         .filter(|item| {
             matches!(
                 item.action.as_str(),
-                tenant_config_transfer_item::Model::ACTION_CREATE
-                    | tenant_config_transfer_item::Model::ACTION_UPDATE
+                TenantConfigTransferItemRecord::ACTION_CREATE
+                    | TenantConfigTransferItemRecord::ACTION_UPDATE
             )
         })
         .map(|item| {

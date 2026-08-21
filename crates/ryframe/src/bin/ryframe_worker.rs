@@ -245,7 +245,9 @@ async fn main() -> Result<(), AppError> {
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
         ryframe_application::system::TenantConfigTransferDependencies {
-            db: database.clone(),
+            persistence: ryframe_application::legacy_tenant_config_transfer_persistence(
+                database.clone(),
+            ),
             queue: queue.clone(),
             user_service: user,
             file_service: file,

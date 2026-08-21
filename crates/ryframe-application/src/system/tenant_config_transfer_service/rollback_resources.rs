@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn ensure_rollback_references_safe(
+pub(crate) async fn ensure_rollback_references_safe(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     transfer_id: i64,
@@ -68,8 +68,8 @@ pub(super) async fn ensure_rollback_references_safe(
             .filter(tenant_config_transfer_item::Column::TransferId.eq(transfer_id))
             .filter(tenant_config_transfer_item::Column::ResourceType.eq("role"))
             .filter(tenant_config_transfer_item::Column::Action.is_in([
-                tenant_config_transfer_item::Model::ACTION_CREATE,
-                tenant_config_transfer_item::Model::ACTION_UPDATE,
+                TenantConfigTransferItemRecord::ACTION_CREATE,
+                TenantConfigTransferItemRecord::ACTION_UPDATE,
             ]))
             .all(transaction)
             .await
@@ -116,7 +116,7 @@ async fn load_created_item_keys(
         .filter(tenant_config_transfer_item::Column::TransferId.eq(transfer_id))
         .filter(
             tenant_config_transfer_item::Column::Action
-                .eq(tenant_config_transfer_item::Model::ACTION_CREATE),
+                .eq(TenantConfigTransferItemRecord::ACTION_CREATE),
         )
         .all(transaction)
         .await
@@ -139,7 +139,7 @@ fn created_keys<'a>(
     created.get(resource_type).into_iter().flatten().cloned()
 }
 
-pub(super) async fn restore_snapshot_in_transaction(
+pub(crate) async fn restore_snapshot_in_transaction(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     snapshot: &TenantConfigPackageResources,
@@ -159,8 +159,8 @@ pub(super) async fn restore_snapshot_in_transaction(
     if descriptions.iter().any(|item| {
         matches!(
             item.action,
-            tenant_config_transfer_item::Model::ACTION_BLOCKED
-                | tenant_config_transfer_item::Model::ACTION_CONFLICT
+            TenantConfigTransferItemRecord::ACTION_BLOCKED
+                | TenantConfigTransferItemRecord::ACTION_CONFLICT
         )
     }) {
         return Err(AppError::Conflict(
@@ -169,7 +169,7 @@ pub(super) async fn restore_snapshot_in_transaction(
     }
     let plan_items = descriptions
         .into_iter()
-        .map(|item| tenant_config_transfer_item::Model {
+        .map(|item| TenantConfigTransferItemRecord {
             id: 0,
             tenant_id: tenant_id.to_owned(),
             transfer_id: 0,
@@ -177,7 +177,7 @@ pub(super) async fn restore_snapshot_in_transaction(
             stable_key: item.stable_key,
             display_name: item.display_name,
             action: item.action.to_owned(),
-            outcome: tenant_config_transfer_item::Model::OUTCOME_PENDING.to_owned(),
+            outcome: TenantConfigTransferItemRecord::OUTCOME_PENDING.to_owned(),
             detail_code: item.detail_code.map(str::to_owned),
             detail: item.detail,
             created_at: now,

@@ -6,14 +6,14 @@ impl TenantConfigTransferService {
         let transfer_id = payload_id(job, "transfer_id")?;
         let owner_token = Uuid::new_v4().to_string();
         let transfer = self
-            .repository
-            .find_transfer_by_id(self.db.write(), tenant_id, transfer_id)
+            .persistence
+            .find_transfer(tenant_id, transfer_id)
             .await?
             .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
         if transfer.apply_background_job_id != Some(job.id) {
             return Ok(());
         }
-        if transfer.status == tenant_config_transfer::Model::STATUS_APPLIED {
+        if transfer.status == TenantConfigTransferRecord::STATUS_APPLIED {
             return self.sync_committed_cache_state(tenant_id, &transfer).await;
         }
         let requester = self
@@ -51,7 +51,7 @@ impl TenantConfigTransferService {
             }
         };
         // 快照也必须在租约持有者的租户行锁下从同一事务读取。
-        let snapshot_transaction = match self.db.write().begin().await.map_err(database_error) {
+        let snapshot_transaction = match self.persistence.begin().await {
             Ok(transaction) => transaction,
             Err(error) => {
                 let _ = lease.release().await;
@@ -59,44 +59,31 @@ impl TenantConfigTransferService {
             }
         };
         let snapshot_result = async {
-            let fence = self
-                .repository
-                .lock_tenant_configuration_in_txn(
-                    &snapshot_transaction,
-                    tenant_id,
-                    Some(&owner_token),
-                )
+            let fence = snapshot_transaction
+                .lock_tenant_configuration(tenant_id, Some(&owner_token))
                 .await?;
             self.product_service
                 .ensure_capability_requirements_in_txn(
-                    &snapshot_transaction,
+                    snapshot_transaction.product(),
                     tenant_id,
                     &parsed.manifest.required_capabilities,
                 )
                 .await?;
-            let snapshot_time = self
-                .repository
-                .database_utc_now(&snapshot_transaction)
+            let snapshot_time = snapshot_transaction.database_now().await?;
+            snapshot_transaction
+                .ensure_requester_snapshot(
+                    tenant_id,
+                    requester_record(&requester),
+                    fence,
+                    snapshot_time,
+                )
                 .await?;
-            ensure_requester_snapshot_in_txn(
-                &snapshot_transaction,
-                tenant_id,
-                &requester,
-                fence,
-                snapshot_time,
-            )
-            .await?;
-            let tenant = tenant::Entity::find()
-                .filter(tenant::Column::TenantId.eq(tenant_id))
-                .one(&snapshot_transaction)
-                .await
-                .map_err(database_error)?
-                .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-            let target_resources = load_resources_on(&snapshot_transaction, tenant_id).await?;
+            let tenant_name = snapshot_transaction.tenant_name(tenant_id).await?;
+            let target_resources = snapshot_transaction.load_resources(tenant_id).await?;
             ensure_preview_identity(&transfer, &parsed, &target_resources, fence)?;
             let enabled_capabilities = self
                 .product_service
-                .enabled_capability_requirements_in_txn(&snapshot_transaction, tenant_id)
+                .enabled_capability_requirements_in_txn(snapshot_transaction.product(), tenant_id)
                 .await?;
             let (snapshot_resources, snapshot_capabilities) = filter_exportable_resources(
                 target_resources,
@@ -106,7 +93,7 @@ impl TenantConfigTransferService {
             Ok::<_, AppError>((
                 snapshot_resources,
                 snapshot_capabilities,
-                tenant.name,
+                tenant_name,
                 snapshot_time,
             ))
         }
@@ -114,18 +101,14 @@ impl TenantConfigTransferService {
         let (snapshot_resources, snapshot_capabilities, snapshot_tenant_name, snapshot_time) =
             match snapshot_result {
                 Ok(value) => {
-                    if let Err(error) = snapshot_transaction.commit().await.map_err(database_error)
-                    {
+                    if let Err(error) = snapshot_transaction.commit().await {
                         let _ = lease.release().await;
                         return Err(error);
                     }
                     value
                 }
                 Err(error) => {
-                    let rollback_result = snapshot_transaction
-                        .rollback()
-                        .await
-                        .map_err(database_error);
+                    let rollback_result = snapshot_transaction.rollback().await;
                     let _ = lease.release().await;
                     rollback_result?;
                     return Err(error);
@@ -191,7 +174,7 @@ impl TenantConfigTransferService {
             return Err(error);
         }
 
-        let transaction = match self.db.write().begin().await.map_err(database_error) {
+        let transaction = match self.persistence.begin().await {
             Ok(transaction) => transaction,
             Err(error) => {
                 let _ = self
@@ -203,24 +186,22 @@ impl TenantConfigTransferService {
             }
         };
         let operation = async {
-            let fence = self
-                .repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, Some(&owner_token))
+            let fence = transaction
+                .lock_tenant_configuration(tenant_id, Some(&owner_token))
                 .await?;
             self.product_service
                 .ensure_capability_requirements_in_txn(
-                    &transaction,
+                    transaction.product(),
                     tenant_id,
                     &parsed.manifest.required_capabilities,
                 )
                 .await?;
-            let mut current = self
-                .repository
-                .lock_transfer_in_txn(&transaction, tenant_id, transfer_id)
+            let mut current = transaction
+                .lock_transfer(tenant_id, transfer_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
             if current.apply_background_job_id != Some(job.id)
-                || current.status != tenant_config_transfer::Model::STATUS_APPLYING
+                || current.status != TenantConfigTransferRecord::STATUS_APPLYING
             {
                 return Err(AppError::Conflict("配置应用任务已被替换".into()));
             }
@@ -229,23 +210,19 @@ impl TenantConfigTransferService {
             {
                 return Err(AppError::Conflict("目标配置已变化，请重新预览".into()));
             }
-            let mutation_time = self.repository.database_utc_now(&transaction).await?;
-            ensure_config_package_file_ready_in_txn(
-                &transaction,
-                tenant_id,
-                snapshot_file_id,
-                mutation_time,
-            )
-            .await?;
-            ensure_requester_snapshot_in_txn(
-                &transaction,
-                tenant_id,
-                &requester,
-                fence,
-                mutation_time,
-            )
-            .await?;
-            let target = load_resources_on(&transaction, tenant_id).await?;
+            let mutation_time = transaction.database_now().await?;
+            transaction
+                .ensure_config_package_file_ready(tenant_id, snapshot_file_id, mutation_time)
+                .await?;
+            transaction
+                .ensure_requester_snapshot(
+                    tenant_id,
+                    requester_record(&requester),
+                    fence,
+                    mutation_time,
+                )
+                .await?;
+            let target = transaction.load_resources(tenant_id).await?;
             let plan = build_preview_plan(
                 tenant_id,
                 transfer_id,
@@ -262,46 +239,45 @@ impl TenantConfigTransferService {
             }
             if plan
                 .counts
-                .get(tenant_config_transfer_item::Model::ACTION_BLOCKED)
+                .get(TenantConfigTransferItemRecord::ACTION_BLOCKED)
                 .copied()
                 .unwrap_or(0)
                 > 0
                 || plan
                     .counts
-                    .get(tenant_config_transfer_item::Model::ACTION_CONFLICT)
+                    .get(TenantConfigTransferItemRecord::ACTION_CONFLICT)
                     .copied()
                     .unwrap_or(0)
                     > 0
             {
                 return Err(AppError::Conflict("配置计划仍含冲突或阻断项".into()));
             }
-            ensure_role_quota_for_plan_in_txn(&transaction, tenant_id, &plan.items).await?;
-            apply_resources_in_transaction(
-                &transaction,
-                tenant_id,
-                &parsed.resources,
-                &plan.items,
-                mutation_time,
-            )
-            .await?;
-            let configuration_version = self
-                .repository
-                .increment_configuration_version_in_txn(&transaction, tenant_id)
+            transaction
+                .ensure_role_quota(tenant_id, &plan.items)
+                .await?;
+            transaction
+                .apply_resources(tenant_id, &parsed.resources, &plan.items, mutation_time)
+                .await?;
+            let configuration_version = transaction
+                .increment_configuration_version(tenant_id)
                 .await?;
             let authorization_epoch = self
                 .authorization_cache
-                .increment_tenant_epoch_in_transaction(&transaction, tenant_id)
+                .increment_tenant_epoch_in_transaction(
+                    transaction.authorization_mirror(),
+                    tenant_id,
+                )
                 .await?;
             let namespace_version = self
                 .authorization_cache
                 .record_namespace_version_in_transaction(
-                    &transaction,
+                    transaction.authorization_mirror(),
                     tenant_id,
                     CONFIG_CACHE_NAMESPACE,
                 )
                 .await?;
-            let now = self.repository.database_utc_now(&transaction).await?;
-            current.status = tenant_config_transfer::Model::STATUS_APPLIED.to_owned();
+            let now = transaction.database_now().await?;
+            current.status = TenantConfigTransferRecord::STATUS_APPLIED.to_owned();
             current.snapshot_file_id = Some(snapshot_file_id);
             current.applied_configuration_version = Some(configuration_version);
             current.applied_authorization_epoch = Some(authorization_epoch);
@@ -309,25 +285,21 @@ impl TenantConfigTransferService {
                 Some(now + Duration::hours(i64::from(self.config.rollback_hours)));
             current.error_summary = None;
             current.updated_at = now;
-            self.repository
-                .update_transfer(&transaction, current)
+            transaction.update_transfer(current).await?;
+            transaction
+                .mark_plan_outcome(
+                    tenant_id,
+                    transfer_id,
+                    TenantConfigTransferItemRecord::OUTCOME_APPLIED,
+                )
                 .await?;
-            mark_plan_outcome(
-                &transaction,
-                tenant_id,
-                transfer_id,
-                tenant_config_transfer_item::Model::OUTCOME_APPLIED,
-            )
-            .await?;
-            self.repository
-                .release_lease_in_txn(&transaction, tenant_id, &owner_token)
-                .await?;
+            transaction.release_lease(tenant_id, &owner_token).await?;
             Ok::<_, AppError>((authorization_epoch, namespace_version))
         }
         .await;
         match operation {
             Ok((authorization_epoch, namespace_version)) => {
-                if let Err(error) = transaction.commit().await.map_err(database_error) {
+                if let Err(error) = transaction.commit().await {
                     let _ = self
                         .file_service
                         .schedule_unreferenced_config_package_cleanup(tenant_id, snapshot_file_id)
@@ -344,7 +316,7 @@ impl TenantConfigTransferService {
                     .await
             }
             Err(error) => {
-                let rollback_result = transaction.rollback().await.map_err(database_error);
+                let rollback_result = transaction.rollback().await;
                 let _ = self
                     .file_service
                     .schedule_unreferenced_config_package_cleanup(tenant_id, snapshot_file_id)

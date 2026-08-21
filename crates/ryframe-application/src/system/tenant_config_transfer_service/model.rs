@@ -18,8 +18,8 @@ pub struct TenantConfigBundleVo {
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<tenant_config_bundle::Model> for TenantConfigBundleVo {
-    fn from(value: tenant_config_bundle::Model) -> Self {
+impl From<TenantConfigBundleRecord> for TenantConfigBundleVo {
+    fn from(value: TenantConfigBundleRecord) -> Self {
         Self {
             id: value.id.to_string(),
             origin: value.origin,
@@ -55,8 +55,8 @@ pub struct TenantConfigBundleSummaryVo {
     pub created_at: DateTime<Utc>,
 }
 
-impl From<&tenant_config_bundle::Model> for TenantConfigBundleSummaryVo {
-    fn from(value: &tenant_config_bundle::Model) -> Self {
+impl From<&TenantConfigBundleRecord> for TenantConfigBundleSummaryVo {
+    fn from(value: &TenantConfigBundleRecord) -> Self {
         Self {
             origin: value.origin.clone(),
             source_tenant_key: value.source_tenant_key.clone(),
@@ -93,8 +93,8 @@ pub struct TenantConfigTransferVo {
 
 impl TenantConfigTransferVo {
     pub(super) fn from_models(
-        value: tenant_config_transfer::Model,
-        bundle: &tenant_config_bundle::Model,
+        value: TenantConfigTransferRecord,
+        bundle: &TenantConfigBundleRecord,
     ) -> AppResult<Self> {
         if value.tenant_id != bundle.tenant_id || value.bundle_id != bundle.id {
             return Err(AppError::Internal("配置迁移关联的配置包无效".into()));
@@ -129,8 +129,8 @@ pub struct TenantConfigTransferItemVo {
     pub detail: Option<String>,
 }
 
-impl From<tenant_config_transfer_item::Model> for TenantConfigTransferItemVo {
-    fn from(value: tenant_config_transfer_item::Model) -> Self {
+impl From<TenantConfigTransferItemRecord> for TenantConfigTransferItemVo {
+    fn from(value: TenantConfigTransferItemRecord) -> Self {
         Self {
             resource_type: value.resource_type,
             stable_key: value.stable_key,

@@ -8,25 +8,16 @@ impl TenantConfigTransferService {
     ) -> AppResult<RequestTenantConfigBundleOutcome> {
         validate_sha256(idempotency_key_hash)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         let operation = async {
-            self.repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            transaction
+                .lock_tenant_configuration(tenant_id, None)
                 .await?;
-            let now = self.repository.database_utc_now(&transaction).await?;
-            let tenant = tenant::Entity::find()
-                .filter(tenant::Column::TenantId.eq(tenant_id))
-                .one(&transaction)
-                .await
-                .map_err(database_error)?
-                .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-            if let Some(bundle) = tenant_config_bundle::Entity::find()
-                .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
-                .filter(tenant_config_bundle::Column::CreatedBy.eq(actor.user_id))
-                .filter(tenant_config_bundle::Column::IdempotencyKeyHash.eq(idempotency_key_hash))
-                .one(&transaction)
-                .await
-                .map_err(database_error)?
+            let now = transaction.database_now().await?;
+            let tenant_name = transaction.tenant_name(tenant_id).await?;
+            if let Some(bundle) = transaction
+                .find_bundle_by_idempotency_key(tenant_id, actor.user_id, idempotency_key_hash)
+                .await?
             {
                 return Ok::<_, AppError>((bundle, false));
             }
@@ -35,7 +26,7 @@ impl TenantConfigTransferService {
             let enqueued = self
                 .queue
                 .enqueue_in_transaction(
-                    &transaction,
+                    transaction.background_jobs(),
                     EnqueueJob {
                         tenant_id: Some(tenant_id.to_owned()),
                         schedule_id: None,
@@ -56,41 +47,35 @@ impl TenantConfigTransferService {
                 )
                 .await?;
             let bundle = if enqueued.inserted {
-                self.repository
-                    .insert_bundle(
-                        &transaction,
-                        tenant_config_bundle::Model {
-                            id: proposed_bundle_id,
-                            tenant_id: tenant_id.to_owned(),
-                            origin: tenant_config_bundle::Model::ORIGIN_GENERATED.to_owned(),
-                            source_tenant_key: tenant_id.to_owned(),
-                            source_tenant_name_snapshot: tenant.name,
-                            package_schema_version: TENANT_CONFIG_PACKAGE_SCHEMA.to_owned(),
-                            source_app_version: env!("CARGO_PKG_VERSION").to_owned(),
-                            file_id: None,
-                            sha256: None,
-                            resource_counts: json!({}),
-                            item_count: 0,
-                            status: tenant_config_bundle::Model::STATUS_PENDING.to_owned(),
-                            background_job_id: Some(enqueued.job_id),
-                            idempotency_key_hash: Some(idempotency_key_hash.to_owned()),
-                            created_by: actor.user_id,
-                            error_summary: None,
-                            expires_at: Some(
-                                now + Duration::hours(i64::from(self.config.artifact_hours)),
-                            ),
-                            created_at: now,
-                            updated_at: now,
-                        },
-                    )
+                transaction
+                    .insert_bundle(TenantConfigBundleRecord {
+                        id: proposed_bundle_id,
+                        tenant_id: tenant_id.to_owned(),
+                        origin: TenantConfigBundleRecord::ORIGIN_GENERATED.to_owned(),
+                        source_tenant_key: tenant_id.to_owned(),
+                        source_tenant_name_snapshot: tenant_name,
+                        package_schema_version: TENANT_CONFIG_PACKAGE_SCHEMA.to_owned(),
+                        source_app_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        file_id: None,
+                        sha256: None,
+                        resource_counts: json!({}),
+                        item_count: 0,
+                        status: TenantConfigBundleRecord::STATUS_PENDING.to_owned(),
+                        background_job_id: Some(enqueued.job_id),
+                        idempotency_key_hash: Some(idempotency_key_hash.to_owned()),
+                        created_by: actor.user_id,
+                        error_summary: None,
+                        expires_at: Some(
+                            now + Duration::hours(i64::from(self.config.artifact_hours)),
+                        ),
+                        created_at: now,
+                        updated_at: now,
+                    })
                     .await?
             } else {
-                tenant_config_bundle::Entity::find()
-                    .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
-                    .filter(tenant_config_bundle::Column::BackgroundJobId.eq(enqueued.job_id))
-                    .one(&transaction)
-                    .await
-                    .map_err(database_error)?
+                transaction
+                    .lock_bundle_by_background_job(enqueued.job_id)
+                    .await?
                     .ok_or_else(|| AppError::Conflict("配置包导出幂等记录尚未完成".into()))?
             };
             Ok::<_, AppError>((bundle, enqueued.inserted))
@@ -98,7 +83,7 @@ impl TenantConfigTransferService {
         .await;
         match operation {
             Ok((bundle, inserted)) => {
-                crate::commit_current_audit(transaction).await?;
+                transaction.commit_audited().await?;
                 self.queue.notify_background_jobs().await;
                 Ok(RequestTenantConfigBundleOutcome {
                     bundle: bundle.into(),
@@ -106,7 +91,7 @@ impl TenantConfigTransferService {
                 })
             }
             Err(error) => {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
                 Err(error)
             }
         }
@@ -176,35 +161,28 @@ impl TenantConfigTransferService {
         idempotency_key_hash: &str,
         package_sha256: &str,
         required_capabilities: &[CapabilityRequirement],
-    ) -> AppResult<Option<(tenant_config_transfer::Model, tenant_config_bundle::Model)>> {
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+    ) -> AppResult<Option<(TenantConfigTransferRecord, TenantConfigBundleRecord)>> {
+        let transaction = self.persistence.begin().await?;
         let result = async {
-            self.repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            transaction
+                .lock_tenant_configuration(tenant_id, None)
                 .await?;
             self.product_service
                 .ensure_capability_requirements_in_txn(
-                    &transaction,
+                    transaction.product(),
                     tenant_id,
                     required_capabilities,
                 )
                 .await?;
-            let existing = self
-                .repository
-                .find_transfer_by_idempotency_key(
-                    &transaction,
-                    tenant_id,
-                    requested_by,
-                    idempotency_key_hash,
-                )
+            let existing = transaction
+                .find_transfer_by_idempotency_key(tenant_id, requested_by, idempotency_key_hash)
                 .await?;
             let Some(existing) = existing else {
                 return Ok::<_, AppError>(None);
             };
             ensure_transfer_request_identity(&existing, REQUEST_KIND_UPLOAD, package_sha256)?;
-            let bundle = self
-                .repository
-                .lock_bundle_in_txn(&transaction, tenant_id, existing.bundle_id)
+            let bundle = transaction
+                .lock_bundle(tenant_id, existing.bundle_id)
                 .await?
                 .ok_or_else(|| AppError::Conflict("幂等记录关联的配置包不存在".into()))?;
             if bundle.sha256.as_deref() != Some(package_sha256) {
@@ -217,15 +195,15 @@ impl TenantConfigTransferService {
         .await;
         match result {
             Ok(Some((existing, bundle))) => {
-                crate::commit_current_audit(transaction).await?;
+                transaction.commit_audited().await?;
                 Ok(Some((existing, bundle)))
             }
             Ok(None) => {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
                 Ok(None)
             }
             Err(error) => {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
                 Err(error)
             }
         }
@@ -242,27 +220,20 @@ impl TenantConfigTransferService {
         let parsed = self.load_bundle_package(tenant_id, bundle_id).await?;
         let request_fingerprint =
             transfer_request_fingerprint(REQUEST_KIND_FROM_PACKAGE, bundle_id);
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         let operation = async {
-            let fence = self
-                .repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            let fence = transaction
+                .lock_tenant_configuration(tenant_id, None)
                 .await?;
             self.product_service
                 .ensure_capability_requirements_in_txn(
-                    &transaction,
+                    transaction.product(),
                     tenant_id,
                     &parsed.manifest.required_capabilities,
                 )
                 .await?;
-            if let Some(existing) = self
-                .repository
-                .find_transfer_by_idempotency_key(
-                    &transaction,
-                    tenant_id,
-                    actor.user_id,
-                    idempotency_key_hash,
-                )
+            if let Some(existing) = transaction
+                .find_transfer_by_idempotency_key(tenant_id, actor.user_id, idempotency_key_hash)
                 .await?
             {
                 ensure_transfer_request_identity(
@@ -275,52 +246,43 @@ impl TenantConfigTransferService {
                         "Idempotency-Key 已用于其他配置包".into(),
                     ));
                 }
-                let bundle = self
-                    .repository
-                    .lock_bundle_in_txn(&transaction, tenant_id, bundle_id)
+                let bundle = transaction
+                    .lock_bundle(tenant_id, bundle_id)
                     .await?
                     .ok_or_else(|| AppError::Conflict("幂等记录关联的配置包不存在".into()))?;
                 return Ok::<_, AppError>((existing, bundle, false));
             }
-            let bundle = self
-                .repository
-                .lock_bundle_in_txn(&transaction, tenant_id, bundle_id)
+            let bundle = transaction
+                .lock_bundle(tenant_id, bundle_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("配置包不存在".into()))?;
-            ensure_bundle_available(
-                &bundle,
-                self.repository.database_utc_now(&transaction).await?,
-            )?;
-            let transfer = self
-                .repository
-                .insert_transfer(
-                    &transaction,
-                    new_transfer_model(
-                        tenant_id,
-                        bundle.id,
-                        idempotency_key_hash,
-                        REQUEST_KIND_FROM_PACKAGE,
-                        &request_fingerprint,
-                        actor.user_id,
-                        fence.configuration_version,
-                        fence.authorization_epoch,
-                        self.repository.database_utc_now(&transaction).await?,
-                    )?,
-                )
+            ensure_bundle_available(&bundle, transaction.database_now().await?)?;
+            let transfer = transaction
+                .insert_transfer(new_transfer_model(
+                    tenant_id,
+                    bundle.id,
+                    idempotency_key_hash,
+                    REQUEST_KIND_FROM_PACKAGE,
+                    &request_fingerprint,
+                    actor.user_id,
+                    fence.configuration_version,
+                    fence.authorization_epoch,
+                    transaction.database_now().await?,
+                )?)
                 .await?;
             Ok((transfer, bundle, true))
         }
         .await;
         match operation {
             Ok((transfer, bundle, inserted)) => {
-                crate::commit_current_audit(transaction).await?;
+                transaction.commit_audited().await?;
                 Ok(RequestTenantConfigTransferOutcome {
                     transfer: TenantConfigTransferVo::from_models(transfer, &bundle)?,
                     inserted,
                 })
             }
             Err(error) => {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
                 Err(error)
             }
         }
@@ -334,27 +296,20 @@ impl TenantConfigTransferService {
         idempotency_key_hash: &str,
     ) -> AppResult<RequestTenantConfigTransferOutcome> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         let operation = async {
-            let fence = self
-                .repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            let fence = transaction
+                .lock_tenant_configuration(tenant_id, None)
                 .await?;
             self.product_service
                 .ensure_capability_requirements_in_txn(
-                    &transaction,
+                    transaction.product(),
                     tenant_id,
                     &parsed.manifest.required_capabilities,
                 )
                 .await?;
-            if let Some(existing) = self
-                .repository
-                .find_transfer_by_idempotency_key(
-                    &transaction,
-                    tenant_id,
-                    actor.user_id,
-                    idempotency_key_hash,
-                )
+            if let Some(existing) = transaction
+                .find_transfer_by_idempotency_key(tenant_id, actor.user_id, idempotency_key_hash)
                 .await?
             {
                 ensure_transfer_request_identity(
@@ -362,9 +317,8 @@ impl TenantConfigTransferService {
                     REQUEST_KIND_UPLOAD,
                     &parsed.package_sha256,
                 )?;
-                let existing_bundle = self
-                    .repository
-                    .lock_bundle_in_txn(&transaction, tenant_id, existing.bundle_id)
+                let existing_bundle = transaction
+                    .lock_bundle(tenant_id, existing.bundle_id)
                     .await?
                     .ok_or_else(|| AppError::Conflict("幂等记录关联的配置包不存在".into()))?;
                 if existing_bundle.sha256.as_deref() != Some(parsed.package_sha256.as_str()) {
@@ -374,71 +328,63 @@ impl TenantConfigTransferService {
                 }
                 return Ok::<_, AppError>((existing, existing_bundle, false));
             }
-            let now = self.repository.database_utc_now(&transaction).await?;
-            ensure_config_package_file_ready_in_txn(&transaction, tenant_id, file_id, now).await?;
+            let now = transaction.database_now().await?;
+            transaction
+                .ensure_config_package_file_ready(tenant_id, file_id, now)
+                .await?;
             let bundle_id = next_id()?;
             let counts = serde_json::to_value(&parsed.manifest.resource_counts)
                 .map_err(internal_json_error)?;
-            let bundle = self
-                .repository
-                .insert_bundle(
-                    &transaction,
-                    tenant_config_bundle::Model {
-                        id: bundle_id,
-                        tenant_id: tenant_id.to_owned(),
-                        origin: tenant_config_bundle::Model::ORIGIN_UPLOADED.to_owned(),
-                        source_tenant_key: parsed.manifest.source_tenant_key,
-                        source_tenant_name_snapshot: parsed.manifest.source_tenant_name,
-                        package_schema_version: parsed.manifest.schema,
-                        source_app_version: parsed.manifest.source_app_version,
-                        file_id: Some(file_id),
-                        sha256: Some(parsed.package_sha256.clone()),
-                        resource_counts: counts,
-                        item_count: i32::try_from(parsed.manifest.item_count)
-                            .map_err(|_| AppError::PayloadTooLarge("配置包项目数量超限".into()))?,
-                        status: tenant_config_bundle::Model::STATUS_SUCCEEDED.to_owned(),
-                        background_job_id: None,
-                        idempotency_key_hash: None,
-                        created_by: actor.user_id,
-                        error_summary: None,
-                        expires_at: Some(
-                            now + Duration::hours(i64::from(self.config.artifact_hours)),
-                        ),
-                        created_at: now,
-                        updated_at: now,
-                    },
-                )
+            let bundle = transaction
+                .insert_bundle(TenantConfigBundleRecord {
+                    id: bundle_id,
+                    tenant_id: tenant_id.to_owned(),
+                    origin: TenantConfigBundleRecord::ORIGIN_UPLOADED.to_owned(),
+                    source_tenant_key: parsed.manifest.source_tenant_key,
+                    source_tenant_name_snapshot: parsed.manifest.source_tenant_name,
+                    package_schema_version: parsed.manifest.schema,
+                    source_app_version: parsed.manifest.source_app_version,
+                    file_id: Some(file_id),
+                    sha256: Some(parsed.package_sha256.clone()),
+                    resource_counts: counts,
+                    item_count: i32::try_from(parsed.manifest.item_count)
+                        .map_err(|_| AppError::PayloadTooLarge("配置包项目数量超限".into()))?,
+                    status: TenantConfigBundleRecord::STATUS_SUCCEEDED.to_owned(),
+                    background_job_id: None,
+                    idempotency_key_hash: None,
+                    created_by: actor.user_id,
+                    error_summary: None,
+                    expires_at: Some(now + Duration::hours(i64::from(self.config.artifact_hours))),
+                    created_at: now,
+                    updated_at: now,
+                })
                 .await?;
-            let transfer = self
-                .repository
-                .insert_transfer(
-                    &transaction,
-                    new_transfer_model(
-                        tenant_id,
-                        bundle_id,
-                        idempotency_key_hash,
-                        REQUEST_KIND_UPLOAD,
-                        &parsed.package_sha256,
-                        actor.user_id,
-                        fence.configuration_version,
-                        fence.authorization_epoch,
-                        now,
-                    )?,
-                )
+            let transfer = transaction
+                .insert_transfer(new_transfer_model(
+                    tenant_id,
+                    bundle_id,
+                    idempotency_key_hash,
+                    REQUEST_KIND_UPLOAD,
+                    &parsed.package_sha256,
+                    actor.user_id,
+                    fence.configuration_version,
+                    fence.authorization_epoch,
+                    now,
+                )?)
                 .await?;
             Ok((transfer, bundle, true))
         }
         .await;
         match operation {
             Ok((transfer, bundle, inserted)) => {
-                crate::commit_current_audit(transaction).await?;
+                transaction.commit_audited().await?;
                 Ok(RequestTenantConfigTransferOutcome {
                     transfer: TenantConfigTransferVo::from_models(transfer, &bundle)?,
                     inserted,
                 })
             }
             Err(error) => {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
                 Err(error)
             }
         }
@@ -454,25 +400,24 @@ impl TenantConfigTransferService {
     ) -> AppResult<TenantConfigTransferVo> {
         validate_sha256(idempotency_key_hash)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let transaction = self.db.write().begin().await.map_err(database_error)?;
+        let transaction = self.persistence.begin().await?;
         let result = async {
-            self.repository
-                .lock_tenant_configuration_in_txn(&transaction, tenant_id, None)
+            transaction
+                .lock_tenant_configuration(tenant_id, None)
                 .await?;
-            let mut transfer = self
-                .repository
-                .lock_transfer_in_txn(&transaction, tenant_id, transfer_id)
+            let mut transfer = transaction
+                .lock_transfer(tenant_id, transfer_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
             if transfer.requested_by != actor.user_id {
                 return Err(AppError::Authorization("只能操作本人创建的配置迁移".into()));
             }
-            let now = self.repository.database_utc_now(&transaction).await?;
+            let now = transaction.database_now().await?;
             let trace = crate::trace_context::current_trace_context();
             let enqueued = self
                 .queue
                 .enqueue_in_transaction(
-                    &transaction,
+                    transaction.background_jobs(),
                     EnqueueJob {
                         tenant_id: Some(tenant_id.to_owned()),
                         schedule_id: None,
@@ -495,9 +440,8 @@ impl TenantConfigTransferService {
             if !enqueued.inserted {
                 if operation_job_id(&transfer, &operation) == Some(enqueued.job_id) {
                     validate_operation_replay_identity(&transfer, &operation)?;
-                    let bundle = self
-                        .repository
-                        .find_bundle_by_id(&transaction, tenant_id, transfer.bundle_id)
+                    let bundle = transaction
+                        .lock_bundle(tenant_id, transfer.bundle_id)
                         .await?
                         .ok_or_else(|| AppError::Internal("配置迁移关联的配置包不存在".into()))?;
                     return Ok::<_, AppError>((transfer, bundle));
@@ -505,12 +449,13 @@ impl TenantConfigTransferService {
                 return Err(AppError::Conflict("幂等键已被其他配置迁移操作使用".into()));
             }
             validate_operation_request(&transfer, &operation)?;
-            clear_superseded_dead_operation_jobs(&transaction, &mut transfer, &operation).await?;
+            clear_superseded_dead_operation_jobs(transaction.as_ref(), &mut transfer, &operation)
+                .await?;
             match operation {
                 TransferOperationRequest::Preview => {
                     if enqueued.inserted {
                         transfer.status =
-                            tenant_config_transfer::Model::STATUS_PREVIEW_PENDING.to_owned();
+                            TenantConfigTransferRecord::STATUS_PREVIEW_PENDING.to_owned();
                         transfer.preview_background_job_id = Some(enqueued.job_id);
                         transfer.preview_calculated_at = None;
                         transfer.plan_hash = None;
@@ -529,7 +474,7 @@ impl TenantConfigTransferService {
                     }
                     if enqueued.inserted {
                         transfer.status =
-                            tenant_config_transfer::Model::STATUS_APPLY_PENDING.to_owned();
+                            TenantConfigTransferRecord::STATUS_APPLY_PENDING.to_owned();
                         transfer.apply_background_job_id = Some(enqueued.job_id);
                         transfer.error_summary = None;
                     } else if transfer.apply_background_job_id != Some(enqueued.job_id) {
@@ -539,7 +484,7 @@ impl TenantConfigTransferService {
                 TransferOperationRequest::Rollback => {
                     if enqueued.inserted {
                         transfer.status =
-                            tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING.to_owned();
+                            TenantConfigTransferRecord::STATUS_ROLLBACK_PENDING.to_owned();
                         transfer.rollback_background_job_id = Some(enqueued.job_id);
                         transfer.error_summary = None;
                     } else if transfer.rollback_background_job_id != Some(enqueued.job_id) {
@@ -548,13 +493,9 @@ impl TenantConfigTransferService {
                 }
             }
             transfer.updated_at = now;
-            let transfer = self
-                .repository
-                .update_transfer(&transaction, transfer)
-                .await?;
-            let bundle = self
-                .repository
-                .find_bundle_by_id(&transaction, tenant_id, transfer.bundle_id)
+            let transfer = transaction.update_transfer(transfer).await?;
+            let bundle = transaction
+                .lock_bundle(tenant_id, transfer.bundle_id)
                 .await?
                 .ok_or_else(|| AppError::Internal("配置迁移关联的配置包不存在".into()))?;
             Ok::<_, AppError>((transfer, bundle))
@@ -562,12 +503,12 @@ impl TenantConfigTransferService {
         .await;
         match result {
             Ok((transfer, bundle)) => {
-                crate::commit_current_audit(transaction).await?;
+                transaction.commit_audited().await?;
                 self.queue.notify_background_jobs().await;
                 TenantConfigTransferVo::from_models(transfer, &bundle)
             }
             Err(error) => {
-                transaction.rollback().await.map_err(database_error)?;
+                transaction.rollback().await?;
                 Err(error)
             }
         }
@@ -578,8 +519,8 @@ impl TenantConfigTransferService {
         tenant_id: &str,
         transfer_id: i64,
     ) -> AppResult<()> {
-        self.repository
-            .find_transfer_by_id(self.db.write(), tenant_id, transfer_id)
+        self.persistence
+            .find_transfer(tenant_id, transfer_id)
             .await?
             .map(|_| ())
             .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))
@@ -592,14 +533,11 @@ pub(super) enum TransferOperationRequest {
     Rollback,
 }
 
-async fn clear_superseded_dead_operation_jobs<C>(
-    db: &C,
-    transfer: &mut tenant_config_transfer::Model,
+async fn clear_superseded_dead_operation_jobs(
+    transaction: &dyn crate::TenantConfigTransferTransaction,
+    transfer: &mut TenantConfigTransferRecord,
     operation: &TransferOperationRequest,
-) -> AppResult<()>
-where
-    C: ConnectionTrait,
-{
+) -> AppResult<()> {
     let candidates = match operation {
         TransferOperationRequest::Preview => [
             transfer.apply_background_job_id,
@@ -620,16 +558,9 @@ where
     if candidates.is_empty() {
         return Ok(());
     }
-    let dead_ids = background_job::Entity::find()
-        .filter(background_job::Column::Id.is_in(candidates))
-        .filter(background_job::Column::TenantId.eq(&transfer.tenant_id))
-        .filter(background_job::Column::Status.eq(background_job::Model::STATUS_DEAD))
-        .all(db)
-        .await
-        .map_err(database_error)?
-        .into_iter()
-        .map(|job| job.id)
-        .collect::<BTreeSet<_>>();
+    let dead_ids = transaction
+        .dead_background_job_ids(&transfer.tenant_id, &candidates)
+        .await?;
 
     // 新操作只废止其他类型的死信执行资格；成功任务指针、应用版本、快照和回滚窗口
     // 均予以保留，因此不会破坏合法回滚链或历史任务关联。

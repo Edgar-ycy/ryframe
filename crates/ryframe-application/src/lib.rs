@@ -69,6 +69,7 @@ mod legacy_service_account_authorization_persistence;
 mod legacy_service_account_read;
 mod legacy_service_account_write;
 mod legacy_tenant_config_retention_persistence;
+mod legacy_tenant_config_transfer_persistence;
 mod legacy_tenant_usage_persistence;
 mod legacy_user_import_persistence;
 mod legacy_user_query_persistence;
@@ -104,6 +105,7 @@ mod spreadsheet;
 pub mod system;
 mod tenant_config_archive;
 mod tenant_config_retention_persistence;
+mod tenant_config_transfer_persistence;
 mod tenant_data_migration;
 mod tenant_data_migration_persistence;
 mod tenant_data_targets;
@@ -298,6 +300,8 @@ pub use legacy_service_account_write::port as legacy_service_account_write;
 #[doc(hidden)]
 pub use legacy_tenant_config_retention_persistence::port as legacy_tenant_config_retention_persistence;
 #[doc(hidden)]
+pub use legacy_tenant_config_transfer_persistence::port as legacy_tenant_config_transfer_persistence;
+#[doc(hidden)]
 pub use legacy_tenant_usage_persistence::port as legacy_tenant_usage_persistence;
 #[doc(hidden)]
 pub use legacy_user_import_persistence::port as legacy_user_import_persistence;
@@ -391,6 +395,11 @@ pub use tenant_config_archive::{TenantConfigArchiveContents, TenantConfigArchive
 pub use tenant_config_retention_persistence::{
     TENANT_CONFIG_PACKAGE_RESOURCE, TENANT_CONFIG_SNAPSHOT_RESOURCE, TenantConfigArtifactCounts,
     TenantConfigRetentionPersistencePort,
+};
+pub use tenant_config_transfer_persistence::{
+    TenantConfigBundleRecord, TenantConfigOperationLeaseRecord, TenantConfigRequesterRecord,
+    TenantConfigTransferItemRecord, TenantConfigTransferPersistencePort,
+    TenantConfigTransferRecord, TenantConfigTransferTransaction, TenantConfigurationFenceRecord,
 };
 pub use tenant_data_migration::{
     TenantDataCatalogTable, TenantDataCleanupOwnership, TenantDataFence, TenantDataMigrationFuture,
