@@ -13,9 +13,7 @@ mod product_persistence;
 pub mod retention;
 pub mod service_accounts;
 pub mod system;
-mod tenant_config_retention_persistence;
-mod tenant_config_transfer_persistence;
-mod tenant_config_transfer_sql;
+pub mod tenant_config;
 mod tenant_usage_persistence;
 pub mod users;
 
@@ -26,6 +24,4 @@ pub use audit_persistence::outbox_port as audit_outbox_persistence;
 #[doc(hidden)]
 pub use control_transaction::DatabasePortTransaction;
 pub use product_persistence::{read_port as product_read, write_port as product_write};
-pub use tenant_config_retention_persistence::port as tenant_config_retention_persistence;
-pub use tenant_config_transfer_persistence::port as tenant_config_transfer_persistence;
 pub use tenant_usage_persistence::port as tenant_usage_persistence;

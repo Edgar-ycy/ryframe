@@ -323,7 +323,7 @@ pub async fn build_all(
         authorization_cache.clone(),
     ));
     let data_retention = Arc::new(DataRetentionService::new(
-        ryframe_db::application_ports::tenant_config_retention_persistence(database.clone()),
+        ryframe_db::application_ports::tenant_config::retention(database.clone()),
         ryframe_db::application_ports::retention::cleanup(database.clone()),
         ryframe_db::application_ports::retention::run(database.clone()),
         job_queue.clone(),
@@ -340,9 +340,7 @@ pub async fn build_all(
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
         ryframe_application::system::TenantConfigTransferDependencies {
-            persistence: ryframe_db::application_ports::tenant_config_transfer_persistence(
-                database.clone(),
-            ),
+            persistence: ryframe_db::application_ports::tenant_config::transfer(database.clone()),
             queue: job_queue.clone(),
             user_service: user.clone(),
             file_service: file.clone(),

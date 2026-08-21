@@ -15,8 +15,11 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    PersistenceFuture, TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort,
-    ports::retention::RetentionCleanupResult,
+    PersistenceFuture,
+    ports::{
+        retention::RetentionCleanupResult,
+        tenant_config::{TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort},
+    },
 };
 
 const ACTIVE_TRANSFER_PREDICATE: &str = "NOT EXISTS (SELECT 1 FROM sys_tenant_config_transfer transfer WHERE transfer.tenant_id = sys_tenant_config_bundle.tenant_id AND transfer.bundle_id = sys_tenant_config_bundle.id AND transfer.status IN ('preview_pending', 'previewing', 'apply_pending', 'applying'))";

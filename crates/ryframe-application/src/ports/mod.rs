@@ -8,4 +8,5 @@ pub mod jobs;
 pub mod retention;
 pub mod service_accounts;
 pub mod system;
+pub mod tenant_config;
 pub mod users;

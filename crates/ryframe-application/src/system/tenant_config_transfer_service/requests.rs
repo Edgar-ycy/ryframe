@@ -534,7 +534,7 @@ pub(super) enum TransferOperationRequest {
 }
 
 async fn clear_superseded_dead_operation_jobs(
-    transaction: &dyn crate::TenantConfigTransferTransaction,
+    transaction: &dyn TenantConfigTransferTransaction,
     transfer: &mut TenantConfigTransferRecord,
     operation: &TransferOperationRequest,
 ) -> AppResult<()> {

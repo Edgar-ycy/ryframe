@@ -20,9 +20,13 @@ use super::{
 };
 use crate::{
     AuthorizationCache, ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
-    TenantConfigArchivePort, TenantConfigBundleRecord, TenantConfigOperationLeaseRecord,
-    TenantConfigRequesterRecord, TenantConfigTransferItemRecord, TenantConfigTransferRecord,
-    TenantConfigurationFenceRecord,
+    TenantConfigArchivePort,
+    ports::tenant_config::{
+        TenantConfigBundleRecord, TenantConfigOperationLeaseRecord, TenantConfigRequesterRecord,
+        TenantConfigTransferItemRecord, TenantConfigTransferPersistencePort,
+        TenantConfigTransferRecord, TenantConfigTransferTransaction,
+        TenantConfigurationFenceRecord,
+    },
 };
 
 mod apply_workflow;
@@ -64,7 +68,7 @@ const REQUEST_KIND_FROM_PACKAGE: &str = "from_package";
 
 #[derive(Clone)]
 pub struct TenantConfigTransferService {
-    persistence: Arc<dyn crate::TenantConfigTransferPersistencePort>,
+    persistence: Arc<dyn TenantConfigTransferPersistencePort>,
     queue: Arc<JobQueue>,
     user_service: Arc<UserService>,
     file_service: Arc<FileService>,
@@ -77,7 +81,7 @@ pub struct TenantConfigTransferService {
 
 #[derive(Clone)]
 pub struct TenantConfigTransferDependencies {
-    pub persistence: Arc<dyn crate::TenantConfigTransferPersistencePort>,
+    pub persistence: Arc<dyn TenantConfigTransferPersistencePort>,
     pub queue: Arc<JobQueue>,
     pub user_service: Arc<UserService>,
     pub file_service: Arc<FileService>,

@@ -7,12 +7,14 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
-    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue, TENANT_CONFIG_PACKAGE_RESOURCE,
-    TENANT_CONFIG_SNAPSHOT_RESOURCE, TenantConfigArtifactCounts,
-    TenantConfigRetentionPersistencePort,
+    ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
     ports::retention::{
         RetentionCleanupPersistencePort, RetentionCleanupResult, RetentionCutoff,
         RetentionResource, RetentionRunPersistencePort, RetentionRunRecord,
+    },
+    ports::tenant_config::{
+        TENANT_CONFIG_PACKAGE_RESOURCE, TENANT_CONFIG_SNAPSHOT_RESOURCE,
+        TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort,
     },
     system::FileService,
 };

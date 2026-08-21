@@ -3,8 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use ryframe_application::system::tenant_config_transfer_service::compare_resources;
 use ryframe_application::{
-    TenantConfigRequesterRecord, TenantConfigTransferItemRecord, TenantConfigurationFenceRecord,
     next_id,
+    ports::tenant_config::{
+        TenantConfigRequesterRecord, TenantConfigTransferItemRecord, TenantConfigurationFenceRecord,
+    },
     system::{
         CONFIG_PACKAGE_BUCKET, PortableConfig, PortableDepartment, PortableDictData,
         PortableDictType, PortableMenu, PortablePermission, PortablePost, PortableRole,

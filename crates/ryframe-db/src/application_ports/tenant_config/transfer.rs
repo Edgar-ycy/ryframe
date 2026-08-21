@@ -14,13 +14,16 @@ use sea_orm::{
     TransactionTrait, sea_query::LockType,
 };
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    PersistenceFuture, TenantConfigBundleRecord, TenantConfigOperationLeaseRecord,
-    TenantConfigRequesterRecord, TenantConfigTransferItemRecord,
-    TenantConfigTransferPersistencePort, TenantConfigTransferRecord,
-    TenantConfigTransferTransaction, TenantConfigurationFenceRecord,
+    PersistenceFuture,
+    ports::tenant_config::{
+        TenantConfigBundleRecord, TenantConfigOperationLeaseRecord, TenantConfigRequesterRecord,
+        TenantConfigTransferItemRecord, TenantConfigTransferPersistencePort,
+        TenantConfigTransferRecord, TenantConfigTransferTransaction,
+        TenantConfigurationFenceRecord,
+    },
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantConfigTransferPersistencePort> {
@@ -221,8 +224,7 @@ impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersist
         tenant_id: &'a str,
     ) -> PersistenceFuture<'a, ryframe_application::system::TenantConfigPackageResources> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::load_resources_on(self.database.write(), tenant_id)
-                .await
+            super::transfer_sql::load_resources_on(self.database.write(), tenant_id).await
         })
     }
 
@@ -498,7 +500,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         now: chrono::DateTime<chrono::Utc>,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::ensure_config_package_file_ready_in_txn(
+            super::transfer_sql::ensure_config_package_file_ready_in_txn(
                 &self.transaction,
                 tenant_id,
                 file_id,
@@ -513,7 +515,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         tenant_id: &'a str,
     ) -> PersistenceFuture<'a, ryframe_application::system::TenantConfigPackageResources> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::load_resources_on(&self.transaction, tenant_id).await
+            super::transfer_sql::load_resources_on(&self.transaction, tenant_id).await
         })
     }
 
@@ -525,7 +527,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         now: chrono::DateTime<chrono::Utc>,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::apply_resources_in_transaction(
+            super::transfer_sql::apply_resources_in_transaction(
                 &self.transaction,
                 tenant_id,
                 resources,
@@ -542,7 +544,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         transfer_id: i64,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::ensure_rollback_references_safe(
+            super::transfer_sql::ensure_rollback_references_safe(
                 &self.transaction,
                 tenant_id,
                 transfer_id,
@@ -560,7 +562,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         now: chrono::DateTime<chrono::Utc>,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::restore_snapshot_in_transaction(
+            super::transfer_sql::restore_snapshot_in_transaction(
                 &self.transaction,
                 tenant_id,
                 snapshot,
@@ -580,7 +582,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         database_now: chrono::DateTime<chrono::Utc>,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::ensure_requester_snapshot_in_txn(
+            super::transfer_sql::ensure_requester_snapshot_in_txn(
                 &self.transaction,
                 tenant_id,
                 requester,
@@ -597,7 +599,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         plan_items: &'a [TenantConfigTransferItemRecord],
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::ensure_role_quota_for_plan_in_txn(
+            super::transfer_sql::ensure_role_quota_for_plan_in_txn(
                 &self.transaction,
                 tenant_id,
                 plan_items,
@@ -613,7 +615,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         outcome: &'a str,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
-            super::tenant_config_transfer_sql::mark_plan_outcome(
+            super::transfer_sql::mark_plan_outcome(
                 &self.transaction,
                 tenant_id,
                 transfer_id,
@@ -645,7 +647,8 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
 
     fn commit_audited(self: Box<Self>) -> PersistenceFuture<'static, ()> {
         Box::pin(async move {
-            super::audit_persistence::commit_current_audit(self.transaction.into_inner()).await
+            super::super::audit_persistence::commit_current_audit(self.transaction.into_inner())
+                .await
         })
     }
 
