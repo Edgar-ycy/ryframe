@@ -305,6 +305,7 @@ pub async fn build_all(
     ));
     let file = Arc::new(FileService::new(
         database.clone(),
+        ryframe_application::legacy_file_download_persistence(database.clone()),
         object_storage.clone(),
         super::file_content::processor(),
     ));

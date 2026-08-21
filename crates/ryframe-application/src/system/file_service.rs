@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use ryframe_db::{ControlDatabaseCluster, ReadConsistency};
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_db::{FileRepository, TenantRepository, entities::sys_file};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sea_orm::TransactionTrait;
@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FileContentProcessor,
-    ProcessedFileContent,
+    FileDownloadPersistencePort, ProcessedFileContent,
 };
 
 mod policy;
@@ -108,6 +108,7 @@ where
 
 pub struct FileService {
     db: ControlDatabaseCluster,
+    downloads: Arc<dyn FileDownloadPersistencePort>,
     storage: Arc<dyn ArtifactStore>,
     content: Arc<dyn FileContentProcessor>,
 }
@@ -115,11 +116,13 @@ pub struct FileService {
 impl FileService {
     pub fn new(
         db: ControlDatabaseCluster,
+        downloads: Arc<dyn FileDownloadPersistencePort>,
         storage: Arc<dyn ArtifactStore>,
         content: Arc<dyn FileContentProcessor>,
     ) -> Self {
         Self {
             db,
+            downloads,
             storage,
             content,
         }
@@ -327,10 +330,9 @@ impl FileService {
             return Err(AppError::Validation("非法的文件路径".into()));
         }
 
-        // 文件元数据紧跟对象上传写入主库；下载必须强一致读取，避免副本延迟导致刚上传文件返回 404。
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let file = FileRepository
-            .find_by_storage_path(&db, tenant_id, bucket, path)
+        let file = self
+            .downloads
+            .find_by_storage_path(tenant_id, bucket, path)
             .await?
             .ok_or_else(|| AppError::NotFound("文件不存在".into()))?;
 
@@ -387,14 +389,10 @@ impl FileService {
         file_id: i64,
         expected_bucket: &str,
     ) -> AppResult<DownloadedFile> {
-        let db = self.db.select_read(ReadConsistency::Strong).connection;
-        let file = FileRepository
-            .find_by_id_any_status(&db, tenant_id, file_id)
+        let file = self
+            .downloads
+            .find_ready_by_id(tenant_id, file_id, expected_bucket)
             .await?
-            .filter(|file| {
-                file.bucket == expected_bucket
-                    && file.upload_status == sys_file::Model::UPLOAD_STATUS_READY
-            })
             .ok_or_else(|| AppError::NotFound("文件不存在或已过期".into()))?;
         let data = self
             .storage
