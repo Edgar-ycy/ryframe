@@ -226,9 +226,9 @@ pub async fn build_all(
             policies.service_accounts,
             policies.multi_tenancy,
             AgentServiceDependencies {
-                identity: ryframe_db::application_ports::agent_identity_read(database.clone()),
-                audit: ryframe_db::application_ports::agent_audit_write(database.clone()),
-                persistence: ryframe_db::application_ports::agent_persistence(
+                identity: ryframe_db::application_ports::agent::identity(database.clone()),
+                audit: ryframe_db::application_ports::agent::audit(database.clone()),
+                persistence: ryframe_db::application_ports::agent::storage(
                     database.clone(),
                     Arc::clone(&product),
                 ),

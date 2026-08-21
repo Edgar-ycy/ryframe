@@ -138,7 +138,7 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
             let snapshot = ProductRepository
                 .tenant_product(&self.transaction, tenant_id)
                 .await?
-                .map(super::product::tenant_snapshot)
+                .map(super::super::product::tenant_snapshot)
                 .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
             self.product
                 .require_capability_snapshot(snapshot, capability_code)
@@ -161,7 +161,7 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
                     represented_user_id,
                 )
                 .await
-                .map(super::agent_snapshot::authorization_snapshot)
+                .map(super::mapping::authorization_snapshot)
         })
     }
 
@@ -177,7 +177,7 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
                 .users_page(
                     &self.transaction,
                     tenant_id,
-                    &super::agent_snapshot::row_scope(scope),
+                    &super::mapping::row_scope(scope),
                     offset,
                     limit,
                 )
@@ -201,7 +201,7 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
                 .departments_page(
                     &self.transaction,
                     tenant_id,
-                    &super::agent_snapshot::row_scope(scope),
+                    &super::mapping::row_scope(scope),
                     offset,
                     limit,
                 )
@@ -264,7 +264,7 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
     fn insert_audit(&self, audit: AgentAccessAuditRecord) -> PersistenceFuture<'_, ()> {
         Box::pin(async move {
             ServiceAccessAuditRepository
-                .insert(&self.transaction, super::agent_audit::model(audit))
+                .insert(&self.transaction, super::audit::model(audit))
                 .await
                 .map(|_| ())
         })

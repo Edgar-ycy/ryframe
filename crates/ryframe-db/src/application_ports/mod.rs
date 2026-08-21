@@ -1,7 +1,4 @@
-mod agent_audit;
-mod agent_identity;
-mod agent_persistence;
-mod agent_snapshot;
+pub mod agent;
 mod audit_persistence;
 pub mod auth;
 pub mod authorization;
@@ -17,9 +14,6 @@ pub mod tenant_config;
 pub mod tenants;
 pub mod users;
 
-pub use agent_audit::port as agent_audit_write;
-pub use agent_identity::port as agent_identity_read;
-pub use agent_persistence::port as agent_persistence;
 pub use audit_persistence::outbox_port as audit_outbox_persistence;
 #[doc(hidden)]
 pub use control_transaction::DatabasePortTransaction;
