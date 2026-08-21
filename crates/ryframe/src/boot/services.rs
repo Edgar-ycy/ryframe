@@ -312,10 +312,8 @@ pub async fn build_all(
     ));
     file.spawn_upload_janitor();
     let job_queue = Arc::new(
-        JobQueue::new(ryframe_db::application_ports::job_queue_persistence(
-            database.clone(),
-        ))
-        .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
+        JobQueue::new(ryframe_db::application_ports::jobs::queue(database.clone()))
+            .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
     );
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         ryframe_tenant_db::tenant_data_migration_persistence_port(database.clone()),
@@ -372,7 +370,7 @@ pub async fn build_all(
         let schedule_targets = super::jobs::build_schedule_targets(policies.messaging.enabled())?;
         Some(Arc::new(
             JobScheduleService::new(
-                ryframe_db::application_ports::job_schedule_persistence(database.clone()),
+                ryframe_db::application_ports::jobs::schedule(database.clone()),
                 job_queue.clone(),
                 super::jobs::execution_tenant_scope(policies.multi_tenancy),
                 schedule_targets,

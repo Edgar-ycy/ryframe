@@ -3,7 +3,9 @@ use std::time::Duration as StdDuration;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::{EnqueueJob, EnqueueJobResult, ExecutionTenantScope, PersistenceFuture};
+use crate::{EnqueueJob, EnqueueJobResult, PersistenceFuture};
+
+use super::ExecutionTenantScope;
 
 #[derive(Debug)]
 pub struct ClaimedJobRecord {

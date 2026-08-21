@@ -134,12 +134,10 @@ async fn main() -> Result<(), AppError> {
     let object_storage = connect_storage_for_worker(&config).await?;
 
     let queue = Arc::new(
-        JobQueue::new(ryframe_db::application_ports::job_queue_persistence(
-            database.clone(),
-        ))
-        .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
+        JobQueue::new(ryframe_db::application_ports::jobs::queue(database.clone()))
+            .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
     );
-    let outbox_persistence = ryframe_db::application_ports::outbox_persistence(database.clone());
+    let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
     install_job_metrics(&queue);
     let message = Arc::new(MessageService::new(
         ryframe_db::application_ports::message_persistence(database.clone()),
@@ -290,7 +288,7 @@ async fn main() -> Result<(), AppError> {
         process_jobs::validate_schedule_targets(&worker, &schedule_targets)?;
         Some(Arc::new(
             JobScheduleService::new(
-                ryframe_db::application_ports::job_schedule_persistence(database.clone()),
+                ryframe_db::application_ports::jobs::schedule(database.clone()),
                 queue.clone(),
                 execution_tenant_scope.clone(),
                 schedule_targets,

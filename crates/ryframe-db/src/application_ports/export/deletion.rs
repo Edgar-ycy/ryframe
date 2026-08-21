@@ -75,7 +75,7 @@ impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
             BackgroundJobRepository
                 .enqueue_in_transaction(
                     &self.transaction,
-                    super::super::job_queue_persistence::database_enqueue(command),
+                    super::super::jobs::database_enqueue(command),
                     now,
                 )
                 .await

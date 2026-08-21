@@ -11,16 +11,19 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
-use super::control_transaction::DatabasePortTransaction;
+use super::super::control_transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
-    BackgroundJobStatsRecord, BackgroundJobTransaction, BackgroundJobTypeStats, ClaimedJobRecord,
-    EnqueueJob, EnqueueJobResult, ExecutionTenantScope, FailJobCommand, JobFailureOutcome,
-    PersistenceFuture, RecoveredJobLeases, TenantConfigJobKind,
+    EnqueueJob, EnqueueJobResult, PersistenceFuture,
+    ports::jobs::{
+        BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
+        BackgroundJobStatsRecord, BackgroundJobTransaction, BackgroundJobTypeStats,
+        ClaimedJobRecord, ExecutionTenantScope, FailJobCommand, JobFailureOutcome,
+        RecoveredJobLeases, TenantConfigJobKind,
+    },
 };
 
-use super::execution_tenant_scope::database_scope;
+use super::tenant_scope::database_scope;
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn BackgroundJobPersistencePort> {
     Arc::new(DatabaseJobQueuePersistence {

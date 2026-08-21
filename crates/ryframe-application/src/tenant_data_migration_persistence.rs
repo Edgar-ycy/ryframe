@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 
-use crate::{BackgroundJobTransaction, PersistenceFuture};
+use crate::{PersistenceFuture, ports::jobs::BackgroundJobTransaction};
 
 pub const MIGRATION_STATE_PRECHECKING: &str = "prechecking";
 pub const MIGRATION_STATE_QUEUED: &str = "queued";

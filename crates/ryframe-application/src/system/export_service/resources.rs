@@ -1,10 +1,10 @@
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::{
-    BackgroundJobRecord, ClaimedBackgroundJob, LoginInfoFilter, OperLogFilter,
-    SPREADSHEET_MAX_DATA_ROWS, SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter,
-    UserQueryFilter,
+    ClaimedBackgroundJob, LoginInfoFilter, OperLogFilter, SPREADSHEET_MAX_DATA_ROWS,
+    SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetWriter, UserQueryFilter,
     ports::export::{ExportExecutionRecord, ExportStartDecision},
+    ports::jobs::BackgroundJobRecord,
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, ExportCursorWindow};
 

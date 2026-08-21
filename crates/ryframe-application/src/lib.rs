@@ -9,15 +9,12 @@ mod authorization_resolver;
 mod config_persistence;
 mod dept_persistence;
 mod dict_persistence;
-mod execution_tenant_scope;
 mod file_cleanup_persistence;
 mod file_content;
 mod file_download_persistence;
 mod file_upload_persistence;
 mod id_generator;
 mod identity_authorization;
-mod job_queue_persistence;
-mod job_schedule_persistence;
 pub mod jobs;
 mod login_info_persistence;
 mod login_protection;
@@ -25,7 +22,6 @@ mod menu_persistence;
 mod message_persistence;
 mod notice_persistence;
 mod oper_log_persistence;
-mod outbox_persistence;
 mod overview_persistence;
 mod password_reset_persistence;
 mod permission_persistence;
@@ -104,7 +100,6 @@ pub use dept_persistence::{
 pub use dict_persistence::{
     DictDataRecord, DictPersistencePort, DictTransaction, DictTypeFilter, DictTypeRecord,
 };
-pub use execution_tenant_scope::ExecutionTenantScope;
 pub use file_cleanup_persistence::{
     FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
     FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileCleanupRecord,
@@ -118,16 +113,6 @@ pub use file_upload_persistence::{
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 pub use identity_authorization::{
     IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
-};
-pub use job_queue_persistence::{
-    BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
-    BackgroundJobStatsRecord, BackgroundJobTransaction, BackgroundJobTypeStats, ClaimedJobRecord,
-    FailJobCommand, JobFailureOutcome, RecoveredJobLeases, TenantConfigJobKind,
-};
-pub use job_schedule_persistence::{
-    JobScheduleExecutionReadFilter, JobScheduleExecutionRecord, JobSchedulePersistencePort,
-    JobScheduleReadFilter, JobScheduleReadPort, JobScheduleRecord, JobScheduleTransaction,
-    NewJobScheduleExecution,
 };
 #[allow(deprecated)]
 pub use jobs::{
@@ -160,7 +145,6 @@ pub use notice_persistence::{
 pub use oper_log_persistence::{
     OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction,
 };
-pub use outbox_persistence::{ClaimedOutboxEvent, OutboxFailureOutcome, OutboxPersistencePort};
 pub use overview_persistence::{
     OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
 };

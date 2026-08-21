@@ -9,11 +9,13 @@ use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    ClaimedOutboxEvent, EnqueueJob, ExecutionTenantScope, OperLogRecord, OutboxFailureOutcome,
-    OutboxPersistencePort, PersistenceFuture,
+    EnqueueJob, OperLogRecord, PersistenceFuture,
+    ports::jobs::{
+        ClaimedOutboxEvent, ExecutionTenantScope, OutboxFailureOutcome, OutboxPersistencePort,
+    },
 };
 
-use super::{execution_tenant_scope::database_scope, job_queue_persistence::database_enqueue};
+use super::{queue::database_enqueue, tenant_scope::database_scope};
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn OutboxPersistencePort> {
     Arc::new(DatabaseOutboxPersistence {
@@ -90,7 +92,7 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
         Box::pin(async move {
             let transaction = begin(self.database.write()).await?;
             let result = async {
-                super::oper_log_persistence::insert_event_in_transaction(
+                super::super::oper_log_persistence::insert_event_in_transaction(
                     &transaction,
                     tenant_id,
                     record,

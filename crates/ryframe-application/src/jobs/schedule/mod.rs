@@ -12,7 +12,7 @@ use super::{
     JobQueue, ScheduleMetricsObserver, ScheduledJobContext, ScheduledJobTarget,
     ScheduledJobTargetDescriptor, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
 };
-use crate::{
+use crate::ports::jobs::{
     ExecutionTenantScope, JobScheduleExecutionReadFilter, JobScheduleExecutionRecord,
     JobSchedulePersistencePort, JobScheduleReadFilter, JobScheduleRecord, JobScheduleTransaction,
     NewJobScheduleExecution,

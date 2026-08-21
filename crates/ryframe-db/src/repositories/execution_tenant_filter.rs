@@ -5,11 +5,11 @@ use sea_orm::{ColumnTrait, Condition};
 /// `tenant_id = NULL` 表示不属于任一业务租户的平台维护记录，因此固定租户范围始终
 /// 同时保留平台记录。范围在数据库查询和加锁前应用，不能在领取后再做拒绝判断。
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ExecutionTenantScope {
+pub(crate) struct ExecutionTenantFilter {
     tenant_id: Option<String>,
 }
 
-impl ExecutionTenantScope {
+impl ExecutionTenantFilter {
     /// 允许处理全部租户以及平台级记录。
     pub const fn all() -> Self {
         Self { tenant_id: None }

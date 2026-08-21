@@ -119,7 +119,7 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
     install_job_metrics(&services.job_queue);
-    let outbox_persistence = ryframe_db::application_ports::outbox_persistence(database.clone());
+    let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let (server_info, mut server_info_sampler) =

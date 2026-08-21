@@ -3,11 +3,12 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use ryframe_adapters::RedisClient;
 use ryframe_application::{
-    CallbackScheduleMetricsObserver, ExecutionTenantScope, ExportCleanupJobHandler,
-    ExportJobHandler, JobQueue, JobWakeupFuture, JobWakeupStream, JobWakeupTransport, JobWorker,
-    JobWorkerPolicy, MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
+    CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
+    JobWakeupFuture, JobWakeupStream, JobWakeupTransport, JobWorker, JobWorkerPolicy,
+    MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
     MessageWakeupPublisher, MultiTenancyPolicy, ScheduleMetricsObserver,
     ScheduledJobTargetRegistry,
+    ports::jobs::ExecutionTenantScope,
     system::{
         DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
         TenantConfigApplyJobHandler, TenantConfigExportJobHandler, TenantConfigPreviewJobHandler,

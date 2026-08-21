@@ -6,10 +6,9 @@ use sea_orm::{
     sea_query::{LikeExpr, LockBehavior, LockType},
 };
 
-use crate::{
-    ExecutionTenantScope,
-    entities::{background_job, job_schedule, job_schedule_execution},
-};
+use crate::entities::{background_job, job_schedule, job_schedule_execution};
+
+use super::ExecutionTenantFilter;
 
 #[derive(Clone, Debug, Default)]
 pub struct JobScheduleFilter<'a> {
@@ -93,11 +92,11 @@ impl JobScheduleRepository {
             .map_err(database_error)
     }
 
-    pub async fn lock_next_due(
+    pub(crate) async fn lock_next_due(
         &self,
         transaction: &DatabaseTransaction,
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<job_schedule::Model>> {
         let mut query = job_schedule::Entity::find()
             .filter(job_schedule::Column::Enabled.eq(true))

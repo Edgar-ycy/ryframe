@@ -8,7 +8,7 @@ use sea_orm::{
     sea_query::{LockBehavior, LockType},
 };
 
-use crate::{ExecutionTenantScope, entities::background_job};
+use crate::{entities::background_job, repositories::ExecutionTenantFilter};
 
 use super::{BackgroundJobRepository, database_error, validate_lease};
 
@@ -17,13 +17,13 @@ impl BackgroundJobRepository {
     ///
     /// 这是进入 `running` 的唯一状态迁移；行锁和 `attempts` 自增位于同一事务中。
     /// 因而进程在提交后崩溃时，任务会在独立的租约回收循环中再次投递。
-    pub async fn claim_next(
+    pub(crate) async fn claim_next(
         &self,
         db: &DatabaseConnection,
         worker_id: &str,
         lease_duration: Duration,
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<background_job::Model>> {
         validate_lease(worker_id, lease_duration)?;
         let txn = db.begin().await.map_err(database_error)?;
@@ -57,7 +57,7 @@ impl BackgroundJobRepository {
 
     fn claimable_query(
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> sea_orm::Select<background_job::Entity> {
         let mut query = background_job::Entity::find()
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_PENDING))

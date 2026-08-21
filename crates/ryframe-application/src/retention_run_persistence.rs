@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::{BackgroundJobTransaction, PersistenceFuture};
+use crate::{PersistenceFuture, ports::jobs::BackgroundJobTransaction};
 
 #[derive(Clone, Debug)]
 pub struct RetentionRunRecord {

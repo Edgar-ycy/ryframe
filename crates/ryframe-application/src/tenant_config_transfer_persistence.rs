@@ -4,7 +4,8 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
 
 use crate::{
-    BackgroundJobTransaction, PersistenceFuture, ProductTransactionPort,
+    PersistenceFuture, ProductTransactionPort,
+    ports::jobs::BackgroundJobTransaction,
     system::{TenantConfigPackageResources, TenantConfigTargetCatalog},
 };
 

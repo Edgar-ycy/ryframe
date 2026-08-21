@@ -7,7 +7,7 @@ use sea_orm::{
     QueryFilter, QueryOrder, QueryResult, Statement, Value, sea_query::Expr,
 };
 
-use crate::{ExecutionTenantScope, entities::background_job};
+use crate::{entities::background_job, repositories::ExecutionTenantFilter};
 
 use super::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
@@ -154,11 +154,11 @@ impl BackgroundJobRepository {
     /// 使用一条条件聚合查询读取所有已注册任务类型的监控指标。
     ///
     /// 数据库中尚无记录的注册类型也会返回零值，避免 Prometheus 保留旧 Gauge。
-    pub async fn stats_for_types(
+    pub(crate) async fn stats_for_types(
         &self,
         db: &DatabaseConnection,
         job_types: &[String],
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Vec<BackgroundJobTypeStats>> {
         let job_types = unique_job_types(job_types);
         if job_types.is_empty() {

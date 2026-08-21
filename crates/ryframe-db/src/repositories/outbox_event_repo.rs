@@ -9,7 +9,9 @@ use sea_orm::{
 };
 use serde_json::Value;
 
-use crate::{ExecutionTenantScope, entities::outbox_event};
+use crate::entities::outbox_event;
+
+use super::ExecutionTenantFilter;
 
 const EXPIRED_LEASE_DEAD_ERROR: &str = "Outbox 事件租约已过期，投递结果未知";
 
@@ -112,13 +114,13 @@ impl OutboxEventRepository {
     }
 
     /// 使用行锁领取一条到期可投递事件。领取即消耗一次尝试预算。
-    pub async fn claim_next(
+    pub(crate) async fn claim_next(
         &self,
         db: &DatabaseConnection,
         worker_id: &str,
         lease_duration: Duration,
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<outbox_event::Model>> {
         validate_lease(worker_id, lease_duration)?;
         let transaction = db.begin().await.map_err(database_error)?;
@@ -232,7 +234,7 @@ impl OutboxEventRepository {
 
     fn claimable_query(
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> sea_orm::Select<outbox_event::Entity> {
         let mut query = outbox_event::Entity::find()
             .filter(outbox_event::Column::Status.eq(outbox_event::Model::STATUS_PENDING))
@@ -279,11 +281,11 @@ impl OutboxEventRepository {
     ///
     /// 该维护操作由单独的恢复循环调用，避免与并发领取操作位于同一事务中，
     /// 从而保持统一的锁顺序并降低 MySQL 死锁风险。
-    pub async fn recover_expired_leases(
+    pub(crate) async fn recover_expired_leases(
         &self,
         db: &DatabaseConnection,
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<()> {
         self.recover_expired_leases_on(db, now, tenant_scope).await
     }
@@ -292,7 +294,7 @@ impl OutboxEventRepository {
         &self,
         db: &C,
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<()>
     where
         C: ConnectionTrait,

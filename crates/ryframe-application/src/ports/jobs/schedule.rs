@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::{EnqueueJob, EnqueueJobResult, ExecutionTenantScope, PersistenceFuture};
+use crate::{EnqueueJob, EnqueueJobResult, PersistenceFuture};
+
+use super::ExecutionTenantScope;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct JobScheduleReadFilter<'a> {

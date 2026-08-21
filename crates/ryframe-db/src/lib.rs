@@ -4,7 +4,6 @@ pub mod connection;
 pub mod data_scope;
 pub mod database_monitor;
 pub mod entities;
-mod execution_tenant_scope;
 mod id_generator;
 pub mod migration;
 pub mod pagination;
@@ -19,7 +18,6 @@ pub use cluster::{
     ReadConsistency, SelectedDatabase,
 };
 pub use database_monitor::SeaOrmDatabaseMonitor;
-pub use execution_tenant_scope::ExecutionTenantScope;
 pub use id_generator::{DatabaseIdGenerator, install as install_id_generator, next_id};
 pub use repository::Repository;
 pub use sql_logger::{DbSpanLayer, SqlLogGuard, SqlLogLayer};

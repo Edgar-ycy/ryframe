@@ -1,7 +1,9 @@
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
-use crate::{EnqueueJob, ExecutionTenantScope, OperLogRecord, PersistenceFuture};
+use crate::{EnqueueJob, OperLogRecord, PersistenceFuture};
+
+use super::ExecutionTenantScope;
 
 /// 已由 Worker 持有租约的 Outbox 事件。
 #[derive(Debug)]

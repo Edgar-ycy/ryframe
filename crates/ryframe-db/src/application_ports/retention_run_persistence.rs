@@ -7,8 +7,8 @@ use sea_orm::TransactionTrait;
 use super::control_transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    BackgroundJobTransaction, PersistenceFuture, RetentionRunPersistencePort, RetentionRunRecord,
-    RetentionRunTransaction,
+    PersistenceFuture, RetentionRunPersistencePort, RetentionRunRecord, RetentionRunTransaction,
+    ports::jobs::BackgroundJobTransaction,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn RetentionRunPersistencePort> {

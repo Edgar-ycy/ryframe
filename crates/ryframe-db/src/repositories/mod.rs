@@ -11,6 +11,7 @@ pub mod config_repo;
 pub mod data_retention_repo;
 pub mod dept_repo;
 pub mod dict_repo;
+mod execution_tenant_filter;
 pub mod export_job_repo;
 pub mod file_repo;
 pub mod job_schedule_repo;
@@ -57,6 +58,7 @@ pub use data_retention_repo::{
 };
 pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeFilter, DictTypeRepository};
+pub(crate) use execution_tenant_filter::ExecutionTenantFilter;
 pub use export_job_repo::{
     CreateExportJob, ExportJobRepository, ExportStartDisposition, MarkExportJobSucceeded,
     MarkExportJobsDeletePending,

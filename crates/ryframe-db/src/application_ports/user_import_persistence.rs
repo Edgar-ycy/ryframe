@@ -12,11 +12,11 @@ use sea_orm::{EntityTrait, TransactionTrait};
 use super::control_transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    BackgroundJobTransaction, EnqueueJob, EnqueueJobResult, NewImportedUser, NewUserImportJob,
-    NewUserImportRow, PersistenceFuture, UserImportAuthorizationSnapshot,
-    UserImportDepartmentRecord, UserImportJobRecord, UserImportPersistencePort,
-    UserImportReadFilter, UserImportRowRecord, UserImportSourceRecord, UserImportSourceState,
-    UserImportTransaction,
+    EnqueueJob, EnqueueJobResult, NewImportedUser, NewUserImportJob, NewUserImportRow,
+    PersistenceFuture, UserImportAuthorizationSnapshot, UserImportDepartmentRecord,
+    UserImportJobRecord, UserImportPersistencePort, UserImportReadFilter, UserImportRowRecord,
+    UserImportSourceRecord, UserImportSourceState, UserImportTransaction,
+    ports::jobs::BackgroundJobTransaction,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn UserImportPersistencePort> {

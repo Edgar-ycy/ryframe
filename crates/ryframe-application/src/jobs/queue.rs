@@ -13,7 +13,7 @@ use super::{
     metrics::JobMetricsObserver,
     wakeup::{JobWakeupTransport, QueueWakeup, WakeupQueue},
 };
-use crate::{
+use crate::ports::jobs::{
     BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
     BackgroundJobStatsRecord, BackgroundJobTransaction, ClaimedJobRecord, ExecutionTenantScope,
     FailJobCommand, JobFailureOutcome, TenantConfigJobKind,

@@ -9,12 +9,11 @@ use sea_orm::{
 };
 
 use crate::{
-    ExecutionTenantScope,
     entities::{
         background_job, data_retention_run, export_job, tenant_config_bundle,
         tenant_config_transfer, user_import_job,
     },
-    repositories::DataRetentionRepository,
+    repositories::{DataRetentionRepository, ExecutionTenantFilter},
 };
 
 use super::{
@@ -122,11 +121,11 @@ impl BackgroundJobRepository {
     ///
     /// 任务被领取时即消耗一次尝试；最后一次已过期的租约直接进入 `dead`，其余任务
     /// 回到 `pending` 并立即可再次领取。先处理死信再重入队，避免耗尽任务被错误复活。
-    pub async fn recover_expired_leases(
+    pub(crate) async fn recover_expired_leases(
         &self,
         db: &DatabaseConnection,
         now: DateTime<Utc>,
-        tenant_scope: &ExecutionTenantScope,
+        tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<ExpiredLeaseRecovery> {
         let transaction = db.begin().await.map_err(database_error)?;
         let mut query = background_job::Entity::find()

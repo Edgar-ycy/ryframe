@@ -242,7 +242,7 @@ impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersist
 }
 
 impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction {
-    fn background_jobs(&self) -> &dyn ryframe_application::BackgroundJobTransaction {
+    fn background_jobs(&self) -> &dyn ryframe_application::ports::jobs::BackgroundJobTransaction {
         &self.transaction
     }
 

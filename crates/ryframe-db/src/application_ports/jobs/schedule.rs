@@ -12,13 +12,15 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    EnqueueJob, EnqueueJobResult, ExecutionTenantScope, JobScheduleExecutionReadFilter,
-    JobScheduleExecutionRecord, JobSchedulePersistencePort, JobScheduleReadFilter,
-    JobScheduleReadPort, JobScheduleRecord, JobScheduleTransaction, NewJobScheduleExecution,
-    PersistenceFuture,
+    EnqueueJob, EnqueueJobResult, PersistenceFuture,
+    ports::jobs::{
+        ExecutionTenantScope, JobScheduleExecutionReadFilter, JobScheduleExecutionRecord,
+        JobSchedulePersistencePort, JobScheduleReadFilter, JobScheduleReadPort, JobScheduleRecord,
+        JobScheduleTransaction, NewJobScheduleExecution,
+    },
 };
 
-use super::{execution_tenant_scope::database_scope, job_queue_persistence::database_enqueue};
+use super::{queue::database_enqueue, tenant_scope::database_scope};
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn JobSchedulePersistencePort> {
     Arc::new(DatabaseJobSchedulePersistence {
