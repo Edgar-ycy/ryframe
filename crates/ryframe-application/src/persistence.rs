@@ -22,7 +22,7 @@ pub enum TransactionAuditMode {
 
 /// 由应用用例显式控制生命周期的持久化事务。
 #[async_trait]
-pub trait PersistenceTransaction: Send {
+pub trait PersistenceTransaction: Send + Sync {
     async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()>;
 
     async fn rollback(self: Box<Self>) -> AppResult<()>;
