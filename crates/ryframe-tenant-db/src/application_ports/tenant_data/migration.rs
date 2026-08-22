@@ -327,7 +327,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
     }
 }
 
-fn catalog_table(table: &str) -> AppResult<&'static TenantDataTableDescriptor> {
+pub fn catalog_table(table: &str) -> AppResult<&'static TenantDataTableDescriptor> {
     TENANT_DATA_CATALOG
         .tables()
         .iter()
@@ -335,7 +335,7 @@ fn catalog_table(table: &str) -> AppResult<&'static TenantDataTableDescriptor> {
         .ok_or_else(|| AppError::Validation(format!("未知租户数据表: {table}")))
 }
 
-fn validate_batch_size(batch_size: u32) -> AppResult<()> {
+pub fn validate_batch_size(batch_size: u32) -> AppResult<()> {
     if (1..=10_000).contains(&batch_size) {
         Ok(())
     } else {
@@ -345,7 +345,7 @@ fn validate_batch_size(batch_size: u32) -> AppResult<()> {
     }
 }
 
-fn business_cursor_columns(descriptor: &TenantDataTableDescriptor) -> Vec<&'static str> {
+pub fn business_cursor_columns(descriptor: &TenantDataTableDescriptor) -> Vec<&'static str> {
     descriptor
         .primary_key_cursor_columns
         .iter()
@@ -378,7 +378,7 @@ fn decode_rows(
         .collect()
 }
 
-fn cursor_from_last_row(
+pub fn cursor_from_last_row(
     rows: &[TenantDataRow],
     descriptor: &TenantDataTableDescriptor,
     cursor_columns: &[&str],
@@ -461,81 +461,12 @@ fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
 }
 
-const fn map_cleanup_ownership(
+pub const fn map_cleanup_ownership(
     ownership: TenantDataCleanupOwnership,
 ) -> ApplicationCleanupOwnership {
     match ownership {
         TenantDataCleanupOwnership::OwnedFrozen => ApplicationCleanupOwnership::OwnedFrozen,
         TenantDataCleanupOwnership::AlreadyClean => ApplicationCleanupOwnership::AlreadyClean,
         TenantDataCleanupOwnership::NotOwned => ApplicationCleanupOwnership::NotOwned,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cleanup_ownership_mapping_is_complete() {
-        assert_eq!(
-            map_cleanup_ownership(TenantDataCleanupOwnership::OwnedFrozen),
-            ApplicationCleanupOwnership::OwnedFrozen
-        );
-        assert_eq!(
-            map_cleanup_ownership(TenantDataCleanupOwnership::AlreadyClean),
-            ApplicationCleanupOwnership::AlreadyClean
-        );
-        assert_eq!(
-            map_cleanup_ownership(TenantDataCleanupOwnership::NotOwned),
-            ApplicationCleanupOwnership::NotOwned
-        );
-    }
-
-    #[test]
-    fn catalog_lookup_rejects_unknown_table() {
-        assert!(catalog_table("unknown_table").is_err());
-    }
-
-    #[test]
-    fn batch_size_is_bounded() {
-        assert!(validate_batch_size(1).is_ok());
-        assert!(validate_batch_size(10_000).is_ok());
-        assert!(validate_batch_size(0).is_err());
-        assert!(validate_batch_size(10_001).is_err());
-    }
-
-    #[test]
-    fn cursor_is_derived_from_catalog_columns() {
-        const COLUMNS: &[&str] = &["tenant_id", "id", "name"];
-        const CURSOR_COLUMNS: &[&str] = &["tenant_id", "id"];
-        const COLUMN_TYPES: &[&str] = &["varchar", "bigint", "varchar"];
-        const DESCRIPTOR: TenantDataTableDescriptor = TenantDataTableDescriptor {
-            table: "biz_example",
-            copy_order: 1,
-            tenant_column: "tenant_id",
-            primary_key_cursor_columns: CURSOR_COLUMNS,
-            checksum_columns: COLUMNS,
-            column_types: COLUMN_TYPES,
-            has_generated_columns: false,
-            foreign_key_dependencies: &[],
-            foreign_keys: &[],
-            schema_canonical: "test",
-        };
-
-        let cursor_columns = business_cursor_columns(&DESCRIPTOR);
-        let row = DESCRIPTOR
-            .checksum_columns
-            .iter()
-            .map(|column| Some((*column).to_owned()))
-            .collect::<TenantDataRow>();
-        let cursor = cursor_from_last_row(&[row], &DESCRIPTOR, &cursor_columns)
-            .expect("应按 catalog 生成 cursor");
-        assert_eq!(
-            cursor,
-            cursor_columns
-                .iter()
-                .map(|column| (*column).to_owned())
-                .collect::<Vec<_>>()
-        );
     }
 }

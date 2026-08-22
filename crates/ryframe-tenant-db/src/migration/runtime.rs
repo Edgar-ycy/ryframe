@@ -153,16 +153,3 @@ where
     Option::<i64>::try_get_by_index(&row, 0)?
         .ok_or_else(|| DbErr::Custom("tenant-data migration lock returned NULL".into()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
-        let migrations = Migrator::migrations();
-        assert_eq!(migrations.len(), 1);
-        assert_eq!(TENANT_DATA_MIGRATION_LEDGER, "seaql_tenant_data_migrations");
-        assert_eq!(migrations[0].name(), "m20260820_000000_tenant_baseline");
-    }
-}

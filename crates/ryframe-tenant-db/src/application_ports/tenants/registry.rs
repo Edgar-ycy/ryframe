@@ -287,7 +287,7 @@ impl TenantTransaction for TenantWorkUnit {
     }
 }
 
-fn map_tenant(tenant: tenant::Model) -> TenantRecord {
+pub fn map_tenant(tenant: tenant::Model) -> TenantRecord {
     TenantRecord {
         id: tenant.id,
         tenant_id: tenant.tenant_id,
@@ -308,7 +308,7 @@ fn map_tenant(tenant: tenant::Model) -> TenantRecord {
     }
 }
 
-fn map_tenant_model(tenant: TenantRecord) -> tenant::Model {
+pub fn map_tenant_model(tenant: TenantRecord) -> tenant::Model {
     tenant::Model {
         id: tenant.id,
         tenant_id: tenant.tenant_id,
@@ -352,36 +352,4 @@ fn map_provision(record: ProvisionTenantRecord) -> ProvisionTenantCommand {
 
 fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use ryframe_db::entities::tenant;
-
-    use super::{map_tenant, map_tenant_model};
-
-    #[test]
-    fn tenant_mapping_preserves_every_field() {
-        let now = "2026-08-21T01:02:03Z".parse().unwrap();
-        let model = tenant::Model {
-            id: 42,
-            tenant_id: "tenant-a".to_owned(),
-            name: "Tenant A".to_owned(),
-            domain: Some("tenant.example.com".to_owned()),
-            status: tenant::Model::STATUS_ENABLED.to_owned(),
-            expire_at: None,
-            max_users: 100,
-            max_roles: 20,
-            max_storage_mb: 1024,
-            max_requests_per_min: 1000,
-            session_version: 3,
-            authorization_epoch: 4,
-            runtime_epoch: 5,
-            configuration_version: 6,
-            created_at: now,
-            updated_at: now,
-        };
-
-        assert_eq!(map_tenant_model(map_tenant(model.clone())), model);
-    }
 }

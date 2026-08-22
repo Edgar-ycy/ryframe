@@ -1,4 +1,4 @@
-pub(super) fn normalize_check_clause(value: &str) -> String {
+pub fn normalize_check_clause(value: &str) -> String {
     // MySQL information_schema may render literal delimiters as
     // `_utf8mb4\'value\'`. Only normalize syntax outside literals. Literal
     // bytes (including case, whitespace, backticks and charset-like text) are

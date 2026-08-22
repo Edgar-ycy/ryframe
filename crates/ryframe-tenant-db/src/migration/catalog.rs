@@ -328,16 +328,3 @@ pub fn schema_fingerprint_for_catalog(entries: &[String]) -> String {
     canonical.push(']');
     hex::encode(Sha256::digest(canonical.as_bytes()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT};
-
-    #[test]
-    fn generated_fingerprint_matches_shared_catalog_computation() {
-        assert_eq!(
-            TENANT_DATA_CATALOG.schema_fingerprint(),
-            TENANT_DATA_SCHEMA_FINGERPRINT
-        );
-    }
-}

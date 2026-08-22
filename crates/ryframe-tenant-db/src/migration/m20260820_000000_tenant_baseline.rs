@@ -1,7 +1,7 @@
 use sea_orm::DbBackend;
 use sea_orm_migration::prelude::*;
 
-pub(crate) const TENANT_FENCE_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_tenant_fence` (
+pub const TENANT_FENCE_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_tenant_fence` (
     `tenant_id` VARCHAR(64) NOT NULL,
     `target_key` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `placement_generation` BIGINT NOT NULL,
@@ -14,7 +14,7 @@ pub(crate) const TENANT_FENCE_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_ten
     CONSTRAINT `ck_biz_tenant_fence_state` CHECK (`state` IN ('active', 'frozen'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据写入围栏'"#;
 
-pub(crate) const TENANT_TARGET_SLOT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_tenant_target_slot` (
+pub const TENANT_TARGET_SLOT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_tenant_target_slot` (
     `slot_id` TINYINT UNSIGNED NOT NULL,
     `tenant_id` VARCHAR(64) DEFAULT NULL,
     `placement_generation` BIGINT DEFAULT NULL,
@@ -28,7 +28,7 @@ pub(crate) const TENANT_TARGET_SLOT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `b
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='dedicated 租户数据目标固定占用槽'"#;
 
-pub(crate) const RESOURCE_OWNERSHIP_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `ryframe_resource_ownership` (
+pub const RESOURCE_OWNERSHIP_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `ryframe_resource_ownership` (
     `resource_kind` VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `scope_id` VARCHAR(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `marker` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -97,18 +97,5 @@ impl MigrationTrait for Migration {
         Err(DbErr::Custom(
             "tenant-data baseline is destructive and cannot be rolled back".into(),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn baseline_contains_complete_infrastructure_schema() {
-        assert!(TENANT_FENCE_DDL.contains("ck_biz_tenant_fence_generation"));
-        assert!(TENANT_FENCE_DDL.contains("ck_biz_tenant_fence_state"));
-        assert!(TENANT_TARGET_SLOT_DDL.contains("ck_biz_tenant_target_slot_value"));
-        assert!(RESOURCE_OWNERSHIP_DDL.contains("uq_resource_ownership_marker"));
     }
 }

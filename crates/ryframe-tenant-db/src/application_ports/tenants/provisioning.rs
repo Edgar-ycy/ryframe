@@ -30,7 +30,9 @@ impl TenantProvisioningPort for TenantDatabaseRouter {
     }
 }
 
-fn to_application_placement(placement: PendingTenantDataPlacement) -> TenantProvisioningPlacement {
+pub fn to_application_placement(
+    placement: PendingTenantDataPlacement,
+) -> TenantProvisioningPlacement {
     TenantProvisioningPlacement {
         tenant_id: placement.tenant_id,
         target_key: placement.current_target_key,
@@ -39,7 +41,7 @@ fn to_application_placement(placement: PendingTenantDataPlacement) -> TenantProv
     }
 }
 
-pub(super) fn to_infrastructure_placement(
+pub fn to_infrastructure_placement(
     placement: &TenantProvisioningPlacement,
 ) -> PendingTenantDataPlacement {
     PendingTenantDataPlacement {
@@ -73,22 +75,5 @@ fn map_error(error: TenantDataError) -> AppError {
         | TenantDataError::ConnectionBudgetExhausted { .. } => {
             AppError::TenantDataTargetUnavailable(message, 5)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn placement_mapping_preserves_all_fields() {
-        let application = TenantProvisioningPlacement {
-            tenant_id: "tenant-a".into(),
-            target_key: "primary".into(),
-            generation: 3,
-            switch_token: "token".into(),
-        };
-        let infrastructure = to_infrastructure_placement(&application);
-        assert_eq!(to_application_placement(infrastructure), application);
     }
 }

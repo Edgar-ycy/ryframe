@@ -394,15 +394,26 @@ pub async fn canonical_table_schema(
 }
 
 fn ensure_local_foreign_key_schemas(foreign_keys: &[ForeignKeySchemaRow]) -> Result<(), DbErr> {
-    if foreign_keys
-        .iter()
-        .any(|foreign_key| foreign_key.referenced_table_schema != foreign_key.current_schema)
-    {
-        return Err(DbErr::Custom(
-            "tenant-data catalog foreign keys must stay within the target schema".into(),
-        ));
+    for foreign_key in foreign_keys {
+        ensure_local_foreign_key_schema(
+            &foreign_key.current_schema,
+            &foreign_key.referenced_table_schema,
+        )?;
     }
     Ok(())
+}
+
+pub fn ensure_local_foreign_key_schema(
+    current_schema: &str,
+    referenced_schema: &str,
+) -> Result<(), DbErr> {
+    if referenced_schema == current_schema {
+        Ok(())
+    } else {
+        Err(DbErr::Custom(
+            "tenant-data catalog foreign keys must stay within the target schema".into(),
+        ))
+    }
 }
 
 async fn verify_fence_schema(
@@ -877,74 +888,4 @@ fn schema_fingerprint_mismatch(detail: &str) -> DbErr {
     DbErr::Custom(format!(
         "tenant-data schema fingerprint mismatch ({detail}): expected {TENANT_DATA_SCHEMA_FINGERPRINT}"
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ForeignKeySchemaRow, ensure_local_foreign_key_schemas, normalize_check_clause};
-
-    #[test]
-    fn normalizes_mysql_escaped_check_literal_quotes() {
-        assert_eq!(
-            normalize_check_clause(r#"(`state` IN (_utf8mb4\'active\', _utf8mb4\'frozen\'))"#),
-            "statein('active','frozen')",
-        );
-        assert_eq!(
-            normalize_check_clause(r#"(`kind` = _ascii\"mysql\")"#),
-            "kind=\"mysql\"",
-        );
-        assert_eq!(
-            normalize_check_clause(r#"(`code` = _utf8mb4\'O\\\'Reilly\')"#),
-            normalize_check_clause("`code` = 'O''Reilly'"),
-        );
-        assert_ne!(
-            normalize_check_clause(r#"(`code` = _utf8mb4\'O\\\'Reilly\')"#),
-            normalize_check_clause("`code` = 'OReilly'"),
-        );
-    }
-
-    #[test]
-    fn preserves_semantic_check_grouping() {
-        assert_eq!(normalize_check_clause("(((`a` = 1)))"), "a=1");
-        assert_ne!(
-            normalize_check_clause("((`a` AND `b`) OR `c`)"),
-            normalize_check_clause("(`a` AND (`b` OR `c`))"),
-        );
-    }
-
-    #[test]
-    fn preserves_literal_bytes_and_charset_like_text() {
-        assert_ne!(
-            normalize_check_clause("`code` = 'A'"),
-            normalize_check_clause("`code` = 'a'"),
-        );
-        assert_ne!(
-            normalize_check_clause("`label` = 'a b'"),
-            normalize_check_clause("`label` = 'ab'"),
-        );
-        assert_ne!(
-            normalize_check_clause("`code` = '_utf8mb4active'"),
-            normalize_check_clause("`code` = 'active'"),
-        );
-        assert_ne!(
-            normalize_check_clause("`code` = 'A` B'"),
-            normalize_check_clause("`code` = 'a b'"),
-        );
-    }
-
-    #[test]
-    fn rejects_cross_schema_foreign_keys() {
-        let row = ForeignKeySchemaRow {
-            constraint_name: "fk_child_parent".into(),
-            column_name: "parent_id".into(),
-            ordinal_position: 1,
-            referenced_table_schema: "control".into(),
-            current_schema: "tenant_data".into(),
-            referenced_table_name: "biz_parent".into(),
-            referenced_column_name: "id".into(),
-            update_rule: "RESTRICT".into(),
-            delete_rule: "RESTRICT".into(),
-        };
-        assert!(ensure_local_foreign_key_schemas(&[row]).is_err());
-    }
 }

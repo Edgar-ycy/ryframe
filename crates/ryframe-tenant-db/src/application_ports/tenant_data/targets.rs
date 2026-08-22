@@ -118,31 +118,10 @@ impl TenantDataTargetPort for TenantDatabaseRouter {
     }
 }
 
-const fn map_health(health: TenantDatabaseTargetHealthStatus) -> TenantDataTargetHealth {
+pub const fn map_health(health: TenantDatabaseTargetHealthStatus) -> TenantDataTargetHealth {
     match health {
         TenantDatabaseTargetHealthStatus::Unknown => TenantDataTargetHealth::Unknown,
         TenantDatabaseTargetHealthStatus::Verified => TenantDataTargetHealth::Verified,
         TenantDatabaseTargetHealthStatus::Unavailable => TenantDataTargetHealth::Unavailable,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn target_health_mapping_is_complete() {
-        assert_eq!(
-            map_health(TenantDatabaseTargetHealthStatus::Unknown),
-            TenantDataTargetHealth::Unknown
-        );
-        assert_eq!(
-            map_health(TenantDatabaseTargetHealthStatus::Verified),
-            TenantDataTargetHealth::Verified
-        );
-        assert_eq!(
-            map_health(TenantDatabaseTargetHealthStatus::Unavailable),
-            TenantDataTargetHealth::Unavailable
-        );
     }
 }
